@@ -8,17 +8,8 @@ pub enum CaptionHit {
     Max,
     Close,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TitlebarAction {
-    Sidebar,
-    Terminal,
-    Settings,
-    Search,
-    Diagnostics,
-    Structure,
-    SplitRight,
-    SplitDown,
-}
+pub use super::command_ui::TitlebarAction;
+use super::command_ui::{CommandItem, core_toolbar_commands};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowHit {
     Client,
@@ -158,6 +149,30 @@ pub fn draw_titlebar(
     icons: &crate::util::icons::Icons,
     title: &str,
 ) -> Vec<TitlebarAction> {
+    draw_titlebar_commands(host, ui, icons, title, &core_toolbar_commands())
+        .into_iter()
+        .filter_map(|id| TitlebarAction::from_command_id(&id))
+        .collect()
+}
+
+pub fn draw_titlebar_commands(
+    host: &mut impl CaptionHost,
+    ui: &dear_imgui_rs::Ui,
+    icons: &crate::util::icons::Icons,
+    title: &str,
+    commands: &[CommandItem],
+) -> Vec<String> {
+    draw_titlebar_commands_with_menu(host, ui, icons, title, commands, &[])
+}
+
+pub fn draw_titlebar_commands_with_menu(
+    host: &mut impl CaptionHost,
+    ui: &dear_imgui_rs::Ui,
+    icons: &crate::util::icons::Icons,
+    title: &str,
+    commands: &[CommandItem],
+    application_commands: &[CommandItem],
+) -> Vec<String> {
     use dear_imgui_rs::{Condition, StyleColor, StyleVar, WindowFlags};
 
     let fs = ui.current_font_size();
@@ -194,10 +209,13 @@ pub fn draw_titlebar(
             let caption_x = ui.window_size()[0] - bw * 3.0;
             let gap = 2.0;
             let tx = fs * 0.7;
+            let controls = commands.len() + usize::from(!application_commands.is_empty());
+            let count = controls as f32;
+            let gaps = controls.saturating_sub(1) as f32;
             let aw = (fs * 1.7)
                 .max(28.0)
-                .min(((caption_x - tx * 2.0 - gap * 7.0) / 8.0).max(1.0));
-            let tools_width = aw * 8.0 + gap * 7.0;
+                .min(((caption_x - tx * 2.0 - gap * gaps) / count.max(1.0)).max(1.0));
+            let tools_width = aw * count + gap * gaps;
             let ts = ui.calc_text_size(title);
             let title_space = (caption_x - tx * 2.0 - tools_width - fs * 0.85).max(0.0);
             let mut tool_x = tx;
@@ -212,44 +230,97 @@ pub fn draw_titlebar(
                 ui.text(title);
                 tool_x += visible_width + fs * 0.85;
             }
-            for (id, tip, action) in [
-                ("##tb_sidebar", "New File Explorer", TitlebarAction::Sidebar),
-                ("##tb_term", "New Terminal", TitlebarAction::Terminal),
-                ("##tb_search", "New Project Search", TitlebarAction::Search),
-                ("##tb_structure", "New Structure", TitlebarAction::Structure),
-                (
-                    "##tb_diagnostics",
-                    "New Diagnostics",
-                    TitlebarAction::Diagnostics,
-                ),
-                (
-                    "##tb_split_right",
-                    "Split Editor Right",
-                    TitlebarAction::SplitRight,
-                ),
-                (
-                    "##tb_split_down",
-                    "Split Editor Down",
-                    TitlebarAction::SplitDown,
-                ),
-                ("##tb_set", "New Settings", TitlebarAction::Settings),
-            ] {
+            for command in commands {
+                let id = format!("##toolbar.{}", command.id);
+                let disabled = ui.begin_disabled_with_cond(!command.enabled);
                 ui.set_cursor_pos([tool_x, 0.0]);
-                let hit = ui.invisible_button(id, [aw, h]);
+                let hit = ui.invisible_button(&id, [aw, h]);
                 let a = ui.item_rect_min();
                 let b = ui.item_rect_max();
                 host.exclude_caption_rect(client(a), client(b), CaptionHit::Client);
                 if ui.is_item_hovered() {
-                    ui.tooltip_text(tip);
+                    ui.tooltip_text(&command.label);
                     dl.add_rect(a, b, ui.style_color(StyleColor::ButtonHovered))
                         .filled(true)
                         .build();
                 }
-                draw_tool_icon(&dl, action, a, b, ink, fs, icons);
-                if hit {
-                    actions.push(action);
+                let mut command_ink = ink;
+                if !command.enabled {
+                    command_ink[3] *= 0.45;
                 }
+                let builtin_icon = TitlebarAction::from_command_id(&command.id).or(
+                    match command.icon.as_deref() {
+                        Some("structure") => Some(TitlebarAction::Structure),
+                        Some("search") => Some(TitlebarAction::Search),
+                        Some("diagnostics") => Some(TitlebarAction::Diagnostics),
+                        Some("gear" | "settings") => Some(TitlebarAction::Settings),
+                        _ => None,
+                    },
+                );
+                if let Some(action) = builtin_icon {
+                    draw_tool_icon(&dl, action, a, b, command_ink, fs, icons);
+                } else if let Some(texture) =
+                    command.icon.as_deref().and_then(|name| icons.get(name))
+                {
+                    let side = aw.min(h) * 0.55;
+                    let c = [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
+                    dl.add_image(
+                        texture,
+                        [c[0] - side * 0.5, c[1] - side * 0.5],
+                        [c[0] + side * 0.5, c[1] + side * 0.5],
+                        [0.0; 2],
+                        [1.0; 2],
+                        command_ink,
+                    );
+                } else {
+                    let text = command.label.chars().next().unwrap_or('+').to_string();
+                    let size = ui.calc_text_size(&text);
+                    dl.add_text(
+                        [(a[0] + b[0] - size[0]) * 0.5, (a[1] + b[1] - size[1]) * 0.5],
+                        command_ink,
+                        text,
+                    );
+                }
+                if hit {
+                    actions.push(command.id.clone());
+                }
+                drop(disabled);
                 tool_x += aw + gap;
+            }
+            if !application_commands.is_empty() {
+                ui.set_cursor_pos([tool_x, 0.0]);
+                if ui.invisible_button("##toolbar.tools", [aw, h]) {
+                    ui.open_popup("##toolbar.tools-menu");
+                }
+                let a = ui.item_rect_min();
+                let b = ui.item_rect_max();
+                host.exclude_caption_rect(client(a), client(b), CaptionHit::Client);
+                if ui.is_item_hovered() {
+                    ui.tooltip_text("Tools");
+                    dl.add_rect(a, b, ui.style_color(StyleColor::ButtonHovered))
+                        .filled(true)
+                        .build();
+                }
+                let text = "⋯";
+                let size = ui.calc_text_size(text);
+                dl.add_text(
+                    [(a[0] + b[0] - size[0]) * 0.5, (a[1] + b[1] - size[1]) * 0.5],
+                    ink,
+                    text,
+                );
+                if let Some(_popup) = ui.begin_popup("##toolbar.tools-menu") {
+                    let _style = crate::util::context_menu_style(ui);
+                    for command in application_commands {
+                        let _id = ui.push_id(&command.id);
+                        if ui.menu_item_enabled_selected_no_shortcut(
+                            &command.label,
+                            false,
+                            command.enabled,
+                        ) {
+                            actions.push(command.id.clone());
+                        }
+                    }
+                }
             }
             let mut x = caption_x;
             for (id, part) in [
@@ -588,6 +659,44 @@ mod native {
             );
             super::draw_titlebar(self, ui, settings, icons, title)
         }
+        pub fn draw_titlebar_commands(
+            &mut self,
+            ui: &Ui,
+            settings: &crate::util::settings::Settings,
+            icons: &crate::util::icons::Icons,
+            title: &str,
+            commands: &[super::CommandItem],
+        ) -> Vec<String> {
+            let _ = Self::apply_theme_to_window(
+                &self.window,
+                settings.text_color(),
+                settings.background_color(),
+            );
+            super::draw_titlebar_commands(self, ui, icons, title, commands)
+        }
+        pub fn draw_titlebar_commands_with_menu(
+            &mut self,
+            ui: &Ui,
+            settings: &crate::util::settings::Settings,
+            icons: &crate::util::icons::Icons,
+            title: &str,
+            commands: &[super::CommandItem],
+            application_commands: &[super::CommandItem],
+        ) -> Vec<String> {
+            let _ = Self::apply_theme_to_window(
+                &self.window,
+                settings.text_color(),
+                settings.background_color(),
+            );
+            super::draw_titlebar_commands_with_menu(
+                self,
+                ui,
+                icons,
+                title,
+                commands,
+                application_commands,
+            )
+        }
         pub fn apply_theme_to_window(
             window: &Window,
             _text: [f32; 4],
@@ -848,9 +957,9 @@ mod tests {
         assert!(context.render_legacy().draw_data().total_vtx_count() > 0);
         actions
     }
-    fn check_toolbar_geometry(host: &ToolbarHost) {
-        assert_eq!(host.rects.len(), 11);
-        let tools = &host.rects[..8];
+    fn check_toolbar_geometry(host: &ToolbarHost, count: usize) {
+        assert_eq!(host.rects.len(), count + 3);
+        let tools = &host.rects[..count];
         let first = tools[0];
         for button in tools {
             assert_eq!(button.hit, CaptionHit::Client);
@@ -861,10 +970,12 @@ mod tests {
         for pair in tools.windows(2) {
             assert!((pair[1].min[0] - pair[0].max[0] - 2.0).abs() < 0.01);
         }
-        assert!(tools[7].max[0] <= host.rects[8].min[0]);
-        assert_eq!(host.rects[8].hit, CaptionHit::Min);
-        assert_eq!(host.rects[9].hit, CaptionHit::Max);
-        assert_eq!(host.rects[10].hit, CaptionHit::Close);
+        if let Some(last) = tools.last() {
+            assert!(last.max[0] <= host.rects[count].min[0]);
+        }
+        assert_eq!(host.rects[count].hit, CaptionHit::Min);
+        assert_eq!(host.rects[count + 1].hit, CaptionHit::Max);
+        assert_eq!(host.rects[count + 2].hit, CaptionHit::Close);
     }
 
     #[test]
@@ -893,7 +1004,7 @@ mod tests {
         for width in [800.0, 480.0, 320.0] {
             toolbar_frame(&mut context, &mut host, &settings, width);
             toolbar_frame(&mut context, &mut host, &settings, width);
-            check_toolbar_geometry(&host);
+            check_toolbar_geometry(&host, TitlebarAction::ALL.len());
         }
         toolbar_frame(&mut context, &mut host, &settings, 800.0);
         let rects = host.rects.clone();
@@ -930,6 +1041,74 @@ mod tests {
     }
 
     #[test]
+    fn contributed_toolbar_commands_keep_ids_and_disabled_state() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context.set_ini_filename(None::<PathBuf>).unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut host = ToolbarHost::default();
+        let mut commands = core_toolbar_commands();
+        commands.extend([
+            CommandItem {
+                id: "image.open".into(),
+                label: "Open image".into(),
+                icon: None,
+                enabled: true,
+            },
+            CommandItem {
+                id: "agent.add_selection".into(),
+                label: "Add selection".into(),
+                icon: None,
+                enabled: false,
+            },
+        ]);
+        let frame = |context: &mut Context, host: &mut ToolbarHost, width: f32| {
+            context.io_mut().set_display_size([width, 200.0]);
+            context.io_mut().set_delta_time(1.0 / 60.0);
+            let ui = context.frame();
+            let actions = draw_titlebar_commands(
+                host,
+                ui,
+                &crate::util::icons::Icons::default(),
+                "bEd",
+                &commands,
+            );
+            assert!(context.render_legacy().draw_data().total_vtx_count() > 0);
+            actions
+        };
+        for width in [800.0, 480.0, 320.0] {
+            frame(&mut context, &mut host, width);
+            frame(&mut context, &mut host, width);
+            check_toolbar_geometry(&host, commands.len());
+        }
+        frame(&mut context, &mut host, 800.0);
+        let rects = host.rects.clone();
+        for (index, expected) in [(8, Some("image.open")), (9, None)] {
+            let rect = rects[index];
+            context.io_mut().add_mouse_pos_event([
+                (rect.min[0] + rect.max[0]) * 0.5,
+                (rect.min[1] + rect.max[1]) * 0.5,
+            ]);
+            frame(&mut context, &mut host, 800.0);
+            context
+                .io_mut()
+                .add_mouse_button_event(MouseButton::Left, true);
+            assert!(frame(&mut context, &mut host, 800.0).is_empty());
+            context
+                .io_mut()
+                .add_mouse_button_event(MouseButton::Left, false);
+            assert_eq!(
+                frame(&mut context, &mut host, 800.0),
+                expected.into_iter().map(str::to_owned).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
     fn toolbar_hit_rectangles_are_client_relative_at_a_nonzero_desktop_origin() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let path =
@@ -954,7 +1133,7 @@ mod tests {
         for _ in 0..2 {
             toolbar_frame_at(&mut context, &mut host, &settings, 800.0, origin);
         }
-        check_toolbar_geometry(&host);
+        check_toolbar_geometry(&host, TitlebarAction::ALL.len());
         for (before, after) in original.iter().zip(&host.rects) {
             for (before, after) in before
                 .min

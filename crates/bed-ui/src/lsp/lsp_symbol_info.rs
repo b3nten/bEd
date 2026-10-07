@@ -472,9 +472,11 @@ mod tests {
             .build();
         let editor = Editor::new();
         let mut client = LspClient::new("/bed-no-lsp-config.json");
-        let mut symbol = LspSymbolInfo::default();
-        symbol.at_caret = true;
-        symbol.fresh_caret_request = true;
+        let mut symbol = LspSymbolInfo {
+            at_caret: true,
+            fresh_caret_request: true,
+            ..Default::default()
+        };
         let ticket = symbol.hover_state.begin();
         symbol
             .hover_state

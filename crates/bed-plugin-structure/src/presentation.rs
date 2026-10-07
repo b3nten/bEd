@@ -1,12 +1,12 @@
 //! Source outline presentation. Workbench owns document targeting and navigation.
-use crate::util::tree_animation::TreeAnimation;
 use bed_core::identity::DocumentId;
 use bed_highlight::outline::{OutlineKey, OutlineResult, OutlineService, OutlineStatus};
+use bed_ui::util::tree_animation::TreeAnimation;
 use dear_imgui_rs::{Condition, StyleVar, Ui};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
-pub(super) struct StructurePanel {
+pub struct StructurePanel {
     expanded: HashMap<(DocumentId, u64), bool>,
     selected: Option<(DocumentId, u64)>,
     source: Option<OutlineKey>,
@@ -14,26 +14,23 @@ pub(super) struct StructurePanel {
     node_indices: HashMap<u64, usize>,
     animation: TreeAnimation<u64>,
     visibility_dirty: bool,
-    #[cfg(test)]
-    pub(super) rows: Vec<(u64, [f32; 2], [f32; 2])>,
-    #[cfg(test)]
-    pub(super) row_paints: Vec<(u64, usize, usize)>,
-    #[cfg(test)]
-    pub(super) caret_spacing: f32,
+    pub rows: Vec<(u64, [f32; 2], [f32; 2])>,
+    pub row_paints: Vec<(u64, usize, usize)>,
+    pub caret_spacing: f32,
 }
 
-pub(super) struct StructureJump {
+pub struct StructureJump {
     pub key: OutlineKey,
     pub offset: usize,
 }
 impl StructurePanel {
-    pub(super) fn draw(
+    pub fn draw(
         &mut self,
         ui: &Ui,
         service: &OutlineService,
         animations: bool,
     ) -> Option<StructureJump> {
-        let _controls = crate::util::controls_style(ui);
+        let _controls = bed_ui::util::popup_style::controls_style(ui);
         let Some(key) = service.requested() else {
             ui.text_disabled("Select a document to view its structure");
             return None;
@@ -94,7 +91,6 @@ impl StructurePanel {
             reset,
         );
         let mut jump = None;
-        #[cfg(test)]
         {
             self.rows.clear();
             self.row_paints.clear();
@@ -110,7 +106,6 @@ impl StructurePanel {
                     ui.current_font_size() * 0.14,
                     padding[1],
                 ]));
-                #[cfg(test)]
                 {
                     self.caret_spacing = ui.clone_style().frame_padding()[0];
                 }
@@ -142,7 +137,6 @@ impl StructurePanel {
                     if indent > 0.0 {
                         ui.indent_by(indent);
                     }
-                    #[cfg(test)]
                     let first_vertex = ui.with_bound_context(|| unsafe {
                         (*dear_imgui_rs::sys::igGetWindowDrawList()).VtxBuffer.Size as usize
                     });
@@ -157,7 +151,6 @@ impl StructurePanel {
                         .no_tree_push_on_open(true)
                         .push()
                         .is_some();
-                    #[cfg(test)]
                     self.row_paints.push((
                         id,
                         first_vertex,
@@ -175,7 +168,6 @@ impl StructurePanel {
                             offset: node.name_range.start,
                         });
                     }
-                    #[cfg(test)]
                     if motion.interactive {
                         self.rows
                             .push((node.id, ui.item_rect_min(), ui.item_rect_max()));

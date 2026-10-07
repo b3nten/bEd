@@ -184,6 +184,27 @@ impl EditorOperations {
         }
     }
 
+    /// Exact offset mutation for byte documents. The caller validates a complete
+    /// transaction before invoking this method and owns its undo grouping.
+    pub fn splice_bytes(
+        &mut self,
+        state: &mut EditorState,
+        range: std::ops::Range<usize>,
+        bytes: &[u8],
+    ) -> Option<Vec<u8>> {
+        if range.start > range.end || range.end > state.byte_size() {
+            return None;
+        }
+        let mut removed = vec![0; range.len()];
+        let len = removed.len();
+        state.copy_bytes(range.start, len, &mut removed);
+        state.buffer_erase(range.start, range.len());
+        state.buffer_insert(range.start, bytes);
+        self.bump_generation();
+        state.mark_edited();
+        Some(removed)
+    }
+
     pub fn apply(&mut self, state: &mut EditorState, op: &TextOp) -> ApplyResult {
         let row = op.row.clamp(0, (state.line_count() - 1).max(0));
         let line = state.line(row);

@@ -18,14 +18,10 @@ use crate::{
     },
 };
 use bed_core::{
-    editor_commands::CursorReveal, editor_events::Overlay, editor_view_state::Selection,
-    util::utf8::utf16_to_utf8_byte_offset,
+    editor_commands::CursorReveal, editor_events::Overlay, editor_state::DocumentKind,
+    editor_view_state::Selection, util::utf8::utf16_to_utf8_byte_offset,
 };
-use bed_highlight::{
-    capture_map::ThemeSlot,
-    outline::{OutlineKey, OutlineService},
-    tree_sitter::ThemeColors,
-};
+use bed_highlight::{capture_map::ThemeSlot, tree_sitter::ThemeColors};
 use bed_lsp::lsp_locations::LspLocation;
 use bed_session::{
     editor::Editor,
@@ -55,11 +51,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "plugin_host.rs"]
+mod plugin_host;
 #[path = "remote_workbench.rs"]
 mod remote_workbench;
-#[path = "structure_panel.rs"]
-mod structure_panel;
-use structure_panel::{StructureJump, StructurePanel};
+use plugin_host::{HostedPanel, PluginRuntime};
 
 unsafe extern "C" {
     fn bed_imgui_dock_node_id(node: *const sys::ImGuiDockNode) -> u32;
@@ -112,7 +108,6 @@ enum Tool {
     Projects,
     Search,
     Diagnostics,
-    Structure,
     References,
     LspDashboard,
 }
@@ -124,7 +119,6 @@ impl Tool {
             Self::Projects => "Projects",
             Self::Search => "Search",
             Self::Diagnostics => "Diagnostics",
-            Self::Structure => "Structure",
             Self::References => "References",
             Self::LspDashboard => "Language Servers",
         }
@@ -136,7 +130,6 @@ impl Tool {
             Self::Projects => "projects",
             Self::Search => "search",
             Self::Diagnostics => "diagnostics",
-            Self::Structure => "structure",
             Self::References => "references",
             Self::LspDashboard => "lsp",
         }
@@ -148,7 +141,6 @@ impl Tool {
             Self::Projects,
             Self::Search,
             Self::Diagnostics,
-            Self::Structure,
             Self::References,
             Self::LspDashboard,
         ]
@@ -158,8 +150,20 @@ impl Tool {
 }
 enum Panel {
     Document(EditorView),
+    Hex(bed_ui::hex_editor::HexEditor),
+    Plugin(HostedPanel),
     Terminal(u64),
     Tool(Tool),
+}
+impl Panel {
+    fn document(&self) -> Option<DocumentId> {
+        match self {
+            Self::Document(view) => Some(view.document_id()),
+            Self::Hex(view) => Some(view.document()),
+            Self::Plugin(panel) => panel.instance.attached_document(),
+            _ => None,
+        }
+    }
 }
 struct Tab {
     id: u64,
@@ -204,11 +208,12 @@ pub struct Workbench {
     tabs: Vec<Tab>,
     next_tab: u64,
     active: Option<ViewId>,
+    last_document: Option<DocumentId>,
     focused: Option<u64>,
     lsp_ui: LspUi,
     content_search: HashMap<u64, ContentSearch>,
-    outline: Option<OutlineService>,
-    structure_panels: HashMap<u64, StructurePanel>,
+    plugins: PluginRuntime,
+    editor_menu_context: HashMap<ViewId, bed_plugin::CommandContext>,
     scratch: Editor,
     store: Option<WorkspaceStore>,
     initialized: bool,
@@ -284,11 +289,12 @@ impl Workbench {
             tabs: Vec::new(),
             next_tab: 1,
             active: None,
+            last_document: None,
             focused: None,
             lsp_ui: LspUi::default(),
             content_search: HashMap::new(),
-            outline: None,
-            structure_panels: HashMap::new(),
+            plugins: PluginRuntime::default(),
+            editor_menu_context: HashMap::new(),
             scratch: Editor::new(),
             store,
             initialized: false,
@@ -365,9 +371,11 @@ impl Workbench {
         if let Some(spec) = store.last_workspace() {
             self.set_workspace(spec)?;
         } else if let Some(state) = store.standalone_layout().cloned() {
+            self.close_plugin_panels()?;
             self.tabs.clear();
             self.content_search.clear();
             self.active = None;
+            self.last_document = None;
             self.focused = None;
             self.next_tab = 1;
             self.restore_workspace(&state)?;
@@ -382,79 +390,11 @@ impl Workbench {
             .filter(|view| self.session.document_for_view(*view).is_some())
     }
     pub fn active_document(&self) -> Option<DocumentId> {
-        self.session.document_for_view(self.active_view()?)
+        self.last_document
+            .filter(|document| self.session.document_kind(*document).is_ok())
     }
     pub fn active_snapshot(&self) -> Option<DocumentSnapshot> {
         self.session.snapshot(self.active_document()?).ok()
-    }
-    fn outline_key(&self) -> io::Result<Option<OutlineKey>> {
-        let Some(document) = self.active_document() else {
-            return Ok(None);
-        };
-        let (generation, revision) = self.session.document_revision(document)?;
-        self.session.with_document(document, |state| {
-            Some(OutlineKey {
-                document,
-                generation,
-                revision,
-                path: state.path.clone(),
-                language_id: state.language_id.clone(),
-            })
-        })
-    }
-    fn sync_outline(&mut self) -> io::Result<()> {
-        if !self.panel_visible("structure") {
-            self.outline = None;
-            return Ok(());
-        }
-        self.outline.get_or_insert_with(OutlineService::default);
-        self.sync_outline_target()
-    }
-    fn sync_outline_target(&mut self) -> io::Result<()> {
-        let key = self.outline_key()?;
-        let Some(outline) = &mut self.outline else {
-            return Ok(());
-        };
-        if let Some(key) = key {
-            if outline.requested() != Some(&key) {
-                let text = self
-                    .session
-                    .with_document(key.document, |state| state.snapshot())?;
-                outline.request(key, text);
-            }
-            outline.poll();
-        } else {
-            outline.clear();
-        }
-        Ok(())
-    }
-    fn draw_structure(&mut self, ui: &Ui, panel: u64) -> io::Result<Option<StructureJump>> {
-        // The last editor may have changed earlier in this same frame.
-        self.sync_outline_target()?;
-        let animations = self.settings.bool("ui_animations", true);
-        Ok(self.outline.as_ref().and_then(|outline| {
-            self.structure_panels
-                .entry(panel)
-                .or_default()
-                .draw(ui, outline, animations)
-        }))
-    }
-    fn jump_to_structure(&mut self, jump: StructureJump) -> io::Result<bool> {
-        if self.outline_key()?.as_ref() != Some(&jump.key) {
-            return Ok(false);
-        }
-        let Some(index) = self.active_tab_index() else {
-            return Ok(false);
-        };
-        let view = self.active_view().unwrap();
-        let (row, column) = self.session.with_document(jump.key.document, |state| {
-            state.row_col_from_offset(jump.offset)
-        })?;
-        self.session.with_commands(view, |commands| {
-            commands.set_cursor(row, column, false, CursorReveal::Center)
-        })?;
-        self.switch_to_tab(index);
-        Ok(true)
     }
     pub fn with_active_view<R>(
         &mut self,
@@ -526,7 +466,9 @@ impl Workbench {
             .filter(|tab| {
                 matches!(tab.panel,Panel::Tool(tool) if tool.key()==kind)
                     || (kind == "terminal" && matches!(tab.panel, Panel::Terminal(_)))
-                    || (kind == "document" && matches!(tab.panel, Panel::Document(_)))
+                    || (kind == "document" && tab.panel.document().is_some())
+                    || (kind == "hex" && matches!(tab.panel, Panel::Hex(_)))
+                    || matches!(&tab.panel, Panel::Plugin(panel) if panel.kind == kind || (kind == "structure" && panel.kind == "bed.structure.panel"))
             })
             .count()
     }
@@ -583,6 +525,9 @@ impl Workbench {
         }
         self.clear_focus_requests();
         let tab = &mut self.tabs[index];
+        if let Some(document) = tab.panel.document() {
+            self.last_document = Some(document);
+        }
         tab.focus = true;
         self.focused = Some(tab.id);
         match &tab.panel {
@@ -599,6 +544,9 @@ impl Workbench {
     }
     fn push_panel(&mut self, panel: Panel) -> u64 {
         self.clear_focus_requests();
+        if let Some(document) = panel.document() {
+            self.last_document = Some(document);
+        }
         let id = self.next_tab;
         self.next_tab += 1;
         let dock = self.largest_dock();
@@ -690,26 +638,7 @@ impl Workbench {
         Ok(self.push_panel(Panel::Document(view)))
     }
     pub fn open_or_focus(&mut self, path: &Path) -> io::Result<bool> {
-        if self.project_root.is_empty() {
-            let path = std::fs::canonicalize(path)?;
-            self.set_project(path.parent().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "File has no parent directory")
-            })?)?;
-        }
-        if let Some(document) = self.session.document_for_path(path)
-            && let Some(index) = self.tabs.iter().position(
-                |tab| matches!(&tab.panel,Panel::Document(view)if view.document_id()==document),
-            )
-        {
-            self.switch_to_tab(index);
-            return Ok(false);
-        }
-        if let Some(document) = self.session.request_open_file(path)? {
-            self.add_view(document)?;
-        } else if let Some(path) = path.to_str() {
-            self.remote_ui.opening.insert(path.to_owned());
-        }
-        Ok(true)
+        self.open_file_with_viewer(path, None, false)
     }
     pub fn set_project(&mut self, root: &Path) -> io::Result<bool> {
         let canonical = std::fs::canonicalize(root)?;
@@ -766,15 +695,17 @@ impl Workbench {
         }
         self.persist_workspace()?;
         self.session.shutdown(ClosePolicy::Discard)?;
+        self.close_plugin_panels()?;
         self.terminal.shutdown();
         self.tabs.clear();
         self.pending_tab_close = None;
         self.active = None;
+        self.last_document = None;
         self.focused = None;
         self.lsp_ui.cancel_requests();
         self.content_search.clear();
-        self.outline = None;
-        self.structure_panels.clear();
+        self.plugins = PluginRuntime::default();
+        self.editor_menu_context.clear();
         self.remote_ui = remote_workbench::RemoteUi::default();
         self.file_explorer.file_finder.set_project_dir("");
         self.file_explorer.file_finder.set_remote_client(None);
@@ -904,8 +835,9 @@ impl Workbench {
         for error in report.errors {
             if let Some(targets) = &self.pending_tab_close {
                 let affected = error.document.is_none_or(|document| {
-                    self.tabs.iter().any(|tab| targets.contains(&tab.id)
-                        && matches!(&tab.panel, Panel::Document(view) if view.document_id() == document))
+                    self.tabs.iter().any(|tab| {
+                        targets.contains(&tab.id) && tab.panel.document() == Some(document)
+                    })
                 });
                 if affected {
                     self.pending_tab_close = None;
@@ -931,7 +863,7 @@ impl Workbench {
         for search in self.content_search.values_mut() {
             search.poll();
         }
-        self.sync_outline()?;
+        self.tick_plugins()?;
         if self.last_settings_check.elapsed() > Duration::from_millis(500) {
             self.last_settings_check = Instant::now();
             self.settings.check_settings_file();
@@ -985,7 +917,7 @@ impl Workbench {
                 self.push_panel(Panel::Tool(Tool::Diagnostics));
             }
             WindowCommand::NewStructure => {
-                self.push_panel(Panel::Tool(Tool::Structure));
+                self.open_plugin_panel("bed.structure.panel", None, &Value::Null, None)?;
             }
             WindowCommand::NewLspDashboard => {
                 self.push_panel(Panel::Tool(Tool::LspDashboard));
@@ -998,7 +930,8 @@ impl Workbench {
             }
             WindowCommand::DuplicateView => {
                 if let Some(document) = self.active_document() {
-                    self.add_view(document)?;
+                    let viewer = self.focused_document_viewer();
+                    self.add_document_panel(document, viewer.as_deref(), &Value::Null)?;
                 }
             }
             WindowCommand::SplitRight | WindowCommand::SplitDown => {
@@ -1014,7 +947,8 @@ impl Workbench {
                             }
                         })
                         .unwrap_or(self.center_dock);
-                    let panel = self.add_view(document)?;
+                    let viewer = self.focused_document_viewer();
+                    let panel = self.add_document_panel(document, viewer.as_deref(), &Value::Null)?;
                     if source != 0 {
                         let mut first = 0;
                         let mut second = 0;
@@ -1072,7 +1006,10 @@ impl Workbench {
             }
             WindowCommand::Projects => self.show_tool(Tool::Projects),
             WindowCommand::Diagnostics => self.show_tool(Tool::Diagnostics),
-            WindowCommand::Structure => self.show_tool(Tool::Structure),
+            WindowCommand::Structure => {
+                if let Some(index) = self.tabs.iter().position(|tab| matches!(&tab.panel, Panel::Plugin(panel) if panel.kind == "bed.structure.panel")) { self.switch_to_tab(index); }
+                else { self.open_plugin_panel("bed.structure.panel", None, &Value::Null, None)?; }
+            },
             WindowCommand::OpenFolder => {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
                     return self.set_project(&path);
@@ -1136,9 +1073,37 @@ impl Workbench {
         Ok(true)
     }
     fn active_tab_index(&self) -> Option<usize> {
-        self.tabs.iter().position(
-            |tab| matches!(&tab.panel,Panel::Document(view)if Some(view.id())==self.active),
-        )
+        if let Some(index) = self
+            .tabs
+            .iter()
+            .position(|tab| Some(tab.id) == self.focused && tab.panel.document().is_some())
+        {
+            return Some(index);
+        }
+        if let Some(document) = self.active_document() {
+            if self.active_view().is_some_and(|view| self.session.document_for_view(view) == Some(document))
+                && let Some(index) = self.tabs.iter().position(|tab| matches!(&tab.panel, Panel::Document(view) if Some(view.id()) == self.active)) {
+                return Some(index);
+            }
+            if let Some(index) = self
+                .tabs
+                .iter()
+                .position(|tab| tab.panel.document() == Some(document))
+            {
+                return Some(index);
+            }
+        }
+        None
+    }
+    fn focused_document_viewer(&self) -> Option<String> {
+        self.active_tab_index()
+            .and_then(|index| self.tabs.get(index))
+            .and_then(|tab| match &tab.panel {
+                Panel::Document(_) => Some("bed.text".to_owned()),
+                Panel::Hex(_) => Some("bed.hex".to_owned()),
+                Panel::Plugin(panel) => panel.viewer.clone(),
+                _ => None,
+            })
     }
     pub fn handle_action(&mut self, action: HostAction) -> io::Result<bool> {
         match action {
@@ -1226,21 +1191,19 @@ impl Workbench {
         let closing = indices
             .iter()
             .filter_map(|index| self.tabs.get(*index))
-            .filter_map(|tab| match &tab.panel {
-                Panel::Document(view) => Some(view.id()),
-                _ => None,
-            })
+            .map(|tab| tab.id)
             .collect::<HashSet<_>>();
-        let docs = closing
+        let docs = indices
             .iter()
-            .filter_map(|view| self.session.document_for_view(*view))
+            .filter_map(|index| self.tabs.get(*index))
+            .filter_map(|tab| tab.panel.document())
             .collect::<HashSet<_>>();
         for document in docs {
             if self
-                .session
-                .view_ids(document)
+                .tabs
                 .iter()
-                .all(|view| closing.contains(view))
+                .filter(|tab| tab.panel.document() == Some(document))
+                .all(|tab| closing.contains(&tab.id))
             {
                 if self.session.save_pending(document) {
                     return Ok(false);
@@ -1281,8 +1244,10 @@ impl Workbench {
                 && (self.remote_ui.path_dialog_pending()
                     || self.remote_ui.mutation_pending()
                     || indices.iter().any(|index| {
-                        matches!(&self.tabs[*index].panel,
-                    Panel::Document(view) if self.session.save_pending(view.document_id()))
+                        self.tabs[*index]
+                            .panel
+                            .document()
+                            .is_some_and(|doc| self.session.save_pending(doc))
                     }));
             if waiting {
                 self.pending_tab_close =
@@ -1377,19 +1342,19 @@ impl Workbench {
         }
         let _style = crate::util::context_menu_style(ui);
         let mut action = None;
-        if let Some(_popup) = ui.begin_popup("Tab actions") {
-            if let Some(id) = self.tab_context {
-                for (label, command) in [
-                    ("Close", TabCloseAction::Close),
-                    ("Close All", TabCloseAction::All),
-                    ("Close Others", TabCloseAction::Others),
-                    ("Close to the Right", TabCloseAction::Right),
-                    ("Close to the Left", TabCloseAction::Left),
-                ] {
-                    let enabled = !self.tab_close_indices(id, command).is_empty();
-                    if ui.menu_item_enabled_selected_no_shortcut(label, false, enabled) {
-                        action = Some((id, command));
-                    }
+        if let Some(_popup) = ui.begin_popup("Tab actions")
+            && let Some(id) = self.tab_context
+        {
+            for (label, command) in [
+                ("Close", TabCloseAction::Close),
+                ("Close All", TabCloseAction::All),
+                ("Close Others", TabCloseAction::Others),
+                ("Close to the Right", TabCloseAction::Right),
+                ("Close to the Left", TabCloseAction::Left),
+            ] {
+                let enabled = !self.tab_close_indices(id, command).is_empty();
+                if ui.menu_item_enabled_selected_no_shortcut(label, false, enabled) {
+                    action = Some((id, command));
                 }
             }
         }
@@ -1401,10 +1366,11 @@ impl Workbench {
     fn remove_tab(&mut self, index: usize) -> io::Result<()> {
         let tab = self.tabs.remove(index);
         self.content_search.remove(&tab.id);
-        self.structure_panels.remove(&tab.id);
+        let document = tab.panel.document();
         match tab.panel {
             Panel::Document(view) => {
-                self.session.close_view(view.id(), ClosePolicy::Discard)?;
+                self.session.detach_view(view.id());
+                self.editor_menu_context.remove(&view.id());
                 if self.active == Some(view.id()) {
                     self.active = None;
                 }
@@ -1412,8 +1378,23 @@ impl Workbench {
             Panel::Terminal(id) => {
                 self.terminal.close_session_id(id);
             }
+            Panel::Hex(_) => {}
+            Panel::Plugin(mut panel) => panel.instance.close(&mut self.plugins.requests),
             Panel::Tool(_) => {}
         }
+        if let Some(document) = document
+            && !self
+                .tabs
+                .iter()
+                .any(|tab| tab.panel.document() == Some(document))
+        {
+            self.session
+                .close_document(document, ClosePolicy::Discard)?;
+            if self.last_document == Some(document) {
+                self.last_document = None;
+            }
+        }
+        self.process_plugin_requests()?;
         if self.focused == Some(tab.id) {
             self.focused = None;
             if !self.tabs.is_empty() {
@@ -1421,7 +1402,7 @@ impl Workbench {
             }
         }
         self.scene += 1;
-        self.sync_outline()?;
+        self.tick_plugins()?;
         Ok(())
     }
     pub fn close_viewport(&mut self, id: u32) -> io::Result<bool> {
@@ -1450,13 +1431,15 @@ impl Workbench {
         }
         self.persist_workspace()?;
         self.session.shutdown(ClosePolicy::Discard)?;
+        self.close_plugin_panels()?;
         self.terminal.shutdown();
         self.tabs.clear();
         self.pending_tab_close = None;
         self.content_search.clear();
-        self.outline = None;
-        self.structure_panels.clear();
+        self.plugins = PluginRuntime::default();
+        self.editor_menu_context.clear();
         self.active = None;
+        self.last_document = None;
         self.focused = None;
         self.closed = true;
         Ok(true)
@@ -1492,6 +1475,19 @@ impl Workbench {
                 .terminal
                 .session_title(*id)
                 .unwrap_or_else(|| format!("Terminal {id}")),
+            Panel::Hex(view) => self
+                .session
+                .with_document(view.document(), |state| {
+                    format!(
+                        "{} [Hex]",
+                        Path::new(&state.path)
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                    )
+                })
+                .unwrap_or_else(|_| "Closed".into()),
+            Panel::Plugin(panel) => panel.instance.title(&self.plugins.frame.context()),
             Panel::Tool(tool) => tool.name().to_owned(),
         };
         format!("{name}###bed_tab_{}", tab.id)
@@ -1602,7 +1598,7 @@ impl Workbench {
         let _font = self.settings.font.main.map(|font| ui.push_font(font));
         let mut actions = Vec::new();
         self.shortcuts(ui)?;
-        self.sync_outline()?;
+        self.refresh_plugins()?;
         let viewport = ui.main_viewport();
         let pos = viewport.work_pos();
         let mut size = viewport.work_size();
@@ -1652,7 +1648,6 @@ impl Workbench {
         let mut reconnect = false;
         let mut search_actions = Vec::new();
         let mut lsp_actions = Vec::new();
-        let mut structure_jump = None;
         for index in 0..count {
             let mut tab = self.tabs.remove(index);
             let title = self.title(&tab);
@@ -1681,8 +1676,8 @@ impl Workbench {
             }
             let flags = WindowFlags::NO_COLLAPSE
                 | WindowFlags::NO_FOCUS_ON_APPEARING
-                | match &tab.panel {
-                    Panel::Document(view) if self.session.snapshot(view.document_id())?.dirty => {
+                | match tab.panel.document() {
+                    Some(document) if self.session.snapshot(document)?.dirty => {
                         WindowFlags::UNSAVED_DOCUMENT
                     }
                     _ => WindowFlags::empty(),
@@ -1705,6 +1700,7 @@ impl Workbench {
                     }
                     if ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS) {
                         self.focused = Some(tab.id);
+                        if let Some(document) = tab.panel.document() { self.last_document = Some(document); }
                         if let Panel::Document(view) = &tab.panel {
                             self.active = Some(view.id());
                         }
@@ -1715,6 +1711,11 @@ impl Workbench {
                     }
                     result = match &mut tab.panel {
                         Panel::Document(view) => self.draw_document(ui, view, &mut actions),
+                        Panel::Hex(view) => view.draw(ui, &mut self.session),
+                        Panel::Plugin(panel) => self.refresh_plugins().map(|()| {
+                            let host = self.plugins.frame.context();
+                            panel.instance.draw(ui, &host, &mut self.plugins.requests);
+                        }),
                         Panel::Terminal(id) => self
                             .terminal
                             .render_session(ui, &self.terminal_fonts, *id)
@@ -1751,14 +1752,19 @@ impl Workbench {
                                             .is_some_and(|git| git.borrow().is_file_modified(path))
                                     }
                                 };
+                                let plugins = &self.plugins;
+                                let extensions = |ui: &Ui, path: &str, directory: bool, background: bool, actions: &mut Vec<FileTreeAction>| {
+                                    Self::draw_tree_plugin_menu(plugins, ui, path, directory, background, actions);
+                                };
                                 tree_actions.extend(
-                                    self.file_explorer.file_tree.display_backend_actions(
+                                    self.file_explorer.file_tree.display_backend_actions_with_menu(
                                         ui,
                                         &active_path,
                                         &style,
                                         Some(&self.icons),
                                         Some(&modified),
                                         remote,
+                                        Some(&extensions),
                                     ),
                                 );
                             }
@@ -1823,8 +1829,21 @@ impl Workbench {
                             Ok(())
                         }
                         Panel::Tool(Tool::Settings) => {
-                            self.settings
-                                .draw_tab(ui, &mut self.scratch, Some(&self.icons));
+                            let plugins = &mut self.plugins;
+                            self.settings.draw_tab_with_extensions(ui, &mut self.scratch, Some(&self.icons), &mut |ui, settings| {
+                                let mut changed = false;
+                                if !settings["plugins"].is_object() { settings["plugins"] = json!({}); }
+                                for section in &plugins.registry.settings {
+                                    let _id = ui.push_id(section.id);
+                                    if ui.collapsing_header(section.label, dear_imgui_rs::TreeNodeFlags::empty())
+                                        && let Some(plugin) = plugins.instances.iter_mut().find(|plugin| plugin.id() == section.plugin) {
+                                        let namespace = &mut settings["plugins"][section.plugin];
+                                        if !namespace.is_object() { *namespace = json!({}); }
+                                        changed |= plugin.draw_settings(section.id, ui, namespace);
+                                    }
+                                }
+                                changed
+                            });
                             Ok(())
                         }
                         Panel::Tool(Tool::Search) => {
@@ -1838,13 +1857,6 @@ impl Workbench {
                                 lsp_actions.push(action);
                             }
                             Ok(())
-                        }
-                        Panel::Tool(Tool::Structure) => {
-                            self.draw_structure(ui, tab.id).map(|jump| {
-                                if jump.is_some() {
-                                    structure_jump = jump;
-                                }
-                            })
                         }
                         Panel::Tool(Tool::References) => {
                             if let Some(action) =
@@ -1927,9 +1939,6 @@ impl Workbench {
                 self.error = Some(error.to_string());
             }
         }
-        if let Some(jump) = structure_jump {
-            self.jump_to_structure(jump)?;
-        }
         let style = FileFinderStyle {
             background_color: self.settings.background_color(),
             embedded_pane: None,
@@ -1943,6 +1952,14 @@ impl Workbench {
             self.error = Some(error.to_string());
         }
         self.draw_remote_path_dialog(ui)?;
+        {
+            let host = self.plugins.frame.context();
+            for plugin in &mut self.plugins.instances {
+                let _id = ui.push_id(plugin.id());
+                plugin.draw_popups(ui, &host, &mut self.plugins.requests);
+            }
+        }
+        self.process_plugin_requests()?;
         self.draw_errors(ui)?;
         if let Some(path) = self.settings.request_config_file.take() {
             if self.session.is_remote() {
@@ -1975,6 +1992,13 @@ impl Workbench {
         let ctrl = ui.io().key_ctrl() || ui.io().key_super();
         if !ctrl {
             return Ok(());
+        }
+        if self.focused_hex() && ui.is_key_pressed_with_repeat(Key::S, false) {
+            self.handle_action(if ui.io().key_shift() {
+                HostAction::SaveAs
+            } else {
+                HostAction::Save
+            })?;
         }
         let pressed = |name| {
             self.settings
@@ -2190,6 +2214,7 @@ impl Workbench {
                 })?;
             }
             self.active = Some(view.id());
+            self.capture_editor_context(view)?;
             ui.open_popup(&name);
         }
         let _menu_style = crate::util::context_menu_style(ui);
@@ -2209,9 +2234,7 @@ impl Workbench {
                 self.show_tool(Tool::LspDashboard);
             }
             ui.separator();
-            if ui.menu_item("Structure") {
-                self.show_tool(Tool::Structure);
-            }
+            self.draw_editor_plugin_menu(ui, view)?;
             let minimap = view.minimap_enabled(self.settings.bool("minimap", true));
             if ui.menu_item_enabled_selected_no_shortcut("Show Minimap", minimap, true) {
                 view.set_minimap_enabled(!minimap);
@@ -2396,6 +2419,18 @@ impl Workbench {
         tree.error = None;
     }
     fn handle_tree_action(&mut self, action: FileTreeAction) -> io::Result<()> {
+        if let FileTreeAction::Command { command, context } = &action {
+            if let Some(viewer) = command.strip_prefix("bed.open_with:") {
+                if let Some(path) = &context.path {
+                    self.open_file_with_viewer(Path::new(path), Some(viewer), true)?;
+                }
+            } else {
+                self.refresh_plugins()?;
+                self.plugins.command(command, context)?;
+                self.process_plugin_requests()?;
+            }
+            return Ok(());
+        }
         if self
             .file_explorer
             .file_tree
@@ -2846,6 +2881,11 @@ impl Workbench {
         Ok(())
     }
     fn persist_workspace(&mut self) -> io::Result<()> {
+        for tab in &mut self.tabs {
+            if let Panel::Hex(view) = &mut tab.panel {
+                view.synchronize(&self.session)?;
+            }
+        }
         if self.store.is_none() || self.remote_ui.connecting() || !self.remote_ui.restore.is_empty()
         {
             return Ok(());
@@ -2882,13 +2922,32 @@ impl Workbench {
                 Panel::Terminal(id) => {
                     json!({"kind":"terminal","cwd":self.terminal.working_directory(*id)})
                 }
+                Panel::Hex(view) => {
+                    let doc = self.session.snapshot(view.document())?;
+                    if doc.path.is_empty() {
+                        continue;
+                    }
+                    json!({"kind":"hex","path":doc.path,"viewer":"bed.hex","document_kind":"bytes","state":view.state()})
+                }
+                Panel::Plugin(panel) => {
+                    let doc = panel
+                        .instance
+                        .attached_document()
+                        .map(|id| self.session.snapshot(id))
+                        .transpose()?;
+                    if doc.as_ref().is_some_and(|doc| doc.path.is_empty()) {
+                        continue;
+                    }
+                    json!({"kind":"plugin","panel_type":panel.kind,"viewer":panel.viewer,
+                        "path":doc.as_ref().map(|doc|doc.path.as_str()),"document_kind":doc.as_ref().map(|doc|if doc.kind == DocumentKind::Bytes {"bytes"} else {"text"}),"state":panel.instance.save_state()})
+                }
                 Panel::Tool(tool) => json!({"kind":tool.key()}),
             };
             let mut value = value;
             value["id"] = json!(tab.id);
             panels.push(value);
         }
-        let state = json!({"version":1,"ini":ini,"panels":panels,"focused":self.focused,"active_document_panel":self.tabs.iter().find(|tab|matches!(&tab.panel,Panel::Document(view)if Some(view.id())==self.active)).map(|tab|tab.id)});
+        let state = json!({"version":1,"ini":ini,"panels":panels,"focused":self.focused,"active_document_panel":self.active_tab_index().and_then(|index|self.tabs.get(index)).map(|tab|tab.id)});
         if self.last_state.as_ref() != Some(&state) {
             self.store
                 .as_mut()
@@ -2914,6 +2973,58 @@ impl Workbench {
         for panel in state["panels"].as_array().into_iter().flatten() {
             let kind = panel["kind"].as_str().unwrap_or("");
             let result = match kind {
+                "structure" => {
+                    self.open_plugin_panel("bed.structure.panel", None, &Value::Null, None)
+                }
+                "hex" | "plugin" => {
+                    let viewer = panel["viewer"].as_str();
+                    let path = panel["path"].as_str();
+                    if let Some(path) = path {
+                        let document_kind =
+                            if panel["document_kind"].as_str() == Some("bytes") || kind == "hex" {
+                                DocumentKind::Bytes
+                            } else {
+                                DocumentKind::Text
+                            };
+                        if self.session.is_remote() {
+                            self.remote_ui
+                                .restore
+                                .entry(path.to_owned())
+                                .or_default()
+                                .push(panel.clone());
+                            self.remote_ui.opening.insert(path.to_owned());
+                            if let Err(error) = self
+                                .session
+                                .request_open_file_with_kind(Path::new(path), document_kind)
+                            {
+                                self.remote_ui.restore.remove(path);
+                                self.error = Some(error.to_string());
+                            }
+                            continue;
+                        }
+                        self.session
+                            .open_file_with_kind(Path::new(path), document_kind)
+                            .and_then(|document| {
+                                if kind == "hex" || viewer.is_some() {
+                                    self.add_document_panel(document, viewer, &panel["state"])
+                                } else {
+                                    self.open_plugin_panel(
+                                        panel["panel_type"].as_str().unwrap_or(""),
+                                        Some(document),
+                                        &panel["state"],
+                                        None,
+                                    )
+                                }
+                            })
+                    } else {
+                        self.open_plugin_panel(
+                            panel["panel_type"].as_str().unwrap_or(""),
+                            None,
+                            &panel["state"],
+                            viewer.map(str::to_owned),
+                        )
+                    }
+                }
                 "document" => {
                     if self.session.is_remote() {
                         if let Some(path) = panel["path"].as_str() {
@@ -3003,9 +3114,11 @@ impl Workbench {
         }
         if let Some(panel) = state["active_document_panel"].as_u64()
             && let Some(tab) = self.tabs.iter().find(|tab| tab.id == panel)
-            && let Panel::Document(view) = &tab.panel
         {
-            self.active = Some(view.id());
+            self.last_document = tab.panel.document();
+            if let Panel::Document(view) = &tab.panel {
+                self.active = Some(view.id());
+            }
         }
         if let Some(ini) = state["ini"].as_str().filter(|ini| !ini.is_empty()) {
             self.pending_ini = Some(ini.to_owned());

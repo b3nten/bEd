@@ -670,6 +670,18 @@ impl Settings {
         shaders_available: bool,
         icons: Option<&super::icons::Icons>,
     ) {
+        self.draw_with_icons_and_extensions(ui, editor, shaders_available, icons, &mut |_, _| {
+            false
+        });
+    }
+    pub fn draw_with_icons_and_extensions(
+        &mut self,
+        ui: &Ui,
+        editor: &mut Editor,
+        shaders_available: bool,
+        icons: Option<&super::icons::Icons>,
+        extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
+    ) {
         if !self.show_settings_window {
             return;
         }
@@ -684,7 +696,7 @@ impl Settings {
                     self.embedded_window_pos = ui.window_pos();
                     self.embedded_window_size = ui.window_size();
                     editor.view.block_input = true;
-                    self.draw_settings_content(ui, editor, false, icons);
+                    self.draw_settings_content(ui, editor, false, icons, extensions);
                 });
             // The source title-bar X changes visibility without the explicit
             // save/unblock performed by closeSettingsWindow (Escape/background).
@@ -754,7 +766,7 @@ impl Settings {
         let window = NativeSettingsWindowGuard(ui);
         if visible {
             editor.view.block_input = true;
-            self.draw_settings_content(ui, editor, shaders_available, icons);
+            self.draw_settings_content(ui, editor, shaders_available, icons, extensions);
         }
         drop(window);
         drop(font);
@@ -784,6 +796,7 @@ impl Settings {
         editor: &mut Editor,
         shaders_available: bool,
         icons: Option<&super::icons::Icons>,
+        extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
     ) {
         let _controls = super::controls_style(ui);
         if !self.is_embedded {
@@ -826,6 +839,9 @@ impl Settings {
                     self.draw_shader_settings(ui);
                 }
                 self.draw_keybinds_settings(ui, lsp_available);
+                if extensions(ui, &mut self.settings) {
+                    self.persist_ui();
+                }
             });
         drop(padding);
         drop(background);
@@ -833,6 +849,15 @@ impl Settings {
     }
     /// Controls only; Workbench owns this tab and its focus/close behavior.
     pub fn draw_tab(&mut self, ui: &Ui, editor: &mut Editor, icons: Option<&super::icons::Icons>) {
+        self.draw_tab_with_extensions(ui, editor, icons, &mut |_, _| false);
+    }
+    pub fn draw_tab_with_extensions(
+        &mut self,
+        ui: &Ui,
+        editor: &mut Editor,
+        icons: Option<&super::icons::Icons>,
+        extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
+    ) {
         let _controls = super::controls_style(ui);
         if let Some(error) = &self.error {
             ui.text_colored(
@@ -847,6 +872,9 @@ impl Settings {
         self.draw_toggle_settings(ui, editor);
         self.draw_shader_settings(ui);
         self.draw_keybinds_settings(ui, editor.lsp_client().is_some());
+        if extensions(ui, &mut self.settings) {
+            self.persist_ui();
+        }
         let _ = icons;
     }
     fn draw_window_header(
@@ -1423,6 +1451,53 @@ mod tests {
         let restarted = settings(&temp);
         assert!(!restarted.autosave_enabled());
         assert_eq!(restarted.autosave_delay(), Duration::from_millis(2500));
+    }
+    #[test]
+    fn extension_settings_render_and_persist_in_tab_and_legacy_window() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let temp = TempDir::new();
+        let mut current = settings(&temp);
+        current.settings["plugins"]["unavailable"] = json!({"retained": true});
+        let mut editor = Editor::new();
+        let mut context = settings_context();
+        context.io_mut().set_display_size([1800.0, 1200.0]);
+        context.io_mut().set_delta_time(1.0 / 60.0);
+        let mut tab_calls = 0;
+        let ui = context.frame();
+        ui.window("Settings tab")
+            .size([1000.0, 1000.0], Condition::Always)
+            .build(|| {
+                current.draw_tab_with_extensions(ui, &mut editor, None, &mut |ui, value| {
+                    tab_calls += 1;
+                    ui.text("Image Viewer");
+                    value["plugins"]["image"]["fit"] = json!(true);
+                    true
+                });
+            });
+        drop(context.render_legacy());
+        assert_eq!(tab_calls, 1);
+        assert_eq!(
+            read_json(&current.settings_path).unwrap()["plugins"]["image"]["fit"],
+            true
+        );
+        current.show_settings_window = true;
+        let mut legacy_calls = 0;
+        let ui = context.frame();
+        current.draw_with_icons_and_extensions(ui, &mut editor, true, None, &mut |ui, value| {
+            legacy_calls += 1;
+            ui.text("Image Viewer");
+            value["plugins"]["image"]["zoom"] = json!(2.0);
+            true
+        });
+        drop(context.render_legacy());
+        assert_eq!(legacy_calls, 1);
+        let restarted = settings(&temp);
+        assert_eq!(restarted.settings["plugins"]["image"]["fit"], true);
+        assert_eq!(restarted.settings["plugins"]["image"]["zoom"], 2.0);
+        assert_eq!(
+            restarted.settings["plugins"]["unavailable"]["retained"],
+            true
+        );
     }
     #[test]
     fn seeds_missing_defaults_only_and_follows_primary_profile_pointer() {

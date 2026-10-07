@@ -9,3 +9,5 @@ pub mod editor_view_state;
 pub mod identity;
 pub mod project_undo;
 pub mod util;
+
+pub use editor_state::DocumentKind;

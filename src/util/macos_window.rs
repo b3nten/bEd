@@ -26,26 +26,17 @@ use winit::{
     window::Window,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TitlebarAction {
-    Sidebar,
-    Terminal,
-    Settings,
-    Search,
-    Diagnostics,
-    Structure,
-    SplitRight,
-    SplitDown,
-}
+pub use super::command_ui::TitlebarAction;
+use super::command_ui::{CommandItem, core_toolbar_commands};
 
 const CONTROL_WIDTH: f64 = 26.0;
 const CONTROL_HEIGHT: f64 = 22.0;
 const CONTROL_SPACING: f64 = 2.0;
-const CONTROL_COUNT: usize = 8;
 
 #[derive(Default)]
 struct Actions {
-    pending: RefCell<Vec<TitlebarAction>>,
+    pending: RefCell<Vec<String>>,
+    commands: RefCell<Vec<String>>,
 }
 
 define_class!(
@@ -73,37 +64,13 @@ define_class!(
     struct NativeActions;
     unsafe impl NSObjectProtocol for NativeActions {}
     impl NativeActions {
-        #[unsafe(method(newExplorer:))]
-        fn sidebar(&self, _sender: Option<&AnyObject>) {
-            self.ivars().pending.borrow_mut().push(TitlebarAction::Sidebar);
-        }
-        #[unsafe(method(newTerminal:))]
-        fn terminal(&self, _sender: Option<&AnyObject>) {
-            self.ivars().pending.borrow_mut().push(TitlebarAction::Terminal);
-        }
-        #[unsafe(method(newSettings:))]
-        fn settings(&self, _sender: Option<&AnyObject>) {
-            self.ivars().pending.borrow_mut().push(TitlebarAction::Settings);
-        }
-        #[unsafe(method(newSearch:))]
-        fn search(&self, _sender: Option<&AnyObject>) {
-            self.ivars().pending.borrow_mut().push(TitlebarAction::Search);
-        }
-        #[unsafe(method(newDiagnostics:))]
-        fn diagnostics(&self, _sender: Option<&AnyObject>) {
-            self.ivars().pending.borrow_mut().push(TitlebarAction::Diagnostics);
-        }
-        #[unsafe(method(newStructure:))]
-        fn structure(&self, _sender: Option<&AnyObject>) {
-            self.ivars().pending.borrow_mut().push(TitlebarAction::Structure);
-        }
-        #[unsafe(method(splitRight:))]
-        fn split_right(&self, _sender: Option<&AnyObject>) {
-            self.ivars().pending.borrow_mut().push(TitlebarAction::SplitRight);
-        }
-        #[unsafe(method(splitDown:))]
-        fn split_down(&self, _sender: Option<&AnyObject>) {
-            self.ivars().pending.borrow_mut().push(TitlebarAction::SplitDown);
+        #[unsafe(method(performCommand:))]
+        fn perform_command(&self, sender: Option<&NSButton>) {
+            let Some(sender) = sender else { return; };
+            if !sender.isEnabled() { return; }
+            if let Some(id) = self.ivars().commands.borrow().get(sender.tag() as usize) {
+                self.ivars().pending.borrow_mut().push(id.clone());
+            }
         }
     }
 );
@@ -138,6 +105,7 @@ pub struct MacOsWindow {
     actions: Retained<NativeActions>,
     accessory: Retained<NSTitlebarAccessoryViewController>,
     buttons: Vec<Retained<NSButton>>,
+    commands: Vec<CommandItem>,
     title: Option<Retained<TitleLabel>>,
     title_width: Option<Retained<NSLayoutConstraint>>,
     title_text: String,
@@ -206,7 +174,8 @@ impl MacOsWindow {
         }
         let actions = NativeActions::alloc(mtm).set_ivars(Actions::default());
         let actions: Retained<NativeActions> = unsafe { msg_send![super(actions), init] };
-        let (accessory, buttons) = install_controls(&native, &actions, mtm);
+        let commands = core_toolbar_commands();
+        let (accessory, buttons) = install_controls(&native, &actions, mtm, &commands);
         let title_text = native.title().to_string();
         let mut result = Self {
             window: native,
@@ -215,6 +184,7 @@ impl MacOsWindow {
             actions,
             accessory,
             buttons,
+            commands,
             title: None,
             title_width: None,
             title_text,
@@ -231,7 +201,46 @@ impl MacOsWindow {
         Ok(result)
     }
     pub fn take_actions(&mut self) -> Vec<TitlebarAction> {
+        self.take_command_ids()
+            .into_iter()
+            .filter_map(|id| TitlebarAction::from_command_id(&id))
+            .collect()
+    }
+    pub fn take_command_ids(&mut self) -> Vec<String> {
         std::mem::take(&mut *self.actions.ivars().pending.borrow_mut())
+    }
+    /// Rebuild only for structural changes; enabled state updates in place.
+    pub fn set_commands(&mut self, commands: &[CommandItem]) -> io::Result<()> {
+        if self.commands == commands {
+            return Ok(());
+        }
+        if self.commands.len() == commands.len()
+            && self.commands.iter().zip(commands).all(|(old, new)| {
+                old.id == new.id && old.label == new.label && old.icon == new.icon
+            })
+        {
+            for (button, command) in self.buttons.iter().zip(commands) {
+                button.setEnabled(command.enabled);
+            }
+            self.commands = commands.to_vec();
+            return Ok(());
+        }
+        let mtm = MainThreadMarker::new()
+            .ok_or_else(|| io::Error::other("AppKit requires the main thread"))?;
+        let controllers = self.window.titlebarAccessoryViewControllers();
+        if let Some(index) = controllers
+            .iter()
+            .position(|view| std::ptr::eq(&**view, &**self.accessory))
+        {
+            self.window
+                .removeTitlebarAccessoryViewControllerAtIndex(index as isize);
+        }
+        let (accessory, buttons) = install_controls(&self.window, &self.actions, mtm, commands);
+        self.accessory = accessory;
+        self.buttons = buttons;
+        self.commands = commands.to_vec();
+        self.theme = None;
+        Ok(())
     }
     pub fn set_title(&mut self, title: &str) {
         if self.title_text == title {
@@ -378,7 +387,7 @@ impl MacOsWindow {
             ));
         }
         let frames = self.control_frames();
-        if frames.len() != CONTROL_COUNT
+        if frames.len() != self.commands.len()
             || self.buttons.iter().any(|button| button.image().is_none())
         {
             return Err(io::Error::other(
@@ -406,21 +415,27 @@ impl MacOsWindow {
     }
     /// Invoke the native control through AppKit's target/action path for smoke tests.
     pub fn click_control(&self, action: TitlebarAction) {
-        let index = match action {
-            TitlebarAction::Sidebar => 0,
-            TitlebarAction::Terminal => 1,
-            TitlebarAction::Search => 2,
-            TitlebarAction::Structure => 3,
-            TitlebarAction::Diagnostics => 4,
-            TitlebarAction::SplitRight => 5,
-            TitlebarAction::SplitDown => 6,
-            TitlebarAction::Settings => 7,
+        if !self.click_command(action.command_id())
+            && action == TitlebarAction::Structure
+            && let Some(command) = self
+                .commands
+                .iter()
+                .find(|command| command.icon.as_deref() == Some("structure"))
+        {
+            self.click_command(&command.id);
+        }
+    }
+    pub fn click_command(&self, id: &str) -> bool {
+        let Some(index) = self.commands.iter().position(|command| command.id == id) else {
+            return false;
         };
         // SAFETY: Retained buttons have valid retained targets and exact selectors.
         unsafe {
             self.buttons[index].performClick(None);
         }
+        true
     }
+
     fn install_title(&mut self, mtm: MainThreadMarker) {
         let Some(bar) = self
             .window
@@ -565,57 +580,28 @@ fn install_controls(
     window: &NSWindow,
     target: &NativeActions,
     mtm: MainThreadMarker,
+    commands: &[CommandItem],
 ) -> (
     Retained<NSTitlebarAccessoryViewController>,
     Vec<Retained<NSButton>>,
 ) {
+    *target.ivars().commands.borrow_mut() =
+        commands.iter().map(|command| command.id.clone()).collect();
     let mut buttons = Vec::new();
-    for (symbols, tooltip, action) in [
-        (
-            &["sidebar.left", "rectangle.split.1x2"][..],
-            "New File Explorer",
-            sel!(newExplorer:),
-        ),
-        (
-            &[
-                "rectangle.bottomhalf.inset.filled",
-                "rectangle.bottomhalf.filled",
-                "dock.rectangle",
-            ][..],
-            "New Terminal",
-            sel!(newTerminal:),
-        ),
-        (
-            &["magnifyingglass"][..],
-            "New Project Search",
-            sel!(newSearch:),
-        ),
-        (
-            &["list.bullet.indent", "list.bullet"][..],
-            "New Structure",
-            sel!(newStructure:),
-        ),
-        (
-            &["exclamationmark.triangle", "exclamationmark.circle"][..],
-            "New Diagnostics",
-            sel!(newDiagnostics:),
-        ),
-        (
-            &["rectangle.split.2x1", "square.split.2x1"][..],
-            "Split Editor Right",
-            sel!(splitRight:),
-        ),
-        (
-            &["rectangle.split.1x2", "square.split.1x2"][..],
-            "Split Editor Down",
-            sel!(splitDown:),
-        ),
-        (
-            &["gearshape", "gear"][..],
-            "New Settings",
-            sel!(newSettings:),
-        ),
-    ] {
+    for (index, command) in commands.iter().enumerate() {
+        let symbols: &[&str] = match command.icon.as_deref() {
+            Some("files" | "filetree" | "sidebar") => &["sidebar.left", "rectangle.split.1x2"],
+            Some("terminal") => &["rectangle.bottomhalf.inset.filled", "dock.rectangle"],
+            Some("search") => &["magnifyingglass"],
+            Some("structure") => &["list.bullet.indent", "list.bullet"],
+            Some("diagnostics") => &["exclamationmark.triangle", "exclamationmark.circle"],
+            Some("split_right") => &["rectangle.split.2x1", "square.split.2x1"],
+            Some("split_down") => &["rectangle.split.1x2", "square.split.1x2"],
+            Some("gear" | "settings") => &["gearshape", "gear"],
+            Some("image") => &["photo", "photo.artframe"],
+            Some("hex") => &["number.square", "number"],
+            _ => &["puzzlepiece.extension", "square.grid.2x2", "square"],
+        };
         // SAFETY: Inherited NSButton initializer leaves the subclass's only
         // customization (identity alignment rectangles) intact.
         let frame = NSRect::new(NSPoint::ZERO, NSSize::new(CONTROL_WIDTH, CONTROL_HEIGHT));
@@ -628,9 +614,11 @@ fn install_controls(
         button.setImagePosition(NSCellImagePosition::ImageOnly);
         unsafe {
             button.setTarget(Some(target));
-            button.setAction(Some(action));
+            button.setAction(Some(sel!(performCommand:)));
         }
-        button.setToolTip(Some(&NSString::from_str(tooltip)));
+        button.setTag(index as isize);
+        button.setEnabled(command.enabled);
+        button.setToolTip(Some(&NSString::from_str(&command.label)));
         button.setTranslatesAutoresizingMaskIntoConstraints(false);
         button
             .widthAnchor()
@@ -654,8 +642,9 @@ fn install_controls(
         bottom: 0.0,
         right: 10.0,
     });
-    let width =
-        CONTROL_WIDTH * CONTROL_COUNT as f64 + CONTROL_SPACING * (CONTROL_COUNT - 1) as f64 + 14.0;
+    let width = CONTROL_WIDTH * commands.len() as f64
+        + CONTROL_SPACING * commands.len().saturating_sub(1) as f64
+        + 14.0;
     stack.setFrame(NSRect::new(NSPoint::ZERO, NSSize::new(width, 28.0)));
     let accessory = NSTitlebarAccessoryViewController::new(mtm);
     accessory.setView(&stack);

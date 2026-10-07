@@ -5,8 +5,17 @@
 use crate::buffer::text_buffer::{Snapshot, TextBuffer};
 use std::path::Path;
 
+/// Text documents normalize line endings; byte documents preserve their exact representation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DocumentKind {
+    #[default]
+    Text,
+    Bytes,
+}
+
 #[derive(Clone, Debug)]
 pub struct EditorState {
+    pub kind: DocumentKind,
     pub path: String,
     pub line_ending: Vec<u8>,
     pub language_id: String,
@@ -19,6 +28,7 @@ pub struct EditorState {
 impl Default for EditorState {
     fn default() -> Self {
         Self {
+            kind: DocumentKind::Text,
             path: String::new(),
             line_ending: Self::platform_line_ending(),
             language_id: String::new(),
@@ -87,6 +97,19 @@ impl EditorState {
     }
 
     pub fn set_from_bytes(&mut self, raw: &[u8]) {
+        self.set_from_bytes_with_kind(raw, DocumentKind::Text);
+    }
+
+    pub fn set_from_bytes_with_kind(&mut self, raw: &[u8], kind: DocumentKind) {
+        self.kind = kind;
+        if kind == DocumentKind::Bytes {
+            self.utf8_bom = false;
+            self.line_ending = Self::platform_line_ending();
+            self.text.assign(raw);
+            self.version = 0;
+            self.dirty = false;
+            return;
+        }
         self.utf8_bom = raw.starts_with(&[0xef, 0xbb, 0xbf]);
         let content = if self.utf8_bom { &raw[3..] } else { raw };
         let (lines, ending) = Self::split_lines(content);
@@ -97,7 +120,7 @@ impl EditorState {
     }
 
     pub fn set_line_ending(&mut self, eol: &[u8]) {
-        if eol.is_empty() || eol == self.line_ending {
+        if self.kind == DocumentKind::Bytes || eol.is_empty() || eol == self.line_ending {
             return;
         }
         let lines = self.lines();
@@ -142,6 +165,19 @@ impl EditorState {
     }
     pub fn copy_bytes(&self, off: usize, len: usize, out: &mut [u8]) {
         self.text.copy_bytes(off, len, out);
+    }
+    pub fn bytes_equal(&self, bytes: &[u8]) -> bool {
+        if bytes.len() != self.byte_size() {
+            return false;
+        }
+        let mut buffer = [0; 4096];
+        for (index, chunk) in bytes.chunks(buffer.len()).enumerate() {
+            self.copy_bytes(index * buffer.len(), chunk.len(), &mut buffer);
+            if &buffer[..chunk.len()] != chunk {
+                return false;
+            }
+        }
+        true
     }
     pub fn line_starts(&self, out: &mut Vec<u32>) {
         self.text.line_starts(out);

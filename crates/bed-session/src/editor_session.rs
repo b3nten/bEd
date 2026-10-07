@@ -5,19 +5,19 @@ use crate::editor::{Editor, SharedProjectUndo};
 use bed_core::{
     editor_commands::EditorCommands,
     editor_events::{DidEdit, DidSave},
-    editor_operations::{OpKind, PendingEdit},
+    editor_operations::{EditorOperations, OpKind, PendingEdit, TextOp},
     editor_state::EditorState,
     editor_view_state::EditorViewState,
     project_undo::ProjectUndo,
 };
 use bed_files::{
     file_monitor::{FileChangeKind, FileMonitor},
-    files::read_file_raw,
+    files::{read_file_bytes, read_file_raw},
 };
 use bed_lsp::workspace_lsp::{WorkspaceLsp, WorkspaceLspEvent};
 use std::{
     cell::RefCell,
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     io,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
@@ -28,7 +28,33 @@ use std::{
 mod remote_session;
 use remote_session::RemoteSession;
 
+pub use bed_core::editor_state::DocumentKind;
 pub use bed_core::identity::{DocumentId, ViewId, WorkspaceId};
+
+/// Ranges refer to the unchanged document at `expected_revision`. Transactions
+/// must be non-overlapping; replacement bytes are normalized only for text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ByteEdit {
+    pub range: std::ops::Range<usize>,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Default)]
+struct ByteHistory {
+    undo: Vec<ByteTransaction>,
+    redo: Vec<ByteTransaction>,
+}
+#[derive(Clone, Copy)]
+struct ByteSplice {
+    revision: u64,
+    start: usize,
+    removed: usize,
+    inserted: usize,
+}
+struct ByteTransaction {
+    undo: Vec<ByteEdit>,
+    redo: Vec<ByteEdit>,
+}
 
 /// No service, settings seeding, GUI, clipboard or global directory is touched
 /// by defaults. Disk/process services require explicit host configuration.
@@ -99,6 +125,7 @@ pub struct TickReport {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentSnapshot {
+    pub kind: DocumentKind,
     pub id: DocumentId,
     pub path: String,
     pub bytes: Vec<u8>,
@@ -126,6 +153,8 @@ impl ViewEntry {
     }
 }
 struct DocumentEntry {
+    byte_history: ByteHistory,
+    byte_splices: VecDeque<ByteSplice>,
     editor: Editor,
     views: BTreeMap<ViewId, ViewEntry>,
     monitor: FileMonitor,
@@ -272,6 +301,7 @@ impl EditorSession {
         let entry = self.entry(document)?;
         let state = &entry.editor.state;
         Ok(DocumentSnapshot {
+            kind: state.kind,
             id: document,
             path: state.path.clone(),
             bytes: state.join(),
@@ -305,54 +335,110 @@ impl EditorSession {
         Ok(self.documents[&id].views[&view].state.clone())
     }
     pub fn create_document(&mut self, bytes: &[u8]) -> io::Result<DocumentId> {
+        self.create_document_with_kind(bytes, DocumentKind::Text)
+    }
+    pub fn create_document_with_kind(
+        &mut self,
+        bytes: &[u8],
+        kind: DocumentKind,
+    ) -> io::Result<DocumentId> {
         self.ensure_running()?;
         let id = DocumentId::next();
         let mut editor = Editor::new();
-        editor.bind_project_undo(Rc::clone(&self.history));
+        if kind == DocumentKind::Text {
+            editor.bind_project_undo(Rc::clone(&self.history));
+        }
         editor.set_history_key(Some(format!("bed:untitled:{}", id.0)));
-        editor.set_content(bytes);
+        editor.set_content_with_kind(bytes, kind);
         self.install_entry(id, editor, FileMonitor::new());
         Ok(id)
     }
+    pub fn document_kind(&self, document: DocumentId) -> io::Result<DocumentKind> {
+        Ok(self.entry(document)?.editor.state.kind)
+    }
     pub fn open_file(&mut self, path: &Path) -> io::Result<DocumentId> {
+        self.open_file_with_kind(path, DocumentKind::Text)
+    }
+    pub fn open_file_with_kind(
+        &mut self,
+        path: &Path,
+        kind: DocumentKind,
+    ) -> io::Result<DocumentId> {
         self.ensure_running()?;
         if self.remote.is_some() {
-            return self.request_open_file(path)?.ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::WouldBlock,
-                    "Remote open queued; poll session events for completion",
-                )
-            });
+            return self
+                .request_open_file_with_kind(path, kind)?
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "Remote open queued; poll session events for completion",
+                    )
+                });
+        }
+        let path = std::fs::canonicalize(path)?;
+        if let Some(&id) = self.paths.get(&path) {
+            if self.document_kind(id)? != kind {
+                return Err(document_kind_conflict());
+            }
+            return Ok(id);
+        }
+        let raw = if kind == DocumentKind::Text {
+            read_file_raw(&path)?
+        } else {
+            read_file_bytes(&path)?
+        };
+        self.install_local_file(path, kind, raw.raw)
+    }
+    /// Open using the host's default text/bytes classifier.
+    pub fn open_file_auto(&mut self, path: &Path) -> io::Result<DocumentId> {
+        self.ensure_running()?;
+        if self.remote.is_some() {
+            return self
+                .request_open_file_auto(path)?
+                .ok_or_else(|| io::Error::new(io::ErrorKind::WouldBlock, "Remote open queued"));
         }
         let path = std::fs::canonicalize(path)?;
         if let Some(&id) = self.paths.get(&path) {
             return Ok(id);
         }
-        let raw = read_file_raw(&path)?;
+        let raw = read_file_bytes(&path)?;
+        self.install_local_file(path, bed_files::files::classify_bytes(&raw.raw), raw.raw)
+    }
+    fn install_local_file(
+        &mut self,
+        path: PathBuf,
+        kind: DocumentKind,
+        bytes: Vec<u8>,
+    ) -> io::Result<DocumentId> {
         let mut monitor = FileMonitor::new();
-        // An explicit open retains its stable load baseline even when polling
-        // is disabled, so enabling monitoring cannot adopt a later disk edit.
-        monitor.watch_bytes(&path, &raw.raw)?;
+        monitor.watch_bytes(&path, &bytes)?;
         let id = DocumentId::next();
         let mut editor = Editor::new();
-        editor.bind_project_undo(Rc::clone(&self.history));
-        editor.set_git_changed_lines(self.options.git);
-        editor.api().open_document(path_string(&path)?, &raw.raw);
+        if kind == DocumentKind::Text {
+            editor.bind_project_undo(Rc::clone(&self.history));
+        }
+        editor.set_git_changed_lines(self.options.git && kind == DocumentKind::Text);
+        editor
+            .api()
+            .open_document_with_kind(path_string(&path)?, &bytes, kind);
         self.paths.insert(path, id);
         self.install_entry(id, editor, monitor);
         Ok(id)
     }
     fn install_entry(&mut self, id: DocumentId, mut editor: Editor, monitor: FileMonitor) {
-        editor.highlight.enabled = self.options.highlighting;
-        editor.highlight.use_bundled_queries();
-        editor.set_git_changed_lines(self.options.git);
+        let text = editor.state.kind == DocumentKind::Text;
+        editor.highlight.enabled = self.options.highlighting && text;
+        if text {
+            editor.highlight.use_bundled_queries();
+        }
+        editor.set_git_changed_lines(self.options.git && text);
         editor.highlight.set_theme_colors(self.theme.clone());
         if let Some(idle) = self.options.autosave {
             editor
                 .save_service
                 .set_autosave_idle_ms(idle.as_millis().min(i32::MAX as u128) as i32);
         }
-        if self.options.git && self.remote.is_none() {
+        if self.options.git && text && self.remote.is_none() {
             let root = self
                 .options
                 .project_root
@@ -373,6 +459,8 @@ impl EditorSession {
         self.documents.insert(
             id,
             DocumentEntry {
+                byte_history: ByteHistory::default(),
+                byte_splices: VecDeque::new(),
                 editor,
                 views: BTreeMap::new(),
                 monitor,
@@ -381,7 +469,7 @@ impl EditorSession {
                 removed: false,
                 allow_recreate: false,
                 autosave_paused: false,
-                git_initialized: self.options.git,
+                git_initialized: self.options.git && text,
             },
         );
         self.attach_lsp(id);
@@ -418,6 +506,13 @@ impl EditorSession {
         view: ViewId,
         f: impl FnOnce(&mut crate::view_context::ViewContext<'_>) -> R,
     ) -> io::Result<R> {
+        let document = self.document_for_view(view).ok_or_else(missing_view)?;
+        if self.document_kind(document)? != DocumentKind::Text {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Text view contexts require a text document",
+            ));
+        }
         self.with_editor_view(view, |editor| f(&mut editor.view_context()))
     }
     pub fn with_commands<R>(
@@ -425,6 +520,13 @@ impl EditorSession {
         view: ViewId,
         f: impl FnOnce(&mut EditorCommands<'_>) -> R,
     ) -> io::Result<R> {
+        let document = self.document_for_view(view).ok_or_else(missing_view)?;
+        if self.document_kind(document)? != DocumentKind::Text {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Text commands require a text document; use byte transactions for binary edits",
+            ));
+        }
         self.with_editor_view(view, |editor| f(&mut editor.commands()))
     }
     pub(crate) fn with_editor_view<R>(
@@ -520,6 +622,262 @@ impl EditorSession {
             Ok(value) => Ok(value),
             Err(panic) => std::panic::resume_unwind(panic),
         }
+    }
+    /// Apply one document-level undo unit. Validate revision, ranges, text
+    /// boundaries and final size before changing any state or publishing events.
+    pub fn apply_edits(
+        &mut self,
+        document: DocumentId,
+        expected_revision: (u64, u64),
+        edits: &[ByteEdit],
+    ) -> io::Result<()> {
+        self.ensure_running()?;
+        if self.document_revision(document)? != expected_revision {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Document changed; refresh before applying edits",
+            ));
+        }
+        let state = &self.entry(document)?.editor.state;
+        let mut ordered = edits.to_vec();
+        ordered.sort_by_key(|edit| (edit.range.start, edit.range.end));
+        let mut previous_end = None;
+        let mut previous_start = None;
+        let mut final_size = state.byte_size() + if state.utf8_bom { 3 } else { 0 };
+        for edit in &mut ordered {
+            if edit.range.start > edit.range.end
+                || edit.range.end > state.byte_size()
+                || previous_end.is_some_and(|end| edit.range.start < end)
+                || previous_start == Some(edit.range.start)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Edit ranges are invalid or overlap",
+                ));
+            }
+            previous_end = Some(edit.range.end);
+            previous_start = Some(edit.range.start);
+            if state.kind == DocumentKind::Text {
+                for offset in [edit.range.start, edit.range.end] {
+                    let (row, col) = state.row_col_from_offset(offset);
+                    if state.offset_from_row_col(row, col) != offset {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "A text edit cannot split a line ending",
+                        ));
+                    }
+                }
+                edit.bytes = EditorOperations::normalize_line_endings(state, &edit.bytes);
+            }
+            final_size = final_size
+                .checked_sub(edit.range.len())
+                .and_then(|size| size.checked_add(edit.bytes.len()))
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Edit size overflow"))?;
+        }
+        if final_size > bed_files::files::MAX_FILE_SIZE {
+            return Err(bed_files::files::file_too_large(
+                Path::new(&state.path),
+                final_size as u64,
+            ));
+        }
+        ordered.retain(|edit| !edit.range.is_empty() || !edit.bytes.is_empty());
+        if ordered.is_empty() {
+            return Ok(());
+        }
+        ordered.reverse();
+        if state.kind == DocumentKind::Bytes {
+            let inverse = self.apply_byte_sequence(document, &ordered)?;
+            let history = &mut self.entry_mut(document)?.byte_history;
+            history.undo.push(ByteTransaction {
+                undo: inverse,
+                redo: ordered,
+            });
+            if history.undo.len() > 50 {
+                history.undo.remove(0);
+            }
+            history.redo.clear();
+        } else {
+            let mut operations = Vec::new();
+            for edit in ordered {
+                let (row, column) = state.row_col_from_offset(edit.range.start);
+                if !edit.range.is_empty() {
+                    operations.push(TextOp {
+                        kind: OpKind::Delete,
+                        row,
+                        column,
+                        length: edit.range.len() as i32,
+                        ..Default::default()
+                    });
+                }
+                if !edit.bytes.is_empty() {
+                    operations.push(TextOp {
+                        kind: OpKind::Insert,
+                        row,
+                        column,
+                        text: edit.bytes,
+                        ..Default::default()
+                    });
+                }
+            }
+            let existing = self.view_ids(document).into_iter().next();
+            let view = match existing {
+                Some(view) => view,
+                None => self.create_view(document)?,
+            };
+            let result =
+                self.with_commands(view, |commands| commands.apply_transaction(&operations));
+            if existing.is_none() {
+                self.detach_view(view);
+            }
+            result?;
+        }
+        Ok(())
+    }
+    /// Keep independent byte-view positions attached to their original content.
+    /// Returns false after a replacement or an expired change history; positions
+    /// are still clamped safely. This journal contains lengths, never file data.
+    pub fn transform_byte_offsets(
+        &self,
+        document: DocumentId,
+        since: (u64, u64),
+        offsets: &mut [usize],
+    ) -> io::Result<bool> {
+        let entry = self.entry(document)?;
+        let state = &entry.editor.state;
+        if state.kind != DocumentKind::Bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Byte positions require a byte document",
+            ));
+        }
+        let current = (
+            entry.editor.document_generation(),
+            entry.editor.ops.generation(),
+        );
+        let available = since.0 == current.0
+            && since.1 <= current.1
+            && (since.1 == current.1
+                || entry
+                    .byte_splices
+                    .front()
+                    .is_some_and(|first| since.1 >= first.revision.saturating_sub(1)));
+        if available {
+            for change in entry
+                .byte_splices
+                .iter()
+                .filter(|change| change.revision > since.1)
+            {
+                for offset in offsets.iter_mut() {
+                    if *offset >= change.start + change.removed {
+                        *offset = offset
+                            .saturating_sub(change.removed)
+                            .saturating_add(change.inserted);
+                    } else if *offset >= change.start {
+                        *offset = change.start + change.inserted;
+                    }
+                }
+            }
+        }
+        for offset in offsets {
+            *offset = (*offset).min(state.byte_size());
+        }
+        Ok(available)
+    }
+    fn apply_byte_sequence(
+        &mut self,
+        document: DocumentId,
+        edits: &[ByteEdit],
+    ) -> io::Result<Vec<ByteEdit>> {
+        let entry = self.entry_mut(document)?;
+        let mut inverse = Vec::with_capacity(edits.len());
+        for edit in edits {
+            let removed = entry
+                .editor
+                .ops
+                .splice_bytes(&mut entry.editor.state, edit.range.clone(), &edit.bytes)
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "Invalid byte history range")
+                })?;
+            entry.byte_splices.push_back(ByteSplice {
+                revision: entry.editor.ops.generation(),
+                start: edit.range.start,
+                removed: edit.range.len(),
+                inserted: edit.bytes.len(),
+            });
+            if entry.byte_splices.len() > 4096 {
+                entry.byte_splices.pop_front();
+            }
+            inverse.push(ByteEdit {
+                range: edit.range.start..edit.range.start + edit.bytes.len(),
+                bytes: removed,
+            });
+        }
+        inverse.reverse();
+        let event = DidEdit {
+            version: entry.editor.state.version,
+            first_row: 0,
+            last_row: 0,
+            changes: Vec::new(),
+        };
+        entry
+            .editor
+            .events
+            .emit_did_edit_document(&event, &entry.editor.state);
+        let path = entry.editor.state.path.clone();
+        self.history.borrow_mut().forget_existing_file(&path);
+        self.collect_notifications(document, None);
+        Ok(inverse)
+    }
+    pub fn undo_document(&mut self, document: DocumentId) -> io::Result<()> {
+        self.history_document(document, true)
+    }
+    pub fn redo_document(&mut self, document: DocumentId) -> io::Result<()> {
+        self.history_document(document, false)
+    }
+    fn history_document(&mut self, document: DocumentId, undo: bool) -> io::Result<()> {
+        self.ensure_running()?;
+        if self.document_kind(document)? == DocumentKind::Bytes {
+            let history = &mut self.entry_mut(document)?.byte_history;
+            let transaction = if undo {
+                history.undo.pop()
+            } else {
+                history.redo.pop()
+            };
+            if let Some(transaction) = transaction {
+                self.apply_byte_sequence(
+                    document,
+                    if undo {
+                        &transaction.undo
+                    } else {
+                        &transaction.redo
+                    },
+                )?;
+                let history = &mut self.entry_mut(document)?.byte_history;
+                if undo {
+                    history.redo.push(transaction);
+                } else {
+                    history.undo.push(transaction);
+                }
+            }
+        } else {
+            let existing = self.view_ids(document).into_iter().next();
+            let view = match existing {
+                Some(view) => view,
+                None => self.create_view(document)?,
+            };
+            let result = self.with_commands(view, |commands| {
+                if undo {
+                    commands.undo()
+                } else {
+                    commands.redo()
+                }
+            });
+            if existing.is_none() {
+                self.detach_view(view);
+            }
+            result?;
+        }
+        Ok(())
     }
     pub fn set_scroll(&mut self, view: ViewId, x: f32, y: f32) -> io::Result<()> {
         let doc = self.document_for_view(view).ok_or_else(missing_view)?;
@@ -665,6 +1023,11 @@ impl EditorSession {
         entry.editor.disk_conflict = old_conflict;
         match result {
             Ok(saved) => {
+                if saved && self.document_kind(document)? == DocumentKind::Bytes {
+                    self.history
+                        .borrow_mut()
+                        .forget_existing_file(path_string(&target)?);
+                }
                 self.entry_mut(document)?.editor.disk_conflict = None;
                 self.rebind_path(document, &target)?;
                 let entry = self.entry_mut(document)?;
@@ -728,15 +1091,17 @@ impl EditorSession {
             return Ok(());
         }
         let old_key = self.entry(document)?.editor.history_key().to_owned();
-        self.history
-            .borrow_mut()
-            .rekey_file(&old_key, &target_string)?;
+        if self.document_kind(document)? == DocumentKind::Text {
+            self.history
+                .borrow_mut()
+                .rekey_file(&old_key, &target_string)?;
+        }
         if let Some(pool) = &mut self.lsp
             && let Err(error) = pool.unregister_document(document)
         {
             self.record_error(Some(document), "lsp", &error);
         }
-        let git_enabled = self.options.git;
+        let git_enabled = self.options.git && self.document_kind(document)? == DocumentKind::Text;
         let remote = self.remote.is_some();
         let entry = self.entry_mut(document)?;
         entry.editor.bind_lsp_client(None);
@@ -821,7 +1186,11 @@ impl EditorSession {
             return self.queue_remote_reload(document);
         }
         let path = self.entry(document)?.editor.state.path.clone();
-        let raw = match read_file_raw(Path::new(&path)) {
+        let raw = match if self.document_kind(document)? == DocumentKind::Text {
+            read_file_raw(Path::new(&path))
+        } else {
+            read_file_bytes(Path::new(&path))
+        } {
             Ok(raw) => raw,
             Err(error) => {
                 let entry = self.entry_mut(document)?;
@@ -831,14 +1200,18 @@ impl EditorSession {
             }
         };
         let monitoring = self.options.monitoring;
-        let git = self.options.git;
+        let git = self.options.git && self.document_kind(document)? == DocumentKind::Text;
         let entry = self.entry_mut(document)?;
         if monitoring {
             entry.monitor.watch_bytes(Path::new(&path), &raw.raw)?;
         } else {
             entry.monitor.reset();
         }
+        let invalidate_text_history = entry.editor.state.kind == DocumentKind::Bytes
+            && !entry.editor.state.bytes_equal(&raw.raw);
         entry.editor.set_content(&raw.raw);
+        entry.byte_history = ByteHistory::default();
+        entry.byte_splices.clear();
         entry.editor.state.path = path;
         entry.highlight_edits.clear();
         entry.removed = false;
@@ -854,6 +1227,9 @@ impl EditorSession {
             .borrow_mut()
             .on_document_opened(&entry.editor.state, git);
         let generation = entry.editor.document_generation();
+        if invalidate_text_history {
+            self.history.borrow_mut().forget_existing_file(&key);
+        }
         if let Some(pool) = &mut self.lsp {
             let _ = pool.unregister_document(document);
         }
@@ -868,7 +1244,11 @@ impl EditorSession {
     /// every view keeps its own scroll and clamps its own carets.
     pub fn replace_content(&mut self, document: DocumentId, bytes: &[u8]) -> io::Result<()> {
         let entry = self.entry_mut(document)?;
+        let invalidate_text_history = entry.editor.state.kind == DocumentKind::Bytes
+            && !entry.editor.state.bytes_equal(bytes);
         entry.editor.set_content(bytes);
+        entry.byte_history = ByteHistory::default();
+        entry.byte_splices.clear();
         entry.editor.state.dirty = true;
         entry.highlight_edits.clear();
         entry.editor.save_service.on_did_edit(&entry.editor.state);
@@ -878,6 +1258,9 @@ impl EditorSession {
             view.state.clamp_all(&entry.editor.state);
         }
         let generation = entry.editor.document_generation();
+        if invalidate_text_history {
+            self.history.borrow_mut().forget_existing_file(&key);
+        }
         if let Some(pool) = &mut self.lsp {
             let _ = pool.unregister_document(document);
         }
@@ -1083,15 +1466,16 @@ impl EditorSession {
         self.initialize_lsp();
         for id in self.document_ids() {
             let entry = self.documents.get_mut(&id).unwrap();
-            entry
-                .editor
-                .highlight
-                .set_enabled(self.options.highlighting);
+            entry.editor.highlight.set_enabled(
+                self.options.highlighting && entry.editor.state.kind == DocumentKind::Text,
+            );
             if highlight_changed {
                 entry.editor.refresh_highlighting();
                 entry.highlight_edits.clear();
             }
-            entry.editor.set_git_changed_lines(self.options.git);
+            entry.editor.set_git_changed_lines(
+                self.options.git && entry.editor.state.kind == DocumentKind::Text,
+            );
             if let Some(idle) = self.options.autosave {
                 entry
                     .editor
@@ -1103,7 +1487,9 @@ impl EditorSession {
             } else {
                 entry.editor.save_service.cancel_pending();
             }
-            if root_changed || (!entry.git_initialized && self.options.git) {
+            if entry.editor.state.kind == DocumentKind::Text
+                && (root_changed || (!entry.git_initialized && self.options.git))
+            {
                 let root = self
                     .options
                     .project_root
@@ -1197,7 +1583,7 @@ impl EditorSession {
             return;
         };
         let entry = self.documents.get_mut(&document).unwrap();
-        if entry.editor.state.path.is_empty() {
+        if entry.editor.state.kind == DocumentKind::Bytes || entry.editor.state.path.is_empty() {
             return;
         }
         let state = &entry.editor.state;
@@ -1220,7 +1606,7 @@ impl EditorSession {
             return;
         };
         let state = &self.documents[&document].editor.state;
-        if !state.path.is_empty() {
+        if state.kind == DocumentKind::Text && !state.path.is_empty() {
             let result = pool.update_document_snapshot(
                 document,
                 &state.path,
@@ -1461,5 +1847,12 @@ fn missing_view() -> io::Error {
     io::Error::new(
         io::ErrorKind::NotFound,
         "View is not attached to this session",
+    )
+}
+
+fn document_kind_conflict() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "File is open in another editing mode; save and close its views before switching modes",
     )
 }

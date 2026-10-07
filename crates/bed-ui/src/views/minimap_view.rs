@@ -132,7 +132,6 @@ fn minimap_wheel_scroll(ui: &Ui) -> Option<[f32; 2]> {
             || window.Collapsed
             || window.Flags
                 & (sys::ImGuiWindowFlags_NoScrollWithMouse | sys::ImGuiWindowFlags_NoMouseInputs)
-                    as i32
                 != 0
         {
             return None;

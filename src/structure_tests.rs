@@ -1,7 +1,59 @@
 use super::*;
 use crate::files::test_support::TempDir;
-use bed_highlight::outline::OutlineStatus;
+use bed_highlight::outline::{OutlineKey, OutlineService, OutlineStatus};
+use bed_plugin_structure::{StructurePlugin, presentation::StructureJump};
 use dear_imgui_rs::FramePrepareOptions;
+use std::cell::Ref;
+
+fn outline(workbench: &Workbench) -> Option<Ref<'_, OutlineService>> {
+    workbench
+        .plugins
+        .instances
+        .iter()
+        .find_map(|plugin| plugin.as_any().downcast_ref::<StructurePlugin>())
+        .and_then(StructurePlugin::outline)
+}
+fn presentation(
+    workbench: &Workbench,
+    id: u64,
+) -> &bed_plugin_structure::presentation::StructurePanel {
+    let tab = workbench.tabs.iter().find(|tab| tab.id == id).unwrap();
+    let Panel::Plugin(panel) = &tab.panel else {
+        panic!("expected plugin panel")
+    };
+    &panel
+        .instance
+        .as_any()
+        .downcast_ref::<bed_plugin_structure::StructurePanel>()
+        .unwrap()
+        .presentation
+}
+fn outline_key(workbench: &Workbench) -> io::Result<Option<OutlineKey>> {
+    let Some(document) = workbench.active_document() else {
+        return Ok(None);
+    };
+    let (generation, revision) = workbench.session.document_revision(document)?;
+    workbench.session.with_document(document, |state| {
+        Some(OutlineKey {
+            document,
+            generation,
+            revision,
+            path: state.path.clone(),
+            language_id: state.language_id.clone(),
+        })
+    })
+}
+fn jump_to_structure(workbench: &mut Workbench, jump: StructureJump) -> io::Result<bool> {
+    workbench.refresh_plugins()?;
+    let Some(request) =
+        StructurePlugin::navigation_request(jump, &workbench.plugins.frame.context())
+    else {
+        return Ok(false);
+    };
+    workbench.plugins.requests.push(request);
+    workbench.process_plugin_requests()?;
+    Ok(true)
+}
 
 fn workspace(dir: &TempDir) -> Workbench {
     let mut settings = Settings::with_paths(
@@ -25,12 +77,8 @@ fn workspace(dir: &TempDir) -> Workbench {
 fn wait(workbench: &mut Workbench) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        workbench.sync_outline().unwrap();
-        if workbench
-            .outline
-            .as_ref()
-            .is_some_and(|outline| !outline.updating())
-        {
+        workbench.tick_plugins().unwrap();
+        if outline(workbench).is_some_and(|outline| !outline.updating()) {
             return;
         }
         assert!(Instant::now() < deadline, "structure worker timed out");
@@ -63,7 +111,7 @@ fn structure_follows_documents_retains_target_on_tool_focus_and_stops_when_close
     let second = dir.write("second.py", b"def second(): pass\n");
     let mut workbench = workspace(&dir);
     workbench.open_or_focus(&first).unwrap();
-    assert!(workbench.outline.is_none());
+    assert!(outline(&workbench).is_none());
     let document = workbench.active_document().unwrap();
     workbench.dispatch(WindowCommand::NewStructure).unwrap();
     let first_panel = workbench.active_panel_id().unwrap();
@@ -72,7 +120,7 @@ fn structure_follows_documents_retains_target_on_tool_focus_and_stops_when_close
     assert!(!workbench.session.options().highlighting);
     assert_eq!(workbench.active_document(), Some(document));
     assert_eq!(
-        workbench.outline.as_ref().unwrap().result().unwrap().nodes[0].label,
+        outline(&workbench).unwrap().result().unwrap().nodes[0].label,
         "first"
     );
     workbench.dispatch(WindowCommand::Settings).unwrap();
@@ -81,33 +129,35 @@ fn structure_follows_documents_retains_target_on_tool_focus_and_stops_when_close
     workbench.dispatch(WindowCommand::Structure).unwrap();
     assert_eq!(workbench.active_panel_id(), Some(first_panel));
     assert_eq!(workbench.panel_count("structure"), 2);
-    let old_key = workbench.outline_key().unwrap().unwrap();
+    let old_key = outline_key(&workbench).unwrap().unwrap();
     workbench.open_or_focus(&second).unwrap();
     assert!(
-        !workbench
-            .jump_to_structure(StructureJump {
+        !jump_to_structure(
+            &mut workbench,
+            StructureJump {
                 key: old_key,
                 offset: 3
-            })
-            .unwrap()
+            }
+        )
+        .unwrap()
     );
     wait(&mut workbench);
     assert_eq!(
-        workbench.outline.as_ref().unwrap().result().unwrap().nodes[0].label,
+        outline(&workbench).unwrap().result().unwrap().nodes[0].label,
         "second"
     );
     let document_index = workbench.active_tab_index().unwrap();
     workbench.dispatch(WindowCommand::Structure).unwrap();
     workbench.close_tab(document_index).unwrap();
-    assert!(workbench.outline.as_ref().unwrap().requested().is_none());
+    assert!(outline(&workbench).unwrap().requested().is_none());
     while let Some(index) = workbench
         .tabs
         .iter()
-        .position(|tab| matches!(tab.panel, Panel::Tool(Tool::Structure)))
+        .position(|tab| matches!(&tab.panel, Panel::Plugin(panel) if panel.kind == bed_plugin_structure::PANEL_ID))
     {
         workbench.close_tab(index).unwrap();
     }
-    assert!(workbench.outline.is_none());
+    assert!(outline(&workbench).is_none());
 }
 
 #[test]
@@ -120,21 +170,17 @@ fn structure_refreshes_unsaved_edits_replacements_and_renames_and_rejects_stale_
     let document = workbench.active_document().unwrap();
     workbench.dispatch(WindowCommand::Structure).unwrap();
     wait(&mut workbench);
-    let key = workbench.outline_key().unwrap().unwrap();
+    let key = outline_key(&workbench).unwrap().unwrap();
     workbench
         .session
         .with_commands(view, |commands| commands.paste(b"fn added() {}\n"))
         .unwrap();
-    workbench.sync_outline().unwrap();
-    assert!(workbench.outline.as_ref().unwrap().updating());
-    assert!(
-        !workbench
-            .jump_to_structure(StructureJump { key, offset: 3 })
-            .unwrap()
-    );
+    workbench.tick_plugins().unwrap();
+    assert!(outline(&workbench).unwrap().updating());
+    assert!(!jump_to_structure(&mut workbench, StructureJump { key, offset: 3 }).unwrap());
     wait(&mut workbench);
     assert_eq!(
-        workbench.outline.as_ref().unwrap().result().unwrap().nodes[0].label,
+        outline(&workbench).unwrap().result().unwrap().nodes[0].label,
         "added"
     );
     assert_eq!(std::fs::read(&path).unwrap(), b"fn original() {}\n");
@@ -144,7 +190,7 @@ fn structure_refreshes_unsaved_edits_replacements_and_renames_and_rejects_stale_
         .unwrap();
     wait(&mut workbench);
     assert_eq!(
-        workbench.outline.as_ref().unwrap().result().unwrap().nodes[0].label,
+        outline(&workbench).unwrap().result().unwrap().nodes[0].label,
         "replacement"
     );
     workbench
@@ -153,7 +199,7 @@ fn structure_refreshes_unsaved_edits_replacements_and_renames_and_rejects_stale_
         .unwrap();
     wait(&mut workbench);
     assert_eq!(
-        workbench.outline.as_ref().unwrap().result().unwrap().status,
+        outline(&workbench).unwrap().result().unwrap().status,
         OutlineStatus::Unsupported
     );
 }
@@ -169,12 +215,12 @@ fn structure_jump_targets_last_shared_view_and_uses_buffer_byte_positions() {
     let second = workbench.active_view().unwrap();
     workbench.dispatch(WindowCommand::Structure).unwrap();
     wait(&mut workbench);
-    let result = workbench.outline.as_ref().unwrap().result().unwrap();
+    let result = outline(&workbench).unwrap().result().unwrap().clone();
     let jump = StructureJump {
         key: result.key.clone(),
         offset: result.nodes[0].name_range.start,
     };
-    assert!(workbench.jump_to_structure(jump).unwrap());
+    assert!(jump_to_structure(&mut workbench, jump).unwrap());
     assert_eq!(workbench.active_view(), Some(second));
     let caret = workbench.session.view_snapshot(second).unwrap();
     assert_eq!((caret.row, caret.column), (1, 3));
@@ -203,7 +249,7 @@ fn structure_mouse_expanders_keep_target_and_labels_jump_to_source() {
     wait(&mut workbench);
     frame(&mut context, &mut workbench);
     frame(&mut context, &mut workbench);
-    let result = workbench.outline.as_ref().unwrap().result().unwrap();
+    let result = outline(&workbench).unwrap().result().unwrap().clone();
     let root_id = result.nodes[0].id;
     let run_id = result
         .nodes
@@ -211,8 +257,8 @@ fn structure_mouse_expanders_keep_target_and_labels_jump_to_source() {
         .find(|node| node.label == "run")
         .unwrap()
         .id;
-    assert_eq!(workbench.structure_panels[&panel].rows.len(), 3);
-    let rows = &workbench.structure_panels[&panel].rows;
+    assert_eq!(presentation(&workbench, panel).rows.len(), 3);
+    let rows = &presentation(&workbench, panel).rows;
     let root_x = rows.iter().find(|row| row.0 == root_id).unwrap().1[0];
     let child_x = rows.iter().find(|row| row.0 == run_id).unwrap().1[0];
     let font_size = context
@@ -223,10 +269,10 @@ fn structure_mouse_expanders_keep_target_and_labels_jump_to_source() {
         "child rows must indent by half a font height"
     );
     assert!(
-        (workbench.structure_panels[&panel].caret_spacing - font_size * 0.14).abs() < 0.01,
+        (presentation(&workbench, panel).caret_spacing - font_size * 0.14).abs() < 0.01,
         "caret spacing must halve the normal control padding"
     );
-    let (_, min, max) = workbench.structure_panels[&panel]
+    let (_, min, max) = presentation(&workbench, panel)
         .rows
         .iter()
         .find(|row| row.0 == root_id)
@@ -241,7 +287,7 @@ fn structure_mouse_expanders_keep_target_and_labels_jump_to_source() {
         frame(&mut context, &mut workbench);
     }
     frame(&mut context, &mut workbench);
-    assert_eq!(workbench.structure_panels[&panel].rows.len(), 1);
+    assert_eq!(presentation(&workbench, panel).rows.len(), 1);
     assert_eq!(workbench.active_panel_id(), Some(panel));
     assert_eq!(workbench.active_view(), Some(view));
     for down in [true, false] {
@@ -252,7 +298,7 @@ fn structure_mouse_expanders_keep_target_and_labels_jump_to_source() {
         frame(&mut context, &mut workbench);
     }
     frame(&mut context, &mut workbench);
-    let (_, min, max) = workbench.structure_panels[&panel]
+    let (_, min, max) = presentation(&workbench, panel)
         .rows
         .iter()
         .find(|row| row.0 == run_id)
@@ -295,7 +341,7 @@ fn structure_instances_restore_with_focused_tool_and_last_document() {
     assert_eq!(restored.active_panel_id(), focused);
     wait(&mut restored);
     assert_eq!(
-        restored.outline.as_ref().unwrap().result().unwrap().nodes[0].label,
+        outline(&restored).unwrap().result().unwrap().nodes[0].label,
         "run"
     );
     workbench.cleanup().unwrap();
@@ -317,8 +363,8 @@ fn structure_panels_keep_independent_expansion_across_offset_edits() {
     wait(&mut workbench);
     frame(&mut context, &mut workbench);
     frame(&mut context, &mut workbench);
-    let root_id = workbench.outline.as_ref().unwrap().result().unwrap().nodes[0].id;
-    let (_, min, max) = workbench.structure_panels[&second]
+    let root_id = outline(&workbench).unwrap().result().unwrap().nodes[0].id;
+    let (_, min, max) = presentation(&workbench, second)
         .rows
         .iter()
         .find(|row| row.0 == root_id)
@@ -333,14 +379,14 @@ fn structure_panels_keep_independent_expansion_across_offset_edits() {
         frame(&mut context, &mut workbench);
     }
     frame(&mut context, &mut workbench);
-    assert_eq!(workbench.structure_panels[&second].rows.len(), 1);
+    assert_eq!(presentation(&workbench, second).rows.len(), 1);
     workbench
         .session
         .with_commands(view, |commands| commands.paste(b"// shifted\n"))
         .unwrap();
     wait(&mut workbench);
     frame(&mut context, &mut workbench);
-    assert_eq!(workbench.structure_panels[&second].rows.len(), 1);
+    assert_eq!(presentation(&workbench, second).rows.len(), 1);
     let index = workbench
         .tabs
         .iter()
@@ -349,11 +395,11 @@ fn structure_panels_keep_independent_expansion_across_offset_edits() {
     workbench.switch_to_tab(index);
     frame(&mut context, &mut workbench);
     frame(&mut context, &mut workbench);
-    assert_eq!(workbench.structure_panels[&first].rows.len(), 2);
+    assert_eq!(presentation(&workbench, first).rows.len(), 2);
 }
 
 fn row_alphas(context: &Context, workbench: &Workbench, panel: u64) -> Vec<u8> {
-    let paints = &workbench.structure_panels[&panel].row_paints;
+    let paints = &presentation(workbench, panel).row_paints;
     context.binding().with_bound_context(|| unsafe {
         let native = &*sys::igGetCurrentContext();
         for index in 0..native.Windows.Size as usize {
@@ -448,7 +494,7 @@ fn structure_branch_motion_moves_siblings_and_closing_rows_ignore_clicks() {
     for _ in 0..3 {
         frame(&mut context, &mut workbench);
     }
-    let result = workbench.outline.as_ref().unwrap().result().unwrap();
+    let result = outline(&workbench).unwrap().result().unwrap().clone();
     let root = result
         .nodes
         .iter()
@@ -468,7 +514,7 @@ fn structure_branch_motion_moves_siblings_and_closing_rows_ignore_clicks() {
         .unwrap()
         .id;
     let row = |workbench: &Workbench, id| {
-        workbench.structure_panels[&panel]
+        presentation(workbench, panel)
             .rows
             .iter()
             .find(|row| row.0 == id)

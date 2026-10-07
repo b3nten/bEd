@@ -268,6 +268,13 @@ impl ProjectUndo {
         self.dirty = true;
         self.maybe_save_to_disk();
     }
+    /// Byte edits invalidate earlier text operations, but do not create a
+    /// persistent history record for a file that has only been viewed as bytes.
+    pub fn forget_existing_file(&mut self, path: &str) {
+        if self.stacks.get(path).is_some_and(FileStack::has_operations) {
+            self.forget_file(path);
+        }
+    }
     pub fn remove_memory_file(&mut self, path: &str) {
         self.stacks.remove(path);
         self.reset_paths.remove(path);

@@ -98,7 +98,7 @@ fn oversized_file_errors_are_visible_dismissible_and_keep_the_active_buffer() {
     let error = workbench
         .handle_tree_action(FileTreeAction::Open(large.to_string_lossy().into_owned()))
         .unwrap_err();
-    assert!(error.to_string().contains("16 MiB"));
+    assert!(error.to_string().contains("128 MiB"));
     assert!(error.to_string().contains("huge.rs"));
     workbench.error = Some(error.to_string());
     let mut context = initialize(&mut workbench);

@@ -423,18 +423,6 @@ fn read_file(path: &Path) -> ServiceResult<(Vec<u8>, FileBaseline)> {
     }
     let mut bytes = Vec::with_capacity((metadata.len() as usize).min(1024));
     Read::by_ref(&mut file).take(1024).read_to_end(&mut bytes)?;
-    let junk = bytes
-        .iter()
-        .filter(|&&byte| {
-            byte == 0 || (byte < 32 && byte != b'\n' && byte != b'\r' && byte != b'\t')
-        })
-        .count();
-    if !bytes.is_empty() && junk > bytes.len() / 10 {
-        return Err(RemoteError::new(
-            ErrorKind::InvalidInput,
-            "Error: File appears to be binary and cannot be displayed.",
-        ));
-    }
     Read::by_ref(&mut file)
         .take((MAX_FILE_BYTES + 1) as u64 - bytes.len() as u64)
         .read_to_end(&mut bytes)?;
@@ -1167,7 +1155,7 @@ mod tests {
         assert_eq!(error.kind, ErrorKind::TooLarge);
         assert!(error.message.contains("maximum.txt"));
         assert!(error.message.contains(&(MAX_FILE_BYTES + 1).to_string()));
-        assert!(error.message.contains("16 MiB"));
+        assert!(error.message.contains("128 MiB"));
         assert!(error.message.contains("another editor"));
         assert_eq!(fs::metadata(&path).unwrap().len(), MAX_FILE_BYTES as u64);
         assert_eq!(fs::read(&path).unwrap(), &bytes[..MAX_FILE_BYTES]);
@@ -1175,7 +1163,7 @@ mod tests {
     }
 
     #[test]
-    fn oversized_binary_and_root_escape_are_rejected() {
+    fn raw_binary_reads_succeed_while_oversized_and_root_escape_are_rejected() {
         let temp = Temp::new();
         File::create(temp.0.join("large"))
             .unwrap()
@@ -1191,15 +1179,11 @@ mod tests {
         assert_eq!(error.kind, ErrorKind::TooLarge);
         assert!(error.message.contains("large"));
         assert!(error.message.contains(&(MAX_FILE_BYTES + 1).to_string()));
-        assert!(error.message.contains("16 MiB"));
-        assert!(
-            LocalBackend
-                .call(Request::ReadFile {
-                    root: temp.root(),
-                    path: "binary".into()
-                })
-                .is_err()
-        );
+        assert!(error.message.contains("128 MiB"));
+        assert!(matches!(
+            LocalBackend.call(Request::ReadFile { root: temp.root(), path: "binary".into() }).unwrap(),
+            Response::File { bytes, .. } if bytes == vec![0; 1024]
+        ));
         assert_eq!(
             LocalBackend
                 .call(Request::Canonicalize {

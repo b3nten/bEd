@@ -276,6 +276,56 @@ impl<'a> EditorCommands<'a> {
         self.emit_did_edit(lo, hi);
         self.request_ensure_visible();
     }
+    /// Apply validated operations as one undo unit, separated from adjacent
+    /// typing. Session-level transactions provide range/revision validation.
+    pub fn apply_transaction(&mut self, operations: &[TextOp]) {
+        self.project_undo.seal_file(&self.history_key);
+        self.begin_batch();
+        for op in operations {
+            self.view.ensure_selections();
+            let index = self.view.primary_index;
+            let mut primary = self.view.selections[index];
+            if self.apply_user_edit(
+                op.clone(),
+                ApplyOptions {
+                    caret: CaretAfter::Leave,
+                    collapse_selection: false,
+                    selection_index: None,
+                },
+            ) {
+                let edit = self.ops.pending_edits().last().unwrap();
+                for (row, column) in [
+                    (&mut primary.head_row, &mut primary.head_column),
+                    (&mut primary.anchor_row, &mut primary.anchor_column),
+                ] {
+                    if op.kind == OpKind::Insert {
+                        shift_pos_after_insert(
+                            row,
+                            column,
+                            op.row,
+                            op.column,
+                            &op.text,
+                            &self.state.line_ending,
+                        );
+                    } else {
+                        shift_pos_after_delete(
+                            row,
+                            column,
+                            op.row,
+                            op.column,
+                            &edit.removed_bytes,
+                            &self.state.line_ending,
+                        );
+                    }
+                }
+                self.view.selections[index] = primary;
+                self.view.sync_primary_mirrors();
+            }
+        }
+        self.end_batch();
+        self.project_undo.seal_file(&self.history_key);
+    }
+
     fn selection_order_reverse(&self) -> Vec<usize> {
         let mut order: Vec<_> = (0..self.view.selection_count()).collect();
         order.sort_by_key(|&i| {

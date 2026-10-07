@@ -98,7 +98,7 @@ fn empty_path_and_oversized_save_keep_dirty_and_disk_unchanged() {
     let mut editor = document(&vec![b'a'; bed_files::files::MAX_FILE_SIZE + 1], &file);
     editor.state.dirty = true;
     let error = editor.save().unwrap_err();
-    assert!(error.to_string().contains("16 MiB"));
+    assert!(error.to_string().contains("128 MiB"));
     assert!(bed_session::save_service::EditorSave::bytes_for_save(&editor.state).is_err());
     assert!(editor.state.dirty);
     assert_eq!(fs::read(&file).unwrap(), b"ORIGINAL_ON_DISK");

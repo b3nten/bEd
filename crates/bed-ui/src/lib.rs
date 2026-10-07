@@ -2,6 +2,7 @@
 pub mod editor_frame;
 pub mod editor_input;
 pub mod editor_view;
+pub mod hex_editor;
 pub mod lsp;
 pub mod presentation;
 pub mod util;

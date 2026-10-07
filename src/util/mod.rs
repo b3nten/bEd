@@ -1,3 +1,4 @@
+pub mod command_ui;
 pub mod font;
 pub mod icons;
 pub mod keybinds;

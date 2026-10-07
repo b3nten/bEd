@@ -23,8 +23,8 @@ workspace's display name in operating-system window lists as well.
 Titlebar panel buttons and panel menu clicks create new panels. New panels and
 opened files join the largest dock group; keyboard shortcuts reveal existing
 tools. Separate Search tabs keep independent queries and results.
-The titlebar offers Files, Terminal, Search, Structure, Diagnostics,
-Split Right, Split Down and Settings with uniform spacing. Splits duplicate the active document view,
+The titlebar offers core panel buttons, Structure, and Open Image with uniform spacing.
+Plugins can contribute more buttons and application menu commands. Splits duplicate the active document view,
 including when a tool panel has focus.
 Closing a detached window closes its contained tabs; a failed save or cancelled
 Save As keeps the group open.
@@ -62,7 +62,7 @@ for local and SSH projects; both filters start off. **Show Hidden Files** tempor
 reveals filtered entries dimmed, with **Unhide from File Tree** for manually hidden
 paths. Hiding a folder covers its subtree. These controls affect only the tree.
 The Git-ignore filter needs Git installed on the project’s machine. SSH directory
-metadata uses protocol v2; bEd automatically installs the matching helper.
+metadata and byte documents use protocol v3; bEd automatically installs the matching helper.
 
 A document can appear in several views. Its text, undo, autosave, highlighting,
 Git and LSP services are shared; cursors, selections, find and scrolling belong
@@ -70,6 +70,21 @@ to each view. Named files autosave after one second of inactivity by default;
 Settings provides an **Autosave code files** toggle and **Autosave delay** control.
 External disk
 changes reload clean buffers; dirty buffers offer Reload, Keep Buffer or Save As.
+
+File opening checks registered plugin extensions first; registration order resolves
+overlapping claims. The bundled image plugin handles PNG and JPEG. Other files
+open in the text editor or the built-in hex editor according to their content.
+Files → right-click → **Open With** selects a viewer explicitly. Image and hex
+views share the same exact-byte document. Switching between text and bytes saves
+and closes its views before reopening; a cancelled or failed save keeps them open.
+
+The hex editor shows offsets, hexadecimal bytes and ASCII. Click or Shift-click
+bytes to select, type hexadecimal digits to overwrite, use Insert to toggle
+insertion, and Backspace/Delete to remove bytes. Copy, cut and paste use hexadecimal
+text. Undo/redo and save use the usual shortcuts. Byte documents preserve BOMs,
+line endings and arbitrary bytes, and share save/autosave/conflict handling with
+text documents; their undo history stays in memory. The image viewer supports
+Fit, 100%, zoom and pan, plus an information popup and a default-fit setting.
 
 SSH projects use the same local editor: typing, undo, selections and highlighting
 stay on your machine. Files, search, Git, language servers and shells run on the
@@ -136,7 +151,7 @@ an explicit restart after disconnection and do not survive closing bEd. Remote
 undo history is in memory, and destructors never save documents or history.
 
 This first version uses one root per workspace, supports UTF-8 paths within the
-selected root. Local and remote text files up to 16 MiB can be edited. Larger
+selected root. Local and remote text or binary files up to 128 MiB can be edited. Larger
 files show an explicit size-limit error without loading partial content; open
 them in another editor or split them into smaller files. Project Search skips
 files above this limit. Remote file
@@ -235,6 +250,7 @@ cargo run --locked -- --platform-smoke --lifecycle-smoke \
 cargo run --locked -- --viewports-smoke \
   --config-dir /tmp/bed-viewport-config path/to/project path/to/file.rs
 cargo run --locked -- --menu-smoke
+cargo run --locked -- --plugin-smoke
 cargo run --locked --example embed_host -- --smoke-test
 ```
 
@@ -268,6 +284,9 @@ live in `crates/`, with concrete APIs and one workspace lockfile:
 | `bed-effects` | wgpu shader passes and viewport postprocessing |
 | `bed-remote` | Versioned RPC, SSH transport and automatic helper deployment |
 | `bed-headless` | Remote filesystem, search and Git services without a GUI |
+| `bed-plugin` | Native plugin contracts, contributions, snapshots and typed host requests |
+| `bed-plugin-structure` | Source outline panel and its worker coordination |
+| `bed-plugin-image` | Read-only PNG/JPEG panels and bounded background decoding |
 | `bed` | Workbench docking, tool panels, settings, resources and native application lifecycle |
 
 Core, files, highlighting, LSP and session compile without GUI backends.
@@ -285,6 +304,29 @@ view ownership and transforms sibling selections even if a consumer panics.
 LSP widgets without exposing mutable frame state. LSP widgets take explicit
 `LspPresentationOptions`. File/search panels wrap GUI-free discovery services
 and return navigation actions to the application.
+
+Text Editor, Hex Editor, Files, Settings and Search are host-owned features.
+Structure and Image Viewer are explicitly linked Rust plugins registered in the
+workbench's `PluginRuntime` constructor. Adding a feature means adding its crate
+dependency and one constructor to that list. There is no dynamic loading or
+plugin-to-plugin event bus.
+
+Implement `bed_plugin::Plugin` to register namespaced commands, panel factories,
+file viewers, toolbar buttons, application/file/folder/tree-background/selected-text
+menu entries, and settings sections. Panels implement `PluginPanel` and can declare
+an attached document so the host includes them in saving, closing and restoration.
+`HostContext` provides immutable document snapshots, captured command context,
+settings, read-only LSP diagnostics and texture handles. `HostRequest` queues
+edits, navigation, document commands, panels, file dialogs and resource changes;
+plugins never need a mutable workbench or direct file-writing path.
+
+`EditorSession::apply_edits` takes byte ranges and an expected document revision.
+The whole transaction is validated before mutation and becomes one undo unit.
+Text transactions retain selection, highlighting and LSP updates. Byte transactions
+use exact splice history and skip text services. Existing text-only embedding APIs
+retain their behavior; `open_file_auto` and `open_file_with_kind` opt into byte
+documents. The image plugin demonstrates host-managed RGBA textures without
+depending on wgpu or native windows. Decoded image pixels are limited to 64 MiB.
 
 Run focused suites with `cargo test -p bed-core`, `cargo test -p bed-session`,
 or another crate name. Run the full workspace commands above before submitting

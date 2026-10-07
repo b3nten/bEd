@@ -1,7 +1,7 @@
 //! Standalone Bed's native application menu. Embedded hosts own their menu bar.
 //! This is the explicitly requested macOS infrastructure addition, not an
 //! upstream editor algorithm replacement.
-use crate::util::settings::Settings;
+use crate::util::{command_ui::CommandItem, settings::Settings};
 use dear_imgui_rs::Key;
 use muda::{
     AboutMetadata, ContextMenu, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu,
@@ -230,6 +230,10 @@ pub struct MacOsMenu {
     targets: Vec<(Retained<NSMenuItem>, Retained<MenuTarget>)>,
     pending: Rc<RefCell<Vec<MenuDispatch>>>,
     dock: DockMenu,
+    plugin_menu: Submenu,
+    plugin_items: Vec<(String, MenuItem)>,
+    queued_actions: RefCell<Vec<MenuDispatch>>,
+    queued_plugin_commands: RefCell<Vec<String>>,
 }
 impl MacOsMenu {
     pub fn install(settings: &Settings) -> io::Result<Self> {
@@ -243,6 +247,7 @@ impl MacOsMenu {
         let edit = Submenu::new("Edit", true);
         let view = Submenu::new("View", true);
         let window = Submenu::new("Window", true);
+        let plugin_menu = Submenu::new("Tools", true);
         let mut items = Vec::new();
         let mut add = |parent: &Submenu, action: MenuAction, title: &str| -> io::Result<()> {
             let accelerator = accelerator(action, settings);
@@ -333,7 +338,7 @@ impl MacOsMenu {
                 &PredefinedMenuItem::bring_all_to_front(None),
             ])
             .map_err(io::Error::other)?;
-        menu.append_items(&[&app, &file, &edit, &view, &window])
+        menu.append_items(&[&app, &file, &edit, &view, &plugin_menu, &window])
             .map_err(io::Error::other)?;
         window.set_as_windows_menu_for_nsapp();
         menu.init_for_nsapp();
@@ -345,6 +350,10 @@ impl MacOsMenu {
             targets: Vec::new(),
             pending: Rc::new(RefCell::new(Vec::new())),
             dock,
+            plugin_menu,
+            plugin_items: Vec::new(),
+            queued_actions: RefCell::new(Vec::new()),
+            queued_plugin_commands: RefCell::new(Vec::new()),
         };
         if !this.is_installed() {
             return Err(io::Error::other("native menu installation failed"));
@@ -352,29 +361,89 @@ impl MacOsMenu {
         this.attach_native_targets(mtm)?;
         Ok(this)
     }
-    pub fn poll(&self) -> Vec<MenuDispatch> {
-        MenuEvent::receiver()
-            .try_iter()
-            .filter_map(|event| {
-                self.items
-                    .iter()
-                    .find(|(_, item, _)| event.id == item.id())
-                    .map(|(action, _, _)| *action)
-            })
-            .map(|action| {
+    pub fn set_plugin_commands(&mut self, commands: &[CommandItem]) -> io::Result<()> {
+        let same_structure = self.plugin_items.len() == commands.len()
+            && self
+                .plugin_items
+                .iter()
+                .zip(commands)
+                .all(|((id, item), command)| id == &command.id && item.text() == command.label);
+        if same_structure {
+            for ((_, item), command) in self.plugin_items.iter().zip(commands) {
+                item.set_enabled(command.enabled);
+            }
+            return Ok(());
+        }
+        for (_, item) in &self.plugin_items {
+            self.plugin_menu.remove(item).map_err(io::Error::other)?;
+        }
+        self.plugin_items.clear();
+        for command in commands {
+            let item = MenuItem::with_id(
+                format!("bed.plugin.{}", command.id),
+                &command.label,
+                command.enabled,
+                None,
+            );
+            self.plugin_menu.append(&item).map_err(io::Error::other)?;
+            self.plugin_items.push((command.id.clone(), item));
+        }
+        Ok(())
+    }
+    fn collect_events(&self) {
+        for event in MenuEvent::receiver().try_iter() {
+            if let Some((id, _)) = self
+                .plugin_items
+                .iter()
+                .find(|(_, item)| event.id == item.id())
+            {
+                self.queued_plugin_commands.borrow_mut().push(id.clone());
+                continue;
+            }
+            if let Some((action, _, _)) =
+                self.items.iter().find(|(_, item, _)| event.id == item.id())
+            {
                 let mut pending = self.pending.borrow_mut();
-                pending
+                let dispatch = pending
                     .iter()
-                    .position(|dispatch| dispatch.action == action)
+                    .position(|dispatch| dispatch.action == *action)
                     .map(|index| pending.remove(index))
                     .unwrap_or(MenuDispatch {
-                        action,
+                        action: *action,
                         keyboard: false,
                         shift: false,
-                    })
-            })
-            .chain(self.dock.actions.ivars().borrow_mut().drain(..))
-            .collect()
+                    });
+                self.queued_actions.borrow_mut().push(dispatch);
+            }
+        }
+    }
+    pub fn poll(&self) -> Vec<MenuDispatch> {
+        self.collect_events();
+        let mut actions = std::mem::take(&mut *self.queued_actions.borrow_mut());
+        actions.extend(self.dock.actions.ivars().borrow_mut().drain(..));
+        actions
+    }
+    pub fn poll_plugin_commands(&self) -> Vec<String> {
+        self.collect_events();
+        std::mem::take(&mut *self.queued_plugin_commands.borrow_mut())
+    }
+    pub fn perform_plugin_for_smoke(&self, id: &str) -> io::Result<()> {
+        let index = self
+            .plugin_items
+            .iter()
+            .position(|(command, _)| command == id)
+            .ok_or_else(|| io::Error::other("plugin menu command is missing"))?;
+        // SAFETY: Muda owns this live menu for the lifetime of the adapter.
+        let root = unsafe { self.menu.ns_menu().cast::<NSMenu>().as_ref() }
+            .ok_or_else(|| io::Error::other("native menu is missing"))?;
+        let submenu = root
+            .itemArray()
+            .iter()
+            .find(|item| item.title().to_string() == "Tools")
+            .and_then(|item| item.submenu())
+            .ok_or_else(|| io::Error::other("plugin menu is missing"))?;
+        submenu.performActionForItemAtIndex(index as isize);
+        Ok(())
     }
     fn attach_native_targets(&mut self, mtm: MainThreadMarker) -> io::Result<()> {
         // SAFETY: Muda retains this live root menu for this adapter's lifetime.

@@ -4,7 +4,10 @@ use bed_remote::{FileBaseline, RemoteClient, Request, Response, SshTarget};
 use std::{collections::BTreeSet, sync::mpsc, thread};
 
 enum Operation {
-    Open(String),
+    Open {
+        requested: String,
+        kind: Option<DocumentKind>,
+    },
     Save {
         document: DocumentId,
         path: String,
@@ -252,11 +255,35 @@ impl EditorSession {
 
     /// Immediate for local files; remote completion arrives as SessionEvent::Opened.
     pub fn request_open_file(&mut self, path: &Path) -> io::Result<Option<DocumentId>> {
+        self.request_open_file_with_kind(path, DocumentKind::Text)
+    }
+    pub fn request_open_file_with_kind(
+        &mut self,
+        path: &Path,
+        kind: DocumentKind,
+    ) -> io::Result<Option<DocumentId>> {
+        self.request_open_mode(path, Some(kind))
+    }
+    pub fn request_open_file_auto(&mut self, path: &Path) -> io::Result<Option<DocumentId>> {
+        self.request_open_mode(path, None)
+    }
+    fn request_open_mode(
+        &mut self,
+        path: &Path,
+        kind: Option<DocumentKind>,
+    ) -> io::Result<Option<DocumentId>> {
         self.ensure_running()?;
         if self.remote.is_none() {
-            return self.open_file(path).map(Some);
+            return match kind {
+                Some(kind) => self.open_file_with_kind(path, kind),
+                None => self.open_file_auto(path),
+            }
+            .map(Some);
         }
         if let Some(id) = self.document_for_path(path) {
+            if kind.is_some_and(|kind| self.documents[&id].editor.state.kind != kind) {
+                return Err(document_kind_conflict());
+            }
             return Ok(Some(id));
         }
         let path = path_string(path)?.to_owned();
@@ -265,7 +292,10 @@ impl EditorSession {
             return Ok(None);
         }
         remote.queue(
-            Operation::Open(path.clone()),
+            Operation::Open {
+                requested: path.clone(),
+                kind,
+            },
             Request::ReadFile {
                 root: remote.root.clone(),
                 path: path.clone(),
@@ -448,12 +478,13 @@ impl EditorSession {
         self.initialize_lsp();
         for id in self.document_ids() {
             let entry = self.documents.get_mut(&id).unwrap();
-            entry
-                .editor
-                .highlight
-                .set_enabled(self.options.highlighting);
+            entry.editor.highlight.set_enabled(
+                self.options.highlighting && entry.editor.state.kind == DocumentKind::Text,
+            );
             entry.editor.refresh_highlighting();
-            entry.editor.set_git_changed_lines(self.options.git);
+            entry.editor.set_git_changed_lines(
+                self.options.git && entry.editor.state.kind == DocumentKind::Text,
+            );
             if let Some(idle) = self.options.autosave {
                 entry
                     .editor
@@ -479,8 +510,8 @@ impl EditorSession {
             .unwrap_or_default();
         for Completion { operation, result } in completions {
             let document = match &operation {
-                Operation::Open(path) => {
-                    self.remote.as_mut().unwrap().opening.remove(path);
+                Operation::Open { requested, .. } => {
+                    self.remote.as_mut().unwrap().opening.remove(requested);
                     None
                 }
                 Operation::Save { document, .. } => {
@@ -575,7 +606,7 @@ impl EditorSession {
             };
             match (operation, response) {
                 (
-                    Operation::Open(requested),
+                    Operation::Open { requested, kind },
                     Response::File {
                         path,
                         bytes,
@@ -583,15 +614,28 @@ impl EditorSession {
                     },
                 ) => {
                     if let Some(&id) = self.paths.get(Path::new(&path)) {
+                        if kind.is_some_and(|kind| kind != self.documents[&id].editor.state.kind) {
+                            self.record_error(None, "remote", &document_kind_conflict());
+                            continue;
+                        }
                         self.remote.as_mut().unwrap().aliases.insert(requested, id);
                         self.queued.push(SessionEvent::Opened { document: id });
                         continue;
                     }
+                    let kind = kind.unwrap_or_else(|| bed_files::files::classify_bytes(&bytes));
+                    if kind == DocumentKind::Text
+                        && let Err(error) = bed_files::files::validate_text_bytes(&bytes)
+                    {
+                        self.record_error(None, "remote", &error);
+                        continue;
+                    }
                     let id = DocumentId::next();
                     let mut editor = Editor::new();
-                    editor.bind_project_undo(Rc::clone(&self.history));
-                    editor.set_git_changed_lines(self.options.git);
-                    editor.api().open_document(&path, &bytes);
+                    if kind == DocumentKind::Text {
+                        editor.bind_project_undo(Rc::clone(&self.history));
+                    }
+                    editor.set_git_changed_lines(self.options.git && kind == DocumentKind::Text);
+                    editor.api().open_document_with_kind(&path, &bytes, kind);
                     self.paths.insert(PathBuf::from(path), id);
                     self.remote.as_mut().unwrap().baselines.insert(id, baseline);
                     self.remote.as_mut().unwrap().aliases.insert(requested, id);
@@ -610,6 +654,9 @@ impl EditorSession {
                     let Some(entry) = self.documents.get_mut(&id) else {
                         continue;
                     };
+                    if entry.editor.state.kind == DocumentKind::Bytes {
+                        self.history.borrow_mut().forget_existing_file(&path);
+                    }
                     if entry.editor.document_generation() != generation {
                         if entry.editor.state.path == path {
                             self.remote.as_mut().unwrap().baselines.insert(id, baseline);
@@ -629,7 +676,10 @@ impl EditorSession {
                             .aliases
                             .retain(|_, doc| *doc != id);
                         let old_key = entry.editor.history_key().to_owned();
-                        if let Err(error) = self.history.borrow_mut().rekey_file(&old_key, &path) {
+                        if entry.editor.state.kind == DocumentKind::Text
+                            && let Err(error) =
+                                self.history.borrow_mut().rekey_file(&old_key, &path)
+                        {
                             self.errors.push(ServiceError {
                                 document: Some(id),
                                 service: "history",
@@ -726,8 +776,25 @@ impl EditorSession {
                                 message,
                             });
                         } else {
+                            if entry.editor.state.kind == DocumentKind::Text
+                                && let Err(error) = bed_files::files::validate_text_bytes(&bytes)
+                            {
+                                entry.editor.disk_conflict = Some(error.to_string());
+                                entry.editor.save_service.cancel_pending();
+                                self.record_error(Some(id), "remote", &error);
+                                continue;
+                            }
+                            if entry.editor.state.kind == DocumentKind::Bytes
+                                && !entry.editor.state.bytes_equal(&bytes)
+                            {
+                                self.history
+                                    .borrow_mut()
+                                    .forget_existing_file(&entry.editor.state.path);
+                            }
                             self.remote.as_mut().unwrap().baselines.insert(id, baseline);
                             entry.editor.set_content(&bytes);
+                            entry.byte_history = ByteHistory::default();
+                            entry.byte_splices.clear();
                             entry.highlight_edits.clear();
                             entry.removed = false;
                             let key = entry.editor.history_key().to_owned();
@@ -802,7 +869,7 @@ impl EditorSession {
         }
     }
     pub(super) fn queue_remote_git(&mut self, document: DocumentId) {
-        if !self.options.git {
+        if !self.options.git || self.documents[&document].editor.state.kind == DocumentKind::Bytes {
             return;
         }
         let entry = &self.documents[&document];

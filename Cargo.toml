@@ -7,7 +7,7 @@ publish = false
 license-file = "LICENSE"
 
 [workspace]
-members = ["crates/bed-core", "crates/bed-files", "crates/bed-highlight", "crates/bed-lsp", "crates/bed-session", "crates/bed-ui", "crates/bed-terminal", "crates/bed-effects", "crates/bed-remote", "crates/bed-headless"]
+members = ["crates/bed-core", "crates/bed-files", "crates/bed-highlight", "crates/bed-lsp", "crates/bed-session", "crates/bed-ui", "crates/bed-terminal", "crates/bed-effects", "crates/bed-remote", "crates/bed-headless", "crates/bed-plugin", "crates/bed-plugin-structure", "crates/bed-plugin-image"]
 default-members = ["."]
 exclude = ["vendor/dear-imgui-sys", "vendor/dear-imgui-winit", "vendor/dear-imgui-wgpu", "vendor/freetype-sys"]
 resolver = "3"
@@ -22,6 +22,7 @@ wgpu = "=30.0.1"
 arboard = { version = "=3.6.1", default-features = false }
 rfd = "=0.17.2"
 serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 serde = "=1.0.229"
 tree-sitter = "=0.26.13"
 regex = "=1.11.3"
@@ -49,8 +50,14 @@ bed-ui = { path = "crates/bed-ui" }
 bed-terminal = { path = "crates/bed-terminal" }
 bed-effects = { path = "crates/bed-effects" }
 bed-remote = { path = "crates/bed-remote" }
+bed-plugin = { path = "crates/bed-plugin" }
+bed-plugin-structure = { path = "crates/bed-plugin-structure" }
+bed-plugin-image = { path = "crates/bed-plugin-image" }
 
 [dependencies]
+bed-plugin = { workspace = true }
+bed-plugin-structure = { workspace = true }
+bed-plugin-image = { workspace = true }
 bed-remote = { workspace = true }
 bed-core = { workspace = true }
 bed-files = { workspace = true }

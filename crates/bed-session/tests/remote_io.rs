@@ -1,7 +1,7 @@
 //! Real framed subprocess I/O around local editing, with delayed acknowledgements.
 use bed_core::editor_commands::CursorReveal;
 use bed_remote::{LocalBackend, RemoteClient, Request, SshTarget, serve_with};
-use bed_session::{ClosePolicy, EditorSession, SessionOptions};
+use bed_session::{ByteEdit, ClosePolicy, DocumentKind, EditorSession, SessionOptions};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -322,6 +322,59 @@ fn main() {
     assert_eq!(fs::read(&path).unwrap(), b"buffer after keep");
     assert!(!reload.snapshot(doc).unwrap().dirty);
     reload.shutdown(ClosePolicy::Discard).unwrap();
+    // Auto resolution and exact-byte edits use the same queued remote lifecycle.
+    let path = root.join("exact-bytes.bin");
+    let raw = b"\xef\xbb\xbf\0\0\xffa\r\nb\rc\n";
+    fs::write(&path, raw).unwrap();
+    let mut binary = self::session(root, client(true), false);
+    assert!(binary.request_open_file_auto(&path).unwrap().is_none());
+    wait(&mut binary, |session| !session.open_pending(&path));
+    let doc = binary.document_for_path(&path).unwrap();
+    assert_eq!(binary.snapshot(doc).unwrap().kind, DocumentKind::Bytes);
+    assert_eq!(binary.snapshot(doc).unwrap().bytes, raw);
+    binary
+        .apply_edits(
+            doc,
+            binary.document_revision(doc).unwrap(),
+            &[ByteEdit {
+                range: 4..5,
+                bytes: vec![0x80, 0x81],
+            }],
+        )
+        .unwrap();
+    let first = binary.snapshot(doc).unwrap().bytes;
+    binary.save(doc).unwrap();
+    binary
+        .apply_edits(
+            doc,
+            binary.document_revision(doc).unwrap(),
+            &[ByteEdit {
+                range: 0..0,
+                bytes: vec![0x01],
+            }],
+        )
+        .unwrap();
+    let second = binary.snapshot(doc).unwrap().bytes;
+    wait(&mut binary, |session| !session.save_pending(doc));
+    assert_eq!(fs::read(&path).unwrap(), first);
+    assert!(binary.snapshot(doc).unwrap().dirty);
+    binary.save(doc).unwrap();
+    wait(&mut binary, |session| !session.save_pending(doc));
+    assert_eq!(fs::read(&path).unwrap(), second);
+    binary.undo_document(doc).unwrap();
+    assert_eq!(binary.snapshot(doc).unwrap().bytes, first);
+    binary.undo_document(doc).unwrap();
+    assert_eq!(binary.snapshot(doc).unwrap().bytes, raw);
+    binary.redo_document(doc).unwrap();
+    assert_eq!(binary.snapshot(doc).unwrap().bytes, first);
+    binary.reload_from_disk(doc).unwrap();
+    wait(&mut binary, |session| {
+        session.snapshot(doc).unwrap().bytes == second
+    });
+    binary.undo_document(doc).unwrap();
+    assert_eq!(binary.snapshot(doc).unwrap().bytes, second);
+    binary.shutdown(ClosePolicy::Discard).unwrap();
+
     println!(
         "remote session: delayed saves/reads, generation races, metadata, conflicts, reload, Save As, reconnect, undo and aliases passed"
     );

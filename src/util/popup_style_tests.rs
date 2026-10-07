@@ -1,5 +1,7 @@
 use super::*;
-use dear_imgui_rs::{Condition, Context, FramePrepareOptions, WindowFlags, sys};
+use dear_imgui_rs::{
+    Condition, Context, FramePrepareOptions, StyleColor, StyleVar, WindowFlags, sys,
+};
 use std::{ffi::c_void, path::PathBuf};
 
 fn context() -> Context {

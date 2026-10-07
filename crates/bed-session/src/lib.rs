@@ -12,7 +12,7 @@ pub mod view_context;
 pub(crate) mod test_support;
 
 pub use editor_session::{
-    ClosePolicy, DocumentId, DocumentSnapshot, EditorSession, ServiceError, SessionEvent,
-    SessionOptions, TickReport, ViewId, WorkspaceId,
+    ByteEdit, ClosePolicy, DocumentId, DocumentKind, DocumentSnapshot, EditorSession, ServiceError,
+    SessionEvent, SessionOptions, TickReport, ViewId, WorkspaceId,
 };
 pub use view_context::ViewContext;

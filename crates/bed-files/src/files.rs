@@ -7,7 +7,37 @@ pub const BINARY_ERROR: &str = "Error: File appears to be binary and cannot be d
 pub struct ReadFile {
     pub raw: Vec<u8>,
 }
+/// Existing text-only read, including the bounded binary probe.
 pub fn read_file_raw(path: &Path) -> io::Result<ReadFile> {
+    read_file(path, true)
+}
+
+/// Bounded raw read used by file viewers and exact-byte documents.
+pub fn read_file_bytes(path: &Path) -> io::Result<ReadFile> {
+    read_file(path, false)
+}
+
+pub fn classify_bytes(bytes: &[u8]) -> bed_core::editor_state::DocumentKind {
+    let prefix = &bytes[..bytes.len().min(1024)];
+    let junk = prefix
+        .iter()
+        .filter(|&&c| c == 0 || (c < 32 && c != b'\n' && c != b'\r' && c != b'\t'))
+        .count();
+    if !prefix.is_empty() && junk > prefix.len() / 10 {
+        bed_core::editor_state::DocumentKind::Bytes
+    } else {
+        bed_core::editor_state::DocumentKind::Text
+    }
+}
+
+pub fn validate_text_bytes(bytes: &[u8]) -> io::Result<()> {
+    if classify_bytes(bytes) == bed_core::editor_state::DocumentKind::Bytes {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, BINARY_ERROR));
+    }
+    Ok(())
+}
+
+fn read_file(path: &Path, text_only: bool) -> io::Result<ReadFile> {
     let file = fs::File::open(path)?;
     let metadata = file.metadata()?;
     if !metadata.is_file() {
@@ -20,7 +50,15 @@ pub fn read_file_raw(path: &Path) -> io::Result<ReadFile> {
     if file_size > MAX_FILE_SIZE as u64 {
         return Err(file_too_large(path, file_size));
     }
-    let raw = read_text_bytes(&file, file_size as usize)?;
+    let raw = if text_only {
+        read_text_bytes(&file, file_size as usize)?
+    } else {
+        let mut raw = Vec::with_capacity(file_size as usize);
+        (&file)
+            .take((MAX_FILE_SIZE + 1) as u64)
+            .read_to_end(&mut raw)?;
+        raw
+    };
     if raw.len() > MAX_FILE_SIZE {
         return Err(file_too_large(
             path,
@@ -46,14 +84,7 @@ fn read_text_bytes(mut file: impl Read, expected_size: usize) -> io::Result<Vec<
     // allocating/reading the remainder of a potentially large build artifact.
     let mut raw = Vec::with_capacity(expected_size.min(1024));
     file.by_ref().take(1024).read_to_end(&mut raw)?;
-    let prefix = &raw[..raw.len().min(1024)];
-    let junk = prefix
-        .iter()
-        .filter(|&&c| c == 0 || (c < 32 && c != b'\n' && c != b'\r' && c != b'\t'))
-        .count();
-    if !prefix.is_empty() && junk > prefix.len() / 10 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, BINARY_ERROR));
-    }
+    validate_text_bytes(&raw)?;
     raw.reserve(expected_size.saturating_sub(raw.len()));
     file.take((MAX_FILE_SIZE + 1 - raw.len()) as u64)
         .read_to_end(&mut raw)?;
@@ -126,7 +157,7 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("too-large.txt"));
         assert!(message.contains(&(MAX_FILE_SIZE + 1).to_string()));
-        assert!(message.contains("16 MiB"));
+        assert!(message.contains("128 MiB"));
         assert!(message.contains("another editor"));
     }
     #[test]

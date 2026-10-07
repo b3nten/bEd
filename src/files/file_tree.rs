@@ -320,6 +320,10 @@ use dear_imgui_rs::{StyleColor, StyleVar, Ui};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FileTreeAction {
+    Command {
+        command: String,
+        context: bed_plugin::CommandContext,
+    },
     Open(String),
     NewFile(String),
     NewFolder(String),
@@ -328,8 +332,13 @@ pub enum FileTreeAction {
     SetHideGitignored(bool),
     SetHideHidden(bool),
     SetShowHidden(bool),
-    SetPathHidden { path: String, hidden: bool },
+    SetPathHidden {
+        path: String,
+        hidden: bool,
+    },
 }
+/// Host-owned extension menu. The path belongs to the popup's source row.
+pub type ExtensionMenu<'a> = dyn Fn(&Ui, &str, bool, bool, &mut Vec<FileTreeAction>) + 'a;
 /// The host provides uploaded upstream icon textures; unavailable icons reserve their space.
 use bed_ui::presentation::FileIcons;
 #[derive(Clone, Copy, Debug)]
@@ -400,7 +409,7 @@ impl FileTree {
         icons: Option<&dyn FileIcons>,
         modified: Option<&dyn Fn(&str) -> bool>,
     ) -> Option<String> {
-        let actions = self.draw_rows(ui, current_path, style, icons, modified, false, false);
+        let actions = self.draw_rows(ui, current_path, style, icons, modified, false, false, None);
         actions.into_iter().find_map(|action| match action {
             FileTreeAction::Open(path) => Some(path),
             _ => None,
@@ -425,7 +434,37 @@ impl FileTree {
         modified: Option<&dyn Fn(&str) -> bool>,
         remote: bool,
     ) -> Vec<FileTreeAction> {
-        let mut actions = self.draw_rows(ui, current_path, style, icons, modified, true, remote);
+        self.display_backend_actions_with_menu(
+            ui,
+            current_path,
+            style,
+            icons,
+            modified,
+            remote,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn display_backend_actions_with_menu(
+        &mut self,
+        ui: &Ui,
+        current_path: &str,
+        style: &FileTreeStyle,
+        icons: Option<&dyn FileIcons>,
+        modified: Option<&dyn Fn(&str) -> bool>,
+        remote: bool,
+        extensions: Option<&ExtensionMenu<'_>>,
+    ) -> Vec<FileTreeAction> {
+        let mut actions = self.draw_rows(
+            ui,
+            current_path,
+            style,
+            icons,
+            modified,
+            true,
+            remote,
+            extensions,
+        );
         let root = self.root_node.full_path.clone();
         let visibility = Visibility {
             root: &root,
@@ -452,6 +491,9 @@ impl FileTree {
                     }
                     ui.separator();
                     Self::visibility_menu(ui, &visibility, &mut actions);
+                    if let Some(extensions) = extensions {
+                        extensions(ui, &root, true, true, &mut actions);
+                    }
                     dear_imgui_rs::sys::igEndPopup();
                 }
             }
@@ -468,6 +510,7 @@ impl FileTree {
         modified: Option<&dyn Fn(&str) -> bool>,
         context_menu: bool,
         remote: bool,
+        extensions: Option<&ExtensionMenu<'_>>,
     ) -> Vec<FileTreeAction> {
         fn collect(
             node: &FileNode,
@@ -591,6 +634,7 @@ impl FileTree {
                 row.hidden,
                 &mut self.error,
                 &mut actions,
+                extensions,
             );
             #[cfg(test)]
             host.labels
@@ -616,6 +660,7 @@ impl FileTree {
         inherited_hidden: bool,
         error: &mut Option<String>,
         actions: &mut Vec<FileTreeAction>,
+        extensions: Option<&ExtensionMenu<'_>>,
     ) {
         let hidden = !root && (inherited_hidden || visibility.hidden(node));
         if hidden && !visibility.show_hidden {
@@ -715,6 +760,9 @@ impl FileTree {
                 }
                 ui.separator();
                 Self::visibility_menu(ui, visibility, actions);
+                if let Some(extensions) = extensions {
+                    extensions(ui, &node.full_path, node.is_directory, false, actions);
+                }
             }
         }
         // Dim labels and icons only; keep context-menu text fully legible.

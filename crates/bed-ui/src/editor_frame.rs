@@ -711,8 +711,8 @@ impl EditorFrame {
                 scroll.advance(ui.io().delta_time());
             }
             let position = clamp(scroll.position);
-            for axis in 0..2 {
-                if position[axis] != scroll.position[axis] {
+            for (axis, value) in position.iter().enumerate() {
+                if *value != scroll.position[axis] {
                     scroll.velocity[axis] = 0.0;
                 }
             }

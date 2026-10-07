@@ -11,15 +11,20 @@ use std::{
 
 use bed_core::{
     editor_events::{DidSave, EditorEvents},
-    editor_state::EditorState,
+    editor_state::{DocumentKind, EditorState},
 };
 
 const WRITE_CHUNK: usize = 64 * 1024;
 
 fn check_save_size(state: &EditorState) -> io::Result<()> {
-    let total = state
-        .byte_size()
-        .saturating_add(if state.utf8_bom { 3 } else { 0 });
+    let total =
+        state
+            .byte_size()
+            .saturating_add(if state.kind == DocumentKind::Text && state.utf8_bom {
+                3
+            } else {
+                0
+            });
     if total > bed_files::files::MAX_FILE_SIZE {
         return Err(bed_files::files::file_too_large(
             std::path::Path::new(&state.path),
@@ -77,7 +82,7 @@ impl EditorSave {
     pub fn bytes_for_save(state: &EditorState) -> io::Result<Vec<u8>> {
         check_save_size(state)?;
         let mut bytes = Vec::with_capacity(state.byte_size() + 3);
-        if state.utf8_bom {
+        if state.kind == DocumentKind::Text && state.utf8_bom {
             bytes.extend_from_slice(&[0xef, 0xbb, 0xbf]);
         }
         bytes.extend(state.join());
@@ -91,7 +96,7 @@ impl EditorSave {
         }
         check_save_size(state)?;
         let mut file = File::create(&state.path)?;
-        if state.utf8_bom {
+        if state.kind == DocumentKind::Text && state.utf8_bom {
             file.write_all(&[0xef, 0xbb, 0xbf])?;
         }
         let total = state.byte_size();

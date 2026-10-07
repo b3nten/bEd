@@ -13,8 +13,11 @@ use crate::{git::git_service::EditorGit, save_service::EditorSave};
 use bed_core::editor_commands::EditorCommands;
 pub use bed_core::editor_commands::ProjectUndoGuard;
 use bed_core::{
-    editor_events::EditorEvents, editor_operations::EditorOperations, editor_state::EditorState,
-    editor_view_state::EditorViewState, project_undo::ProjectUndo,
+    editor_events::EditorEvents,
+    editor_operations::EditorOperations,
+    editor_state::{DocumentKind, EditorState},
+    editor_view_state::EditorViewState,
+    project_undo::ProjectUndo,
 };
 use bed_highlight::highlight_service::EditorHighlight;
 use bed_lsp::{diagnostics::diagnostics_store::LspDiagnostics, lsp_client::LspClient};
@@ -59,6 +62,9 @@ impl Default for Editor {
         let git_listener = Rc::clone(&git);
         let git_enabled = Rc::clone(&git_changed_lines);
         events.subscribe_did_edit_document(move |event, state| {
+            if state.kind == DocumentKind::Bytes {
+                return;
+            }
             git_listener.borrow_mut().on_did_edit(
                 state,
                 event.first_row,
@@ -191,15 +197,24 @@ impl Editor {
     }
 
     pub fn set_content(&mut self, raw: &[u8]) {
+        self.set_content_with_kind(raw, self.state.kind);
+    }
+
+    pub fn set_content_with_kind(&mut self, raw: &[u8], kind: DocumentKind) {
         self.document_generation = self.document_generation.wrapping_add(1);
         self.disk_conflict = None;
         self.save_service.cancel_pending();
-        self.state.set_from_bytes(raw);
+        self.state.set_from_bytes_with_kind(raw, kind);
         self.ops.clear_pending();
         self.ops.bump_generation();
-        self.highlight
-            .reset_for_document(&self.state, self.state.line_count() as usize);
-        self.highlight_dirty.set(true);
+        if kind == DocumentKind::Text {
+            self.highlight
+                .reset_for_document(&self.state, self.state.line_count() as usize);
+            self.highlight_dirty.set(true);
+        } else {
+            self.highlight.cancel_highlighting();
+            self.highlight_dirty.set(false);
+        }
     }
 
     /// Distinguishes replacing a document from sequential edits, whose version
@@ -211,11 +226,17 @@ impl Editor {
     pub(crate) fn rebind_document_path(&mut self, path: &str) {
         self.document_generation = self.document_generation.wrapping_add(1);
         self.state.path = path.to_owned();
-        self.state.language_id = EditorState::language_id_from_path(path);
+        self.state.language_id = if self.state.kind == DocumentKind::Text {
+            EditorState::language_id_from_path(path)
+        } else {
+            String::new()
+        };
         self.ops.bump_generation();
-        self.highlight
-            .reset_for_document(&self.state, self.state.line_count() as usize);
-        self.refresh_highlighting();
+        if self.state.kind == DocumentKind::Text {
+            self.highlight
+                .reset_for_document(&self.state, self.state.line_count() as usize);
+            self.refresh_highlighting();
+        }
     }
 
     pub fn open(&mut self, path: &Path) -> io::Result<()> {
@@ -257,6 +278,11 @@ impl Editor {
     }
 
     pub(crate) fn poll_document_services(&mut self) {
+        if self.state.kind == DocumentKind::Bytes {
+            self.ops.clear_pending();
+            self.highlight_dirty.set(false);
+            return;
+        }
         self.git.borrow_mut().poll();
         if self.highlight_dirty.replace(false) {
             self.highlight.highlight_content(&self.state, &mut self.ops);
@@ -281,7 +307,7 @@ impl Editor {
         self.lsp_binding.borrow().clone()
     }
     pub fn notify_document_opened(&self) {
-        if self.state.path.is_empty() {
+        if self.state.kind == DocumentKind::Bytes || self.state.path.is_empty() {
             return;
         }
         if let Some(client) = self.lsp_client() {

@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
-pub const PROTOCOL_VERSION: u32 = 2;
-pub const MAX_FRAME_BYTES: usize = 80 * 1024 * 1024;
+pub const PROTOCOL_VERSION: u32 = 3;
 // JSON arrays of u8 require at most four bytes per input byte. Keep headroom
-// within the existing frame bound for a full file and its request metadata.
-pub const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
+// for a full file and its request metadata.
+pub const MAX_FILE_BYTES: usize = 128 * 1024 * 1024;
+pub const MAX_FRAME_BYTES: usize = 4 * MAX_FILE_BYTES + 16 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct FileBaseline {
@@ -277,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn full_editable_file_fits_the_existing_frame_even_with_worst_case_json_bytes() {
+    fn full_editable_file_fits_the_frame_even_with_worst_case_json_bytes() {
         let frame = RequestFrame {
             id: u64::MAX,
             request: Request::WriteFile {

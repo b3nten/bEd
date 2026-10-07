@@ -128,6 +128,7 @@ pub(super) struct RemoteUi {
     ready: Option<ConnectionResult>,
     io: Option<RemoteIo>,
     path_dialog: Option<PathDialog>,
+    pub(super) dialog_viewer: Option<String>,
     mutation_documents: HashSet<DocumentId>,
     mutation_pending: bool,
     navigation: HashMap<String, (i32, i32, bool)>,
@@ -473,15 +474,17 @@ impl Workbench {
         )?;
         self.persist_workspace()?;
         self.session.shutdown(ClosePolicy::Discard)?;
+        self.close_plugin_panels()?;
         self.terminal.shutdown();
         self.tabs.clear();
         self.pending_tab_close = None;
         self.active = None;
+        self.last_document = None;
         self.focused = None;
         self.lsp_ui.cancel_requests();
         self.content_search.clear();
-        self.outline = None;
-        self.structure_panels.clear();
+        self.plugins = plugin_host::PluginRuntime::default();
+        self.editor_menu_context.clear();
         self.remote_ui = RemoteUi {
             io: Some(RemoteIo::new(client.clone())),
             ..RemoteUi::default()
@@ -704,6 +707,18 @@ impl Workbench {
         self.remote_ui.opening.retain(|requested| {
             self.session.document_for_path(Path::new(requested)) != Some(document)
         });
+        let pending = self
+            .plugins
+            .pending_open
+            .keys()
+            .find(|requested| {
+                requested.as_str() == path
+                    || self.session.document_for_path(Path::new(requested)) == Some(document)
+            })
+            .cloned();
+        let viewer = pending
+            .and_then(|requested| self.plugins.pending_open.remove(&requested))
+            .flatten();
         let requested = self
             .remote_ui
             .restore
@@ -717,13 +732,31 @@ impl Workbench {
             requested.and_then(|requested| self.remote_ui.restore.remove(&requested))
         {
             for panel in panels {
-                self.add_view(document)?;
+                let viewer = panel["viewer"]
+                    .as_str()
+                    .or_else(|| match panel["kind"].as_str() {
+                        Some("document") => Some("bed.text"),
+                        Some("hex") => Some("bed.hex"),
+                        _ => None,
+                    });
+                if panel["kind"].as_str() == Some("plugin") && viewer.is_none() {
+                    self.open_plugin_panel(
+                        panel["panel_type"].as_str().unwrap_or(""),
+                        Some(document),
+                        &panel["state"],
+                        None,
+                    )?;
+                } else {
+                    self.add_document_panel(document, viewer, &panel["state"])?;
+                }
                 self.apply_remote_panel_state(&panel)?;
             }
-        } else if !self.tabs.iter().any(
-            |tab| matches!(&tab.panel, Panel::Document(view) if view.document_id() == document),
-        ) {
-            self.add_view(document)?;
+        } else if !self
+            .tabs
+            .iter()
+            .any(|tab| tab.panel.document() == Some(document))
+        {
+            self.add_document_panel(document, viewer.as_deref(), &Value::Null)?;
         }
         let requested = self
             .remote_ui
@@ -745,6 +778,9 @@ impl Workbench {
         self.remote_ui
             .opening
             .retain(|path| self.session.open_pending(Path::new(path)));
+        self.plugins
+            .pending_open
+            .retain(|path, _| self.session.open_pending(Path::new(path)));
         let stale = self
             .remote_ui
             .restore
@@ -769,9 +805,11 @@ impl Workbench {
         }
         if let Some(id) = self.remote_ui.restored_active.take()
             && let Some(tab) = self.tabs.iter().find(|tab| tab.id == id)
-            && let Panel::Document(view) = &tab.panel
         {
-            self.active = Some(view.id());
+            self.last_document = tab.panel.document();
+            if let Panel::Document(view) = &tab.panel {
+                self.active = Some(view.id());
+            }
         }
         if let Some(id) = self.remote_ui.restored_focus.take()
             && let Some(index) = self.tabs.iter().position(|tab| tab.id == id)
@@ -827,11 +865,17 @@ impl Workbench {
         column: i32,
         utf16: bool,
     ) -> io::Result<()> {
-        let destination = self.session.document_for_path(Path::new(path));
-        if destination.is_none() || destination != self.active_document() {
-            self.open_or_focus(Path::new(path))?;
-        }
-        if self.session.document_for_path(Path::new(path)).is_some() {
+        self.open_file_with_viewer(Path::new(path), Some("bed.text"), false)?;
+        if self
+            .session
+            .document_for_path(Path::new(path))
+            .is_some_and(|document| {
+                self.active
+                    .and_then(|view| self.session.document_for_view(view))
+                    == Some(document)
+                    && self.session.document_kind(document).ok() == Some(DocumentKind::Text)
+            })
+        {
             self.position_active(row, column, utf16)?;
         } else {
             self.remote_ui
@@ -840,7 +884,7 @@ impl Workbench {
         }
         Ok(())
     }
-    fn position_active(&mut self, row: i32, column: i32, utf16: bool) -> io::Result<()> {
+    pub(super) fn position_active(&mut self, row: i32, column: i32, utf16: bool) -> io::Result<()> {
         if let Some(view) = self.active {
             self.session.with_view(view, |editor| {
                 let row = row.clamp(0, editor.state.line_count() - 1);
@@ -919,7 +963,9 @@ impl Workbench {
                         .save_as(id, Path::new(&dialog.path))
                         .map(|_| ())
                 } else {
-                    self.open_or_focus(Path::new(&dialog.path)).map(|_| ())
+                    let viewer = self.remote_ui.dialog_viewer.clone();
+                    self.open_file_with_viewer(Path::new(&dialog.path), viewer.as_deref(), false)
+                        .map(|_| ())
                 };
                 match result {
                     Ok(()) => {
@@ -932,6 +978,8 @@ impl Workbench {
         }
         if !done {
             self.remote_ui.path_dialog = Some(dialog);
+        } else {
+            self.remote_ui.dialog_viewer = None;
         }
         Ok(())
     }
@@ -1030,6 +1078,16 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
     }
+    fn structure_outline(
+        workbench: &Workbench,
+    ) -> Option<std::cell::Ref<'_, bed_highlight::outline::OutlineService>> {
+        workbench.plugins.instances.iter().find_map(|plugin| {
+            plugin
+                .as_any()
+                .downcast_ref::<bed_plugin_structure::StructurePlugin>()?
+                .outline()
+        })
+    }
     #[cfg(unix)]
     #[test]
     fn remote_structure_uses_unsaved_local_buffer_and_restored_document_target() {
@@ -1046,9 +1104,7 @@ mod tests {
         workbench.restore_workspace(&state).unwrap();
         wait(&mut workbench, |w| {
             w.remote_ui.restore.is_empty()
-                && w.outline
-                    .as_ref()
-                    .is_some_and(|outline| outline.result().is_some())
+                && structure_outline(w).is_some_and(|outline| outline.result().is_some())
         });
         assert_eq!(workbench.active_panel_id(), Some(13));
         assert_eq!(workbench.panel_count("structure"), 2);
@@ -1058,7 +1114,7 @@ mod tests {
             .with_commands(view, |commands| commands.paste(b"fn unsaved() {}\n"))
             .unwrap();
         wait(&mut workbench, |w| {
-            w.outline.as_ref().is_some_and(|outline| {
+            structure_outline(w).is_some_and(|outline| {
                 !outline.updating()
                     && outline.result().is_some_and(|result| {
                         result.nodes.iter().any(|node| node.label == "unsaved")
@@ -1069,18 +1125,27 @@ mod tests {
             std::fs::read(&file).unwrap(),
             b"mod demo { fn saved() {} }\n"
         );
-        let result = workbench.outline.as_ref().unwrap().result().unwrap();
-        let jump = StructureJump {
-            key: result.key.clone(),
-            offset: result
-                .nodes
-                .iter()
-                .find(|node| node.label == "saved")
-                .unwrap()
-                .name_range
-                .start,
+        let jump = {
+            let outline = structure_outline(&workbench).unwrap();
+            let result = outline.result().unwrap();
+            bed_plugin_structure::presentation::StructureJump {
+                key: result.key.clone(),
+                offset: result
+                    .nodes
+                    .iter()
+                    .find(|node| node.label == "saved")
+                    .unwrap()
+                    .name_range
+                    .start,
+            }
         };
-        assert!(workbench.jump_to_structure(jump).unwrap());
+        let request = bed_plugin_structure::StructurePlugin::navigation_request(
+            jump,
+            &workbench.plugins.frame.context(),
+        )
+        .unwrap();
+        workbench.plugins.requests.push(request);
+        workbench.process_plugin_requests().unwrap();
         assert_eq!(workbench.active_view(), Some(view));
         assert_eq!(workbench.active_panel_id(), Some(11));
     }
@@ -1201,6 +1266,120 @@ mod tests {
         );
         assert_eq!(workbench.session.document_for_view(view), Some(document));
         assert!(!renamed.exists());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn remote_registered_image_viewer_precedes_classifier_and_shares_bytes_with_hex() {
+        let temp = TempDir::new();
+        let file = temp.write(
+            "project/picture.PNG",
+            b"text-like payload intentionally handled by registered extension",
+        );
+        let root = std::fs::canonicalize(temp.path("project")).unwrap();
+        let file = std::fs::canonicalize(file).unwrap();
+        let mut workbench = workspace(&temp, root.to_str().unwrap());
+        workbench.open_or_focus(&file).unwrap();
+        wait(&mut workbench, |workbench| {
+            workbench.session.document_for_path(&file).is_some()
+        });
+        let document = workbench.session.document_for_path(&file).unwrap();
+        assert_eq!(
+            workbench.session.document_kind(document).unwrap(),
+            DocumentKind::Bytes
+        );
+        assert!(
+            matches!(&workbench.tabs.last().unwrap().panel, Panel::Plugin(panel) if panel.viewer.as_deref() == Some(bed_plugin_image::VIEWER_ID))
+        );
+        workbench
+            .open_file_with_viewer(&file, Some("bed.hex"), true)
+            .unwrap();
+        assert_eq!(
+            workbench
+                .tabs
+                .iter()
+                .filter(|tab| tab.panel.document() == Some(document))
+                .count(),
+            2
+        );
+        let revision = workbench.session.document_revision(document).unwrap();
+        workbench
+            .session
+            .apply_edits(
+                document,
+                revision,
+                &[bed_session::ByteEdit {
+                    range: 0..1,
+                    bytes: vec![0xff],
+                }],
+            )
+            .unwrap();
+        let bytes = workbench.session.snapshot(document).unwrap().bytes;
+        let hex = workbench
+            .tabs
+            .iter()
+            .position(|tab| matches!(tab.panel, Panel::Hex(_)))
+            .unwrap();
+        assert!(
+            workbench.close_tab(hex).unwrap(),
+            "closing a sibling view must retain the shared dirty document"
+        );
+        assert!(workbench.session.snapshot(document).unwrap().dirty);
+        let image = workbench
+            .tabs
+            .iter()
+            .position(|tab| tab.panel.document() == Some(document))
+            .unwrap();
+        assert!(
+            !workbench.close_tab(image).unwrap(),
+            "last attached panel must wait for queued SSH save"
+        );
+        wait(&mut workbench, |workbench| {
+            !workbench.session.save_pending(document)
+        });
+        assert!(workbench.close_tab(image).unwrap());
+        assert_eq!(std::fs::read(file).unwrap(), bytes);
+        assert!(workbench.session.snapshot(document).is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn remote_restore_preserves_hex_and_plugin_viewers_attached_to_one_byte_document() {
+        let temp = TempDir::new();
+        let file = temp.write("project/picture.png", b"\0\xffraw image bytes\r\n");
+        let root = std::fs::canonicalize(temp.path("project")).unwrap();
+        let file = std::fs::canonicalize(file).unwrap();
+        let mut workbench = workspace(&temp, root.to_str().unwrap());
+        let path = file.to_str().unwrap();
+        let state = json!({"panels":[
+            {"kind":"hex","id":51,"path":path,"viewer":"bed.hex","document_kind":"bytes","state":{"cursor":5,"anchor":3,"insert":true}},
+            {"kind":"plugin","id":52,"path":path,"viewer":bed_plugin_image::VIEWER_ID,"panel_type":bed_plugin_image::PANEL_ID,"document_kind":"bytes","state":{"fit":false,"zoom":2.0,"pan":[3.0,4.0]}}
+        ],"focused":51});
+        workbench.restore_workspace(&state).unwrap();
+        wait(&mut workbench, |workbench| {
+            workbench.remote_ui.restore.is_empty() && workbench.session.document_ids().len() == 1
+        });
+        let document = workbench.session.document_for_path(&file).unwrap();
+        assert_eq!(
+            workbench.session.document_kind(document).unwrap(),
+            DocumentKind::Bytes
+        );
+        assert_eq!(workbench.active_panel_id(), Some(51));
+        let hex = workbench.tabs.iter().find(|tab| tab.id == 51).unwrap();
+        let Panel::Hex(hex) = &hex.panel else {
+            panic!("hex view restored as another panel");
+        };
+        assert_eq!(hex.state(), json!({"cursor":5,"anchor":3,"insert":true}));
+        let plugin = workbench.tabs.iter().find(|tab| tab.id == 52).unwrap();
+        let Panel::Plugin(plugin) = &plugin.panel else {
+            panic!("image viewer restored as another panel");
+        };
+        assert_eq!(plugin.viewer.as_deref(), Some(bed_plugin_image::VIEWER_ID));
+        assert_eq!(plugin.instance.attached_document(), Some(document));
+        assert_eq!(plugin.instance.save_state()["zoom"], json!(2.0));
+        assert_eq!(plugin.instance.save_state()["pan"], json!([3.0, 4.0]));
+        assert_eq!(
+            workbench.session.snapshot(document).unwrap().bytes,
+            b"\0\xffraw image bytes\r\n"
+        );
     }
     #[cfg(unix)]
     #[test]

@@ -1,10 +1,6 @@
 //! Bed's standalone winit/wgpu host. Editing and document code remain
 //! independent of these backends.
-#[cfg(target_os = "macos")]
-use crate::util::macos_window::TitlebarAction;
 use crate::util::settings::Settings;
-#[cfg(target_os = "windows")]
-use crate::util::windows_window::TitlebarAction;
 use crate::workbench::{WindowCommand, Workbench, WorkbenchHostMode};
 use bed_effects::{
     shader_manager::ShaderManager, shader_types::OFFSCREEN_FORMAT,
@@ -22,6 +18,7 @@ use dear_imgui_wgpu::{
 use dear_imgui_winit::{HiDpiMode, WinitPlatform};
 use std::io;
 use std::{
+    collections::{HashMap, HashSet},
     error::Error,
     future::Future,
     io::Write,
@@ -138,6 +135,27 @@ impl SurfaceRenderer {
             Self::MainOnly(renderer) => renderer.register_external_texture(view)?,
         })
     }
+    fn update_external_texture(
+        &mut self,
+        texture: dear_imgui_wgpu::ExternalTextureId,
+        view: &wgpu::TextureView,
+    ) -> HostResult<()> {
+        match self {
+            Self::Native(route) => route.update_external_texture(texture, view)?,
+            Self::MainOnly(renderer) => renderer.update_external_texture(texture, view)?,
+        }
+        Ok(())
+    }
+    fn unregister_external_texture(
+        &mut self,
+        texture: dear_imgui_wgpu::ExternalTextureId,
+    ) -> HostResult<()> {
+        match self {
+            Self::Native(route) => route.unregister_external_texture(texture)?,
+            Self::MainOnly(renderer) => renderer.unregister_external_texture(texture)?,
+        }
+        Ok(())
+    }
     fn shutdown(&mut self, context: &mut Context) -> HostResult<()> {
         match self {
             Self::Native(route) => route.shutdown(context)?,
@@ -160,6 +178,10 @@ struct Gpu {
     reconfigure_next_frame: bool,
     effects: ShaderManager,
     image_textures: Vec<wgpu::Texture>,
+    plugin_textures: HashMap<
+        bed_plugin::TextureHandle,
+        (dear_imgui_wgpu::ExternalTextureId, wgpu::Texture, u64),
+    >,
 }
 
 impl Gpu {
@@ -258,23 +280,43 @@ impl Gpu {
             reconfigure_next_frame: false,
             effects,
             image_textures: Vec::new(),
+            plugin_textures: HashMap::new(),
         })
     }
 
     fn upload_rgba(&mut self, image: &crate::util::icons::RgbaImage) -> HostResult<TextureId> {
-        let expected = u64::from(image.width) * u64::from(image.height) * 4;
-        if image.width == 0 || image.height == 0 || expected != image.pixels.len() as u64 {
+        let texture = self.create_rgba_texture(image.width, image.height, &image.pixels)?;
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let texture_id = self.route.register_external_texture(&view)?.texture_id();
+        self.image_textures.push(texture);
+        Ok(texture_id)
+    }
+
+    fn create_rgba_texture(
+        &self,
+        width: u32,
+        height: u32,
+        pixels: &[u8],
+    ) -> HostResult<wgpu::Texture> {
+        let expected = u64::from(width) * u64::from(height) * 4;
+        let maximum = self.device.limits().max_texture_dimension_2d;
+        if width == 0
+            || height == 0
+            || expected != pixels.len() as u64
+            || width > maximum
+            || height > maximum
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "RGBA image dimensions do not match its pixels",
+                "RGBA image dimensions do not match its pixels or exceed the GPU texture limit",
             )
             .into());
         }
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Bed bundled image"),
+            label: Some("Bed RGBA image"),
             size: wgpu::Extent3d {
-                width: image.width,
-                height: image.height,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -291,18 +333,53 @@ impl Gpu {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &image.pixels,
+            pixels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(image.width * 4),
-                rows_per_image: Some(image.height),
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
             },
             texture.size(),
         );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let texture_id = self.route.register_external_texture(&view)?.texture_id();
-        self.image_textures.push(texture);
-        Ok(texture_id)
+        Ok(texture)
+    }
+
+    /// Run between frame transactions: no viewport can still refer to a removed view.
+    fn sync_plugin_textures(&mut self, workbench: &mut Workbench) -> HostResult<()> {
+        let images = workbench.plugin_texture_images();
+        let live: HashSet<_> = images.iter().map(|(handle, _, _, _)| *handle).collect();
+        let removed: Vec<_> = self
+            .plugin_textures
+            .keys()
+            .filter(|handle| !live.contains(handle))
+            .copied()
+            .collect();
+        for handle in removed {
+            if let Some((external, _, _)) = self.plugin_textures.remove(&handle) {
+                self.route.unregister_external_texture(external)?;
+            }
+        }
+        for (handle, [width, height], pixels, revision) in images {
+            if let Some((external, _, current)) = self.plugin_textures.get(&handle)
+                && *current == revision
+            {
+                workbench.set_plugin_texture(handle, external.texture_id());
+                continue;
+            }
+            let texture = self.create_rgba_texture(width, height, &pixels)?;
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let external = if let Some((external, _, _)) = self.plugin_textures.get(&handle) {
+                let external = *external;
+                self.route.update_external_texture(external, &view)?;
+                external
+            } else {
+                self.route.register_external_texture(&view)?
+            };
+            workbench.set_plugin_texture(handle, external.texture_id());
+            self.plugin_textures
+                .insert(handle, (external, texture, revision));
+        }
+        Ok(())
     }
 
     fn upload_frame_assets(&mut self, frame: &mut Workbench) -> HostResult<()> {
@@ -389,6 +466,7 @@ struct Runtime {
     #[cfg(target_os = "macos")]
     menu_smoke: Option<MenuEditSmoke>,
     viewport_smoke: Option<ViewportSmoke>,
+    plugin_smoke: Option<PluginSmoke>,
     effects_enabled_override: Option<bool>,
     started: Instant,
 }
@@ -401,9 +479,17 @@ struct RuntimeOptions {
     appearance: bool,
     native_appearance: bool,
     menu_edit: bool,
+    plugins: bool,
     viewports: bool,
     main_only: bool,
     effects_enabled_override: Option<bool>,
+}
+const PLUGIN_SMOKE_BYTES: &[u8] = &[0, 255, 13, 10, 239, 187, 191, 128, 0, 1];
+struct PluginSmoke {
+    image: PathBuf,
+    binary: PathBuf,
+    original_handle: Option<bed_plugin::TextureHandle>,
+    phase: u8,
 }
 struct AppearanceSmoke {
     original: serde_json::Value,
@@ -495,6 +581,7 @@ impl Runtime {
         context.set_ini_filename(
             if options.viewports
                 || options.menu_edit
+                || options.plugins
                 || options.lifecycle
                 || options.appearance
                 || options.native_appearance
@@ -537,7 +624,7 @@ impl Runtime {
             gpu.effect_factory.enable_capture();
         }
         #[cfg(target_os = "macos")]
-        let native_window = crate::util::macos_window::MacOsWindow::configure(
+        let mut native_window = crate::util::macos_window::MacOsWindow::configure(
             &window,
             workbench.settings.number("mac_background_opacity", 0.5),
             workbench.settings.bool("mac_blur_enabled", true),
@@ -550,7 +637,12 @@ impl Runtime {
             workbench.root_top_inset = native_window.titlebar_inset();
         }
         #[cfg(target_os = "macos")]
-        let native_menu = crate::util::macos_menu::MacOsMenu::install(&workbench.settings)?;
+        let mut native_menu = crate::util::macos_menu::MacOsMenu::install(&workbench.settings)?;
+        #[cfg(target_os = "macos")]
+        {
+            native_window.set_commands(&workbench.toolbar_commands())?;
+            native_menu.set_plugin_commands(&workbench.application_commands())?;
+        }
         gpu.upload_frame_assets(&mut workbench)?;
         #[cfg(target_os = "macos")]
         let menu_smoke = if options.menu_edit {
@@ -584,6 +676,12 @@ impl Runtime {
             document_panels_before_split: 0,
             phase: 0,
         });
+        let plugin_smoke = options.plugins.then(|| PluginSmoke {
+            image: PathBuf::from(&workbench.project_root).join("image.png"),
+            binary: PathBuf::from(&workbench.project_root).join("bytes.bin"),
+            original_handle: None,
+            phase: 0,
+        });
         Ok(Self {
             #[cfg(target_os = "macos")]
             native_menu,
@@ -611,6 +709,7 @@ impl Runtime {
             native_smoke,
             #[cfg(target_os = "macos")]
             menu_smoke,
+            plugin_smoke,
             viewport_smoke: options.viewports.then(|| ViewportSmoke {
                 phase: 0,
                 panel: None,
@@ -686,7 +785,11 @@ impl Runtime {
             if self.viewport_capture_prefix.is_some() {
                 self.gpu.effect_factory.enable_capture();
             }
+            self.workbench.invalidate_plugin_textures();
             self.gpu.upload_frame_assets(&mut self.workbench)?;
+        }
+        if let Err(error) = self.gpu.sync_plugin_textures(&mut self.workbench) {
+            self.workbench.error = Some(error.to_string());
         }
         self.workbench.apply_settings(&mut self.context)?;
         let title = self.workbench.window_title();
@@ -696,6 +799,10 @@ impl Runtime {
         #[cfg(target_os = "macos")]
         {
             self.native_window.set_title(&title);
+            self.native_window
+                .set_commands(&self.workbench.toolbar_commands())?;
+            self.native_menu
+                .set_plugin_commands(&self.workbench.application_commands())?;
             self.native_menu.update(
                 &self.workbench.settings,
                 self.workbench.active_document().is_some(),
@@ -712,8 +819,8 @@ impl Runtime {
             let background = self.workbench.settings.background_color();
             self.native_window.update_theme(text, background)?;
             self.workbench.root_top_inset = self.native_window.titlebar_inset();
-            for action in self.native_window.take_actions() {
-                self.workbench.dispatch(native_titlebar_command(action))?;
+            for id in self.native_window.take_command_ids() {
+                self.workbench.dispatch_command(&id)?;
             }
         }
         #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -724,16 +831,49 @@ impl Runtime {
         let ui = frame.ui();
         #[cfg(target_os = "windows")]
         {
-            let toolbar_actions = self.native_window.draw_titlebar(
+            let commands = self.workbench.toolbar_commands();
+            let application_commands = self.workbench.application_commands();
+            let toolbar_actions = self.native_window.draw_titlebar_commands_with_menu(
                 ui,
                 &self.workbench.settings,
                 &self.workbench.icons,
                 &title,
+                &commands,
+                &application_commands,
             );
-            for action in toolbar_actions {
-                self.workbench.dispatch(native_titlebar_command(action))?;
+            for id in toolbar_actions {
+                self.workbench.dispatch_command(&id)?;
             }
             self.workbench.root_top_inset = self.native_window.titlebar_inset();
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            let toolbar = self.workbench.toolbar_commands();
+            let application = self.workbench.application_commands();
+            let mut command_ids = Vec::new();
+            if let Some(_bar) = ui.begin_main_menu_bar() {
+                if let Some(_tools) = ui.begin_menu("Tools") {
+                    for command in &application {
+                        if ui.menu_item_enabled_selected_no_shortcut(
+                            &command.label,
+                            false,
+                            command.enabled,
+                        ) {
+                            command_ids.push(command.id.clone());
+                        }
+                    }
+                }
+                for command in &toolbar {
+                    let _id = ui.push_id(&command.id);
+                    let _disabled = ui.begin_disabled_with_cond(!command.enabled);
+                    if ui.small_button(&command.label) {
+                        command_ids.push(command.id.clone());
+                    }
+                }
+            }
+            for id in command_ids {
+                self.workbench.dispatch_command(&id)?;
+            }
         }
         let actions = self.workbench.render(ui)?;
         self.platform.prepare_render(ui, &self.window)?;
@@ -933,6 +1073,7 @@ impl Runtime {
             self.advance_menu_edit_after_frame()?;
         }
         self.advance_viewport_smoke()?;
+        self.advance_plugin_smoke()?;
         for action in actions {
             self.workbench.handle_action(action)?;
         }
@@ -1348,8 +1489,21 @@ impl Runtime {
                 match route {
                     NativeEditRoute::Ignore => {}
                     NativeEditRoute::SelectAllDocument => {
-                        self.workbench
-                            .with_active_view(|editor| editor.commands().select_all())?;
+                        if self.workbench.focused_hex() {
+                            queue_native_edit_shortcut(
+                                &mut self.context,
+                                dear_imgui_rs::Key::A,
+                                false,
+                            );
+                        } else if self
+                            .workbench
+                            .active_view()
+                            .and_then(|view| self.workbench.session.document_for_view(view))
+                            == self.workbench.active_document()
+                        {
+                            self.workbench
+                                .with_active_view(|editor| editor.commands().select_all())?;
+                        }
                     }
                     NativeEditRoute::Shortcut(key, shift) => {
                         queue_native_edit_shortcut(&mut self.context, key, shift)
@@ -1360,6 +1514,9 @@ impl Runtime {
             if let Some(command) = native_menu_command(action, dispatch.keyboard) {
                 self.workbench.dispatch(command)?;
             }
+        }
+        for id in self.native_menu.poll_plugin_commands() {
+            self.workbench.dispatch_command(&id)?;
         }
         Ok(false)
     }
@@ -1523,7 +1680,135 @@ impl Runtime {
         Ok(())
     }
 
+    fn advance_plugin_smoke(&mut self) -> HostResult<()> {
+        let Some(mut smoke) = self.plugin_smoke.take() else {
+            return Ok(());
+        };
+        let result = self.advance_plugin_fixture(&mut smoke);
+        self.plugin_smoke = Some(smoke);
+        result
+    }
+    fn advance_plugin_fixture(&mut self, smoke: &mut PluginSmoke) -> HostResult<()> {
+        if smoke.phase < 7 && self.started.elapsed() > Duration::from_secs(30) {
+            return Err(io::Error::other(format!(
+                "Plugin smoke timed out in phase {}: {:?}",
+                smoke.phase, self.workbench.error
+            ))
+            .into());
+        }
+        let images = self.workbench.plugin_texture_images();
+        match smoke.phase {
+            0 if images.len() == 1 && self.gpu.plugin_textures.len() == 1 => {
+                if self.workbench.panel_count("bed.image.panel") != 1 {
+                    return Err(
+                        io::Error::other("PNG extension did not select image plugin").into(),
+                    );
+                }
+                smoke.original_handle = Some(images[0].0);
+                #[cfg(target_os = "macos")]
+                {
+                    self.native_menu
+                        .perform_plugin_for_smoke("bed.structure.open")?;
+                    self.process_native_menu()?;
+                    if self.workbench.panel_count("structure") != 1 {
+                        return Err(io::Error::other(
+                            "Native Tools menu did not dispatch plugin command",
+                        )
+                        .into());
+                    }
+                    self.workbench.dispatch(WindowCommand::Close)?;
+                    if !self.native_window.click_command("bed.structure.open") {
+                        return Err(io::Error::other("Plugin toolbar command is missing").into());
+                    }
+                    for id in self.native_window.take_command_ids() {
+                        self.workbench.dispatch_command(&id)?;
+                    }
+                    if self.workbench.panel_count("structure") != 1 {
+                        return Err(io::Error::other(
+                            "Native toolbar did not dispatch plugin command",
+                        )
+                        .into());
+                    }
+                    self.workbench.dispatch(WindowCommand::Close)?;
+                }
+                self.workbench.open_or_focus(&smoke.binary)?;
+                smoke.phase = 1;
+            }
+            1 => {
+                let document = self
+                    .workbench
+                    .active_snapshot()
+                    .ok_or_else(|| io::Error::other("Binary fixture is not active"))?;
+                if self.workbench.panel_count("hex") != 1 || document.bytes != PLUGIN_SMOKE_BYTES {
+                    return Err(io::Error::other(
+                        "Binary fallback did not preserve exact bytes in hex editor",
+                    )
+                    .into());
+                }
+                self.workbench.open_or_focus(&smoke.image)?;
+                smoke.phase = 2;
+            }
+            2 if self.capture_path.is_none() && self.rendered_frames >= 16 => {
+                self.workbench.dispatch(WindowCommand::Close)?;
+                smoke.phase = 3;
+            }
+            3 if images.is_empty() && self.gpu.plugin_textures.is_empty() => {
+                self.workbench.open_or_focus(&smoke.image)?;
+                smoke.phase = 4;
+            }
+            4 if images.len() == 1 && self.gpu.plugin_textures.len() == 1 => {
+                if Some(images[0].0) == smoke.original_handle {
+                    return Err(
+                        io::Error::other("Closed image panel retained its texture handle").into(),
+                    );
+                }
+                *self
+                    .gpu
+                    .device_lost
+                    .lock()
+                    .map_err(|_| io::Error::other("GPU loss state poisoned"))? =
+                    Some("plugin smoke recovery fixture".into());
+                smoke.phase = 5;
+            }
+            5 => {
+                if images.len() != 1 || self.gpu.plugin_textures.len() != 1 {
+                    return Err(io::Error::other(
+                        "Plugin texture was not restored after GPU recreation",
+                    )
+                    .into());
+                }
+                self.workbench.dispatch(WindowCommand::Close)?;
+                self.workbench.open_or_focus(&smoke.binary)?;
+                self.workbench.dispatch(WindowCommand::Close)?;
+                smoke.phase = 6;
+            }
+            6 if images.is_empty() && self.gpu.plugin_textures.is_empty() => {
+                if self.workbench.panel_count("bed.image.panel") != 0
+                    || self.workbench.panel_count("hex") != 0
+                    || std::fs::read(&smoke.binary)? != PLUGIN_SMOKE_BYTES
+                {
+                    return Err(io::Error::other(
+                        "Plugin/hex close leaked a panel or changed the fixture bytes",
+                    )
+                    .into());
+                }
+                smoke.phase = 7;
+                eprintln!(
+                    "bEd: plugin smoke verified extension routing, exact-byte hex fallback, native plugin commands, texture close/reopen and GPU recovery"
+                );
+            }
+            _ => {}
+        }
+        Ok(())
+    }
     fn smoke_complete(&self, smoke_test: bool) -> bool {
+        if self
+            .plugin_smoke
+            .as_ref()
+            .is_some_and(|smoke| smoke.phase < 7)
+        {
+            return false;
+        }
         if self
             .viewport_smoke
             .as_ref()
@@ -1842,20 +2127,6 @@ fn new_instance_command(
     Ok(command)
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-fn native_titlebar_command(action: TitlebarAction) -> WindowCommand {
-    match action {
-        TitlebarAction::Sidebar => WindowCommand::NewExplorer,
-        TitlebarAction::Terminal => WindowCommand::NewTerminal,
-        TitlebarAction::Settings => WindowCommand::NewSettings,
-        TitlebarAction::Search => WindowCommand::NewContentSearch,
-        TitlebarAction::Diagnostics => WindowCommand::NewDiagnostics,
-        TitlebarAction::Structure => WindowCommand::NewStructure,
-        TitlebarAction::SplitRight => WindowCommand::SplitRight,
-        TitlebarAction::SplitDown => WindowCommand::SplitDown,
-    }
-}
-
 #[cfg(target_os = "macos")]
 fn validate_native_split(
     context: &Context,
@@ -2051,6 +2322,9 @@ pub fn run() -> HostResult<()> {
         } else if argument == "--menu-smoke" {
             options.menu_edit = true;
             smoke_test = true;
+        } else if argument == "--plugin-smoke" {
+            options.plugins = true;
+            smoke_test = true;
         } else if argument == "--config-dir" {
             config_dir =
                 Some(PathBuf::from(arguments.next().ok_or_else(|| {
@@ -2060,7 +2334,7 @@ pub fn run() -> HostResult<()> {
             resume_workspace = false;
         } else if argument == "--help" || argument == "-h" {
             println!(
-                "Usage: bed [FILE_OR_FOLDER] [--smoke-test | --lifecycle-smoke | --effects-smoke]\n           [--appearance-smoke] [--platform-smoke] [--menu-smoke] [--viewports-smoke]\n           [--main-only-smoke] [--capture-frame OUTPUT.ppm] [--capture-after-frames N]\n           [--config-dir DIRECTORY]\n\nCmd/Ctrl+O open · Cmd/Ctrl+S save · Cmd/Ctrl+F find · Cmd/Ctrl+; go to line\n--menu-smoke uses an isolated temporary document/config to verify autosave and native Undo/Redo."
+                "Usage: bed [FILE_OR_FOLDER] [--smoke-test | --lifecycle-smoke | --effects-smoke]\n           [--appearance-smoke] [--platform-smoke] [--menu-smoke] [--plugin-smoke] [--viewports-smoke]\n           [--main-only-smoke] [--capture-frame OUTPUT.ppm] [--capture-after-frames N]\n           [--config-dir DIRECTORY]\n\nCmd/Ctrl+O open · Cmd/Ctrl+S save · Cmd/Ctrl+F find · Cmd/Ctrl+; go to line\n--menu-smoke uses an isolated temporary document/config to verify autosave and native Undo/Redo."
             );
             return Ok(());
         } else {
@@ -2100,15 +2374,48 @@ pub fn run() -> HostResult<()> {
     } else {
         None
     };
+    let _plugin_fixture = if options.plugins {
+        if options.menu_edit || options.native_appearance || options.appearance || options.viewports
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Run --plugin-smoke separately from other feature smoke fixtures",
+            )
+            .into());
+        }
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("bed-plugin-smoke-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&root)?;
+        let fixture = TemporaryMenuFixture(root);
+        let image = fixture.0.join("image.png");
+        std::fs::copy(
+            Settings::get_app_resources_path().join("resources/icons/bed.png"),
+            &image,
+        )?;
+        std::fs::write(fixture.0.join("bytes.bin"), PLUGIN_SMOKE_BYTES)?;
+        paths.clear();
+        paths.push(fixture.0.clone());
+        paths.push(image);
+        if config_dir.is_none() {
+            config_dir = Some(fixture.0.join("config"));
+        }
+        Some(fixture)
+    } else {
+        None
+    };
     let settings = match config_dir {
         Some(path) => Settings::with_paths(path, Settings::get_app_resources_path())?,
         None => Settings::new()?,
     };
     let mut workbench = Workbench::with_settings(settings);
-    if paths.is_empty() && resume_workspace {
-        if let Err(error) = workbench.restore_last_workspace() {
-            workbench.error = Some(format!("Unable to restore workspace: {error}"));
-        }
+    if paths.is_empty()
+        && resume_workspace
+        && let Err(error) = workbench.restore_last_workspace()
+    {
+        workbench.error = Some(format!("Unable to restore workspace: {error}"));
     }
     for path in paths {
         if path.is_dir() {

@@ -7,7 +7,7 @@ use crate::editor::Editor;
 use bed_core::{
     editor_commands::CursorReveal,
     editor_events::{DidRequestExclusiveOverlay, EditorEvents, Overlay},
-    editor_state::EditorState,
+    editor_state::{DocumentKind, EditorState},
 };
 
 pub struct EditorApi<'a> {
@@ -26,6 +26,10 @@ impl<'a> EditorApi<'a> {
     }
 
     pub fn open_document(&mut self, path: &str, raw: &[u8]) {
+        self.open_document_with_kind(path, raw, DocumentKind::Text);
+    }
+
+    pub fn open_document_with_kind(&mut self, path: &str, raw: &[u8], kind: DocumentKind) {
         let previous = &self.editor.state.path;
         if !previous.is_empty()
             && previous != path
@@ -38,10 +42,17 @@ impl<'a> EditorApi<'a> {
                 eprintln!("Bed: LSP document close failed: {error}");
             }
         }
-        self.editor.set_content(raw);
+        self.editor.set_content_with_kind(raw, kind);
         self.editor.state.path = path.to_owned();
-        self.editor.state.language_id = EditorState::language_id_from_path(path);
+        self.editor.state.language_id = if kind == DocumentKind::Text {
+            EditorState::language_id_from_path(path)
+        } else {
+            String::new()
+        };
         self.reset_caret();
+        if kind == DocumentKind::Bytes {
+            return;
+        }
         self.editor.with_project_undo(|undo| undo.ensure_file(path));
         self.editor
             .git

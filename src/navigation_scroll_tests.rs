@@ -201,11 +201,25 @@ fn structure_navigation_animates_only_the_last_shared_document_view() {
     }
     workbench.dispatch(WindowCommand::Structure).unwrap();
     frame(&mut context, &mut workbench);
-    let jump = StructureJump {
-        key: workbench.outline_key().unwrap().unwrap(),
+    workbench.refresh_plugins().unwrap();
+    let target = workbench.plugins.frame.context().active().unwrap().clone();
+    let jump = bed_plugin_structure::presentation::StructureJump {
+        key: bed_highlight::outline::OutlineKey {
+            document: target.id,
+            generation: target.revision.0,
+            revision: target.revision.1,
+            path: target.path,
+            language_id: target.language_id,
+        },
         offset: source.find("destination").unwrap(),
     };
-    assert!(workbench.jump_to_structure(jump).unwrap());
+    let request = bed_plugin_structure::StructurePlugin::navigation_request(
+        jump,
+        &workbench.plugins.frame.context(),
+    )
+    .unwrap();
+    workbench.plugins.requests.push(request);
+    workbench.process_plugin_requests().unwrap();
     assert_eq!(workbench.active_view(), Some(second));
     assert_eq!(workbench.session.view_snapshot(second).unwrap().row, 250);
     assert_smooth_center(&mut context, &mut workbench, second, 250, 0.0);

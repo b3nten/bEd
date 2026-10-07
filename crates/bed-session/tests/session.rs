@@ -53,6 +53,48 @@ fn files_beyond_one_mib_open_edit_save_and_reload_without_synthetic_text() {
 }
 
 #[test]
+fn million_line_file_opens_edits_undoes_saves_and_reloads() {
+    let fixture = Fixture::new();
+    let line = b"A million lines to load and edit in Bed.\n";
+    let mut raw = line.repeat(1_000_000);
+    raw.pop(); // Exactly one million lines, with no trailing empty line.
+    assert!(raw.len() > 16 * 1024 * 1024);
+    let path = fixture.file("million-lines.txt", &raw);
+    let mut session = EditorSession::new();
+    let document = session.open_file(&path).unwrap();
+    let view = session.create_view(document).unwrap();
+    session
+        .with_document(document, |state| assert_eq!(state.line_count(), 1_000_000))
+        .unwrap();
+    session
+        .with_commands(view, |commands| {
+            commands.set_cursor(999_999, 0, false, CursorReveal::Ensure);
+            commands.type_text(b"edited ");
+        })
+        .unwrap();
+    session
+        .with_document(document, |state| {
+            assert_eq!(
+                state.line(999_999),
+                b"edited A million lines to load and edit in Bed."
+            );
+        })
+        .unwrap();
+    session.undo_document(document).unwrap();
+    assert_eq!(session.snapshot(document).unwrap().bytes, raw);
+    session.redo_document(document).unwrap();
+    let last_line = raw.len() - (line.len() - 1);
+    raw.splice(last_line..last_line, b"edited ".iter().copied());
+    assert!(session.save(document).unwrap());
+    assert_eq!(fs::read(&path).unwrap(), raw);
+    session.reload_from_disk(document).unwrap();
+    assert_eq!(session.snapshot(document).unwrap().bytes, raw);
+    session
+        .with_document(document, |state| assert_eq!(state.line_count(), 1_000_000))
+        .unwrap();
+}
+
+#[test]
 fn oversized_open_and_reload_leave_the_session_and_existing_buffer_intact() {
     let fixture = Fixture::new();
     let oversized = fixture.file("oversized.txt", b"");
