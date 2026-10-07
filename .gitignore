@@ -1,0 +1,13 @@
+/target/
+/reference/
+.DS_Store
+
+# Native captures, nested vendor caches, and local editor state.
+/artifacts/
+**/target/
+/imgui.ini
+/.undo-redo-bed.json
+
+# Python packaging checks.
+__pycache__/
+*.pyc

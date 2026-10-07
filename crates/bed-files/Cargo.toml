@@ -1,0 +1,17 @@
+[package]
+name = "bed-files"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license-file = "../../LICENSE"
+
+[dependencies]
+bed-core = { workspace = true }
+bed-remote = { workspace = true }
+git2 = { workspace = true }
+regex = { workspace = true }
+
+[[test]]
+name = "remote_services"
+path = "tests/remote_services.rs"
+harness = false

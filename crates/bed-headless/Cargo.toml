@@ -1,0 +1,10 @@
+[package]
+name = "bed-headless"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license-file = "../../LICENSE"
+
+[dependencies]
+bed-remote = { workspace = true }
+bed-files = { workspace = true }

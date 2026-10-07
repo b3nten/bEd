@@ -1,0 +1,99 @@
+[package]
+name = "bed"
+version = "0.1.0"
+edition = "2024"
+description = "A desktop text editor with dockable tools, SSH projects and embeddable document views"
+publish = false
+license-file = "LICENSE"
+
+[workspace]
+members = ["crates/bed-core", "crates/bed-files", "crates/bed-highlight", "crates/bed-lsp", "crates/bed-session", "crates/bed-ui", "crates/bed-terminal", "crates/bed-effects", "crates/bed-remote", "crates/bed-headless"]
+default-members = ["."]
+exclude = ["vendor/dear-imgui-sys", "vendor/dear-imgui-winit", "vendor/dear-imgui-wgpu", "vendor/freetype-sys"]
+resolver = "3"
+
+[workspace.dependencies]
+dear-imgui-rs = { version = "=0.18.0", features = ["build-from-source", "freetype"] }
+dear-imgui-sys = { version = "=0.18.0", features = ["bundled-freetype"] }
+dear-imgui-winit = { version = "=0.18.0", features = ["multi-viewport"] }
+dear-imgui-wgpu = { version = "=0.18.0", features = ["multi-viewport-winit"] }
+winit = "=0.30.13"
+wgpu = "=30.0.1"
+arboard = { version = "=3.6.1", default-features = false }
+rfd = "=0.17.2"
+serde_json = "1"
+serde = "=1.0.229"
+tree-sitter = "=0.26.13"
+regex = "=1.11.3"
+resvg = { version = "=0.48.1", default-features = false }
+git2 = { version = "=0.21.0", default-features = false, features = ["vendored-libgit2"] }
+alacritty_terminal = { version = "=0.26.0", default-features = false }
+polling = "=3.11.0"
+unicode-width = "=0.2.2"
+trash = "=5.2.9"
+
+cc = "=1.6.0"
+libc = "=0.2.190"
+windows-sys = { version = "=0.59.0", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_Threading", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+muda = { version = "=0.21.0", default-features = false }
+objc2 = "=0.6.5"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSGeometry", "NSObject", "NSThread", "NSObjCRuntime"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "AppKitDefines", "NSButton", "NSButtonCell", "NSCell", "NSColor", "NSControl", "NSEvent", "NSFont", "NSFontDescriptor", "NSGraphics", "NSGraphicsContext", "NSImage", "NSLayoutAnchor", "NSLayoutConstraint", "NSResponder", "NSStackView", "NSText", "NSTextField", "NSTitlebarAccessoryViewController", "NSUserInterfaceLayout", "NSView", "NSViewController", "NSVisualEffectView", "NSWindow", "objc2-quartz-core", "objc2-core-graphics", "objc2-core-foundation"] }
+objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer"] }
+bed-core = { path = "crates/bed-core" }
+bed-files = { path = "crates/bed-files" }
+bed-highlight = { path = "crates/bed-highlight" }
+bed-lsp = { path = "crates/bed-lsp" }
+bed-session = { path = "crates/bed-session" }
+bed-ui = { path = "crates/bed-ui" }
+bed-terminal = { path = "crates/bed-terminal" }
+bed-effects = { path = "crates/bed-effects" }
+bed-remote = { path = "crates/bed-remote" }
+
+[dependencies]
+bed-remote = { workspace = true }
+bed-core = { workspace = true }
+bed-files = { workspace = true }
+bed-highlight = { workspace = true }
+bed-lsp = { workspace = true }
+bed-session = { workspace = true }
+bed-ui = { workspace = true }
+bed-terminal = { workspace = true }
+bed-effects = { workspace = true }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+dear-imgui-winit = { workspace = true }
+dear-imgui-wgpu = { workspace = true }
+winit = { workspace = true }
+wgpu = { workspace = true }
+arboard = { workspace = true }
+rfd = { workspace = true }
+serde_json = { workspace = true }
+resvg = { workspace = true }
+trash = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { workspace = true }
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-app-kit = { workspace = true }
+objc2-quartz-core = { workspace = true }
+
+[build-dependencies]
+cc = { workspace = true }
+
+[[test]]
+name = "lsp_transport"
+path = "tests/lsp_transport.rs"
+harness = false
+
+[patch.crates-io]
+dear-imgui-sys = { path = "vendor/dear-imgui-sys" }
+dear-imgui-winit = { path = "vendor/dear-imgui-winit" }
+dear-imgui-wgpu = { path = "vendor/dear-imgui-wgpu" }

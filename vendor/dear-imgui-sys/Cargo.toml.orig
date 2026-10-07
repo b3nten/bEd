@@ -1,0 +1,87 @@
+[package]
+name = "dear-imgui-sys"
+version.workspace = true
+edition.workspace = true
+description = "Low-level FFI bindings to Dear ImGui v1.92.9b (docking branch) via cimgui (C API)"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+documentation = "https://docs.rs/dear-imgui-sys"
+categories.workspace = true
+keywords.workspace = true
+build = "build.rs"
+links = "dear-imgui"
+
+# Exclude unnecessary files to reduce package size
+exclude = [
+    # Exclude heavy upstream folders from cimgui/imgui submodule
+    "third-party/cimgui/imgui/.github/**",
+    "third-party/cimgui/imgui/docs/**",
+    "third-party/cimgui/imgui/examples/**",
+    "third-party/cimgui/imgui/misc/cpp/**",
+    "third-party/cimgui/imgui/misc/debuggers/**",
+    "third-party/cimgui/imgui/misc/fonts/**",
+    "third-party/cimgui/imgui/misc/single_file/**",
+    # cimgui helper/test/generator content not needed for building
+    "third-party/cimgui/.github/**",
+    "third-party/cimgui/backend_test/**",
+    "third-party/cimgui/generator/**",
+    "third-party/cimgui/test/**",
+]
+
+[package.metadata.dear-imgui-sources]
+cimgui-revision = "bf9b984ef74470996fc6c9a6963d9e988e310101"
+imgui-revision = "b48d1afbe8ee8b238e2961dc363a949dd7304e23"
+
+# docs.rs configuration for offline builds
+[package.metadata.docs.rs]
+no-default-features = true
+all-features = false
+features = []
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+mint.workspace = true
+flate2 = { version = "1", optional = true }
+tar = { version = "0.4", optional = true }
+glam = { workspace = true, optional = true }
+
+[build-dependencies]
+bindgen = { workspace = true, optional = true }
+cc.workspace = true
+build-support = { workspace = true, features = ["binding-spec"] }
+
+[[bin]]
+name = "package"
+path = "bin/package/main.rs"
+required-features = ["package-bin"]
+
+[features]
+default = []
+bindgen = ["dep:bindgen"]
+# Docking is always enabled; feature removed.
+# Enable multi-viewport support (commented out while WIP)
+# multi-viewport = []
+# Enable Dear ImGui test engine hooks (requires linking dear-imgui-test-engine-sys).
+# Test engine hooks alter the native core artifact and therefore require a source build.
+test-engine = ["build-from-source"]
+# Internal CI-only C++/Rust aggregate layout probe. This source-only feature is
+# intentionally not needed by normal or prebuilt consumers.
+abi-probe = ["build-from-source"]
+# Enable freetype font rasterizer
+freetype = ["pkg-config", "vcpkg"]
+pkg-config = ["build-support/pkg-config"]
+vcpkg = ["build-support/vcpkg"]
+# Enable for WASM targets
+wasm = []
+# Enable the native patched Dear ImGui artifact used by blueprint-style stack layouts.
+stack-layout = []
+package-bin = ["dep:flate2", "dep:tar"]
+prebuilt = ["build-support/download"]
+build-from-source = []
+glam = ["dep:glam"]
+backend-shim-android = []
+backend-shim-dx11 = []
+backend-shim-opengl3 = []
+backend-shim-win32 = []

@@ -1,0 +1,43 @@
+[package]
+name = "bed-terminal"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license-file = "../../LICENSES/terminal-adapter-BSL-1.1.txt"
+
+[features]
+default = ["ui"]
+ui = ["dep:dear-imgui-rs", "dep:dear-imgui-sys"]
+
+[dependencies]
+bed-remote = { workspace = true }
+dear-imgui-rs = { workspace = true, optional = true }
+dear-imgui-sys = { workspace = true, optional = true }
+alacritty_terminal = { workspace = true }
+polling = { workspace = true }
+unicode-width = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[[test]]
+name = "terminal_pty"
+path = "tests/terminal_pty.rs"
+harness = false
+
+[[test]]
+name = "terminal_input"
+path = "tests/terminal_input.rs"
+harness = false
+required-features = ["ui"]
+
+[[test]]
+name = "terminal_view"
+path = "tests/terminal_view.rs"
+required-features = ["ui"]

@@ -1,0 +1,18 @@
+//! Bed session components. Attribution: workspace LICENSE, NOTICE and UPSTREAM_REVISION.
+pub mod editor;
+pub mod editor_api;
+pub mod editor_session;
+pub mod git;
+pub mod save_service;
+pub mod view_context;
+
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../tests/support/temp_dir.rs"]
+pub(crate) mod test_support;
+
+pub use editor_session::{
+    ClosePolicy, DocumentId, DocumentSnapshot, EditorSession, ServiceError, SessionEvent,
+    SessionOptions, TickReport, ViewId, WorkspaceId,
+};
+pub use view_context::ViewContext;
