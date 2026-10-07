@@ -89,6 +89,7 @@ pub enum ContentSearchAction {
 impl ContentSearch {
     /// Search controls and results inside a caller-owned docking panel.
     pub fn draw_body(&mut self, ui: &Ui, project_root: &str) -> ContentSearchAction {
+        let _controls = crate::util::controls_style(ui);
         self.poll();
         let fs = ui.current_font_size();
         let mut action = ContentSearchAction::None;
@@ -164,6 +165,7 @@ impl ContentSearch {
         }
         let fs = ui.current_font_size();
         let size = [fs * 42.0, fs * 25.0];
+        let _controls = crate::util::controls_style(ui);
         let center = style
             .embedded_pane
             .map(|(pos, size)| [pos[0] + size[0] * 0.5, pos[1] + size[1] * 0.5])

@@ -226,6 +226,9 @@ impl LspUi {
     pub fn symbol_origin(&self) -> Option<LspRequestOrigin> {
         self.symbol_info.origin()
     }
+    pub fn symbol_popup_contains(&self, mouse: [f32; 2]) -> bool {
+        self.symbol_info.popup_contains(mouse)
+    }
     pub fn set_mouse_origin(&mut self, origin: Option<LspRequestOrigin>) {
         self.symbol_info.set_mouse_origin(origin);
     }

@@ -1,6 +1,8 @@
 //! Translated from ned files/file_tree.{h,cpp}; see LICENSE and NOTICE.
+use crate::util::tree_animation::TreeAnimation;
 use bed_files::tree_ignore::TreeIgnore;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::{collections::BTreeSet, fs, io, path::Path};
 
 /// Personal, project-scoped tree preferences. Paths use project-relative `/` components.
@@ -93,6 +95,29 @@ pub struct FileTree {
     pub preferences: FileTreePreferences,
     pub show_hidden: bool,
     pub error: Option<String>,
+    #[doc(hidden)]
+    pub animations: FileTreeAnimations,
+}
+#[derive(Default)]
+pub struct FileTreeAnimations {
+    hosts: HashMap<u32, TreeHost>,
+}
+#[derive(Default)]
+struct TreeHost {
+    motion: TreeAnimation<String>,
+    rows: HashMap<String, TreeRow>,
+    root: String,
+    preferences: FileTreePreferences,
+    show_hidden: bool,
+    last_frame: usize,
+    #[cfg(test)]
+    labels: HashMap<String, [f32; 2]>,
+}
+#[derive(Clone)]
+struct TreeRow {
+    path: Vec<usize>,
+    depth: i32,
+    hidden: bool,
 }
 impl FileTree {
     /// Update a directory from its target without probing the local filesystem.
@@ -312,6 +337,7 @@ pub struct FileTreeStyle {
     pub text_color: [f32; 4],
     pub rainbow: bool,
     pub rainbow_time: f32,
+    pub animations: bool,
 }
 impl Default for FileTreeStyle {
     fn default() -> Self {
@@ -319,6 +345,7 @@ impl Default for FileTreeStyle {
             text_color: [1.0; 4],
             rainbow: true,
             rainbow_time: 0.0,
+            animations: true,
         }
     }
 }
@@ -373,30 +400,7 @@ impl FileTree {
         icons: Option<&dyn FileIcons>,
         modified: Option<&dyn Fn(&str) -> bool>,
     ) -> Option<String> {
-        let mut actions = Vec::new();
-        let root = self.root_node.full_path.clone();
-        let visibility = Visibility {
-            root: &root,
-            preferences: &self.preferences,
-            show_hidden: self.show_hidden,
-            remote: false,
-        };
-        Self::draw_node_row(
-            &mut self.root_node,
-            0,
-            ui,
-            current_path,
-            style,
-            icons,
-            modified,
-            false,
-            true,
-            false,
-            &visibility,
-            false,
-            &mut self.error,
-            &mut actions,
-        );
+        let actions = self.draw_rows(ui, current_path, style, icons, modified, false, false);
         actions.into_iter().find_map(|action| match action {
             FileTreeAction::Open(path) => Some(path),
             _ => None,
@@ -421,7 +425,7 @@ impl FileTree {
         modified: Option<&dyn Fn(&str) -> bool>,
         remote: bool,
     ) -> Vec<FileTreeAction> {
-        let mut actions = Vec::new();
+        let mut actions = self.draw_rows(ui, current_path, style, icons, modified, true, remote);
         let root = self.root_node.full_path.clone();
         let visibility = Visibility {
             root: &root,
@@ -429,22 +433,6 @@ impl FileTree {
             show_hidden: self.show_hidden,
             remote,
         };
-        Self::draw_node_row(
-            &mut self.root_node,
-            0,
-            ui,
-            current_path,
-            style,
-            icons,
-            modified,
-            true,
-            true,
-            remote,
-            &visibility,
-            false,
-            &mut self.error,
-            &mut actions,
-        );
         // NoOpenOverItems keeps a row's menu separate from the background menu.
         // SAFETY: This call is inside the live Ui context and its matching End
         // runs synchronously without retaining an ImGui pointer.
@@ -468,6 +456,148 @@ impl FileTree {
                 }
             }
         }
+        actions
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn draw_rows(
+        &mut self,
+        ui: &Ui,
+        current_path: &str,
+        style: &FileTreeStyle,
+        icons: Option<&dyn FileIcons>,
+        modified: Option<&dyn Fn(&str) -> bool>,
+        context_menu: bool,
+        remote: bool,
+    ) -> Vec<FileTreeAction> {
+        fn collect(
+            node: &FileNode,
+            path: &mut Vec<usize>,
+            inherited_hidden: bool,
+            visibility: &Visibility<'_>,
+            rows: &mut Vec<(String, TreeRow)>,
+        ) {
+            let hidden = !path.is_empty() && (inherited_hidden || visibility.hidden(node));
+            if hidden && !visibility.show_hidden {
+                return;
+            }
+            rows.push((
+                node.full_path.clone(),
+                TreeRow {
+                    path: path.clone(),
+                    depth: path.len() as i32,
+                    hidden,
+                },
+            ));
+            if node.is_directory && node.is_open {
+                for (index, child) in node.children.iter().enumerate() {
+                    path.push(index);
+                    collect(child, path, hidden, visibility, rows);
+                    path.pop();
+                }
+            }
+        }
+        fn node_at<'a>(mut node: &'a mut FileNode, path: &[usize]) -> Option<&'a mut FileNode> {
+            for index in path {
+                node = node.children.get_mut(*index)?;
+            }
+            Some(node)
+        }
+        fn valid_row(mut node: &FileNode, path: &[usize], key: &str) -> bool {
+            for index in path {
+                let Some(child) = node.children.get(*index) else {
+                    return false;
+                };
+                node = child;
+            }
+            node.full_path == key
+        }
+        let root = self.root_node.full_path.clone();
+        let visibility = Visibility {
+            root: &root,
+            preferences: &self.preferences,
+            show_hidden: self.show_hidden,
+            remote,
+        };
+        let mut rows = Vec::new();
+        collect(
+            &self.root_node,
+            &mut Vec::new(),
+            false,
+            &visibility,
+            &mut rows,
+        );
+        let desired: Vec<_> = rows.iter().map(|(key, _)| key.clone()).collect();
+        let frame = ui.frame_count();
+        let host_id =
+            ui.with_bound_context(|| unsafe { (*dear_imgui_rs::sys::igGetCurrentWindow()).ID });
+        self.animations
+            .hosts
+            .retain(|_, host| frame <= host.last_frame.saturating_add(120));
+        let host = self.animations.hosts.entry(host_id).or_default();
+        let reset = host.root != root
+            || host.preferences != self.preferences
+            || host.show_hidden != self.show_hidden;
+        if reset {
+            host.rows.clear();
+        }
+        host.root = root.clone();
+        host.preferences = self.preferences.clone();
+        host.show_hidden = self.show_hidden;
+        host.last_frame = frame;
+        host.rows.extend(rows);
+        host.motion
+            .update(&desired, ui.time(), frame, style.animations, false, reset);
+        if host.motion.rows().len() != desired.len() {
+            host.motion.retain(|key| {
+                host.rows
+                    .get(key)
+                    .is_some_and(|row| valid_row(&self.root_node, &row.path, key))
+            });
+        }
+        let row_height = (ui.current_font_size() * 1.32 + 2.0).max(ui.current_font_size() * 1.2)
+            + ui.current_font_size() * 0.15;
+        let layout = host.motion.layout(ui, row_height);
+        let mut actions = Vec::new();
+        #[cfg(test)]
+        host.labels.clear();
+        for index in layout.visible.clone() {
+            if layout.height(index) <= 0.0 {
+                continue;
+            }
+            let key = &host.motion.rows()[index];
+            let row = &host.rows[key];
+            let motion = host.motion.sample(key);
+            let Some(node) = node_at(&mut self.root_node, &row.path) else {
+                continue;
+            };
+            ui.set_cursor_pos(layout.position(index));
+            let _clip = layout.row_clip(ui, index);
+            let _alpha =
+                ui.push_style_var(StyleVar::Alpha(ui.clone_style().alpha() * motion.alpha));
+            let _disabled_alpha = ui.push_style_var(StyleVar::DisabledAlpha(1.0));
+            let _disabled = ui.begin_disabled_with_cond(!motion.interactive);
+            Self::draw_node_row(
+                node,
+                row.depth,
+                ui,
+                current_path,
+                style,
+                icons,
+                modified,
+                context_menu,
+                row.path.is_empty(),
+                remote,
+                &visibility,
+                row.hidden,
+                &mut self.error,
+                &mut actions,
+            );
+            #[cfg(test)]
+            host.labels
+                .insert(node.full_path.clone(), ui.item_rect_min());
+        }
+        layout.finish(ui);
+        host.rows.retain(|key, _| host.motion.contains(key));
         actions
     }
     #[allow(clippy::too_many_arguments)] // Recursive upstream row painter and its action output.
@@ -500,9 +630,9 @@ impl FileTree {
         let _id = ui.push_id(node.full_path.as_str());
         let base_icon = font_size * if node.is_directory { 0.8 } else { 1.2 };
         let icon_size = base_icon * 1.1;
-        let item_height = ui.frame_height().max(icon_size + 2.0);
+        let item_height = ui.frame_height().max(font_size * 1.32 + 2.0);
         let row_origin = ui.cursor_pos();
-        let indent = depth as f32 * font_size * 0.9;
+        let indent = depth as f32 * font_size * 0.45;
         let row_pad_x = font_size * 0.2;
         let icon_text_gap = font_size * 0.35;
         let icon = icons.and_then(|icons| {
@@ -524,7 +654,12 @@ impl FileTree {
         let width = required_width.max(ui.content_region_avail()[0]);
         let clicked = {
             let _bg = ui.push_style_color(StyleColor::Button, [0.0; 4]);
-            let _hover = ui.push_style_color(StyleColor::ButtonHovered, [0.06, 0.35, 0.60, 0.85]);
+            let text = style.text_color;
+            let _hover =
+                ui.push_style_color(StyleColor::ButtonHovered, [text[0], text[1], text[2], 0.13]);
+            let _active =
+                ui.push_style_color(StyleColor::ButtonActive, [text[0], text[1], text[2], 0.20]);
+            let _border = ui.push_style_var(StyleVar::FrameBorderSize(0.0));
             let _pad = ui.push_style_var(StyleVar::FramePadding([0.0; 2]));
             ui.button_with_size(format!("##{}", node.full_path), [width, item_height])
         };
@@ -590,7 +725,16 @@ impl FileTree {
         let text_x = icon_x + icon_size + icon_text_gap;
         ui.set_cursor_pos([icon_x, center_y - icon_size * 0.5]);
         if let Some(icon) = icon {
-            ui.image(icon, [icon_size; 2]);
+            let tint = if node.is_directory
+                || icons.is_some_and(|icons| Some(icon) == icons.get("default"))
+            {
+                ui.style_color(StyleColor::Text)
+            } else {
+                [1.0; 4]
+            };
+            ui.image_config(icon, [icon_size; 2])
+                .tint_color(tint)
+                .build();
         }
         ui.set_cursor_pos([text_x, center_y - ui.text_line_height() * 0.5]);
         let color = if !node.is_directory && node.full_path == current_path && style.rainbow {
@@ -605,10 +749,12 @@ impl FileTree {
             && node.full_path != current_path
             && modified.is_some_and(|f| f(&node.full_path))
         {
-            [0.45, 0.45, 0.45, 1.0]
+            ui.style_color(StyleColor::TextDisabled)
         } else {
             style.text_color
         };
+        let color =
+            bed_core::util::color::ensure_contrast(color, ui.style_color(StyleColor::ChildBg), 4.5);
         {
             let _text = ui.push_style_color(StyleColor::Text, color);
             ui.text(&node.name);
@@ -626,26 +772,6 @@ impl FileTree {
                     }
                 }
             }
-            if node.is_open {
-                for child in &mut node.children {
-                    Self::draw_node_row(
-                        child,
-                        depth + 1,
-                        ui,
-                        current_path,
-                        style,
-                        icons,
-                        modified,
-                        context_menu,
-                        false,
-                        remote,
-                        visibility,
-                        hidden,
-                        error,
-                        actions,
-                    );
-                }
-            }
         } else if clicked {
             actions.push(FileTreeAction::Open(node.full_path.clone()));
         }
@@ -656,6 +782,162 @@ impl FileTree {
 mod tests {
     use super::*;
     use crate::files::test_support::TempDir;
+    #[test]
+    fn branch_motion_eases_height_keeps_current_hit_targets_and_reverses() {
+        use dear_imgui_rs::{Condition, Context, FramePrepareOptions, MouseButton, WindowFlags};
+        fn frame(
+            context: &mut Context,
+            tree: &mut FileTree,
+            dt: f32,
+        ) -> (Vec<FileTreeAction>, f32, bool) {
+            context.prepare_frame(FramePrepareOptions::new([400.0, 300.0], dt));
+            let ui = context.frame();
+            let mut actions = Vec::new();
+            let mut height = 0.0;
+            let mut popup = false;
+            ui.window("Animated Files")
+                .position([0.0, 0.0], Condition::Always)
+                .size([400.0, 300.0], Condition::Always)
+                .flags(WindowFlags::NO_TITLE_BAR | WindowFlags::NO_MOVE | WindowFlags::NO_RESIZE)
+                .build(|| {
+                    actions = tree.display_backend_actions(
+                        ui,
+                        "",
+                        &FileTreeStyle::default(),
+                        None,
+                        None,
+                        true,
+                    );
+                    ui.with_bound_context(|| unsafe {
+                        let window = &*dear_imgui_rs::sys::igGetCurrentWindow();
+                        height = window.DC.CursorMaxPos.y - window.DC.CursorStartPos.y;
+                        popup = (*dear_imgui_rs::sys::igGetCurrentContext())
+                            .OpenPopupStack
+                            .Size
+                            > 0;
+                    });
+                });
+            drop(context.render_legacy());
+            (actions, height, popup)
+        }
+        fn click(
+            context: &mut Context,
+            tree: &mut FileTree,
+            pos: [f32; 2],
+            button: MouseButton,
+        ) -> Vec<FileTreeAction> {
+            let mut actions = Vec::new();
+            for down in [true, false] {
+                context.io_mut().add_mouse_pos_event(pos);
+                context.io_mut().add_mouse_button_event(button, down);
+                actions.extend(frame(context, tree, 0.001).0);
+            }
+            actions
+        }
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context.style_mut().set_window_padding([0.0; 2]);
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut tree = FileTree {
+            root_node: FileNode {
+                name: "project".into(),
+                full_path: "/fixture".into(),
+                is_directory: true,
+                is_open: true,
+                children: vec![
+                    FileNode {
+                        name: "branch".into(),
+                        full_path: "/fixture/branch".into(),
+                        is_directory: true,
+                        is_open: true,
+                        children: vec![FileNode {
+                            name: "inside".into(),
+                            full_path: "/fixture/branch/inside".into(),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    },
+                    FileNode {
+                        name: "outside".into(),
+                        full_path: "/fixture/outside".into(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        frame(&mut context, &mut tree, 1.0 / 60.0);
+        let (_, expanded_height, _) = frame(&mut context, &mut tree, 1.0 / 60.0);
+        let font_size = context
+            .binding()
+            .with_bound_context(|| unsafe { dear_imgui_rs::sys::igGetFontSize() });
+        let host = tree.animations.hosts.values().next().unwrap();
+        let inside = host.labels["/fixture/branch/inside"];
+        let outside = host.labels["/fixture/outside"];
+        assert!(
+            (inside[0] - outside[0] - font_size * 0.45).abs() < 0.01,
+            "file indentation must be half the original 0.9 font sizes"
+        );
+        let branch = host.labels["/fixture/branch"];
+        let branch_click = [branch[0] + 2.0, branch[1] + font_size * 0.5];
+        assert!(click(&mut context, &mut tree, branch_click, MouseButton::Left).is_empty());
+        assert!(!tree.root_node.children[0].is_open);
+        frame(&mut context, &mut tree, 0.001);
+        let (_, halfway_height, _) = frame(&mut context, &mut tree, 0.084);
+        let pitch = expanded_height / 4.0;
+        assert!(
+            (halfway_height - pitch * 3.5).abs() < 0.1,
+            "sibling positions and scroll extent must follow the shrinking child height"
+        );
+        let host = tree.animations.hosts.values().next().unwrap();
+        let closing = host.motion.sample(&"/fixture/branch/inside".into());
+        assert!(!closing.interactive);
+        let child_pos = [inside[0] + 2.0, pitch * 2.0 + 2.0];
+        assert!(
+            click(&mut context, &mut tree, child_pos, MouseButton::Left).is_empty(),
+            "closing children cannot open files"
+        );
+        assert!(click(&mut context, &mut tree, child_pos, MouseButton::Right).is_empty());
+        assert!(
+            !frame(&mut context, &mut tree, 0.001).2,
+            "closing children cannot open context menus"
+        );
+        click(&mut context, &mut tree, branch_click, MouseButton::Left);
+        let before_reversal = tree
+            .animations
+            .hosts
+            .values()
+            .next()
+            .unwrap()
+            .motion
+            .sample(&"/fixture/branch/inside".into())
+            .height;
+        frame(&mut context, &mut tree, 0.001);
+        let after_reversal = tree
+            .animations
+            .hosts
+            .values()
+            .next()
+            .unwrap()
+            .motion
+            .sample(&"/fixture/branch/inside".into());
+        assert!(tree.root_node.children[0].is_open);
+        assert!(after_reversal.interactive);
+        assert!(
+            (before_reversal - after_reversal.height).abs() < 0.02,
+            "reopening must continue from the current row height"
+        );
+        let (_, settled_height, _) = frame(&mut context, &mut tree, 0.2);
+        assert!((settled_height - expanded_height).abs() < 0.01);
+    }
     #[test]
     fn local_tree_refresh_updates_ignore_metadata_and_reveals_ignored_folders() {
         let temp = TempDir::new();

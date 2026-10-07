@@ -266,7 +266,7 @@ const LANGS: &[(&[&str], LanguageFn, &str)] = &[
     ),
     (&["rb"], tree_sitter_ruby::LANGUAGE.into_raw(), "rb.scm"),
 ];
-fn detect_language(id: &str) -> Option<(*const ffi::TSLanguage, &'static str)> {
+pub(crate) fn detect_language(id: &str) -> Option<(*const ffi::TSLanguage, &'static str)> {
     let id = id.strip_prefix('.').unwrap_or(id);
     LANGS
         .iter()

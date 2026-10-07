@@ -32,6 +32,68 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn files_beyond_one_mib_open_edit_save_and_reload_without_synthetic_text() {
+    let fixture = Fixture::new();
+    let mut raw = b"\xef\xbb\xbfheader\r\n".to_vec();
+    raw.resize(2 * 1024 * 1024, b'a');
+    let path = fixture.file("large.txt", &raw);
+    let mut session = EditorSession::new();
+    let document = session.open_file(&path).unwrap();
+    let view = session.create_view(document).unwrap();
+    assert_eq!(session.snapshot(document).unwrap().bytes, &raw[3..]);
+    session
+        .with_commands(view, |commands| commands.type_text(b"edited "))
+        .unwrap();
+    assert!(session.save(document).unwrap());
+    let saved = fs::read(&path).unwrap();
+    assert!(saved.starts_with(b"\xef\xbb\xbfedited header\r\n"));
+    assert_eq!(saved.len(), raw.len() + 7);
+    session.reload_from_disk(document).unwrap();
+    assert_eq!(session.snapshot(document).unwrap().bytes, &saved[3..]);
+}
+
+#[test]
+fn oversized_open_and_reload_leave_the_session_and_existing_buffer_intact() {
+    let fixture = Fixture::new();
+    let oversized = fixture.file("oversized.txt", b"");
+    fs::File::options()
+        .write(true)
+        .open(&oversized)
+        .unwrap()
+        .set_len(bed_files::files::MAX_FILE_SIZE as u64 + 1)
+        .unwrap();
+    let mut session = EditorSession::new();
+    let path = fixture.file("preserved.txt", b"preserved");
+    let document = session.open_file(&path).unwrap();
+    let before = session.snapshot(document).unwrap();
+    let error = session.open_file(&oversized).unwrap_err();
+    assert!(error.to_string().contains("oversized.txt"));
+    assert_eq!(session.document_ids(), vec![document]);
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(bed_files::files::MAX_FILE_SIZE as u64 + 1)
+        .unwrap();
+    assert!(session.reload_from_disk(document).is_err());
+    let after = session.snapshot(document).unwrap();
+    assert_eq!(after.bytes, before.bytes);
+    assert_eq!(after.generation, before.generation);
+    assert_eq!(after.dirty, before.dirty);
+    assert_eq!(after.path, before.path);
+    assert!(after.disk_conflict.is_some());
+    let view = session.create_view(document).unwrap();
+    session
+        .with_commands(view, |commands| commands.type_text(b"local "))
+        .unwrap();
+    assert!(session.save(document).is_err());
+    assert_eq!(
+        fs::metadata(&path).unwrap().len(),
+        bed_files::files::MAX_FILE_SIZE as u64 + 1
+    );
+}
+
+#[test]
 fn utf8_crlf_splices_transform_sibling_selection_and_undo_without_scroll_changes() {
     let mut session = EditorSession::new();
     let doc = session

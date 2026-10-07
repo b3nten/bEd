@@ -237,8 +237,13 @@ impl Icons {
                 continue;
             };
             match load_svg(&path) {
-                Ok(image) => {
+                Ok(mut image) => {
                     let key = file.split('.').next().unwrap_or(file);
+                    if monochrome_icon(key) {
+                        for pixel in image.pixels.as_chunks_mut::<4>().0 {
+                            pixel[..3].fill(255);
+                        }
+                    }
                     icons.images.insert(key.to_owned(), image);
                 }
                 Err(error) => eprintln!("Error loading SVG {}: {error}", path.display()),
@@ -266,6 +271,33 @@ impl Icons {
     pub fn get_for_file(&self, filename: &str) -> Option<TextureId> {
         self.get(icon_key_for_file(filename))
     }
+    pub fn file_icon_tint(&self, filename: &str, text: [f32; 4]) -> [f32; 4] {
+        if self.get_for_file(filename) == self.get("default") {
+            text
+        } else {
+            [1.0; 4]
+        }
+    }
+}
+fn monochrome_icon(key: &str) -> bool {
+    matches!(
+        key,
+        "default"
+            | "terminal"
+            | "terminal-hover"
+            | "edit"
+            | "edit-hover"
+            | "brain"
+            | "close"
+            | "gear"
+            | "gear-hover"
+            | "folder"
+            | "folder-open"
+            | "search"
+            | "settings"
+            | "code-search"
+            | "new-file"
+    )
 }
 impl FileIcons for Icons {
     fn get(&self, name: &str) -> Option<TextureId> {
@@ -380,5 +412,26 @@ mod tests {
             );
             assert!(image.pixels.as_chunks::<4>().0.iter().any(|p| p[3] != 0));
         }
+        for key in [
+            "close",
+            "gear",
+            "folder",
+            "folder-open",
+            "search",
+            "default",
+        ] {
+            assert!(
+                icons.images[key]
+                    .pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|pixel| pixel[..3] == [255; 3])
+            );
+        }
+        assert_eq!(
+            icons.images["rs"],
+            load_svg(&root.join("resources/icons/rs.svg")).unwrap()
+        );
     }
 }

@@ -185,7 +185,7 @@ impl Gpu {
         let size = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
-            .ok_or_else(|| io::Error::other("GPU cannot present to the Bed window"))?;
+            .ok_or_else(|| io::Error::other("GPU cannot present to the bEd window"))?;
         let capabilities = surface.get_capabilities(&adapter);
         if let Some(format) = capabilities
             .formats
@@ -238,7 +238,7 @@ impl Gpu {
             return Err(io::Error::other(error.to_string()).into());
         }
         eprintln!(
-            "Bed: renderer ready ({:?}, {:?}, {}×{}, scale {})",
+            "bEd: renderer ready ({:?}, {:?}, {}×{}, scale {})",
             adapter.get_info().backend,
             config.format,
             size.width,
@@ -347,7 +347,7 @@ impl Gpu {
                 Ok(None)
             }
             wgpu::CurrentSurfaceTexture::Lost => {
-                eprintln!("Bed: recreating lost window surface");
+                eprintln!("bEd: recreating lost window surface");
                 self.surface = self.instance.create_surface(Arc::clone(window))?;
                 self.resize(window.inner_size());
                 Ok(None)
@@ -366,6 +366,8 @@ struct Runtime {
     native_window: crate::util::macos_window::MacOsWindow,
     #[cfg(target_os = "windows")]
     native_window: crate::util::windows_window::WindowsWindow,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    viewport_themes: std::collections::HashMap<WindowId, ([f32; 4], [f32; 4])>,
     window: Arc<Window>,
     gpu: Gpu,
     platform: WinitPlatform,
@@ -411,7 +413,7 @@ struct AppearanceSmoke {
 struct NativeAppearanceSmoke {
     opacity: serde_json::Value,
     blur: serde_json::Value,
-    panel_counts: [usize; 5],
+    panel_counts: [usize; 6],
     document_path: Option<String>,
     split_source_panel: Option<u64>,
     document_panels_before_split: usize,
@@ -422,6 +424,7 @@ struct MenuEditSmoke {
     original: Vec<u8>,
     edited: Vec<u8>,
     keyboard_save_received: bool,
+    instances: Vec<std::process::Child>,
     phase: u8,
 }
 struct ViewportSmoke {
@@ -472,7 +475,7 @@ impl Runtime {
         options: RuntimeOptions,
     ) -> HostResult<Self> {
         let attributes = Window::default_attributes()
-            .with_title("Bed")
+            .with_title(workbench.window_title())
             .with_inner_size(LogicalSize::new(1200.0, 800.0));
         #[cfg(target_os = "macos")]
         let attributes = {
@@ -521,7 +524,7 @@ impl Runtime {
                 return Err(io::Error::new(io::ErrorKind::Unsupported,"Detached native windows require X11/XWayland; this Wayland session supports internal docking and floating panels").into());
             }
             eprintln!(
-                "Bed: using internal docking/floating panels; native detached windows disabled for this platform/test"
+                "bEd: using internal docking/floating panels; native detached windows disabled for this platform/test"
             );
         }
         window.set_ime_allowed(true);
@@ -561,6 +564,7 @@ impl Runtime {
                 original,
                 edited,
                 keyboard_save_received: false,
+                instances: Vec::new(),
                 phase: 0,
             })
         } else {
@@ -574,7 +578,7 @@ impl Runtime {
         let native_smoke = options.native_appearance.then(|| NativeAppearanceSmoke {
             opacity: workbench.settings.settings["mac_background_opacity"].clone(),
             blur: workbench.settings.settings["mac_blur_enabled"].clone(),
-            panel_counts: [0; 5],
+            panel_counts: [0; 6],
             document_path: workbench.active_snapshot().map(|document| document.path),
             split_source_panel: None,
             document_panels_before_split: 0,
@@ -585,6 +589,8 @@ impl Runtime {
             native_menu,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_window,
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            viewport_themes: Default::default(),
             window,
             gpu,
             platform,
@@ -630,6 +636,39 @@ impl Runtime {
             }])
         }
     }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn update_viewport_themes(&mut self) -> HostResult<()> {
+        let windows = self.windows()?;
+        self.viewport_themes.retain(|id, _| {
+            windows
+                .iter()
+                .any(|viewport| !viewport.is_main && viewport.window.id() == *id)
+        });
+        let theme = (
+            self.workbench.settings.text_color(),
+            self.workbench.settings.background_color(),
+        );
+        for viewport in windows.into_iter().filter(|viewport| !viewport.is_main) {
+            let id = viewport.window.id();
+            if self.viewport_themes.get(&id) == Some(&theme) {
+                continue;
+            }
+            #[cfg(target_os = "macos")]
+            crate::util::macos_window::MacOsWindow::apply_theme_to_window(
+                &viewport.window,
+                theme.0,
+                theme.1,
+            )?;
+            #[cfg(target_os = "windows")]
+            crate::util::windows_window::WindowsWindow::apply_theme_to_window(
+                &viewport.window,
+                theme.0,
+                theme.1,
+            )?;
+            self.viewport_themes.insert(id, theme);
+        }
+        Ok(())
+    }
     fn redraw(&mut self, event_loop: &ActiveEventLoop) -> HostResult<bool> {
         if let Err(error) = self.workbench.tick() {
             self.workbench.error = Some(error.to_string());
@@ -641,7 +680,7 @@ impl Runtime {
             .ok()
             .and_then(|mut slot| slot.take());
         if let Some(message) = lost {
-            eprintln!("Bed: recreating GPU after device loss: {message}");
+            eprintln!("bEd: recreating GPU after device loss: {message}");
             self.gpu.route.shutdown(&mut self.context)?;
             self.gpu = Gpu::new(Arc::clone(&self.window), &mut self.context, &self.platform)?;
             if self.viewport_capture_prefix.is_some() {
@@ -650,8 +689,13 @@ impl Runtime {
             self.gpu.upload_frame_assets(&mut self.workbench)?;
         }
         self.workbench.apply_settings(&mut self.context)?;
+        let title = self.workbench.window_title();
+        if self.window.title() != title {
+            self.window.set_title(&title);
+        }
         #[cfg(target_os = "macos")]
         {
+            self.native_window.set_title(&title);
             self.native_menu.update(
                 &self.workbench.settings,
                 self.workbench.active_document().is_some(),
@@ -664,11 +708,16 @@ impl Runtime {
                     .number("mac_background_opacity", 0.5),
                 self.workbench.settings.bool("mac_blur_enabled", true),
             )?;
+            let text = self.workbench.settings.text_color();
+            let background = self.workbench.settings.background_color();
+            self.native_window.update_theme(text, background)?;
             self.workbench.root_top_inset = self.native_window.titlebar_inset();
             for action in self.native_window.take_actions() {
                 self.workbench.dispatch(native_titlebar_command(action))?;
             }
         }
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        self.update_viewport_themes()?;
         self.platform
             .prepare_frame(&mut self.context, &self.window)?;
         let frame = self.context.begin_frame();
@@ -679,6 +728,7 @@ impl Runtime {
                 ui,
                 &self.workbench.settings,
                 &self.workbench.icons,
+                &title,
             );
             for action in toolbar_actions {
                 self.workbench.dispatch(native_titlebar_command(action))?;
@@ -731,7 +781,7 @@ impl Runtime {
                     capture.format,
                 )?;
                 eprintln!(
-                    "Bed: captured secondary final CRT output {}×{} to {}",
+                    "bEd: captured secondary final CRT output {}×{} to {}",
                     capture.width,
                     capture.height,
                     path.display()
@@ -862,7 +912,7 @@ impl Runtime {
                 buffer.unmap();
                 self.capture_completed = true;
                 eprintln!(
-                    "Bed: captured {}×{} GPU frame to {}",
+                    "bEd: captured {}×{} GPU frame to {}",
                     extent.width,
                     extent.height,
                     path.display()
@@ -886,22 +936,6 @@ impl Runtime {
         for action in actions {
             self.workbench.handle_action(action)?;
         }
-        let title = self
-            .workbench
-            .active_snapshot()
-            .map(|doc| {
-                format!(
-                    "{}{} — Bed",
-                    if doc.path.is_empty() {
-                        "Untitled"
-                    } else {
-                        &doc.path
-                    },
-                    if doc.dirty { " •" } else { "" }
-                )
-            })
-            .unwrap_or_else(|| "Bed".into());
-        self.window.set_title(&title);
         Ok(true)
     }
     fn advance_appearance(&mut self) -> HostResult<()> {
@@ -932,7 +966,7 @@ impl Runtime {
                 settings.settings = smoke.original.clone();
                 settings.request_apply();
                 smoke.phase = 3;
-                eprintln!("Bed: appearance smoke restored font/profile settings");
+                eprintln!("bEd: appearance smoke restored font/profile settings");
             }
             _ => {}
         }
@@ -960,8 +994,15 @@ impl Runtime {
                         io::Error::other("native menu Find did not target active view").into(),
                     );
                 }
-                smoke.panel_counts = ["explorer", "terminal", "settings", "search", "diagnostics"]
-                    .map(|kind| self.workbench.panel_count(kind));
+                smoke.panel_counts = [
+                    "explorer",
+                    "terminal",
+                    "settings",
+                    "search",
+                    "diagnostics",
+                    "structure",
+                ]
+                .map(|kind| self.workbench.panel_count(kind));
                 for _ in 0..2 {
                     for action in [
                         TitlebarAction::Sidebar,
@@ -969,6 +1010,7 @@ impl Runtime {
                         TitlebarAction::Settings,
                         TitlebarAction::Search,
                         TitlebarAction::Diagnostics,
+                        TitlebarAction::Structure,
                     ] {
                         self.native_window.click_control(action);
                     }
@@ -991,9 +1033,16 @@ impl Runtime {
                 }
                 self.workbench.settings.settings["mac_background_opacity"] = smoke.opacity.clone();
                 self.workbench.settings.settings["mac_blur_enabled"] = smoke.blur.clone();
-                for (kind, before) in ["explorer", "terminal", "settings", "search", "diagnostics"]
-                    .into_iter()
-                    .zip(smoke.panel_counts)
+                for (kind, before) in [
+                    "explorer",
+                    "terminal",
+                    "settings",
+                    "search",
+                    "diagnostics",
+                    "structure",
+                ]
+                .into_iter()
+                .zip(smoke.panel_counts)
                 {
                     if self.workbench.panel_count(kind) != before + 2 {
                         return Err(io::Error::other(format!(
@@ -1008,15 +1057,23 @@ impl Runtime {
                     crate::util::macos_menu::MenuAction::NewSettings,
                     crate::util::macos_menu::MenuAction::NewContentSearch,
                     crate::util::macos_menu::MenuAction::NewDiagnostics,
+                    crate::util::macos_menu::MenuAction::NewStructure,
                 ] {
                     self.native_menu.perform_for_smoke(action)?;
                 }
                 smoke.phase = 3;
             }
             (3, 8..) => {
-                for (kind, before) in ["explorer", "terminal", "settings", "search", "diagnostics"]
-                    .into_iter()
-                    .zip(smoke.panel_counts)
+                for (kind, before) in [
+                    "explorer",
+                    "terminal",
+                    "settings",
+                    "search",
+                    "diagnostics",
+                    "structure",
+                ]
+                .into_iter()
+                .zip(smoke.panel_counts)
                 {
                     if self.workbench.panel_count(kind) != before + 3 {
                         return Err(io::Error::other(format!(
@@ -1066,7 +1123,7 @@ impl Runtime {
                     .into());
                 }
                 eprintln!(
-                    "Bed: native menu/titlebar/material smoke passed; five tools created three panels each, both split controls created distinct document panes; toolbar frames {:?}",
+                    "bEd: native menu/titlebar/material smoke passed; six tools created three panels each, both split controls created distinct document panes; toolbar frames {:?}",
                     self.native_window.control_frames()
                 );
                 smoke.phase = 6;
@@ -1081,7 +1138,7 @@ impl Runtime {
         let Some(smoke) = &mut self.menu_smoke else {
             return Ok(());
         };
-        if smoke.phase < 7 && self.started.elapsed() > Duration::from_secs(20) {
+        if smoke.phase < 11 && self.started.elapsed() > Duration::from_secs(30) {
             return Err(io::Error::other(format!(
                 "native menu smoke timed out in phase {}",
                 smoke.phase
@@ -1156,22 +1213,75 @@ impl Runtime {
                 smoke.phase = 5;
             }
             (5, 12..) => {
-                self.native_menu.key_equivalent_for_smoke("s", 1)?;
+                self.native_menu.key_equivalent_for_smoke("s", 1, false)?;
                 smoke.phase = 6;
             }
             (6, 14..) => {
+                let cursor_visible = self
+                    .workbench
+                    .with_active_view(|editor| {
+                        !editor.view.block_input && !editor.view.selections.is_empty()
+                    })?
+                    .unwrap_or(false);
                 if !smoke.keyboard_save_received
                     || snapshot.bytes != smoke.edited
                     || std::fs::read(&snapshot.path)? != smoke.edited
+                    || !cursor_visible
                 {
                     return Err(io::Error::other(
-                        "native Cmd+S did not save active document exactly once",
+                        "native Cmd+S did not save the active document and preserve cursor focus",
                     )
                     .into());
                 }
                 smoke.phase = 7;
                 eprintln!(
-                    "Bed: native menu typing/autosave/Undo/Redo/keyboard Save passed for the active shared document"
+                    "bEd: native menu typing/autosave/Undo/Redo/keyboard Save passed for the active shared document"
+                );
+            }
+            (7, 16..) => {
+                // Exercise the keyboard while this app still has focus; child
+                // processes may become the active application when they launch.
+                self.native_menu.key_equivalent_for_smoke("n", 45, true)?;
+                smoke.phase = 8;
+            }
+            (8, 18..) => {
+                if smoke.instances.is_empty() {
+                    return Ok(());
+                }
+                self.native_menu.perform_for_smoke(MenuAction::NewWindow)?;
+                smoke.phase = 9;
+            }
+            (9, 20..) => {
+                if smoke.instances.len() < 2 {
+                    return Ok(());
+                }
+                self.native_menu.perform_dock_new_window_for_smoke()?;
+                smoke.phase = 10;
+            }
+            (10, 22..) => {
+                if smoke.instances.len() < 3 {
+                    return Ok(());
+                }
+                if smoke.instances.len() != 3 {
+                    return Err(io::Error::other(
+                        "File, Dock and shortcut actions must each launch one instance",
+                    )
+                    .into());
+                }
+                for child in &mut smoke.instances {
+                    match child.try_wait()? {
+                        Some(status) if status.success() => {}
+                        Some(status) => {
+                            return Err(
+                                io::Error::other(format!("new instance failed: {status}")).into()
+                            );
+                        }
+                        None => return Ok(()),
+                    }
+                }
+                smoke.phase = 11;
+                eprintln!(
+                    "bEd: File, Dock and Cmd+Shift+N launched separate instances and all exited cleanly"
                 );
             }
             _ => {}
@@ -1190,6 +1300,27 @@ impl Runtime {
             let action = dispatch.action;
             if action == MenuAction::Quit {
                 return Ok(true);
+            }
+            if action == MenuAction::NewWindow {
+                let mut command = new_instance_command(
+                    &std::env::current_exe()?,
+                    &self.workbench.settings.config_dir,
+                    self.menu_smoke.is_some(),
+                )?;
+                if self.menu_smoke.is_some() {
+                    command.arg("--main-only-smoke");
+                }
+                let mut child = command.spawn()?;
+                if let Some(smoke) = &mut self.menu_smoke {
+                    smoke.instances.push(child);
+                } else {
+                    std::thread::Builder::new()
+                        .name("bed-instance-wait".into())
+                        .spawn(move || {
+                            let _ = child.wait();
+                        })?;
+                }
+                continue;
             }
             if matches!(action, MenuAction::Save | MenuAction::SaveAs)
                 && dispatch.keyboard
@@ -1266,12 +1397,12 @@ impl Runtime {
                 );
                 smoke.panel = Some(panel);
                 smoke.phase = 1;
-                eprintln!("Bed: viewport smoke detached shared view panel {panel}");
+                eprintln!("bEd: viewport smoke detached shared view panel {panel}");
             }
             (1, 6..) => {
                 if let Some(secondary) = windows.iter().find(|window| !window.is_main) {
                     eprintln!(
-                        "Bed: viewport smoke found native secondary {}",
+                        "bEd: viewport smoke found native secondary {}",
                         secondary.viewport_id
                     );
                     secondary.window.set_ime_allowed(true);
@@ -1299,7 +1430,7 @@ impl Runtime {
                 self.window.focus_window();
                 smoke.phase = 3;
                 eprintln!(
-                    "Bed: independent secondary CRT presentation continued while main minimized"
+                    "bEd: independent secondary CRT presentation continued while main minimized"
                 );
             }
             (3, 12..) => {
@@ -1316,7 +1447,7 @@ impl Runtime {
                 }
                 smoke.phase = 4;
                 eprintln!(
-                    "Bed: detached native window resize/focus/minimize/group-close smoke passed"
+                    "bEd: detached native window resize/focus/minimize/group-close smoke passed"
                 );
             }
             _ => {}
@@ -1335,7 +1466,7 @@ impl Runtime {
                 life.phase = LifecyclePhase::Resizing;
                 let _ = self.window.request_inner_size(target);
                 eprintln!(
-                    "Bed: lifecycle requesting native resize to {}×{}",
+                    "bEd: lifecycle requesting native resize to {}×{}",
                     life.target.width, life.target.height
                 );
             }
@@ -1350,7 +1481,7 @@ impl Runtime {
                 life.frames_at_transition = self.rendered_frames;
                 self.window.set_minimized(true);
                 eprintln!(
-                    "Bed: lifecycle requesting native minimize; zero-size configure guard passed"
+                    "bEd: lifecycle requesting native minimize; zero-size configure guard passed"
                 );
             }
             LifecyclePhase::Restoring
@@ -1360,7 +1491,7 @@ impl Runtime {
             {
                 life.phase = LifecyclePhase::Complete;
                 eprintln!(
-                    "Bed: lifecycle native resize, minimize, restore, focus and redraw passed"
+                    "bEd: lifecycle native resize, minimize, restore, focus and redraw passed"
                 );
             }
             _ => {}
@@ -1385,7 +1516,7 @@ impl Runtime {
                 life.phase = LifecyclePhase::Restoring;
                 life.frames_at_transition = self.rendered_frames;
                 eprintln!(
-                    "Bed: lifecycle observed native minimized state and focus loss; restoring"
+                    "bEd: lifecycle observed native minimized state and focus loss; restoring"
                 );
             }
         }
@@ -1404,7 +1535,7 @@ impl Runtime {
         if self
             .menu_smoke
             .as_ref()
-            .is_some_and(|smoke| smoke.phase < 7)
+            .is_some_and(|smoke| smoke.phase < 11)
         {
             return false;
         }
@@ -1575,7 +1706,7 @@ impl ApplicationHandler for Bed {
                 match runtime.redraw(event_loop) {
                     Ok(_) if runtime.smoke_complete(self.smoke_test) => {
                         eprintln!(
-                            "Bed: smoke test rendered {} frames / {} secondary presentations; closing cleanly",
+                            "bEd: smoke test rendered {} frames / {} secondary presentations; closing cleanly",
                             runtime.rendered_frames, runtime.secondary_presentations
                         );
                         self.closing = true;
@@ -1668,6 +1799,49 @@ impl ApplicationHandler for Bed {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn new_instance_command(
+    executable: &Path,
+    config_dir: &Path,
+    wait: bool,
+) -> io::Result<std::process::Command> {
+    let config_dir = std::fs::canonicalize(config_dir)?;
+    // Launch Services needs -n to start another process for a running bundle.
+    // Source builds run the executable directly. Neither path inherits the
+    // parent's project arguments or smoke flags.
+    let bundle = executable
+        .parent()
+        .filter(|path| path.file_name().is_some_and(|name| name == "MacOS"))
+        .and_then(Path::parent)
+        .filter(|path| path.file_name().is_some_and(|name| name == "Contents"))
+        .and_then(Path::parent)
+        .filter(|path| path.extension().is_some_and(|extension| extension == "app"));
+    let mut command = if let Some(bundle) = bundle {
+        let mut command = std::process::Command::new("/usr/bin/open");
+        command.arg("-n");
+        if wait {
+            command.arg("-W");
+        }
+        command.arg(bundle).arg("--args");
+        command
+    } else {
+        std::process::Command::new(executable)
+    };
+    command
+        .arg("--new-window")
+        .arg("--config-dir")
+        .arg(config_dir)
+        .stdin(std::process::Stdio::null());
+    use std::os::unix::process::CommandExt;
+    command.process_group(0);
+    if !wait {
+        command
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+    }
+    Ok(command)
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn native_titlebar_command(action: TitlebarAction) -> WindowCommand {
     match action {
@@ -1676,6 +1850,7 @@ fn native_titlebar_command(action: TitlebarAction) -> WindowCommand {
         TitlebarAction::Settings => WindowCommand::NewSettings,
         TitlebarAction::Search => WindowCommand::NewContentSearch,
         TitlebarAction::Diagnostics => WindowCommand::NewDiagnostics,
+        TitlebarAction::Structure => WindowCommand::NewStructure,
         TitlebarAction::SplitRight => WindowCommand::SplitRight,
         TitlebarAction::SplitDown => WindowCommand::SplitDown,
     }
@@ -1743,6 +1918,7 @@ fn native_menu_command(
         MenuAction::NewSettings => WindowCommand::NewSettings,
         MenuAction::NewProjects | MenuAction::Projects => WindowCommand::NewProjects,
         MenuAction::NewDiagnostics | MenuAction::Diagnostics => WindowCommand::NewDiagnostics,
+        MenuAction::Structure | MenuAction::NewStructure => WindowCommand::NewStructure,
         MenuAction::NewReferences => WindowCommand::NewReferences,
         MenuAction::NewLspDashboard | MenuAction::LspDashboard => WindowCommand::NewLspDashboard,
         MenuAction::NewContentSearch => WindowCommand::NewContentSearch,
@@ -1830,6 +2006,7 @@ fn queue_native_edit_shortcut(context: &mut Context, key: dear_imgui_rs::Key, sh
 
 pub fn run() -> HostResult<()> {
     let mut paths = Vec::new();
+    let mut resume_workspace = true;
     let mut smoke_test = false;
     let mut options = RuntimeOptions::default();
     let mut config_dir = None;
@@ -1879,6 +2056,8 @@ pub fn run() -> HostResult<()> {
                 Some(PathBuf::from(arguments.next().ok_or_else(|| {
                     io::Error::other("--config-dir requires a directory")
                 })?));
+        } else if argument == "--new-window" {
+            resume_workspace = false;
         } else if argument == "--help" || argument == "-h" {
             println!(
                 "Usage: bed [FILE_OR_FOLDER] [--smoke-test | --lifecycle-smoke | --effects-smoke]\n           [--appearance-smoke] [--platform-smoke] [--menu-smoke] [--viewports-smoke]\n           [--main-only-smoke] [--capture-frame OUTPUT.ppm] [--capture-after-frames N]\n           [--config-dir DIRECTORY]\n\nCmd/Ctrl+O open · Cmd/Ctrl+S save · Cmd/Ctrl+F find · Cmd/Ctrl+; go to line\n--menu-smoke uses an isolated temporary document/config to verify autosave and native Undo/Redo."
@@ -1926,6 +2105,11 @@ pub fn run() -> HostResult<()> {
         None => Settings::new()?,
     };
     let mut workbench = Workbench::with_settings(settings);
+    if paths.is_empty() && resume_workspace {
+        if let Err(error) = workbench.restore_last_workspace() {
+            workbench.error = Some(format!("Unable to restore workspace: {error}"));
+        }
+    }
     for path in paths {
         if path.is_dir() {
             workbench.set_project(&path)?;
@@ -2212,6 +2396,8 @@ mod tests {
             (MenuAction::NewSettings, WindowCommand::NewSettings),
             (MenuAction::Projects, WindowCommand::NewProjects),
             (MenuAction::Diagnostics, WindowCommand::NewDiagnostics),
+            (MenuAction::Structure, WindowCommand::NewStructure),
+            (MenuAction::NewStructure, WindowCommand::NewStructure),
             (MenuAction::NewReferences, WindowCommand::NewReferences),
             (MenuAction::LspDashboard, WindowCommand::NewLspDashboard),
         ] {

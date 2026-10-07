@@ -18,6 +18,7 @@ use alacritty_terminal::{
         Mode, NamedColor, PrivateMode, Processor, Rgb, StandardCharset, TabulationClearMode,
     },
 };
+use bed_core::util::color::{blend, ensure_contrast};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::OnceLock};
 use unicode_width::UnicodeWidthChar;
 
@@ -33,6 +34,60 @@ pub const ATTR_WRAP: u16 = 1 << 8;
 pub const ATTR_WIDE: u16 = 1 << 9;
 pub const ATTR_WDUMMY: u16 = 1 << 10;
 const BLINK_FLAG: Flags = Flags::from_bits_retain(1 << 15);
+const DEFAULT_FOREGROUND: usize = 258;
+const DEFAULT_BACKGROUND: usize = 259;
+
+/// Host colors for the terminal's theme-managed defaults and ANSI palette.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerminalTheme {
+    background: [f32; 4],
+    foreground: [f32; 4],
+    ansi: [[f32; 4]; 16],
+}
+
+impl TerminalTheme {
+    pub fn new(background: [f32; 4], foreground: [f32; 4], ansi: [[f32; 4]; 16]) -> Self {
+        Self {
+            background,
+            foreground,
+            ansi,
+        }
+    }
+
+    fn palette(&self) -> [[u8; 3]; 260] {
+        let mut palette = default_palette();
+        let background = [
+            self.background[0],
+            self.background[1],
+            self.background[2],
+            1.0,
+        ];
+        // Leave a small margin for quantization to the terminal's RGB8 palette.
+        let readable = |color| rgb8(ensure_contrast(color, background, 4.6), background);
+        for (index, color) in self.ansi.into_iter().enumerate() {
+            palette[index] = readable(color);
+        }
+        palette[DEFAULT_FOREGROUND] = readable(self.foreground);
+        palette[DEFAULT_BACKGROUND] = rgb8(background, background);
+        palette[256] = palette[DEFAULT_FOREGROUND];
+        palette[257] = palette[DEFAULT_BACKGROUND];
+        palette
+    }
+}
+
+fn rgba(rgb: [u8; 3]) -> [f32; 4] {
+    [
+        rgb[0] as f32 / 255.0,
+        rgb[1] as f32 / 255.0,
+        rgb[2] as f32 / 255.0,
+        1.0,
+    ]
+}
+
+fn rgb8(color: [f32; 4], background: [f32; 4]) -> [u8; 3] {
+    let rendered = blend(color, background, color[3]);
+    std::array::from_fn(|index| (rendered[index].clamp(0.0, 1.0) * 255.0).round() as u8)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerminalColor {
@@ -136,6 +191,10 @@ pub struct Terminal {
     saved_cursor: [Cursor<Cell>; 2],
     modes: TerminalModes,
     palette: [[u8; 3]; 260],
+    theme_palette: [[u8; 3]; 260],
+    palette_overrides: [bool; 260],
+    faint_palette: [[u8; 3]; 260],
+    theme: Option<TerminalTheme>,
     title: String,
     cursor_shape: u8,
     cursor_blinking: bool,
@@ -184,6 +243,10 @@ impl Terminal {
                 ..Default::default()
             },
             palette: default_palette(),
+            theme_palette: default_palette(),
+            palette_overrides: [false; 260],
+            faint_palette: [[0; 3]; 260],
+            theme: None,
             title: "Terminal".into(),
             cursor_shape: 2,
             cursor_blinking: false,
@@ -205,6 +268,68 @@ impl Terminal {
     }
     pub fn palette(&self) -> &[[u8; 3]; 260] {
         &self.palette
+    }
+    /// Change host defaults without discarding colors explicitly set by OSC.
+    pub fn set_theme(&mut self, theme: &TerminalTheme) -> bool {
+        if self.theme.as_ref() == Some(theme) {
+            return false;
+        }
+        self.theme_palette = theme.palette();
+        self.theme = Some(theme.clone());
+        for (index, color) in self.palette.iter_mut().enumerate() {
+            if !self.palette_overrides[index] {
+                *color = self.theme_palette[index];
+            }
+        }
+        self.refresh_faint_palette();
+        self.revision = self.revision.wrapping_add(1);
+        true
+    }
+
+    #[cfg(feature = "ui")]
+    pub(crate) fn faint_color(&self, color: TerminalColor) -> Option<[u8; 3]> {
+        if self.theme.is_some()
+            && let TerminalColor::Indexed(index) = color
+            && (index < 16 || index == DEFAULT_FOREGROUND)
+            && !self.palette_overrides[index]
+        {
+            Some(self.faint_palette[index])
+        } else {
+            None
+        }
+    }
+
+    fn refresh_faint_palette(&mut self) {
+        if self.theme.is_none() {
+            return;
+        }
+        let background = rgba(self.palette[DEFAULT_BACKGROUND]);
+        for index in (0..16).chain([DEFAULT_FOREGROUND]) {
+            let dimmed = blend(rgba(self.palette[index]), background, 0.65);
+            self.faint_palette[index] = rgb8(ensure_contrast(dimmed, background, 4.6), background);
+        }
+    }
+
+    fn set_palette_color(&mut self, index: usize, color: [u8; 3]) {
+        if index < self.palette.len() {
+            self.palette[index] = color;
+            self.palette_overrides[index] = true;
+            self.refresh_faint_palette();
+        }
+    }
+
+    fn reset_palette_color(&mut self, index: usize) {
+        if index < self.palette.len() {
+            self.palette[index] = self.theme_palette[index];
+            self.palette_overrides[index] = false;
+            self.refresh_faint_palette();
+        }
+    }
+
+    fn reset_palette(&mut self) {
+        self.palette = self.theme_palette;
+        self.palette_overrides.fill(false);
+        self.refresh_faint_palette();
     }
     pub fn title(&self) -> &str {
         &self.title
@@ -586,15 +711,15 @@ impl Terminal {
                     if let Ok(index) = index.parse::<usize>()
                         && index < 260
                     {
-                        self.palette[index] = default_palette()[index];
+                        self.reset_palette_color(index);
                     }
                 } else {
-                    self.palette = default_palette();
+                    self.reset_palette();
                 }
             }
             110..=112 => {
                 let index = [258, 259, 256][(code - 110) as usize];
-                self.palette[index] = default_palette()[index];
+                self.reset_palette_color(index);
             }
             _ => {} // Includes source's disabled OSC52 and ignored DCS/APC/PM.
         }
@@ -624,7 +749,7 @@ impl Terminal {
             self.outgoing
                 .push(TerminalEvent::Write(response.into_bytes()));
         } else if let Some(rgb) = parse_color(spec) {
-            self.palette[index] = rgb;
+            self.set_palette_color(index, rgb);
         }
     }
     pub fn clear_selection(&mut self) {
@@ -1175,14 +1300,10 @@ impl Handler for Terminal {
         self.source_mode(false, false, mode.raw());
     }
     fn set_color(&mut self, index: usize, rgb: Rgb) {
-        if index < 260 {
-            self.palette[index] = [rgb.r, rgb.g, rgb.b];
-        }
+        self.set_palette_color(index, [rgb.r, rgb.g, rgb.b]);
     }
     fn reset_color(&mut self, index: usize) {
-        if index < 260 {
-            self.palette[index] = default_palette()[index];
-        }
+        self.reset_palette_color(index);
     }
     fn dynamic_color_sequence(&mut self, prefix: String, index: usize, _: &str) {
         let native = if index == NamedColor::Foreground as usize {
@@ -1226,7 +1347,7 @@ impl Handler for Terminal {
             ..modes
         };
         self.active_charset = CharsetIndex::G0;
-        self.palette = default_palette();
+        self.reset_palette();
         self.set_title(None);
         self.clear_selection();
         self.scroll_top = 0;

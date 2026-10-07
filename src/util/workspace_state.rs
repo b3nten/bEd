@@ -158,6 +158,7 @@ impl WorkspaceStore {
         if spec.name.is_empty() {
             spec.name = default_name(&spec.root);
         }
+        let _lock = self.reload_for_write()?;
         let id = spec.identity();
         let mut recent = self.state["recent"].as_array().cloned().unwrap_or_default();
         recent.retain(|entry| entry.as_str() != Some(&id));
@@ -170,6 +171,7 @@ impl WorkspaceStore {
         Ok(spec)
     }
     pub fn forget_workspace(&mut self, spec: &WorkspaceSpec) -> io::Result<()> {
+        let _lock = self.reload_for_write()?;
         let id = spec.identity();
         if let Some(recent) = self.state["recent"].as_array_mut() {
             recent.retain(|entry| entry.as_str() != Some(&id));
@@ -188,6 +190,7 @@ impl WorkspaceStore {
                 "Workspace name cannot be empty",
             ));
         }
+        let _lock = self.reload_for_write()?;
         let mut renamed = self.stored_spec(spec).unwrap_or_else(|| spec.clone());
         renamed.name = name.to_owned();
         self.ensure_record(&renamed);
@@ -208,6 +211,7 @@ impl WorkspaceStore {
         spec: &WorkspaceSpec,
         preferences: &crate::files::file_tree::FileTreePreferences,
     ) -> io::Result<()> {
+        let _lock = self.reload_for_write()?;
         self.ensure_record(spec);
         self.state["workspaces"][spec.identity()]["file_tree"] = preferences.to_value();
         self.save()
@@ -218,7 +222,39 @@ impl WorkspaceStore {
             .get(spec.identity())?
             .get("layout")
     }
+    /// Older configurations resume the most recent project. An explicit null
+    /// means the last window had no project open.
+    pub fn last_workspace(&self) -> Option<WorkspaceSpec> {
+        match self.state.get("last_workspace") {
+            Some(Value::String(id)) => {
+                WorkspaceSpec::from_value(&self.state["workspaces"][id]["spec"])
+            }
+            Some(_) => None,
+            None => self.recent_workspaces().into_iter().next(),
+        }
+    }
+    pub fn standalone_layout(&self) -> Option<&Value> {
+        self.state.get("standalone_layout")
+    }
+    pub fn save_session_layout(
+        &mut self,
+        spec: Option<&WorkspaceSpec>,
+        layout: Value,
+    ) -> io::Result<()> {
+        let _lock = self.reload_for_write()?;
+        if let Some(spec) = spec {
+            self.ensure_record(spec);
+            let id = spec.identity();
+            self.state["workspaces"][&id]["layout"] = layout;
+            self.state["last_workspace"] = json!(id);
+        } else {
+            self.state["standalone_layout"] = layout;
+            self.state["last_workspace"] = Value::Null;
+        }
+        self.save()
+    }
     pub fn set_layout(&mut self, spec: &WorkspaceSpec, layout: Value) -> io::Result<()> {
+        let _lock = self.reload_for_write()?;
         self.ensure_record(spec);
         self.state["workspaces"][spec.identity()]["layout"] = layout;
         self.save()
@@ -268,6 +304,24 @@ impl WorkspaceStore {
     }
     fn save(&self) -> io::Result<()> {
         write_atomic(&self.path, &self.state)
+    }
+    fn reload_for_write(&mut self) -> io::Result<fs::File> {
+        let parent = self
+            .path
+            .parent()
+            .expect("workspace store has a config directory");
+        fs::create_dir_all(parent)?;
+        // Lock a stable sidecar: saving atomically replaces workspaces.json's
+        // inode. The lock is released on close, including errors/process exit.
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.path.with_extension("lock"))?;
+        lock.lock()?;
+        self.state = Self::load(parent)?.state;
+        Ok(lock)
     }
 }
 fn migrate_v1(old: &Value) -> Value {
@@ -348,6 +402,71 @@ pub fn write_atomic(path: &Path, value: &Value) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::files::test_support::TempDir;
+    #[test]
+    fn independent_instances_preserve_other_projects_and_fields() {
+        use crate::files::file_tree::FileTreePreferences;
+        let temp = TempDir::new();
+        let config = temp.path("config");
+        let mut first = WorkspaceStore::load(&config).unwrap();
+        let mut second = WorkspaceStore::load(&config).unwrap();
+        let a = first.record_workspace(remote("host", "/a")).unwrap();
+        let b = second.record_workspace(remote("host", "/b")).unwrap();
+        first.set_layout(&a, json!({"panel":"first"})).unwrap();
+        second.set_layout(&b, json!({"panel":"second"})).unwrap();
+        first.rename_workspace(&b, "Renamed elsewhere").unwrap();
+        second
+            .set_tree_preferences(
+                &b,
+                &FileTreePreferences {
+                    hide_hidden: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        first.forget_workspace(&a).unwrap();
+        second.set_layout(&b, json!({"panel":"updated"})).unwrap();
+
+        let loaded = WorkspaceStore::load(&config).unwrap();
+        assert_eq!(loaded.recent_workspaces().len(), 1);
+        assert_eq!(loaded.recent_workspaces()[0].name, "Renamed elsewhere");
+        assert_eq!(loaded.layout(&a).unwrap()["panel"], "first");
+        assert_eq!(loaded.layout(&b).unwrap()["panel"], "updated");
+        assert!(loaded.tree_preferences(&b).hide_hidden);
+    }
+    #[test]
+    fn concurrent_instances_serialize_workspace_updates() {
+        let temp = TempDir::new();
+        let config = temp.path("config");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let workers = (0..8)
+            .map(|index| {
+                let config = config.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let mut store = WorkspaceStore::load(&config).unwrap();
+                    barrier.wait();
+                    let spec = store
+                        .record_workspace(remote("host", &format!("/project-{index}")))
+                        .unwrap();
+                    for revision in 0..5 {
+                        store
+                            .set_layout(&spec, json!({"revision":revision}))
+                            .unwrap();
+                    }
+                    spec
+                })
+            })
+            .collect::<Vec<_>>();
+        let specs = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>();
+        let loaded = WorkspaceStore::load(&config).unwrap();
+        assert_eq!(loaded.recent_workspaces().len(), specs.len());
+        for spec in specs {
+            assert_eq!(loaded.layout(&spec).unwrap()["revision"], 4);
+        }
+    }
     #[test]
     fn tree_preferences_roundtrip_without_changing_layout_or_other_workspaces() {
         use crate::files::file_tree::FileTreePreferences;

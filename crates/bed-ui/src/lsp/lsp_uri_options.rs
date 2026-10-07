@@ -129,7 +129,7 @@ impl LspUriOptions {
             let _hover = ui.push_style_color(
                 StyleColor::HeaderHovered,
                 if is_selected {
-                    [1.0, 0.1, 0.7, 0.3]
+                    ui.style_color(StyleColor::TextSelectedBg)
                 } else {
                     [0.0; 4]
                 },
@@ -185,18 +185,25 @@ impl LspUriOptions {
             embedded,
         );
         let bg = settings.background_color();
-        let bg = [bg[0] * 0.8, bg[1] * 0.8, bg[2] * 0.8, 1.0];
+        let mut bg = bed_core::util::color::blend(ui.style_color(StyleColor::Text), bg, 0.055);
+        bg[3] = 1.0;
         let _padding = ui.push_style_var(StyleVar::WindowPadding([padding; 2]));
         let _round = ui.push_style_var(StyleVar::WindowRounding(fs * 0.5));
         let _border_size = ui.push_style_var(StyleVar::WindowBorderSize(1.0));
         let _spacing = ui.push_style_var(StyleVar::ItemSpacing([fs * 0.4; 2]));
         let _window_bg = ui.push_style_color(StyleColor::WindowBg, bg);
         let _child_bg = ui.push_style_color(StyleColor::ChildBg, bg);
-        let _border = ui.push_style_color(StyleColor::Border, [0.3, 0.3, 0.3, 1.0]);
+        let _border = ui.push_style_color(StyleColor::Border, ui.style_color(StyleColor::Border));
         let _frame_bg = ui.push_style_color(StyleColor::FrameBg, bg);
-        let _header = ui.push_style_color(StyleColor::Header, [1.0, 0.1, 0.7, 0.3]);
+        let _header = ui.push_style_color(
+            StyleColor::Header,
+            ui.style_color(StyleColor::TextSelectedBg),
+        );
         let _hover = ui.push_style_color(StyleColor::HeaderHovered, [0.0; 4]);
-        let _active = ui.push_style_color(StyleColor::HeaderActive, [1.0, 0.1, 0.7, 0.5]);
+        let _active = ui.push_style_color(
+            StyleColor::HeaderActive,
+            ui.style_color(StyleColor::HeaderActive),
+        );
         let mut selected = None;
         let rendered = ui
             .window("##LSPUriOptions")

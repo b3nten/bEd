@@ -55,6 +55,11 @@ fn main() {
         ("stubborn_child_is_killed_and_reaped", stubborn_teardown),
         #[cfg(unix)]
         ("real_interactive_shell_working_directory", real_shell),
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        (
+            "tab_name_tracks_foreground_job_and_returns_to_shell",
+            foreground_title,
+        ),
     ];
     for (name, test) in tests {
         test();
@@ -435,6 +440,42 @@ fn real_shell() {
     capture.wait(&mut pty, "TERM:st-256color");
     assert!(capture.contains("REAL_SHELL_READY"));
     assert!(capture.contains(&directory.0.canonicalize().unwrap().to_string_lossy()));
+    pty.write(b"exit 0\n").unwrap();
+    assert!(capture.wait_exit(&mut pty).success());
+    bounded_shutdown(&mut pty);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn foreground_title() {
+    let configuration = PtyOptions {
+        shell: Some(TerminalShell::new(
+            "/bin/bash",
+            vec!["--noprofile".into(), "--norc".into(), "-i".into()],
+        )),
+        ..PtyOptions::default()
+    };
+    let mut pty = TerminalPty::spawn(&configuration, size(80, 24)).unwrap();
+    let mut capture = Capture::new();
+    assert_eq!(pty.shell_name(), "bash");
+    let wait_title = |pty: &mut TerminalPty, capture: &mut Capture, expected: &str| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            capture.poll(pty);
+            if pty.foreground_process_name().as_deref() == Some(expected) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        panic!(
+            "Expected foreground {expected:?}, got {:?}",
+            pty.foreground_process_name()
+        );
+    };
+    wait_title(&mut pty, &mut capture, "bash");
+    pty.write(b"/bin/sleep 10\n").unwrap();
+    wait_title(&mut pty, &mut capture, "sleep");
+    pty.write(&[3]).unwrap();
+    wait_title(&mut pty, &mut capture, "bash");
     pty.write(b"exit 0\n").unwrap();
     assert!(capture.wait_exit(&mut pty).success());
     bounded_shutdown(&mut pty);

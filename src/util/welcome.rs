@@ -67,6 +67,7 @@ impl Welcome {
     }
     /// Draw inside a caller-owned dockable Projects tab.
     pub fn draw_body(&mut self, ui: &Ui) -> WelcomeAction {
+        let _controls = super::controls_style(ui);
         let mut action = WelcomeAction::default();
         let fs = ui.current_font_size();
         let available = ui.content_region_avail();
@@ -216,6 +217,7 @@ impl Welcome {
         if begin_rename {
             ui.open_popup("Rename Workspace");
         }
+        let _dialog = super::dialog_style(ui);
         if let Some(_popup) = ui.begin_modal_popup("Rename Workspace") {
             ui.input_text("Name", &mut self.rename_name).build();
             if ui.button("Rename") {

@@ -1,16 +1,19 @@
 //! Native titlebar/material adapter translated from ned util/macos_window.mm.
 //! Winit retains its content view and application delegate; see PORTING.md.
+use bed_core::util::color::{ensure_contrast, relative_luminance};
 use objc2::{
-    ClassType, DefinedClass, MainThreadOnly, Message, define_class, msg_send, rc::Retained,
-    runtime::AnyObject, sel,
+    ClassType, DefinedClass, MainThreadOnly, Message, define_class, msg_send,
+    rc::Retained,
+    runtime::{AnyClass, AnyObject},
+    sel,
 };
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSButton, NSButtonType, NSCellImagePosition, NSColor, NSFont,
-    NSFontWeightSemibold, NSImage, NSLayoutAttribute, NSStackView, NSStackViewDistribution,
-    NSTextAlignment, NSTextField, NSTitlebarAccessoryViewController, NSTitlebarSeparatorStyle,
-    NSUserInterfaceLayoutOrientation, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
-    NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton, NSWindowStyleMask,
-    NSWindowTitleVisibility,
+    NSFontWeightSemibold, NSImage, NSLayoutAttribute, NSLayoutConstraint, NSStackView,
+    NSStackViewDistribution, NSTextAlignment, NSTextField, NSTitlebarAccessoryViewController,
+    NSTitlebarSeparatorStyle, NSUserInterfaceLayoutOrientation, NSView, NSVisualEffectBlendingMode,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
+    NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSEdgeInsets, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
@@ -30,6 +33,7 @@ pub enum TitlebarAction {
     Settings,
     Search,
     Diagnostics,
+    Structure,
     SplitRight,
     SplitDown,
 }
@@ -37,7 +41,7 @@ pub enum TitlebarAction {
 const CONTROL_WIDTH: f64 = 26.0;
 const CONTROL_HEIGHT: f64 = 22.0;
 const CONTROL_SPACING: f64 = 2.0;
-const CONTROL_COUNT: usize = 7;
+const CONTROL_COUNT: usize = 8;
 
 #[derive(Default)]
 struct Actions {
@@ -89,6 +93,10 @@ define_class!(
         fn diagnostics(&self, _sender: Option<&AnyObject>) {
             self.ivars().pending.borrow_mut().push(TitlebarAction::Diagnostics);
         }
+        #[unsafe(method(newStructure:))]
+        fn structure(&self, _sender: Option<&AnyObject>) {
+            self.ivars().pending.borrow_mut().push(TitlebarAction::Structure);
+        }
         #[unsafe(method(splitRight:))]
         fn split_right(&self, _sender: Option<&AnyObject>) {
             self.ivars().pending.borrow_mut().push(TitlebarAction::SplitRight);
@@ -131,10 +139,13 @@ pub struct MacOsWindow {
     accessory: Retained<NSTitlebarAccessoryViewController>,
     buttons: Vec<Retained<NSButton>>,
     title: Option<Retained<TitleLabel>>,
+    title_width: Option<Retained<NSLayoutConstraint>>,
+    title_text: String,
     metal: Option<Retained<CALayer>>,
     original_metal_opacity: f32,
     opacity: f32,
     blur: bool,
+    theme: Option<([f32; 4], [f32; 4])>,
 }
 
 impl MacOsWindow {
@@ -162,7 +173,6 @@ impl MacOsWindow {
         native.setTitlebarAppearsTransparent(true);
         native.setTitleVisibility(NSWindowTitleVisibility::Hidden);
         native.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
-        native.setTitle(ns_string!("Bed Text Editor"));
         native.setHasShadow(true);
         native.setMovableByWindowBackground(false);
         native.setOpaque(false);
@@ -197,6 +207,7 @@ impl MacOsWindow {
         let actions = NativeActions::alloc(mtm).set_ivars(Actions::default());
         let actions: Retained<NativeActions> = unsafe { msg_send![super(actions), init] };
         let (accessory, buttons) = install_controls(&native, &actions, mtm);
+        let title_text = native.title().to_string();
         let mut result = Self {
             window: native,
             content,
@@ -205,10 +216,13 @@ impl MacOsWindow {
             accessory,
             buttons,
             title: None,
+            title_width: None,
+            title_text,
             metal: None,
             original_metal_opacity: 1.0,
             opacity: f32::NAN,
             blur: !blur,
+            theme: None,
         };
         result.install_title(mtm);
         result.update(opacity, blur)?;
@@ -218,6 +232,18 @@ impl MacOsWindow {
     }
     pub fn take_actions(&mut self) -> Vec<TitlebarAction> {
         std::mem::take(&mut *self.actions.ivars().pending.borrow_mut())
+    }
+    pub fn set_title(&mut self, title: &str) {
+        if self.title_text == title {
+            return;
+        }
+        let text = NSString::from_str(title);
+        self.window.setTitle(&text);
+        if let Some(label) = &self.title {
+            label.setStringValue(&text);
+            label.setToolTip(Some(&text));
+        }
+        self.title_text = title.to_owned();
     }
     pub fn titlebar_inset(&self) -> f32 {
         let height =
@@ -232,6 +258,15 @@ impl MacOsWindow {
         }
         if self.title.is_none() {
             self.install_title(mtm);
+        }
+        if let (Some(label), Some(width)) = (&self.title, &self.title_width)
+            && let Some(bar) = unsafe { label.superview() }
+        {
+            let reserved = (self.accessory.view().frame().size.width + 16.0).max(100.0);
+            let available = (bar.frame().size.width - 2.0 * reserved).max(0.0);
+            if width.constant() != available {
+                width.setConstant(available);
+            }
         }
         let metal = self
             .content
@@ -259,6 +294,46 @@ impl MacOsWindow {
             self.window.setHasShadow(true);
             self.opacity = opacity;
             self.blur = blur;
+        }
+        Ok(())
+    }
+    pub fn update_theme(&mut self, text: [f32; 4], background: [f32; 4]) -> io::Result<()> {
+        let text = ensure_contrast(text, background, 4.5);
+        if self.theme == Some((text, background)) {
+            return Ok(());
+        }
+        set_native_appearance(&self.window, background)?;
+        let color = native_color(text);
+        if let Some(title) = &self.title {
+            title.setTextColor(Some(&color));
+        }
+        for button in &self.buttons {
+            button.setContentTintColor(Some(&color));
+            NSView::setNeedsDisplay(button, true);
+        }
+        self.theme = Some((text, background));
+        Ok(())
+    }
+    /// Detached viewports inherit the document theme instead of the OS theme.
+    pub fn apply_theme_to_window(
+        window: &Window,
+        text: [f32; 4],
+        background: [f32; 4],
+    ) -> io::Result<()> {
+        let handle = window.window_handle().map_err(io::Error::other)?;
+        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+            return Err(io::Error::other("window has no AppKit content view"));
+        };
+        let content = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
+        let native = content
+            .window()
+            .ok_or_else(|| io::Error::other("AppKit content view has no window"))?;
+        set_native_appearance(&native, background)?;
+        if let Some(frame) = unsafe { content.superview() } {
+            tint_native_title(
+                &frame,
+                &native_color(ensure_contrast(text, background, 4.5)),
+            );
         }
         Ok(())
     }
@@ -292,6 +367,16 @@ impl MacOsWindow {
     }
     /// Native acceptance checks use rendered geometry, rather than stack settings.
     pub fn validate_control_layout(&self) -> io::Result<()> {
+        if self.window.title().to_string() != self.title_text
+            || self
+                .title
+                .as_ref()
+                .is_none_or(|label| label.stringValue().to_string() != self.title_text)
+        {
+            return Err(io::Error::other(
+                "native window title and visible caption differ",
+            ));
+        }
         let frames = self.control_frames();
         if frames.len() != CONTROL_COUNT
             || self.buttons.iter().any(|button| button.image().is_none())
@@ -324,11 +409,12 @@ impl MacOsWindow {
         let index = match action {
             TitlebarAction::Sidebar => 0,
             TitlebarAction::Terminal => 1,
-            TitlebarAction::Settings => 2,
-            TitlebarAction::Search => 3,
+            TitlebarAction::Search => 2,
+            TitlebarAction::Structure => 3,
             TitlebarAction::Diagnostics => 4,
             TitlebarAction::SplitRight => 5,
             TitlebarAction::SplitDown => 6,
+            TitlebarAction::Settings => 7,
         };
         // SAFETY: Retained buttons have valid retained targets and exact selectors.
         unsafe {
@@ -348,11 +434,16 @@ impl MacOsWindow {
         unsafe {
             let _: () = msg_send![&label, setIdentifier: ns_string!("bed.title")];
         }
-        label.setStringValue(ns_string!("Bed Text Editor"));
+        label.setStringValue(&NSString::from_str(&self.title_text));
+        label.setToolTip(Some(&NSString::from_str(&self.title_text)));
         label.setFont(Some(&NSFont::systemFontOfSize_weight(13.0, unsafe {
             NSFontWeightSemibold
         })));
-        label.setTextColor(Some(&NSColor::secondaryLabelColor()));
+        if let Some((text, _)) = self.theme {
+            label.setTextColor(Some(&native_color(text)));
+        } else {
+            label.setTextColor(Some(&NSColor::secondaryLabelColor()));
+        }
         label.setAlignment(NSTextAlignment::Center);
         label.setEditable(false);
         label.setSelectable(false);
@@ -369,6 +460,12 @@ impl MacOsWindow {
             .centerYAnchor()
             .constraintEqualToAnchor(&bar.centerYAnchor())
             .setActive(true);
+        let reserved = (self.accessory.view().frame().size.width + 16.0).max(100.0);
+        let width = label.widthAnchor().constraintLessThanOrEqualToConstant(
+            (bar.frame().size.width - 2.0 * reserved).max(0.0),
+        );
+        width.setActive(true);
+        self.title_width = Some(width);
         self.title = Some(label);
     }
 }
@@ -397,6 +494,43 @@ impl Drop for MacOsWindow {
     }
 }
 
+fn native_color(color: [f32; 4]) -> Retained<NSColor> {
+    NSColor::colorWithSRGBRed_green_blue_alpha(
+        color[0] as f64,
+        color[1] as f64,
+        color[2] as f64,
+        color[3] as f64,
+    )
+}
+fn tint_native_title(view: &NSView, color: &NSColor) {
+    let object: &AnyObject = view;
+    if let Some(field) = object.downcast_ref::<NSTextField>() {
+        field.setTextColor(Some(color));
+    }
+    for child in view.subviews() {
+        tint_native_title(&child, color);
+    }
+}
+fn set_native_appearance(window: &NSWindow, background: [f32; 4]) -> io::Result<()> {
+    MainThreadMarker::new().ok_or_else(|| io::Error::other("AppKit requires the main thread"))?;
+    let class = AnyClass::get(c"NSAppearance")
+        .ok_or_else(|| io::Error::other("NSAppearance is unavailable"))?;
+    let name = if relative_luminance(background) > 0.179 {
+        "NSAppearanceNameAqua"
+    } else {
+        "NSAppearanceNameDarkAqua"
+    };
+    // Stable public AppKit selectors, used on the main thread with retained objects.
+    let appearance: Option<Retained<AnyObject>> =
+        unsafe { msg_send![class, appearanceNamed: &*NSString::from_str(name)] };
+    if let Some(appearance) = appearance {
+        unsafe {
+            let _: () = msg_send![window, setAppearance: &*appearance];
+        }
+    }
+    window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
+    Ok(())
+}
 fn find_metal_layer(root: &CALayer) -> Option<Retained<CALayer>> {
     if root.isKindOfClass(CAMetalLayer::class()) {
         return Some(root.retain());
@@ -420,7 +554,9 @@ fn titlebar_symbol(names: &[&str]) -> Option<Retained<NSImage>> {
             };
             let sized: Option<Retained<NSImage>> =
                 unsafe { msg_send![&image, imageWithSymbolConfiguration: &*configuration] };
-            return Some(sized.unwrap_or(image));
+            let image = sized.unwrap_or(image);
+            image.setTemplate(true);
+            return Some(image);
         }
     }
     None
@@ -450,14 +586,14 @@ fn install_controls(
             sel!(newTerminal:),
         ),
         (
-            &["gearshape", "gear"][..],
-            "New Settings",
-            sel!(newSettings:),
-        ),
-        (
             &["magnifyingglass"][..],
             "New Project Search",
             sel!(newSearch:),
+        ),
+        (
+            &["list.bullet.indent", "list.bullet"][..],
+            "New Structure",
+            sel!(newStructure:),
         ),
         (
             &["exclamationmark.triangle", "exclamationmark.circle"][..],
@@ -473,6 +609,11 @@ fn install_controls(
             &["rectangle.split.1x2", "square.split.1x2"][..],
             "Split Editor Down",
             sel!(splitDown:),
+        ),
+        (
+            &["gearshape", "gear"][..],
+            "New Settings",
+            sel!(newSettings:),
         ),
     ] {
         // SAFETY: Inherited NSButton initializer leaves the subclass's only

@@ -16,12 +16,54 @@ use crate::{
 use bed_core::editor_events::Overlay;
 use bed_session::{ViewContext, editor::Editor};
 #[cfg(test)]
-use dear_imgui_rs::Condition;
-use dear_imgui_rs::{FocusedFlags, Key, StyleColor, StyleVar, Ui, WindowFlags, WindowHoveredFlags};
+use dear_imgui_rs::{Condition, StyleColor};
+use dear_imgui_rs::{FocusedFlags, Key, StyleVar, Ui, WindowFlags, sys};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
+
+// Explicit location jumps ease into place; ordinary scrolling stays native.
+const SCROLL_SPRING_FREQUENCY: f32 = 36.0;
+
+struct SmoothScroll {
+    position: [f32; 2],
+    target: [f32; 2],
+    velocity: [f32; 2],
+    last_requested: [f32; 2],
+}
+
+impl SmoothScroll {
+    fn new(position: [f32; 2], target: [f32; 2]) -> Self {
+        Self {
+            position,
+            target,
+            velocity: [0.0; 2],
+            last_requested: position,
+        }
+    }
+
+    fn advance(&mut self, delta: f32) {
+        // Exact critically damped integration preserves velocity on retarget
+        // and keeps the same trajectory across frame rates and pixel rounding.
+        let delta = delta.max(0.0);
+        let decay = (-SCROLL_SPRING_FREQUENCY * delta).exp();
+        for axis in 0..2 {
+            let displacement = self.position[axis] - self.target[axis];
+            let rate = self.velocity[axis] + SCROLL_SPRING_FREQUENCY * displacement;
+            self.position[axis] = self.target[axis] + (displacement + rate * delta) * decay;
+            self.velocity[axis] =
+                (self.velocity[axis] - SCROLL_SPRING_FREQUENCY * rate * delta) * decay;
+        }
+    }
+
+    fn settled(&self) -> bool {
+        (0..2).all(|axis| {
+            (self.position[axis] - self.target[axis]).abs() < 0.35
+                && self.velocity[axis].abs() < 12.0
+        })
+    }
+}
 
 pub struct EditorFrame {
     pub layout: ViewLayout,
@@ -35,7 +77,8 @@ pub struct EditorFrame {
     width_lines: i32,
     width_font: f32,
     width_document_generation: u64,
-    scroll_target: Option<[f32; 2]>,
+    smooth_scroll: Option<SmoothScroll>,
+    pub navigation_animations: bool,
     was_focused: bool,
     pub rainbow_mode: bool,
     pub line_jump_key: Option<Key>,
@@ -89,7 +132,8 @@ impl EditorFrame {
             width_lines: 0,
             width_font: 0.0,
             width_document_generation: 0,
-            scroll_target: None,
+            smooth_scroll: None,
+            navigation_animations: true,
             was_focused: false,
             rainbow_mode: true,
             line_jump_key: Some(Key::Semicolon),
@@ -258,7 +302,10 @@ impl EditorFrame {
         let fs = ui.current_font_size();
 
         if let Some(error) = &self.error {
-            ui.text_colored([1.0, 0.45, 0.4, 1.0], error);
+            ui.text_colored(
+                crate::presentation::readable_color(ui, [1.0, 0.45, 0.4, 1.0]),
+                error,
+            );
             if ui.button("Dismiss error") {
                 self.error = None;
             }
@@ -310,12 +357,6 @@ impl EditorFrame {
         let _rounding = ui.push_style_var(StyleVar::ChildRounding(0.0));
         let _child_border = ui.push_style_var(StyleVar::ChildBorderSize(1.0));
         let _scrollbar = ui.push_style_var(StyleVar::ScrollbarSize(fs * 0.6));
-        let _border = ui.push_style_color(StyleColor::Border, [0.5, 0.5, 0.5, 0.5]);
-        let _scrollbar_bg = ui.push_style_color(StyleColor::ScrollbarBg, [0.05, 0.05, 0.05, 0.0]);
-        let _scrollbar_hover =
-            ui.push_style_color(StyleColor::ScrollbarGrabHovered, [0.6, 0.6, 0.6, 0.7]);
-        let _scrollbar_active =
-            ui.push_style_color(StyleColor::ScrollbarGrabActive, [0.8, 0.8, 0.8, 0.9]);
         ui.with_bound_context(|| unsafe {
             dear_imgui_rs::sys::igSetNextWindowContentSize(
                 [content_width, self.layout.total_height].into(),
@@ -326,11 +367,7 @@ impl EditorFrame {
                 (self.layout.size[0] - gutter_width - self.layout.minimap_width).max(1.0),
                 self.layout.size[1],
             ])
-            .flags(
-                WindowFlags::HORIZONTAL_SCROLLBAR
-                    | WindowFlags::NO_SCROLL_WITH_MOUSE
-                    | WindowFlags::NO_NAV_INPUTS,
-            )
+            .flags(WindowFlags::HORIZONTAL_SCROLLBAR | WindowFlags::NO_NAV_INPUTS)
             .build(ui, || {
                 if editor.view.request_focus && !overlay_active {
                     ui.set_window_focus(None);
@@ -390,10 +427,6 @@ impl EditorFrame {
                 ui.dummy([0.0, 0.0]);
                 editor.view_mut().scroll_position = [ui.scroll_x(), ui.scroll_y()];
             });
-        drop(_scrollbar_active);
-        drop(_scrollbar_hover);
-        drop(_scrollbar_bg);
-        drop(_border);
         drop(_scrollbar);
         drop(_child_border);
         drop(_rounding);
@@ -436,6 +469,8 @@ impl EditorFrame {
                 &self.tooltip_arbiter,
             );
         }
+        self.tooltip_arbiter
+            .render_retained_diagnostic(ui, overlay_active);
         drop(_spacing);
         actions
     }
@@ -562,67 +597,94 @@ impl EditorFrame {
             view.collapse_to_primary();
             view.sync_primary_mirrors();
             view.center_cursor_vertical = true;
+            view.ensure_cursor_visible.horizontal = true;
         }
         let baseline = [ui.scroll_x(), ui.scroll_y()];
         let mut next = baseline;
         let max_x = ui.scroll_max_x();
-        let max_y = ui.scroll_max_y();
+        let max_y = if ui.scroll_max_y() < 1.0 && self.layout.total_height > ui.window_height() {
+            self.layout.total_height + self.layout.editor_top_margin - ui.window_height()
+        } else {
+            ui.scroll_max_y()
+        };
         let clamp = |p: [f32; 2]| {
             [
                 p[0].clamp(0.0, max_x.max(0.0)),
                 p[1].clamp(0.0, max_y.max(0.0)),
             ]
         };
-        let focused =
-            ui.is_window_focused_with_flags(FocusedFlags::CHILD_WINDOWS) || ui.is_window_focused();
-        if !focused {
-            self.scroll_target = None;
+        if self.smooth_scroll.as_ref().is_some_and(|scroll| {
+            let expected = clamp(scroll.last_requested);
+            (0..2).any(|axis| (baseline[axis] - expected[axis]).abs() > 1.5)
+        }) {
+            // Native/host scroll changes interrupt navigation. ImGui rounds
+            // requested positions to pixels, so tolerate that small difference.
+            self.smooth_scroll = None;
         }
-        if ui.is_window_hovered_with_flags(WindowHoveredFlags::ALLOW_WHEN_BLOCKED_BY_ACTIVE_ITEM)
-            && (ui.io().mouse_wheel() != 0.0 || ui.io().mouse_wheel_h() != 0.0)
-        {
-            if ui.io().key_shift() {
-                next[0] -= ui.io().mouse_wheel() * ui.current_font_size();
-            } else {
-                next[1] -= ui.io().mouse_wheel() * self.layout.line_height * 3.0;
-            }
-            next[0] -= ui.io().mouse_wheel_h() * ui.current_font_size();
-            next = clamp(next);
-            self.scroll_target = None;
-        }
-        if let Some(requested) = view.requested_scroll.take() {
-            let requested_max_y = if max_y < 1.0 && self.layout.total_height > self.layout.size[1] {
-                self.layout.total_height + self.layout.editor_top_margin - self.layout.size[1]
-            } else {
-                max_y
-            };
-            next = [
-                requested[0].clamp(0.0, max_x.max(0.0)),
-                requested[1].clamp(0.0, requested_max_y.max(0.0)),
-            ];
-            self.scroll_target = None;
-        } else if view.center_cursor_vertical {
-            next[1] = view.row as f32 * self.layout.line_height
-                - (ui.window_height() - self.layout.line_height) * 0.5;
-            let center_max_y = if max_y < 1.0 && self.layout.total_height > ui.window_height() {
-                self.layout.total_height + self.layout.editor_top_margin - ui.window_height()
-            } else {
-                max_y
-            };
-            next[1] = next[1].clamp(0.0, center_max_y.max(0.0));
+        // Wheel input and scrollbar drags use ImGui's ordinary panel behavior.
+        // Manual scrolling takes precedence over pending caret reveal requests.
+        let manual_scroll = ui.with_bound_context(|| unsafe {
+            let native = &*sys::igGetCurrentContext();
+            let active = native.ActiveId;
+            let window = sys::igGetCurrentWindowRead();
+            (active != 0
+                && (active == sys::igGetWindowScrollbarID(window, sys::ImGuiAxis_X)
+                    || active == sys::igGetWindowScrollbarID(window, sys::ImGuiAxis_Y)))
+                || (native.WheelingWindow == window
+                    && native.WheelingWindowScrolledFrame == native.FrameCount)
+        });
+        if manual_scroll {
+            self.smooth_scroll = None;
             view.center_cursor_vertical = false;
-            self.scroll_target = None;
+            view.ensure_cursor_visible.horizontal = false;
+            view.ensure_cursor_visible.vertical = false;
+        }
+        let reveal_horizontal = |mut target: [f32; 2]| {
+            let x = line_column_x(ui, &state.line(view.row), view.column, 0.0);
+            let margin = ui.current_font_size() * 2.0;
+            let viewport = ui.window_width() - ui.current_font_size() * 0.6;
+            if x < target[0] + margin {
+                target[0] = x - margin;
+            } else if x + ui.current_font_size() > target[0] + viewport - margin {
+                target[0] = x + ui.current_font_size() - viewport + margin;
+            }
+            target
+        };
+        let mut navigation_started = false;
+        if let Some(requested) = view.requested_scroll.take() {
+            self.smooth_scroll = None;
+            next = clamp(requested);
+            view.center_cursor_vertical = false;
+            view.ensure_cursor_visible.horizontal = false;
+            view.ensure_cursor_visible.vertical = false;
+        } else if view.center_cursor_vertical {
+            let mut target = reveal_horizontal(next);
+            target[1] = view.row as f32 * self.layout.line_height
+                - (ui.window_height() - self.layout.line_height) * 0.5;
+            target = clamp(target);
+            view.center_cursor_vertical = false;
+            // Center and horizontal reveal are one navigation request. Leaving
+            // Ensure flags pending would interrupt centering on the next frame.
+            view.ensure_cursor_visible.horizontal = false;
+            view.ensure_cursor_visible.vertical = false;
+            if self.navigation_animations && target != next {
+                if let Some(scroll) = &mut self.smooth_scroll {
+                    scroll.target = target;
+                } else {
+                    navigation_started = true;
+                    self.smooth_scroll = Some(SmoothScroll::new(next, target));
+                }
+            } else {
+                next = target;
+                self.smooth_scroll = None;
+            }
         } else if view.ensure_cursor_visible.horizontal || view.ensure_cursor_visible.vertical {
+            self.smooth_scroll = None;
+            // Editing, caret movement and document clicks resume ordinary
+            // cursor-follow scrolling from the currently displayed viewport.
             let mut target = next;
             if view.ensure_cursor_visible.horizontal {
-                let x = line_column_x(ui, &state.line(view.row), view.column, 0.0);
-                let margin = ui.current_font_size() * 2.0;
-                let viewport = ui.window_width() - ui.current_font_size() * 0.6;
-                if x < target[0] + margin {
-                    target[0] = x - margin;
-                } else if x + ui.current_font_size() > target[0] + viewport - margin {
-                    target[0] = x + ui.current_font_size() - viewport + margin;
-                }
+                target = reveal_horizontal(target);
             }
             if view.ensure_cursor_visible.vertical {
                 let y = view.row as f32 * self.layout.line_height;
@@ -636,30 +698,40 @@ impl EditorFrame {
             }
             view.ensure_cursor_visible.horizontal = false;
             view.ensure_cursor_visible.vertical = false;
-            if target != next {
-                self.scroll_target = Some(clamp(target));
-            }
-            if !focused && self.scroll_target.is_some() {
-                next = clamp(target);
-                self.scroll_target = None;
-            }
+            next = clamp(target);
         }
-        if let Some(target) = self.scroll_target {
+        if let Some(scroll) = &mut self.smooth_scroll {
+            scroll.target = clamp(scroll.target);
+            if !self.navigation_animations {
+                scroll.position = scroll.target;
+                scroll.velocity = [0.0; 2];
+            } else if !navigation_started {
+                // A slow file open happened before this request. Begin its
+                // animation on the following frame rather than counting that delay.
+                scroll.advance(ui.io().delta_time());
+            }
+            let position = clamp(scroll.position);
             for axis in 0..2 {
-                let distance = target[axis] - next[axis];
-                let step = (distance.abs() * 15.0 * ui.io().delta_time()).max(1.0);
-                next[axis] = if distance.abs() <= step {
-                    target[axis]
-                } else {
-                    next[axis] + step.copysign(distance)
-                };
+                if position[axis] != scroll.position[axis] {
+                    scroll.velocity[axis] = 0.0;
+                }
             }
-            if next == target {
-                self.scroll_target = None;
+            scroll.position = position;
+            let settled = scroll.settled();
+            next = if settled {
+                scroll.target
+            } else {
+                scroll.position
+            };
+            scroll.last_requested = next;
+            if settled {
+                self.smooth_scroll = None;
             }
         }
-        ui.set_scroll_x(next[0]);
-        ui.set_scroll_y(next[1]);
+        if next != baseline {
+            ui.set_scroll_x(next[0]);
+            ui.set_scroll_y(next[1]);
+        }
         view.scroll_position = next;
     }
 }
@@ -705,7 +777,11 @@ mod tests {
                         );
                     });
             }
+            let muted = crate::presentation::muted_text_color(ui);
+            let current = crate::presentation::readable_color(ui, ui.style_color(StyleColor::Text));
             let gutters = ui.with_bound_context(|| unsafe {
+                let muted = sys::igColorConvertFloat4ToU32(muted.into());
+                let current = sys::igColorConvertFloat4ToU32(current.into());
                 let native = &*dear_imgui_rs::sys::igGetCurrentContext();
                 let mut count = 0;
                 for index in 0..native.Windows.Size {
@@ -720,15 +796,15 @@ mod tests {
                         draw.VtxBuffer.Data,
                         draw.VtxBuffer.Size as usize,
                     );
-                    let gray: Vec<_> = vertices
+                    let inactive: Vec<_> = vertices
                         .iter()
                         .enumerate()
-                        .filter(|(_, v)| v.col == 0x9680_8080)
+                        .filter(|(_, v)| v.col == muted)
                         .collect();
-                    assert_eq!(gray.len(), 16, "four inactive line numbers: {name}");
-                    assert!(gray[0].0 >= 4, "glyphs follow the opaque background");
-                    assert!(vertices.iter().any(|v| v.col == 0xffff_ffff));
-                    let leading = gray
+                    assert_eq!(inactive.len(), 16, "four inactive line numbers: {name}");
+                    assert!(inactive[0].0 >= 4, "glyphs follow the opaque background");
+                    assert!(vertices.iter().any(|v| v.col == current));
+                    let leading = inactive
                         .iter()
                         .map(|(_, v)| v.pos.x)
                         .fold(f32::INFINITY, f32::min)
@@ -737,7 +813,7 @@ mod tests {
                         (0.0..6.0).contains(&leading),
                         "compact one-digit gutter in {name}: {leading}px"
                     );
-                    assert!(gray.iter().all(|(_, v)| {
+                    assert!(inactive.iter().all(|(_, v)| {
                         v.pos.x >= window.Pos.x && v.pos.x < window.Pos.x + window.Size.x
                     }));
                 }
@@ -855,3 +931,7 @@ mod tests {
         assert!(!editor.view.center_cursor_vertical);
     }
 }
+
+#[cfg(test)]
+#[path = "navigation_scroll_tests.rs"]
+mod navigation_scroll_tests;

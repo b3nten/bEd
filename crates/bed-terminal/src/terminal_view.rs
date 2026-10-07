@@ -69,6 +69,17 @@ pub fn glyph_colors(
     blink: bool,
     bad_font: bool,
 ) -> ([u8; 3], [u8; 3]) {
+    glyph_colors_with_faint(cell, palette, reverse, blink, bad_font, None)
+}
+
+fn glyph_colors_with_faint(
+    cell: TerminalCell,
+    palette: &[[u8; 3]; 260],
+    reverse: bool,
+    blink: bool,
+    bad_font: bool,
+    faint: Option<[u8; 3]>,
+) -> ([u8; 3], [u8; 3]) {
     let mut fg = resolve(cell.fg, palette);
     let mut bg = resolve(cell.bg, palette);
     if bad_font {
@@ -92,7 +103,7 @@ pub fn glyph_colors(
         };
     }
     if cell.mode & (ATTR_BOLD | ATTR_FAINT) == ATTR_FAINT {
-        fg = fg.map(|v| v / 2);
+        fg = faint.unwrap_or_else(|| fg.map(|v| v / 2));
     }
     if cell.mode & ATTR_REVERSE != 0 {
         std::mem::swap(&mut fg, &mut bg);
@@ -128,12 +139,20 @@ fn glyph_run(
         } else {
             m.cw
         };
-    let (fg, bg) = glyph_colors(
+    let bad_font = bad_fonts[font_style(base)];
+    let faint =
+        if !term.modes().reverse && !bad_font && base.bg == TerminalColor::Indexed(DEFAULT_BG) {
+            term.faint_color(base.fg)
+        } else {
+            None
+        };
+    let (fg, bg) = glyph_colors_with_faint(
         base,
         term.palette(),
         term.modes().reverse,
         blink,
-        bad_fonts[font_style(base)],
+        bad_font,
+        faint,
     );
     let tw = term.cols() as f32 * m.cw;
     let th = term.rows() as f32 * m.ch;

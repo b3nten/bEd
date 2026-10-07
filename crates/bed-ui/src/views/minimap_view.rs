@@ -3,7 +3,7 @@
 use crate::views::view_layout::ViewLayout;
 use bed_core::{editor_state::EditorState, editor_view_state::EditorViewState};
 use bed_highlight::highlight_service::EditorHighlight;
-use dear_imgui_rs::{MouseButton, Ui};
+use dear_imgui_rs::{MouseButton, Ui, WindowHoveredFlags, sys};
 
 pub const WIDTH_FONT_MUL: f32 = 4.0;
 pub const MIN_PANE_FONT_MUL: f32 = 16.0;
@@ -110,6 +110,71 @@ fn dim(mut color: [f32; 4]) -> [f32; 4] {
         *c *= 0.72;
     }
     color
+}
+
+fn minimap_wheel_scroll(ui: &Ui) -> Option<[f32; 2]> {
+    if !ui.is_window_hovered_with_flags(
+        WindowHoveredFlags::ROOT_AND_CHILD_WINDOWS
+            | WindowHoveredFlags::NO_POPUP_HIERARCHY
+            | WindowHoveredFlags::ALLOW_WHEN_BLOCKED_BY_ACTIVE_ITEM,
+    ) {
+        return None;
+    }
+    ui.with_bound_context(|| unsafe {
+        let native = &*sys::igGetCurrentContext();
+        let window_ptr = sys::igGetCurrentWindowRead();
+        let window = &*window_ptr;
+        // The minimap is beside the scrolling text child. Forward only wheel
+        // input which native scrolling has not already consumed or locked away.
+        if native.IO.KeyCtrl
+            || native.WheelingWindowScrolledFrame == native.FrameCount
+            || (!native.WheelingWindow.is_null() && native.WheelingWindow != window_ptr)
+            || window.Collapsed
+            || window.Flags
+                & (sys::ImGuiWindowFlags_NoScrollWithMouse | sys::ImGuiWindowFlags_NoMouseInputs)
+                    as i32
+                != 0
+        {
+            return None;
+        }
+        let mut wheel = [
+            if sys::igTestKeyOwner(sys::ImGuiKey_MouseWheelX, window.ID) {
+                native.IO.MouseWheelH
+            } else {
+                0.0
+            },
+            if sys::igTestKeyOwner(sys::ImGuiKey_MouseWheelY, window.ID) {
+                native.IO.MouseWheel
+            } else {
+                0.0
+            },
+        ];
+        if native.IO.MouseWheelRequestAxisSwap {
+            wheel = [wheel[1], 0.0];
+        }
+        let mut scroll_axis = [
+            wheel[0] != 0.0 && window.ScrollMax.x != 0.0,
+            wheel[1] != 0.0 && window.ScrollMax.y != 0.0,
+        ];
+        if scroll_axis[0] && scroll_axis[1] {
+            scroll_axis[usize::from(native.WheelingAxisAvg.x > native.WheelingAxisAvg.y)] = false;
+        }
+        if !scroll_axis[0] && !scroll_axis[1] {
+            return None;
+        }
+        let mut target = [window.Scroll.x, window.Scroll.y];
+        let inner_size = [
+            window.InnerRect.Max.x - window.InnerRect.Min.x,
+            window.InnerRect.Max.y - window.InnerRect.Min.y,
+        ];
+        for axis in 0..2 {
+            if scroll_axis[axis] {
+                let font_step = window.FontRefSize * if axis == 0 { 2.0 } else { 5.0 };
+                target[axis] -= wheel[axis] * font_step.min(inner_size[axis] * 0.67).trunc();
+            }
+        }
+        Some(target)
+    })
 }
 impl MinimapView {
     fn rebuild_density_cache(
@@ -221,11 +286,8 @@ impl MinimapView {
         }
         let d = Density::new(ui.current_font_size());
         let s = make_strip(state, layout, view.scroll_position[1], height, d);
-        if ui.io().mouse_wheel() != 0.0 && layout.line_height > 0.0 {
-            view.request_scroll(
-                view.scroll_position[0],
-                view.scroll_position[1] - ui.io().mouse_wheel() * layout.line_height * 3.0,
-            );
+        if let Some([x, y]) = minimap_wheel_scroll(ui) {
+            view.request_scroll(x, y);
         }
         if ui.is_mouse_clicked(MouseButton::Left) {
             let local = (mouse[1] - a[1]).clamp(0.0, height);
@@ -291,18 +353,18 @@ impl MinimapView {
         if s.slider_h > 0.0 {
             let y0 = a[1] + s.slider_top;
             let y1 = (a[1] + h).min(y0 + s.slider_h);
-            draw.add_rect(
-                [a[0], y0],
-                [a[0] + w, y1],
-                [180.0 / 255.0, 180.0 / 255.0, 220.0 / 255.0, 40.0 / 255.0],
-            )
+            draw.add_rect([a[0], y0], [a[0] + w, y1], {
+                let mut color = ui.style_color(dear_imgui_rs::StyleColor::Text);
+                color[3] = 0.12;
+                color
+            })
             .filled(true)
             .build();
-            draw.add_rect(
-                [a[0] + 0.5, y0],
-                [a[0] + w - 0.5, y1],
-                [220.0 / 255.0, 220.0 / 255.0, 1.0, 110.0 / 255.0],
-            )
+            draw.add_rect([a[0] + 0.5, y0], [a[0] + w - 0.5, y1], {
+                let mut color = ui.style_color(dear_imgui_rs::StyleColor::Text);
+                color[3] = 0.45;
+                color
+            })
             .build();
         }
     }
@@ -311,6 +373,193 @@ impl MinimapView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dear_imgui_rs::{Condition, Context, FramePrepareOptions, Key, WindowFlags};
+
+    fn wheel_frame(context: &mut Context, size: [f32; 2], draw: impl FnOnce(&Ui)) {
+        context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], 1.0 / 60.0));
+        let ui = context.frame();
+        ui.window("minimap wheel fixture")
+            .position([0.0; 2], Condition::Always)
+            .size([640.0, 480.0], Condition::Always)
+            .flags(WindowFlags::NO_TITLE_BAR | WindowFlags::NO_SCROLL_WITH_MOUSE)
+            .build(|| {
+                ui.with_bound_context(|| unsafe {
+                    sys::igSetNextWindowContentSize([1000.0, 2000.0].into());
+                });
+                ui.child_window("text")
+                    .size(size)
+                    .flags(WindowFlags::HORIZONTAL_SCROLLBAR)
+                    .build(ui, || draw(ui));
+            });
+        drop(context.render_legacy());
+    }
+
+    fn wheel_context(size: [f32; 2]) -> Context {
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        context.io_mut().add_mouse_pos_event([500.0, 300.0]);
+        for _ in 0..3 {
+            wheel_frame(&mut context, size, |_| {});
+        }
+        context
+    }
+
+    fn wheel_request(ui: &Ui) -> Option<[f32; 2]> {
+        let mut state = EditorState::new();
+        state.set_from_bytes(&b"x\n".repeat(1000));
+        let mut view = EditorViewState::default();
+        let mouse = ui.io().mouse_pos();
+        let layout = ViewLayout {
+            line_height: 20.0,
+            total_height: 20000.0,
+            size: [200.0, 180.0],
+            minimap_width: 40.0,
+            minimap_min: [mouse[0] - 20.0, mouse[1] - 20.0],
+            minimap_max: [mouse[0] + 20.0, mouse[1] + 20.0],
+            ..Default::default()
+        };
+        MinimapView::default().interact(ui, &state, &mut view, &layout);
+        view.requested_scroll
+    }
+
+    #[test]
+    fn minimap_wheel_uses_native_font_and_viewport_steps() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        for size in [[200.0, 180.0], [40.0, 36.0]] {
+            let mut context = wheel_context(size);
+            for axis in 0..2 {
+                let mut wheel = [0.0; 2];
+                wheel[axis] = -2.0;
+                context.io_mut().add_mouse_wheel_event(wheel);
+                wheel_frame(&mut context, size, |ui| {
+                    let (step, font_step) = ui.with_bound_context(|| unsafe {
+                        let window = &*sys::igGetCurrentWindowRead();
+                        let extent = if axis == 0 {
+                            window.InnerRect.Max.x - window.InnerRect.Min.x
+                        } else {
+                            window.InnerRect.Max.y - window.InnerRect.Min.y
+                        };
+                        let font_step = window.FontRefSize * if axis == 0 { 2.0 } else { 5.0 };
+                        (font_step.min(extent * 0.67).trunc(), font_step)
+                    });
+                    let mut expected = [ui.scroll_x(), ui.scroll_y()];
+                    expected[axis] += 2.0 * step;
+                    assert_eq!(wheel_request(ui), Some(expected));
+                    if size[1] < 40.0 {
+                        assert!(step < font_step, "small viewport caps each axis");
+                    }
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn minimap_wheel_respects_modifiers_axis_priority_and_key_owners() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let size = [200.0, 180.0];
+        let mut context = wheel_context(size);
+        context.io_mut().set_config_macosx_behaviors(false);
+        context.io_mut().add_key_event(Key::ModShift, true);
+        context.io_mut().add_mouse_wheel_event([0.0, -1.0]);
+        wheel_frame(&mut context, size, |ui| {
+            let request = wheel_request(ui).unwrap();
+            assert!(request[0] > 0.0 && request[1] == 0.0);
+        });
+        context.io_mut().set_config_macosx_behaviors(true);
+        context.io_mut().add_mouse_wheel_event([0.0, -1.0]);
+        wheel_frame(&mut context, size, |ui| {
+            let request = wheel_request(ui).unwrap();
+            assert!(request[0] == 0.0 && request[1] > 0.0);
+        });
+        context.io_mut().set_config_macosx_behaviors(false);
+        context.io_mut().add_key_event(Key::ModShift, false);
+        context.io_mut().add_key_event(Key::ModCtrl, true);
+        context.io_mut().add_mouse_wheel_event([0.0, -1.0]);
+        wheel_frame(&mut context, size, |ui| assert_eq!(wheel_request(ui), None));
+        context.io_mut().add_key_event(Key::ModCtrl, false);
+        context.io_mut().add_key_event(Key::ModShift, false);
+        context.io_mut().add_mouse_wheel_event([-1.0, -1.0]);
+        wheel_frame(&mut context, size, |ui| {
+            ui.with_bound_context(|| unsafe {
+                (*sys::igGetCurrentContext()).WheelingAxisAvg = [9.0, 2.0].into();
+            });
+            let request = wheel_request(ui).unwrap();
+            assert!(request[0] > 0.0 && request[1] == 0.0);
+            ui.with_bound_context(|| unsafe {
+                (*sys::igGetCurrentContext()).WheelingAxisAvg = [1.0, 9.0].into();
+            });
+            let request = wheel_request(ui).unwrap();
+            assert!(request[0] == 0.0 && request[1] > 0.0);
+            ui.with_bound_context(|| unsafe {
+                sys::igSetKeyOwner(sys::ImGuiKey_MouseWheelX, 123, 0);
+                sys::igSetKeyOwner(sys::ImGuiKey_MouseWheelY, 123, 0);
+            });
+            assert_eq!(wheel_request(ui), None);
+        });
+    }
+
+    #[test]
+    fn minimap_wheel_does_not_repeat_native_text_child_scrolling() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let size = [200.0, 180.0];
+        let mut context = wheel_context(size);
+        context.io_mut().add_mouse_pos_event([30.0, 40.0]);
+        wheel_frame(&mut context, size, |_| {});
+        context.io_mut().add_mouse_wheel_event([0.0, -1.0]);
+        wheel_frame(&mut context, size, |ui| {
+            assert!(ui.scroll_y() > 0.0);
+            ui.with_bound_context(|| unsafe {
+                let native = &*sys::igGetCurrentContext();
+                assert_eq!(native.WheelingWindow, sys::igGetCurrentWindowRead());
+                assert_eq!(native.WheelingWindowScrolledFrame, native.FrameCount);
+            });
+            assert_eq!(wheel_request(ui), None);
+        });
+    }
+
+    #[test]
+    fn popup_without_scroll_extent_blocks_minimap_wheel_forwarding() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let size = [200.0, 180.0];
+        let mut context = wheel_context(size);
+        let popup = |ui: &Ui| {
+            ui.with_bound_context(|| unsafe {
+                sys::igSetNextWindowPos([480.0, 280.0].into(), 0, [0.0; 2].into());
+                sys::igSetNextWindowSize([120.0, 80.0].into(), 0);
+            });
+            ui.popup("minimap wheel blocker", || {
+                ui.text("Popup");
+                assert_eq!([ui.scroll_max_x(), ui.scroll_max_y()], [0.0; 2]);
+            });
+        };
+        wheel_frame(&mut context, size, |ui| {
+            ui.open_popup("minimap wheel blocker");
+            popup(ui);
+        });
+        wheel_frame(&mut context, size, popup);
+        context.io_mut().add_mouse_wheel_event([0.0, -1.0]);
+        wheel_frame(&mut context, size, |ui| {
+            popup(ui);
+            assert_eq!(ui.io().mouse_wheel(), -1.0);
+            ui.with_bound_context(|| unsafe {
+                let native = &*sys::igGetCurrentContext();
+                assert_ne!(native.WheelingWindowScrolledFrame, native.FrameCount);
+                assert!(sys::igTestKeyOwner(
+                    sys::ImGuiKey_MouseWheelY,
+                    (*sys::igGetCurrentWindowRead()).ID,
+                ));
+            });
+            assert_eq!(wheel_request(ui), None);
+        });
+    }
+
     #[test]
     fn sliding_strip_tracks_viewport_at_start_middle_and_end() {
         let mut state = EditorState::new();

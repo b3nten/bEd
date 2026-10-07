@@ -8,12 +8,12 @@ BEGIN
     BEGIN
         BLOCK "040904E4"
         BEGIN
-            VALUE "CompanyName", "Bed contributors"
-            VALUE "FileDescription", "Bed Text Editor"
+            VALUE "CompanyName", "bEd contributors"
+            VALUE "FileDescription", "bEd"
             VALUE "FileVersion", "@BED_VERSION@"
             VALUE "InternalName", "bed"
             VALUE "OriginalFilename", "bed.exe"
-            VALUE "ProductName", "Bed"
+            VALUE "ProductName", "bEd"
             VALUE "ProductVersion", "@BED_VERSION@"
         END
     END

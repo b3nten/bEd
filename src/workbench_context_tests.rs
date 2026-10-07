@@ -674,3 +674,317 @@ fn file_tree_visibility_menus_toggle_hide_reveal_and_unhide_exact_paths() {
     assert!(tree.preferences.hidden_paths.is_empty());
     assert_eq!(std::fs::read(path).unwrap(), b"keep");
 }
+
+fn file_dialog_frame(context: &mut Context, workbench: &mut Workbench, host: &str, size: [f32; 2]) {
+    context.prepare_frame(FramePrepareOptions::new(size, 1.0 / 60.0));
+    let ui = context.frame();
+    ui.window(host)
+        .flags(WindowFlags::NO_DECORATION | WindowFlags::NO_SAVED_SETTINGS)
+        .position([0.0; 2], Condition::Always)
+        .size(size, Condition::Always)
+        .build(|| assert!(workbench.render(ui).unwrap().is_empty()));
+    drop(context.render_legacy());
+}
+
+fn visible_file_dialog(context: &Context) -> ([f32; 2], [f32; 2], f32) {
+    context.binding().with_bound_context(|| unsafe {
+        let native = &*sys::igGetCurrentContext();
+        assert_eq!(native.OpenPopupStack.Size, 1, "one active file modal");
+        let window = &*(*native.OpenPopupStack.Data).Window;
+        assert!(window.Active && !window.Hidden && !window.Collapsed);
+        assert!(
+            CStr::from_ptr(window.Name)
+                .to_string_lossy()
+                .contains("###bed_file_action")
+        );
+        assert_eq!(
+            CStr::from_ptr((*window.ParentWindowInBeginStack).Name).to_bytes(),
+            b"##bed_workspace",
+            "the modal belongs to the stable workspace, not its source tab"
+        );
+        (
+            [window.Pos.x, window.Pos.y],
+            [window.Size.x, window.Size.y],
+            window.FontRefSize,
+        )
+    })
+}
+
+#[test]
+fn file_action_dialog_survives_hidden_origin_and_host_changes_and_escape_restores_typing() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let dir = TempDir::new();
+    let path = dir.write("editor.txt", b"original");
+    let mut context = context();
+    let mut workbench = workspace(&dir, &mut context);
+    workbench.settings.settings["ui_animations"] = json!(false);
+    workbench.open_or_focus(&path).unwrap();
+    let view = workbench.active_view().unwrap();
+    let document = workbench.active_document().unwrap();
+    frame(&mut context, &mut workbench);
+    frame(&mut context, &mut workbench);
+    workbench
+        .session
+        .with_commands(view, |commands| {
+            commands.set_selection(0, 0, 0, 4, CursorReveal::Ensure)
+        })
+        .unwrap();
+    let selection = workbench.session.view_snapshot(view).unwrap().selections;
+    workbench
+        .handle_tree_action(FileTreeAction::NewFile(dir.root().to_str().unwrap().into()))
+        .unwrap();
+    // The originating tool need not remain visible, and an embedding host may
+    // change the current window between frames while the modal is open.
+    workbench.dispatch(WindowCommand::Settings).unwrap();
+    for host in ["Caller A", "Caller B", "Caller A"] {
+        file_dialog_frame(&mut context, &mut workbench, host, [1200.0, 800.0]);
+    }
+    let (position, size, fs) = visible_file_dialog(&context);
+    assert!(size[0] >= fs * 29.0 && size[1] >= fs * 8.0);
+    assert!((position[0] + size[0] * 0.5 - 600.0).abs() < 2.0);
+    assert!((position[1] + size[1] * 0.5 - 400.0).abs() < 2.0);
+    assert!(workbench.file_dialog.as_ref().unwrap().visible);
+    context.binding().with_bound_context(|| unsafe {
+        let native = &*sys::igGetCurrentContext();
+        assert_ne!(native.InputTextState.ID, 0);
+        assert_eq!(
+            native.ActiveId, native.InputTextState.ID,
+            "name receives keyboard focus"
+        );
+    });
+    context.io_mut().add_input_characters_utf8("draft.rs");
+    file_dialog_frame(&mut context, &mut workbench, "Caller B", [1200.0, 800.0]);
+    assert_eq!(workbench.file_dialog.as_ref().unwrap().name, "draft.rs");
+    assert_eq!(
+        workbench.session.snapshot(document).unwrap().bytes,
+        b"original"
+    );
+    context.io_mut().add_key_event(Key::Escape, true);
+    file_dialog_frame(&mut context, &mut workbench, "Caller A", [1200.0, 800.0]);
+    assert!(workbench.file_dialog.is_none());
+    assert!(!workbench.session.view_snapshot(view).unwrap().block_input);
+    assert_eq!(
+        workbench.session.view_snapshot(view).unwrap().selections,
+        selection
+    );
+    context.io_mut().add_key_event(Key::Escape, false);
+    frame(&mut context, &mut workbench);
+    context.io_mut().add_input_characters_utf8("x");
+    frame(&mut context, &mut workbench);
+    assert_eq!(
+        workbench.session.snapshot(document).unwrap().bytes,
+        b"xinal"
+    );
+    assert!(!dir.path("draft.rs").exists());
+}
+
+#[test]
+fn file_action_dialog_menu_cancel_close_and_reopen_do_not_leave_modal_blockers() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let dir = TempDir::new();
+    let path = dir.write("editor.txt", b"original");
+    let mut context = context();
+    let mut workbench = workspace(&dir, &mut context);
+    workbench.settings.settings["ui_animations"] = json!(false);
+    workbench.open_or_focus(&path).unwrap();
+    let view = workbench.active_view().unwrap();
+    workbench.show_tool(Tool::Explorer);
+    frame(&mut context, &mut workbench);
+    frame(&mut context, &mut workbench);
+    let explorer = workbench
+        .tabs
+        .iter()
+        .find(|tab| matches!(tab.panel, Panel::Tool(Tool::Explorer)))
+        .unwrap();
+    let title = CString::new(workbench.title(explorer)).unwrap();
+    let row = context.binding().with_bound_context(|| unsafe {
+        let window = &*sys::igFindWindowByName(title.as_ptr());
+        [
+            window.DC.CursorStartPos.x + 75.0,
+            window.DC.CursorStartPos.y + window.FontRefSize * 0.5,
+        ]
+    });
+    mouse(&mut context, &mut workbench, row, MouseButton::Right, true);
+    mouse(&mut context, &mut workbench, row, MouseButton::Right, false);
+    frame(&mut context, &mut workbench);
+    let create = tree_popup_item(&context, 0, 0);
+    mouse(
+        &mut context,
+        &mut workbench,
+        create,
+        MouseButton::Left,
+        true,
+    );
+    mouse(
+        &mut context,
+        &mut workbench,
+        create,
+        MouseButton::Left,
+        false,
+    );
+    frame(&mut context, &mut workbench);
+    frame(&mut context, &mut workbench);
+    visible_file_dialog(&context);
+    let cancel = button_point(&context, "New file###bed_file_action", false);
+    mouse(
+        &mut context,
+        &mut workbench,
+        cancel,
+        MouseButton::Left,
+        true,
+    );
+    mouse(
+        &mut context,
+        &mut workbench,
+        cancel,
+        MouseButton::Left,
+        false,
+    );
+    assert!(workbench.file_dialog.is_none());
+    assert!(!workbench.session.view_snapshot(view).unwrap().block_input);
+    for close_with_x in [true, false] {
+        workbench
+            .handle_tree_action(FileTreeAction::NewFile(dir.root().to_str().unwrap().into()))
+            .unwrap();
+        frame(&mut context, &mut workbench);
+        frame(&mut context, &mut workbench);
+        let (position, size, fs) = visible_file_dialog(&context);
+        if close_with_x {
+            let point = [position[0] + size[0] - fs * 1.05, position[1] + fs * 0.8];
+            mouse(&mut context, &mut workbench, point, MouseButton::Left, true);
+            mouse(
+                &mut context,
+                &mut workbench,
+                point,
+                MouseButton::Left,
+                false,
+            );
+        } else {
+            // Native closure must clear application state as well, even if a
+            // different popup or host caused it before this frame.
+            context
+                .binding()
+                .with_bound_context(|| unsafe { sys::igClosePopupToLevel(0, true) });
+            frame(&mut context, &mut workbench);
+        }
+        assert!(workbench.file_dialog.is_none());
+        assert!(!workbench.session.view_snapshot(view).unwrap().block_input);
+        context.binding().with_bound_context(|| unsafe {
+            assert_eq!((*sys::igGetCurrentContext()).OpenPopupStack.Size, 0);
+        });
+    }
+    workbench
+        .handle_tree_action(FileTreeAction::NewFile(dir.root().to_str().unwrap().into()))
+        .unwrap();
+    frame(&mut context, &mut workbench);
+    frame(&mut context, &mut workbench);
+    context.io_mut().add_input_characters_utf8("created.txt");
+    frame(&mut context, &mut workbench);
+    let create = button_point(&context, "New file###bed_file_action", true);
+    mouse(
+        &mut context,
+        &mut workbench,
+        create,
+        MouseButton::Left,
+        true,
+    );
+    mouse(
+        &mut context,
+        &mut workbench,
+        create,
+        MouseButton::Left,
+        false,
+    );
+    assert!(workbench.file_dialog.is_none());
+    assert!(dir.path("created.txt").is_file());
+    let created = workbench.active_snapshot().unwrap();
+    assert!(created.path.ends_with("created.txt"));
+    assert!(created.bytes.is_empty());
+}
+
+#[test]
+fn file_action_dialog_stays_inside_small_viewport_below_titlebar() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let dir = TempDir::new();
+    let path = dir.write("editor.txt", b"original");
+    let mut context = context();
+    let mut workbench = workspace(&dir, &mut context);
+    workbench.settings.settings["ui_animations"] = json!(false);
+    workbench.root_top_inset = 35.0;
+    workbench.open_or_focus(&path).unwrap();
+    workbench
+        .handle_tree_action(FileTreeAction::NewFile(dir.root().to_str().unwrap().into()))
+        .unwrap();
+    for _ in 0..3 {
+        file_dialog_frame(&mut context, &mut workbench, "Small host", [360.0, 260.0]);
+    }
+    let (position, size, _) = visible_file_dialog(&context);
+    assert!(position[0] >= 0.0 && position[1] >= 35.0);
+    assert!(position[0] + size[0] <= 360.0 && position[1] + size[1] <= 260.0);
+}
+
+#[test]
+fn file_action_dialog_keeps_drafted_name_and_focus_when_background_error_arrives() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let dir = TempDir::new();
+    let path = dir.write("editor.txt", b"original");
+    let mut context = context();
+    let mut workbench = workspace(&dir, &mut context);
+    workbench.settings.settings["ui_animations"] = json!(false);
+    workbench.open_or_focus(&path).unwrap();
+    let view = workbench.active_view().unwrap();
+    frame(&mut context, &mut workbench);
+    frame(&mut context, &mut workbench);
+    workbench
+        .handle_tree_action(FileTreeAction::NewFile(dir.root().to_str().unwrap().into()))
+        .unwrap();
+    frame(&mut context, &mut workbench);
+    frame(&mut context, &mut workbench);
+    context.io_mut().add_input_characters_utf8("draft.rs");
+    frame(&mut context, &mut workbench);
+    workbench.error = Some("Background service could not refresh".into());
+    for _ in 0..2 {
+        frame(&mut context, &mut workbench);
+        visible_file_dialog(&context);
+        assert_eq!(workbench.file_dialog.as_ref().unwrap().name, "draft.rs");
+        context.binding().with_bound_context(|| unsafe {
+            let native = &*sys::igGetCurrentContext();
+            assert_eq!(native.NavWindow, (*native.OpenPopupStack.Data).Window);
+            assert_eq!(native.ActiveId, native.InputTextState.ID);
+            assert_ne!(native.ActiveId, 0, "the name input keeps keyboard focus");
+        });
+    }
+    context.io_mut().add_input_characters_utf8(".tmp");
+    frame(&mut context, &mut workbench);
+    assert_eq!(workbench.file_dialog.as_ref().unwrap().name, "draft.rs.tmp");
+    context.io_mut().add_key_event(Key::Escape, true);
+    frame(&mut context, &mut workbench);
+    assert!(workbench.file_dialog.is_none());
+    assert!(
+        workbench.error.is_some(),
+        "Escape dismisses only the active modal"
+    );
+    assert!(!workbench.session.view_snapshot(view).unwrap().block_input);
+    context.io_mut().add_key_event(Key::Escape, false);
+    frame(&mut context, &mut workbench);
+    let dismiss = button_point(&context, "Error", false);
+    mouse(
+        &mut context,
+        &mut workbench,
+        dismiss,
+        MouseButton::Left,
+        true,
+    );
+    mouse(
+        &mut context,
+        &mut workbench,
+        dismiss,
+        MouseButton::Left,
+        false,
+    );
+    frame(&mut context, &mut workbench);
+    assert!(workbench.error.is_none());
+    assert_eq!(workbench.active_snapshot().unwrap().bytes, b"original");
+    assert!(!workbench.session.view_snapshot(view).unwrap().block_input);
+    assert!(!dir.path("draft.rs.tmp").exists());
+}

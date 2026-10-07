@@ -51,7 +51,7 @@ impl TextView {
         arbiter: &super::hover_tooltip::TooltipArbiter,
     ) {
         use crate::views::{
-            diagnostic_style::severity_mark, hover_tooltip::render_diagnostic_tooltip,
+            diagnostic_style::severity_color, hover_tooltip::render_diagnostic_tooltip,
             hover_trigger::Zone, view_layout::line_column_x,
         };
         use bed_core::util::utf8::{utf8_byte_offset_to_utf16, utf16_to_utf8_byte_offset};
@@ -63,10 +63,17 @@ impl TextView {
             .min(state.line_count() - 1);
         let draw = ui.get_window_draw_list();
         let window = ui.window_pos();
+        let severity_colors: [u32; 4] = std::array::from_fn(|index| {
+            native_color(
+                ui,
+                crate::presentation::readable_color(ui, severity_color(index as i32 + 1)),
+            )
+        });
         for item in diagnostics.for_document(&state.path) {
             if item.end_line < first || item.start_line > last {
                 continue;
             }
+            let color = severity_colors[(item.severity.clamp(1, 4) - 1) as usize];
             for row in item.start_line.max(first)..=item.end_line.min(last) {
                 let line = state.line(row);
                 let mut start = if row == item.start_line {
@@ -101,9 +108,7 @@ impl TextView {
                 let mut x = x0 + 2.0;
                 while x <= x1 + 0.01 {
                     let next = [x.min(x1), y + ((x - x0) * 1.2).sin() * 1.25];
-                    draw.add_line(previous, next, severity_mark(item.severity))
-                        .thickness(1.4)
-                        .build();
+                    draw.add_line(previous, next, color).thickness(1.4).build();
                     previous = next;
                     x += 2.0;
                 }
@@ -143,7 +148,11 @@ impl TextView {
             draw.add_rect(
                 [window_pos[0] + 6.0, y],
                 [window_pos[0] + ui.window_width(), y + layout.line_height],
-                native_color(ui, [0.5, 0.5, 0.5, 0.08]),
+                native_color(ui, {
+                    let mut color = ui.style_color(dear_imgui_rs::StyleColor::Text);
+                    color[3] = 0.055;
+                    color
+                }),
             )
             .filled(true)
             .build();
@@ -151,8 +160,15 @@ impl TextView {
         let origin_x = layout.text_pos[0];
         let clip_right = window_pos[0] + ui.window_width();
         let space_width = glyph_advance(ui, " ");
-        let selection_color = native_color(ui, [1.0, 0.1, 0.7, 0.3]);
-        let guide_color = native_color(ui, [0.3, 0.3, 0.3, 0.4]);
+        let selection_color = native_color(
+            ui,
+            ui.style_color(dear_imgui_rs::StyleColor::TextSelectedBg),
+        );
+        let guide_color = native_color(ui, {
+            let mut color = ui.style_color(dear_imgui_rs::StyleColor::Text);
+            color[3] = 0.18;
+            color
+        });
         let mut line = Vec::new();
         for row in first..=last {
             state.line_into(row, &mut line, usize::MAX);
@@ -355,7 +371,7 @@ mod tests {
             TextView::draw(ui, &editor.state, &editor.view, layout);
             let actual = vertices(ui)[before..].to_vec();
             let selection_color = ui.with_bound_context(|| unsafe {
-                sys::igColorConvertFloat4ToU32([1.0, 0.1, 0.7, 0.3].into())
+                sys::igColorConvertFloat4ToU32(ui.style_color(StyleColor::TextSelectedBg).into())
             });
             let text_color = ui.with_bound_context(|| unsafe {
                 sys::igColorConvertFloat4ToU32(ui.style_color(StyleColor::Text).into())
@@ -402,5 +418,67 @@ mod tests {
             let reference = vertices(ui)[before + actual.len()..].to_vec();
             assert_eq!(actual, reference);
         });
+    }
+
+    #[test]
+    fn native_diagnostic_squiggles_keep_all_severities_readable_on_both_surfaces() {
+        use bed_core::util::color::{blend, contrast_ratio};
+        use bed_lsp::diagnostics::diagnostics_store::{DiagnosticItem, LspDiagnostics};
+
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut editor = Editor::new();
+        editor.state.path = "/virtual/theme-diagnostics.rs".into();
+        editor.set_content(
+            &("wide diagnostic range ".repeat(10) + "\n")
+                .repeat(4)
+                .into_bytes(),
+        );
+        let diagnostics = LspDiagnostics::new();
+        diagnostics.replace(
+            &editor.state.path,
+            (0..4)
+                .map(|row| DiagnosticItem {
+                    start_line: row,
+                    end_line: row,
+                    end_character: 100,
+                    severity: row + 1,
+                    ..Default::default()
+                })
+                .collect(),
+            1,
+        );
+        let arbiter = super::super::hover_tooltip::TooltipArbiter::default();
+        for background in [[0.96, 0.94, 0.90, 1.0], [0.04, 0.05, 0.08, 1.0]] {
+            context
+                .style_mut()
+                .set_color(StyleColor::WindowBg, background);
+            render(&mut context, |ui, layout| {
+                let start = vertices(ui).len();
+                TextView::draw_diagnostics(
+                    ui,
+                    &editor.state,
+                    layout,
+                    &diagnostics,
+                    Default::default(),
+                    &arbiter,
+                );
+                let actual = &vertices(ui)[start..];
+                assert!(actual.len() > 100);
+                let mut inks = std::collections::HashSet::new();
+                for vertex in actual {
+                    let color: [f32; 4] = std::array::from_fn(|channel| {
+                        ((vertex.col >> (channel * 8)) & 255) as f32 / 255.0
+                    });
+                    if color[3] > 0.5 {
+                        assert!(
+                            contrast_ratio(blend(color, background, color[3]), background) >= 4.45
+                        );
+                        inks.insert(vertex.col);
+                    }
+                }
+                assert_eq!(inks.len(), 4);
+            });
+        }
     }
 }

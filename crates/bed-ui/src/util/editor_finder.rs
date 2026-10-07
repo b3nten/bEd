@@ -22,13 +22,14 @@ impl Default for EditorOverlayStyle {
     }
 }
 impl EditorOverlayStyle {
-    pub(crate) fn dimmed_background(&self) -> [f32; 4] {
-        [
-            self.background_color[0] * 0.8,
-            self.background_color[1] * 0.8,
-            self.background_color[2] * 0.8,
-            1.0,
-        ]
+    pub(crate) fn dimmed_background(&self, ui: &Ui) -> [f32; 4] {
+        let mut color = bed_core::util::color::blend(
+            ui.style_color(StyleColor::Text),
+            self.background_color,
+            0.055,
+        );
+        color[3] = 1.0;
+        color
     }
 }
 
@@ -344,8 +345,9 @@ impl EditorFinder {
             {
                 let _round = ui.push_style_var(StyleVar::FrameRounding(fs * 0.3));
                 let _border_size = ui.push_style_var(StyleVar::FrameBorderSize(1.0));
-                let _bg = ui.push_style_color(StyleColor::FrameBg, style.dimmed_background());
-                let _border = ui.push_style_color(StyleColor::Border, [0.3, 0.3, 0.3, 1.0]);
+                let _bg = ui.push_style_color(StyleColor::FrameBg, style.dimmed_background(ui));
+                let _border =
+                    ui.push_style_color(StyleColor::Border, ui.style_color(StyleColor::Border));
                 if owner_focused && !self.find_field_holds_focus && !ui.is_any_item_active() {
                     ui.set_keyboard_focus_here();
                 }
@@ -374,8 +376,9 @@ impl EditorFinder {
             ui.same_line();
             let _round = ui.push_style_var(StyleVar::FrameRounding(fs * 0.3));
             let _border_size = ui.push_style_var(StyleVar::FrameBorderSize(1.0));
-            let _bg = ui.push_style_color(StyleColor::FrameBg, style.dimmed_background());
-            let _border = ui.push_style_color(StyleColor::Border, [0.3, 0.3, 0.3, 1.0]);
+            let _bg = ui.push_style_color(StyleColor::FrameBg, style.dimmed_background(ui));
+            let _border =
+                ui.push_style_color(StyleColor::Border, ui.style_color(StyleColor::Border));
             ui.checkbox("Case Sensitive", &mut self.case_sensitive);
         });
         let (search_min, search_max) = ui.item_rect();
@@ -387,8 +390,9 @@ impl EditorFinder {
             {
                 let _round = ui.push_style_var(StyleVar::FrameRounding(fs * 0.3));
                 let _border_size = ui.push_style_var(StyleVar::FrameBorderSize(1.0));
-                let _bg = ui.push_style_color(StyleColor::FrameBg, style.dimmed_background());
-                let _border = ui.push_style_color(StyleColor::Border, [0.3, 0.3, 0.3, 1.0]);
+                let _bg = ui.push_style_color(StyleColor::FrameBg, style.dimmed_background(ui));
+                let _border =
+                    ui.push_style_color(StyleColor::Border, ui.style_color(StyleColor::Border));
                 bounded_input::<256>(
                     ui,
                     &format!("##replacebox_{instance:p}"),
@@ -404,8 +408,9 @@ impl EditorFinder {
             ui.same_line();
             let _round = ui.push_style_var(StyleVar::FrameRounding(fs * 0.3));
             let _border_size = ui.push_style_var(StyleVar::FrameBorderSize(1.0));
-            let _bg = ui.push_style_color(StyleColor::FrameBg, style.dimmed_background());
-            let _border = ui.push_style_color(StyleColor::Border, [0.3, 0.3, 0.3, 1.0]);
+            let _bg = ui.push_style_color(StyleColor::FrameBg, style.dimmed_background(ui));
+            let _border =
+                ui.push_style_color(StyleColor::Border, ui.style_color(StyleColor::Border));
             if ui.button("Replace All") {
                 self.replace_all(editor);
             }

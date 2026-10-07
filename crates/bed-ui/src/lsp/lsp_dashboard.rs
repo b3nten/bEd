@@ -102,7 +102,8 @@ impl LspDashboard {
             }
             let push_bg = !settings.embedded;
             let bg = settings.background_color();
-            let bg = [bg[0] * 0.8, bg[1] * 0.8, bg[2] * 0.8, 1.0];
+            let mut bg = bed_core::util::color::blend(ui.style_color(StyleColor::Text), bg, 0.055);
+            bg[3] = 1.0;
             let _bg = push_bg.then(|| ui.push_style_color(StyleColor::WindowBg, bg));
             let _child_bg = push_bg.then(|| ui.push_style_color(StyleColor::ChildBg, bg));
             let mut open = true;
@@ -162,7 +163,7 @@ impl LspDashboard {
             info.progress = client.dashboard_progress(&info.language);
         }
         let mut action = None;
-        ui.text_colored([0.7, 0.9, 1.0, 1.0], "Language Server Protocol Dashboard");
+        ui.text("Language Server Protocol Dashboard");
         ui.separator();
         if ui.button("Refresh Server Status") {
             self.server_infos = client.dashboard_servers();
@@ -196,7 +197,10 @@ impl LspDashboard {
             }
         }
         if let Some(error) = client.dashboard_error() {
-            ui.text_colored([1.0, 0.4, 0.3, 1.0], error);
+            ui.text_colored(
+                crate::presentation::readable_color(ui, [1.0, 0.4, 0.3, 1.0]),
+                error,
+            );
         }
         for info in &self.server_infos {
             for job in &info.progress {
@@ -214,11 +218,17 @@ impl LspDashboard {
                 if job.finished {
                     ui.text_disabled(format!("Completed: {text}"));
                 } else {
-                    ui.text_colored([0.9, 0.8, 0.4, 1.0], &text);
+                    ui.text_colored(
+                        crate::presentation::readable_color(ui, [0.9, 0.8, 0.4, 1.0]),
+                        &text,
+                    );
                 }
             }
             if let Some(error) = &info.error {
-                ui.text_colored([1.0, 0.4, 0.3, 1.0], format!("{}: {error}", info.language));
+                ui.text_colored(
+                    crate::presentation::readable_color(ui, [1.0, 0.4, 0.3, 1.0]),
+                    format!("{}: {error}", info.language),
+                );
             }
             if !info.stderr.is_empty()
                 && ui.collapsing_header(
@@ -239,7 +249,7 @@ impl LspDashboard {
             .border(true)
             .build(ui, || {
                 if self.server_infos.is_empty() {
-                    ui.text_colored([0.7, 0.7, 0.7, 1.0], "No LSP servers configured");
+                    ui.text_disabled("No LSP servers configured");
                 } else if let Some(_table) = ui.begin_table_with_flags(
                     "ServerTable",
                     4,
@@ -277,11 +287,14 @@ impl LspDashboard {
                         }
                         ui.table_set_column_index(2);
                         ui.text_colored(
-                            if info.is_found {
-                                [0.2, 0.8, 0.2, 1.0]
-                            } else {
-                                [0.8, 0.2, 0.2, 1.0]
-                            },
+                            crate::presentation::readable_color(
+                                ui,
+                                if info.is_found {
+                                    [0.2, 0.8, 0.2, 1.0]
+                                } else {
+                                    [0.8, 0.2, 0.2, 1.0]
+                                },
+                            ),
                             if info.is_found {
                                 "● Found"
                             } else {
@@ -296,7 +309,7 @@ impl LspDashboard {
                         } else {
                             ([0.7, 0.7, 0.7, 1.0], "● Inactive")
                         };
-                        ui.text_colored(color, text);
+                        ui.text_colored(crate::presentation::readable_color(ui, color), text);
                         ui.same_line();
                         if ui.button(format!("Restart##{}-{index}", info.language)) {
                             self.restart_requested = Some(info.language.clone());
@@ -333,13 +346,13 @@ impl LspDashboard {
             .rounding(8.0)
             .filled(true)
             .build();
-        draw.add_rect(origin, max, 0xffff_ffff)
+        draw.add_rect(origin, max, ui.style_color(StyleColor::Border))
             .rounding(8.0)
             .thickness(1.0)
             .build();
         draw.add_text(
             [origin[0] + 15.0, origin[1] + 15.0],
-            0xffff_ffff,
+            ui.style_color(StyleColor::Text),
             text.as_str(),
         );
         *timer -= ui.io().delta_time();

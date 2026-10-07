@@ -1,4 +1,17 @@
-use dear_imgui_rs::{Key, TextureId};
+use bed_core::util::color::{blend, ensure_contrast};
+use dear_imgui_rs::{Key, StyleColor, TextureId, Ui};
+
+/// Readable secondary text for both light and dark host palettes.
+pub fn muted_text_color(ui: &Ui) -> [f32; 4] {
+    let background = ui.style_color(StyleColor::WindowBg);
+    let text = ui.style_color(StyleColor::Text);
+    ensure_contrast(blend(text, background, 0.6), background, 4.5)
+}
+
+/// Keep semantic hues while making their labels legible on the current surface.
+pub fn readable_color(ui: &Ui, color: [f32; 4]) -> [f32; 4] {
+    ensure_contrast(color, ui.style_color(StyleColor::WindowBg), 4.5)
+}
 pub trait FileIcons {
     fn get(&self, name: &str) -> Option<TextureId>;
     fn get_for_file(&self, filename: &str) -> Option<TextureId>;

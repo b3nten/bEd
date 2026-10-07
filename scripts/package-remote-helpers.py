@@ -97,6 +97,25 @@ def validate_bundle(directory, target):
 
 
 def validate(source, targets):
+    targets = tuple(targets)
+    missing = [source / target / name for target in targets
+               for name in ("bed-headless", "manifest.json")
+               if not (source / target / name).is_file()]
+    if missing:
+        paths = "\n".join(f"  {path}" for path in missing)
+        artifacts = "\n".join(f"  bed-remote-helper-{target}" for target in targets)
+        raise ValueError(
+            f"Missing prebuilt remote helper bundle files:\n{paths}\n\n"
+            "Desktop packages require both Linux x86-64 and ARM64 helper bundles. "
+            "Building the desktop binary does not build or stage these helpers.\n"
+            "Build and stage both helpers locally with:\n"
+            "  bash scripts/build-remote-helpers.sh\n"
+            "This requires running Docker; Rust and the C compiler run only in "
+            "Linux containers.\n"
+            "Alternatively, download these CI artifacts from the matching Bed release and extract "
+            f"their target directories into {source}:\n{artifacts}\n"
+            "Each bundle must include its manifest and license files. "
+            "For an existing bundle directory, pass --source PATH.")
     for target in targets:
         validate_bundle(source / target, target)
 

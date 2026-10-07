@@ -1,6 +1,7 @@
 //! Bed terminal components. Attribution: workspace LICENSE, NOTICE and UPSTREAM_REVISION.
 #[cfg(feature = "ui")]
 pub mod bed_terminal;
+mod process_title;
 pub mod terminal;
 #[cfg(feature = "ui")]
 pub mod terminal_font;

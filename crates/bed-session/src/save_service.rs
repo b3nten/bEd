@@ -14,8 +14,20 @@ use bed_core::{
     editor_state::EditorState,
 };
 
-const TRUNCATED_MARKER: &[u8] = b"[File truncated - No Edits - showing first";
 const WRITE_CHUNK: usize = 64 * 1024;
+
+fn check_save_size(state: &EditorState) -> io::Result<()> {
+    let total = state
+        .byte_size()
+        .saturating_add(if state.utf8_bom { 3 } else { 0 });
+    if total > bed_files::files::MAX_FILE_SIZE {
+        return Err(bed_files::files::file_too_large(
+            std::path::Path::new(&state.path),
+            total as u64,
+        ));
+    }
+    Ok(())
+}
 
 pub struct EditorSave {
     last_edit: Rc<Cell<Option<Instant>>>,
@@ -63,14 +75,7 @@ impl EditorSave {
 
     /// Generate the same bytes as a local save, without touching a filesystem.
     pub fn bytes_for_save(state: &EditorState) -> io::Result<Vec<u8>> {
-        let mut prefix = vec![0; state.byte_size().min(96)];
-        state.copy_bytes(0, prefix.len(), &mut prefix);
-        if prefix
-            .windows(TRUNCATED_MARKER.len())
-            .any(|s| s == TRUNCATED_MARKER)
-        {
-            return Err(io::Error::other("Cannot save truncated file content"));
-        }
+        check_save_size(state)?;
         let mut bytes = Vec::with_capacity(state.byte_size() + 3);
         if state.utf8_bom {
             bytes.extend_from_slice(&[0xef, 0xbb, 0xbf]);
@@ -84,14 +89,7 @@ impl EditorSave {
         if state.path.is_empty() || !state.dirty {
             return Ok(false);
         }
-        let mut prefix = vec![0; state.byte_size().min(96)];
-        state.copy_bytes(0, prefix.len(), &mut prefix);
-        if prefix
-            .windows(TRUNCATED_MARKER.len())
-            .any(|s| s == TRUNCATED_MARKER)
-        {
-            return Err(io::Error::other("Cannot save truncated file content"));
-        }
+        check_save_size(state)?;
         let mut file = File::create(&state.path)?;
         if state.utf8_bom {
             file.write_all(&[0xef, 0xbb, 0xbf])?;

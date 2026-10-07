@@ -15,6 +15,7 @@ pub enum TitlebarAction {
     Settings,
     Search,
     Diagnostics,
+    Structure,
     SplitRight,
     SplitDown,
 }
@@ -155,6 +156,7 @@ pub fn draw_titlebar(
     ui: &dear_imgui_rs::Ui,
     _settings: &crate::util::settings::Settings,
     icons: &crate::util::icons::Icons,
+    title: &str,
 ) -> Vec<TitlebarAction> {
     use dear_imgui_rs::{Condition, StyleColor, StyleVar, WindowFlags};
 
@@ -194,24 +196,27 @@ pub fn draw_titlebar(
             let tx = fs * 0.7;
             let aw = (fs * 1.7)
                 .max(28.0)
-                .min(((caption_x - tx * 2.0 - gap * 6.0) / 7.0).max(1.0));
-            let tools_width = aw * 7.0 + gap * 6.0;
-            let title = "Bed Text Editor";
+                .min(((caption_x - tx * 2.0 - gap * 7.0) / 8.0).max(1.0));
+            let tools_width = aw * 8.0 + gap * 7.0;
             let ts = ui.calc_text_size(title);
-            let title_space = caption_x - tx * 2.0 - tools_width - fs * 0.85;
-            let title = if ts[0] <= title_space { title } else { "Bed" };
-            let ts = ui.calc_text_size(title);
+            let title_space = (caption_x - tx * 2.0 - tools_width - fs * 0.85).max(0.0);
             let mut tool_x = tx;
-            if ts[0] <= title_space {
+            if title_space >= fs * 2.0 {
+                let visible_width = ts[0].min(title_space);
+                let _clip = ui.push_clip_rect(
+                    [origin[0] + tx, origin[1]],
+                    [origin[0] + tx + visible_width, origin[1] + h],
+                    true,
+                );
                 ui.set_cursor_pos([tx, (h - ts[1]) * 0.5]);
                 ui.text(title);
-                tool_x += ts[0] + fs * 0.85;
+                tool_x += visible_width + fs * 0.85;
             }
             for (id, tip, action) in [
                 ("##tb_sidebar", "New File Explorer", TitlebarAction::Sidebar),
                 ("##tb_term", "New Terminal", TitlebarAction::Terminal),
-                ("##tb_set", "New Settings", TitlebarAction::Settings),
                 ("##tb_search", "New Project Search", TitlebarAction::Search),
+                ("##tb_structure", "New Structure", TitlebarAction::Structure),
                 (
                     "##tb_diagnostics",
                     "New Diagnostics",
@@ -227,6 +232,7 @@ pub fn draw_titlebar(
                     "Split Editor Down",
                     TitlebarAction::SplitDown,
                 ),
+                ("##tb_set", "New Settings", TitlebarAction::Settings),
             ] {
                 ui.set_cursor_pos([tool_x, 0.0]);
                 let hit = ui.invisible_button(id, [aw, h]);
@@ -235,7 +241,7 @@ pub fn draw_titlebar(
                 host.exclude_caption_rect(client(a), client(b), CaptionHit::Client);
                 if ui.is_item_hovered() {
                     ui.tooltip_text(tip);
-                    dl.add_rect(a, b, [1.0, 1.0, 1.0, 28.0 / 255.0])
+                    dl.add_rect(a, b, ui.style_color(StyleColor::ButtonHovered))
                         .filled(true)
                         .build();
                 }
@@ -264,7 +270,7 @@ pub fn draw_titlebar(
                         if part == CaptionHit::Close {
                             [232.0 / 255.0, 17.0 / 255.0, 35.0 / 255.0, 1.0]
                         } else {
-                            [1.0, 1.0, 1.0, 28.0 / 255.0]
+                            ui.style_color(StyleColor::ButtonHovered)
                         },
                     )
                     .filled(true)
@@ -328,14 +334,6 @@ pub fn draw_titlebar(
                 }
                 x += bw;
             }
-            let p = ui.window_pos();
-            let y = p[1] + h - 1.0;
-            dl.add_line(
-                [p[0], y],
-                [p[0] + ui.window_size()[0], y],
-                ui.style_color(StyleColor::Border),
-            )
-            .build();
         });
     actions
 }
@@ -407,6 +405,20 @@ fn draw_tool_icon(
             dl.add_circle([c[0], c[1] + s * 0.62], stroke * 0.5, ink)
                 .filled(true)
                 .build();
+        }
+        TitlebarAction::Structure => {
+            let trunk = c[0] - s * 0.65;
+            dl.add_line([trunk, p0[1]], [trunk, p1[1]], ink)
+                .thickness(stroke)
+                .build();
+            for y in [p0[1] + side * 0.2, c[1], p1[1] - side * 0.1] {
+                dl.add_line([trunk, y], [c[0] - s * 0.05, y], ink)
+                    .thickness(stroke)
+                    .build();
+                dl.add_line([c[0] + s * 0.2, y], [p1[0], y], ink)
+                    .thickness(stroke)
+                    .build();
+            }
         }
         TitlebarAction::Settings => {
             if let Some(texture) = icons.get("gear") {
@@ -567,8 +579,35 @@ mod native {
             ui: &Ui,
             settings: &crate::util::settings::Settings,
             icons: &crate::util::icons::Icons,
+            title: &str,
         ) -> Vec<TitlebarAction> {
-            super::draw_titlebar(self, ui, settings, icons)
+            let _ = Self::apply_theme_to_window(
+                &self.window,
+                settings.text_color(),
+                settings.background_color(),
+            );
+            super::draw_titlebar(self, ui, settings, icons, title)
+        }
+        pub fn apply_theme_to_window(
+            window: &Window,
+            _text: [f32; 4],
+            background: [f32; 4],
+        ) -> io::Result<()> {
+            let RawWindowHandle::Win32(handle) =
+                window.window_handle().map_err(io::Error::other)?.as_raw()
+            else {
+                return Err(io::Error::other("window has no HWND"));
+            };
+            let dark = i32::from(bed_core::util::color::relative_luminance(background) <= 0.179);
+            unsafe {
+                DwmSetWindowAttribute(
+                    handle.hwnd.get() as HWND,
+                    DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+                    (&dark as *const i32).cast(),
+                    4,
+                );
+            }
+            Ok(())
         }
     }
     impl super::CaptionHost for WindowsWindow {
@@ -799,13 +838,19 @@ mod tests {
             (*viewport).Pos = origin.into();
             (*viewport).WorkPos = origin.into();
         });
-        let actions = draw_titlebar(host, ui, settings, &crate::util::icons::Icons::default());
+        let actions = draw_titlebar(
+            host,
+            ui,
+            settings,
+            &crate::util::icons::Icons::default(),
+            "bEd",
+        );
         assert!(context.render_legacy().draw_data().total_vtx_count() > 0);
         actions
     }
     fn check_toolbar_geometry(host: &ToolbarHost) {
-        assert_eq!(host.rects.len(), 10);
-        let tools = &host.rects[..7];
+        assert_eq!(host.rects.len(), 11);
+        let tools = &host.rects[..8];
         let first = tools[0];
         for button in tools {
             assert_eq!(button.hit, CaptionHit::Client);
@@ -816,14 +861,14 @@ mod tests {
         for pair in tools.windows(2) {
             assert!((pair[1].min[0] - pair[0].max[0] - 2.0).abs() < 0.01);
         }
-        assert!(tools[6].max[0] <= host.rects[7].min[0]);
-        assert_eq!(host.rects[7].hit, CaptionHit::Min);
-        assert_eq!(host.rects[8].hit, CaptionHit::Max);
-        assert_eq!(host.rects[9].hit, CaptionHit::Close);
+        assert!(tools[7].max[0] <= host.rects[8].min[0]);
+        assert_eq!(host.rects[8].hit, CaptionHit::Min);
+        assert_eq!(host.rects[9].hit, CaptionHit::Max);
+        assert_eq!(host.rects[10].hit, CaptionHit::Close);
     }
 
     #[test]
-    fn toolbar_measured_geometry_and_all_seven_click_actions() {
+    fn toolbar_measured_geometry_and_all_eight_click_actions() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
@@ -855,11 +900,12 @@ mod tests {
         for (rect, expected) in rects.iter().zip([
             TitlebarAction::Sidebar,
             TitlebarAction::Terminal,
-            TitlebarAction::Settings,
             TitlebarAction::Search,
+            TitlebarAction::Structure,
             TitlebarAction::Diagnostics,
             TitlebarAction::SplitRight,
             TitlebarAction::SplitDown,
+            TitlebarAction::Settings,
         ]) {
             context.io_mut().add_mouse_pos_event([
                 (rect.min[0] + rect.max[0]) * 0.5,

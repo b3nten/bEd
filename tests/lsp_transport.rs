@@ -989,7 +989,7 @@ fn native_fixture_supports_navigation_hover_and_diagnostics() {
 
 fn shared_session_save_diagnostics_render_in_each_custom_view() {
     use bed_core::editor_commands::CursorReveal;
-    use bed_ui::views::diagnostic_style::severity_mark;
+    use bed_ui::views::diagnostic_style::severity_color;
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions, sys};
 
     let fixture = PoolFixture::new(9900, "basic");
@@ -1037,6 +1037,13 @@ fn shared_session_save_diagnostics_render_in_each_custom_view() {
                 right: &mut EditorView| {
         context.prepare_frame(FramePrepareOptions::new([1000.0, 600.0], 1.0 / 60.0));
         let ui = context.frame();
+        let diagnostic_mark = ui.with_bound_context(|| unsafe {
+            // Diagnostic ink adapts to the host palette; retain the geometry
+            // assertions without depending on the unadjusted source color.
+            sys::igColorConvertFloat4ToU32(
+                bed_ui::presentation::readable_color(ui, severity_color(1)).into(),
+            )
+        });
         ui.window("Session diagnostic canvas")
             .position([0.0, 0.0], Condition::Always)
             .size([980.0, 550.0], Condition::Always)
@@ -1066,15 +1073,15 @@ fn shared_session_save_diagnostics_render_in_each_custom_view() {
                     continue;
                 }
                 let draw = &*window.DrawList;
-                let red = (0..draw.VtxBuffer.Size)
+                let marks = (0..draw.VtxBuffer.Size)
                     .filter(|index| {
-                        (*draw.VtxBuffer.Data.add(*index as usize)).col == severity_mark(1)
+                        (*draw.VtxBuffer.Data.add(*index as usize)).col == diagnostic_mark
                     })
                     .count();
                 if name.contains("LineNumbers") {
-                    gutter_counts.push(red);
+                    gutter_counts.push(marks);
                 } else if name.contains("##editor") {
-                    text_counts.push(red);
+                    text_counts.push(marks);
                 }
             }
             (text_counts, gutter_counts)

@@ -20,7 +20,7 @@ use bed_core::editor_state::EditorState;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContentMatch {
     pub file: FileEntry,
-    /// Zero-based position in the loaded editor, including its truncation notice when present.
+    /// Zero-based position in the loaded editor and original source file.
     pub row: i32,
     pub column: i32,
     /// Zero-based source-file line, used in the result label.
@@ -491,9 +491,7 @@ fn run_search_project(
         // and then walking an editable AVL rope for each read-only file.
         let content = raw.raw.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&raw.raw);
         let (lines, _) = EditorState::split_lines(content);
-        // The capped reader prepends three lines. They are UI information, not source content.
-        let source_start = if raw.truncated { 3 } else { 0 };
-        for (row, line) in lines.into_iter().enumerate().skip(source_start) {
+        for (row, line) in lines.into_iter().enumerate() {
             if canceled() {
                 return None;
             }
@@ -509,7 +507,7 @@ fn run_search_project(
                     file: file.clone(),
                     row: row as i32,
                     column: column as i32,
-                    source_row: (row - source_start) as i32,
+                    source_row: row as i32,
                     line: Arc::clone(shared),
                 });
                 total_matches += 1;
@@ -638,22 +636,20 @@ mod tests {
         ));
     }
     #[test]
-    fn bom_binary_hidden_and_truncated_source_positions() {
+    fn bom_binary_hidden_and_oversized_files_keep_source_positions() {
         let temp = TempDir::new();
         temp.write(".hidden", b"\xef\xbb\xbfneedle");
         temp.write("binary", b"\0needle");
-        let mut long = vec![b'x'; MAX_FILE_SIZE + 1];
-        long[..6].copy_from_slice(b"needle");
-        temp.write("large", &long);
-        let result = search(&temp, b"needle", false);
-        assert_eq!(result.skipped_files, 1);
-        assert_eq!(result.matches.len(), 2);
-        let large = result
-            .matches
-            .iter()
-            .find(|found| found.file.relative_path == "large")
+        let large = temp.write("large", b"needle");
+        std::fs::File::options()
+            .write(true)
+            .open(&large)
+            .unwrap()
+            .set_len(MAX_FILE_SIZE as u64 + 1)
             .unwrap();
-        assert_eq!((large.source_row, large.row, large.column), (0, 3, 0));
+        let result = search(&temp, b"needle", false);
+        assert_eq!(result.skipped_files, 2);
+        assert_eq!(result.matches.len(), 1);
         let hidden = result
             .matches
             .iter()
@@ -754,10 +750,10 @@ mod tests {
         }
     }
     #[test]
-    fn truncated_bom_and_mixed_newlines_keep_loaded_document_positions() {
+    fn files_beyond_the_old_limit_keep_bom_and_mixed_newline_source_positions() {
         let temp = TempDir::new();
         let mut raw = b"\xef\xbb\xbfneedle\r\nneedle\rneedle\n".to_vec();
-        raw.resize(MAX_FILE_SIZE + 1, b'x');
+        raw.resize(2 * 1024 * 1024, b'x');
         temp.write("large", &raw);
         let result = search(&temp, b"needle", false);
         assert_eq!(
@@ -766,7 +762,7 @@ mod tests {
                 .iter()
                 .map(|found| (found.source_row, found.row, found.column))
                 .collect::<Vec<_>>(),
-            vec![(0, 3, 3), (1, 4, 0), (2, 5, 0)]
+            vec![(0, 0, 0), (1, 1, 0), (2, 2, 0)]
         );
     }
     #[test]

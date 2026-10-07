@@ -55,12 +55,12 @@ impl EditorLineJump {
             .pane
             .unwrap_or_else(|| (ui.window_pos(), ui.window_size()));
         let (position, size) = line_jump_geometry(fs, pane);
-        let background = style.dimmed_background();
+        let background = style.dimmed_background(ui);
         let _round = ui.push_style_var(StyleVar::WindowRounding(fs * 0.5));
         let _border_size = ui.push_style_var(StyleVar::WindowBorderSize(1.0));
         let _padding = ui.push_style_var(StyleVar::WindowPadding([fs * 0.8; 2]));
         let _bg = ui.push_style_color(StyleColor::WindowBg, background);
-        let _border = ui.push_style_color(StyleColor::Border, [0.3, 0.3, 0.3, 1.0]);
+        let _border = ui.push_style_color(StyleColor::Border, ui.style_color(StyleColor::Border));
         let _frame_bg = ui.push_style_color(StyleColor::FrameBg, background);
         let instance = self as *const Self;
         let mut enter_pressed = false;
@@ -87,7 +87,8 @@ impl EditorLineJump {
                     let _round = ui.push_style_var(StyleVar::FrameRounding(fs * 0.2));
                     let _border_size = ui.push_style_var(StyleVar::FrameBorderSize(1.0));
                     let _pad = ui.push_style_var(StyleVar::FramePadding([fs * 0.4; 2]));
-                    let _border = ui.push_style_color(StyleColor::Border, [0.3, 0.3, 0.3, 1.0]);
+                    let _border =
+                        ui.push_style_color(StyleColor::Border, ui.style_color(StyleColor::Border));
                     let _bg = ui.push_style_color(StyleColor::FrameBg, background);
                     // As upstream, re-grab every frame after Enter deactivates InputText.
                     ui.set_keyboard_focus_here();

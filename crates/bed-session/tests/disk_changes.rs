@@ -234,6 +234,69 @@ fn oversized_external_change_preserves_buffer_and_blocks_future_saves() {
     invalid_external(&vec![b'a'; bed_files::files::MAX_FILE_SIZE + 1]);
 }
 #[test]
+fn unchanged_oversized_monitor_errors_are_reported_once_and_recovery_is_retried() {
+    let mut fx = Fixture::new(b"preserved");
+    let generation = fx.snapshot().generation;
+    let grow = |path: &std::path::Path, extra: u64| {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_len(bed_files::files::MAX_FILE_SIZE as u64 + extra)
+            .unwrap();
+    };
+    grow(&fx.path, 1);
+    let first = fx.poll();
+    assert_eq!(
+        first
+            .errors
+            .iter()
+            .filter(|error| error.service == "monitor")
+            .count(),
+        1
+    );
+    let conflict = fx.snapshot().disk_conflict;
+    assert!(conflict.is_some());
+    let repeated = fx.poll();
+    assert!(
+        repeated.errors.is_empty(),
+        "unchanged failure must stay dismissed"
+    );
+    assert_eq!(fx.snapshot().disk_conflict, conflict);
+    assert_eq!(fx.snapshot().bytes, b"preserved");
+    assert_eq!(fx.snapshot().generation, generation);
+
+    grow(&fx.path, 2);
+    let changed = fx.poll();
+    assert_eq!(
+        changed
+            .errors
+            .iter()
+            .filter(|error| error.service == "monitor")
+            .count(),
+        1
+    );
+    assert_ne!(fx.snapshot().disk_conflict, conflict);
+
+    fx.external(b"recovered");
+    assert!(
+        fx.reloaded(),
+        "monitoring must continue retrying after an error"
+    );
+    assert_eq!(fx.snapshot().bytes, b"recovered");
+    assert!(fx.snapshot().disk_conflict.is_none());
+
+    grow(&fx.path, 1);
+    assert_eq!(
+        fx.poll()
+            .errors
+            .iter()
+            .filter(|error| error.service == "monitor")
+            .count(),
+        1
+    );
+}
+#[test]
 fn external_reload_resets_old_undo_and_persists_empty_history() {
     let mut fx = Fixture::new(b"original");
     fx.edit(|c| c.type_text(b"local "));

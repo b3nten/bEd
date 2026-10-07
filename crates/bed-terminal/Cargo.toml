@@ -10,6 +10,7 @@ default = ["ui"]
 ui = ["dep:dear-imgui-rs", "dep:dear-imgui-sys"]
 
 [dependencies]
+bed-core = { workspace = true }
 bed-remote = { workspace = true }
 dear-imgui-rs = { workspace = true, optional = true }
 dear-imgui-sys = { workspace = true, optional = true }

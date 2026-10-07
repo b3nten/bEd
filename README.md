@@ -1,6 +1,6 @@
-# bed
+# bEd
 
-Bed is a Rust desktop text editor with dockable tools, SSH projects and
+bEd is a Rust desktop text editor with dockable tools, SSH projects and
 embeddable document views. It uses a custom byte buffer with multi-cursor editing
 and undo, Dear ImGui for its interface, and winit/wgpu for native windows and
 rendering.
@@ -9,21 +9,51 @@ rendering.
 cargo run --locked -- path/to/project path/to/file.rs
 ```
 
-Run without paths for the project picker. Recent projects remember their open
+Run without paths to resume the last workspace, or use `--new-window` for the
+project picker. Recent projects remember their open
 files, independent views, tool panels, terminal working directories and docking
-layout. Documents, Files, terminals, Settings, Search, References, Diagnostics
-and Language Servers are ordinary ImGui tabs. Drag tabs between groups, split
+layout. Documents, Files, terminals, Settings, Search, References, Diagnostics,
+Structure and Language Servers are ordinary ImGui tabs. Drag tabs between groups, split
 panels or detach them into native windows. macOS has native menus through Muda.
-Titlebar panel buttons and menu clicks create new instances. New panels and
+On macOS, **File → New Window** (Cmd+Shift+N) or **New Window** in the Dock
+icon's right-click menu launches a separate bEd process at the project picker.
+Instances share settings and recent projects; each has its own editing session.
+The main titlebar and native window title show `bEd • workspace_name`, using the
+workspace's display name in operating-system window lists as well.
+Titlebar panel buttons and panel menu clicks create new panels. New panels and
 opened files join the largest dock group; keyboard shortcuts reveal existing
 tools. Separate Search tabs keep independent queries and results.
-The titlebar offers Files, Terminal, Settings, Search, Diagnostics, Split Right
-and Split Down with uniform spacing. Splits duplicate the active document view,
+The titlebar offers Files, Terminal, Search, Structure, Diagnostics,
+Split Right, Split Down and Settings with uniform spacing. Splits duplicate the active document view,
 including when a tool panel has focus.
 Closing a detached window closes its contained tabs; a failed save or cancelled
 Save As keeps the group open.
+Right-click a tab to close it, all tabs in its group, other tabs, or tabs to its
+left or right. Panels also persist when no project is open.
+Right-click in an editor and toggle **Show Minimap** to change only that tab;
+the override expires when the tab closes.
 Restored terminals start fresh shells in their recorded launch directories;
 live processes, scrollback and subsequent shell `cd` changes are not restored.
+Terminal labels follow the foreground process on macOS and Linux, and terminal
+titles supplied by remote shells or programs.
+
+Panels fade in when opened or revealed, and menus and floating popovers grow
+subtly into place.
+Structure entries appear with a short stagger; expanding or collapsing branches
+in Files and Structure fades their children and smoothly adjusts the row spacing.
+Explicit navigation jumps, including Go to Line, definitions and Structure
+selections, scroll smoothly. Wheel and trackpad scrolling and cursor following
+use the same native behavior as Files and Settings. Disable **UI Animations** in
+Settings to turn off panel, tree, popup and navigation motion.
+
+Structure shows a nested outline of the most recently focused document, including
+unsaved edits. Open it from the titlebar, the macOS View/Window menus, or the
+editor's right-click menu. Click a name to focus its editor view and jump to the
+source; click an arrow to expand its children. Structure supports all bundled
+Tree-sitter languages, including JSON keys, TOML sections, HCL blocks, HTML
+elements and CSS rules. It parses local buffers for local and SSH files and
+works with syntax highlighting and language servers disabled. Panel instances
+and docking are restored with the workspace.
 
 Right-click in Files to toggle **Hide Gitignored Files** or **Hide Hidden Files**
 (dot-prefixed names), or right-click a file or folder and choose **Hide from File
@@ -32,31 +62,33 @@ for local and SSH projects; both filters start off. **Show Hidden Files** tempor
 reveals filtered entries dimmed, with **Unhide from File Tree** for manually hidden
 paths. Hiding a folder covers its subtree. These controls affect only the tree.
 The Git-ignore filter needs Git installed on the project’s machine. SSH directory
-metadata uses protocol v2; Bed automatically installs the matching helper.
+metadata uses protocol v2; bEd automatically installs the matching helper.
 
 A document can appear in several views. Its text, undo, autosave, highlighting,
 Git and LSP services are shared; cursors, selections, find and scrolling belong
-to each view. Named files autosave after one second of inactivity. External disk
+to each view. Named files autosave after one second of inactivity by default;
+Settings provides an **Autosave code files** toggle and **Autosave delay** control.
+External disk
 changes reload clean buffers; dirty buffers offer Reload, Keep Buffer or Save As.
 
 SSH projects use the same local editor: typing, undo, selections and highlighting
 stay on your machine. Files, search, Git, language servers and shells run on the
 remote host. In Projects, enter an SSH host or config alias and a project path
-such as `~/Dev/foo` or `/srv/foo`. Bed resolves `~` using the remote account's
+such as `~/Dev/foo` or `/srv/foo`. bEd resolves `~` using the remote account's
 home directory and uses the folder name as the display name. Recent workspaces
 can be renamed and retain separate layouts for each local/SSH target and root.
 Existing saved local projects migrate automatically.
 
 Desktop packages include prebuilt Linux x86-64 and ARM64 helpers. On first
-connection, Bed detects the remote CPU, uploads the matching `bed-headless` to
+connection, bEd detects the remote CPU, uploads the matching `bed-headless` to
 the SSH user's `~/.cache/bed/helpers/`, and launches it there. Later connections
 reuse the same helper; a different bundled binary installs alongside the old
 one automatically. Uploads commit atomically after validating the executable.
 No sudo, remote download, compiler or PATH changes are needed.
 
-Bed manages the helper automatically. It invokes your system `ssh`, so existing
+bEd manages the helper automatically. It invokes your system `ssh`, so existing
 SSH config, keys and authentication agents apply. No
-listening TCP port or additional credentials are configured by Bed. Language
+listening TCP port or additional credentials are configured by bEd. Language
 servers and Git must be installed remotely; LSP configuration remains local, and
 configured executable paths refer to the remote host.
 Running an installed helper needs no Rust or C compiler, and connecting never
@@ -71,18 +103,45 @@ Source checkouts use helpers under `target/remote-helpers/<Rust target>/`;
 (use `x86_64-unknown-linux-musl` for x86-64). Cargo does not build these target
 binaries automatically when running the desktop from source.
 
+To build, package, and install bEd on macOS:
+
+```sh
+bash scripts/build-macos.sh
+```
+
+This requires Rust, Xcode Command Line Tools, Python 3, and a running Docker
+engine (Docker Desktop or OrbStack). The script builds static Linux x86-64 and
+ARM64 helpers in Rust/GCC containers, builds the native desktop, packages
+`target/dist/bEd.app` and its ZIP, and copies the app to `/Applications/bEd.app`.
+Use `--no-install` to leave the app in `target/dist`. Docker is a build dependency;
+the installed app and SSH servers do not need it or a compiler. Container build
+caches make subsequent builds incremental.
+
+If the desktop is already built, prepare its helpers and package it with:
+
+```sh
+bash scripts/build-remote-helpers.sh
+bash scripts/pack-mac.sh
+```
+
+Alternatively, extract both matching `bed-remote-helper-*` CI artifacts into
+`target/remote-helpers` before packaging; that avoids a local Docker build.
+
 Remote saves are asynchronous and check the previously loaded disk baseline.
 They preserve BOM/line-ending bytes and clear dirty state only after the relevant
 version is acknowledged. Closing a tab during a save keeps it open; retry after
 the save finishes. Losing SSH retains local buffers and undo; **Reconnect SSH**
 starts a fresh helper and checks for external changes. Remote terminals require
-an explicit restart after disconnection and do not survive closing Bed. Remote
+an explicit restart after disconnection and do not survive closing bEd. Remote
 undo history is in memory, and destructors never save documents or history.
 
 This first version uses one root per workspace, supports UTF-8 paths within the
-selected root, and rejects remote editable files larger than 1 MiB. Remote file
+selected root. Local and remote text files up to 16 MiB can be edited. Larger
+files show an explicit size-limit error without loading partial content; open
+them in another editor or split them into smaller files. Project Search skips
+files above this limit. Remote file
 deletion asks for permanent deletion rather than using your desktop Trash. Open
-and Save As accept remote paths in Bed. Editing local configuration files from a
+and Save As accept remote paths in bEd. Editing local configuration files from a
 remote workspace requires switching to a local workspace; Settings controls work
 in either. Local and remote workspaces retain separate layouts and documents.
 
@@ -145,7 +204,7 @@ use bed_session::EditorSession;
 use bed_ui::{EditorView, EditorViewOptions};
 
 let mut session = EditorSession::new();
-let document = session.create_document(b"Hello, Bed\n")?;
+let document = session.create_document(b"Hello, bEd\n")?;
 let mut view = EditorView::new(&mut session, document)?;
 // In the host's existing ImGui frame and chosen container:
 let response = view.draw(ui, &mut session, &EditorViewOptions::default())?;
@@ -185,7 +244,7 @@ first; native Linux/Windows CI is configured and its results are required before
 claiming every-platform acceptance. The pinned viewport backend supports native
 undocking on macOS, Windows and X11; Wayland retains internal docking/floating.
 
-Bed's original buffer and editing algorithms were translated from
+bEd's original buffer and editing algorithms were translated from
 [nealmick/ned](https://github.com/nealmick/ned). [PORTING.md](PORTING.md) records
 source provenance, mappings, dependencies and validation. Original notices and
 assets remain attributed in [NOTICE](NOTICE) and accompanying licenses.

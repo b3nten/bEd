@@ -17,3 +17,6 @@ pub(crate) mod test_support;
 
 pub use editor_input::{DefinitionRequest, HostAction};
 pub use editor_view::{EditorView, EditorViewOptions, ViewPresentation, ViewResponse};
+
+#[cfg(test)]
+mod theme_tests;

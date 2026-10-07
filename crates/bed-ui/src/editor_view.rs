@@ -59,6 +59,7 @@ pub struct EditorView {
     // widget handles between panels or reallocate their own tab registries.
     frame: Box<EditorFrame>,
     input: EditorInput,
+    minimap_override: Option<bool>,
     _lifetime: Rc<()>,
 }
 impl EditorView {
@@ -72,6 +73,7 @@ impl EditorView {
             context: None,
             frame,
             input: EditorInput::default(),
+            minimap_override: None,
             _lifetime: token,
         })
     }
@@ -83,6 +85,19 @@ impl EditorView {
     }
     pub fn context_id(&self) -> Option<ContextId> {
         self.context
+    }
+    /// Animate explicit location jumps such as Go to Definition or Go to Line.
+    /// Wheel, trackpad and ordinary caret scrolling always use native behavior.
+    /// Enabled by default; disabling finishes an active jump on the next draw.
+    pub fn set_navigation_animations(&mut self, enabled: bool) {
+        self.frame.navigation_animations = enabled;
+    }
+    /// Override this view's minimap for its lifetime without changing host settings.
+    pub fn set_minimap_enabled(&mut self, enabled: bool) {
+        self.minimap_override = Some(enabled);
+    }
+    pub fn minimap_enabled(&self, default: bool) -> bool {
+        self.minimap_override.unwrap_or(default)
     }
     pub fn draw(
         &mut self,
@@ -112,7 +127,7 @@ impl EditorView {
                 .background_color
                 .unwrap_or_else(|| ui.style_color(StyleColor::WindowBg));
             self.frame.rainbow_mode = options.rainbow_mode;
-            self.frame.minimap_enabled = options.minimap_enabled;
+            self.frame.minimap_enabled = self.minimap_enabled(options.minimap_enabled);
             self.frame.line_jump_key = options.line_jump_key;
             self.frame.external_overlay = options.block_input;
             let mut response = None;

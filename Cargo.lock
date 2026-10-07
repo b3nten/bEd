@@ -304,6 +304,7 @@ name = "bed-terminal"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "bed-core",
  "bed-remote",
  "dear-imgui-rs",
  "dear-imgui-sys",

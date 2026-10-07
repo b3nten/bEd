@@ -86,7 +86,7 @@ fn bom_and_byte_content_round_trip_and_clean_save_is_noop() {
 }
 
 #[test]
-fn empty_path_and_truncated_guard_keep_dirty_and_disk_unchanged() {
+fn empty_path_and_oversized_save_keep_dirty_and_disk_unchanged() {
     let mut editor = Editor::new();
     editor.set_content(b"x");
     editor.state.dirty = true;
@@ -95,14 +95,54 @@ fn empty_path_and_truncated_guard_keep_dirty_and_disk_unchanged() {
     let temp = TempDir::new();
     let file = temp.file("big.txt");
     fs::write(&file, b"ORIGINAL_ON_DISK").unwrap();
-    let mut editor = document(
-        b"\n\n[File truncated - No Edits - showing first 1MB of 5MB]\npartial body",
-        &file,
-    );
+    let mut editor = document(&vec![b'a'; bed_files::files::MAX_FILE_SIZE + 1], &file);
+    editor.state.dirty = true;
+    let error = editor.save().unwrap_err();
+    assert!(error.to_string().contains("16 MiB"));
+    assert!(bed_session::save_service::EditorSave::bytes_for_save(&editor.state).is_err());
+    assert!(editor.state.dirty);
+    assert_eq!(fs::read(&file).unwrap(), b"ORIGINAL_ON_DISK");
+}
+
+#[test]
+fn legitimate_text_resembling_the_old_truncation_notice_can_be_saved() {
+    let temp = TempDir::new();
+    let file = temp.file("notice.txt");
+    let bytes = b"\n\n[File truncated - No Edits - showing first 1MB of 5MB]\nactual source text";
+    let mut editor = document(bytes, &file);
+    editor.state.dirty = true;
+    assert!(editor.save().unwrap());
+    assert_eq!(fs::read(&file).unwrap(), bytes);
+}
+
+#[test]
+fn save_limit_includes_the_utf8_bom_before_touching_the_destination() {
+    let temp = TempDir::new();
+    let file = temp.file("bom-limit.txt");
+    fs::write(&file, b"original").unwrap();
+    let mut editor = document(&vec![b'a'; bed_files::files::MAX_FILE_SIZE - 2], &file);
+    editor.state.utf8_bom = true;
     editor.state.dirty = true;
     assert!(editor.save().is_err());
     assert!(editor.state.dirty);
-    assert_eq!(fs::read(&file).unwrap(), b"ORIGINAL_ON_DISK");
+    assert_eq!(fs::read(&file).unwrap(), b"original");
+}
+
+#[test]
+fn oversized_open_preserves_the_existing_document_and_caret() {
+    let temp = TempDir::new();
+    let file = temp.file("oversized.txt");
+    fs::File::create(&file)
+        .unwrap()
+        .set_len(bed_files::files::MAX_FILE_SIZE as u64 + 1)
+        .unwrap();
+    let mut editor = Editor::new();
+    editor.set_content(b"preserved");
+    editor.view.column = 4;
+    assert!(editor.open(&file).is_err());
+    assert_eq!(editor.state.join(), b"preserved");
+    assert_eq!(editor.view.column, 4);
+    assert!(editor.state.path.is_empty());
 }
 
 #[test]

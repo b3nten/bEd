@@ -227,8 +227,8 @@ impl Editor {
         // just saved, rather than an earlier disk version. Reset the view only
         // after a successful read so failed opens preserve the current caret.
         self.save()?;
-        let raw = std::fs::read(&absolute)?;
-        self.api().open_document(path, &raw);
+        let raw = bed_files::files::read_file_raw(&absolute)?;
+        self.api().open_document(path, &raw.raw);
         self.view.request_focus = true;
         Ok(())
     }

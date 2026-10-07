@@ -1,0 +1,4 @@
+- investigate rust lsp startup time
+- possible to drag out items from menu toolbar and position them in one gesture instead of clicking, then dragging them after?
+- default to gpu stuff turned off
+- investigate power usage, especially with gpu effects on

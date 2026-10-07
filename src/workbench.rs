@@ -12,6 +12,7 @@ use crate::{
     util::{
         icons::Icons,
         settings::Settings,
+        ui_animations::UiAnimations,
         welcome::Welcome,
         workspace_state::{WorkspaceSpec, WorkspaceStore, WorkspaceTarget},
     },
@@ -20,7 +21,11 @@ use bed_core::{
     editor_commands::CursorReveal, editor_events::Overlay, editor_view_state::Selection,
     util::utf8::utf16_to_utf8_byte_offset,
 };
-use bed_highlight::tree_sitter::ThemeColors;
+use bed_highlight::{
+    capture_map::ThemeSlot,
+    outline::{OutlineKey, OutlineService},
+    tree_sitter::ThemeColors,
+};
 use bed_lsp::lsp_locations::LspLocation;
 use bed_session::{
     editor::Editor,
@@ -52,6 +57,9 @@ use std::{
 
 #[path = "remote_workbench.rs"]
 mod remote_workbench;
+#[path = "structure_panel.rs"]
+mod structure_panel;
+use structure_panel::{StructureJump, StructurePanel};
 
 unsafe extern "C" {
     fn bed_imgui_dock_node_id(node: *const sys::ImGuiDockNode) -> u32;
@@ -71,6 +79,7 @@ pub enum WindowCommand {
     NewSettings,
     NewProjects,
     NewDiagnostics,
+    NewStructure,
     NewLspDashboard,
     NewContentSearch,
     NewReferences,
@@ -80,6 +89,7 @@ pub enum WindowCommand {
     ResetLayout,
     Projects,
     Diagnostics,
+    Structure,
     OpenFolder,
     OpenFile,
     Save,
@@ -102,6 +112,7 @@ enum Tool {
     Projects,
     Search,
     Diagnostics,
+    Structure,
     References,
     LspDashboard,
 }
@@ -113,6 +124,7 @@ impl Tool {
             Self::Projects => "Projects",
             Self::Search => "Search",
             Self::Diagnostics => "Diagnostics",
+            Self::Structure => "Structure",
             Self::References => "References",
             Self::LspDashboard => "Language Servers",
         }
@@ -124,6 +136,7 @@ impl Tool {
             Self::Projects => "projects",
             Self::Search => "search",
             Self::Diagnostics => "diagnostics",
+            Self::Structure => "structure",
             Self::References => "references",
             Self::LspDashboard => "lsp",
         }
@@ -135,6 +148,7 @@ impl Tool {
             Self::Projects,
             Self::Search,
             Self::Diagnostics,
+            Self::Structure,
             Self::References,
             Self::LspDashboard,
         ]
@@ -161,6 +175,15 @@ struct FileDialog {
     name: String,
     error: Option<String>,
     appearing: bool,
+    visible: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TabCloseAction {
+    Close,
+    All,
+    Others,
+    Left,
+    Right,
 }
 type PanelComposition = (u64, u32, u32, bool, [u32; 4]);
 
@@ -184,11 +207,14 @@ pub struct Workbench {
     focused: Option<u64>,
     lsp_ui: LspUi,
     content_search: HashMap<u64, ContentSearch>,
+    outline: Option<OutlineService>,
+    structure_panels: HashMap<u64, StructurePanel>,
     scratch: Editor,
     store: Option<WorkspaceStore>,
     initialized: bool,
     context_id: Option<ContextId>,
     context_binding: Option<ContextBinding>,
+    ui_animations: Option<UiAnimations>,
     mode: WorkbenchHostMode,
     dock_root: u32,
     center_dock: u32,
@@ -209,10 +235,28 @@ pub struct Workbench {
     composition: Vec<PanelComposition>,
     viewport_focus: HashMap<u32, u64>,
     reload_confirmation: Option<DocumentId>,
+    tab_context: Option<u64>,
+    pending_tab_close: Option<Vec<u64>>,
 }
 impl Workbench {
     pub fn new() -> io::Result<Self> {
         Ok(Self::with_settings(Settings::new()?))
+    }
+    /// Shared by custom captions and the OS window list, independent of the selected panel.
+    pub fn window_title(&self) -> String {
+        let name = self
+            .workspace_spec
+            .as_ref()
+            .map(|spec| spec.name.trim().to_owned())
+            .filter(|name| !name.is_empty())
+            .or_else(|| {
+                (!self.project_root.is_empty())
+                    .then(|| WorkspaceSpec::local(&self.project_root).name)
+            });
+        match name {
+            Some(name) => format!("bEd • {name}"),
+            None => "bEd".to_owned(),
+        }
     }
     pub fn with_settings(settings: Settings) -> Self {
         let (store, error) = match WorkspaceStore::load(&settings.config_dir) {
@@ -243,11 +287,14 @@ impl Workbench {
             focused: None,
             lsp_ui: LspUi::default(),
             content_search: HashMap::new(),
+            outline: None,
+            structure_panels: HashMap::new(),
             scratch: Editor::new(),
             store,
             initialized: false,
             context_id: None,
             context_binding: None,
+            ui_animations: None,
             mode: WorkbenchHostMode::Fullscreen,
             dock_root: 0,
             center_dock: 0,
@@ -268,6 +315,8 @@ impl Workbench {
             composition: Vec::new(),
             viewport_focus: HashMap::new(),
             reload_confirmation: None,
+            tab_context: None,
+            pending_tab_close: None,
         };
         this.show_tool(Tool::Projects);
         this
@@ -301,11 +350,29 @@ impl Workbench {
         self.settings.request_apply();
         self.apply_settings(context)?;
         self.icons = Icons::load(&self.settings.resources_root);
+        self.ui_animations = Some(UiAnimations::new(context));
         self.initialized = true;
         Ok(true)
     }
     pub fn initialized(&self) -> bool {
         self.initialized
+    }
+    /// Resume the previous window only when the host was launched without a path.
+    pub fn restore_last_workspace(&mut self) -> io::Result<()> {
+        let Some(store) = &self.store else {
+            return Ok(());
+        };
+        if let Some(spec) = store.last_workspace() {
+            self.set_workspace(spec)?;
+        } else if let Some(state) = store.standalone_layout().cloned() {
+            self.tabs.clear();
+            self.content_search.clear();
+            self.active = None;
+            self.focused = None;
+            self.next_tab = 1;
+            self.restore_workspace(&state)?;
+        }
+        Ok(())
     }
     pub fn host_mode(&self) -> WorkbenchHostMode {
         self.mode
@@ -319,6 +386,75 @@ impl Workbench {
     }
     pub fn active_snapshot(&self) -> Option<DocumentSnapshot> {
         self.session.snapshot(self.active_document()?).ok()
+    }
+    fn outline_key(&self) -> io::Result<Option<OutlineKey>> {
+        let Some(document) = self.active_document() else {
+            return Ok(None);
+        };
+        let (generation, revision) = self.session.document_revision(document)?;
+        self.session.with_document(document, |state| {
+            Some(OutlineKey {
+                document,
+                generation,
+                revision,
+                path: state.path.clone(),
+                language_id: state.language_id.clone(),
+            })
+        })
+    }
+    fn sync_outline(&mut self) -> io::Result<()> {
+        if !self.panel_visible("structure") {
+            self.outline = None;
+            return Ok(());
+        }
+        self.outline.get_or_insert_with(OutlineService::default);
+        self.sync_outline_target()
+    }
+    fn sync_outline_target(&mut self) -> io::Result<()> {
+        let key = self.outline_key()?;
+        let Some(outline) = &mut self.outline else {
+            return Ok(());
+        };
+        if let Some(key) = key {
+            if outline.requested() != Some(&key) {
+                let text = self
+                    .session
+                    .with_document(key.document, |state| state.snapshot())?;
+                outline.request(key, text);
+            }
+            outline.poll();
+        } else {
+            outline.clear();
+        }
+        Ok(())
+    }
+    fn draw_structure(&mut self, ui: &Ui, panel: u64) -> io::Result<Option<StructureJump>> {
+        // The last editor may have changed earlier in this same frame.
+        self.sync_outline_target()?;
+        let animations = self.settings.bool("ui_animations", true);
+        Ok(self.outline.as_ref().and_then(|outline| {
+            self.structure_panels
+                .entry(panel)
+                .or_default()
+                .draw(ui, outline, animations)
+        }))
+    }
+    fn jump_to_structure(&mut self, jump: StructureJump) -> io::Result<bool> {
+        if self.outline_key()?.as_ref() != Some(&jump.key) {
+            return Ok(false);
+        }
+        let Some(index) = self.active_tab_index() else {
+            return Ok(false);
+        };
+        let view = self.active_view().unwrap();
+        let (row, column) = self.session.with_document(jump.key.document, |state| {
+            state.row_col_from_offset(jump.offset)
+        })?;
+        self.session.with_commands(view, |commands| {
+            commands.set_cursor(row, column, false, CursorReveal::Center)
+        })?;
+        self.switch_to_tab(index);
+        Ok(true)
     }
     pub fn with_active_view<R>(
         &mut self,
@@ -632,10 +768,13 @@ impl Workbench {
         self.session.shutdown(ClosePolicy::Discard)?;
         self.terminal.shutdown();
         self.tabs.clear();
+        self.pending_tab_close = None;
         self.active = None;
         self.focused = None;
         self.lsp_ui.cancel_requests();
         self.content_search.clear();
+        self.outline = None;
+        self.structure_panels.clear();
         self.remote_ui = remote_workbench::RemoteUi::default();
         self.file_explorer.file_finder.set_project_dir("");
         self.file_explorer.file_finder.set_remote_client(None);
@@ -682,7 +821,10 @@ impl Workbench {
         let project_services = root.is_some();
         SessionOptions {
             project_root: root,
-            autosave: Some(Duration::from_secs(1)),
+            autosave: self
+                .settings
+                .autosave_enabled()
+                .then(|| self.settings.autosave_delay()),
             monitoring: true,
             git: project_services && self.settings.bool("git_changed_lines", true),
             highlighting: self.settings.bool("treesitter", true),
@@ -695,12 +837,35 @@ impl Workbench {
             return Ok(());
         }
         self.service_settings = Some(self.settings.settings.clone());
+        let mut options = self.session.options().clone();
+        options.autosave = self
+            .settings
+            .autosave_enabled()
+            .then(|| self.settings.autosave_delay());
+        self.session.configure(options)?;
         self.session
             .set_git_enabled(self.settings.bool("git_changed_lines", true))?;
         self.session
             .set_highlighting_enabled(self.settings.bool("treesitter", true))?;
-        self.session
-            .set_highlight_theme(ThemeColors::from_settings(&self.settings.settings));
+        let colors = ThemeColors::from_settings(&self.settings.settings);
+        self.session.set_highlight_theme(colors.clone());
+        let foreground = self.settings.text_color();
+        let background = self.settings.background_color();
+        let base = [
+            background,
+            colors.color(ThemeSlot::Constant),
+            colors.color(ThemeSlot::String),
+            colors.color(ThemeSlot::Number),
+            colors.color(ThemeSlot::Function),
+            colors.color(ThemeSlot::Keyword),
+            colors.color(ThemeSlot::Type),
+            foreground,
+        ];
+        self.terminal.set_theme(
+            background,
+            foreground,
+            std::array::from_fn(|index| base[index % 8]),
+        );
         Ok(())
     }
     pub fn apply_settings(&mut self, context: &mut Context) -> io::Result<bool> {
@@ -737,13 +902,36 @@ impl Workbench {
             self.queue_remote_directories(false)?;
         }
         for error in report.errors {
+            if let Some(targets) = &self.pending_tab_close {
+                let affected = error.document.is_none_or(|document| {
+                    self.tabs.iter().any(|tab| targets.contains(&tab.id)
+                        && matches!(&tab.panel, Panel::Document(view) if view.document_id() == document))
+                });
+                if affected {
+                    self.pending_tab_close = None;
+                }
+            }
             self.error = Some(format!("{}: {}", error.service, error.message));
+        }
+        if !self.remote_ui.path_dialog_pending()
+            && let Some(ids) = self.pending_tab_close.take()
+        {
+            let indices = self
+                .tabs
+                .iter()
+                .enumerate()
+                .filter_map(|(index, tab)| ids.contains(&tab.id).then_some(index))
+                .collect();
+            if let Err(error) = self.close_tabs(indices) {
+                self.error = Some(error.to_string());
+            }
         }
         self.terminal.poll()?;
         self.file_explorer.poll();
         for search in self.content_search.values_mut() {
             search.poll();
         }
+        self.sync_outline()?;
         if self.last_settings_check.elapsed() > Duration::from_millis(500) {
             self.last_settings_check = Instant::now();
             self.settings.check_settings_file();
@@ -795,6 +983,9 @@ impl Workbench {
             }
             WindowCommand::NewDiagnostics => {
                 self.push_panel(Panel::Tool(Tool::Diagnostics));
+            }
+            WindowCommand::NewStructure => {
+                self.push_panel(Panel::Tool(Tool::Structure));
             }
             WindowCommand::NewLspDashboard => {
                 self.push_panel(Panel::Tool(Tool::LspDashboard));
@@ -881,6 +1072,7 @@ impl Workbench {
             }
             WindowCommand::Projects => self.show_tool(Tool::Projects),
             WindowCommand::Diagnostics => self.show_tool(Tool::Diagnostics),
+            WindowCommand::Structure => self.show_tool(Tool::Structure),
             WindowCommand::OpenFolder => {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
                     return self.set_project(&path);
@@ -971,19 +1163,34 @@ impl Workbench {
                         "Wait for the remote file action before saving",
                     ));
                 }
-                if self.session.snapshot(document)?.path.is_empty() {
+                let result = if self.session.snapshot(document)?.path.is_empty() {
                     self.save_as(document)
                 } else {
                     self.session.save(document)
-                }
+                };
+                self.restore_save_focus()?;
+                result
             }
             HostAction::SaveAs => {
                 let Some(document) = self.active_document() else {
                     return Ok(false);
                 };
-                self.save_as(document)
+                let result = self.save_as(document);
+                self.restore_save_focus()?;
+                result
             }
         }
+    }
+    fn restore_save_focus(&mut self) -> io::Result<()> {
+        if let Some(index) = self.active_tab_index() {
+            self.switch_to_tab(index);
+            if let Some(view) = self.active_view() {
+                self.session.with_view(view, |editor| {
+                    editor.view_mut().cursor_blink_time = std::f32::consts::FRAC_PI_8;
+                })?;
+            }
+        }
+        Ok(())
     }
     fn save_as(&mut self, document: DocumentId) -> io::Result<bool> {
         if self.remote_ui.document_mutating(document) {
@@ -1066,9 +1273,135 @@ impl Workbench {
         self.remove_tab(index)?;
         Ok(true)
     }
+    fn close_tabs(&mut self, mut indices: Vec<usize>) -> io::Result<bool> {
+        indices.sort_unstable();
+        indices.dedup();
+        if !self.preflight_close(&indices)? {
+            let waiting = self.session.is_remote()
+                && (self.remote_ui.path_dialog_pending()
+                    || self.remote_ui.mutation_pending()
+                    || indices.iter().any(|index| {
+                        matches!(&self.tabs[*index].panel,
+                    Panel::Document(view) if self.session.save_pending(view.document_id()))
+                    }));
+            if waiting {
+                self.pending_tab_close =
+                    Some(indices.iter().map(|index| self.tabs[*index].id).collect());
+            }
+            return Ok(false);
+        }
+        for index in indices.into_iter().rev() {
+            self.remove_tab(index)?;
+        }
+        Ok(true)
+    }
+    /// Read the visible order from ImGui, which owns tab dragging/reordering.
+    fn tab_group_order(&self, id: u64) -> Vec<usize> {
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == id) else {
+            return Vec::new();
+        };
+        let Some(binding) = &self.context_binding else {
+            return (0..self.tabs.len()).collect();
+        };
+        binding.with_bound_context(|| unsafe {
+            let name = CString::new(self.title(&self.tabs[index])).unwrap();
+            let window = sys::igFindWindowByName(name.as_ptr());
+            if window.is_null() || (*window).DockNode.is_null() {
+                return vec![index];
+            }
+            let bar = bed_imgui_dock_node_tab_bar((*window).DockNode);
+            if bar.is_null() || (*bar).Tabs.Size <= 0 {
+                return vec![index];
+            }
+            let native = std::slice::from_raw_parts((*bar).Tabs.Data, (*bar).Tabs.Size as usize);
+            native
+                .iter()
+                .filter_map(|item| {
+                    self.tabs.iter().position(|tab| {
+                        let title = CString::new(self.title(tab)).unwrap();
+                        sys::igFindWindowByName(title.as_ptr()) == item.Window
+                    })
+                })
+                .collect()
+        })
+    }
+    fn tab_close_indices(&self, id: u64, action: TabCloseAction) -> Vec<usize> {
+        let group = self.tab_group_order(id);
+        let Some(position) = group.iter().position(|index| self.tabs[*index].id == id) else {
+            return Vec::new();
+        };
+        group
+            .into_iter()
+            .enumerate()
+            .filter_map(|(offset, index)| {
+                match action {
+                    TabCloseAction::Close => offset == position,
+                    TabCloseAction::All => true,
+                    TabCloseAction::Others => offset != position,
+                    TabCloseAction::Left => offset < position,
+                    TabCloseAction::Right => offset > position,
+                }
+                .then_some(index)
+            })
+            .collect()
+    }
+    fn draw_tab_context_menu(&mut self, ui: &Ui) -> io::Result<()> {
+        if ui.is_mouse_released(MouseButton::Right) && !ui.is_popup_open("Tab actions") {
+            let mouse = ui.io().mouse_pos();
+            self.tab_context = self.tabs.iter().find_map(|tab| unsafe {
+                let name = CString::new(self.title(tab)).unwrap();
+                let window = sys::igFindWindowByName(name.as_ptr());
+                if window.is_null() || !(*window).Active || !(*window).DockIsActive() {
+                    return None;
+                }
+                let rect = (*window).DC.DockTabItemRect;
+                (mouse[0] >= rect.Min.x
+                    && mouse[0] < rect.Max.x
+                    && mouse[1] >= rect.Min.y
+                    && mouse[1] < rect.Max.y)
+                    .then_some(tab.id)
+            });
+            if self.tab_context.is_some() {
+                ui.open_popup("Tab actions");
+            }
+        }
+        if ui.is_popup_open("Tab actions")
+            && let Some(tab) = self
+                .tabs
+                .iter()
+                .find(|tab| Some(tab.id) == self.tab_context)
+        {
+            // Tab menus are submitted after panel windows end. Route the popup
+            // to the clicked tab's real viewport rather than the fallback window.
+            ui.set_next_window_viewport(tab.viewport.into());
+        }
+        let _style = crate::util::context_menu_style(ui);
+        let mut action = None;
+        if let Some(_popup) = ui.begin_popup("Tab actions") {
+            if let Some(id) = self.tab_context {
+                for (label, command) in [
+                    ("Close", TabCloseAction::Close),
+                    ("Close All", TabCloseAction::All),
+                    ("Close Others", TabCloseAction::Others),
+                    ("Close to the Right", TabCloseAction::Right),
+                    ("Close to the Left", TabCloseAction::Left),
+                ] {
+                    let enabled = !self.tab_close_indices(id, command).is_empty();
+                    if ui.menu_item_enabled_selected_no_shortcut(label, false, enabled) {
+                        action = Some((id, command));
+                    }
+                }
+            }
+        }
+        if let Some((id, command)) = action {
+            self.close_tabs(self.tab_close_indices(id, command))?;
+        }
+        Ok(())
+    }
     fn remove_tab(&mut self, index: usize) -> io::Result<()> {
         let tab = self.tabs.remove(index);
         self.content_search.remove(&tab.id);
+        self.structure_panels.remove(&tab.id);
         match tab.panel {
             Panel::Document(view) => {
                 self.session.close_view(view.id(), ClosePolicy::Discard)?;
@@ -1088,6 +1421,7 @@ impl Workbench {
             }
         }
         self.scene += 1;
+        self.sync_outline()?;
         Ok(())
     }
     pub fn close_viewport(&mut self, id: u32) -> io::Result<bool> {
@@ -1118,7 +1452,10 @@ impl Workbench {
         self.session.shutdown(ClosePolicy::Discard)?;
         self.terminal.shutdown();
         self.tabs.clear();
+        self.pending_tab_close = None;
         self.content_search.clear();
+        self.outline = None;
+        self.structure_panels.clear();
         self.active = None;
         self.focused = None;
         self.closed = true;
@@ -1151,7 +1488,10 @@ impl Workbench {
                     }
                 })
                 .unwrap_or_else(|_| "Closed".to_owned()),
-            Panel::Terminal(id) => format!("Terminal {id}"),
+            Panel::Terminal(id) => self
+                .terminal
+                .session_title(*id)
+                .unwrap_or_else(|| format!("Terminal {id}")),
             Panel::Tool(tool) => tool.name().to_owned(),
         };
         format!("{name}###bed_tab_{}", tab.id)
@@ -1256,15 +1596,21 @@ impl Workbench {
         ui.with_bound_context(|| self.render_bound(ui))
     }
     fn render_bound(&mut self, ui: &Ui) -> io::Result<Vec<HostAction>> {
+        if let Some(animations) = &mut self.ui_animations {
+            animations.begin(ui, self.settings.bool("ui_animations", true));
+        }
         let _font = self.settings.font.main.map(|font| ui.push_font(font));
         let mut actions = Vec::new();
         self.shortcuts(ui)?;
+        self.sync_outline()?;
         let viewport = ui.main_viewport();
         let pos = viewport.work_pos();
         let mut size = viewport.work_size();
         size[1] = (size[1] - self.root_top_inset).max(1.0);
         let _padding = ui.push_style_var(StyleVar::WindowPadding([0.0; 2]));
         let _rounding = ui.push_style_var(StyleVar::WindowRounding(0.0));
+        let _workspace_border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+        let mut dialog_result = Ok(());
         ui.set_next_window_viewport(ui.main_viewport().id());
         ui.window("##bed_workspace")
             .position([pos[0], pos[1] + self.root_top_inset], Condition::Always)
@@ -1277,6 +1623,9 @@ impl Workbench {
                     | WindowFlags::NO_NAV_FOCUS,
             )
             .build(|| {
+                if let Some(animations) = &mut self.ui_animations {
+                    animations.exclude_current(ui);
+                }
                 self.dock_root = ui.get_id("bed_workspace_dock").raw();
                 self.build_layout(ui, size);
                 // Native dock tab-list menus are submitted inside DockSpace;
@@ -1285,9 +1634,16 @@ impl Workbench {
                 unsafe {
                     sys::igDockSpace(self.dock_root, [0.0; 2].into(), 0, std::ptr::null());
                 }
+                drop(_menu_style);
+                // Popup IDs belong to their submitting window. Keep file
+                // actions rooted here even when their source tab is hidden or
+                // an embedding host changes the enclosing window.
+                dialog_result = self.draw_file_dialog(ui);
             });
+        drop(_workspace_border);
         drop(_rounding);
         drop(_padding);
+        dialog_result?;
         let mut close = Vec::new();
         let count = self.tabs.len();
         let mut tree_actions = Vec::new();
@@ -1296,6 +1652,7 @@ impl Workbench {
         let mut reconnect = false;
         let mut search_actions = Vec::new();
         let mut lsp_actions = Vec::new();
+        let mut structure_jump = None;
         for index in 0..count {
             let mut tab = self.tabs.remove(index);
             let title = self.title(&tab);
@@ -1343,6 +1700,9 @@ impl Workbench {
                 .flags(flags)
                 .size([700.0, 520.0], Condition::FirstUseEver)
                 .build(|| {
+                    if let Some(animations) = &mut self.ui_animations {
+                        animations.register_panel(ui);
+                    }
                     if ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS) {
                         self.focused = Some(tab.id);
                         if let Panel::Document(view) = &tab.panel {
@@ -1374,6 +1734,7 @@ impl Workbench {
                                     text_color: self.settings.text_color(),
                                     rainbow: self.settings.rainbow(),
                                     rainbow_time: ui.time() as f32,
+                                    animations: self.settings.bool("ui_animations", true),
                                 };
                                 let git = self.active.and_then(|view| {
                                     self.session
@@ -1478,6 +1839,13 @@ impl Workbench {
                             }
                             Ok(())
                         }
+                        Panel::Tool(Tool::Structure) => {
+                            self.draw_structure(ui, tab.id).map(|jump| {
+                                if jump.is_some() {
+                                    structure_jump = jump;
+                                }
+                            })
+                        }
                         Panel::Tool(Tool::References) => {
                             if let Some(action) =
                                 self.lsp_ui.render_navigation_body(ui, self.navigation_kind)
@@ -1514,6 +1882,9 @@ impl Workbench {
             if let Err(error) = self.close_tab(index) {
                 self.error = Some(error.to_string());
             }
+        }
+        if let Err(error) = self.draw_tab_context_menu(ui) {
+            self.error = Some(error.to_string());
         }
         if let Some(error) = self.file_explorer.file_tree.error.take() {
             self.error = Some(error);
@@ -1556,6 +1927,9 @@ impl Workbench {
                 self.error = Some(error.to_string());
             }
         }
+        if let Some(jump) = structure_jump {
+            self.jump_to_structure(jump)?;
+        }
         let style = FileFinderStyle {
             background_color: self.settings.background_color(),
             embedded_pane: None,
@@ -1568,13 +1942,12 @@ impl Workbench {
         {
             self.error = Some(error.to_string());
         }
-        self.draw_file_dialog(ui)?;
         self.draw_remote_path_dialog(ui)?;
         self.draw_errors(ui)?;
         if let Some(path) = self.settings.request_config_file.take() {
             if self.session.is_remote() {
                 self.error = Some(format!(
-                    "Bed configuration is local to this computer: {}. Open it in a local workspace.",
+                    "bEd configuration is local to this computer: {}. Open it in a local workspace.",
                     path.display()
                 ));
             } else {
@@ -1589,6 +1962,9 @@ impl Workbench {
                 self.error = Some(error.to_string());
             }
             self.last_persist = Instant::now();
+        }
+        if let Some(animations) = &mut self.ui_animations {
+            animations.end(ui, self.settings.bool("ui_animations", true));
         }
         Ok(actions)
     }
@@ -1662,11 +2038,15 @@ impl Workbench {
             minimap_enabled: self.settings.bool("minimap", true),
             background_color: Some(self.settings.background_color()),
             line_jump_key: self.settings.keybinds.get_action_key("line_jump_key"),
-            block_input: self.file_dialog.is_some()
+            block_input: self
+                .file_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.visible)
                 || self.reload_confirmation.is_some()
                 || self.file_explorer.file_finder.show_ff_window,
             ..Default::default()
         };
+        view.set_navigation_animations(self.settings.bool("ui_animations", true));
         let response = view.draw(ui, &mut self.session, &options)?;
         if response.focused {
             self.active = Some(view.id());
@@ -1729,7 +2109,16 @@ impl Workbench {
                     .lsp_ui
                     .symbol_origin()
                     .is_some_and(|request| request.view_id == view_id);
-            if caret_here || (!self.lsp_ui.symbol_at_caret() && hover_here) {
+            let over_symbol_popup = self.lsp_ui.symbol_popup_contains(mouse);
+            let popup_here = over_symbol_popup
+                && self
+                    .lsp_ui
+                    .symbol_origin()
+                    .is_some_and(|request| request.view_id == view_id);
+            if caret_here
+                || (!self.lsp_ui.symbol_at_caret()
+                    && (popup_here || (hover_here && !over_symbol_popup)))
+            {
                 self.lsp_ui.set_mouse_origin(origin);
                 self.session.with_view(view_id, |editor| {
                     self.lsp_ui.render_hover(
@@ -1818,6 +2207,14 @@ impl Workbench {
             }
             if !ready && ui.menu_item("Language Servers…") {
                 self.show_tool(Tool::LspDashboard);
+            }
+            ui.separator();
+            if ui.menu_item("Structure") {
+                self.show_tool(Tool::Structure);
+            }
+            let minimap = view.minimap_enabled(self.settings.bool("minimap", true));
+            if ui.menu_item_enabled_selected_no_shortcut("Show Minimap", minimap, true) {
+                view.set_minimap_enabled(!minimap);
             }
             ui.separator();
             if ui.menu_item("Undo") {
@@ -2037,6 +2434,7 @@ impl Workbench {
                 name,
                 error: None,
                 appearing: true,
+                visible: false,
             });
         }
         Ok(())
@@ -2045,46 +2443,108 @@ impl Workbench {
         let Some(mut dialog) = self.file_dialog.take() else {
             return Ok(());
         };
-        if dialog.appearing {
-            ui.open_popup("File action");
-            dialog.appearing = false;
+        let title = match &dialog.action {
+            FileTreeAction::NewFile(_) => "New file",
+            FileTreeAction::NewFolder(_) => "New folder",
+            FileTreeAction::Rename(_) => "Rename",
+            FileTreeAction::Trash(_) if self.session.is_remote() => "Delete permanently",
+            FileTreeAction::Trash(_) => "Move to Trash",
+            FileTreeAction::Open(_) => "Open",
+            _ => unreachable!("visibility actions do not open file dialogs"),
+        };
+        let popup_name = format!("{title}###bed_file_action");
+        let appearing = std::mem::take(&mut dialog.appearing);
+        dialog.visible = false;
+        if appearing {
+            self.clear_focus_requests();
+            ui.open_popup(&popup_name);
         }
+        let viewport = ui.main_viewport();
+        let position = viewport.work_pos();
+        let size = viewport.work_size();
+        let fs = ui.current_font_size();
+        let width = (fs * 30.0).min((size[0] - fs * 2.0).max(1.0));
+        let max_height = (size[1] - self.root_top_inset - fs * 2.0).max(1.0);
+        ui.set_next_window_viewport(viewport.id());
+        ui.with_bound_context(|| unsafe {
+            sys::igSetNextWindowSizeConstraints(
+                [width, (fs * 9.0).min(max_height)].into(),
+                [width, max_height].into(),
+                None,
+                std::ptr::null_mut(),
+            );
+            sys::igSetNextWindowPos(
+                [
+                    position[0] + size[0] * 0.5,
+                    position[1] + self.root_top_inset + (size[1] - self.root_top_inset) * 0.5,
+                ]
+                .into(),
+                sys::ImGuiCond_Appearing,
+                [0.5; 2].into(),
+            );
+        });
+        let mut opened = true;
         let mut done = false;
-        if let Some(_popup) = ui.begin_modal_popup("File action") {
-            let title = match &dialog.action {
-                FileTreeAction::NewFile(_) => "New file",
-                FileTreeAction::NewFolder(_) => "New folder",
-                FileTreeAction::Rename(_) => "Rename",
-                FileTreeAction::Trash(_) if self.session.is_remote() => "Delete permanently",
-                FileTreeAction::Trash(_) => "Move to Trash",
-                FileTreeAction::Open(_) => "Open",
-                _ => unreachable!("visibility actions do not open file dialogs"),
-            };
-            ui.text(title);
-            if !matches!(dialog.action, FileTreeAction::Trash(_)) {
-                ui.input_text("Name", &mut dialog.name).build();
-            } else if let FileTreeAction::Trash(path) = &dialog.action {
-                ui.text_wrapped(path);
-            }
-            if let Some(error) = &dialog.error {
-                ui.text_wrapped(error);
-            }
-            if ui.button("Cancel") {
+        let _dialog_style = crate::util::dialog_style(ui);
+        if let Some(_popup) = ui
+            .begin_modal_popup_config(&popup_name)
+            .opened(&mut opened)
+            .flags(
+                WindowFlags::ALWAYS_AUTO_RESIZE
+                    | WindowFlags::NO_RESIZE
+                    | WindowFlags::NO_COLLAPSE
+                    | WindowFlags::NO_SAVED_SETTINGS
+                    | WindowFlags::NO_DOCKING,
+            )
+            .begin()
+        {
+            dialog.visible = true;
+            if ui.is_key_pressed_with_repeat(Key::Escape, false) {
+                // The editor resumes later in this frame; consume the modal's
+                // Escape so it cannot also collapse the editor's selection.
+                ui.with_bound_context(|| unsafe {
+                    sys::igSetKeyOwner(
+                        sys::ImGuiKey_Escape,
+                        ui.get_id("file_dialog_dismiss").raw(),
+                        sys::ImGuiInputFlags_LockThisFrame,
+                    );
+                });
                 done = true;
                 ui.close_current_popup();
-            }
-            ui.same_line();
-            if ui.button(title) {
-                match self.apply_file_action(&dialog.action, &dialog.name) {
-                    Ok(()) => {
-                        done = true;
-                        ui.close_current_popup();
+            } else {
+                if !matches!(dialog.action, FileTreeAction::Trash(_)) {
+                    ui.text("Name");
+                    if appearing {
+                        ui.set_keyboard_focus_here();
                     }
-                    Err(error) => dialog.error = Some(error.to_string()),
+                    ui.set_next_item_width(-1.0);
+                    ui.input_text("##file_action_name", &mut dialog.name)
+                        .build();
+                } else if let FileTreeAction::Trash(path) = &dialog.action {
+                    ui.text_wrapped(path);
+                }
+                if let Some(error) = &dialog.error {
+                    ui.text_wrapped(error);
+                }
+                if ui.button("Cancel") {
+                    done = true;
+                    ui.close_current_popup();
+                }
+                ui.same_line();
+                if ui.button(title) && !done {
+                    match self.apply_file_action(&dialog.action, &dialog.name) {
+                        Ok(()) => {
+                            done = true;
+                            ui.close_current_popup();
+                        }
+                        Err(error) => dialog.error = Some(error.to_string()),
+                    }
                 }
             }
         }
-        if !done {
+        if done || !opened || !ui.is_popup_open(&popup_name) {
+            self.restore_save_focus()?;
+        } else {
             self.file_dialog = Some(dialog);
         }
         Ok(())
@@ -2262,20 +2722,57 @@ impl Workbench {
         Ok(())
     }
     fn draw_errors(&mut self, ui: &Ui) -> io::Result<()> {
+        let _dialog_style = crate::util::dialog_style(ui);
         if let Some(error) = self.error.clone() {
             let mut open = true;
             let mut dismiss = false;
+            let viewport = ui.main_viewport();
+            let position = viewport.work_pos();
+            let available = viewport.work_size();
+            let width = (ui.current_font_size() * 32.0).min((available[0] - 32.0).max(1.0));
+            ui.set_next_window_viewport(viewport.id());
             ui.window("Error")
                 .opened(&mut open)
-                .flags(WindowFlags::NO_DOCKING)
+                .position(
+                    [
+                        position[0] + (available[0] - width) * 0.5,
+                        position[1] + available[1] * 0.25,
+                    ],
+                    Condition::Appearing,
+                )
+                .size_constraints([width, 0.0], [width, (available[1] * 0.70).max(1.0)])
+                .flags(
+                    WindowFlags::NO_DOCKING
+                        | WindowFlags::NO_SAVED_SETTINGS
+                        | WindowFlags::NO_COLLAPSE
+                        | WindowFlags::ALWAYS_AUTO_RESIZE,
+                )
                 .build(|| {
+                    if ui.is_window_appearing() {
+                        ui.with_bound_context(|| unsafe {
+                            sys::igFocusWindow(
+                                sys::igGetCurrentWindow(),
+                                sys::ImGuiFocusRequestFlags_UnlessBelowModal,
+                            );
+                        });
+                    }
                     ui.text_wrapped(error);
-                    if ui.button("Dismiss") {
+                    if ui.button("Dismiss")
+                        || (ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS)
+                            && ui.is_key_pressed_with_repeat(Key::Escape, false))
+                    {
                         dismiss = true;
                     }
                 });
             if !open || dismiss {
                 self.error = None;
+                if let Some(index) = self
+                    .tabs
+                    .iter()
+                    .position(|tab| Some(tab.id) == self.focused)
+                {
+                    self.switch_to_tab(index);
+                }
             }
         }
         let conflicts = self
@@ -2349,19 +2846,28 @@ impl Workbench {
         Ok(())
     }
     fn persist_workspace(&mut self) -> io::Result<()> {
-        if self.project_root.is_empty()
-            || self.store.is_none()
-            || self.context_id.is_none()
-            || !self.remote_ui.restore.is_empty()
+        if self.store.is_none() || self.remote_ui.connecting() || !self.remote_ui.restore.is_empty()
         {
             return Ok(());
         }
-        let mut length = 0;
-        let ini = unsafe {
-            let ptr = sys::igSaveIniSettingsToMemory(&mut length);
-            String::from_utf8_lossy(std::slice::from_raw_parts(ptr.cast::<u8>(), length))
-                .into_owned()
-        };
+        // An unapplied layout is still authoritative when closing before the
+        // first frame. Never replace it with a fresh context's empty settings.
+        let ini = self.pending_ini.clone().unwrap_or_else(|| {
+            self.context_binding
+                .as_ref()
+                .map(|binding| {
+                    binding.with_bound_context(|| unsafe {
+                        let mut length = 0;
+                        let ptr = sys::igSaveIniSettingsToMemory(&mut length);
+                        String::from_utf8_lossy(std::slice::from_raw_parts(
+                            ptr.cast::<u8>(),
+                            length,
+                        ))
+                        .into_owned()
+                    })
+                })
+                .unwrap_or_default()
+        });
         let mut panels = Vec::new();
         for tab in &self.tabs {
             let value = match &tab.panel {
@@ -2384,13 +2890,10 @@ impl Workbench {
         }
         let state = json!({"version":1,"ini":ini,"panels":panels,"focused":self.focused,"active_document_panel":self.tabs.iter().find(|tab|matches!(&tab.panel,Panel::Document(view)if Some(view.id())==self.active)).map(|tab|tab.id)});
         if self.last_state.as_ref() != Some(&state) {
-            self.store.as_mut().unwrap().set_layout(
-                &self
-                    .workspace_spec
-                    .clone()
-                    .unwrap_or_else(|| WorkspaceSpec::local(&self.project_root)),
-                state.clone(),
-            )?;
+            self.store
+                .as_mut()
+                .unwrap()
+                .save_session_layout(self.workspace_spec.as_ref(), state.clone())?;
             self.last_state = Some(state);
         }
         Ok(())
@@ -2504,7 +3007,7 @@ impl Workbench {
         {
             self.active = Some(view.id());
         }
-        if let Some(ini) = state["ini"].as_str() {
+        if let Some(ini) = state["ini"].as_str().filter(|ini| !ini.is_empty()) {
             self.pending_ini = Some(ini.to_owned());
             self.dock_built = true;
         }
@@ -2960,3 +3463,19 @@ mod tests {
 #[cfg(test)]
 #[path = "workbench_context_tests.rs"]
 mod context_tests;
+
+#[cfg(test)]
+#[path = "structure_tests.rs"]
+mod structure_tests;
+
+#[cfg(test)]
+#[path = "navigation_scroll_tests.rs"]
+mod navigation_scroll_tests;
+
+#[cfg(test)]
+#[path = "ui_animation_tests.rs"]
+mod ui_animation_tests;
+
+#[cfg(test)]
+#[path = "workbench_feature_tests.rs"]
+mod feature_tests;

@@ -433,6 +433,7 @@ impl EditorSession {
             ));
         }
         options.persistent_history = false;
+        let start_autosave = options.autosave.is_some() && self.options.autosave.is_none();
         let lsp_changed = options.lsp_config != self.options.lsp_config;
         if lsp_changed {
             for entry in self.documents.values_mut() {
@@ -458,6 +459,9 @@ impl EditorSession {
                     .editor
                     .save_service
                     .set_autosave_idle_ms(idle.as_millis().min(i32::MAX as u128) as i32);
+                if start_autosave {
+                    entry.editor.save_service.on_did_edit(&entry.editor.state);
+                }
             } else {
                 entry.editor.save_service.cancel_pending();
             }

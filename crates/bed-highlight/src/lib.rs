@@ -1,6 +1,7 @@
 //! Bed highlight components. Attribution: workspace LICENSE, NOTICE and UPSTREAM_REVISION.
 pub mod capture_map;
 pub mod highlight_service;
+pub mod outline;
 pub mod span_map;
 pub mod tree_sitter;
 

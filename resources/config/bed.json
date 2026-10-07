@@ -1,6 +1,8 @@
 {
     "agent_model": "anthropic/claude-3-5-haiku-20241022",
     "ai_autocomplete": false,
+    "autosave": true,
+    "autosave_delay_ms": 1000,
     "backgroundColor": [
         0.09061046689748764,
         0.09061048924922943,

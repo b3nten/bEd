@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bed Linux packaging translated from pinned ned scripts/pack-deb.sh.
+# bEd Linux packaging translated from pinned ned scripts/pack-deb.sh.
 set -euo pipefail
 source "$(dirname "$0")/package-common.sh"
 cd "$BED_PACKAGE_ROOT"
@@ -18,7 +18,7 @@ verify_bed_resources "$stage/usr/share/Bed"
 cat > "$stage/usr/share/applications/bed.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Bed
+Name=bEd
 Comment=Rust desktop text editor
 Exec=bed %F
 Icon=bed
@@ -29,7 +29,7 @@ EOF
 mkdir -p "$stage/usr/share/icons/hicolor/256x256/apps"
 cp resources/icons/bed.png "$stage/usr/share/icons/hicolor/256x256/apps/bed.png"
 arch=$(uname -m)
-tar -czf "$dist/Bed-$BED_PACKAGE_VERSION-$arch-linux.tar.gz" -C "$stage" usr
+tar -czf "$dist/bEd-$BED_PACKAGE_VERSION-$arch-linux.tar.gz" -C "$stage" usr
 if command -v dpkg-deb >/dev/null 2>&1; then
     arch=$(dpkg --print-architecture)
     mkdir -p "$stage/DEBIAN"
@@ -37,11 +37,11 @@ if command -v dpkg-deb >/dev/null 2>&1; then
 Package: bed
 Version: $BED_PACKAGE_VERSION
 Architecture: $arch
-Maintainer: Bed contributors
+Maintainer: bEd contributors
 Section: editors
 Priority: optional
 Depends: libc6, libgcc-s1, libstdc++6, libx11-6, libxcursor1, libxrandr2, libxi6, libxkbcommon0, libwayland-client0, libvulkan1
-Description: Bed Text Editor with embeddable document views
+Description: bEd desktop editor with embeddable document views
  Desktop text editor with syntax highlighting, Git, language servers,
  terminals and SSH workspaces. See the bundled PORTING.md for details.
 EOF

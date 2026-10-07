@@ -284,6 +284,12 @@ impl EditorSession {
             disk_conflict: entry.editor.disk_conflict.clone(),
         })
     }
+    /// Cheap cache identity: document replacement generation and text edit revision.
+    /// Unlike a full snapshot, this never copies the document's bytes.
+    pub fn document_revision(&self, document: DocumentId) -> io::Result<(u64, u64)> {
+        let editor = &self.entry(document)?.editor;
+        Ok((editor.document_generation(), editor.ops.generation()))
+    }
     pub fn document_snapshot(&self, document: DocumentId) -> io::Result<DocumentSnapshot> {
         self.snapshot(document)
     }
@@ -326,9 +332,7 @@ impl EditorSession {
         let mut monitor = FileMonitor::new();
         // An explicit open retains its stable load baseline even when polling
         // is disabled, so enabling monitoring cannot adopt a later disk edit.
-        if !raw.truncated {
-            monitor.watch_bytes(&path, &raw.raw)?;
-        }
+        monitor.watch_bytes(&path, &raw.raw)?;
         let id = DocumentId::next();
         let mut editor = Editor::new();
         editor.bind_project_undo(Rc::clone(&self.history));
@@ -817,11 +821,19 @@ impl EditorSession {
             return self.queue_remote_reload(document);
         }
         let path = self.entry(document)?.editor.state.path.clone();
-        let raw = read_file_raw(Path::new(&path))?;
+        let raw = match read_file_raw(Path::new(&path)) {
+            Ok(raw) => raw,
+            Err(error) => {
+                let entry = self.entry_mut(document)?;
+                entry.editor.disk_conflict = Some(error.to_string());
+                entry.editor.save_service.cancel_pending();
+                return Err(error);
+            }
+        };
         let monitoring = self.options.monitoring;
         let git = self.options.git;
         let entry = self.entry_mut(document)?;
-        if monitoring && !raw.truncated {
+        if monitoring {
             entry.monitor.watch_bytes(Path::new(&path), &raw.raw)?;
         } else {
             entry.monitor.reset();
@@ -1255,9 +1267,13 @@ impl EditorSession {
         let change = match entry.monitor.poll(&path) {
             Ok(change) => change,
             Err(error) => {
-                entry.editor.disk_conflict = Some(error.to_string());
+                let message = error.to_string();
+                let repeated = entry.editor.disk_conflict.as_deref() == Some(&message);
+                entry.editor.disk_conflict = Some(message);
                 entry.editor.save_service.cancel_pending();
-                return Err(error);
+                // Keep retrying the disk read and blocking writes, while an
+                // unchanged failure should not reopen a dismissed error window.
+                return if repeated { Ok(()) } else { Err(error) };
             }
         };
         let Some(change) = change else {

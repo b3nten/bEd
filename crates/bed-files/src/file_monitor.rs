@@ -1,7 +1,7 @@
 //! Watches an active document's disk baseline using std filesystem metadata.
 //!
 //! Returned bytes preserve BOMs and invalid UTF-8. Reads are bounded by the
-//! editor's one-MiB open-file limit. Metadata is the
+//! editor's editable-file limit. Metadata is the
 //! fast path; in-place changes preserving size and timestamps are not detected.
 use std::fs;
 use std::io;
@@ -14,7 +14,7 @@ use std::{
     time::SystemTime,
 };
 
-pub const MAX_FILE_SIZE: u64 = 1024 * 1024;
+pub const MAX_FILE_SIZE: u64 = crate::files::MAX_FILE_SIZE as u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileChangeKind {
@@ -160,7 +160,7 @@ fn read_current(path: &Path) -> io::Result<(DiskState, Option<Vec<u8>>)> {
     };
     let metadata = file.metadata()?;
     if metadata.len() > MAX_FILE_SIZE {
-        return Err(too_large());
+        return Err(crate::files::file_too_large(path, metadata.len()));
     }
     let fingerprint = Fingerprint::from_metadata(&metadata);
     let mut raw = Vec::with_capacity(metadata.len() as usize);
@@ -177,7 +177,10 @@ fn read_current(path: &Path) -> io::Result<(DiskState, Option<Vec<u8>>)> {
         return Err(changed_during_read());
     }
     if raw.len() as u64 > MAX_FILE_SIZE {
-        return Err(too_large());
+        return Err(crate::files::file_too_large(
+            path,
+            after.len.max(raw.len() as u64),
+        ));
     }
     let mut hasher = DefaultHasher::new();
     raw.hash(&mut hasher);
@@ -188,12 +191,6 @@ fn read_current(path: &Path) -> io::Result<(DiskState, Option<Vec<u8>>)> {
         },
         Some(raw),
     ))
-}
-fn too_large() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::InvalidData,
-        "File exceeds the one-MiB editor size limit",
-    )
 }
 fn changed_during_read() -> io::Error {
     io::Error::new(
@@ -347,6 +344,22 @@ mod tests {
         monitor.reset();
         assert!(monitor.poll(&fixture.path()).unwrap().is_none());
     }
+    #[test]
+    fn files_beyond_one_mib_keep_a_monitoring_baseline_and_report_external_changes() {
+        let fixture = Fixture::new();
+        let mut bytes = vec![b'a'; 2 * 1024 * 1024];
+        fixture.write(&bytes, 1);
+        let mut monitor = FileMonitor::new();
+        monitor.watch(&fixture.path()).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] = b'z';
+        fixture.write(&bytes, 2);
+        let change = monitor.poll(&fixture.path()).unwrap().unwrap();
+        assert_eq!(change.kind, FileChangeKind::Modified);
+        assert_eq!(change.raw.unwrap(), bytes);
+        assert!(monitor.poll(&fixture.path()).unwrap().is_none());
+    }
+
     #[test]
     fn oversized_change_returns_error_without_accepting_baseline() {
         let fixture = Fixture::new();

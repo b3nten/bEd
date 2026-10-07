@@ -19635,12 +19635,10 @@ void ImGui::DockNodeWindowMenuHandler_Default(ImGuiContext* ctx, ImGuiDockNode* 
 
 static void ImGui::DockNodeWindowMenuUpdate(ImGuiDockNode* node, ImGuiTabBar* tab_bar)
 {
-    // Try to position the menu so it is more likely to stays within the same viewport
+    // Keep the tab list in its host viewport. Use the popup's regular anchor and
+    // placement so it can fit near an edge instead of escaping into a platform window.
     ImGuiContext& g = *GImGui;
-    if (g.Style.WindowMenuButtonPosition == ImGuiDir_Left)
-        SetNextWindowPos(ImVec2(node->Pos.x, node->Pos.y + GetFrameHeight()), ImGuiCond_Always, ImVec2(0.0f, 0.0f));
-    else
-        SetNextWindowPos(ImVec2(node->Pos.x + node->Size.x, node->Pos.y + GetFrameHeight()), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    SetNextWindowViewport(GetWindowViewport()->ID);
     if (BeginPopup("#WindowMenu"))
     {
         node->IsFocused = true;

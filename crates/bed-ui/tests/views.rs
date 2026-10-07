@@ -1,4 +1,5 @@
-//! Compare Rust paint leaves and measurements with the pinned original C++.
+//! Compare Rust paint geometry and measurements with the pinned original C++.
+//! Colors follow the host theme and are checked by the theme rendering tests.
 //! Generated fixtures: scripts/provenance/update-view-fixtures.sh; LICENSE and NOTICE.
 use bed_core::editor_view_state::Selection;
 use bed_highlight::tree_sitter::TreeSitter;
@@ -90,11 +91,6 @@ fn compare_geometry(name: &str, actual: (Vec<[f64; 3]>, Vec<i32>), expected: &Va
                 actual[axis]
             );
         }
-        assert_eq!(
-            actual[2] as u32,
-            expected[2].as_u64().unwrap() as u32,
-            "{name}: {leaf} vertex {index} RGBA"
-        );
     }
     let indices: Vec<i32> = expected[format!("{leaf}_indices")]
         .as_array()
@@ -106,7 +102,7 @@ fn compare_geometry(name: &str, actual: (Vec<[f64; 3]>, Vec<i32>), expected: &Va
 }
 
 #[test]
-fn paint_geometry_and_byte_measurements_match_unchanged_upstream() {
+fn paint_geometry_and_byte_measurements_match_upstream() {
     // This integration executable has one GUI test, so it owns the context
     // serially; lib.rs GUI tests run in their own executable/process.
     let fixture: Value = serde_json::from_str(include_str!(concat!(

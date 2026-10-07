@@ -10,23 +10,26 @@ use muda::{
 use objc2::{
     DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send,
     rc::Retained,
-    runtime::{AnyObject, Sel},
+    runtime::{AnyClass, AnyObject, ClassBuilder, ProtocolObject, Sel},
     sel,
 };
 use objc2_app_kit::{
-    NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSMenu, NSMenuItem,
+    NSApplication, NSApplicationDelegate, NSEvent, NSEventModifierFlags, NSEventType, NSMenu,
+    NSMenuItem,
 };
 use objc2_foundation::{NSObject, NSObjectProtocol, NSPoint, NSString};
 use std::{cell::RefCell, io, rc::Rc};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuAction {
+    NewWindow,
     NewDocument,
     NewTerminal,
     NewExplorer,
     NewSettings,
     NewProjects,
     NewDiagnostics,
+    NewStructure,
     NewReferences,
     NewLspDashboard,
     NewContentSearch,
@@ -36,6 +39,7 @@ pub enum MenuAction {
     ResetLayout,
     Projects,
     Diagnostics,
+    Structure,
     OpenFolder,
     OpenFile,
     Save,
@@ -94,12 +98,138 @@ define_class!(
     }
 );
 
+define_class!(
+    // SAFETY: AppKit invokes this retained target on the main thread; it only
+    // queues owned actions for the application loop.
+    #[unsafe(super = NSObject)]
+    #[name = "BedDockMenuActions"]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = RefCell<Vec<MenuDispatch>>]
+    struct DockMenuActions;
+    unsafe impl NSObjectProtocol for DockMenuActions {}
+    impl DockMenuActions {
+        #[unsafe(method(newWindow:))]
+        fn new_window(&self, _sender: Option<&AnyObject>) {
+            self.ivars().borrow_mut().push(MenuDispatch {
+                action: MenuAction::NewWindow,
+                keyboard: false,
+                shift: false,
+            });
+        }
+    }
+);
+
+static DOCK_MENU_KEY: u8 = 0;
+
+extern "C-unwind" fn application_dock_menu(
+    delegate: &AnyObject,
+    _selector: Sel,
+    _application: &NSApplication,
+) -> *mut NSMenu {
+    // SAFETY: Installation associates a retained NSMenu with this live delegate.
+    // Returning a borrowed object matches applicationDockMenu:'s ownership rule.
+    unsafe {
+        objc2::ffi::objc_getAssociatedObject(delegate, (&DOCK_MENU_KEY as *const u8).cast())
+            .cast_mut()
+            .cast()
+    }
+}
+
+struct DockMenu {
+    actions: Retained<DockMenuActions>,
+    delegate: Retained<ProtocolObject<dyn NSApplicationDelegate>>,
+    original_class: &'static AnyClass,
+    menu_class: &'static AnyClass,
+}
+impl DockMenu {
+    fn install(application: &NSApplication, mtm: MainThreadMarker) -> io::Result<Self> {
+        let delegate = application
+            .delegate()
+            .ok_or_else(|| io::Error::other("native application delegate is missing"))?;
+        let object: &AnyObject = delegate.as_ref();
+        let original_class = object.class();
+        // Winit 0.30 requires its original delegate and ivars. Add just the Dock
+        // callback via an ivar-free subclass, preserving its identity/lifecycle.
+        let menu_class = if let Some(class) = AnyClass::get(c"BedDockMenuDelegate") {
+            if class.superclass() != Some(original_class) {
+                return Err(io::Error::other(
+                    "native application delegate class changed",
+                ));
+            }
+            class
+        } else {
+            let mut builder = ClassBuilder::new(c"BedDockMenuDelegate", original_class)
+                .ok_or_else(|| io::Error::other("could not create Dock menu delegate subclass"))?;
+            // SAFETY: The function has applicationDockMenu:'s exact object ABI.
+            unsafe {
+                builder.add_method(
+                    sel!(applicationDockMenu:),
+                    application_dock_menu as extern "C-unwind" fn(_, _, _) -> _,
+                )
+            };
+            builder.register()
+        };
+        let menu = NSMenu::new(mtm);
+        let actions = DockMenuActions::alloc(mtm).set_ivars(RefCell::new(Vec::new()));
+        // SAFETY: NSObject's initializer has no additional subclass requirements.
+        let actions: Retained<DockMenuActions> = unsafe { msg_send![super(actions), init] };
+        // SAFETY: The retained target implements this selector on the main thread.
+        let item = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str("New Window"),
+                Some(sel!(newWindow:)),
+                &NSString::new(),
+            )
+        };
+        // SAFETY: The retained actions outlive this menu item.
+        unsafe { item.setTarget(Some(&actions)) };
+        menu.addItem(&item);
+        // SAFETY: The subclass adds no ivars and inherits every existing method.
+        // The association retains the menu until this adapter removes it.
+        unsafe {
+            objc2::ffi::objc_setAssociatedObject(
+                (object as *const AnyObject).cast_mut(),
+                (&DOCK_MENU_KEY as *const u8).cast(),
+                &*menu as *const NSMenu as *mut AnyObject,
+                objc2::ffi::OBJC_ASSOCIATION_RETAIN_NONATOMIC,
+            );
+            AnyObject::set_class(object, menu_class);
+        }
+        Ok(Self {
+            actions,
+            delegate,
+            original_class,
+            menu_class,
+        })
+    }
+}
+impl Drop for DockMenu {
+    fn drop(&mut self) {
+        let object: &AnyObject = self.delegate.as_ref();
+        // SAFETY: Remove only our association and restore the original ivar-free
+        // subclass relationship while Winit's delegate is still retained.
+        unsafe {
+            objc2::ffi::objc_setAssociatedObject(
+                (object as *const AnyObject).cast_mut(),
+                (&DOCK_MENU_KEY as *const u8).cast(),
+                std::ptr::null_mut(),
+                objc2::ffi::OBJC_ASSOCIATION_RETAIN_NONATOMIC,
+            );
+            if object.class() == self.menu_class {
+                AnyObject::set_class(object, self.original_class);
+            }
+        }
+    }
+}
+
 pub struct MacOsMenu {
     menu: Menu,
     items: Vec<(MenuAction, MenuItem, Option<Accelerator>)>,
     previous: Option<Retained<NSMenu>>,
     targets: Vec<(Retained<NSMenuItem>, Retained<MenuTarget>)>,
     pending: Rc<RefCell<Vec<MenuDispatch>>>,
+    dock: DockMenu,
 }
 impl MacOsMenu {
     pub fn install(settings: &Settings) -> io::Result<Self> {
@@ -108,7 +238,7 @@ impl MacOsMenu {
         let application = NSApplication::sharedApplication(mtm);
         let previous = application.mainMenu();
         let menu = Menu::new();
-        let app = Submenu::new("Bed", true);
+        let app = Submenu::new("bEd", true);
         let file = Submenu::new("File", true);
         let edit = Submenu::new("Edit", true);
         let view = Submenu::new("View", true);
@@ -122,9 +252,9 @@ impl MacOsMenu {
             Ok(())
         };
         app.append(&PredefinedMenuItem::about(
-            Some("About Bed"),
+            Some("About bEd"),
             Some(AboutMetadata {
-                name: Some("Bed".into()),
+                name: Some("bEd".into()),
                 version: Some(env!("CARGO_PKG_VERSION").into()),
                 comments: Some("Desktop text editor with embeddable document views.".into()),
                 credits: Some(include_str!("../../NOTICE").into()),
@@ -140,14 +270,15 @@ impl MacOsMenu {
         app.append_items(&[
             &PredefinedMenuItem::services(None),
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::hide(Some("Hide Bed")),
+            &PredefinedMenuItem::hide(Some("Hide bEd")),
             &PredefinedMenuItem::hide_others(None),
             &PredefinedMenuItem::show_all(None),
             &PredefinedMenuItem::separator(),
         ])
         .map_err(io::Error::other)?;
-        add(&app, MenuAction::Quit, "Quit Bed")?;
+        add(&app, MenuAction::Quit, "Quit bEd")?;
         for (action, title) in [
+            (MenuAction::NewWindow, "New Window"),
             (MenuAction::NewDocument, "New Document"),
             (MenuAction::OpenFolder, "Open Folder…"),
             (MenuAction::OpenFile, "Open File…"),
@@ -176,6 +307,7 @@ impl MacOsMenu {
         add(&view, MenuAction::LspDashboard, "Language Server Dashboard")?;
         add(&view, MenuAction::Projects, "Projects")?;
         add(&view, MenuAction::Diagnostics, "Diagnostics")?;
+        add(&view, MenuAction::Structure, "Structure")?;
         for (action, title) in [
             (MenuAction::NewExplorer, "New File Explorer"),
             (MenuAction::NewTerminal, "New Terminal"),
@@ -183,6 +315,7 @@ impl MacOsMenu {
             (MenuAction::NewProjects, "New Projects"),
             (MenuAction::NewContentSearch, "New Project Search"),
             (MenuAction::NewDiagnostics, "New Diagnostics"),
+            (MenuAction::NewStructure, "New Structure"),
             (MenuAction::NewReferences, "New References"),
             (MenuAction::NewLspDashboard, "New Language Server Dashboard"),
             (MenuAction::DuplicateView, "New View of Document"),
@@ -204,12 +337,14 @@ impl MacOsMenu {
             .map_err(io::Error::other)?;
         window.set_as_windows_menu_for_nsapp();
         menu.init_for_nsapp();
+        let dock = DockMenu::install(&application, mtm)?;
         let mut this = Self {
             menu,
             items,
             previous,
             targets: Vec::new(),
             pending: Rc::new(RefCell::new(Vec::new())),
+            dock,
         };
         if !this.is_installed() {
             return Err(io::Error::other("native menu installation failed"));
@@ -238,6 +373,7 @@ impl MacOsMenu {
                         shift: false,
                     })
             })
+            .chain(self.dock.actions.ivars().borrow_mut().drain(..))
             .collect()
     }
     fn attach_native_targets(&mut self, mtm: MainThreadMarker) -> io::Result<()> {
@@ -347,9 +483,28 @@ impl MacOsMenu {
         }
         Err(io::Error::other("native menu smoke item was not found"))
     }
+    /// Exercise the Dock's actual native menu target/action without OS input injection.
+    pub fn perform_dock_new_window_for_smoke(&self) -> io::Result<()> {
+        let mtm = MainThreadMarker::new()
+            .ok_or_else(|| io::Error::other("native Dock menu requires the main thread"))?;
+        let app = NSApplication::sharedApplication(mtm);
+        let delegate = app
+            .delegate()
+            .ok_or_else(|| io::Error::other("native Dock menu delegate is missing"))?;
+        let menu = delegate
+            .applicationDockMenu(&app)
+            .ok_or_else(|| io::Error::other("native Dock menu is missing"))?;
+        menu.performActionForItemAtIndex(0);
+        Ok(())
+    }
     /// Send a locally constructed event only to this application's own window.
     /// No OS input injection or interaction with another running Bed is used.
-    pub fn key_equivalent_for_smoke(&self, characters: &str, key_code: u16) -> io::Result<()> {
+    pub fn key_equivalent_for_smoke(
+        &self,
+        characters: &str,
+        key_code: u16,
+        shift: bool,
+    ) -> io::Result<()> {
         let mtm = MainThreadMarker::new()
             .ok_or_else(|| io::Error::other("native menu requires the main thread"))?;
         let app = NSApplication::sharedApplication(mtm);
@@ -357,9 +512,15 @@ impl MacOsMenu {
             .keyWindow()
             .ok_or_else(|| io::Error::other("native key fixture has no key window"))?;
         let characters = NSString::from_str(characters);
+        let modifiers = NSEventModifierFlags::Command
+            | if shift {
+                NSEventModifierFlags::Shift
+            } else {
+                NSEventModifierFlags::empty()
+            };
         for event_type in [NSEventType::KeyDown, NSEventType::KeyUp] {
             let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
-                event_type, NSPoint::ZERO, NSEventModifierFlags::Command, 0.0,
+                event_type, NSPoint::ZERO, modifiers, 0.0,
                 window.windowNumber(), None, &characters, &characters, false, key_code,
             ).ok_or_else(|| io::Error::other("AppKit could not create the native key event"))?;
             app.postEvent_atStart(&event, false);
@@ -405,11 +566,12 @@ fn accelerator(action: MenuAction, settings: &Settings) -> Option<Accelerator> {
 pub fn input_shortcut(action: MenuAction, settings: &Settings) -> Option<(Key, bool)> {
     use MenuAction::*;
     let (key, shift) = match action {
+        NewWindow => (Key::N, true),
         NewDocument => (Key::N, false),
         NewTerminal => (Key::T, true),
         NewExplorer | NewSettings | NewProjects | NewDiagnostics | NewReferences
         | NewLspDashboard | NewContentSearch | DuplicateView | SplitRight | SplitDown
-        | ResetLayout | Projects | Diagnostics => {
+        | ResetLayout | Projects | Diagnostics | Structure | NewStructure => {
             return None;
         }
         OpenFolder => (Key::O, false),

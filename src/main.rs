@@ -5,7 +5,7 @@
 
 fn main() {
     if let Err(error) = bed::bed::run() {
-        eprintln!("Bed: {error}");
+        eprintln!("bEd: {error}");
         std::process::exit(1);
     }
 }

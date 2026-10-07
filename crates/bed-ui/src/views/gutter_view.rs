@@ -2,7 +2,7 @@
 use crate::views::view_layout::{ViewLayout, rainbow_color};
 use bed_core::editor_state::EditorState;
 use bed_session::editor::Editor;
-use dear_imgui_rs::{DrawListMut, Ui, sys};
+use dear_imgui_rs::{DrawListMut, StyleColor, Ui, sys};
 
 pub struct GutterView;
 
@@ -46,20 +46,34 @@ impl GutterView {
                 + 1,
         );
         let (selection_start, selection_end) = view.selection_line_span();
-        let current_color = if layout.rainbow_mode {
-            let rainbow = rainbow_color(ui.time() as f32);
-            ui.with_bound_context(|| unsafe { sys::igColorConvertFloat4ToU32(rainbow.into()) })
-        } else {
-            0xffff_ffff
+        let pack = |color: [f32; 4]| {
+            ui.with_bound_context(|| unsafe { sys::igColorConvertFloat4ToU32(color.into()) })
         };
+        let text = crate::presentation::readable_color(ui, ui.style_color(StyleColor::Text));
+        let current_color = if layout.rainbow_mode {
+            pack(crate::presentation::readable_color(
+                ui,
+                rainbow_color(ui.time() as f32),
+            ))
+        } else {
+            pack(text)
+        };
+        let edited_color = pack(text);
+        let muted_color = pack(crate::presentation::muted_text_color(ui));
+        let severity_colors: [u32; 4] = std::array::from_fn(|index| {
+            pack(crate::presentation::readable_color(
+                ui,
+                super::diagnostic_style::severity_color(index as i32 + 1),
+            ))
+        });
         for row in first..last {
             let selected = row >= selection_start && row < selection_end;
             let color = if row == view.row || selected {
                 current_color
             } else if git.is_line_edited(&state.path, row + 1) {
-                0xffff_ffff
+                edited_color
             } else {
-                0x9680_8080
+                muted_color
             };
             let label = (row + 1).to_string();
             let x = pos[0] + width - ui.calc_text_size(&label)[0] - 10.0;
@@ -74,7 +88,7 @@ impl GutterView {
                 draw.add_rect(
                     [x, y + 2.0],
                     [x + mark_width, y + layout.line_height - 2.0],
-                    super::diagnostic_style::severity_mark(severity),
+                    severity_colors[(severity.clamp(1, 4) - 1) as usize],
                 )
                 .filled(true)
                 .build();

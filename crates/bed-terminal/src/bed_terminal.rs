@@ -2,7 +2,7 @@
 //! The workspace hosts each session in an independent docking window.
 //! See NOTICE for source and terminal adapter attribution.
 use crate::{
-    terminal::{Terminal, TerminalEvent},
+    terminal::{Terminal, TerminalEvent, TerminalTheme},
     terminal_font::TerminalFonts,
     terminal_pty::{PtyEvent, PtyOptions, TerminalPty, WindowSize},
     terminal_view::{TerminalIo, TerminalView},
@@ -21,6 +21,7 @@ struct Session {
     ended: bool,
     working_directory: Option<PathBuf>,
     ssh_target: Option<bed_remote::SshTarget>,
+    last_reported_title: String,
 }
 impl Session {
     fn new(id: u64, ssh_target: Option<bed_remote::SshTarget>) -> Self {
@@ -32,10 +33,25 @@ impl Session {
             ended: false,
             working_directory: None,
             ssh_target,
+            last_reported_title: "Terminal".into(),
         }
     }
     fn alive(&self) -> bool {
         self.pty.is_some() && !self.ended
+    }
+    fn title(&self) -> String {
+        let foreground = self.pty.as_ref().and_then(|pty| {
+            self.ssh_target
+                .is_none()
+                .then(|| pty.foreground_process_name())
+                .flatten()
+        });
+        let title = foreground
+            .as_deref()
+            .or_else(|| (self.terminal.title() != "Terminal").then(|| self.terminal.title()))
+            .or_else(|| self.pty.as_ref().map(TerminalPty::shell_name))
+            .unwrap_or("Terminal");
+        tab_title(title)
     }
     fn shutdown(&mut self) {
         if let Some(mut pty) = self.pty.take() {
@@ -55,6 +71,7 @@ pub struct BedTerminal {
     project_root: PathBuf,
     pty_options: PtyOptions,
     ssh_target: Option<bed_remote::SshTarget>,
+    theme: Option<TerminalTheme>,
 }
 impl Default for BedTerminal {
     fn default() -> Self {
@@ -94,6 +111,13 @@ impl BedTerminal {
     }
     pub fn session_ids(&self) -> Vec<u64> {
         self.sessions.iter().map(|s| s.id).collect()
+    }
+    /// A short display label; the host should retain the session ID as its tab ID.
+    pub fn session_title(&self, id: u64) -> Option<String> {
+        self.sessions
+            .iter()
+            .find(|session| session.id == id)
+            .map(Session::title)
     }
     pub fn working_directory(&self, id: u64) -> Option<&Path> {
         self.sessions
@@ -188,12 +212,30 @@ impl BedTerminal {
             project_root: PathBuf::new(),
             pty_options,
             ssh_target: None,
+            theme: None,
         };
         terminal.add_session();
         terminal
     }
     pub fn set_project_root(&mut self, root: &str) {
         self.project_root = PathBuf::from(root);
+    }
+    /// Update current sessions and the defaults used by future/restarted shells.
+    pub fn set_theme(
+        &mut self,
+        background: [f32; 4],
+        foreground: [f32; 4],
+        ansi: [[f32; 4]; 16],
+    ) -> bool {
+        let theme = TerminalTheme::new(background, foreground, ansi);
+        if self.theme.as_ref() == Some(&theme) {
+            return false;
+        }
+        for session in &mut self.sessions {
+            session.terminal.set_theme(&theme);
+        }
+        self.theme = Some(theme);
+        true
     }
     /// Configure future sessions. Existing sessions retain their original host.
     pub fn set_ssh_target(&mut self, target: Option<bed_remote::SshTarget>) {
@@ -278,8 +320,11 @@ impl BedTerminal {
             .next_id
             .checked_add(1)
             .expect("terminal session ID overflow");
-        self.sessions
-            .push(Session::new(id, self.ssh_target.clone()));
+        let mut session = Session::new(id, self.ssh_target.clone());
+        if let Some(theme) = &self.theme {
+            session.terminal.set_theme(theme);
+        }
+        self.sessions.push(session);
         self.active = self.sessions.len() - 1;
     }
     fn close_session(&mut self, index: usize) {
@@ -338,6 +383,9 @@ impl BedTerminal {
             },
         )?;
         self.sessions[index].terminal = Terminal::new(80, 24);
+        if let Some(theme) = &self.theme {
+            self.sessions[index].terminal.set_theme(theme);
+        }
         self.sessions[index].view = transparent_view();
         self.sessions[index].pty = Some(pty);
         self.sessions[index].ended = false;
@@ -354,6 +402,11 @@ impl BedTerminal {
                     ended: &mut session.ended,
                 };
                 changed |= pipe.pump(&mut session.terminal)?;
+            }
+            let title = session.title();
+            if title != session.last_reported_title {
+                session.last_reported_title = title;
+                changed = true;
             }
         }
         Ok(changed)
@@ -392,8 +445,9 @@ impl BedTerminal {
         let mut i = 0;
         while i < self.sessions.len() {
             let label = std::ffi::CString::new(format!(
-                "Terminal {}###bed_term_{}",
-                self.sessions[i].id, self.sessions[i].id
+                "{}###bed_term_{}",
+                self.sessions[i].title(),
+                self.sessions[i].id
             ))
             .unwrap();
             let mut open = true;
@@ -461,6 +515,104 @@ impl BedTerminal {
             sys::igEndTabBar();
         }
         result
+    }
+}
+
+fn tab_title(title: &str) -> String {
+    let mut label = String::new();
+    for character in title
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(64)
+    {
+        // ImGui treats adjacent hashes as a hidden/stable label ID separator.
+        if character == '#' && label.ends_with('#') {
+            label.push(' ');
+        }
+        label.push(character);
+    }
+    if label.trim().is_empty() {
+        "Terminal".into()
+    } else {
+        label
+    }
+}
+
+#[cfg(test)]
+mod title_tests {
+    use super::*;
+
+    #[test]
+    fn remote_session_uses_osc_title_and_reset_fallback() {
+        let mut session = Session::new(1, Some(bed_remote::SshTarget::new("host")));
+        session.terminal.feed(b"\x1b]0;codex\x07");
+        assert_eq!(session.title(), "codex");
+        session.terminal.feed(b"\x1bc");
+        assert_eq!(session.title(), "Terminal");
+    }
+
+    #[test]
+    fn tab_titles_are_bounded_and_safe_for_imgui_labels() {
+        assert_eq!(tab_title("codex\0\n###title"), "codex# # #title");
+        assert_eq!(tab_title(""), "Terminal");
+        assert_eq!(tab_title(&"😀".repeat(100)).chars().count(), 64);
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+
+    #[test]
+    fn themes_update_existing_future_and_restarted_sessions_without_losing_osc_colors() {
+        let mut terminal = BedTerminal::with_pty_options(PtyOptions {
+            shell: Some(crate::terminal_pty::TerminalShell::new(
+                if cfg!(windows) { "cmd.exe" } else { "/bin/sh" },
+                if cfg!(windows) {
+                    vec!["/c".into(), "exit 0".into()]
+                } else {
+                    vec!["-c".into(), "exit 0".into()]
+                },
+            )),
+            ..PtyOptions::default()
+        });
+        terminal.sessions[0].terminal.feed(b"\x1b]4;1;#123456\x07");
+        let light = [0.98, 0.97, 0.95, 1.0];
+        let text = [0.12, 0.13, 0.14, 1.0];
+        assert!(terminal.set_theme(light, text, [text; 16]));
+        assert_eq!(
+            terminal.sessions[0].terminal.palette()[1],
+            [0x12, 0x34, 0x56]
+        );
+        let expected_background = terminal.sessions[0].terminal.palette()[259];
+        terminal.new_session();
+        assert_eq!(
+            terminal.sessions[1].terminal.palette()[259],
+            expected_background
+        );
+        assert!(!terminal.set_theme(light, text, [text; 16]));
+        terminal.ensure_shell(0).unwrap();
+        assert_eq!(
+            terminal.sessions[0].terminal.palette()[259],
+            expected_background
+        );
+        terminal.sessions[0].shutdown();
+        terminal.sessions[0].ended = true;
+        terminal.ensure_shell(0).unwrap();
+        assert_eq!(
+            terminal.sessions[0].terminal.palette()[259],
+            expected_background
+        );
+        let dark = [0.03, 0.04, 0.06, 1.0];
+        assert!(terminal.set_theme(dark, text, [text; 16]));
+        assert_ne!(
+            terminal.sessions[0].terminal.palette()[259],
+            expected_background
+        );
+        assert_eq!(
+            terminal.sessions[0].terminal.palette(),
+            terminal.sessions[1].terminal.palette()
+        );
     }
 }
 impl Drop for BedTerminal {

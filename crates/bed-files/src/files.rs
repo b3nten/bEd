@@ -1,15 +1,15 @@
 //! Translated from ned files/files.{h,cpp}; see LICENSE and NOTICE.
 use std::io;
 use std::{fs, io::Read, path::Path};
-pub const MAX_FILE_SIZE: usize = 1024 * 1024;
+pub const MAX_FILE_SIZE: usize = bed_remote::MAX_FILE_BYTES;
 pub const BINARY_ERROR: &str = "Error: File appears to be binary and cannot be displayed.";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadFile {
     pub raw: Vec<u8>,
-    pub truncated: bool,
 }
 pub fn read_file_raw(path: &Path) -> io::Result<ReadFile> {
-    let metadata = fs::metadata(path)?;
+    let file = fs::File::open(path)?;
+    let metadata = file.metadata()?;
     if !metadata.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -17,34 +17,35 @@ pub fn read_file_raw(path: &Path) -> io::Result<ReadFile> {
         ));
     }
     let file_size = metadata.len();
-    let truncated = file_size > MAX_FILE_SIZE as u64;
-    let read_size = if truncated {
-        MAX_FILE_SIZE
-    } else {
-        file_size as usize
-    };
-    let file = fs::File::open(path)?;
-    let mut raw = read_text_bytes(file, read_size)?;
-    if truncated {
-        let mut notice = format!(
-            "\n\n[File truncated - No Edits - showing first {}MB of {}MB]\n",
-            MAX_FILE_SIZE / (1024 * 1024),
-            file_size / (1024 * 1024)
-        )
-        .into_bytes();
-        notice.extend(raw);
-        raw = notice;
+    if file_size > MAX_FILE_SIZE as u64 {
+        return Err(file_too_large(path, file_size));
     }
-    Ok(ReadFile { raw, truncated })
+    let raw = read_text_bytes(&file, file_size as usize)?;
+    if raw.len() > MAX_FILE_SIZE {
+        return Err(file_too_large(
+            path,
+            file.metadata()?.len().max(raw.len() as u64),
+        ));
+    }
+    Ok(ReadFile { raw })
 }
 
-fn read_text_bytes(mut file: impl Read, read_size: usize) -> io::Result<Vec<u8>> {
+pub fn file_too_large(path: &Path, actual: u64) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "Cannot edit '{}': file is {actual} bytes; Bed's limit is {} MiB ({MAX_FILE_SIZE} bytes). Open it in another editor or split it into smaller files.",
+            path.display(),
+            MAX_FILE_SIZE / (1024 * 1024),
+        ),
+    )
+}
+
+fn read_text_bytes(mut file: impl Read, expected_size: usize) -> io::Result<Vec<u8>> {
     // Reject binary files after the same 1KiB probe used upstream, before
     // allocating/reading the remainder of a potentially large build artifact.
-    let mut raw = Vec::with_capacity(read_size.min(1024));
-    file.by_ref()
-        .take(read_size.min(1024) as u64)
-        .read_to_end(&mut raw)?;
+    let mut raw = Vec::with_capacity(expected_size.min(1024));
+    file.by_ref().take(1024).read_to_end(&mut raw)?;
     let prefix = &raw[..raw.len().min(1024)];
     let junk = prefix
         .iter()
@@ -53,9 +54,9 @@ fn read_text_bytes(mut file: impl Read, read_size: usize) -> io::Result<Vec<u8>>
     if !prefix.is_empty() && junk > prefix.len() / 10 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, BINARY_ERROR));
     }
-    let remaining = read_size.saturating_sub(raw.len());
-    raw.reserve(remaining);
-    file.take(remaining as u64).read_to_end(&mut raw)?;
+    raw.reserve(expected_size.saturating_sub(raw.len()));
+    file.take((MAX_FILE_SIZE + 1 - raw.len()) as u64)
+        .read_to_end(&mut raw)?;
     Ok(raw)
 }
 
@@ -100,19 +101,38 @@ mod tests {
         );
     }
     #[test]
-    fn caps_at_one_mib_and_prepends_exact_truncation_notice() {
+    fn reads_beyond_the_old_limit_without_inserting_text_and_accepts_the_boundary() {
         let temp = TempDir::new();
-        let path = temp.write("large", &vec![b'a'; MAX_FILE_SIZE + 1]);
+        let bytes = vec![b'a'; 2 * 1024 * 1024];
+        let path = temp.write("large", &bytes);
         let read = read_file_raw(&path).unwrap();
-        assert!(read.truncated);
-        let notice = b"\n\n[File truncated - No Edits - showing first 1MB of 1MB]\n";
-        assert!(read.raw.starts_with(notice));
-        assert_eq!(read.raw.len(), notice.len() + MAX_FILE_SIZE);
-        assert!(read.raw[notice.len()..].iter().all(|&b| b == b'a'));
+        assert_eq!(read.raw, bytes);
         fs::write(&path, vec![b'a'; MAX_FILE_SIZE]).unwrap();
         let read = read_file_raw(&path).unwrap();
-        assert!(!read.truncated);
         assert_eq!(read.raw.len(), MAX_FILE_SIZE);
+    }
+    #[test]
+    fn oversized_file_fails_with_path_actual_size_and_actionable_limit() {
+        let temp = TempDir::new();
+        let path = temp.write("too-large.txt", b"");
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(MAX_FILE_SIZE as u64 + 1)
+            .unwrap();
+        let error = read_file_raw(&path).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        let message = error.to_string();
+        assert!(message.contains("too-large.txt"));
+        assert!(message.contains(&(MAX_FILE_SIZE + 1).to_string()));
+        assert!(message.contains("16 MiB"));
+        assert!(message.contains("another editor"));
+    }
+    #[test]
+    fn growing_reader_is_bounded_even_when_initial_metadata_is_small() {
+        let bytes = read_text_bytes(io::repeat(b'a'), 1).unwrap();
+        assert_eq!(bytes.len(), MAX_FILE_SIZE + 1);
     }
     #[test]
     fn empty_files_read_and_directories_fail() {

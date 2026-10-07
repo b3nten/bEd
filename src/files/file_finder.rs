@@ -1,4 +1,5 @@
 //! File-finder presentation around the GUI-free discovery service.
+use bed_core::util::color::blend;
 use bed_files::file_finder::FileFinder as Finder;
 use bed_ui::presentation::FileIcons;
 use dear_imgui_rs::{Condition, Key, MouseButton, StyleColor, StyleVar, Ui, WindowFlags};
@@ -68,6 +69,7 @@ impl FileFinder {
             return FileFinderAction::None;
         }
         let fs = ui.current_font_size();
+        let _controls = crate::util::controls_style(ui);
         let size = [fs * 30.0, fs * 17.5];
         let (position, pivot) = if let Some((pos, pane_size)) = style
             .embedded_pane
@@ -84,17 +86,18 @@ impl FileFinder {
             let display = ui.io().display_size();
             ([display[0] * 0.5, display[1] * 0.35], [0.5; 2])
         };
-        let dimmed = [
-            style.background_color[0] * 0.8,
-            style.background_color[1] * 0.8,
-            style.background_color[2] * 0.8,
-            1.0,
-        ];
+        let text = ui.style_color(StyleColor::Text);
+        let background = style.background_color;
+        let dimmed = blend(
+            text,
+            [background[0], background[1], background[2], 1.0],
+            0.025,
+        );
         let _rounding = ui.push_style_var(StyleVar::WindowRounding(fs * 0.5));
         let _border_size = ui.push_style_var(StyleVar::WindowBorderSize(1.0));
         let _padding = ui.push_style_var(StyleVar::WindowPadding([fs * 0.8; 2]));
         let _bg = ui.push_style_color(StyleColor::WindowBg, dimmed);
-        let _border = ui.push_style_color(StyleColor::Border, [0.3, 0.3, 0.3, 1.0]);
+        let _border = ui.push_style_color(StyleColor::Border, blend(text, dimmed, 0.30));
         let _frame_bg = ui.push_style_color(StyleColor::FrameBg, dimmed);
         let mut action = FileFinderAction::None;
         ui.window("FileFinder")
@@ -144,7 +147,8 @@ impl FileFinder {
                     let _round = ui.push_style_var(StyleVar::FrameRounding(fs * 0.2));
                     let _frame_border = ui.push_style_var(StyleVar::FrameBorderSize(1.0));
                     let _frame_pad = ui.push_style_var(StyleVar::FramePadding([fs * 0.4; 2]));
-                    let _border = ui.push_style_color(StyleColor::Border, [0.3, 0.3, 0.3, 1.0]);
+                    let _border =
+                        ui.push_style_color(StyleColor::Border, blend(text, dimmed, 0.30));
                     let _frame = ui.push_style_color(StyleColor::FrameBg, dimmed);
                     ui.set_next_item_width(ui.content_region_avail()[0]);
                     ui.set_keyboard_focus_here();
@@ -194,7 +198,6 @@ impl FileFinder {
                 let _align = ui.push_style_var(StyleVar::SelectableTextAlign([0.0, 0.5]));
                 let _round = ui.push_style_var(StyleVar::FrameRounding(fs * 0.2));
                 let _pad = ui.push_style_var(StyleVar::FramePadding([fs * 0.4, fs * 0.2]));
-                let _header = ui.push_style_color(StyleColor::Header, [1.0, 0.1, 0.7, 0.4]);
                 let _hover = ui.push_style_color(StyleColor::HeaderHovered, [0.0; 4]);
                 let _active = ui.push_style_color(StyleColor::HeaderActive, [0.0; 4]);
                 for i in start..end {
@@ -212,7 +215,15 @@ impl FileFinder {
                         .unwrap_or_default();
                     let icon_size = ui.text_line_height();
                     if let Some(icon) = icons.and_then(|icons| icons.get_for_file(filename)) {
-                        ui.image(icon, [icon_size; 2]);
+                        let tint = if icons.is_some_and(|icons| Some(icon) == icons.get("default"))
+                        {
+                            ui.style_color(StyleColor::Text)
+                        } else {
+                            [1.0; 4]
+                        };
+                        ui.image_config(icon, [icon_size; 2])
+                            .tint_color(tint)
+                            .build();
                     } else {
                         ui.dummy([icon_size; 2]);
                     }

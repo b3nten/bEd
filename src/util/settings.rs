@@ -1,6 +1,7 @@
 //! Desktop profile lifecycle and appearance. Embedded consumers provide their
 //! configuration explicitly through the reusable session and view APIs.
 use crate::util::{font::Font, keybinds::KeybindsManager};
+use bed_core::util::color::{blend, ensure_contrast};
 use bed_session::editor::Editor;
 use dear_imgui_rs::{
     Condition, Context, Key, MouseButton, PopupQueryFlags, StyleColor, StyleVar, TreeNodeFlags, Ui,
@@ -13,7 +14,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 const PRIMARY_PROFILE: &str = "bed.json";
@@ -462,6 +463,15 @@ impl Settings {
     pub fn font_size(&self) -> f32 {
         self.number("fontSize", 20.0).max(1.0)
     }
+    pub fn autosave_enabled(&self) -> bool {
+        self.bool("autosave", true)
+    }
+    pub fn autosave_delay(&self) -> Duration {
+        Duration::from_millis(
+            self.number("autosave_delay_ms", 1000.0)
+                .clamp(100.0, 60_000.0) as u64,
+        )
+    }
     pub fn shader_settings(&self) -> bed_effects::shader_manager::ShaderSettings {
         use bed_effects::shader_manager::ShaderSettings;
         match self.effect_preset {
@@ -515,7 +525,22 @@ impl Settings {
     }
     pub fn text_color(&self) -> [f32; 4] {
         let theme = self.settings["theme"].as_str().unwrap_or("default");
-        color(&self.settings["themes"][theme]["text"], [1.0; 4])
+        ensure_contrast(
+            color(&self.settings["themes"][theme]["text"], [1.0; 4]),
+            self.background_color(),
+            4.5,
+        )
+    }
+    pub fn accent_color(&self) -> [f32; 4] {
+        let theme = self.settings["theme"].as_str().unwrap_or("default");
+        ensure_contrast(
+            color(
+                &self.settings["themes"][theme]["function"],
+                self.text_color(),
+            ),
+            self.background_color(),
+            3.0,
+        )
     }
     pub fn rainbow(&self) -> bool {
         self.bool("rainbow", true)
@@ -552,9 +577,16 @@ impl Settings {
         style.set_color(StyleColor::Text, text);
         style.set_color(
             StyleColor::TextDisabled,
-            [text[0] * 0.6, text[1] * 0.6, text[2] * 0.6, text[3]],
+            ensure_contrast(
+                blend(text, self.background_color(), 0.60),
+                self.background_color(),
+                3.0,
+            ),
         );
-        style.set_color(StyleColor::TextSelectedBg, [1.0, 0.1, 0.7, 0.3]);
+        style.set_color(
+            StyleColor::TextSelectedBg,
+            blend(self.accent_color(), self.background_color(), 0.20),
+        );
         style.set_color(StyleColor::ScrollbarBg, [0.0; 4]);
         if !self.is_embedded {
             let bg = self.background_color();
@@ -584,14 +616,22 @@ impl Settings {
                 style.set_color(slot, [0.0; 4]);
             }
             style.set_color(StyleColor::TabHovered, [text[0], text[1], text[2], 0.12]);
-            for (slot, alpha) in [
-                (StyleColor::Button, 0.12),
-                (StyleColor::ButtonHovered, 0.18),
-                (StyleColor::ButtonActive, 0.30),
-            ] {
-                style.set_color(slot, [text[0], text[1], text[2], alpha]);
+            for (slot, color) in super::popup_style::control_colors(bg, text, self.accent_color()) {
+                style.set_color(slot, color);
             }
-            style.set_scrollbar_size(30.0 * style.font_scale_dpi().max(1.0));
+            let fs = self.font_size();
+            style.set_frame_rounding(fs * 0.25);
+            style.set_frame_border_size(1.0);
+            style.set_frame_padding([fs * 0.55, fs * 0.30]);
+            style.set_grab_rounding(fs * 0.2);
+            style.set_grab_min_size(fs * 0.5);
+            style.set_popup_rounding(super::popup_style::POPUP_ROUNDING);
+            style.set_popup_border_size(super::popup_style::POPUP_BORDER_SIZE);
+            style.set_window_rounding(fs * 0.4);
+            style.set_scrollbar_rounding(fs * 0.3);
+            style.set_scrollbar_size(fs * 0.55);
+            style.set_tab_bar_border_size(0.0);
+            style.set_disabled_alpha(0.75);
         }
         self.sidebar_visible = self.bool("sidebar_visible", true);
         self.terminal_visible = self.bool("terminal_visible", true);
@@ -667,28 +707,28 @@ impl Settings {
         let scrollbar_round = ui.push_style_var(StyleVar::ScrollbarRounding(fs * 0.5));
         let padding = ui.push_style_var(StyleVar::WindowPadding([fs * 0.75; 2]));
         let bg = self.background_color();
-        let window_bg = ui.push_style_color(
-            StyleColor::WindowBg,
-            [bg[0] * 0.8, bg[1] * 0.8, bg[2] * 0.8, 1.0],
-        );
+        let surface = blend(self.text_color(), [bg[0], bg[1], bg[2], 1.0], 0.025);
+        let window_bg = ui.push_style_color(StyleColor::WindowBg, surface);
         let frame_bg = ui.push_style_color(
             StyleColor::FrameBg,
-            [bg[0] * 0.5, bg[1] * 0.5, bg[2] * 0.5, 1.0],
+            blend(self.text_color(), surface, 0.045),
         );
-        let scrollbar_bg = ui.push_style_color(
-            StyleColor::ScrollbarBg,
-            [bg[0] * 0.5, bg[1] * 0.5, bg[2] * 0.5, 0.0],
+        let scrollbar_bg = ui.push_style_color(StyleColor::ScrollbarBg, [0.0; 4]);
+        let popup_bg = ui.push_style_color(StyleColor::PopupBg, surface);
+        let border_color =
+            ui.push_style_color(StyleColor::Border, blend(self.text_color(), surface, 0.30));
+        let grab = ui.push_style_color(
+            StyleColor::ScrollbarGrab,
+            blend(self.text_color(), surface, 0.35),
         );
-        let popup_bg = ui.push_style_color(
-            StyleColor::PopupBg,
-            [bg[0] * 0.5, bg[1] * 0.5, bg[2] * 0.5, 1.0],
+        let grab_hover = ui.push_style_color(
+            StyleColor::ScrollbarGrabHovered,
+            blend(self.text_color(), surface, 0.50),
         );
-        let border_color = ui.push_style_color(StyleColor::Border, [0.3, 0.3, 0.3, 1.0]);
-        let grab = ui.push_style_color(StyleColor::ScrollbarGrab, [0.3, 0.3, 0.3, 1.0]);
-        let grab_hover =
-            ui.push_style_color(StyleColor::ScrollbarGrabHovered, [0.4, 0.4, 0.4, 1.0]);
-        let grab_active =
-            ui.push_style_color(StyleColor::ScrollbarGrabActive, [0.5, 0.5, 0.5, 1.0]);
+        let grab_active = ui.push_style_color(
+            StyleColor::ScrollbarGrabActive,
+            blend(self.text_color(), surface, 0.65),
+        );
         let font = self.font.main.map(|font| ui.push_font(font));
         // ned passes the internal Modal flag to Begin directly. The safe binding
         // only accepts public flags, so preserve that source behavior here; the
@@ -745,6 +785,7 @@ impl Settings {
         shaders_available: bool,
         icons: Option<&super::icons::Icons>,
     ) {
+        let _controls = super::controls_style(ui);
         if !self.is_embedded {
             let padding = ui.push_style_var(StyleVar::WindowPadding([0.0; 2]));
             self.draw_window_header(ui, editor, icons);
@@ -758,7 +799,7 @@ impl Settings {
             let bg = self.background_color();
             ui.push_style_color(
                 StyleColor::ChildBg,
-                [bg[0] * 0.8, bg[1] * 0.8, bg[2] * 0.8, 1.0],
+                blend(self.text_color(), [bg[0], bg[1], bg[2], 1.0], 0.025),
             )
         });
         let fs = ui.current_font_size();
@@ -769,7 +810,10 @@ impl Settings {
             .flags(WindowFlags::ALWAYS_VERTICAL_SCROLLBAR)
             .build(ui, || {
                 if let Some(error) = &self.error {
-                    ui.text_colored([1.0, 0.4, 0.3, 1.0], error);
+                    ui.text_colored(
+                        ensure_contrast([1.0, 0.4, 0.3, 1.0], self.background_color(), 4.5),
+                        error,
+                    );
                 }
                 self.draw_profile_selector(ui);
                 self.draw_main_settings(ui);
@@ -789,8 +833,12 @@ impl Settings {
     }
     /// Controls only; Workbench owns this tab and its focus/close behavior.
     pub fn draw_tab(&mut self, ui: &Ui, editor: &mut Editor, icons: Option<&super::icons::Icons>) {
+        let _controls = super::controls_style(ui);
         if let Some(error) = &self.error {
-            ui.text_colored([1.0, 0.4, 0.3, 1.0], error);
+            ui.text_colored(
+                ensure_contrast([1.0, 0.4, 0.3, 1.0], self.background_color(), 4.5),
+                error,
+            );
         }
         self.draw_profile_selector(ui);
         self.draw_main_settings(ui);
@@ -828,17 +876,17 @@ impl Settings {
                 self.close_settings_window(editor);
             }
             let hovered = ui.is_item_hovered();
+            let mut ink = ui.style_color(StyleColor::Text);
+            ink[3] *= if hovered { 0.6 } else { 1.0 };
+            let ink = ensure_contrast(ink, ui.style_color(StyleColor::WindowBg), 3.0);
             ui.set_cursor_pos(cursor);
             if let Some(texture) = icons.and_then(|icons| icons.get("close")) {
-                ui.image_config(texture, [side; 2])
-                    .tint_color([1.0, 1.0, 1.0, if hovered { 0.6 } else { 1.0 }])
-                    .build();
+                ui.image_config(texture, [side; 2]).tint_color(ink).build();
             } else {
                 // Hosts can delay their asset upload; keep the same hit rectangle
                 // and draw the close glyph until they supply the source SVG texture.
                 let pos = ui.cursor_screen_pos();
                 let pad = side * 0.2;
-                let ink = [1.0, 1.0, 1.0, if hovered { 0.6 } else { 1.0 }];
                 let draw = ui.get_window_draw_list();
                 draw.add_line(
                     [pos[0] + pad, pos[1] + pad],
@@ -960,6 +1008,36 @@ impl Settings {
             self.request_apply();
             self.persist_ui();
         }
+        ui.spacing();
+        let mut autosave = self.autosave_enabled();
+        if ui.checkbox("Autosave code files", &mut autosave) {
+            self.settings["autosave"] = json!(autosave);
+            self.persist_ui();
+        }
+        if ui.is_item_hovered() {
+            ui.tooltip_text(
+                "Save files after typing stops. New files require a path before autosave can run.",
+            );
+        }
+        {
+            let _disabled = ui.begin_disabled_with_cond(!autosave);
+            let mut delay = self.autosave_delay().as_millis() as i32;
+            if ui
+                .slider_config("Autosave delay", 100, 60_000)
+                .flags(
+                    dear_imgui_rs::SliderFlags::ALWAYS_CLAMP
+                        | dear_imgui_rs::SliderFlags::LOGARITHMIC,
+                )
+                .try_display_format("%d ms")
+                .expect("constant valid format")
+                .build(&mut delay)
+            {
+                self.settings["autosave_delay_ms"] = json!(delay);
+            }
+            if ui.is_item_deactivated_after_edit() {
+                self.persist_ui();
+            }
+        }
     }
     fn draw_mac_settings(&mut self, ui: &Ui) {
         #[cfg(target_os = "macos")]
@@ -1080,6 +1158,12 @@ impl Settings {
                 "Terminal",
                 "terminal_visible",
                 "(Show/hide bottom terminal panel)",
+                true,
+            ),
+            (
+                "UI Animations",
+                "ui_animations",
+                "(Animate panels, tree branches, popovers and navigation jumps)",
                 true,
             ),
             (
@@ -1237,7 +1321,10 @@ impl Settings {
         ui.same_line();
         ui.text_disabled("(Edit keyboard shortcuts)");
         if defaults.is_file() && !keybinds.exists() {
-            ui.text_colored([1.0, 0.5, 0.0, 1.0], "Using default keybinds");
+            ui.text_colored(
+                ensure_contrast([1.0, 0.5, 0.0, 1.0], self.background_color(), 4.5),
+                "Using default keybinds",
+            );
             if ui.button("Restore Default Keybinds")
                 && let Err(error) =
                     fs::copy(defaults, keybinds).and_then(|_| self.keybinds.load_keybinds())
@@ -1317,6 +1404,25 @@ mod tests {
     }
     fn settings(temp: &TempDir) -> Settings {
         Settings::with_paths(temp.0.clone(), PathBuf::from(env!("CARGO_MANIFEST_DIR"))).unwrap()
+    }
+    #[test]
+    fn autosave_defaults_limits_and_profile_changes_persist() {
+        let temp = TempDir::new();
+        let mut current = settings(&temp);
+        assert!(current.autosave_enabled());
+        assert_eq!(current.autosave_delay(), Duration::from_millis(1000));
+        for (configured, expected) in [(-10, 100), (0, 100), (2500, 2500), (90_000, 60_000)] {
+            current.settings["autosave_delay_ms"] = json!(configured);
+            assert_eq!(current.autosave_delay(), Duration::from_millis(expected));
+        }
+        current.settings["autosave_delay_ms"] = json!("invalid");
+        assert_eq!(current.autosave_delay(), Duration::from_millis(1000));
+        current.settings["autosave"] = json!(false);
+        current.settings["autosave_delay_ms"] = json!(2500);
+        current.save_settings().unwrap();
+        let restarted = settings(&temp);
+        assert!(!restarted.autosave_enabled());
+        assert_eq!(restarted.autosave_delay(), Duration::from_millis(2500));
     }
     #[test]
     fn seeds_missing_defaults_only_and_follows_primary_profile_pointer() {
@@ -1981,6 +2087,43 @@ mod tests {
             read_json(&settings.settings_path).unwrap()["test_close"],
             "header persists"
         );
+    }
+
+    #[test]
+    fn light_settings_header_tints_the_close_icon_with_readable_theme_ink() {
+        use crate::util::icons::Icons;
+        use dear_imgui_rs::TextureId;
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let temp = TempDir::new();
+        let mut settings = settings(&temp);
+        settings.show_settings_window = true;
+        let background = [0.97, 0.94, 0.89, 1.0];
+        let text = [0.12, 0.18, 0.23, 1.0];
+        settings.settings["backgroundColor"] = json!(background);
+        settings.settings["themes"]["default"]["text"] = json!(text);
+        settings.settings["theme"] = json!("default");
+        let mut context = settings_context();
+        context
+            .style_mut()
+            .set_color(StyleColor::WindowBg, background);
+        context.style_mut().set_color(StyleColor::Text, text);
+        let mut icons = Icons::default();
+        icons.set_texture("close", TextureId::new(99));
+        let mut editor = Editor::new();
+        draw_settings_with_icons(&mut context, &mut settings, &mut editor, Some(&icons));
+        let header =
+            draw_settings_with_icons(&mut context, &mut settings, &mut editor, Some(&icons));
+        for rgba in header.close_icon.unwrap().colors {
+            let ink = [
+                (rgba & 0xff) as f32 / 255.0,
+                ((rgba >> 8) & 0xff) as f32 / 255.0,
+                ((rgba >> 16) & 0xff) as f32 / 255.0,
+                1.0,
+            ];
+            assert!(bed_core::util::color::contrast_ratio(ink, background) >= 4.5);
+            assert!(ink[0] < 0.5 && ink[1] < 0.5 && ink[2] < 0.5);
+        }
+        assert_eq!(context.style().color(StyleColor::Text), text);
     }
 
     #[cfg(target_os = "macos")]

@@ -1,4 +1,4 @@
-# Portable Bed package translated from pinned scripts/build-win-ci.bat.
+# Portable bEd package translated from pinned scripts/build-win-ci.bat.
 param([string]$Binary = "target/release/bed.exe", [string]$Destination = "target/dist")
 $ErrorActionPreference = "Stop"
 $repository = Split-Path -Parent $PSScriptRoot
@@ -10,7 +10,7 @@ $version = $Matches[1]
 $null = New-Item -ItemType Directory -Force $Destination
 $dist = (Resolve-Path $Destination).Path
 $stage = Join-Path $dist ("bed-package-" + [guid]::NewGuid().ToString("N"))
-$package = Join-Path $stage "Bed"
+$package = Join-Path $stage "bEd"
 try {
     $null = New-Item -ItemType Directory -Force $package
     Copy-Item -LiteralPath $Binary -Destination (Join-Path $package "bed.exe")
@@ -25,9 +25,9 @@ try {
     foreach ($asset in @("resources/config/bed.json", "resources/fonts/SourceCodePro-Regular.ttf", "resources/fonts/Emoji.ttf", "resources/icons/bed.png", "resources/icons/bed.ico", "queries/rs.scm", "LICENSES/terminal-adapter-BSL-1.1.txt")) {
         if (!(Test-Path (Join-Path $package $asset))) { throw "Missing packaged asset: $asset" }
     }
-    $archive = Join-Path $dist "Bed-$version-windows-x64.zip"
+    $archive = Join-Path $dist "bEd-$version-windows-x64.zip"
     Compress-Archive -Path $package -DestinationPath $archive -Force
-    $output = Join-Path $dist "Bed"
+    $output = Join-Path $dist "bEd"
     if (Test-Path $output) { Remove-Item -LiteralPath $output -Recurse -Force }
     Move-Item -LiteralPath $package -Destination $output
     Write-Output $archive

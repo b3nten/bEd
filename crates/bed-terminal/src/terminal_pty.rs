@@ -13,7 +13,7 @@ use std::{
     path::PathBuf,
     process::ExitStatus,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc,
     },
@@ -26,6 +26,7 @@ pub const MAX_QUEUED_WRITE_BYTES: usize = 4 * 1024 * 1024;
 pub const OUTPUT_CHUNK_BYTES: usize = 16 * 1024;
 pub const OUTPUT_QUEUE_CHUNKS: usize = 64;
 const COMMAND_CAPACITY: usize = 64;
+const PROCESS_TITLE_INTERVAL: Duration = Duration::from_millis(400);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalShell {
@@ -113,6 +114,8 @@ pub struct TerminalPty {
     alive: Arc<AtomicBool>,
     budget: Arc<AtomicUsize>,
     process_id: u32,
+    shell_name: String,
+    foreground_process: Arc<Mutex<Option<String>>>,
 }
 
 impl TerminalPty {
@@ -120,6 +123,8 @@ impl TerminalPty {
         validate_size(size)?;
         let mut backend = platform::Pty::spawn(options, size)?;
         let process_id = backend.process_id();
+        let shell_name = backend.shell_name().to_owned();
+        let foreground_process = Arc::new(Mutex::new(None));
         let poller = Arc::new(Poller::new()?);
         // SAFETY: backend owns the registered source throughout the worker. It
         // deregisters before closing that source, including all error paths.
@@ -133,12 +138,18 @@ impl TerminalPty {
         let worker_stop = stop.clone();
         let worker_alive = alive.clone();
         let worker_poll = poller.clone();
+        let worker_foreground = foreground_process.clone();
         let worker = thread::Builder::new()
             .name("bed-terminal-pty".into())
             .spawn(move || {
-                if let Err(error) =
-                    run_worker(&mut backend, &receiver, &sender, &worker_stop, &worker_poll)
-                {
+                if let Err(error) = run_worker(
+                    &mut backend,
+                    &receiver,
+                    &sender,
+                    &worker_stop,
+                    &worker_poll,
+                    &worker_foreground,
+                ) {
                     let _ = sender.send(PtyEvent::Error(error.to_string()));
                 }
                 worker_alive.store(false, Ordering::Release);
@@ -154,11 +165,20 @@ impl TerminalPty {
             alive,
             budget: Arc::new(AtomicUsize::new(0)),
             process_id,
+            shell_name,
+            foreground_process,
         })
     }
 
     pub fn process_id(&self) -> u32 {
         self.process_id
+    }
+    pub fn shell_name(&self) -> &str {
+        &self.shell_name
+    }
+    /// Cached by the PTY worker; reading a tab label never queries the OS.
+    pub fn foreground_process_name(&self) -> Option<String> {
+        self.foreground_process.lock().unwrap().clone()
     }
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::Acquire)
@@ -285,13 +305,20 @@ fn run_worker(
     output: &mpsc::SyncSender<PtyEvent>,
     stop: &AtomicBool,
     poller: &Arc<Poller>,
+    foreground_process: &Mutex<Option<String>>,
 ) -> io::Result<()> {
     let mut writes: VecDeque<QueuedWrite> = VecDeque::new();
     let mut events = Events::new();
     let mut child_exit = None;
     let mut exit_deadline = None;
     let mut read_closed = false;
+    let mut next_title_poll = Instant::now();
     while !stop.load(Ordering::Acquire) {
+        if Instant::now() >= next_title_poll {
+            let title = backend.foreground_process_name();
+            *foreground_process.lock().unwrap() = title;
+            next_title_poll = Instant::now() + PROCESS_TITLE_INTERVAL;
+        }
         for _ in 0..COMMAND_CAPACITY {
             match commands.try_recv() {
                 Ok(PtyCommand::Write(bytes)) => writes.push_back(bytes),
@@ -397,6 +424,7 @@ mod platform {
 
     pub struct Pty {
         child: Child,
+        shell_name: String,
         file: Option<File>,
         reported_exit: bool,
     }
@@ -502,12 +530,27 @@ mod platform {
             }
             Ok(Self {
                 child: command.spawn()?,
+                shell_name: crate::process_title::program_name(&shell.program),
                 file: Some(file),
                 reported_exit: false,
             })
         }
         pub fn process_id(&self) -> u32 {
             self.child.id()
+        }
+        pub fn shell_name(&self) -> &str {
+            &self.shell_name
+        }
+        pub fn foreground_process_name(&self) -> Option<String> {
+            let file = self.file.as_ref()?;
+            // SAFETY: the master file is owned and remains open on this worker.
+            let group = unsafe { libc::tcgetpgrp(file.as_raw_fd()) };
+            let pid = if group > 0 {
+                group
+            } else {
+                self.child.id() as libc::pid_t
+            };
+            crate::process_title::process_name(pid)
         }
         pub fn resize(&mut self, size: WindowSize) -> io::Result<()> {
             let file = self
@@ -657,7 +700,6 @@ mod platform {
             io::{AsRawHandle, FromRawHandle, OwnedHandle},
             process::ExitStatusExt,
         },
-        sync::Mutex,
     };
     use windows_sys::Win32::{
         Foundation::{HANDLE, S_OK, WAIT_OBJECT_0},
@@ -729,6 +771,7 @@ mod platform {
         console: Option<HPCON>,
         process: Option<OwnedHandle>,
         process_id: u32,
+        shell_name: String,
         reader: PtyReader,
         writer: PtyWriter,
         io_stop: Arc<AtomicBool>,
@@ -767,6 +810,7 @@ mod platform {
                 console: Some(console),
                 process: None,
                 process_id: 0,
+                shell_name: String::new(),
                 reader: PtyReader {
                     receiver: output_receiver,
                     pending: Vec::new(),
@@ -938,11 +982,20 @@ mod platform {
             let thread = unsafe { OwnedHandle::from_raw_handle(information.hThread.cast()) };
             drop(thread);
             pty.process_id = information.dwProcessId;
+            pty.shell_name = crate::process_title::program_name(&shell.program);
             pty.process = Some(process);
             Ok(pty)
         }
         pub fn process_id(&self) -> u32 {
             self.process_id
+        }
+        pub fn shell_name(&self) -> &str {
+            &self.shell_name
+        }
+        pub fn foreground_process_name(&self) -> Option<String> {
+            // ConPTY has no Unix-style foreground process group. Applications
+            // can supply OSC titles; otherwise the configured shell is shown.
+            None
         }
         pub fn resize(&mut self, size: WindowSize) -> io::Result<()> {
             let console = self.console.ok_or(io::ErrorKind::NotConnected)?;

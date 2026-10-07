@@ -2,6 +2,8 @@
 import importlib.util
 import json
 import struct
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -91,7 +93,7 @@ class StaticHelperTests(unittest.TestCase):
         target = "aarch64-unknown-linux-musl"
         directory = bundle(self.root, target)
         HELPERS.validate(self.root, [target])
-        with self.assertRaises(OSError):
+        with self.assertRaisesRegex(ValueError, "Missing prebuilt remote helper bundle"):
             HELPERS.validate(self.root, HELPERS.TARGETS)
         binary = directory / "bed-headless"
         original = binary.read_bytes()
@@ -112,6 +114,40 @@ class StaticHelperTests(unittest.TestCase):
         path.write_text(json.dumps(manifest), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "protocol_version"):
             HELPERS.validate(self.root, [target])
+
+    def test_missing_bundles_cli_reports_packaging_prerequisites_without_errno(self):
+        result = subprocess.run(
+            [sys.executable, str(Path(HELPERS.__file__)), "validate", "--source", str(self.root)],
+            text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Building the desktop binary does not build or stage", result.stderr)
+        self.assertIn("bash scripts/build-remote-helpers.sh", result.stderr)
+        self.assertIn("requires running Docker", result.stderr)
+        self.assertIn("C compiler run only in Linux containers", result.stderr)
+        self.assertIn("matching Bed release", result.stderr)
+        self.assertIn("--source PATH", result.stderr)
+        self.assertNotIn("[Errno", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        for target in HELPERS.TARGETS:
+            self.assertIn(str(self.root / target / "bed-headless"), result.stderr)
+            self.assertIn(f"bed-remote-helper-{target}", result.stderr)
+
+    def test_partial_bundle_copy_fails_before_creating_desktop_resources(self):
+        bundle(self.root, "aarch64-unknown-linux-musl")
+        resources = self.root / "desktop-resources"
+        with self.assertRaises(ValueError) as raised:
+            HELPERS.copy(self.root, resources)
+        self.assertIn(str(self.root / "x86_64-unknown-linux-musl" / "bed-headless"),
+                      str(raised.exception))
+        self.assertFalse(resources.exists())
+
+    def test_missing_manifest_reports_the_incomplete_bundle(self):
+        target = "aarch64-unknown-linux-musl"
+        directory = bundle(self.root, target)
+        (directory / "manifest.json").unlink()
+        with self.assertRaisesRegex(ValueError, "manifest.json") as raised:
+            HELPERS.validate(self.root, [target])
+        self.assertIn("manifest and license files", str(raised.exception))
 
     def test_resource_copy_keeps_both_targets_and_restores_executable_modes(self):
         for target in HELPERS.TARGETS:

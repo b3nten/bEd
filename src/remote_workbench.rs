@@ -475,10 +475,13 @@ impl Workbench {
         self.session.shutdown(ClosePolicy::Discard)?;
         self.terminal.shutdown();
         self.tabs.clear();
+        self.pending_tab_close = None;
         self.active = None;
         self.focused = None;
         self.lsp_ui.cancel_requests();
         self.content_search.clear();
+        self.outline = None;
+        self.structure_panels.clear();
         self.remote_ui = RemoteUi {
             io: Some(RemoteIo::new(client.clone())),
             ..RemoteUi::default()
@@ -877,6 +880,7 @@ impl Workbench {
         Ok(())
     }
     pub(super) fn draw_remote_path_dialog(&mut self, ui: &Ui) -> io::Result<()> {
+        let _dialog_style = crate::util::dialog_style(ui);
         let Some(mut dialog) = self.remote_ui.path_dialog.take() else {
             return Ok(());
         };
@@ -899,6 +903,7 @@ impl Workbench {
             if ui.button("Cancel") {
                 self.remote_ui.cancel_connection();
                 self.remote_ui.pending_local = None;
+                self.pending_tab_close = None;
                 done = true;
                 ui.close_current_popup();
             }
@@ -1024,6 +1029,120 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(5));
         }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn remote_structure_uses_unsaved_local_buffer_and_restored_document_target() {
+        let temp = TempDir::new();
+        let file = temp.write("project/file.rs", b"mod demo { fn saved() {} }\n");
+        let root = std::fs::canonicalize(temp.path("project")).unwrap();
+        let file = std::fs::canonicalize(file).unwrap();
+        let mut workbench = workspace(&temp, root.to_str().unwrap());
+        let state = json!({"panels":[
+            {"kind":"document","id":11,"path":file.to_str().unwrap()},
+            {"kind":"structure","id":12},
+            {"kind":"structure","id":13}
+        ],"focused":13,"active_document_panel":11});
+        workbench.restore_workspace(&state).unwrap();
+        wait(&mut workbench, |w| {
+            w.remote_ui.restore.is_empty()
+                && w.outline
+                    .as_ref()
+                    .is_some_and(|outline| outline.result().is_some())
+        });
+        assert_eq!(workbench.active_panel_id(), Some(13));
+        assert_eq!(workbench.panel_count("structure"), 2);
+        let view = workbench.active_view().unwrap();
+        workbench
+            .session
+            .with_commands(view, |commands| commands.paste(b"fn unsaved() {}\n"))
+            .unwrap();
+        wait(&mut workbench, |w| {
+            w.outline.as_ref().is_some_and(|outline| {
+                !outline.updating()
+                    && outline.result().is_some_and(|result| {
+                        result.nodes.iter().any(|node| node.label == "unsaved")
+                    })
+            })
+        });
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            b"mod demo { fn saved() {} }\n"
+        );
+        let result = workbench.outline.as_ref().unwrap().result().unwrap();
+        let jump = StructureJump {
+            key: result.key.clone(),
+            offset: result
+                .nodes
+                .iter()
+                .find(|node| node.label == "saved")
+                .unwrap()
+                .name_range
+                .start,
+        };
+        assert!(workbench.jump_to_structure(jump).unwrap());
+        assert_eq!(workbench.active_view(), Some(view));
+        assert_eq!(workbench.active_panel_id(), Some(11));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn bulk_tab_close_waits_for_remote_saves_and_keeps_new_panels() {
+        let temp = TempDir::new();
+        let first = temp.write("project/a.rs", b"a");
+        let second = temp.write("project/b.rs", b"b");
+        let root = std::fs::canonicalize(temp.path("project")).unwrap();
+        let mut workbench = workspace(&temp, root.to_str().unwrap());
+        for path in [&first, &second] {
+            workbench.open_or_focus(path).unwrap();
+            wait(&mut workbench, |w| {
+                w.session.document_ids().len() == if path == &first { 1 } else { 2 }
+            });
+            let view = workbench.active_view().unwrap();
+            workbench
+                .session
+                .with_commands(view, |commands| commands.type_text(b"edited "))
+                .unwrap();
+        }
+        let indices = (0..workbench.tabs.len()).collect();
+        assert!(!workbench.close_tabs(indices).unwrap());
+        assert!(workbench.pending_tab_close.is_some());
+        workbench
+            .dispatch(crate::workbench::WindowCommand::NewSettings)
+            .unwrap();
+        let added = workbench.focused;
+        wait(&mut workbench, |w| w.pending_tab_close.is_none());
+        assert_eq!(std::fs::read(first).unwrap(), b"edited a");
+        assert_eq!(std::fs::read(second).unwrap(), b"edited b");
+        assert_eq!(workbench.tabs.len(), 1);
+        assert_eq!(workbench.focused, added);
+        assert!(matches!(
+            workbench.tabs[0].panel,
+            Panel::Tool(Tool::Settings)
+        ));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn enabling_remote_autosave_schedules_existing_unsaved_edits() {
+        let temp = TempDir::new();
+        let file = temp.write("project/code.rs", b"code");
+        let root = std::fs::canonicalize(temp.path("project")).unwrap();
+        let mut workbench = workspace(&temp, root.to_str().unwrap());
+        workbench.settings.settings["autosave"] = json!(false);
+        workbench.sync_services().unwrap();
+        workbench.open_or_focus(&file).unwrap();
+        wait(&mut workbench, |w| w.active_document().is_some());
+        let view = workbench.active_view().unwrap();
+        workbench
+            .session
+            .with_commands(view, |commands| commands.type_text(b"edited "))
+            .unwrap();
+        workbench.tick().unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"code");
+        workbench.settings.settings["autosave"] = json!(true);
+        workbench.settings.settings["autosave_delay_ms"] = json!(100);
+        workbench.sync_services().unwrap();
+        wait(&mut workbench, |w| !w.active_snapshot().unwrap().dirty);
+        assert_eq!(std::fs::read(file).unwrap(), b"edited code");
     }
     #[cfg(unix)]
     #[test]

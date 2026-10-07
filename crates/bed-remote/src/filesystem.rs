@@ -398,6 +398,17 @@ fn baseline(bytes: &[u8], metadata: &fs::Metadata) -> FileBaseline {
     }
 }
 
+fn file_too_large(path: &Path, actual: u64) -> RemoteError {
+    RemoteError::new(
+        ErrorKind::TooLarge,
+        format!(
+            "Cannot edit '{}': file is {actual} bytes; Bed's limit is {} MiB ({MAX_FILE_BYTES} bytes). Open it in another editor or split it into smaller files.",
+            path.display(),
+            MAX_FILE_BYTES / (1024 * 1024),
+        ),
+    )
+}
+
 fn read_file(path: &Path) -> ServiceResult<(Vec<u8>, FileBaseline)> {
     let mut file = File::open(path)?;
     let metadata = file.metadata()?;
@@ -408,10 +419,7 @@ fn read_file(path: &Path) -> ServiceResult<(Vec<u8>, FileBaseline)> {
         ));
     }
     if metadata.len() > MAX_FILE_BYTES as u64 {
-        return Err(RemoteError::new(
-            ErrorKind::TooLarge,
-            "remote file exceeds Bed's 1 MiB editing limit",
-        ));
+        return Err(file_too_large(path, metadata.len()));
     }
     let mut bytes = Vec::with_capacity((metadata.len() as usize).min(1024));
     Read::by_ref(&mut file).take(1024).read_to_end(&mut bytes)?;
@@ -431,9 +439,9 @@ fn read_file(path: &Path) -> ServiceResult<(Vec<u8>, FileBaseline)> {
         .take((MAX_FILE_BYTES + 1) as u64 - bytes.len() as u64)
         .read_to_end(&mut bytes)?;
     if bytes.len() > MAX_FILE_BYTES {
-        return Err(RemoteError::new(
-            ErrorKind::TooLarge,
-            "remote file exceeds Bed's 1 MiB editing limit",
+        return Err(file_too_large(
+            path,
+            file.metadata()?.len().max(bytes.len() as u64),
         ));
     }
     let after = file.metadata()?;
@@ -479,10 +487,7 @@ fn write_file(
     expected: Option<&FileBaseline>,
 ) -> ServiceResult<FileBaseline> {
     if bytes.len() > MAX_FILE_BYTES {
-        return Err(RemoteError::new(
-            ErrorKind::TooLarge,
-            "remote file exceeds Bed's 1 MiB editing limit",
-        ));
+        return Err(file_too_large(path, bytes.len() as u64));
     }
     check_baseline(path, expected)?;
     static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
@@ -699,6 +704,24 @@ fn walk_files(root: &Path, include_git: bool) -> ServiceResult<Vec<PathBuf>> {
     Ok(files)
 }
 
+fn document_lines(text: &str) -> impl Iterator<Item = &str> {
+    let mut remaining = Some(text.strip_prefix('\u{feff}').unwrap_or(text));
+    std::iter::from_fn(move || {
+        let text = remaining.take()?;
+        if let Some(end) = text.find(['\r', '\n']) {
+            let separator = if text[end..].starts_with("\r\n") {
+                2
+            } else {
+                1
+            };
+            remaining = Some(&text[end + separator..]);
+            Some(&text[..end])
+        } else {
+            Some(text)
+        }
+    })
+}
+
 fn search(
     root: &Path,
     query: &str,
@@ -730,27 +753,31 @@ fn search(
     };
     let discovered_files = paths.len();
     let mut scanned_files = 0;
+    let mut skipped_files = 0;
     let mut budget = 0;
     for path in paths {
         scanned_files += 1;
         let Ok((bytes, _)) = read_file(&path) else {
+            skipped_files += 1;
             continue;
         };
         let Ok(text) = std::str::from_utf8(&bytes) else {
+            skipped_files += 1;
             continue;
         };
-        for (line_index, line) in text.lines().enumerate() {
+        for (line_index, line) in document_lines(text).enumerate() {
             let mut byte = 0;
             while byte <= line.len() {
                 let found = if case_sensitive {
                     line[byte..].find(&needle).map(|offset| byte + offset)
                 } else {
-                    // Match on character boundaries while retaining original
-                    // byte offsets even when Unicode lowercasing changes width.
-                    line[byte..]
-                        .char_indices()
-                        .map(|(offset, _)| byte + offset)
-                        .find(|&offset| line[offset..].to_ascii_lowercase().starts_with(&needle))
+                    // ASCII folding preserves UTF-8 bytes and byte columns.
+                    // Compare only the needle-sized window: lowercasing each
+                    // remaining suffix would copy a long line quadratically.
+                    line.as_bytes()[byte..]
+                        .windows(needle.len())
+                        .position(|candidate| candidate.eq_ignore_ascii_case(needle.as_bytes()))
+                        .map(|offset| byte + offset)
                 };
                 let Some(found) = found else {
                     break;
@@ -764,7 +791,7 @@ fn search(
                         scanned_files,
                         discovered_files,
                         ignored_paths: 0,
-                        skipped_files: 0,
+                        skipped_files,
                     });
                 }
                 matches.push(SearchMatch {
@@ -785,7 +812,7 @@ fn search(
         scanned_files,
         discovered_files,
         ignored_paths: 0,
-        skipped_files: 0,
+        skipped_files,
     })
 }
 
@@ -869,20 +896,14 @@ fn git_baseline(root: &Path, path: &str) -> ServiceResult<Response> {
         .parse::<u64>()
         .map_err(|_| RemoteError::new(ErrorKind::Other, "invalid Git object size"))?;
     if size > MAX_FILE_BYTES as u64 {
-        return Err(RemoteError::new(
-            ErrorKind::TooLarge,
-            "Git baseline exceeds Bed's 1 MiB editing limit",
-        ));
+        return Err(file_too_large(&path, size));
     }
     let output = git(root, &["show", &object])?;
     if !output.status.success() {
         return Ok(Response::GitBaseline { bytes: None });
     }
     if output.stdout.len() > MAX_FILE_BYTES {
-        return Err(RemoteError::new(
-            ErrorKind::TooLarge,
-            "Git baseline exceeds Bed's 1 MiB editing limit",
-        ));
+        return Err(file_too_large(&path, output.stdout.len() as u64));
     }
     Ok(Response::GitBaseline {
         bytes: Some(output.stdout),
@@ -1129,20 +1150,48 @@ mod tests {
     }
 
     #[test]
+    fn editable_limit_accepts_full_files_and_rejects_oversized_writes_without_clobbering() {
+        let temp = Temp::new();
+        let path = temp.0.join("maximum.txt");
+        let mut original = vec![b'a'; MAX_FILE_BYTES];
+        original[..3].copy_from_slice(&[0xef, 0xbb, 0xbf]);
+        original[MAX_FILE_BYTES - 2..].copy_from_slice(b"\r\n");
+        fs::write(&path, &original).unwrap();
+        let (mut bytes, baseline) = read_file(&path).unwrap();
+        assert_eq!(bytes, original);
+        bytes[3] = b'z';
+        write_file(&path, &bytes, Some(&baseline)).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        bytes.push(b'x');
+        let error = write_file(&path, &bytes, None).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::TooLarge);
+        assert!(error.message.contains("maximum.txt"));
+        assert!(error.message.contains(&(MAX_FILE_BYTES + 1).to_string()));
+        assert!(error.message.contains("16 MiB"));
+        assert!(error.message.contains("another editor"));
+        assert_eq!(fs::metadata(&path).unwrap().len(), MAX_FILE_BYTES as u64);
+        assert_eq!(fs::read(&path).unwrap(), &bytes[..MAX_FILE_BYTES]);
+        assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 1);
+    }
+
+    #[test]
     fn oversized_binary_and_root_escape_are_rejected() {
         let temp = Temp::new();
-        fs::write(temp.0.join("large"), vec![b'a'; MAX_FILE_BYTES + 1]).unwrap();
+        File::create(temp.0.join("large"))
+            .unwrap()
+            .set_len(MAX_FILE_BYTES as u64 + 1)
+            .unwrap();
         fs::write(temp.0.join("binary"), vec![0; 1024]).unwrap();
-        assert_eq!(
-            LocalBackend
-                .call(Request::ReadFile {
-                    root: temp.root(),
-                    path: "large".into()
-                })
-                .unwrap_err()
-                .kind,
-            ErrorKind::TooLarge
-        );
+        let error = LocalBackend
+            .call(Request::ReadFile {
+                root: temp.root(),
+                path: "large".into(),
+            })
+            .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::TooLarge);
+        assert!(error.message.contains("large"));
+        assert!(error.message.contains(&(MAX_FILE_BYTES + 1).to_string()));
+        assert!(error.message.contains("16 MiB"));
         assert!(
             LocalBackend
                 .call(Request::ReadFile {
@@ -1210,6 +1259,35 @@ mod tests {
             })
             .unwrap();
         assert_eq!(fs::read(temp.0.join("real")).unwrap(), b"text");
+    }
+
+    #[test]
+    fn search_beyond_one_mib_keeps_editor_positions_and_reports_oversized_skips() {
+        let temp = Temp::new();
+        let mut bytes = b"\xef\xbb\xbfneedle\r\nneedle\rneedle\n".to_vec();
+        bytes.resize(2 * 1024 * 1024, b'x');
+        fs::write(temp.0.join("large.txt"), &bytes).unwrap();
+        File::create(temp.0.join("oversized.txt"))
+            .unwrap()
+            .set_len(MAX_FILE_BYTES as u64 + 1)
+            .unwrap();
+        let Response::Search {
+            matches,
+            skipped_files,
+            ..
+        } = search(&temp.0, "NEEDLE", false, true, 100).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(skipped_files, 1);
+        assert_eq!(
+            matches
+                .iter()
+                .map(|found| (found.line, found.editor_row, found.column))
+                .collect::<Vec<_>>(),
+            vec![(1, 1, 1), (2, 2, 1), (3, 3, 1)],
+        );
+        assert!(matches.iter().all(|found| found.line_bytes == b"needle"));
     }
 
     #[test]

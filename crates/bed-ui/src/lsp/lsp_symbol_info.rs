@@ -2,7 +2,12 @@
 use crate::{
     lsp::lsp_ui::LspView,
     views::{
-        hover_tooltip::render_hover_markdown, hover_trigger::Zone, view_layout::line_column_x,
+        hover_tooltip::{
+            HoverRect, hover_key_pressed, hover_rect_contains, render_hover_markdown,
+            render_hover_popup,
+        },
+        hover_trigger::Zone,
+        view_layout::line_column_x,
     },
 };
 use bed_core::util::utf8::utf8_byte_offset_to_utf16;
@@ -11,10 +16,9 @@ use bed_lsp::{
     workspace_lsp::LspRequestOrigin,
 };
 use bed_session::editor::Editor;
-use dear_imgui_rs::{StyleVar, Ui, sys};
+use dear_imgui_rs::Ui;
 use serde_json::{Value, json};
 use std::{io, sync::Arc};
-const POPUP_STICKY_PADDING: f32 = 12.0;
 
 fn invalid_hover() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "Invalid LSP hover contents")
@@ -69,22 +73,26 @@ pub fn format_hover_contents(contents: &Value, fallback_language: &str) -> io::R
 
 pub struct LspSymbolInfo {
     at_caret: bool,
+    fresh_caret_request: bool,
     requested_for_cell: bool,
     hover_state: Arc<LspRequestState<String>>,
     hover_row: i32,
     hover_column: i32,
-    popup_rect: Option<([f32; 2], [f32; 2])>,
+    popup_rect: Option<HoverRect>,
+    popup_anchor: Option<[f32; 2]>,
     mouse_origin: Option<LspRequestOrigin>,
 }
 impl Default for LspSymbolInfo {
     fn default() -> Self {
         Self {
             at_caret: false,
+            fresh_caret_request: false,
             requested_for_cell: false,
             hover_state: Arc::new(LspRequestState::new()),
             hover_row: -1,
             hover_column: -1,
             popup_rect: None,
+            popup_anchor: None,
             mouse_origin: None,
         }
     }
@@ -96,11 +104,16 @@ impl LspSymbolInfo {
     pub fn origin(&self) -> Option<LspRequestOrigin> {
         self.hover_state.origin()
     }
+    pub fn popup_contains(&self, mouse: [f32; 2]) -> bool {
+        self.popup_rect
+            .is_some_and(|rect| hover_rect_contains(rect, mouse))
+    }
     pub fn get(&mut self, client: &mut LspClient, editor: &Editor) {
         if !client.is_initialized() {
             return;
         }
         self.at_caret = true;
+        self.fresh_caret_request = true;
         self.request_at(client, editor, editor.view.row, editor.view.column, None);
     }
     pub fn get_with_origin(
@@ -113,6 +126,7 @@ impl LspSymbolInfo {
             return;
         }
         self.at_caret = true;
+        self.fresh_caret_request = true;
         self.request_at(
             client,
             editor,
@@ -139,6 +153,7 @@ impl LspSymbolInfo {
     }
     pub fn cancel(&mut self) {
         self.at_caret = false;
+        self.fresh_caret_request = false;
         self.hide_mouse_hover();
     }
     fn hide_mouse_hover(&mut self) {
@@ -149,6 +164,7 @@ impl LspSymbolInfo {
         self.hover_row = -1;
         self.hover_column = -1;
         self.popup_rect = None;
+        self.popup_anchor = None;
         self.hover_state.cancel();
     }
     fn request_at(
@@ -162,6 +178,8 @@ impl LspSymbolInfo {
         if !client.is_process_started() {
             return;
         }
+        self.popup_rect = None;
+        self.popup_anchor = None;
         self.requested_for_cell = true;
         let utf16 = utf8_byte_offset_to_utf16(&editor.state.line(row), byte_column);
         let origin = origin.map(|origin| self.hover_state.begin_for(origin));
@@ -190,32 +208,31 @@ impl LspSymbolInfo {
         editor: &Editor,
         view: &LspView<'_>,
     ) {
-        if !client.is_initialized() {
-            return;
-        }
+        let over_popup = ui.is_mouse_pos_valid() && self.popup_contains(ui.io().mouse_pos());
+        // Scrollbar drags and wheel input belong to the popup. Keyboard input,
+        // clicks outside it, and scrolling the editor dismiss the hover.
+        let dismissed = hover_key_pressed(ui) || (view.hover_dismissed && !over_popup);
         if self.at_caret {
-            if view.hover_dismissed {
-                self.at_caret = false;
-                self.hover_state.cancel();
+            // The shortcut that opened this hover also dismisses existing
+            // hovers in the editor frame. Accept it for this first frame.
+            if std::mem::take(&mut self.fresh_caret_request) {
+                return;
+            }
+            if dismissed {
+                self.cancel();
             }
             return;
         }
-        let mouse = ui.io().mouse_pos();
-        let over_popup = self.popup_rect.is_some_and(|(min, max)| {
-            ui.is_mouse_pos_valid_at(mouse)
-                && mouse[0] >= min[0] - POPUP_STICKY_PADDING
-                && mouse[0] <= max[0] + POPUP_STICKY_PADDING
-                && mouse[1] >= min[1] - POPUP_STICKY_PADDING
-                && mouse[1] <= max[1] + POPUP_STICKY_PADDING
-        });
-        if view.hover_dismissed {
+        if dismissed {
             self.hide_mouse_hover();
             return;
         }
         if over_popup && (self.hover_state.is_pending() || self.hover_state.snapshot().is_some()) {
             return;
         }
-        self.popup_rect = None;
+        if !client.is_initialized() {
+            return;
+        }
         let info = view.hover_info;
         if !info.active
             || info.zone != Zone::Text
@@ -229,6 +246,8 @@ impl LspSymbolInfo {
             self.hover_row = info.row;
             self.hover_column = info.column;
             self.requested_for_cell = false;
+            self.popup_rect = None;
+            self.popup_anchor = None;
             self.hover_state.cancel();
         }
         if !self.requested_for_cell {
@@ -244,7 +263,7 @@ impl LspSymbolInfo {
             return;
         }
         let fs = ui.current_font_size();
-        if self.at_caret {
+        let anchor = if self.at_caret {
             let x = line_column_x(
                 ui,
                 &editor.state.line(editor.view.row),
@@ -252,26 +271,22 @@ impl LspSymbolInfo {
                 view.layout.text_pos[0],
             )
             .floor();
-            let anchor = [
+            [
                 x + fs * 0.25,
                 view.layout.text_pos[1]
                     + (editor.view.row + 1) as f32 * view.layout.line_height
                     + fs * 0.25,
-            ];
-            ui.with_bound_context(|| unsafe {
-                sys::igSetNextWindowPos(anchor.into(), 0, [0.0; 2].into());
+            ]
+        } else {
+            *self.popup_anchor.get_or_insert_with(|| {
+                let mouse = ui.io().mouse_pos();
+                [mouse[0] + 8.0, mouse[1] + 12.0]
+            })
+        };
+        self.popup_rect =
+            render_hover_popup(ui, "##bed_lsp_hover", anchor, self.popup_rect, || {
+                render_hover_markdown(ui, &markdown, editor, &editor.state.language_id);
             });
-        }
-        let _padding = ui.push_style_var(StyleVar::WindowPadding([fs * 0.7, fs * 0.5]));
-        let _round = ui.push_style_var(StyleVar::WindowRounding(fs * 0.3));
-        if let Some(_tooltip) = ui.begin_tooltip() {
-            render_hover_markdown(ui, &markdown, editor, &editor.state.language_id);
-            if !self.at_caret {
-                let min = ui.window_pos();
-                let size = ui.window_size();
-                self.popup_rect = Some((min, [min[0] + size[0], min[1] + size[1]]));
-            }
-        }
     }
 }
 
@@ -281,7 +296,34 @@ mod tests {
     use crate::views::{
         hover_tooltip::TooltipArbiter, hover_trigger::Info, view_layout::ViewLayout,
     };
-    use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
+    use dear_imgui_rs::{Condition, Context, FramePrepareOptions, Key, MouseButton};
+
+    fn symbol_frame(
+        context: &mut Context,
+        symbol: &mut LspSymbolInfo,
+        editor: &Editor,
+        client: &mut LspClient,
+        dismissed: bool,
+    ) {
+        context.prepare_frame(FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0));
+        let ui = context.frame();
+        ui.window("host")
+            .size([700.0, 500.0], Condition::Always)
+            .build(|| {
+                symbol.render(
+                    ui,
+                    client,
+                    editor,
+                    &LspView {
+                        layout: &ViewLayout::default(),
+                        hover_info: Info::default(),
+                        hover_dismissed: dismissed,
+                        tooltip_arbiter: &TooltipArbiter::default(),
+                    },
+                );
+            });
+        drop(context.render_legacy());
+    }
     #[test]
     fn original_hover_shapes_preserve_plaintext_fences_and_single_array_boundaries() {
         assert_eq!(
@@ -414,5 +456,53 @@ mod tests {
         assert!(symbol.hover_state.snapshot().is_none());
         assert!(symbol.popup_rect.is_none());
         assert!(!symbol.hover_state.is_pending());
+    }
+
+    #[test]
+    fn native_caret_hover_accepts_its_shortcut_and_scrollbar_then_escape_cancels() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let editor = Editor::new();
+        let mut client = LspClient::new("/bed-no-lsp-config.json");
+        let mut symbol = LspSymbolInfo::default();
+        symbol.at_caret = true;
+        symbol.fresh_caret_request = true;
+        let ticket = symbol.hover_state.begin();
+        symbol
+            .hover_state
+            .deliver(ticket, Some("Symbol documentation.\n".repeat(50)));
+        context.io_mut().add_key_event(Key::K, true);
+        symbol_frame(&mut context, &mut symbol, &editor, &mut client, true);
+        assert!(symbol.at_caret());
+        assert!(symbol.hover_state.snapshot().is_some());
+        context.io_mut().add_key_event(Key::K, false);
+        symbol_frame(&mut context, &mut symbol, &editor, &mut client, false);
+        let (min, max) = symbol.popup_rect.unwrap();
+        context
+            .io_mut()
+            .add_mouse_pos_event([max[0] - 4.0, min[1] + 20.0]);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        symbol_frame(&mut context, &mut symbol, &editor, &mut client, true);
+        assert!(symbol.at_caret());
+        assert!(symbol.hover_state.snapshot().is_some());
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, false);
+        symbol_frame(&mut context, &mut symbol, &editor, &mut client, false);
+        context.io_mut().add_key_event(Key::Escape, true);
+        symbol_frame(&mut context, &mut symbol, &editor, &mut client, true);
+        assert!(!symbol.at_caret());
+        assert!(symbol.popup_rect.is_none());
+        assert!(symbol.hover_state.snapshot().is_none());
     }
 }
