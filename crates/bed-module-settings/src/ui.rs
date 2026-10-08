@@ -1,11 +1,12 @@
 //! Settings controls and the legacy floating settings window.
 use bed_document_session::editor::Editor;
 use bed_editing::util::color::{blend, ensure_contrast};
-use bed_settings::{EffectPreset, PRIMARY_PROFILE, Settings, font::Font};
+use bed_settings::theme::ThemeDraft;
+use bed_settings::{EffectPreset, Settings, font::Font};
 use bed_ui::icons::Icons;
 use dear_imgui_rs::{
-    Condition, Key, MouseButton, PopupQueryFlags, StyleColor, StyleVar, TreeNodeFlags, Ui,
-    WindowFlags, WindowHoveredFlags,
+    Condition, Key, MouseButton, PopupQueryFlags, StyleColor, StyleVar, Ui, WindowFlags,
+    WindowHoveredFlags,
 };
 use serde_json::{Value, json};
 use std::{
@@ -13,12 +14,40 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(i32)]
+pub enum SettingsCategory {
+    #[default]
+    General,
+    Appearance,
+    ThemeEditor,
+    Editor,
+    Terminal,
+    Effects,
+    Keybindings,
+    Extensions,
+}
+impl SettingsCategory {
+    const ALL: [(Self, &'static str); 8] = [
+        (Self::General, "General"),
+        (Self::Appearance, "Appearance"),
+        (Self::ThemeEditor, "Theme Editor"),
+        (Self::Editor, "Editor"),
+        (Self::Terminal, "Terminal"),
+        (Self::Effects, "Effects"),
+        (Self::Keybindings, "Keybindings"),
+        (Self::Extensions, "Extensions"),
+    ];
+}
+
 /// Presentation state for a floating settings window, separate from saved configuration.
 pub struct SettingsWindowState {
     pub show_settings_window: bool,
     pub embedded_window_pos: [f32; 2],
     pub embedded_window_size: [f32; 2],
     pub embedded_window_collapsed: bool,
+    pub category: SettingsCategory,
+    theme_editor: ThemeDraft,
     was_focused: bool,
 }
 impl Default for SettingsWindowState {
@@ -28,6 +57,8 @@ impl Default for SettingsWindowState {
             embedded_window_pos: [200.0, 200.0],
             embedded_window_size: [900.0, 600.0],
             embedded_window_collapsed: false,
+            category: SettingsCategory::General,
+            theme_editor: ThemeDraft::default(),
             was_focused: false,
         }
     }
@@ -80,6 +111,14 @@ pub trait SettingsUi {
         icons: Option<&Icons>,
         extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
     );
+    fn draw_tab_with_state(
+        &mut self,
+        ui: &Ui,
+        state: &mut SettingsWindowState,
+        editor: &mut Editor,
+        icons: Option<&Icons>,
+        extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
+    );
     fn draw_tab(&mut self, ui: &Ui, editor: &mut Editor, icons: Option<&Icons>);
     fn draw_tab_with_extensions(
         &mut self,
@@ -126,6 +165,16 @@ impl SettingsUi for Settings {
             extensions,
         );
     }
+    fn draw_tab_with_state(
+        &mut self,
+        ui: &Ui,
+        state: &mut SettingsWindowState,
+        editor: &mut Editor,
+        icons: Option<&Icons>,
+        extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
+    ) {
+        SettingsView::new(self, state).draw_tab_with_extensions(ui, editor, icons, extensions);
+    }
     fn draw_tab(&mut self, ui: &Ui, editor: &mut Editor, icons: Option<&Icons>) {
         self.draw_tab_with_extensions(ui, editor, icons, &mut |_, _| false);
     }
@@ -136,8 +185,24 @@ impl SettingsUi for Settings {
         icons: Option<&Icons>,
         extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
     ) {
-        SettingsView::new(self, &mut SettingsWindowState::default())
-            .draw_tab_with_extensions(ui, editor, icons, extensions);
+        let mut state = SettingsWindowState::default();
+        state.theme_editor = std::mem::take(&mut self.theme_draft);
+        let id = ui.get_id("bed-settings-category").raw();
+        let selected = ui.with_bound_context(|| unsafe {
+            dear_imgui_rs::sys::ImGuiStorage_GetInt(dear_imgui_rs::sys::igGetStateStorage(), id, 0)
+        });
+        state.category = SettingsCategory::ALL
+            .get(selected as usize)
+            .map_or(SettingsCategory::General, |entry| entry.0);
+        SettingsView::new(self, &mut state).draw_tab_with_extensions(ui, editor, icons, extensions);
+        self.theme_draft = std::mem::take(&mut state.theme_editor);
+        ui.with_bound_context(|| unsafe {
+            dear_imgui_rs::sys::ImGuiStorage_SetInt(
+                dear_imgui_rs::sys::igGetStateStorage(),
+                id,
+                state.category as i32,
+            );
+        });
     }
 }
 
@@ -193,7 +258,7 @@ impl SettingsView<'_> {
             return;
         }
         let display = ui.io().display_size();
-        let compact = display[0] < 1100.0 || self.font_size() > 40.0;
+        let compact = display[0] < 1100.0 || ui.current_font_size() > 40.0;
         let size = [
             display[0] * if compact { 0.90 } else { 0.75 },
             display[1] * if compact { 0.80 } else { 0.85 },
@@ -288,75 +353,131 @@ impl SettingsView<'_> {
             self.draw_window_header(ui, editor, icons);
             drop(padding);
         }
-        let background = (!self.is_embedded
-            && self.settings["backgroundColor"]
-                .as_array()
-                .is_some_and(|colors| colors.len() >= 3))
-        .then(|| {
-            let bg = self.background_color();
-            ui.push_style_color(
-                StyleColor::ChildBg,
-                blend(self.text_color(), [bg[0], bg[1], bg[2], 1.0], 0.025),
-            )
-        });
-        let fs = ui.current_font_size();
-        let padding = ui.push_style_var(StyleVar::WindowPadding([fs * 0.75, fs * 0.25]));
-        let lsp_available = editor.lsp_client().is_some();
-        ui.child_window("SettingsContent")
-            .size([0.0, ui.content_region_avail()[1]])
-            .flags(WindowFlags::ALWAYS_VERTICAL_SCROLLBAR)
-            .build(ui, || {
-                if let Some(error) = &self.error {
-                    ui.text_colored(
-                        ensure_contrast([1.0, 0.4, 0.3, 1.0], self.background_color(), 4.5),
-                        error,
-                    );
-                }
-                self.draw_profile_selector(ui);
-                self.draw_main_settings(ui);
-                if !self.is_embedded {
-                    self.draw_mac_settings(ui);
-                }
-                self.draw_syntax_colors(ui);
-                self.draw_toggle_settings(ui, editor);
-                if shaders_available && !self.is_embedded {
-                    self.draw_shader_settings(ui);
-                }
-                self.draw_keybinds_settings(ui, lsp_available);
-                if extensions(ui, &mut self.settings) {
-                    self.persist_ui();
-                }
-            });
-        drop(padding);
-        drop(background);
+        self.draw_categories(ui, editor, shaders_available, extensions);
         self.handle_window_input(ui, editor);
     }
-    /// Controls only; Workbench owns this tab and its focus/close behavior.
+    /// The docked panel owns this state, independently of other settings views.
     pub fn draw_tab_with_extensions(
         &mut self,
         ui: &Ui,
         editor: &mut Editor,
-        icons: Option<&Icons>,
+        _: Option<&Icons>,
         extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
     ) {
         let _controls = bed_ui::util::popup_style::controls_style(ui);
-        if let Some(error) = &self.error {
-            ui.text_colored(
-                ensure_contrast([1.0, 0.4, 0.3, 1.0], self.background_color(), 4.5),
-                error,
-            );
+        self.draw_categories(ui, editor, !self.is_embedded, extensions);
+    }
+    fn draw_categories(
+        &mut self,
+        ui: &Ui,
+        editor: &mut Editor,
+        shaders_available: bool,
+        extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
+    ) {
+        if let Some(error) = &self.reload_error {
+            ui.text_wrapped(error);
         }
-        self.draw_profile_selector(ui);
-        self.draw_main_settings(ui);
-        self.draw_mac_settings(ui);
-        self.draw_syntax_colors(ui);
-        self.draw_toggle_settings(ui, editor);
-        self.draw_shader_settings(ui);
-        self.draw_keybinds_settings(ui, editor.lsp_client().is_some());
-        if extensions(ui, &mut self.settings) {
+        if let Some(error) = &self.error {
+            ui.text_wrapped(error);
+        }
+        if let Some(warning) = &self.font.warning {
+            ui.text_wrapped(warning);
+        }
+        let width = (ui.current_font_size() * 9.0).min(ui.content_region_avail()[0] * 0.35);
+        // Parent panel IDs distinguish settings instances; a separate child ID
+        // per category lets ImGui retain each category's scroll position.
+        ui.child_window("SettingsCategories")
+            .size([width, 0.0])
+            .build(ui, || {
+                for (category, label) in SettingsCategory::ALL {
+                    if ui
+                        .selectable_config(label)
+                        .selected(self.window.category == category)
+                        .build()
+                    {
+                        self.window.category = category;
+                    }
+                }
+            });
+        ui.same_line();
+        let category = self.window.category;
+        ui.child_window(format!("SettingsContent{category:?}"))
+            .size([0.0, 0.0])
+            .build(ui, || match category {
+                SettingsCategory::General => {
+                    ui.text("General");
+                    ui.separator();
+                    self.draw_boolean(ui, "File Explorer", "sidebar_visible", true);
+                    self.draw_boolean(ui, "Limit frame rate", "fps_toggle", true);
+                    for (label, key, default) in [
+                        ("Frame rate", "fps_target", 57.0),
+                        ("Unfocused frame rate", "fps_target_unfocused", 30.0),
+                    ] {
+                        let mut value = self.number(key, default);
+                        if ui.slider(label, 10.0, 240.0, &mut value) {
+                            self.settings[key] = json!(value);
+                        }
+                        if ui.is_item_deactivated_after_edit() {
+                            self.persist_ui();
+                        }
+                    }
+                    if ui.button("Open Settings JSON") {
+                        self.request_config_file = Some(self.settings_path.clone());
+                    }
+                }
+                SettingsCategory::Appearance => {
+                    ui.text("Appearance");
+                    ui.separator();
+                    self.draw_theme_selector(ui);
+                    self.draw_main_settings(ui);
+                    if !self.is_embedded {
+                        self.draw_mac_settings(ui);
+                    }
+                    self.draw_boolean(ui, "UI Animations", "ui_animations", true);
+                    self.draw_boolean(ui, "Rainbow cursor and line numbers", "rainbow", true);
+                }
+                SettingsCategory::Editor => {
+                    ui.text("Editor");
+                    ui.separator();
+                    self.draw_autosave_settings(ui);
+                    self.draw_boolean(ui, "Minimap", "minimap", true);
+                    self.draw_boolean(ui, "Syntax highlighting", "treesitter", true);
+                    self.draw_boolean(ui, "Git changed lines", "git_changed_lines", true);
+                    if editor.lsp_client().is_some() && ui.button("LSP Dashboard") {
+                        self.request_lsp_dashboard = true;
+                    }
+                }
+                SettingsCategory::ThemeEditor => {
+                    crate::theme_editor::draw(ui, &mut self.window.theme_editor, self.service);
+                }
+                SettingsCategory::Terminal => {
+                    ui.text("Terminal");
+                    ui.separator();
+                    self.draw_boolean(ui, "Show Terminal", "terminal_visible", true);
+                    ui.text_wrapped("Font and size follow Appearance settings.");
+                }
+                SettingsCategory::Effects => {
+                    if shaders_available {
+                        self.draw_shader_settings(ui);
+                    } else {
+                        ui.text_disabled("Effects are provided by the desktop host.");
+                    }
+                }
+                SettingsCategory::Keybindings => self.draw_keybinds_settings(ui, false),
+                SettingsCategory::Extensions => {
+                    if extensions(ui, &mut self.settings) {
+                        self.persist_ui();
+                    }
+                }
+            });
+    }
+    fn draw_boolean(&mut self, ui: &Ui, label: &str, key: &str, default: bool) {
+        let mut value = self.bool(key, default);
+        if ui.checkbox(label, &mut value) {
+            self.settings[key] = json!(value);
+            self.request_apply();
             self.persist_ui();
         }
-        let _ = icons;
     }
     fn draw_window_header(&mut self, ui: &Ui, editor: &mut Editor, icons: Option<&Icons>) {
         let focused =
@@ -436,48 +557,43 @@ impl SettingsView<'_> {
             self.close_settings_window(editor);
         }
     }
-    fn draw_profile_selector(&mut self, ui: &Ui) {
-        ui.spacing();
-        let current = self
-            .settings_path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| PRIMARY_PROFILE.into());
-        let mut profiles = self.list_profiles();
-        if !current.is_empty() && !profiles.contains(&current) {
-            profiles.insert(0, current.clone());
-        }
-        if let Some(_combo) = ui.begin_combo("##ActiveSettingsFileCombo", &current) {
-            for name in profiles {
-                let selected = name == current;
-                if ui.selectable_config(&name).selected(selected).build()
-                    && !selected
-                    && let Err(error) = self.switch_to_profile(&name)
-                {
-                    self.error = Some(error.to_string());
+    fn draw_theme_selector(&mut self, ui: &Ui) {
+        let current = self.settings["theme"]
+            .as_str()
+            .unwrap_or("tokyo")
+            .to_owned();
+        if let Some(_combo) = ui.begin_combo("Theme", &self.theme.name.clone()) {
+            for (id, name) in self.list_themes() {
+                let _id = ui.push_id(&id);
+                let selected = id == current;
+                if ui.selectable_config(&name).selected(selected).build() && !selected {
+                    if let Err(error) = self.select_theme(&id) {
+                        self.error = Some(error.to_string());
+                    }
                 }
                 if selected {
                     ui.set_item_default_focus();
                 }
             }
         }
-        ui.same_line();
-        ui.text("Profile");
+        if current.starts_with("themes/") && ui.button("Open Theme JSON") {
+            match self.theme_path(&current) {
+                Ok(path) => self.request_config_file = Some(path),
+                Err(error) => self.error = Some(error.to_string()),
+            }
+        }
+        ui.text_wrapped("Custom themes: copy a built-in theme JSON into the config directory's themes folder, then select it here.");
         ui.spacing();
     }
     fn draw_main_settings(&mut self, ui: &Ui) {
         let current = self.settings["font"]
             .as_str()
-            .unwrap_or("SourceCodePro-Regular")
+            .unwrap_or("Paper Mono")
             .to_owned();
-        if let Some(_combo) = ui.begin_combo("Font", display_font_name(&current)) {
+        if let Some(_combo) = ui.begin_combo("Font", &current) {
             for name in Font::available_fonts(&self.resources_root) {
                 let selected = name == current;
-                if ui
-                    .selectable_config(display_font_name(name))
-                    .selected(selected)
-                    .build()
-                {
+                if ui.selectable_config(&name).selected(selected).build() {
                     self.settings["font"] = json!(name);
                     self.request_apply();
                     self.persist_ui();
@@ -488,31 +604,28 @@ impl SettingsView<'_> {
             }
         }
         ui.spacing();
-        let mut size = self.font_size();
-        if ui
-            .slider_config("Font Size", 4.0, 64.0)
-            .try_display_format("%.0f")
-            .expect("constant valid format")
-            .build(&mut size)
-        {
-            self.settings["fontSize"] = json!(size);
-            self.request_apply();
-        }
-        if ui.is_item_deactivated_after_edit() {
-            self.persist_ui();
-        }
-        ui.spacing();
-        let mut bg = self.settings["backgroundColor"]
-            .as_array()
-            .filter(|colors| colors.len() == 4)
-            .map(|_| self.background_color())
-            .unwrap_or([0.058, 0.194, 0.158, 1.0]);
-        if ui.color_edit4("Background Color", &mut bg) {
-            self.settings["backgroundColor"] = json!(bg);
-            self.request_apply();
-            self.persist_ui();
+        let size = self.font_size();
+        if let Some(_combo) = ui.begin_combo("Font Size", format!("{size:.0}")) {
+            for value in 10..=40 {
+                let selected = size == value as f32;
+                if ui
+                    .selectable_config(value.to_string())
+                    .selected(selected)
+                    .build()
+                    && !selected
+                {
+                    self.settings["fontSize"] = json!(value);
+                    self.request_apply();
+                    self.persist_ui();
+                }
+                if selected {
+                    ui.set_item_default_focus();
+                }
+            }
         }
         ui.spacing();
+    }
+    fn draw_autosave_settings(&mut self, ui: &Ui) {
         let mut autosave = self.autosave_enabled();
         if ui.checkbox("Autosave code files", &mut autosave) {
             self.settings["autosave"] = json!(autosave);
@@ -544,188 +657,22 @@ impl SettingsView<'_> {
         }
     }
     fn draw_mac_settings(&mut self, ui: &Ui) {
-        #[cfg(target_os = "macos")]
+        ui.spacing();
+        let mut opacity = self.background_opacity();
+        if ui
+            .slider_config("Background Opacity", 0.0, 1.0)
+            .try_display_format("%.2f")
+            .expect("constant valid format")
+            .build(&mut opacity)
         {
-            ui.spacing();
-            ui.text("macOS Settings");
-            ui.separator();
-            ui.spacing();
-            let mut opacity = self.number("mac_background_opacity", 0.5);
-            if ui
-                .slider_config("Background Opacity", 0.0, 1.0)
-                .try_display_format("%.2f")
-                .expect("constant valid format")
-                .build(&mut opacity)
-            {
-                self.settings["mac_background_opacity"] = json!(opacity);
-                self.request_apply();
-                self.persist_ui();
-            }
-            let mut blur = self.bool("mac_blur_enabled", true);
-            if ui.checkbox("Enable Background Blur", &mut blur) {
-                self.settings["mac_blur_enabled"] = json!(blur);
-                self.request_apply();
-                self.persist_ui();
-            }
+            self.settings["background_opacity"] = json!(opacity);
+            self.request_apply();
         }
-        #[cfg(not(target_os = "macos"))]
-        let _ = ui;
-    }
-    fn draw_syntax_colors(&mut self, ui: &Ui) {
-        let theme = self.settings["theme"]
-            .as_str()
-            .unwrap_or("default")
-            .to_owned();
-        if !self.settings["themes"][&theme].is_object() {
-            ui.text(format!("Theme '{theme}' not found."));
-            return;
+        if ui.is_item_deactivated_after_edit() {
+            self.persist_ui();
         }
-        for (key, fallback) in [
-            ("text", "text"),
-            ("keyword", "text"),
-            ("string", "text"),
-            ("number", "text"),
-            ("comment", "text"),
-            ("function", "text"),
-            ("type", "text"),
-            ("variable", "text"),
-            ("parameter", "variable"),
-            ("property", "variable"),
-            ("constant", "number"),
-            ("operator", "text"),
-            ("punctuation", "text"),
-            ("special", "keyword"),
-        ] {
-            let colors = &mut self.settings["themes"][&theme];
-            if colors[key].as_array().is_none_or(|rgba| rgba.len() != 4) {
-                colors[key] = if colors[fallback]
-                    .as_array()
-                    .is_some_and(|rgba| rgba.len() == 4)
-                {
-                    colors[fallback].clone()
-                } else {
-                    json!([0.75, 0.75, 0.75, 1.0])
-                };
-            }
-        }
-        ui.spacing();
-        if !ui.collapsing_header("Syntax Colors", TreeNodeFlags::empty()) {
-            return;
-        }
-        ui.spacing();
-        for (label, key) in [
-            ("Text", "text"),
-            ("Keywords", "keyword"),
-            ("Strings", "string"),
-            ("Numbers", "number"),
-            ("Comments", "comment"),
-            ("Functions", "function"),
-            ("Types", "type"),
-            ("Identifier", "variable"),
-            ("Parameter", "parameter"),
-            ("Property / field", "property"),
-            ("Constant", "constant"),
-            ("Operator", "operator"),
-            ("Punctuation", "punctuation"),
-            ("Special / builtin", "special"),
-        ] {
-            let mut rgba = color(
-                &self.settings["themes"][&theme][key],
-                [0.75, 0.75, 0.75, 1.0],
-            );
-            ui.text(label);
-            ui.same_line_with_pos(200.0);
-            if ui.color_edit4(format!("##{key}"), &mut rgba) {
-                self.settings["themes"][&theme][key] = json!(rgba);
-                self.request_apply();
-            }
-            if ui.is_item_deactivated_after_edit() {
-                self.settings["themes"][&theme][key] = json!(rgba);
-                self.request_apply();
-                self.persist_ui();
-            }
-        }
-    }
-    fn draw_toggle_settings(&mut self, ui: &Ui, editor: &mut Editor) {
-        ui.spacing();
-        ui.text("Toggle Settings");
-        ui.separator();
-        ui.spacing();
-        for (label, key, help, spaced) in [
-            (
-                "File Explorer",
-                "sidebar_visible",
-                "(Show/hide file explorer sidebar)",
-                true,
-            ),
-            (
-                "Terminal",
-                "terminal_visible",
-                "(Show/hide bottom terminal panel)",
-                true,
-            ),
-            (
-                "UI Animations",
-                "ui_animations",
-                "(Animate panels, tree branches, popovers and navigation jumps)",
-                true,
-            ),
-            (
-                "Rainbow Mode",
-                "rainbow",
-                "(Rainbow cursor & line numbers)",
-                false,
-            ),
-            (
-                "Minimap",
-                "minimap",
-                "(Code overview strip on the right)",
-                false,
-            ),
-            (
-                "TreeSitter Mode",
-                "treesitter",
-                "(Syntax Highlighting)",
-                false,
-            ),
-            (
-                "Git Changed Lines",
-                "git_changed_lines",
-                "(Highlight changed lines in git)",
-                false,
-            ),
-        ] {
-            let mut value = self.bool(key, true);
-            if ui.checkbox(label, &mut value) {
-                match key {
-                    "sidebar_visible" => {
-                        if let Err(error) = self.toggle_sidebar() {
-                            self.error = Some(error.to_string());
-                        }
-                    }
-                    "terminal_visible" => {
-                        if let Err(error) = self.toggle_terminal() {
-                            self.error = Some(error.to_string());
-                        }
-                    }
-                    _ => {
-                        self.settings[key] = json!(value);
-                        if key == "treesitter" {
-                            self.request_apply();
-                        }
-                        if key == "git_changed_lines" {
-                            editor.set_git_changed_lines(value);
-                        }
-                        self.persist_ui();
-                    }
-                }
-            }
-            ui.same_line();
-            ui.text_disabled(help);
-            if spaced {
-                ui.spacing();
-            }
-        }
+        #[cfg(target_os = "macos")]
+        self.draw_boolean(ui, "Enable Background Blur", "mac_blur_enabled", true);
     }
     fn draw_shader_settings(&mut self, ui: &Ui) {
         ui.spacing();
@@ -766,7 +713,7 @@ impl SettingsView<'_> {
         ui.text("Shaders");
         ui.separator();
         ui.spacing();
-        let mut enabled = self.bool("shader_toggle", true);
+        let mut enabled = self.bool("shader_toggle", false);
         if ui.checkbox("Enable Shader Effects", &mut enabled) {
             self.settings["shader_toggle"] = json!(enabled);
             self.persist_ui();
@@ -790,7 +737,6 @@ impl SettingsView<'_> {
             ("Burn-in", "burnin_intensity", 0.0, 0.999, "%.03f", 0.0),
             ("Jitter", "jitter_intensity", 0.0, 10.0, "%.02f", 2.81),
             ("Pulse", "pulse_intensity", 0.0, 0.1, "%.03f", 0.0),
-            ("FPS Target", "fps_target", 20.0, 1000.0, "%.0f", 120.0),
         ] {
             let mut value = self.number(key, default);
             if ui
@@ -860,30 +806,6 @@ impl Drop for NativeSettingsWindowGuard<'_> {
     }
 }
 
-fn display_font_name(name: &str) -> String {
-    if name == "System Default" || !name.contains('.') {
-        return name.to_owned();
-    }
-    name.rsplit_once('.').unwrap().0.replace('-', " ")
-}
-
-fn color(value: &Value, default: [f32; 4]) -> [f32; 4] {
-    let Some(array) = value.as_array().filter(|a| a.len() >= 3) else {
-        return default;
-    };
-    let mut result = default;
-    for (i, v) in array.iter().take(4).enumerate() {
-        let Some(number) = v.as_f64().filter(|v| v.is_finite()) else {
-            return default;
-        };
-        result[i] = number as f32;
-    }
-    if array.len() == 3 {
-        result[3] = 1.0;
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -917,11 +839,226 @@ mod tests {
         .unwrap()
     }
     #[test]
+    fn theme_editor_requires_a_choice_and_keeps_the_draft_when_going_back() {
+        use dear_imgui_rs::{FramePrepareOptions, sys};
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let temp = TempDir::new();
+        let mut settings = settings(&temp);
+        let mut draft = ThemeDraft::default();
+        let mut context = settings_context();
+        let draw = |context: &mut Context,
+                    settings: &mut Settings,
+                    draft: &mut ThemeDraft,
+                    activate: Option<&str>| {
+            context.prepare_frame(FramePrepareOptions::new([1000.0, 1200.0], 1.0 / 60.0));
+            let ui = context.frame();
+            let mut last_item = 0;
+            ui.window("Theme choices")
+                .position([0.0; 2], Condition::Always)
+                .size([1000.0, 1200.0], Condition::Always)
+                .build(|| {
+                    crate::theme_editor::draw(ui, draft, settings);
+                    ui.with_bound_context(|| unsafe {
+                        last_item = (*sys::igGetCurrentContext()).LastItemData.ID;
+                        if let Some(label) = activate {
+                            sys::igActivateItemByID(ui.get_id(label).raw());
+                        }
+                    });
+                });
+            drop(context.render_legacy());
+            last_item
+        };
+        draw(&mut context, &mut settings, &mut draft, None);
+        let chooser_item = draw(&mut context, &mut settings, &mut draft, None);
+        assert!(!draft.editing);
+        assert!(draft.palette.is_none());
+
+        draw(&mut context, &mut settings, &mut draft, Some("Clone Theme"));
+        draw(&mut context, &mut settings, &mut draft, None);
+        assert!(draft.editing);
+        assert!(draft.destination.is_none());
+        assert!(draft.dirty);
+        assert_eq!(draft.palette.as_ref().unwrap().name, "Tokyo Night Copy");
+        let editor_item = draw(&mut context, &mut settings, &mut draft, None);
+        assert_ne!(chooser_item, editor_item);
+        draft.palette.as_mut().unwrap().name = "My unsaved colors".into();
+
+        draw(
+            &mut context,
+            &mut settings,
+            &mut draft,
+            Some("Back to Themes"),
+        );
+        draw(&mut context, &mut settings, &mut draft, None);
+        assert!(!draft.editing);
+        assert!(draft.dirty);
+        assert_eq!(
+            chooser_item,
+            draw(&mut context, &mut settings, &mut draft, None)
+        );
+        draw(
+            &mut context,
+            &mut settings,
+            &mut draft,
+            Some("Continue editing My unsaved colors"),
+        );
+        draw(&mut context, &mut settings, &mut draft, None);
+        assert!(draft.editing);
+        assert_eq!(draft.palette.as_ref().unwrap().name, "My unsaved colors");
+        assert_eq!(settings.settings["theme"], "tokyo");
+        assert_eq!(fs::read_dir(temp.0.join("themes")).unwrap().count(), 0);
+    }
+    #[test]
+    fn theme_editor_saves_and_applies_an_independent_view_draft() {
+        use dear_imgui_rs::{FramePrepareOptions, sys};
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let temp = TempDir::new();
+        let mut settings = settings(&temp);
+        let original_font = settings.settings["font"].clone();
+        let mut states = [
+            SettingsWindowState::default(),
+            SettingsWindowState::default(),
+        ];
+        for (index, state) in states.iter_mut().enumerate() {
+            let mut theme = settings.theme.clone();
+            theme.name = format!("Custom view {index}");
+            state.theme_editor.load(theme, None);
+        }
+        states[0].theme_editor.palette.as_mut().unwrap().background = [0.2, 0.3, 0.4, 1.0];
+        let mut context = settings_context();
+        let draw =
+            |context: &mut Context, settings: &mut Settings, state: &mut SettingsWindowState| {
+                context.prepare_frame(FramePrepareOptions::new([1000.0, 2000.0], 1.0 / 60.0));
+                let ui = context.frame();
+                let mut button = [0.0; 2];
+                ui.window("Theme editing")
+                    .position([0.0; 2], Condition::Always)
+                    .size([1000.0, 2000.0], Condition::Always)
+                    .build(|| {
+                        for label in ["Syntax Colors", "Terminal Colors"] {
+                            let id = ui.get_id(label).raw();
+                            ui.with_bound_context(|| unsafe {
+                                sys::ImGuiStorage_SetInt(sys::igGetStateStorage(), id, 1);
+                            });
+                        }
+                        crate::theme_editor::draw(ui, &mut state.theme_editor, settings);
+                        let (min, max) = ui.item_rect();
+                        button = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
+                        ui.with_bound_context(|| unsafe {
+                            assert_eq!(
+                                (*sys::igGetCurrentContext()).LastItemData.ID,
+                                sys::igGetID_Str(c"Save & Apply".as_ptr())
+                            );
+                        });
+                    });
+                drop(context.render_legacy());
+                button
+            };
+        draw(&mut context, &mut settings, &mut states[0]);
+        let button = draw(&mut context, &mut settings, &mut states[0]);
+        context.io_mut().add_mouse_pos_event(button);
+        draw(&mut context, &mut settings, &mut states[0]);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        draw(&mut context, &mut settings, &mut states[0]);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, false);
+        draw(&mut context, &mut settings, &mut states[0]);
+        assert_eq!(settings.settings["theme"], "themes/custom-view-0.json");
+        assert_eq!(
+            read_json(&temp.0.join("themes/custom-view-0.json")).unwrap()["ui"]["background"],
+            "#334d66"
+        );
+        assert_eq!(settings.settings["font"], original_font);
+        assert!(!settings.shader_settings().enabled);
+        assert!(states[0].theme_editor.destination.is_some());
+        assert!(states[1].theme_editor.destination.is_none());
+        assert_eq!(
+            states[1].theme_editor.palette.as_ref().unwrap().name,
+            "Custom view 1"
+        );
+    }
+    #[test]
+    fn category_clicks_stay_with_their_settings_view() {
+        use dear_imgui_rs::{FramePrepareOptions, sys};
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let temp = TempDir::new();
+        let mut settings = settings(&temp);
+        let mut states = [
+            SettingsWindowState::default(),
+            SettingsWindowState::default(),
+        ];
+        states[1].category = SettingsCategory::Extensions;
+        let mut editor = Editor::new();
+        let mut context = settings_context();
+        let mut extension_calls = [0; 2];
+        let mut frame = |context: &mut Context, states: &mut [SettingsWindowState; 2]| {
+            context.prepare_frame(FramePrepareOptions::new([1800.0, 1000.0], 1.0 / 60.0));
+            let ui = context.frame();
+            for (index, state) in states.iter_mut().enumerate() {
+                ui.window(["Settings one", "Settings two"][index])
+                    .position([10.0 + index as f32 * 800.0, 10.0], Condition::Always)
+                    .size([760.0, 800.0], Condition::Always)
+                    .build(|| {
+                        settings.draw_tab_with_state(ui, state, &mut editor, None, &mut |ui, _| {
+                            extension_calls[index] += 1;
+                            ui.text("Extension preferences");
+                            false
+                        });
+                    });
+            }
+            let appearance = ui.with_bound_context(|| unsafe {
+                let native = &*sys::igGetCurrentContext();
+                (0..native.Windows.Size as usize)
+                    .find_map(|index| {
+                        let window = &**native.Windows.Data.add(index);
+                        let name = std::ffi::CStr::from_ptr(window.Name).to_string_lossy();
+                        (name.starts_with("Settings one/") && name.contains("SettingsCategories"))
+                            .then(|| {
+                                let height = window.FontRefSize;
+                                [
+                                    window.DC.CursorStartPos.x + height,
+                                    window.DC.CursorStartPos.y
+                                        + height
+                                        + native.Style.ItemSpacing.y
+                                        + height * 0.5,
+                                ]
+                            })
+                    })
+                    .expect("first view has a category sidebar")
+            });
+            drop(context.render_legacy());
+            appearance
+        };
+        frame(&mut context, &mut states);
+        let appearance = frame(&mut context, &mut states);
+        context.io_mut().add_mouse_pos_event(appearance);
+        frame(&mut context, &mut states);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        frame(&mut context, &mut states);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, false);
+        frame(&mut context, &mut states);
+        frame(&mut context, &mut states);
+        assert_eq!(states[0].category, SettingsCategory::Appearance);
+        assert_eq!(states[1].category, SettingsCategory::Extensions);
+        assert_eq!(extension_calls[0], 0);
+        assert_eq!(extension_calls[1], 6);
+    }
+    #[test]
     fn extension_settings_render_and_persist_in_tab_and_legacy_window() {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let temp = TempDir::new();
         let mut current = settings(&temp);
-        let mut window_state = SettingsWindowState::default();
+        let mut window_state = SettingsWindowState {
+            category: SettingsCategory::Extensions,
+            ..Default::default()
+        };
         current.settings["plugins"]["unavailable"] = json!({"retained": true});
         let mut editor = Editor::new();
         let mut context = settings_context();
@@ -932,12 +1069,18 @@ mod tests {
         ui.window("Settings tab")
             .size([1000.0, 1000.0], Condition::Always)
             .build(|| {
-                current.draw_tab_with_extensions(ui, &mut editor, None, &mut |ui, value| {
-                    tab_calls += 1;
-                    ui.text("Image Viewer");
-                    value["plugins"]["image"]["fit"] = json!(true);
-                    true
-                });
+                current.draw_tab_with_state(
+                    ui,
+                    &mut window_state,
+                    &mut editor,
+                    None,
+                    &mut |ui, value| {
+                        tab_calls += 1;
+                        ui.text("Image Viewer");
+                        value["plugins"]["image"]["fit"] = json!(true);
+                        true
+                    },
+                );
             });
         drop(context.render_legacy());
         assert_eq!(tab_calls, 1);
@@ -1251,9 +1394,6 @@ mod tests {
             show_settings_window: true,
             ..Default::default()
         };
-        settings.settings["themes"] =
-            json!({"old": {"text": [0.1, 0.2, 0.3, 1.0], "variable": [0.4, 0.5, 0.6, 1.0]}});
-        settings.settings["theme"] = json!("old");
         let mut context = settings_context();
         let mut editor = Editor::new();
         let mut icons = Icons::default();
@@ -1278,12 +1418,6 @@ mod tests {
             [icon.max[0] - icon.min[0], icon.max[1] - icon.min[1]],
             [side; 2]
         );
-        let colors = &settings.settings["themes"]["old"];
-        // Upstream upgrades old eight-slot themes even with the picker collapsed.
-        assert_eq!(colors["parameter"], colors["variable"]);
-        assert_eq!(colors["property"], colors["variable"]);
-        assert_eq!(colors["constant"], colors["number"]);
-        assert_eq!(colors.as_object().unwrap().len(), 14);
         context.io_mut().add_mouse_pos_event([
             (icon.min[0] + icon.max[0]) * 0.5,
             (icon.min[1] + icon.max[1]) * 0.5,
@@ -1346,9 +1480,8 @@ mod tests {
         };
         let background = [0.97, 0.94, 0.89, 1.0];
         let text = [0.12, 0.18, 0.23, 1.0];
-        settings.settings["backgroundColor"] = json!(background);
-        settings.settings["themes"]["default"]["text"] = json!(text);
-        settings.settings["theme"] = json!("default");
+        settings.theme.background = background;
+        settings.theme.foreground = text;
         let mut context = settings_context();
         context
             .style_mut()
@@ -1404,7 +1537,7 @@ mod tests {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let temp = TempDir::new();
         let mut settings = settings(&temp);
-        settings.settings["mac_background_opacity"] = json!(0.5);
+        settings.settings["background_opacity"] = json!(0.5);
         settings.settings["mac_blur_enabled"] = json!(true);
         settings.save_settings().unwrap();
         let mut context = settings_context();
@@ -1451,12 +1584,12 @@ mod tests {
             .io_mut()
             .add_mouse_button_event(MouseButton::Left, false);
         draw(&mut context, &mut settings);
-        let opacity = settings.number("mac_background_opacity", 0.0);
+        let opacity = settings.number("background_opacity", 0.0);
         assert!(opacity > 0.7 && opacity < 0.8);
         assert!(apply_pending(&mut context, &mut settings));
         assert_eq!(
-            read_json(&settings.settings_path).unwrap()["mac_background_opacity"],
-            settings.settings["mac_background_opacity"]
+            read_json(&settings.settings_path).unwrap()["background_opacity"],
+            settings.settings["background_opacity"]
         );
         context.io_mut().add_mouse_pos_event(checkbox);
         draw(&mut context, &mut settings);

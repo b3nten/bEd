@@ -1,8 +1,8 @@
 use super::*;
 use std::time::{Duration, Instant};
 
-const DEJAVU: &[u8] = include_bytes!("../../../resources/fonts/DejaVuSans.ttf");
-const SOURCE: &[u8] = include_bytes!("../../../resources/fonts/SourceCodePro-Regular.ttf");
+const DEJAVU: &[u8] = include_bytes!("../../../tests/fixtures/fonts/DejaVuSans.ttf");
+const SOURCE: &[u8] = include_bytes!("../../../tests/fixtures/fonts/SourceCodePro-Regular.ttf");
 const WOFF: &[u8] = include_bytes!("../tests/fixtures/SourceCodePro-Regular.woff");
 const WOFF2: &[u8] = include_bytes!("../tests/fixtures/SourceCodePro-Regular.woff2");
 

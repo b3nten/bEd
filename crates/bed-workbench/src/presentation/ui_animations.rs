@@ -6,7 +6,7 @@
 use dear_imgui_rs::{Context, ContextBinding, Ui, sys};
 use std::collections::{HashMap, HashSet};
 
-const PANEL_SECONDS: f64 = 0.120;
+const PANEL_SECONDS: f64 = 0.300;
 const POPOVER_SECONDS: f64 = 0.150;
 const INITIAL_SCALE: f32 = 0.96;
 

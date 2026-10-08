@@ -7,7 +7,7 @@ repository, revision `803b7e23ec97ae58b6232ea76519a76d428ba268`.
 
 Copyright Adobe, with Reserved Font Name 'Source'. The fonts retain their
 embedded notices and are licensed under the SIL Open Font License 1.1; see
-[SourceCodePro-LICENSE.md](../../../../resources/fonts/SourceCodePro-LICENSE.md).
+[SourceCodePro-LICENSE.md](../../../../tests/fixtures/fonts/SourceCodePro-LICENSE.md).
 The WOFF2 fixture uses the standard transformed TrueType glyph representation.
 
 SHA-256:

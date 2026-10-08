@@ -3,7 +3,8 @@ pub mod font;
 pub mod keybinds;
 mod persistence;
 pub mod settings;
-pub use settings::{EffectPreset, PRIMARY_PROFILE, Settings, read_json, write_json};
+pub mod theme;
+pub use settings::{EffectPreset, SETTINGS_FILE, Settings, read_json, write_json};
 #[cfg(test)]
 static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(test)]

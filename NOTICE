@@ -3,9 +3,9 @@ Upstream: https://github.com/nealmick/ned
 Revision: 2d3e9b53b0ebc44c6da6901ff242a95edaa4a1ff
 The upstream MIT/X Consortium license is preserved in LICENSE.
 
-resources/fonts/SourceCodePro-Regular.ttf is copied unchanged from the pinned
-ned resources. Source Code Pro is by Adobe; its SIL Open Font License is
-preserved in resources/fonts/SourceCodePro-LICENSE.md.
+tests/fixtures/fonts/SourceCodePro-Regular.ttf is copied unchanged from the pinned
+ned resources for development tests only. Source Code Pro is by Adobe; its SIL
+Open Font License is preserved in tests/fixtures/fonts/SourceCodePro-LICENSE.md.
 
 Additional copied fonts and artwork retain their original notices and licenses
 in resources/fonts/ATTRIBUTION.txt and resources/icons/ATTRIBUTION.txt.
@@ -58,3 +58,13 @@ The Model Viewer embeds Studio Small 08 by Sergej Majboroda and Kiara 1 Dawn
 by Greg Zaal, downloaded from Poly Haven (formerly HDRI Haven). Both HDRIs are
 CC0 1.0 Universal; artist/source/checksum records and the full dedication are
 retained in LICENSES/polyhaven.
+
+Desktop themes and fonts:
+- Paper Mono v1.000 Regular and Bold: https://github.com/paper-design/paper-mono
+  Copyright 2025 The Paper-Mono.Git Project Authors; SIL OFL 1.1.
+  License: resources/fonts/PaperMono-OFL.txt.
+- Color themes are adapted from Tokyo Night, Solarized, taotao7/carbon-theme,
+  Catppuccin, Rosé Pine, Synthwave ’84, Everforest, and Oxocarbon.
+  Source links and individual MIT licenses are
+  retained under resources/themes. Non-Paper font assets retained solely for
+  development tests are under tests/fixtures/fonts and are not distributed.

@@ -54,7 +54,7 @@ fn observe_progress(
 }
 
 #[test]
-#[ignore = "requires the user's installed rust-analyzer and read-only ~/bed/config/lsp.json"]
+#[ignore = "requires the user's installed rust-analyzer and read-only ~/.config/bed/lsp.json"]
 fn real_session_user_config_reports_and_clears_rust_syntax_diagnostics() {
     let root =
         std::env::temp_dir().join(format!("bed-real-session-rust-lsp-{}", std::process::id()));

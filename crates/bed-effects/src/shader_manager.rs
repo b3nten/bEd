@@ -314,9 +314,11 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn sharp_preset_has_no_distortion_noise_or_temporal_ghosts() {
-        let settings = ShaderSettings::from_json(&serde_json::json!({}));
-        assert_eq!(settings, ShaderSettings::subtle());
+    fn effects_default_off_and_sharp_has_no_distortion_noise_or_temporal_ghosts() {
+        let defaults = ShaderSettings::from_json(&serde_json::json!({}));
+        assert_eq!(defaults, ShaderSettings::default());
+        assert!(!defaults.enabled);
+        let settings = ShaderSettings::subtle();
         assert!(settings.enabled);
         assert_eq!(settings.bloom_intensity, 0.025);
         assert_eq!(settings.scanline_intensity, 0.06);
@@ -595,7 +597,7 @@ mod tests {
         let mut manager = ShaderManager::new(&device, 64, 32, OFFSCREEN_FORMAT);
         assert!(block_on(scope.pop()).is_none());
         let output = FramebufferState::new(&device, "Shader fixture output", 64, 32);
-        let pattern: Vec<u8> = (0..32)
+        let mut pattern: Vec<u8> = (0..32)
             .flat_map(|y| {
                 (0..64).flat_map(move |x| {
                     [
@@ -607,6 +609,11 @@ mod tests {
                 })
             })
             .collect();
+        for pixel in pattern.as_chunks_mut::<4>().0 {
+            for index in 0..3 {
+                pixel[index] = ((u16::from(pixel[index]) * u16::from(pixel[3])) / 255) as u8;
+            }
+        }
         upload(&queue, &manager.fb.texture, &pattern);
         let pixels = render_readback(
             &device,
@@ -623,11 +630,7 @@ mod tests {
         );
 
         // With no distortion, sampling preserves every physical texel.
-        // Enabled output forces alpha as in the original fragment shader.
-        let mut opaque = pattern.clone();
-        for pixel in opaque.as_chunks_mut::<4>().0 {
-            pixel[3] = 255;
-        }
+        // Both disabled and enabled effects preserve premultiplied alpha.
         let pixels = render_readback(
             &device,
             &queue,
@@ -636,7 +639,7 @@ mod tests {
             &neutral(true),
             0.0,
         );
-        assert_pixels_close(&pixels, &opaque, 1);
+        assert_pixels_close(&pixels, &pattern, 1);
         assert!(manager.temporal.is_none());
         let pixels = render_readback(
             &device,
@@ -646,11 +649,34 @@ mod tests {
             &neutral(true),
             0.0,
         );
-        assert_pixels_close(&pixels, &opaque, 1);
+        assert_pixels_close(&pixels, &pattern, 1);
         assert!(manager.temporal.as_ref().is_none_or(|t| !t.accum.swap));
+
+        // Background coverage must survive effects, while foreground coverage
+        // remains opaque at every opacity level, including temporal burn-in.
+        for alpha in [0u8, 128, 255] {
+            let mut input = [alpha / 4, alpha / 3, alpha / 2, alpha].repeat(64 * 32);
+            input[..4].copy_from_slice(&[200, 150, 100, 255]);
+            upload(&queue, &manager.fb.texture, &input);
+            for enabled in [false, true] {
+                let mut settings = neutral(enabled);
+                settings.burnin_intensity = if enabled { 0.8 } else { 0.0 };
+                manager.invalidate_history();
+                let pixels = render_readback(
+                    &device,
+                    &queue,
+                    &mut manager,
+                    &output.texture,
+                    &settings,
+                    0.0,
+                );
+                assert_pixels_close(&pixels, &input, 1);
+            }
+        }
 
         // The two accumulation textures alternate and use pow(decay,4), max
         // against the new frame, and normalized 8-bit storage before CRT.
+        manager.invalidate_history();
         let bright: Vec<u8> = [200, 100, 50, 255].repeat(64 * 32);
         upload(&queue, &manager.fb.texture, &bright);
         let mut settings = neutral(true);

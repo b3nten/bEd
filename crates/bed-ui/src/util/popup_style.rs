@@ -96,7 +96,7 @@ pub fn controls_style(ui: &Ui) -> ControlsStyle<'_> {
     let fs = ui.current_font_size();
     ControlsStyle {
         _colors: control_colors(
-            ui.style_color(StyleColor::WindowBg),
+            ui.style_color(StyleColor::PopupBg),
             ui.style_color(StyleColor::Text),
             ui.style_color(StyleColor::CheckMark),
         )

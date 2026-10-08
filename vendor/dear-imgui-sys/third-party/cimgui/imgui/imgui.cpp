@@ -7611,8 +7611,7 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
         const float backup_border_size = style.FrameBorderSize;
         g.Style.FrameBorderSize = window->WindowBorderSize;
         ImU32 title_bar_col = GetColorU32((title_bar_is_highlight && g.NavCursorVisible) ? ImGuiCol_TitleBgActive : ImGuiCol_TitleBgCollapsed);
-        if (window->ViewportOwned)
-            title_bar_col |= IM_COL32_A_MASK; // No alpha (we don't support is_docking_transparent_payload here because simpler and less meaningful, but could with a bit of code shuffle/reuse)
+        // Bed: collapsed native windows preserve background alpha too.
         RenderFrame(title_bar_rect.Min, title_bar_rect.Max, title_bar_col, true, window_rounding);
         g.Style.FrameBorderSize = backup_border_size;
     }
@@ -7629,7 +7628,7 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
             ImU32 bg_col = GetColorU32(GetWindowBgColorIdx(window));
             if (window->ViewportOwned)
             {
-                bg_col |= IM_COL32_A_MASK; // No alpha
+                // Bed: preserve the background alpha on native viewports.
                 if (is_docking_transparent_payload)
                     window->Viewport->Alpha *= DOCKING_TRANSPARENT_PAYLOAD_ALPHA;
             }
@@ -7682,8 +7681,6 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
         if (!(flags & ImGuiWindowFlags_NoTitleBar) && !window->DockIsActive)
         {
             ImU32 title_bar_col = GetColorU32(title_bar_is_highlight ? ImGuiCol_TitleBgActive : ImGuiCol_TitleBg);
-            if (window->ViewportOwned)
-                title_bar_col |= IM_COL32_A_MASK; // No alpha
             window->DrawList->AddRectFilled(title_bar_rect.Min, title_bar_rect.Max, title_bar_col, window_rounding, ImDrawFlags_RoundCornersTop);
         }
 
@@ -17653,10 +17650,12 @@ void ImGui::WindowSyncOwnedViewport(ImGuiWindow* window, ImGuiWindow* parent_win
     if (window->WindowClass.ViewportFlagsOverrideClear)
         viewport_flags &= ~window->WindowClass.ViewportFlagsOverrideClear;
 
-    // We can also tell the backend that clearing the platform window won't be necessary,
-    // as our window background is filling the viewport and we have disabled BgAlpha.
-    // FIXME: Work on support for per-viewport transparency (#2766)
-    if (!(window_flags & ImGuiWindowFlags_NoBackground))
+    // Bed: a translucent background must start from a cleared target every
+    // frame. Loading the old target would accumulate opacity (including in
+    // persistent offscreen postprocess targets).
+    if (!(window_flags & ImGuiWindowFlags_NoBackground)
+        && g.Style.Alpha >= 1.0f && g.Style.Colors[GetWindowBgColorIdx(window)].w >= 1.0f
+        && (!(g.NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasBgAlpha) || g.NextWindowData.BgAlphaVal >= 1.0f))
         viewport_flags |= ImGuiViewportFlags_NoRendererClear;
 
     window->Viewport->Flags = viewport_flags;

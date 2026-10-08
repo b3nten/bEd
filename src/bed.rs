@@ -166,6 +166,29 @@ impl SurfaceRenderer {
     }
 }
 
+fn transparent_alpha_mode(
+    backend: wgpu::Backend,
+    supported: &[wgpu::CompositeAlphaMode],
+) -> wgpu::CompositeAlphaMode {
+    use wgpu::CompositeAlphaMode as Alpha;
+    // wgpu 29's Metal backend calls its premultiplied CAMetalLayer mode
+    // PostMultiplied. Keep our premultiplied pixels and select that mode until
+    // the pin includes https://github.com/gfx-rs/wgpu/pull/9922.
+    [
+        Alpha::PreMultiplied,
+        if backend == wgpu::Backend::Metal {
+            Alpha::PostMultiplied
+        } else {
+            Alpha::Inherit
+        },
+        Alpha::Inherit,
+        Alpha::Opaque,
+    ]
+    .into_iter()
+    .find(|mode| supported.contains(mode))
+    .unwrap_or(Alpha::Auto)
+}
+
 struct Gpu {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
@@ -226,6 +249,8 @@ impl Gpu {
         if capabilities.usages.contains(wgpu::TextureUsages::COPY_SRC) {
             config.usage |= wgpu::TextureUsages::COPY_SRC;
         }
+        config.alpha_mode =
+            transparent_alpha_mode(adapter.get_info().backend, &capabilities.alpha_modes);
         surface.configure(&device, &config);
         let error_handlers = DeviceErrorHandlers::default();
         error_handlers.install(&device);
@@ -618,12 +643,12 @@ impl Runtime {
     ) -> HostResult<Self> {
         let attributes = Window::default_attributes()
             .with_title(workbench.window_title())
+            .with_transparent(true)
             .with_inner_size(LogicalSize::new(1200.0, 800.0));
         #[cfg(target_os = "macos")]
         let attributes = {
             use winit::platform::macos::WindowAttributesExtMacOS;
             attributes
-                .with_transparent(true)
                 .with_titlebar_transparent(true)
                 .with_title_hidden(true)
                 .with_fullsize_content_view(true)
@@ -665,7 +690,7 @@ impl Runtime {
         #[cfg(target_os = "macos")]
         let mut native_window = crate::platform::macos_window::MacOsWindow::configure(
             &window,
-            workbench.settings.number("mac_background_opacity", 0.5),
+            workbench.settings.background_opacity(),
             workbench.settings.bool("mac_blur_enabled", true),
         )?;
         #[cfg(target_os = "macos")]
@@ -704,7 +729,7 @@ impl Runtime {
         });
         #[cfg(target_os = "macos")]
         let native_smoke = options.native_appearance.then(|| NativeAppearanceSmoke {
-            opacity: workbench.settings.settings["mac_background_opacity"].clone(),
+            opacity: workbench.settings.settings["background_opacity"].clone(),
             blur: workbench.settings.settings["mac_blur_enabled"].clone(),
             panel_counts: [0; 6],
             document_path: workbench.active_snapshot().map(|document| document.path),
@@ -863,9 +888,7 @@ impl Runtime {
                 self.context.io().want_text_input(),
             )?;
             self.native_window.update(
-                self.workbench
-                    .settings
-                    .number("mac_background_opacity", 0.5),
+                self.workbench.settings.background_opacity(),
                 self.workbench.settings.bool("mac_blur_enabled", true),
             )?;
             let text = self.workbench.settings.text_color();
@@ -930,13 +953,9 @@ impl Runtime {
         self.gpu
             .effect_factory
             .update(effect_settings, time, generation);
-        let background = self.workbench.settings.background_color();
-        let clear = wgpu::Color {
-            r: f64::from(background[0]),
-            g: f64::from(background[1]),
-            b: f64::from(background[2]),
-            a: f64::from(background[3]),
-        };
+        // Each visible window draws its own background once. Clearing to the
+        // theme background would composite another translucent layer below it.
+        let clear = wgpu::Color::TRANSPARENT;
         self.gpu.route.set_viewport_clear_color(clear)?;
 
         // The route completes every secondary surface before acquiring the main
@@ -1132,15 +1151,14 @@ impl Runtime {
         let settings = &mut self.workbench.settings;
         match (smoke.phase, self.rendered_frames) {
             (0, 2..) => {
-                settings.settings["font"] = serde_json::json!("JetBrainsMonoNL-Regular");
+                settings.settings["font"] = serde_json::json!("Paper Mono");
                 settings.settings["fontSize"] = serde_json::json!(24.0);
                 settings.settings["treesitter"] = serde_json::json!(true);
                 settings.request_apply();
                 smoke.phase = 1;
             }
             (1, 4..) => {
-                settings.settings =
-                    bed_settings::read_json(&settings.config_dir.join("amber.json"))?;
+                settings.select_theme("solarized-light")?;
                 settings.request_apply();
                 smoke.phase = 2;
             }
@@ -1148,7 +1166,7 @@ impl Runtime {
                 settings.settings = smoke.original.clone();
                 settings.request_apply();
                 smoke.phase = 3;
-                eprintln!("bEd: appearance smoke restored font/profile settings");
+                eprintln!("bEd: appearance smoke restored font/theme settings");
             }
             _ => {}
         }
@@ -1197,23 +1215,23 @@ impl Runtime {
                         self.native_window.click_control(action);
                     }
                 }
-                self.workbench.settings.settings["mac_background_opacity"] =
-                    serde_json::json!(0.35);
+                self.workbench.settings.settings["background_opacity"] = serde_json::json!(0.35);
                 self.workbench.settings.settings["mac_blur_enabled"] = serde_json::json!(false);
                 smoke.phase = 2;
             }
             (2, 6..) => {
                 if self.native_window.material_is_visible()
+                    || self.native_window.content_is_opaque() != Some(false)
                     || self
                         .native_window
                         .content_opacity()
-                        .is_none_or(|v| (v - 0.35).abs() > 0.001)
+                        .is_none_or(|v| (v - 1.0).abs() > 0.001)
                 {
                     return Err(
                         io::Error::other("native appearance opacity/blur reload failed").into(),
                     );
                 }
-                self.workbench.settings.settings["mac_background_opacity"] = smoke.opacity.clone();
+                self.workbench.settings.settings["background_opacity"] = smoke.opacity.clone();
                 self.workbench.settings.settings["mac_blur_enabled"] = smoke.blur.clone();
                 for (kind, before) in [
                     "explorer",
@@ -1598,6 +1616,23 @@ impl Runtime {
             }
             (1, 6..) => {
                 if let Some(secondary) = windows.iter().find(|window| !window.is_main) {
+                    if self.workbench.settings.background_opacity() < 1.0 {
+                        let clears_background =
+                            self.context.binding().with_bound_context(|| unsafe {
+                                let viewport =
+                                    dear_imgui_rs::sys::igFindViewportByID(secondary.viewport_id);
+                                !viewport.is_null()
+                                    && (*viewport).Flags
+                                        & dear_imgui_rs::sys::ImGuiViewportFlags_NoRendererClear
+                                        == 0
+                            });
+                        if !clears_background {
+                            return Err(io::Error::other(
+                                "translucent native viewport must clear its background each frame",
+                            )
+                            .into());
+                        }
+                    }
                     eprintln!(
                         "bEd: viewport smoke found native secondary {}",
                         secondary.viewport_id

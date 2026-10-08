@@ -1,0 +1,45 @@
+{
+    "name": "Oxocarbon Dark",
+    "appearance": "dark",
+    "ui": {
+        "background": "#161616",
+        "surface": "#262626",
+        "foreground": "#cfcfcf",
+        "accent": "#78a9ff",
+        "selection": "#393939"
+    },
+    "syntax": {
+        "text": "#cfcfcf",
+        "comment": "#525252",
+        "keyword": "#78a9ff",
+        "string": "#be95ff",
+        "number": "#82cfff",
+        "function": "#ff7eb6",
+        "type": "#78a9ff",
+        "variable": "#cfcfcf",
+        "parameter": "#cfcfcf",
+        "property": "#ee5396",
+        "constant": "#be95ff",
+        "operator": "#78a9ff",
+        "punctuation": "#3ddbd9",
+        "special": "#82cfff"
+    },
+    "terminal": [
+        "#262626",
+        "#33b1ff",
+        "#be95ff",
+        "#42be65",
+        "#78a9ff",
+        "#82cfff",
+        "#3ddbd9",
+        "#f2f2f2",
+        "#525252",
+        "#33b1ff",
+        "#be95ff",
+        "#42be65",
+        "#78a9ff",
+        "#82cfff",
+        "#08bdba",
+        "#ffffff"
+    ]
+}

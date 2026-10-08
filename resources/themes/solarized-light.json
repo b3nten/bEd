@@ -1,0 +1,45 @@
+{
+    "name": "Solarized Light",
+    "appearance": "light",
+    "ui": {
+        "background": "#fdf6e3",
+        "surface": "#eee8d5",
+        "foreground": "#657b83",
+        "accent": "#268bd2",
+        "selection": "#d8d5bf"
+    },
+    "syntax": {
+        "text": "#657b83",
+        "comment": "#93a1a1",
+        "keyword": "#859900",
+        "string": "#2aa198",
+        "number": "#2aa198",
+        "function": "#268bd2",
+        "type": "#b58900",
+        "variable": "#657b83",
+        "parameter": "#cb4b16",
+        "property": "#268bd2",
+        "constant": "#d33682",
+        "operator": "#859900",
+        "punctuation": "#93a1a1",
+        "special": "#dc322f"
+    },
+    "terminal": [
+        "#073642",
+        "#dc322f",
+        "#859900",
+        "#b58900",
+        "#268bd2",
+        "#d33682",
+        "#2aa198",
+        "#eee8d5",
+        "#002b36",
+        "#cb4b16",
+        "#586e75",
+        "#657b83",
+        "#839496",
+        "#6c71c4",
+        "#93a1a1",
+        "#fdf6e3"
+    ]
+}

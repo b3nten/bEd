@@ -18,6 +18,14 @@ from test_remote_helpers import HELPERS, bundle, elf
 
 
 SCRIPTS = Path(__file__).resolve().parents[1]
+THEMES = (
+    "tokyo", "solarized-light", "carbon", "catppuccin-latte", "catppuccin-frappe",
+    "catppuccin-macchiato", "catppuccin-mocha", "rose-pine", "rose-pine-moon",
+    "rose-pine-dawn", "synthwave-84", "everforest-dark-hard", "everforest-dark-medium",
+    "everforest-dark-soft", "everforest-light-hard", "everforest-light-medium",
+    "everforest-light-soft", "oxocarbon-dark", "oxocarbon-light",
+)
+THEME_LICENSES = ("tokyo", "solarized", "carbon", "catppuccin", "rose-pine", "synthwave", "everforest", "oxocarbon")
 RUST_BINDING_NOTICES = [
     f"vendor/{binding}/{license}"
     for binding in ("dear-imgui-sys", "dear-imgui-winit", "dear-imgui-wgpu")
@@ -59,15 +67,20 @@ class DesktopPackageTests(unittest.TestCase):
             "LICENSES/musl-COPYRIGHT.txt": "Retained musl license\n",
             "LICENSES/terminal-adapter-BSL-1.1.txt": "Retained terminal license\n",
             "vendor/freetype-sys/freetype2/docs/FTL.TXT": "Retained font license\n",
-            "resources/config/bed.json": "{}\n",
-            "resources/fonts/SourceCodePro-Regular.ttf": "source font\n",
-            "resources/fonts/Emoji.ttf": "emoji font\n",
+            "resources/config/settings.json": "{}\n",
+            "resources/fonts/PaperMono-Regular.ttf": "source font\n",
+            "resources/fonts/PaperMono-Bold.ttf": "emoji font\n",
             "resources/icons/file.svg": "<svg xmlns='http://www.w3.org/2000/svg'/>\n",
             "assets/bEd.icon/icon.json": "{}\n",
             "resources/queries/rs.scm": "highlight query\n",
             "target/release/bed": "#!/bin/sh\nexit 0\n",
             "target/release/bed-headless": "#!/bin/sh\nexit 0\n",
         }
+        files["resources/fonts/PaperMono-OFL.txt"] = "Paper license\n"
+        for theme in THEMES:
+            files[f"resources/themes/{theme}.json"] = "{}\n"
+        for theme in THEME_LICENSES:
+            files[f"resources/themes/{theme}-LICENSE.txt"] = f"Retained {theme} license\n"
         files.update({name: f"Retained Rust binding notice: {name}\n" for name in RUST_BINDING_NOTICES})
         for name, contents in files.items():
             path = self.root / name
@@ -156,6 +169,11 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
                 icon = package.extractfile(f"usr/share/icons/hicolor/{size}x{size}/apps/bed.png").read()
                 self.assertEqual(png_dimensions(icon), (size, size))
             self.assertFalse(any("/assets/" in name for name in package.getnames()))
+            self.assertEqual({Path(name).name for name in package.getnames() if name.endswith(".ttf")}, {"PaperMono-Regular.ttf", "PaperMono-Bold.ttf"})
+            self.assertEqual(sum(name.endswith(".json") and "/themes/" in name for name in package.getnames()), len(THEMES))
+            for theme in THEME_LICENSES:
+                self.assertEqual(package.extractfile(prefix + f"resources/themes/{theme}-LICENSE.txt").read(),
+                                 (self.root / f"resources/themes/{theme}-LICENSE.txt").read_bytes())
             for notice in RUST_BINDING_NOTICES:
                 self.assertEqual(package.extractfile(prefix + "LICENSES/dependencies/" + notice).read(),
                                  (self.root / notice).read_bytes())
@@ -178,6 +196,11 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
             self.assertEqual(package.read(resources + "resources/icons/bed.png"),
                              (self.root / "assets/bEd-iOS-Default-1024@1x.png").read_bytes())
             self.assertIn(resources + "resources/queries/rs.scm", package.namelist())
+            self.assertEqual({Path(name).name for name in package.namelist() if name.endswith(".ttf")}, {"PaperMono-Regular.ttf", "PaperMono-Bold.ttf"})
+            self.assertEqual(sum(name.endswith(".json") and "/themes/" in name for name in package.namelist()), len(THEMES))
+            for theme in THEME_LICENSES:
+                self.assertEqual(package.read(resources + f"resources/themes/{theme}-LICENSE.txt"),
+                                 (self.root / f"resources/themes/{theme}-LICENSE.txt").read_bytes())
             self.assertFalse(any(name.startswith(resources + "queries/") for name in package.namelist()))
             icon = package.read(resources + "bed.icns")
             self.assertEqual(icon[:4], b"icns")
@@ -198,6 +221,12 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
                                  (self.root / notice).read_bytes())
             for target in HELPERS.TARGETS:
                 self.assertIn(resources + f"remote-helpers/{target}/bed-headless", package.namelist())
+
+    def test_unexpected_runtime_font_prevents_packaging(self):
+        (self.root / "resources/fonts/extra.ttf").write_bytes(b"unexpected font")
+        result = self.run_package("linux")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("extra.ttf", result.stderr)
 
     def test_damaged_helper_prevents_publishing_a_desktop_package(self):
         helper = Path(self.environment["BED_HELPERS_DIR"]) / next(iter(HELPERS.TARGETS)) / "bed-headless"

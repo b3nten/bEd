@@ -1,13 +1,4 @@
-Additional fonts copied unchanged from the pinned nealmick/ned resources.
-Each family retains its embedded copyright/license metadata and the accompanying
-*-LICENSE.txt notice. Source revision: 2d3e9b53b0ebc44c6da6901ff242a95edaa4a1ff.
-
-VT323: VT323-Regular.ttf
-NotoSansMono: NotoSansMono-Regular.ttf, NotoSansMono-Light.ttf, NotoSansMono-Thin.ttf
-JetBrainsMonoNL: JetBrainsMonoNL-Regular.ttf
-NotoColorEmoji: NotoColorEmoji-Regular.ttf, Emoji.ttf
-DejaVuSans: DejaVuSans.ttf
-IBM_MDA: IBM_MDA.ttf
-
-seguiemj.ttf is omitted: its embedded Microsoft license restricts redistribution.
-VT100.ttf is omitted: the embedded creator note supplies no redistribution license.
+Paper Mono v1.000 — Copyright 2025 The Paper-Mono.Git Project Authors
+https://github.com/paper-design/paper-mono
+Regular and Bold are redistributed unmodified under the SIL Open Font License.
+See PaperMono-OFL.txt. No other font families are packaged.

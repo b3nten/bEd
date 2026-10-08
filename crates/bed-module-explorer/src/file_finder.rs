@@ -215,12 +215,9 @@ impl FileFinder {
                         .unwrap_or_default();
                     let icon_size = ui.text_line_height();
                     if let Some(icon) = icons.and_then(|icons| icons.get_for_file(filename)) {
-                        let tint = if icons.is_some_and(|icons| Some(icon) == icons.get("default"))
-                        {
-                            ui.style_color(StyleColor::Text)
-                        } else {
-                            [1.0; 4]
-                        };
+                        let tint = icons.map_or([1.0; 4], |icons| {
+                            icons.file_icon_tint(filename, ui.style_color(StyleColor::Text))
+                        });
                         ui.image_config(icon, [icon_size; 2])
                             .tint_color(tint)
                             .build();

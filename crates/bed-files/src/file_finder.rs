@@ -5,7 +5,11 @@ use std::thread;
 use std::{
     fs, io,
     path::{Component, Path, PathBuf},
-    sync::mpsc::{Receiver, Sender},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{Receiver, Sender},
+    },
     thread::JoinHandle,
     time::{Duration, Instant},
 };
@@ -83,8 +87,29 @@ fn relative_path(path: &Path, root: &Path) -> io::Result<PathBuf> {
 }
 /// Include every regular file, including .git and dot directories. Upstream applies no ignore files.
 pub fn scan_file_list(project_dir: &Path) -> io::Result<Vec<FileEntry>> {
-    fn scan(dir: &Path, root: &Path, out: &mut Vec<FileEntry>) -> io::Result<()> {
-        for item in fs::read_dir(dir)? {
+    scan_file_list_cancellable(project_dir, || false).map(Option::unwrap_or_default)
+}
+fn scan_file_list_cancellable(
+    project_dir: &Path,
+    mut canceled: impl FnMut() -> bool,
+) -> io::Result<Option<Vec<FileEntry>>> {
+    fn scan(
+        dir: &Path,
+        root: &Path,
+        out: &mut Vec<FileEntry>,
+        canceled: &mut impl FnMut() -> bool,
+    ) -> io::Result<bool> {
+        if canceled() {
+            return Ok(false);
+        }
+        let mut entries = fs::read_dir(dir)?;
+        loop {
+            if canceled() {
+                return Ok(false);
+            }
+            let Some(item) = entries.next() else {
+                break;
+            };
             let entry = item?;
             let path = entry.path();
             let Ok(kind) = entry.file_type() else {
@@ -99,15 +124,18 @@ pub fn scan_file_list(project_dir: &Path) -> io::Result<Vec<FileEntry>> {
                 out.push(file);
             }
             // Recursive iterator defaults do not follow directory symlinks.
-            if kind.is_dir() {
-                scan(&path, root, out)?;
+            if kind.is_dir() && !scan(&path, root, out, canceled)? {
+                return Ok(false);
             }
         }
-        Ok(())
+        Ok(true)
     }
     let mut files = Vec::new();
-    scan(project_dir, project_dir, &mut files)?;
-    Ok(files)
+    if scan(project_dir, project_dir, &mut files, &mut canceled)? {
+        Ok(Some(files))
+    } else {
+        Ok(None)
+    }
 }
 /// Substring filter and path-length ranking, preserving the upstream dotfile exception.
 pub fn filter_file_list(files: &[FileEntry], query: &str) -> Vec<FileEntry> {
@@ -146,6 +174,7 @@ pub struct FileFinder {
     worker_sender: Option<Sender<WorkerMessage>>,
     worker_receiver: Option<Receiver<ScanResult>>,
     worker: Option<JoinHandle<()>>,
+    worker_stop: Arc<AtomicBool>,
 }
 impl FileFinder {
     pub fn new() -> Self {
@@ -163,14 +192,21 @@ impl FileFinder {
         }
     }
     fn stop_worker(&mut self) {
+        self.worker_stop.store(true, Ordering::Release);
         if let Some(sender) = self.worker_sender.take() {
             let _ = sender.send(WorkerMessage::Stop);
         }
         self.worker_receiver.take();
-        if let Some(worker) = self.worker.take()
-            && (self.remote_client.is_none() || worker.is_finished())
-        {
-            let _ = worker.join();
+        if let Some(worker) = self.worker.take() {
+            let deadline = Instant::now() + Duration::from_millis(100);
+            while !worker.is_finished() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(2));
+            }
+            if worker.is_finished() {
+                let _ = worker.join();
+            }
+            // Filesystem or remote I/O may remain blocked. The worker owns its
+            // state and keeps the stop flag, so it can safely finish detached.
         }
     }
     pub fn start_background_thread(&mut self) {
@@ -182,13 +218,16 @@ impl FileFinder {
         self.worker_sender = Some(sender);
         self.worker_receiver = Some(receiver);
         let remote = self.remote_client.clone();
+        // A detached old worker must keep its canceled flag when we restart.
+        self.worker_stop = Arc::new(AtomicBool::new(false));
+        let stop = Arc::clone(&self.worker_stop);
         self.worker = Some(thread::spawn(move || {
             let mut project = String::new();
             let mut scanned = String::new();
             let mut generation = 0;
             let mut force_scan = false;
             let mut last_scan = Instant::now();
-            loop {
+            while !stop.load(Ordering::Acquire) {
                 match requests.recv_timeout(Duration::from_millis(100)) {
                     Ok(WorkerMessage::Project(root, next)) => {
                         project = root;
@@ -197,6 +236,9 @@ impl FileFinder {
                     }
                     Ok(WorkerMessage::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                if stop.load(Ordering::Acquire) {
+                    break;
                 }
                 if !project.is_empty()
                     && (force_scan
@@ -221,10 +263,13 @@ impl FileFinder {
                                     "Unexpected remote file-list response",
                                 )),
                             })
+                            .map(Some)
                     } else {
-                        scan_file_list(Path::new(&project))
+                        scan_file_list_cancellable(Path::new(&project), || {
+                            stop.load(Ordering::Acquire)
+                        })
                     };
-                    if let Ok(files) = scan
+                    if let Ok(Some(files)) = scan
                         && results
                             .send(ScanResult {
                                 root: project.clone(),
@@ -408,6 +453,20 @@ mod tests {
         assert!(files.iter().any(|f| f.relative_path == ".git/config"));
     }
     #[test]
+    fn canceled_recursive_scan_discards_partial_results() {
+        let temp = TempDir::new();
+        temp.write("nested/a.rs", b"");
+        temp.write("nested/b.rs", b"");
+        let mut checks = 0;
+        let files = scan_file_list_cancellable(temp.root(), || {
+            checks += 1;
+            checks == 5
+        })
+        .unwrap();
+        assert!(files.is_none());
+        assert_eq!(checks, 5);
+    }
+    #[test]
     fn query_changes_reset_selection_and_commit_is_only_open_signal() {
         let mut finder = FileFinder::new();
         finder.file_list = vec![entry("b.rs"), entry("deep/a.rs")];
@@ -443,6 +502,39 @@ mod tests {
         assert_eq!(finder.filtered_list.len(), 1);
         assert_eq!(finder.filtered_list[0].relative_path, "main.rs");
         finder.start_background_thread();
+    }
+    #[test]
+    fn local_shutdown_does_not_wait_for_a_blocked_scan() {
+        let (release, blocked) = mpsc::channel();
+        let mut finder = FileFinder::new();
+        // Model a filesystem call that cannot observe cancellation until it returns.
+        finder.worker = Some(thread::spawn(move || {
+            let _ = blocked.recv();
+        }));
+        let (done, completed) = mpsc::channel();
+        let shutdown = thread::spawn(move || {
+            drop(finder);
+            let _ = done.send(());
+        });
+        let result = completed.recv_timeout(Duration::from_secs(1));
+        // Always release the worker so a regression fails without hanging the suite.
+        let _ = release.send(());
+        shutdown.join().unwrap();
+        assert!(result.is_ok(), "Shutdown waited for the blocked scan");
+    }
+    #[test]
+    fn restarting_the_worker_keeps_the_previous_scan_canceled() {
+        let (release, blocked) = mpsc::channel();
+        let mut finder = FileFinder::new();
+        let previous_stop = Arc::clone(&finder.worker_stop);
+        finder.worker = Some(thread::spawn(move || {
+            let _ = blocked.recv();
+        }));
+        finder.stop_worker();
+        finder.start_background_thread();
+        let _ = release.send(());
+        assert!(previous_stop.load(Ordering::Acquire));
+        assert!(!finder.worker_stop.load(Ordering::Acquire));
     }
     #[cfg(unix)]
     #[test]

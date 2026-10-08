@@ -783,12 +783,12 @@ impl FileTree {
         let text_x = icon_x + icon_size + icon_text_gap;
         ui.set_cursor_pos([icon_x, center_y - icon_size * 0.5]);
         if let Some(icon) = icon {
-            let tint = if node.is_directory
-                || icons.is_some_and(|icons| Some(icon) == icons.get("default"))
-            {
+            let tint = if node.is_directory {
                 ui.style_color(StyleColor::Text)
             } else {
-                [1.0; 4]
+                icons.map_or([1.0; 4], |icons| {
+                    icons.file_icon_tint(&node.name, ui.style_color(StyleColor::Text))
+                })
             };
             ui.image_config(icon, [icon_size; 2])
                 .tint_color(tint)

@@ -17,7 +17,10 @@ pub struct ShaderSettings {
 }
 impl Default for ShaderSettings {
     fn default() -> Self {
-        Self::subtle()
+        Self {
+            enabled: false,
+            ..Self::subtle()
+        }
     }
 }
 impl ShaderSettings {
@@ -65,7 +68,7 @@ impl ShaderSettings {
             enabled: settings
                 .get("shader_toggle")
                 .and_then(serde_json::Value::as_bool)
-                .unwrap_or(base.enabled),
+                .unwrap_or(false),
             scanline_intensity: number("scanline_intensity", base.scanline_intensity),
             vignet_intensity: number("vignet_intensity", base.vignet_intensity),
             bloom_intensity: number("bloom_intensity", base.bloom_intensity),

@@ -166,7 +166,8 @@ impl MacOsWindow {
         material.setWantsLayer(true);
         content.addSubview(&material);
         // Wgpu creates a Metal sublayer in WinitView's backing layer. Keep the
-        // passive material below it; only the GPU sublayer receives opacity.
+        // passive material below it. The GPU layer keeps full opacity; its
+        // pixels carry background alpha.
         if let Some(layer) = material.layer() {
             layer.setZPosition(-1.0);
         }
@@ -291,7 +292,7 @@ impl MacOsWindow {
         let opacity = opacity.clamp(0.0, 1.0);
         if changed_layer || opacity != self.opacity || blur != self.blur {
             if let Some(layer) = &self.metal {
-                layer.setOpacity(opacity);
+                layer.setOpacity(1.0);
             }
             self.material.setHidden(!blur);
             self.material.setNeedsDisplay(true);
@@ -354,6 +355,9 @@ impl MacOsWindow {
     }
     pub fn content_opacity(&self) -> Option<f32> {
         self.metal.as_ref().map(|layer| layer.opacity())
+    }
+    pub fn content_is_opaque(&self) -> Option<bool> {
+        self.metal.as_ref().map(|layer| layer.isOpaque())
     }
     /// Actual AppKit rectangles in the accessory's coordinate space, after layout.
     pub fn control_frames(&self) -> Vec<[f64; 4]> {

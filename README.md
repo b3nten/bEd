@@ -60,7 +60,7 @@ and docking are restored with the workspace.
 
 Right-click in Files to toggle **Hide Gitignored Files** or **Hide Hidden Files**
 (dot-prefixed names), or right-click a file or folder and choose **Hide from File
-Tree**. Choices are saved per project in `~/bed/config/workspaces.json`, separately
+Tree**. Choices are saved per project in `~/.config/bed/workspaces.json`, separately
 for local and SSH projects; both filters start off. **Show Hidden Files** temporarily
 reveals filtered entries dimmed, with **Unhide from File Tree** for manually hidden
 paths. Hiding a folder covers its subtree. These controls affect only the tree.
@@ -282,17 +282,46 @@ Folders outside Git include all regular files. Progress and matches arrive
 while searching; Cancel stops the scan. Broad queries stop at 100,000 matches
 and display the result limit.
 
-Sharp is the default effect preset: subtle scanlines/vignette/bloom with no
-jitter, pixelation, color shift, pulse or temporal blur. Off, Legacy and Custom
-are available in Settings. Picking Sharp preserves existing profile values;
-Customize copies the visible parameters before editing them.
+Shaders are off by default. Sharp, Legacy, and Custom presets are available in
+Settings → Effects. Customize copies the current effect parameters before editing.
+Effects preserve background transparency, including temporal burn-in.
 
-Standalone settings and keybind defaults are seeded into `~/bed/config`.
-`--config-dir DIRECTORY` selects another location.
-`bed.json` selects the active settings profile. Existing `ned.json` settings
-migrate automatically, preserving the selected profile and the original file.
-`effects.json` stores the chosen preset; `workspaces.json` stores recent projects
-and per-project layouts. Existing theme, keybind and LSP formats remain supported.
+Standalone preferences live in `~/.config/bed/settings.json`.
+`--config-dir DIRECTORY` selects another location. The new configuration starts
+fresh; older `~/bed/config` files are left untouched and are not imported.
+Settings are grouped in a category sidebar: General, Appearance, Theme Editor, Editor, Terminal,
+Effects, Keybindings, and Extensions. UI changes save automatically; settings and
+selected custom theme JSON files reload while the app runs. Invalid JSON retains
+the last valid state and must be repaired before the UI can save that file.
+
+Themes contain colors only. Switching themes preserves font, font size, opacity,
+shader settings, and editor preferences. The nineteen built-ins are Tokyo Night (the
+default), Solarized Light, Carbon, four Catppuccin flavors, and Rosé Pine, Moon,
+and Dawn, Synthwave ’84, six Everforest light/dark contrast variants, and Oxocarbon
+Light and Dark. Theme Editor starts by opening a saved custom theme or cloning
+an existing theme. Then name it and edit UI, syntax, and terminal colors with
+pickers or hex inputs. Save it to
+`~/.config/bed/themes`; Save & Apply also selects it. You can reopen saved themes,
+paste Bed theme JSON, and copy a draft's JSON. Drafts stay independent in each
+settings panel and are written only when saved. See
+[the theme format](resources/themes/README.md) for color roles and examples.
+Bundled tab bars share the main background color; custom themes can override
+`ui.tab_bar`.
+
+Paper Mono at 20 px is the default shared UI, editor, and terminal font. Appearance
+also offers installed monospace families. Missing selections fall back to Paper
+Mono; missing glyphs use installed symbol, CJK, and emoji fonts where available.
+Only Paper Mono Regular and Bold are packaged, with their OFL license.
+The font-size dropdown offers whole-pixel sizes from 10 through 40.
+
+Background opacity starts at 100%. It affects editor, terminal, panel, tab, and
+window backgrounds on macOS and Linux compositors that support transparency.
+Text, icons, controls, selections, and media retain their own opacity. Menus,
+popups, and dialogs stay opaque. macOS also offers background blur. Panel opening
+fades last 300 ms; Appearance can disable UI animations.
+
+`keybinds.json` and `lsp.json` remain separate configuration files;
+`workspaces.json` stores recent projects and per-project layouts.
 
 Useful shortcuts:
 
@@ -306,7 +335,7 @@ Useful shortcuts:
 - Cmd/Ctrl+T: reveal a terminal panel. File/View/Window menus expose new
   documents, terminals, duplicate views, splits, panel tools and layout reset.
 
-Language servers are configured in `~/bed/config/lsp.json`. Rust discovery
+Language servers are configured in `~/.config/bed/lsp.json`. Rust discovery
 checks configured paths, PATH and rustup shims, with the project directory and
 inherited environment passed to the server. Language Servers shows executable
 resolution, startup errors and stderr, with a Restart action. A workspace keeps
@@ -455,7 +484,7 @@ To measure shader cost on your GPU, run:
 ```sh
 cargo run --release --locked -p bed-effects --example profile_effects -- 3024 1964
 # Optionally include a settings profile as the third argument:
-cargo run --release --locked -p bed-effects --example profile_effects -- 3024 1964 ~/bed/config/solarized-light.json
+cargo run --release --locked -p bed-effects --example profile_effects -- 3024 1964 ~/.config/bed/settings.json
 ```
 
 Dimensions are physical pixels. The profiler uses GPU timestamps, discards a

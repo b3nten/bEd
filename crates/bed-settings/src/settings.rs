@@ -1,6 +1,10 @@
-//! Desktop profile lifecycle and appearance. Embedded consumers provide their
+//! Desktop preferences and appearance. Embedded consumers provide their
 //! configuration explicitly through the reusable session and view APIs.
-use crate::{font::Font, keybinds::KeybindsManager};
+use crate::{
+    font::Font,
+    keybinds::KeybindsManager,
+    theme::{BUILTIN_THEMES, DEFAULT_THEME, Theme, ThemeDraft},
+};
 use bed_document_session::editor::Editor;
 use bed_editing::util::color::{blend, ensure_contrast};
 use dear_imgui_rs::{Context, StyleColor};
@@ -10,17 +14,15 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 
-pub const PRIMARY_PROFILE: &str = "bed.json";
-const LEGACY_PRIMARY_PROFILE: &str = "ned.json";
+pub const SETTINGS_FILE: &str = "settings.json";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EffectPreset {
-    #[default]
     Sharp,
+    #[default]
     Off,
     Legacy,
     Custom,
@@ -72,9 +74,13 @@ pub struct Settings {
     pub config_dir: PathBuf,
     pub resources_root: PathBuf,
     pub settings_path: PathBuf,
-    disk_time: Option<SystemTime>,
+    pub theme: Theme,
+    pub theme_draft: ThemeDraft,
+    disk_contents: Option<Vec<u8>>,
+    theme_contents: Vec<u8>,
     needs_apply: bool,
     pub error: Option<String>,
+    pub reload_error: Option<String>,
 }
 
 impl Settings {
@@ -85,7 +91,7 @@ impl Settings {
         let keybinds = KeybindsManager::new(&config_dir, &resources_root);
         let mut this = Self {
             settings: json!({}),
-            effect_preset: EffectPreset::Sharp,
+            effect_preset: EffectPreset::Off,
             keybinds,
             font: Font::default(),
             sidebar_visible: true,
@@ -94,28 +100,24 @@ impl Settings {
             request_config_file: None,
             is_embedded: false,
             config_dir,
-            resources_root,
+            resources_root: resources_root.clone(),
             settings_path: PathBuf::new(),
-            disk_time: None,
+            theme: Theme::load(&resources_root.join("resources/themes/tokyo.json"))?,
+            theme_draft: ThemeDraft::default(),
+            disk_contents: None,
+            theme_contents: Vec::new(),
             needs_apply: true,
             error: None,
+            reload_error: None,
         };
         this.load_settings()?;
-        if let Ok(effects) = read_json(&this.config_dir.join("effects.json")) {
-            this.effect_preset = match effects["preset"].as_str() {
-                Some("off") => EffectPreset::Off,
-                Some("legacy") => EffectPreset::Legacy,
-                Some("custom") => EffectPreset::Custom,
-                _ => EffectPreset::Sharp,
-            };
-        }
         this.keybinds.load_keybinds()?;
         Ok(this)
     }
     pub fn get_user_config_dir() -> io::Result<PathBuf> {
         std::env::var_os("HOME")
             .filter(|s| !s.is_empty())
-            .map(|home| PathBuf::from(home).join("bed/config"))
+            .map(|home| PathBuf::from(home).join(".config/bed"))
             .ok_or_else(|| {
                 io::Error::new(io::ErrorKind::NotFound, "Home directory is not set (HOME)")
             })
@@ -145,252 +147,257 @@ impl Settings {
             .map(|path| fs::canonicalize(&path).unwrap_or(path))
             .unwrap_or(cwd)
     }
-    fn bundled_path(&self) -> PathBuf {
-        self.resources_root
-            .join("resources/config")
-            .join(PRIMARY_PROFILE)
-    }
-    fn primary_path(&self) -> PathBuf {
-        self.config_dir.join(PRIMARY_PROFILE)
-    }
-    fn selects_legacy_profile(&self, name: &str) -> bool {
-        self.selects_profile(name, LEGACY_PRIMARY_PROFILE)
-    }
-    fn selects_profile(&self, name: &str, profile: &str) -> bool {
-        name == profile
-            || fs::canonicalize(self.config_dir.join(name))
-                .ok()
-                .zip(fs::canonicalize(self.config_dir.join(profile)).ok())
-                .is_some_and(|(selected, expected)| selected == expected)
-    }
-    fn write_primary(&self, value: &Value) -> io::Result<()> {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let primary = self.primary_path();
-        let temporary = self.config_dir.join(format!(
-            ".bed-profile-{}-{}.tmp",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let result = (|| {
-            let mut options = fs::OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            let file = options.open(&temporary)?;
-            write_json_contents(&file, value)?;
-            if let Ok(metadata) = fs::metadata(&primary) {
-                fs::set_permissions(&temporary, metadata.permissions())?;
-            }
-            file.sync_all()?;
-            drop(file);
-            // Replace the directory entry itself, so a legacy-targeting Bed
-            // symlink or hard link never causes a write to the original file.
-            fs::rename(&temporary, &primary)
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        result
-    }
-    fn migrate_legacy_primary(&self) -> io::Result<()> {
-        let primary = self.primary_path();
-        if primary.try_exists()? {
-            return Ok(());
-        }
-        let Ok(mut legacy) = read_json(&self.config_dir.join(LEGACY_PRIMARY_PROFILE)) else {
-            return Ok(());
-        };
-        if !legacy.is_object() {
-            return Ok(());
-        }
-        if legacy["settings_file"]
-            .as_str()
-            .is_none_or(|name| self.selects_legacy_profile(name))
-        {
-            legacy["settings_file"] = json!(PRIMARY_PROFILE);
-        }
-        // Never overwrite a Bed profile created by another running instance.
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let file = match options.open(&primary) {
-            Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(()),
-            Err(error) => return Err(error),
-        };
-        let result = write_json_contents(file, &legacy);
-        if result.is_err() {
-            let _ = fs::remove_file(&primary);
-        }
-        result
-    }
-    fn legacy_profile(&self) -> io::Result<Value> {
-        let mut profile = read_json(&self.config_dir.join(LEGACY_PRIMARY_PROFILE))?;
-        if !profile.is_object() {
+    fn read_preferences(bytes: &[u8]) -> io::Result<Value> {
+        let value: Value = serde_json::from_slice(bytes)?;
+        if !value.is_object() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Legacy settings are not an object",
+                "settings.json must contain an object",
             ));
         }
-        profile["settings_file"] = json!(PRIMARY_PROFILE);
-        Ok(profile)
-    }
-    fn touch_disk_time(&mut self) {
-        self.disk_time = fs::metadata(&self.settings_path)
-            .ok()
-            .and_then(|m| m.modified().ok());
-    }
-    fn load_bundled(&mut self) -> io::Result<()> {
-        self.settings_path = self.bundled_path();
-        self.settings = read_json(&self.settings_path)?;
-        if !self.settings.is_object() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Bundled settings are not an object",
-            ));
-        }
-        self.needs_apply = true;
-        Ok(())
+        Ok(value)
     }
     pub fn load_settings(&mut self) -> io::Result<()> {
-        fs::create_dir_all(&self.config_dir)?;
-        self.migrate_legacy_primary()?;
-        for entry in fs::read_dir(self.resources_root.join("resources/config"))? {
-            let entry = entry?;
-            if entry.file_type()?.is_file() {
-                let dest = self.config_dir.join(entry.file_name());
-                if !dest.exists() {
-                    fs::copy(entry.path(), dest)?;
-                }
+        fs::create_dir_all(self.config_dir.join("themes"))?;
+        self.settings_path = self.config_dir.join(SETTINGS_FILE);
+        for name in [SETTINGS_FILE, "keybinds.json", "lsp.json"] {
+            let source = self.resources_root.join("resources/config").join(name);
+            let destination = self.config_dir.join(name);
+            let bytes = fs::read(source)?;
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&destination)
+            {
+                Ok(mut file) => file.write_all(&bytes)?,
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e),
             }
         }
-        let primary = self.primary_path();
-        let Ok(mut pointer) = read_json(&primary) else {
-            return self.load_bundled();
-        };
-        if !pointer.is_object() {
-            return self.load_bundled();
-        }
-        if pointer["settings_file"].as_str().is_none() {
-            pointer["settings_file"] = json!(PRIMARY_PROFILE);
-            self.write_primary(&pointer)?;
-        } else if self
-            .selects_legacy_profile(pointer["settings_file"].as_str().expect("validated string"))
-        {
-            let Ok(profile) = self.legacy_profile() else {
-                return self.load_bundled();
-            };
-            self.write_primary(&profile)?;
-            pointer = profile;
-        }
-        self.settings_path = self
-            .config_dir
-            .join(pointer["settings_file"].as_str().expect("validated string"));
-        let Ok(profile) = read_json(&self.settings_path) else {
-            return self.load_bundled();
-        };
-        if !profile.is_object() {
-            return self.load_bundled();
-        }
-        self.settings = profile;
-        self.touch_disk_time();
+        self.settings = Self::read_preferences(&fs::read(
+            self.resources_root.join("resources/config/settings.json"),
+        )?)?;
+        self.check_settings_file();
         self.needs_apply = true;
         Ok(())
     }
     pub fn save_settings(&mut self) -> io::Result<()> {
-        if self.settings_path == self.primary_path() {
-            self.write_primary(&self.settings)?;
-        } else {
-            write_json(&self.settings_path, &self.settings)?;
+        // A broken external edit must be repaired by its author, never silently
+        // replaced by the UI's last valid in-memory preferences.
+        match fs::read(&self.settings_path) {
+            Ok(bytes) => {
+                Self::read_preferences(&bytes)?;
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
         }
-        self.touch_disk_time();
+        crate::persistence::write_atomic(&self.settings_path, &self.settings)?;
+        self.disk_contents = Some(fs::read(&self.settings_path)?);
         Ok(())
     }
     pub fn check_settings_file(&mut self) -> bool {
-        let modified = fs::metadata(&self.settings_path)
-            .ok()
-            .and_then(|m| m.modified().ok());
-        if modified.is_none() || modified <= self.disk_time {
-            return false;
-        }
-        if let Ok(settings) = read_json(&self.settings_path) {
-            self.settings = settings;
-            self.disk_time = modified;
-            self.needs_apply = true;
-            return true;
-        }
-        false
-    }
-    pub fn switch_to_profile(&mut self, name: &str) -> io::Result<()> {
-        let legacy = self.selects_legacy_profile(name);
-        let path = if legacy {
-            self.primary_path()
-        } else {
-            self.config_dir.join(name)
-        };
-        let mut loaded = if legacy {
-            self.legacy_profile()?
-        } else {
-            read_json(&path)?
-        };
-        let primary = self.primary_path();
-        let mut pointer = if legacy {
-            loaded.clone()
-        } else {
-            read_json(&primary)?
-        };
-        if !pointer.is_object() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Profile pointer is not an object",
-            ));
-        }
-        let primary_selected = legacy || self.selects_profile(name, PRIMARY_PROFILE);
-        pointer["settings_file"] = json!(if primary_selected {
-            PRIMARY_PROFILE
-        } else {
-            name
-        });
-        self.write_primary(&pointer)?;
-        if primary_selected {
-            loaded = pointer;
-        }
-        self.settings = loaded;
-        self.settings_path = if primary_selected { primary } else { path };
-        self.touch_disk_time();
-        self.needs_apply = true;
-        Ok(())
-    }
-    pub fn list_profiles(&self) -> Vec<String> {
-        let mut profiles = Vec::new();
-        if let Ok(entries) = fs::read_dir(&self.config_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let name = entry.file_name().to_string_lossy().into_owned();
-                if path.is_file()
-                    && path.extension().is_some_and(|e| e == "json")
-                    && ![
-                        "keybinds.json",
-                        "default-keybinds.json",
-                        "lsp.json",
-                        ".undo-redo-bed.json",
-                        LEGACY_PRIMARY_PROFILE,
-                    ]
-                    .contains(&name.as_str())
-                {
-                    profiles.push(name);
+        let mut changed = false;
+        self.reload_error = None;
+        match fs::read(&self.settings_path) {
+            Ok(bytes) if self.disk_contents.as_ref() != Some(&bytes) => {
+                match Self::read_preferences(&bytes) {
+                    Ok(value) => {
+                        self.settings = value;
+                        self.disk_contents = Some(bytes);
+                        self.reload_error = None;
+                        self.sync_effect_preset();
+                        changed = true;
+                    }
+                    Err(e) => {
+                        self.reload_error = Some(format!(
+                            "{}: {e}. Repair the JSON to resume saving.",
+                            self.settings_path.display()
+                        ))
+                    }
                 }
             }
+            Err(e) => self.reload_error = Some(format!("{}: {e}", self.settings_path.display())),
+            _ => {}
         }
-        profiles.sort();
-        profiles
+        match self.refresh_theme() {
+            Ok(reloaded) => changed |= reloaded,
+            Err(e) => self.reload_error = Some(e.to_string()),
+        }
+        self.needs_apply |= changed;
+        changed
+    }
+    fn sync_effect_preset(&mut self) {
+        self.effect_preset = match self.settings["effect_preset"].as_str() {
+            Some("sharp") => EffectPreset::Sharp,
+            Some("legacy") => EffectPreset::Legacy,
+            Some("custom") => EffectPreset::Custom,
+            _ => EffectPreset::Off,
+        };
+    }
+    pub fn theme_path(&self, selection: &str) -> io::Result<PathBuf> {
+        if BUILTIN_THEMES.contains(&selection) {
+            return Ok(self
+                .resources_root
+                .join("resources/themes")
+                .join(format!("{selection}.json")));
+        }
+        let path = Path::new(selection);
+        if selection.starts_with("themes/")
+            && path.extension().is_some_and(|e| e == "json")
+            && path
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return Ok(self.config_dir.join(path));
+        }
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Unknown theme '{selection}'; choose a built-in ID or themes/<name>.json"),
+        ))
+    }
+    fn refresh_theme(&mut self) -> io::Result<bool> {
+        let selection = self.settings["theme"].as_str().unwrap_or(DEFAULT_THEME);
+        let path = self.theme_path(selection)?;
+        let bytes = fs::read(&path)
+            .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))?;
+        if bytes == self.theme_contents {
+            return Ok(false);
+        }
+        let theme = Theme::from_json(&serde_json::from_slice(&bytes).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{}: {e}", path.display()),
+            )
+        })?)
+        .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))?;
+        self.theme = theme;
+        self.theme_contents = bytes;
+        Ok(true)
+    }
+    pub fn select_theme(&mut self, selection: &str) -> io::Result<()> {
+        // Validate before changing the selection or writing any preferences.
+        Theme::load(&self.theme_path(selection)?)?;
+        let previous = self.settings["theme"].clone();
+        self.settings["theme"] = json!(selection);
+        if let Err(e) = self.save_settings() {
+            self.settings["theme"] = previous;
+            return Err(e);
+        }
+        self.refresh_theme()?;
+        self.request_apply();
+        Ok(())
+    }
+    pub fn list_themes(&self) -> Vec<(String, String)> {
+        let mut themes: Vec<_> = BUILTIN_THEMES
+            .iter()
+            .filter_map(|id| {
+                Theme::load(&self.theme_path(id).ok()?)
+                    .ok()
+                    .map(|t| (id.to_string(), t.name))
+            })
+            .collect();
+        if let Ok(entries) = fs::read_dir(self.config_dir.join("themes")) {
+            let mut custom: Vec<_> = entries
+                .flatten()
+                .filter_map(|entry| {
+                    let path = entry.path();
+                    if !path.is_file() || path.extension().is_none_or(|e| e != "json") {
+                        return None;
+                    }
+                    let label = Theme::load(&path).map_or_else(
+                        |_| format!("{} (invalid JSON)", entry.file_name().to_string_lossy()),
+                        |t| t.name,
+                    );
+                    Some((
+                        format!("themes/{}", entry.file_name().to_string_lossy()),
+                        format!("{label} (custom)"),
+                    ))
+                })
+                .collect();
+            custom.sort();
+            themes.extend(custom);
+        }
+        themes
+    }
+    pub fn load_theme(&self, selection: &str) -> io::Result<Theme> {
+        Theme::load(&self.theme_path(selection)?)
+    }
+
+    /// Save a validated color-only theme. New drafts receive a unique filename;
+    /// an existing custom selection is the only destination that can be updated.
+    pub fn save_custom_theme(
+        &mut self,
+        destination: Option<&str>,
+        value: &Value,
+    ) -> io::Result<String> {
+        let theme = Theme::from_json(value)?;
+        let value = theme.to_json();
+        if let Some(selection) = destination {
+            if !selection.starts_with("themes/") || Path::new(selection).components().count() != 2 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Only custom themes can be edited",
+                ));
+            }
+            let path = self.theme_path(selection)?;
+            if !path.is_file() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "Custom theme no longer exists; clone it to save a new copy",
+                ));
+            }
+            crate::persistence::write_atomic(&path, &value)?;
+            self.check_settings_file();
+            return Ok(selection.to_owned());
+        }
+        let mut slug = String::new();
+        for c in theme.name.chars() {
+            if c.is_ascii_alphanumeric() {
+                slug.push(c.to_ascii_lowercase());
+            } else if !slug.is_empty() && !slug.ends_with('-') {
+                slug.push('-');
+            }
+            if slug.len() >= 80 {
+                break;
+            }
+        }
+        let slug = slug.trim_end_matches('-');
+        let slug = if slug.is_empty() {
+            "custom-theme"
+        } else {
+            slug
+        };
+        for index in 1.. {
+            let selection = if index == 1 {
+                format!("themes/{slug}.json")
+            } else {
+                format!("themes/{slug}-{index}.json")
+            };
+            let path = self.theme_path(&selection)?;
+            match crate::persistence::write_atomic_new(&path, &value) {
+                Ok(()) => return Ok(selection),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        unreachable!()
+    }
+    pub fn background_opacity(&self) -> f32 {
+        self.number("background_opacity", 1.0).clamp(0.0, 1.0)
+    }
+    /// Opaque theme color used for contrast and transient surfaces. Background
+    /// opacity is applied to rendered backgrounds, never to foreground ink.
+    pub fn background_color(&self) -> [f32; 4] {
+        self.theme.background
+    }
+    pub fn text_color(&self) -> [f32; 4] {
+        ensure_contrast(self.theme.foreground, self.theme.background, 4.5)
+    }
+    pub fn accent_color(&self) -> [f32; 4] {
+        ensure_contrast(self.theme.accent, self.theme.background, 3.0)
+    }
+    pub fn highlight_colors(&self) -> bed_highlight::tree_sitter::ThemeColors {
+        self.theme.syntax.clone()
     }
     pub fn bool(&self, key: &str, default: bool) -> bool {
         self.settings[key].as_bool().unwrap_or(default)
@@ -402,7 +409,7 @@ impl Settings {
             .map_or(default, |v| v as f32)
     }
     pub fn font_size(&self) -> f32 {
-        self.number("fontSize", 20.0).max(1.0)
+        self.number("fontSize", 20.0).clamp(4.0, 64.0)
     }
     pub fn autosave_enabled(&self) -> bool {
         self.bool("autosave", true)
@@ -423,6 +430,7 @@ impl Settings {
             },
             EffectPreset::Legacy => {
                 let mut legacy = ShaderSettings::from_json(&self.settings);
+                legacy.enabled = true;
                 legacy.pulse_intensity = self.number("pulse_intensity", 0.05);
                 legacy
             }
@@ -430,10 +438,8 @@ impl Settings {
         }
     }
     pub fn set_effect_preset(&mut self, preset: EffectPreset) -> io::Result<()> {
-        crate::persistence::write_atomic(
-            &self.config_dir.join("effects.json"),
-            &json!({"version":1,"preset":preset.name()}),
-        )?;
+        self.settings["effect_preset"] = json!(preset.name());
+        self.save_settings()?;
         self.effect_preset = preset;
         Ok(())
     }
@@ -458,31 +464,6 @@ impl Settings {
         self.save_settings()?;
         self.set_effect_preset(EffectPreset::Custom)
     }
-    pub fn background_color(&self) -> [f32; 4] {
-        color(
-            &self.settings["backgroundColor"],
-            [0.09061047, 0.09061049, 0.13687152, 1.0],
-        )
-    }
-    pub fn text_color(&self) -> [f32; 4] {
-        let theme = self.settings["theme"].as_str().unwrap_or("default");
-        ensure_contrast(
-            color(&self.settings["themes"][theme]["text"], [1.0; 4]),
-            self.background_color(),
-            4.5,
-        )
-    }
-    pub fn accent_color(&self) -> [f32; 4] {
-        let theme = self.settings["theme"].as_str().unwrap_or("default");
-        ensure_contrast(
-            color(
-                &self.settings["themes"][theme]["function"],
-                self.text_color(),
-            ),
-            self.background_color(),
-            3.0,
-        )
-    }
     pub fn rainbow(&self) -> bool {
         self.bool("rainbow", true)
     }
@@ -494,13 +475,13 @@ impl Settings {
             return Ok(false);
         }
         self.needs_apply = false;
-        if !self.settings.is_object() {
-            self.load_bundled()?;
-            self.needs_apply = false;
+        self.sync_effect_preset();
+        if let Err(e) = self.refresh_theme() {
+            self.reload_error = Some(e.to_string());
         }
         let name = self.settings["font"]
             .as_str()
-            .unwrap_or("SourceCodePro-Regular")
+            .unwrap_or("Paper Mono")
             .to_owned();
         self.font.set_font(&name, self.font_size());
         // Embedding shares the host's atlas. Append our own fonts and leave the
@@ -524,25 +505,26 @@ impl Settings {
                 3.0,
             ),
         );
-        style.set_color(
-            StyleColor::TextSelectedBg,
-            blend(self.accent_color(), self.background_color(), 0.20),
-        );
+        style.set_color(StyleColor::TextSelectedBg, self.theme.selection);
         style.set_color(StyleColor::ScrollbarBg, [0.0; 4]);
         if !self.is_embedded {
             let bg = self.background_color();
-            let opaque = [bg[0], bg[1], bg[2], 1.0];
-            style.set_color(StyleColor::WindowBg, bg);
+            let opacity = self.background_opacity();
+            let panel = [bg[0], bg[1], bg[2], opacity];
+            let tab_bar = self.theme.tab_bar;
+            let chrome = [tab_bar[0], tab_bar[1], tab_bar[2], opacity];
+            style.set_color(StyleColor::WindowBg, panel);
+            // Children share their parent's single background fill.
+            style.set_color(StyleColor::ChildBg, [0.0; 4]);
             for slot in [
-                StyleColor::ChildBg,
                 StyleColor::TitleBg,
                 StyleColor::TitleBgActive,
                 StyleColor::TitleBgCollapsed,
                 StyleColor::MenuBarBg,
-                StyleColor::DockingEmptyBg,
             ] {
-                style.set_color(slot, opaque);
+                style.set_color(slot, chrome);
             }
+            style.set_color(StyleColor::DockingEmptyBg, panel);
             for slot in [
                 StyleColor::Tab,
                 StyleColor::TabSelected,
@@ -557,11 +539,14 @@ impl Settings {
                 style.set_color(slot, [0.0; 4]);
             }
             style.set_color(StyleColor::TabHovered, [text[0], text[1], text[2], 0.12]);
-            for (slot, color) in
-                bed_ui::util::popup_style::control_colors(bg, text, self.accent_color())
-            {
+            for (slot, color) in bed_ui::util::popup_style::control_colors(
+                self.theme.surface,
+                text,
+                self.accent_color(),
+            ) {
                 style.set_color(slot, color);
             }
+            style.set_color(StyleColor::TextSelectedBg, self.theme.selection);
             let fs = self.font_size();
             style.set_frame_rounding(fs * 0.25);
             style.set_frame_border_size(1.0);
@@ -581,7 +566,7 @@ impl Settings {
         editor.highlight.enabled = self.bool("treesitter", true);
         editor.set_git_changed_lines(self.bool("git_changed_lines", true));
         editor.highlight.force_color_update(
-            bed_highlight::tree_sitter::ThemeColors::from_settings(&self.settings),
+            self.highlight_colors(),
             &editor.state,
             &mut editor.ops,
         );
@@ -600,27 +585,9 @@ impl Settings {
     }
 }
 
-fn color(value: &Value, default: [f32; 4]) -> [f32; 4] {
-    let Some(array) = value.as_array().filter(|a| a.len() >= 3) else {
-        return default;
-    };
-    let mut result = default;
-    for (i, v) in array.iter().take(4).enumerate() {
-        let Some(number) = v.as_f64().filter(|v| v.is_finite()) else {
-            return default;
-        };
-        result[i] = number as f32;
-    }
-    if array.len() == 3 {
-        result[3] = 1.0;
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dear_imgui_rs::Key;
     use std::sync::atomic::{AtomicUsize, Ordering};
     struct TempDir(PathBuf);
     impl TempDir {
@@ -647,302 +614,6 @@ mod tests {
         )
         .unwrap()
     }
-    #[test]
-    fn autosave_defaults_limits_and_profile_changes_persist() {
-        let temp = TempDir::new();
-        let mut current = settings(&temp);
-        assert!(current.autosave_enabled());
-        assert_eq!(current.autosave_delay(), Duration::from_millis(1000));
-        for (configured, expected) in [(-10, 100), (0, 100), (2500, 2500), (90_000, 60_000)] {
-            current.settings["autosave_delay_ms"] = json!(configured);
-            assert_eq!(current.autosave_delay(), Duration::from_millis(expected));
-        }
-        current.settings["autosave_delay_ms"] = json!("invalid");
-        assert_eq!(current.autosave_delay(), Duration::from_millis(1000));
-        current.settings["autosave"] = json!(false);
-        current.settings["autosave_delay_ms"] = json!(2500);
-        current.save_settings().unwrap();
-        let restarted = settings(&temp);
-        assert!(!restarted.autosave_enabled());
-        assert_eq!(restarted.autosave_delay(), Duration::from_millis(2500));
-    }
-
-    #[test]
-    fn seeds_missing_defaults_only_and_follows_primary_profile_pointer() {
-        let temp = TempDir::new();
-        let mut first = settings(&temp);
-        assert_eq!(first.settings_path.file_name().unwrap(), "tokyo.json");
-        assert_eq!(
-            read_json(&temp.0.join("bed.json")).unwrap()["settings_file"],
-            "tokyo.json"
-        );
-        assert!(!temp.0.join("ned.json").exists());
-        assert_eq!(
-            first.keybinds.get_action_key("toggle_file_finder"),
-            Some(Key::P)
-        );
-        first.settings["fontSize"] = json!(31);
-        first.save_settings().unwrap();
-        fs::remove_file(temp.0.join("amber.json")).unwrap();
-        let second = settings(&temp);
-        assert_eq!(second.font_size(), 31.0);
-        assert!(temp.0.join("amber.json").exists());
-    }
-
-    #[test]
-    fn profile_switch_persists_pointer_and_preserves_source_formats() {
-        let temp = TempDir::new();
-        let mut first = settings(&temp);
-        first.switch_to_profile("amber.json").unwrap();
-        assert_eq!(
-            read_json(&temp.0.join("bed.json")).unwrap()["settings_file"],
-            "amber.json"
-        );
-        let second = settings(&temp);
-        assert_eq!(second.settings_path.file_name().unwrap(), "amber.json");
-        assert!(second.list_profiles().contains(&"amber.json".to_owned()));
-        assert!(!second.list_profiles().contains(&"keybinds.json".to_owned()));
-        assert!(!second.list_profiles().contains(&"lsp.json".to_owned()));
-    }
-
-    #[test]
-    fn switching_back_to_bed_then_saving_keeps_bed_selected_after_restart() {
-        for name in ["bed.json", "./bed.json"] {
-            let temp = TempDir::new();
-            let mut current = settings(&temp);
-            current.switch_to_profile("amber.json").unwrap();
-            current.switch_to_profile(name).unwrap();
-            assert_eq!(current.settings["settings_file"], "bed.json");
-            assert_eq!(current.settings_path, temp.0.join("bed.json"));
-            current.settings["fontSize"] = json!(34);
-            current.save_settings().unwrap();
-            let restarted = settings(&temp);
-            assert_eq!(restarted.settings_path, temp.0.join("bed.json"));
-            assert_eq!(restarted.font_size(), 34.0);
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn bed_primary_links_to_legacy_are_detached_without_modifying_legacy_source() {
-        for symbolic in [false, true] {
-            let temp = TempDir::new();
-            let legacy = b"{\"settings_file\":\"bed.json\",\"fontSize\":39}\n";
-            fs::write(temp.0.join("ned.json"), legacy).unwrap();
-            if symbolic {
-                std::os::unix::fs::symlink("ned.json", temp.0.join("bed.json")).unwrap();
-            } else {
-                fs::hard_link(temp.0.join("ned.json"), temp.0.join("bed.json")).unwrap();
-            }
-            let mut migrated = settings(&temp);
-            assert_eq!(migrated.settings_path, temp.0.join("bed.json"));
-            assert_eq!(migrated.font_size(), 39.0);
-            migrated.settings["fontSize"] = json!(40);
-            migrated.save_settings().unwrap();
-            assert_eq!(settings(&temp).font_size(), 40.0);
-            assert_eq!(fs::read(temp.0.join("ned.json")).unwrap(), legacy);
-            assert!(
-                !fs::symlink_metadata(temp.0.join("bed.json"))
-                    .unwrap()
-                    .file_type()
-                    .is_symlink()
-            );
-        }
-    }
-
-    #[test]
-    fn absent_pointer_uses_primary_and_bad_active_profile_uses_bundled_default() {
-        let temp = TempDir::new();
-        let mut first = settings(&temp);
-        write_json(&temp.0.join("bed.json"), &json!({"fontSize":24})).unwrap();
-        first.load_settings().unwrap();
-        assert_eq!(first.font_size(), 24.0);
-        assert_eq!(
-            read_json(&temp.0.join("bed.json")).unwrap()["settings_file"],
-            "bed.json"
-        );
-        fs::write(
-            temp.0.join("bed.json"),
-            b"{\"settings_file\":\"missing.json\"}",
-        )
-        .unwrap();
-        first.load_settings().unwrap();
-        assert_eq!(first.settings_path, first.bundled_path());
-    }
-
-    #[test]
-    fn legacy_default_profiles_migrate_without_changing_the_original_file() {
-        for pointer in [None, Some("ned.json"), Some("./ned.json")] {
-            let temp = TempDir::new();
-            let mut legacy = json!({"fontSize":27, "custom":{"retained":[1,2,3]}});
-            if let Some(pointer) = pointer {
-                legacy["settings_file"] = json!(pointer);
-            }
-            let original = format!("{}\n// retain legacy comments\n", legacy);
-            fs::write(temp.0.join("ned.json"), original.as_bytes()).unwrap();
-            let mut migrated = settings(&temp);
-            assert_eq!(migrated.settings_path, temp.0.join("bed.json"));
-            assert_eq!(migrated.font_size(), 27.0);
-            assert_eq!(migrated.settings["custom"]["retained"], json!([1, 2, 3]));
-            assert_eq!(migrated.settings["settings_file"], "bed.json");
-            migrated.settings["fontSize"] = json!(32);
-            migrated.save_settings().unwrap();
-            assert_eq!(settings(&temp).font_size(), 32.0);
-            assert_eq!(
-                fs::read(temp.0.join("ned.json")).unwrap(),
-                original.as_bytes()
-            );
-            assert!(!migrated.list_profiles().contains(&"ned.json".to_owned()));
-        }
-    }
-
-    #[test]
-    fn legacy_custom_profile_selection_and_settings_survive_migration_and_reload() {
-        let temp = TempDir::new();
-        let legacy = b"{\"settings_file\":\"my-theme.json\",\"fontSize\":29,\"custom\":true}\n";
-        let custom = b"{\"fontSize\":35,\"theme\":\"my-own-theme\",\"unknown\":{\"keep\":true}}\n";
-        fs::write(temp.0.join("ned.json"), legacy).unwrap();
-        fs::write(temp.0.join("my-theme.json"), custom).unwrap();
-        let first = settings(&temp);
-        assert_eq!(first.settings_path, temp.0.join("my-theme.json"));
-        assert_eq!(first.font_size(), 35.0);
-        assert_eq!(first.settings["unknown"]["keep"], true);
-        assert_eq!(
-            read_json(&temp.0.join("bed.json")).unwrap(),
-            serde_json::from_slice::<Value>(legacy).unwrap()
-        );
-        assert_eq!(fs::read(temp.0.join("ned.json")).unwrap(), legacy);
-        assert_eq!(fs::read(temp.0.join("my-theme.json")).unwrap(), custom);
-        // Once imported, the Bed pointer owns future selection changes.
-        write_json(
-            &temp.0.join("ned.json"),
-            &json!({"settings_file":"tokyo.json"}),
-        )
-        .unwrap();
-        let mut second = settings(&temp);
-        assert_eq!(second.settings_path, temp.0.join("my-theme.json"));
-        second.switch_to_profile("amber.json").unwrap();
-        assert_eq!(settings(&temp).settings_path, temp.0.join("amber.json"));
-        assert_eq!(
-            read_json(&temp.0.join("ned.json")).unwrap()["settings_file"],
-            "tokyo.json"
-        );
-    }
-
-    #[test]
-    fn existing_bed_profile_takes_priority_over_legacy_settings() {
-        let temp = TempDir::new();
-        let bed = b"{\"settings_file\":\"bed.json\",\"fontSize\":26}\n";
-        let legacy = b"{\"settings_file\":\"ned.json\",\"fontSize\":41}\n";
-        fs::write(temp.0.join("bed.json"), bed).unwrap();
-        fs::write(temp.0.join("ned.json"), legacy).unwrap();
-        assert_eq!(settings(&temp).font_size(), 26.0);
-        assert_eq!(fs::read(temp.0.join("bed.json")).unwrap(), bed);
-        assert_eq!(fs::read(temp.0.join("ned.json")).unwrap(), legacy);
-    }
-
-    #[test]
-    fn bed_pointer_selecting_legacy_profile_imports_it_before_future_saves() {
-        let temp = TempDir::new();
-        let legacy = b"{\"settings_file\":\"tokyo.json\",\"fontSize\":37,\"custom\":true}\n";
-        fs::write(temp.0.join("ned.json"), legacy).unwrap();
-        write_json(
-            &temp.0.join("bed.json"),
-            &json!({"settings_file":"./ned.json"}),
-        )
-        .unwrap();
-        let mut migrated = settings(&temp);
-        assert_eq!(migrated.settings_path, temp.0.join("bed.json"));
-        assert_eq!(migrated.font_size(), 37.0);
-        migrated.settings["fontSize"] = json!(38);
-        migrated.save_settings().unwrap();
-        migrated.switch_to_profile("ned.json").unwrap();
-        assert_eq!(migrated.settings_path, temp.0.join("bed.json"));
-        assert_eq!(migrated.font_size(), 37.0);
-        assert_eq!(migrated.settings["settings_file"], "bed.json");
-        assert_eq!(fs::read(temp.0.join("ned.json")).unwrap(), legacy);
-    }
-
-    #[test]
-    fn invalid_legacy_files_seed_bed_defaults_without_overwriting_legacy_data() {
-        for legacy in [b"{ invalid".as_slice(), b"[]"] {
-            let temp = TempDir::new();
-            fs::write(temp.0.join("ned.json"), legacy).unwrap();
-            assert_eq!(settings(&temp).settings_path, temp.0.join("tokyo.json"));
-            assert!(temp.0.join("bed.json").is_file());
-            assert_eq!(fs::read(temp.0.join("ned.json")).unwrap(), legacy);
-        }
-    }
-
-    #[test]
-    fn missing_or_bad_legacy_selected_profile_keeps_pointer_and_uses_bed_fallback() {
-        for bad_profile in [None, Some(b"[]".as_slice()), Some(b"{ invalid".as_slice())] {
-            let temp = TempDir::new();
-            let legacy = b"{\"settings_file\":\"my-theme.json\",\"fontSize\":23}\n";
-            fs::write(temp.0.join("ned.json"), legacy).unwrap();
-            if let Some(bytes) = bad_profile {
-                fs::write(temp.0.join("my-theme.json"), bytes).unwrap();
-            }
-            let migrated = settings(&temp);
-            assert_eq!(migrated.settings_path, migrated.bundled_path());
-            assert_eq!(migrated.settings_path.file_name().unwrap(), "bed.json");
-            assert_eq!(
-                read_json(&temp.0.join("bed.json")).unwrap()["settings_file"],
-                "my-theme.json"
-            );
-            assert_eq!(fs::read(temp.0.join("ned.json")).unwrap(), legacy);
-        }
-    }
-
-    #[test]
-    fn profile_picker_preserves_user_dot_profiles_and_excludes_bed_history() {
-        let temp = TempDir::new();
-        let current = settings(&temp);
-        write_json(&temp.0.join(".my-theme.json"), &json!({"fontSize":28})).unwrap();
-        write_json(&temp.0.join(".undo-redo-bed.json"), &json!({})).unwrap();
-        assert!(
-            current
-                .list_profiles()
-                .contains(&".my-theme.json".to_owned())
-        );
-        assert!(
-            !current
-                .list_profiles()
-                .contains(&".undo-redo-bed.json".to_owned())
-        );
-    }
-
-    #[test]
-    fn json_stream_accepts_trailing_comments_but_rejects_comments_inside_object() {
-        let temp = TempDir::new();
-        let path = temp.0.join("json");
-        fs::write(&path, b"{\"toggle\":\"p\"}\n// help text").unwrap();
-        assert_eq!(read_json(&path).unwrap()["toggle"], "p");
-        fs::write(&path, b"{ // invalid\n \"toggle\":\"p\"}").unwrap();
-        assert!(read_json(&path).is_err());
-    }
-
-    #[test]
-    fn malformed_reload_retains_last_valid_profile_and_keybinds() {
-        let temp = TempDir::new();
-        let mut first = settings(&temp);
-        let previous = first.settings.clone();
-        first.disk_time = Some(SystemTime::UNIX_EPOCH);
-        fs::write(&first.settings_path, b"{ invalid").unwrap();
-        assert!(!first.check_settings_file());
-        assert_eq!(first.settings, previous);
-        fs::write(
-            temp.0.join("keybinds.json"),
-            b"{\"toggle_file_finder\":\"F2\"}",
-        )
-        .unwrap();
-        assert!(first.keybinds.check_keybinds_file().unwrap());
-        assert_eq!(
-            first.keybinds.get_action_key("toggle_file_finder"),
-            Some(Key::F2)
-        );
-    }
-
     #[test]
     fn embedded_apply_appends_fonts_and_preserves_host_size_and_backgrounds() {
         use dear_imgui_rs::{Condition, FontSource, FramePrepareOptions};
@@ -1031,57 +702,250 @@ mod tests {
 }
 
 #[cfg(test)]
-mod effect_preset_tests {
+mod desktop_tests {
     use super::*;
     use crate::test_support::TempDir;
-    #[test]
-    fn sharp_is_clear_without_rewriting_custom_profile_values() {
-        let dir = TempDir::new();
-        let mut settings = Settings::with_paths(
-            dir.path("config"),
-            PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")),
-        )
-        .unwrap();
-        settings.settings["bloom_intensity"] = json!(0.7);
-        settings.settings["burnin_intensity"] = json!(0.93);
-        settings.settings["font"] = json!("SourceCodePro-Regular");
-        let original = settings.settings.clone();
-        assert_eq!(
-            settings.shader_settings(),
-            bed_effects_config::ShaderSettings::subtle()
-        );
-        assert_eq!(settings.settings, original);
-        settings.set_effect_preset(EffectPreset::Legacy).unwrap();
-        assert_eq!(settings.shader_settings().bloom_intensity, 0.7);
-        assert_eq!(settings.settings, original);
-        settings.set_effect_preset(EffectPreset::Off).unwrap();
-        assert!(!settings.shader_settings().enabled);
-        let loaded = Settings::with_paths(
-            dir.path("config"),
-            PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")),
-        )
-        .unwrap();
-        assert_eq!(loaded.effect_preset, EffectPreset::Off);
+    fn root() -> PathBuf {
+        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+    }
+    fn settings(dir: &TempDir) -> Settings {
+        Settings::with_paths(dir.path("config"), root()).unwrap()
     }
     #[test]
-    fn customizing_copies_visible_effects_preserving_theme_and_fonts() {
+    fn fresh_preferences_ignore_legacy_and_seed_only_application_config() {
         let dir = TempDir::new();
-        let mut settings = Settings::with_paths(
-            dir.path("config"),
-            PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")),
+        fs::create_dir_all(dir.path("config")).unwrap();
+        fs::write(
+            dir.path("config/bed.json"),
+            br#"{"fontSize":99,"settings_file":"amber.json"}"#,
         )
         .unwrap();
-        let font = settings.settings["font"].clone();
-        let themes = settings.settings["themes"].clone();
-        settings.settings["pixelation_intensity"] = json!(0.6);
-        settings.settings["pixel_width"] = json!(17.0);
-        settings.customize_shaders().unwrap();
-        assert_eq!(settings.effect_preset, EffectPreset::Custom);
-        assert_eq!(settings.settings["font"], font);
-        assert_eq!(settings.settings["themes"], themes);
+        fs::write(dir.path("config/ned.json"), b"legacy unchanged").unwrap();
+        let current = settings(&dir);
+        assert_eq!(current.settings_path, dir.path("config/settings.json"));
+        assert_eq!(current.settings["font"], "Paper Mono");
+        assert_eq!(current.font_size(), 20.0);
+        assert_eq!(current.background_opacity(), 1.0);
+        assert!(!current.shader_settings().enabled);
+        assert_eq!(current.list_themes().len(), BUILTIN_THEMES.len());
+        assert!(current.settings["themes"].is_null());
+        assert!(!dir.path("config/tokyo.json").exists());
+        assert!(!dir.path("config/effects.json").exists());
         assert_eq!(
-            settings.shader_settings(),
-            bed_effects_config::ShaderSettings::subtle()
+            fs::read(dir.path("config/ned.json")).unwrap(),
+            b"legacy unchanged"
         );
+    }
+    #[test]
+    fn every_theme_switch_preserves_preferences_and_survives_restart() {
+        let dir = TempDir::new();
+        let mut current = settings(&dir);
+        current.settings["fontSize"] = json!(27);
+        current.settings["background_opacity"] = json!(0.5);
+        current.settings["autosave"] = json!(false);
+        current.settings["plugins"] = json!({"fixture":{"enabled":true}});
+        current.set_effect_preset(EffectPreset::Sharp).unwrap();
+        let mut expected = current.settings.clone();
+        for id in BUILTIN_THEMES {
+            current.select_theme(id).unwrap();
+            expected["theme"] = json!(id);
+            assert_eq!(current.settings, expected);
+            assert!(current.shader_settings().enabled);
+            assert!(current.theme.terminal.iter().all(|color| color[3] == 1.0));
+            assert_eq!(current.theme.tab_bar, current.theme.background, "{id}");
+            assert_eq!(settings(&dir).settings, expected);
+        }
+        current.set_effect_preset(EffectPreset::Off).unwrap();
+        assert!(!settings(&dir).shader_settings().enabled);
+    }
+    #[test]
+    fn custom_color_reload_is_isolated_and_invalid_edits_are_recoverable() {
+        let dir = TempDir::new();
+        let mut current = settings(&dir);
+        let path = dir.path("config/themes/test.json");
+        let mut value = read_json(&root().join("resources/themes/tokyo.json")).unwrap();
+        value["name"] = json!("Custom");
+        value["ui"]["tab_bar"] = json!("#123456");
+        value["fontSize"] = json!(99);
+        value["shader_toggle"] = json!(true);
+        write_json(&path, &value).unwrap();
+        current.select_theme("themes/test.json").unwrap();
+        assert_eq!(current.font_size(), 20.0);
+        assert!(!current.shader_settings().enabled);
+        assert_eq!(
+            current.theme.tab_bar[..3],
+            [
+                0x12 as f32 / 255.0,
+                0x34 as f32 / 255.0,
+                0x56 as f32 / 255.0
+            ]
+        );
+        value["syntax"]["keyword"] = json!("#123456");
+        write_json(&path, &value).unwrap();
+        assert!(current.check_settings_file());
+        let valid = current.highlight_colors();
+        assert_eq!(valid.slots[2][0], 0x12 as f32 / 255.0);
+        fs::write(&path, b"{ bad").unwrap();
+        assert!(!current.check_settings_file());
+        assert_eq!(current.highlight_colors(), valid);
+        assert!(current.reload_error.is_some());
+        assert!(current.select_theme("themes/test.json").is_err());
+        assert!(current.select_theme("themes/../settings.json").is_err());
+        write_json(&path, &value).unwrap();
+        current.check_settings_file();
+        assert_eq!(current.theme.name, "Custom");
+        assert!(current.reload_error.is_none());
+    }
+    #[test]
+    fn broken_settings_are_never_overwritten_and_valid_edits_reload() {
+        let dir = TempDir::new();
+        let mut current = settings(&dir);
+        let original = current.settings.clone();
+        fs::write(&current.settings_path, b"{ incomplete").unwrap();
+        assert!(!current.check_settings_file());
+        assert_eq!(current.settings, original);
+        assert!(current.save_settings().is_err());
+        assert_eq!(fs::read(&current.settings_path).unwrap(), b"{ incomplete");
+        assert_eq!(settings(&dir).font_size(), 20.0);
+        let mut repaired = original;
+        repaired["fontSize"] = json!(25);
+        repaired["effect_preset"] = json!("sharp");
+        write_json(&current.settings_path, &repaired).unwrap();
+        assert!(current.check_settings_file());
+        assert_eq!(current.font_size(), 25.0);
+        assert_eq!(current.effect_preset, EffectPreset::Sharp);
+        current.save_settings().unwrap();
+        assert_eq!(settings(&dir).font_size(), 25.0);
+    }
+    #[test]
+    fn opacity_changes_background_slots_without_fading_ink_or_controls() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let dir = TempDir::new();
+        let mut current = settings(&dir);
+        let mut context = Context::create();
+        context.set_ini_filename(None::<PathBuf>).unwrap();
+        let mut original_text = None;
+        for opacity in [0.0, 0.5, 1.0] {
+            current.settings["background_opacity"] = json!(opacity);
+            current.request_apply();
+            current.apply(&mut context, &mut Editor::new()).unwrap();
+            let style = context.style();
+            assert_eq!(style.color(StyleColor::WindowBg)[3], opacity);
+            assert_eq!(style.color(StyleColor::TitleBg)[3], opacity);
+            assert_eq!(
+                style.color(StyleColor::TitleBg),
+                style.color(StyleColor::WindowBg)
+            );
+            assert_eq!(
+                style.color(StyleColor::TitleBgActive),
+                style.color(StyleColor::WindowBg)
+            );
+            assert_eq!(style.color(StyleColor::ChildBg)[3], 0.0);
+            for slot in [
+                StyleColor::Text,
+                StyleColor::PopupBg,
+                StyleColor::FrameBg,
+                StyleColor::Button,
+                StyleColor::CheckMark,
+            ] {
+                assert_eq!(style.color(slot)[3], 1.0, "{slot:?}");
+            }
+            let text = style.color(StyleColor::Text);
+            if let Some(previous) = original_text {
+                assert_eq!(text, previous);
+            }
+            original_text = Some(text);
+        }
+    }
+    #[test]
+    fn custom_theme_saves_are_unique_color_only_and_reload_selected_edits() {
+        let dir = TempDir::new();
+        let mut current = settings(&dir);
+        let original = current.settings.clone();
+        let builtin = current.theme_path("tokyo").unwrap();
+        let builtin_bytes = fs::read(&builtin).unwrap();
+        let mut value = current.theme.to_json();
+        value["name"] = json!("  My / Night!  ");
+        value["fontSize"] = json!(40);
+        value["shader_toggle"] = json!(true);
+        let first = current.save_custom_theme(None, &value).unwrap();
+        let second = current.save_custom_theme(None, &value).unwrap();
+        assert_eq!(first, "themes/my-night.json");
+        assert_eq!(second, "themes/my-night-2.json");
+        assert_eq!(current.settings, original);
+        let saved = read_json(&current.theme_path(&first).unwrap()).unwrap();
+        assert!(saved["fontSize"].is_null() && saved["shader_toggle"].is_null());
+        assert_eq!(saved["name"], "My / Night!");
+        assert!(current.list_themes().iter().any(|theme| theme.0 == first));
+        for invalid in [
+            "tokyo",
+            "themes/../settings.json",
+            "themes/nested/theme.json",
+        ] {
+            assert!(current.save_custom_theme(Some(invalid), &value).is_err());
+        }
+        current.select_theme(&first).unwrap();
+        value["ui"]["background"] = json!("#123456");
+        current.save_custom_theme(Some(&first), &value).unwrap();
+        assert_eq!(
+            current.theme.background,
+            current.load_theme(&first).unwrap().background
+        );
+        assert_eq!(current.theme.tab_bar, current.theme.background);
+        assert_eq!(current.font_size(), 20.0);
+        assert!(!current.shader_settings().enabled);
+        assert_eq!(fs::read(builtin).unwrap(), builtin_bytes);
+        assert_eq!(settings(&dir).theme.background, current.theme.background);
+        assert!(
+            fs::read_dir(dir.path("config/themes"))
+                .unwrap()
+                .all(|entry| !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp"))
+        );
+        let before = fs::read(current.theme_path(&first).unwrap()).unwrap();
+        value["syntax"]["keyword"] = json!("not a color");
+        assert!(current.save_custom_theme(Some(&first), &value).is_err());
+        assert_eq!(
+            fs::read(current.theme_path(&first).unwrap()).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn pasted_themes_validate_without_discarding_the_previous_draft() {
+        let dir = TempDir::new();
+        let current = settings(&dir);
+        let mut draft = ThemeDraft::default();
+        draft.load(current.theme.clone(), None);
+        draft.json_input = "{ incomplete".into();
+        assert!(draft.import_json().is_err());
+        assert_eq!(draft.palette.as_ref().unwrap().name, current.theme.name);
+        for id in BUILTIN_THEMES {
+            let theme = current.load_theme(id).unwrap();
+            let value = theme.to_json();
+            draft.json_input = serde_json::to_string(&value).unwrap();
+            draft.import_json().unwrap();
+            assert_eq!(draft.palette.as_ref().unwrap().to_json(), value);
+            assert_eq!(draft.palette.as_ref().unwrap().syntax, theme.syntax);
+            assert_eq!(draft.palette.as_ref().unwrap().terminal, theme.terminal);
+            assert!(draft.destination.is_none() && draft.dirty);
+        }
+    }
+
+    #[test]
+    fn customizing_effects_keeps_theme_font_and_off_state() {
+        let dir = TempDir::new();
+        let mut current = settings(&dir);
+        let theme = current.settings["theme"].clone();
+        let font = current.settings["font"].clone();
+        current.customize_shaders().unwrap();
+        assert_eq!(current.effect_preset, EffectPreset::Custom);
+        assert!(!current.shader_settings().enabled);
+        assert_eq!(current.settings["theme"], theme);
+        assert_eq!(current.settings["font"], font);
+        assert_eq!(settings(&dir).effect_preset, EffectPreset::Custom);
     }
 }

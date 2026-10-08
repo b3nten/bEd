@@ -118,6 +118,7 @@ pub(in super::super) unsafe extern "C" fn winit_create_window(
             }
             let mut window_attrs = WindowAttributes::default()
                 .with_title("ImGui Viewport")
+                .with_transparent(cfg!(any(target_os = "macos", target_os = "linux")))
                 .with_inner_size(window_size_from_desktop(size))
                 .with_position(window_position_from_desktop(position))
                 .with_visible(false)

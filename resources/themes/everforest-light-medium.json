@@ -1,0 +1,45 @@
+{
+    "name": "Everforest Light Medium",
+    "appearance": "light",
+    "ui": {
+        "background": "#fdf6e3",
+        "surface": "#f4f0d9",
+        "foreground": "#5c6a72",
+        "accent": "#8da101",
+        "selection": "#eaedc8"
+    },
+    "syntax": {
+        "text": "#5c6a72",
+        "comment": "#939f91",
+        "keyword": "#f85552",
+        "string": "#35a77c",
+        "number": "#df69ba",
+        "function": "#8da101",
+        "type": "#dfa000",
+        "variable": "#5c6a72",
+        "parameter": "#5c6a72",
+        "property": "#3a94c5",
+        "constant": "#35a77c",
+        "operator": "#f57d26",
+        "punctuation": "#5c6a72",
+        "special": "#dfa000"
+    },
+    "terminal": [
+        "#5c6a72",
+        "#f85552",
+        "#8da101",
+        "#dfa000",
+        "#3a94c5",
+        "#df69ba",
+        "#35a77c",
+        "#e6e2cc",
+        "#5c6a72",
+        "#f85552",
+        "#8da101",
+        "#dfa000",
+        "#3a94c5",
+        "#df69ba",
+        "#35a77c",
+        "#e6e2cc"
+    ]
+}

@@ -1,5 +1,5 @@
 //! Settings panels edit the shared settings service through a scoped borrow.
-use crate::SettingsUi;
+use crate::{SettingsUi, SettingsWindowState};
 use bed_document_session::{DocumentId, editor::Editor};
 use bed_settings::Settings;
 use bed_ui::icons::Icons;
@@ -56,6 +56,7 @@ impl Module for SettingsModule {
         }
         Ok(Box::new(SettingsPanel {
             scratch: Editor::new(),
+            ui_state: SettingsWindowState::default(),
         }))
     }
     fn as_any(&self) -> &dyn Any {
@@ -68,6 +69,7 @@ impl Module for SettingsModule {
 
 pub struct SettingsPanel {
     scratch: Editor,
+    ui_state: SettingsWindowState,
 }
 impl ModulePanel for SettingsPanel {
     fn title(&self, _: &HostContext<'_>) -> String {
@@ -89,8 +91,9 @@ impl ModulePanel for SettingsPanel {
             .ok_or_else(|| io::Error::other("Application settings service is unavailable"))?;
         let icons = services.resources.take::<Icons>();
         let mut contributions = services.settings_ui.as_deref_mut();
-        settings.draw_tab_with_extensions(
+        settings.draw_tab_with_state(
             ui,
+            &mut self.ui_state,
             &mut self.scratch,
             icons.as_deref(),
             &mut |ui, value| {
@@ -177,6 +180,12 @@ mod tests {
         let mut panel = SettingsModule
             .create_panel(PANEL_ID, None, &Value::Null)
             .unwrap();
+        panel
+            .as_any_mut()
+            .downcast_mut::<SettingsPanel>()
+            .unwrap()
+            .ui_state
+            .category = crate::SettingsCategory::Extensions;
         let mut context = dear_imgui_rs::Context::create();
         context.set_ini_filename(None::<PathBuf>).unwrap();
         context

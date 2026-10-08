@@ -143,7 +143,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         color = apply_static_noise(color, params.time, gl_frag_coord);
         color = apply_pulse(color, params.time);
         color = apply_grid(color, gl_frag_coord);
-        return present_color(vec4(color, 1.0));
+        let alpha = sample_current(uv).a;
+        // Effects operate on premultiplied pixels. Never emit color outside
+        // their coverage or turn a translucent surface into an opaque one.
+        return present_color(vec4(clamp(color, vec3(0.0), vec3(alpha)), alpha));
     }
     return present_color(sample_current(input.tex_coords));
 }

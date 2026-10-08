@@ -463,7 +463,7 @@ fn font_viewer_routes_restores_state_and_shares_byte_edits_with_hex() {
     let dir = TempDir::new();
     let bytes = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../resources/fonts/SourceCodePro-Regular.ttf"
+        "/../../tests/fixtures/fonts/SourceCodePro-Regular.ttf"
     ));
     let path = dir.write("project/typeface.TTF", bytes);
     let mut first = host(&dir);

@@ -8,17 +8,4 @@ menu cleanup
 	should have one canonical place for each item
 	rename "new" prepension to "open"
 reorder toolbar menu items
-	- files, terminal, seatch, diagnostics, debugger, structure, splits, settings (settings always at the end)
-config file should go in ~/.config/bed
-system fonts + packaged default paper font
-
-settings
-	- seperate settings and theme json files
-	- theme files do not set things like shaders, font size, etc
-	- by default, shaders are off
-built in packaged themes 
-	- light + dark theme (tokyo, solarized light)
-	- carbon theme
-	- catppuccin themes
-	- rose pine theme
-opacity should affect backgrounds only, not entire surface
+improve project search

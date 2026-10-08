@@ -18,7 +18,6 @@ use bed_editing::{
     editor_view_state::Selection,
 };
 use bed_editor_ui::editor_input::HostAction;
-use bed_highlight::{capture_map::ThemeSlot, tree_sitter::ThemeColors};
 use bed_module_explorer::{file_tree::FileTreeAction, files::FileExplorer};
 use bed_settings::Settings;
 use bed_terminal::{bed_terminal::BedTerminal, terminal_font::TerminalFonts};
@@ -345,7 +344,7 @@ impl Workbench {
         self.settings.is_embedded = false;
         let flags = context.io().config_flags() | ConfigFlags::DOCKING_ENABLE;
         context.io_mut().set_config_flags(flags);
-        context.io_mut().set_config_docking_with_shift(true);
+        context.io_mut().set_config_docking_with_shift(false);
         context
             .io_mut()
             .set_config_windows_move_from_title_bar_only(true);
@@ -811,25 +810,12 @@ impl Workbench {
             .set_git_enabled(self.settings.bool("git_changed_lines", true))?;
         self.session
             .set_highlighting_enabled(self.settings.bool("treesitter", true))?;
-        let colors = ThemeColors::from_settings(&self.settings.settings);
+        let colors = self.settings.highlight_colors();
         self.session.set_highlight_theme(colors.clone());
         let foreground = self.settings.text_color();
         let background = self.settings.background_color();
-        let base = [
-            background,
-            colors.color(ThemeSlot::Constant),
-            colors.color(ThemeSlot::String),
-            colors.color(ThemeSlot::Number),
-            colors.color(ThemeSlot::Function),
-            colors.color(ThemeSlot::Keyword),
-            colors.color(ThemeSlot::Type),
-            foreground,
-        ];
-        self.terminal.set_theme(
-            background,
-            foreground,
-            std::array::from_fn(|index| base[index % 8]),
-        );
+        self.terminal
+            .set_theme(background, foreground, self.settings.theme.terminal);
         Ok(())
     }
     pub fn apply_settings(&mut self, context: &mut Context) -> io::Result<bool> {
@@ -850,13 +836,18 @@ impl Workbench {
         }
         let applied = self.settings.apply(context, &mut self.scratch)?;
         if applied {
-            self.terminal_fonts.reload(
-                context,
-                &self.settings.resources_root,
-                self.settings.font_size(),
-            )?;
+            if let Some(fonts) = &self.settings.font.resolved {
+                self.terminal_fonts.reload_resolved(
+                    context,
+                    &self.settings.resources_root,
+                    self.settings.font_size(),
+                    &fonts.faces,
+                    &fonts.fallbacks,
+                )?;
+            }
             self.terminal
                 .reload_terminal_fonts(self.settings.font_size());
+            self.service_settings = None;
             self.sync_services()?;
             self.scene += 1;
         }
@@ -1648,8 +1639,22 @@ impl Workbench {
         let pos = viewport.work_pos();
         let mut size = viewport.work_size();
         size[1] = (size[1] - self.root_top_inset).max(1.0);
-        let _padding = ui.push_style_var(StyleVar::WindowPadding([0.0; 2]));
+        if self.root_top_inset > 0.0 {
+            let mut background = self.settings.background_color();
+            background[3] = self.settings.background_opacity();
+            ui.get_background_draw_list()
+                .add_rect(
+                    pos,
+                    [pos[0] + size[0], pos[1] + self.root_top_inset],
+                    background,
+                )
+                .filled(true)
+                .build();
+        }
+        // Panels meet the native titlebar and neighboring dock nodes without
+        // rounded cutouts. Dialogs push their own rounding after this scope.
         let _rounding = ui.push_style_var(StyleVar::WindowRounding(0.0));
+        let _padding = ui.push_style_var(StyleVar::WindowPadding([0.0; 2]));
         let _workspace_border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
         let mut dialog_result = Ok(());
         ui.set_next_window_viewport(ui.main_viewport().id());
@@ -1658,6 +1663,7 @@ impl Workbench {
             .size(size, Condition::Always)
             .flags(
                 WindowFlags::NO_DECORATION
+                    | WindowFlags::NO_BACKGROUND
                     | WindowFlags::NO_DOCKING
                     | WindowFlags::NO_MOVE
                     | WindowFlags::NO_BRING_TO_FRONT_ON_FOCUS
@@ -1682,7 +1688,6 @@ impl Workbench {
                 dialog_result = self.draw_file_dialog(ui);
             });
         drop(_workspace_border);
-        drop(_rounding);
         drop(_padding);
         dialog_result?;
         self.configure_native_modules(ui);
@@ -1759,6 +1764,7 @@ impl Workbench {
                 close.push(index);
             }
         }
+        drop(_rounding);
         self.modules
             .editor_runtime
             .borrow_mut()

@@ -3,7 +3,6 @@ use super::*;
 use crate::test_support::TempDir;
 use dear_imgui_rs::FramePrepareOptions;
 
-const TEXT_COLOR: [f32; 4] = [0.2, 0.4, 0.6, 1.0];
 const TEXT_RGB: u32 = 0x0099_6633;
 const HOST_COLOR: [f32; 4] = [0.8, 0.2, 0.4, 1.0];
 const HOST_RGB: u32 = 0x0066_33cc;
@@ -24,8 +23,16 @@ fn workspace(dir: &TempDir) -> (Context, Workbench) {
     ] {
         settings.settings[key] = json!(false);
     }
-    settings.settings["theme"] = json!("animation-test");
-    settings.settings["themes"]["animation-test"] = json!({ "text": TEXT_COLOR });
+    let mut theme =
+        bed_settings::read_json(&settings.resources_root.join("resources/themes/tokyo.json"))
+            .unwrap();
+    theme["syntax"]["text"] = json!("#336699");
+    bed_settings::write_json(
+        &settings.config_dir.join("themes/animation-test.json"),
+        &theme,
+    )
+    .unwrap();
+    settings.select_theme("themes/animation-test.json").unwrap();
     settings.terminal_visible = false;
     let mut workbench = Workbench::with_settings(settings, crate::builtins::modules);
     let mut context = Context::create();
@@ -111,7 +118,7 @@ fn custom_editor_text_fades_while_host_windows_remain_opaque() {
     workbench.open_or_focus(&file).unwrap();
     let view = workbench.active_view().unwrap();
     let mut faded = false;
-    for _ in 0..15 {
+    for _ in 0..25 {
         frame(&mut context, &mut workbench);
         faded |= text_alphas(&context, view)
             .iter()
@@ -132,13 +139,13 @@ fn revealing_a_docked_document_restarts_its_content_fade() {
     let (mut context, mut workbench) = workspace(&dir);
     workbench.open_or_focus(&first).unwrap();
     let first_view = workbench.active_view().unwrap();
-    for _ in 0..15 {
+    for _ in 0..25 {
         frame(&mut context, &mut workbench);
     }
     assert_opaque(&text_alphas(&context, first_view));
     workbench.open_or_focus(&second).unwrap();
     let second_view = workbench.active_view().unwrap();
-    for _ in 0..15 {
+    for _ in 0..25 {
         frame(&mut context, &mut workbench);
     }
     assert_opaque(&text_alphas(&context, second_view));
@@ -150,7 +157,7 @@ fn revealing_a_docked_document_restarts_its_content_fade() {
         .unwrap();
     assert!(workbench.switch_to_tab(index));
     let mut faded = false;
-    for _ in 0..15 {
+    for _ in 0..25 {
         frame(&mut context, &mut workbench);
         faded |= text_alphas(&context, first_view)
             .iter()

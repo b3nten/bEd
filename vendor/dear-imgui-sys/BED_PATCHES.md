@@ -53,3 +53,13 @@ The original Rust binding `LICENSE-MIT` and `LICENSE-APACHE` files are copied
 unchanged from repository commit `95f279150e95c728952db3e79226c687167ccf73`.
 The published crate archive omitted these workspace-root notices; they are
 retained here alongside the native sources' separate notices.
+
+Native viewport window and title backgrounds preserve style alpha instead of
+forcing it to 255. Bed requests transparent native windows and applies opacity
+to backgrounds only; foreground colors are unchanged. Translucent viewport
+backgrounds retain renderer clearing, preventing opacity from accumulating
+across frames in persistent postprocess targets.
+
+Checkboxes paint their square and check mark at 70% of the native frame size,
+centered within the original bounds. Row layout, label baseline, keyboard
+navigation, and the full click target are preserved globally.

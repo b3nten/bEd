@@ -3,7 +3,7 @@
 use crate::presentation::FileIcons;
 use dear_imgui_rs::TextureId;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     path::{Path, PathBuf},
 };
@@ -228,6 +228,7 @@ pub struct RgbaImage {
 pub struct Icons {
     pub images: BTreeMap<String, RgbaImage>,
     pub textures: BTreeMap<String, TextureId>,
+    pub themed: BTreeSet<String>,
 }
 impl Icons {
     pub fn load(resources_root: &Path) -> Self {
@@ -239,7 +240,8 @@ impl Icons {
             match load_svg(&path) {
                 Ok(mut image) => {
                     let key = file.split('.').next().unwrap_or(file);
-                    if monochrome_icon(key) {
+                    if monochrome_icon(key) || neutral_monochrome(&image) {
+                        icons.themed.insert(key.to_owned());
                         for pixel in image.pixels.as_chunks_mut::<4>().0 {
                             pixel[..3].fill(255);
                         }
@@ -272,12 +274,25 @@ impl Icons {
         self.get(icon_key_for_file(filename))
     }
     pub fn file_icon_tint(&self, filename: &str, text: [f32; 4]) -> [f32; 4] {
-        if self.get_for_file(filename) == self.get("default") {
+        if self.themed.contains(icon_key_for_file(filename))
+            || self.get_for_file(filename) == self.get("default")
+        {
             text
         } else {
             [1.0; 4]
         }
     }
+}
+// Recolor single neutral silhouettes such as Rust and lock icons, while
+// preserving colored logos and artwork with distinct black/white details.
+fn neutral_monochrome(image: &RgbaImage) -> bool {
+    let mut pixels = image.pixels.as_chunks::<4>().0.iter().filter(|p| p[3] != 0);
+    let Some(first) = pixels.next() else {
+        return false;
+    };
+    first[0] == first[1]
+        && first[1] == first[2]
+        && pixels.all(|p| p[..3].iter().all(|channel| channel.abs_diff(first[0]) <= 2))
 }
 fn monochrome_icon(key: &str) -> bool {
     matches!(
@@ -305,6 +320,9 @@ impl FileIcons for Icons {
     }
     fn get_for_file(&self, filename: &str) -> Option<TextureId> {
         self.get_for_file(filename)
+    }
+    fn file_icon_tint(&self, filename: &str, text: [f32; 4]) -> [f32; 4] {
+        self.file_icon_tint(filename, text)
     }
 }
 pub fn icon_key_for_file(filename: &str) -> &str {
@@ -401,7 +419,7 @@ mod tests {
     #[test]
     fn bundled_icons_rasterize() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let icons = Icons::load(&root);
+        let mut icons = Icons::load(&root);
         assert_eq!(icons.images.len(), 194);
         assert!(icons.images.contains_key("default"));
         assert!(icons.images.contains_key("folder-open"));
@@ -419,6 +437,8 @@ mod tests {
             "folder-open",
             "search",
             "default",
+            "rs",
+            "lock",
         ] {
             assert!(
                 icons.images[key]
@@ -430,8 +450,18 @@ mod tests {
             );
         }
         assert_eq!(
-            icons.images["rs"],
-            load_svg(&root.join("resources/icons/rs.svg")).unwrap()
+            icons.images["py"],
+            load_svg(&root.join("resources/icons/py.svg")).unwrap()
         );
+        icons.set_texture("default", TextureId::new(1));
+        icons.set_texture("rs", TextureId::new(2));
+        icons.set_texture("lock", TextureId::new(3));
+        icons.set_texture("py", TextureId::new(4));
+        for text in [[0.8, 0.85, 0.95, 1.0], [0.1, 0.15, 0.2, 1.0]] {
+            let provider: &dyn FileIcons = &icons;
+            assert_eq!(provider.file_icon_tint("lib.rs", text), text);
+            assert_eq!(provider.file_icon_tint("Cargo.lock", text), text);
+            assert_eq!(provider.file_icon_tint("main.py", text), [1.0; 4]);
+        }
     }
 }

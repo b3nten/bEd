@@ -280,9 +280,9 @@ mod tests {
     #[test]
     fn svg_text_renders_with_a_known_font() {
         let mut options = resvg::usvg::Options::default();
-        options
-            .fontdb_mut()
-            .load_font_data(include_bytes!("../../../resources/fonts/DejaVuSans.ttf").to_vec());
+        options.fontdb_mut().load_font_data(
+            include_bytes!("../../../tests/fixtures/fonts/DejaVuSans.ttf").to_vec(),
+        );
         let tree = resvg::usvg::Tree::from_str(
             r#"
             <svg xmlns="http://www.w3.org/2000/svg" width="80" height="32">

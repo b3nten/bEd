@@ -22,7 +22,7 @@ use serde_json::Value;
 use std::{
     any::Any,
     cell::{Ref, RefCell, RefMut},
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     io,
     rc::{Rc, Weak},
     time::{Duration, Instant},
@@ -98,13 +98,22 @@ impl ExplorerExtensions {
 
 /// GPU texture handles only; the application retains icon pixels and uploads.
 #[derive(Clone, Default)]
-pub struct IconTextures(pub BTreeMap<String, TextureId>);
+pub struct IconTextures(pub BTreeMap<String, TextureId>, pub BTreeSet<String>);
 impl FileIcons for IconTextures {
     fn get(&self, name: &str) -> Option<TextureId> {
         self.0.get(name).or_else(|| self.0.get("default")).copied()
     }
     fn get_for_file(&self, filename: &str) -> Option<TextureId> {
         self.get(icon_key_for_file(filename))
+    }
+    fn file_icon_tint(&self, filename: &str, text: [f32; 4]) -> [f32; 4] {
+        if self.1.contains(icon_key_for_file(filename))
+            || self.get_for_file(filename) == self.get("default")
+        {
+            text
+        } else {
+            [1.0; 4]
+        }
     }
 }
 
@@ -237,7 +246,7 @@ impl ExplorerHandle {
         let mut config = self.config.borrow_mut();
         config.tree_style = tree_style;
         config.finder_style = finder_style;
-        config.icons = IconTextures(icons.textures.clone());
+        config.icons = IconTextures(icons.textures.clone(), icons.themed.clone());
         config.workspace_identity = workspace_identity;
     }
     /// Replace a transport only at workspace activation/reconnection. Replacing

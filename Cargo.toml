@@ -63,6 +63,7 @@ bevy_stl = { version = "=0.18.0", default-features = false }
 arboard = { version = "=3.6.1", default-features = false }
 rfd = "=0.17.2"
 serde_json = "1"
+fontdb = { version = "=0.24.0", default-features = false, features = ["std", "fs", "fontconfig"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 harfrust = "=0.14.0"
 wuff = { version = "=0.2.9", default-features = false, features = ["brotli"] }

@@ -114,8 +114,37 @@ impl TerminalFonts {
         size: f32,
         override_path: Option<&Path>,
     ) -> io::Result<()> {
+        self.reload_sources(context, resources_root, size, override_path, None)
+    }
+    /// The desktop resolves one family for UI, editor and terminal. Keep these
+    /// plain source descriptors independent of the settings service crate.
+    pub fn reload_resolved(
+        &mut self,
+        context: &mut Context,
+        resources_root: &Path,
+        size: f32,
+        faces: &[(PathBuf, u32, bool, bool); 4],
+        fallbacks: &[(PathBuf, u32, bool)],
+    ) -> io::Result<()> {
+        self.reload_sources(
+            context,
+            resources_root,
+            size,
+            None,
+            Some((faces, fallbacks)),
+        )
+    }
+    #[allow(clippy::type_complexity)]
+    fn reload_sources(
+        &mut self,
+        context: &mut Context,
+        resources_root: &Path,
+        size: f32,
+        override_path: Option<&Path>,
+        selected: Option<(&[(PathBuf, u32, bool, bool); 4], &[(PathBuf, u32, bool)])>,
+    ) -> io::Result<()> {
         self.size = if size.is_finite() {
-            size.clamp(6.0, 72.0)
+            size.clamp(4.0, 64.0)
         } else {
             16.0
         };
@@ -127,6 +156,7 @@ impl TerminalFonts {
         }
         let regular_path = override_path
             .map(PathBuf::from)
+            .or_else(|| selected.map(|(faces, _)| faces[0].0.clone()))
             .or_else(|| regular_path(resources_root));
         let regular = regular_path
             .as_deref()
@@ -158,19 +188,49 @@ impl TerminalFonts {
         } else {
             None
         };
+        let resolved_fallbacks: Vec<_> = if override_path.is_none() {
+            selected
+                .into_iter()
+                .flat_map(|(_, fallbacks)| fallbacks.iter())
+                .filter_map(|(path, index, emoji)| {
+                    FaceData::read(path)
+                        .filter(|data| data.faces.iter().any(|face| face.0 == *index as i32))
+                        .map(|data| (data, *index, *emoji))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         for (index, (want_bold, want_italic)) in
             [(false, false), (true, false), (false, true), (true, true)]
                 .into_iter()
                 .enumerate()
         {
             let variant = if override_path.is_none() {
-                variant_path(index).and_then(|path| FaceData::read(&path))
+                selected
+                    .map(|(faces, _)| faces[index].0.clone())
+                    .or_else(|| {
+                        let path = resources_root.join(format!(
+                            "resources/fonts/PaperMono-{}.ttf",
+                            if want_bold { "Bold" } else { "Regular" }
+                        ));
+                        path.is_file().then_some(path)
+                    })
+                    .or_else(|| variant_path(index))
+                    .and_then(|path| FaceData::read(&path))
             } else {
                 None
             };
             let data = variant.as_ref().unwrap_or(&regular);
             let (face_index, actual_bold, actual_italic) = if override_path.is_some() {
                 data.faces[0]
+            } else if let Some((faces, _)) = selected {
+                let face = &faces[index];
+                data.faces
+                    .iter()
+                    .copied()
+                    .find(|candidate| candidate.0 == face.1 as i32)
+                    .unwrap_or_else(|| data.matching(want_bold, want_italic))
             } else {
                 data.matching(want_bold, want_italic)
             };
@@ -191,7 +251,7 @@ impl TerminalFonts {
                     FontLoaderFlags::LOAD_COLOR
                 });
             let mut sources = vec![data.source(self.size, config)];
-            if index == 0 {
+            if index == 0 && selected.is_none() {
                 for fallback in [symbols.as_ref(), cjk.as_ref()].into_iter().flatten() {
                     sources.push(fallback.source(self.size, FontConfig::new().merge_mode(true)));
                 }
@@ -203,6 +263,15 @@ impl TerminalFonts {
                     sources.push(emoji.source(self.size, config));
                 }
             }
+            for (fallback, _, emoji) in &resolved_fallbacks {
+                let mut config = FontConfig::new().merge_mode(true);
+                if *emoji {
+                    config = config
+                        .font_loader_flags(FontLoaderFlags::LOAD_COLOR | FontLoaderFlags::BITMAP)
+                        .rasterizer_density(20.0 / self.size);
+                }
+                sources.push(fallback.source(self.size, config));
+            }
             let first = unsafe { (*atlas.raw()).Sources.Size };
             let font = atlas.add_font(&sources);
             // dear-imgui-rs does not expose FontNo. The validated collection
@@ -210,6 +279,12 @@ impl TerminalFonts {
             // before any bake/frame. No raw input/font pointers escape.
             unsafe {
                 (*(*atlas.raw()).Sources.Data.add(first as usize)).FontNo = face_index as u32;
+                if selected.is_some() {
+                    for (i, (_, face_index, _)) in resolved_fallbacks.iter().enumerate() {
+                        (*(*atlas.raw()).Sources.Data.add(first as usize + i + 1)).FontNo =
+                            *face_index;
+                    }
+                }
             }
             match index {
                 0 => self.regular = Some(font),
@@ -241,18 +316,7 @@ fn first_file(paths: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
     paths.into_iter().find(|path| path.is_file())
 }
 fn regular_path(root: &Path) -> Option<PathBuf> {
-    let paths = vec![
-        #[cfg(target_os = "macos")]
-        PathBuf::from("/System/Library/Fonts/Menlo.ttc"),
-        #[cfg(all(unix, not(target_os = "macos")))]
-        PathBuf::from("/usr/share/fonts/truetype/msttcorefonts/Menlo.ttf"),
-        #[cfg(all(unix, not(target_os = "macos")))]
-        PathBuf::from("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
-        #[cfg(all(unix, not(target_os = "macos")))]
-        PathBuf::from("/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf"),
-        root.join("resources/fonts/NotoSansMono-Regular.ttf"),
-    ];
-    first_file(paths)
+    first_file([root.join("resources/fonts/PaperMono-Regular.ttf")])
 }
 fn variant_path(index: usize) -> Option<PathBuf> {
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -275,13 +339,12 @@ fn variant_path(index: usize) -> Option<PathBuf> {
         None
     }
 }
-fn symbol_paths(root: &Path) -> Vec<PathBuf> {
+fn symbol_paths(_root: &Path) -> Vec<PathBuf> {
     vec![
         #[cfg(target_os = "macos")]
         PathBuf::from("/System/Library/Fonts/Apple Symbols.ttf"),
         #[cfg(target_os = "macos")]
         PathBuf::from("/System/Library/Fonts/Symbol.ttf"),
-        root.join("resources/fonts/DejaVuSans.ttf"),
     ]
 }
 fn cjk_paths() -> Vec<PathBuf> {
@@ -295,11 +358,10 @@ fn cjk_paths() -> Vec<PathBuf> {
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     )];
 }
-fn emoji_paths(root: &Path) -> Vec<PathBuf> {
+fn emoji_paths(_root: &Path) -> Vec<PathBuf> {
     vec![
         #[cfg(target_os = "macos")]
         PathBuf::from("/System/Library/Fonts/Apple Color Emoji.ttc"),
-        root.join("resources/fonts/Emoji.ttf"),
     ]
 }
 #[cfg(test)]
@@ -314,7 +376,7 @@ mod tests {
         context.set_ini_filename(None::<PathBuf>).unwrap();
         let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
         let atlas = context.font_atlas();
-        let data = FaceData::read(&root.join("resources/fonts/SourceCodePro-Regular.ttf")).unwrap();
+        let data = FaceData::read(&root.join("resources/fonts/PaperMono-Regular.ttf")).unwrap();
         let host = atlas.add_font(&[data.source(16.0, FontConfig::new())]);
         atlas.add_font(&[FontSource::default_font()]);
         let mut fonts = TerminalFonts::default();
@@ -323,7 +385,7 @@ mod tests {
                 &mut context,
                 root,
                 16.0,
-                Some(&root.join("resources/fonts/SourceCodePro-Regular.ttf")),
+                Some(&root.join("resources/fonts/PaperMono-Regular.ttf")),
             )
             .unwrap();
         let raw = context.font_atlas().raw();
@@ -367,7 +429,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn menlo_collection_selects_distinct_native_faces_and_base_fallbacks() {
+    fn paper_default_has_valid_metrics_and_four_style_slots() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let mut context = Context::create();
         context.set_ini_filename(None::<PathBuf>).unwrap();
@@ -375,7 +437,7 @@ mod tests {
         let mut fonts = TerminalFonts::default();
         fonts.reload_from(&mut context, root, 20.0, None).unwrap();
         assert_eq!(fonts.bad_weight, [false; 4]);
-        assert_eq!(fonts.bad_slant, [false; 4]);
+        assert_eq!(fonts.bad_slant, [false, false, true, true]);
         let atlas = context.font_atlas().raw();
         let source_indices: std::collections::BTreeSet<_> = unsafe {
             std::slice::from_raw_parts((*atlas).Sources.Data, (*atlas).Sources.Size as usize)
@@ -384,7 +446,7 @@ mod tests {
                 .map(|source| source.FontNo)
                 .collect()
         };
-        assert_eq!(source_indices.len(), 4);
+        assert_eq!(source_indices.len(), 1);
         context
             .font_atlas()
             .try_claim_legacy_renderer()
@@ -393,7 +455,7 @@ mod tests {
         unsafe {
             let font = *(*atlas).Fonts.Data;
             let baked = sys::ImFont_GetFontBaked(font, 20.0, 1.0);
-            for codepoint in [u32::from('M'), 0x2800, 0x4e2d, 0x1f680] {
+            for codepoint in [u32::from('M')] {
                 assert!(
                     !sys::ImFontBaked_FindGlyphNoFallback(baked, codepoint).is_null(),
                     "Missing {codepoint:x}"

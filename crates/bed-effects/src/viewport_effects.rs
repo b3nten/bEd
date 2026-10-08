@@ -28,7 +28,7 @@ impl Default for ViewportEffectsFactory {
         Self {
             captures: Rc::new(RefCell::new(CaptureState::default())),
             frame: Rc::new(Cell::new(EffectFrame {
-                settings: ShaderSettings::subtle(),
+                settings: ShaderSettings::default(),
                 time: 0.0,
                 scene_generation: 0,
             })),

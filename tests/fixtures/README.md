@@ -67,3 +67,7 @@ tests isolate a small primitive from that asset. Attribution remains in
 [assets/README.md](../../assets/README.md). Opt-in native
 GPU tests and the application's `--plugin-smoke` check rendering and lifecycle
 behavior separately from these loader fixtures.
+
+`fonts/` retains Source Code Pro and DejaVu Sans only for font-viewer and SVG
+regressions, together with their licenses. They are not runtime assets and are
+not copied into desktop packages. Runtime fonts are exclusively Paper Mono.

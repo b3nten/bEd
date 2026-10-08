@@ -705,6 +705,7 @@ dependencies = [
  "bed-highlight",
  "bed-ui",
  "dear-imgui-rs",
+ "fontdb",
  "serde_json",
 ]
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Shared desktop packaging steps. See NOTICE for attribution.
 set -euo pipefail
+# Keep macOS AppleDouble metadata out of portable runtime archives.
+export COPYFILE_DISABLE=1
 BED_PACKAGE_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 BED_PACKAGE_VERSION=$(awk '$1 == "version" {gsub(/"/, "", $3); print $3; exit}' "$BED_PACKAGE_ROOT/Cargo.toml")
 BED_PACKAGE_ICON_SOURCE="$BED_PACKAGE_ROOT/assets/bEd-iOS-Default-1024@1x.png"
@@ -35,9 +37,24 @@ copy_bed_resources() {
 
 verify_bed_resources() {
     local destination=$1
-    test -f "$destination/resources/config/bed.json"
-    test -f "$destination/resources/fonts/SourceCodePro-Regular.ttf"
-    test -f "$destination/resources/fonts/Emoji.ttf"
+    test -f "$destination/resources/config/settings.json"
+    test -f "$destination/resources/fonts/PaperMono-Regular.ttf"
+    test -f "$destination/resources/fonts/PaperMono-Bold.ttf"
+    test -f "$destination/resources/fonts/PaperMono-OFL.txt"
+    local theme
+    for theme in tokyo solarized-light carbon catppuccin-latte catppuccin-frappe catppuccin-macchiato catppuccin-mocha rose-pine rose-pine-moon rose-pine-dawn synthwave-84 everforest-dark-hard everforest-dark-medium everforest-dark-soft everforest-light-hard everforest-light-medium everforest-light-soft oxocarbon-dark oxocarbon-light; do
+        test -f "$destination/resources/themes/$theme.json"
+    done
+    for theme in tokyo solarized carbon catppuccin rose-pine synthwave everforest oxocarbon; do
+        test -f "$destination/resources/themes/$theme-LICENSE.txt"
+    done
+    python3 - "$destination" <<'PYFONT'
+import sys
+from pathlib import Path
+fonts = Path(sys.argv[1]) / "resources/fonts"
+actual = {p.name for p in fonts.rglob("*") if p.suffix.lower() in {".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2"}}
+assert actual == {"PaperMono-Regular.ttf", "PaperMono-Bold.ttf"}, actual
+PYFONT
     test -f "$destination/resources/icons/bed.png"
     test -f "$destination/resources/queries/rs.scm"
     test -f "$destination/LICENSES/terminal-adapter-BSL-1.1.txt"

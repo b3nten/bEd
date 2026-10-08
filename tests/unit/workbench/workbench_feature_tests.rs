@@ -47,6 +47,34 @@ fn frame(context: &mut Context, workbench: &mut Workbench) -> Vec<HostAction> {
 }
 
 #[test]
+fn panels_meet_the_native_titlebar_with_square_content_corners() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let dir = TempDir::new();
+    let path = dir.write("project/main.rs", b"fn main() {}\n");
+    let mut workbench = workspace(&dir);
+    workbench.open_or_focus(&path).unwrap();
+    workbench.root_top_inset = 32.0;
+    let mut context = initialize(&mut workbench);
+    context.style_mut().set_window_rounding(12.0);
+    let padding = context.style().window_padding();
+    for _ in 0..3 {
+        frame(&mut context, &mut workbench);
+    }
+    context.binding().with_bound_context(|| unsafe {
+        for tab in &workbench.tabs {
+            let title = std::ffi::CString::new(workbench.title(tab)).unwrap();
+            let window = sys::igFindWindowByName(title.as_ptr()).as_ref().unwrap();
+            assert!(window.DockIsActive());
+            assert_eq!(window.WindowRounding, 0.0);
+            let host = (*window.DockNode).HostWindow.as_ref().unwrap();
+            assert_eq!(host.WindowRounding, 0.0);
+        }
+    });
+    assert_eq!(context.style().window_rounding(), 12.0);
+    assert_eq!(context.style().window_padding(), padding);
+}
+
+#[test]
 fn window_titles_follow_workspace_names_independently_of_panels() {
     let dir = TempDir::new();
     let mut workbench = workspace(&dir);
@@ -198,17 +226,27 @@ fn theme_settings_update_existing_and_future_terminal_sessions_and_preserve_osc_
         ("light", [0.96, 0.94, 0.90, 1.0], [0.10, 0.12, 0.14, 1.0]),
         ("dark", [0.04, 0.05, 0.07, 1.0], [0.90, 0.91, 0.92, 1.0]),
     ] {
-        workbench.settings.settings["theme"] = json!(name);
-        workbench.settings.settings["backgroundColor"] = json!(background);
-        workbench.settings.settings["themes"][name] = json!({
-            "text": foreground,
-            "constant": [0.9, 0.4, 0.3, 1.0],
-            "string": [0.4, 0.8, 0.3, 1.0],
-            "number": [0.8, 0.7, 0.3, 1.0],
-            "function": [0.3, 0.6, 0.9, 1.0],
-            "keyword": [0.7, 0.3, 0.8, 1.0],
-            "type": [0.2, 0.7, 0.7, 1.0],
-        });
+        let mut theme = bed_settings::read_json(
+            &workbench
+                .settings
+                .resources_root
+                .join("resources/themes/tokyo.json"),
+        )
+        .unwrap();
+        let hex = |rgba: [f32; 4]| {
+            format!(
+                "#{:02x}{:02x}{:02x}",
+                (rgba[0] * 255.0).round() as u8,
+                (rgba[1] * 255.0).round() as u8,
+                (rgba[2] * 255.0).round() as u8
+            )
+        };
+        theme["name"] = json!(name);
+        theme["ui"]["background"] = json!(hex(background));
+        theme["ui"]["foreground"] = json!(hex(foreground));
+        let selection = format!("themes/{name}.json");
+        bed_settings::write_json(&workbench.settings.config_dir.join(&selection), &theme).unwrap();
+        workbench.settings.select_theme(&selection).unwrap();
         workbench.sync_services().unwrap();
         let terminal = workbench.terminal.active_terminal().unwrap();
         let palette = *terminal.palette();
@@ -587,4 +625,33 @@ fn editor_context_menu_toggles_only_its_tabs_minimap_without_persisting() {
             );
         }
     }
+}
+
+#[test]
+fn custom_theme_hot_reload_updates_live_terminal_with_unchanged_preferences() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let dir = TempDir::new();
+    let mut workbench = workspace(&dir);
+    let mut value = bed_settings::read_json(
+        &workbench
+            .settings
+            .resources_root
+            .join("resources/themes/tokyo.json"),
+    )
+    .unwrap();
+    let path = workbench.settings.config_dir.join("themes/live.json");
+    bed_settings::write_json(&path, &value).unwrap();
+    workbench.settings.select_theme("themes/live.json").unwrap();
+    let mut context = initialize(&mut workbench);
+    workbench.dispatch(WindowCommand::NewTerminal).unwrap();
+    let preferences = workbench.settings.settings.clone();
+    let previous = workbench.terminal.active_terminal().unwrap().palette()[259];
+    value["ui"]["background"] = json!("#070809");
+    bed_settings::write_json(&path, &value).unwrap();
+    assert!(workbench.settings.check_settings_file());
+    assert_eq!(workbench.settings.settings, preferences);
+    assert!(workbench.apply_settings(&mut context).unwrap());
+    let current = workbench.terminal.active_terminal().unwrap().palette()[259];
+    assert_eq!(current, [7, 8, 9]);
+    assert_ne!(current, previous);
 }

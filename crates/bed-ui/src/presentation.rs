@@ -15,4 +15,11 @@ pub fn readable_color(ui: &Ui, color: [f32; 4]) -> [f32; 4] {
 pub trait FileIcons {
     fn get(&self, name: &str) -> Option<TextureId>;
     fn get_for_file(&self, filename: &str) -> Option<TextureId>;
+    fn file_icon_tint(&self, filename: &str, text: [f32; 4]) -> [f32; 4] {
+        if self.get_for_file(filename) == self.get("default") {
+            text
+        } else {
+            [1.0; 4]
+        }
+    }
 }

@@ -1,0 +1,45 @@
+{
+    "name": "Oxocarbon Light",
+    "appearance": "light",
+    "ui": {
+        "background": "#ffffff",
+        "surface": "#f2f2f2",
+        "foreground": "#37474f",
+        "accent": "#ee5396",
+        "selection": "#cfcfcf"
+    },
+    "syntax": {
+        "text": "#37474f",
+        "comment": "#161616",
+        "keyword": "#ee5396",
+        "string": "#be95ff",
+        "number": "#ffab91",
+        "function": "#673ab7",
+        "type": "#ee5396",
+        "variable": "#37474f",
+        "parameter": "#37474f",
+        "property": "#ff6f00",
+        "constant": "#be95ff",
+        "operator": "#ee5396",
+        "punctuation": "#ff7eb6",
+        "special": "#ffab91"
+    },
+    "terminal": [
+        "#f2f2f2",
+        "#0f62fe",
+        "#be95ff",
+        "#42be65",
+        "#ee5396",
+        "#ffab91",
+        "#ff7eb6",
+        "#90a4ae",
+        "#161616",
+        "#0f62fe",
+        "#be95ff",
+        "#42be65",
+        "#ee5396",
+        "#ffab91",
+        "#08bdba",
+        "#525252"
+    ]
+}

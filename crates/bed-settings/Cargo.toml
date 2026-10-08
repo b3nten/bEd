@@ -12,5 +12,5 @@ bed-highlight = { workspace = true }
 bed-document-session = { workspace = true }
 bed-ui = { workspace = true }
 dear-imgui-rs = { workspace = true }
+fontdb = { workspace = true }
 serde_json = { workspace = true }
-
