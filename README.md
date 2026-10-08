@@ -18,6 +18,9 @@ panels or detach them into native windows. macOS has native menus through Muda.
 On macOS, **File → New Window** (Cmd+Shift+N) or **New Window** in the Dock
 icon's right-click menu launches a separate bEd process at the project picker.
 Instances share settings and recent projects; each has its own editing session.
+Switching projects clears the previous workspace's docking and transient UI state.
+Saved layouts discard obsolete tabs and are validated before loading; invalid
+docking data falls back to a default arrangement while retaining restorable panels.
 The main titlebar and native window title show `bEd • workspace_name`, using the
 workspace's display name in operating-system window lists as well.
 Titlebar panel buttons and panel menu clicks create new panels. New panels and
@@ -72,10 +75,11 @@ External disk
 changes reload clean buffers; dirty buffers offer Reload, Keep Buffer or Save As.
 
 File opening checks registered plugin extensions first; registration order resolves
-overlapping claims. The bundled image plugin handles PNG and JPEG. Other files
-open in the text editor or the built-in hex editor according to their content.
-Files → right-click → **Open With** selects a viewer explicitly. Image and hex
-views share the same exact-byte document. Switching between text and bytes saves
+overlapping claims. The bundled image plugin handles PNG and JPEG; the glTF
+plugin handles GLB and glTF. Other files open in the text editor or the built-in
+hex editor according to their content. Files → right-click → **Open With**
+selects a viewer explicitly. Image, glTF and hex views share the same exact-byte
+document. Switching between text and bytes saves
 and closes its views before reopening; a cancelled or failed save keeps them open.
 
 The hex editor shows offsets, hexadecimal bytes and ASCII. Click or Shift-click
@@ -85,6 +89,14 @@ text. Undo/redo and save use the usual shortcuts. Byte documents preserve BOMs,
 line endings and arbitrary bytes, and share save/autosave/conflict handling with
 text documents; their undo history stays in memory. The image viewer supports
 Fit, 100%, zoom and pan, plus an information popup and a default-fit setting.
+The glTF viewer previews static, self-contained models with base-color textures,
+vertex colors, depth testing, transparency and studio lighting. Drag to orbit,
+right/middle-drag to pan, scroll to zoom, and double-click or choose **Frame All**
+to reset the framing. Camera state is restored with the workspace. Export GLB or
+glTF with embedded buffers and PNG/JPEG textures. Draco-compressed meshes are
+decoded in Rust, and skins are shown in their authored pose with up to four
+joint influences per vertex. Companion files, morph targets, animation playback
+and full PBR materials are not supported yet.
 
 SSH projects use the same local editor: typing, undo, selections and highlighting
 stay on your machine. Files, search, Git, language servers and shells run on the
@@ -245,6 +257,7 @@ python3 scripts/check-crate-boundaries.py
 cargo clippy --workspace --locked --all-targets -- -D warnings
 cargo test --workspace --locked --all-targets
 cargo test -p bed-effects --locked --lib native_shader -- --ignored --nocapture
+cargo test -p bed-plugin-gltf --locked native_ -- --ignored --nocapture
 cargo run --locked -- --platform-smoke --lifecycle-smoke \
   --config-dir /tmp/bed-native-config path/to/project path/to/file.rs
 cargo run --locked -- --viewports-smoke \
@@ -301,9 +314,10 @@ live in `crates/`, with concrete APIs and one workspace lockfile:
 | `bed-effects` | wgpu shader passes and viewport postprocessing |
 | `bed-remote` | Versioned RPC, SSH transport and automatic helper deployment |
 | `bed-headless` | Remote filesystem, search and Git services without a GUI |
-| `bed-plugin` | Native plugin contracts, contributions, snapshots and typed host requests |
+| `bed-plugin` | Native plugin contracts, contributions, snapshots, typed host requests and optional GPU canvases |
 | `bed-plugin-structure` | Source outline panel and its worker coordination |
-| `bed-plugin-image` | Read-only PNG/JPEG panels and bounded background decoding |
+| `bed-plugin-image` | Read-only PNG/JPEG panels, bounded background decoding and GPU drawing |
+| `bed-plugin-gltf` | Static GLB/embedded glTF loading, orbit cameras and GPU scene rendering |
 | `bed` | Workbench docking, tool panels, settings, resources and native application lifecycle |
 
 Core, files, highlighting, LSP and session compile without GUI backends.
@@ -323,8 +337,8 @@ LSP widgets without exposing mutable frame state. LSP widgets take explicit
 and return navigation actions to the application.
 
 Text Editor, Hex Editor, Files, Settings and Search are host-owned features.
-Structure and Image Viewer are explicitly linked Rust plugins registered in the
-workbench's `PluginRuntime` constructor. Adding a feature means adding its crate
+Structure, Image Viewer and glTF Viewer are explicitly linked Rust plugins
+registered in the workbench's `PluginRuntime` constructor. Adding a feature means adding its crate
 dependency and one constructor to that list. There is no dynamic loading or
 plugin-to-plugin event bus.
 
@@ -342,8 +356,26 @@ The whole transaction is validated before mutation and becomes one undo unit.
 Text transactions retain selection, highlighting and LSP updates. Byte transactions
 use exact splice history and skip text services. Existing text-only embedding APIs
 retain their behavior; `open_file_auto` and `open_file_with_kind` opt into byte
-documents. The image plugin demonstrates host-managed RGBA textures without
-depending on wgpu or native windows. Decoded image pixels are limited to 64 MiB.
+documents.
+
+Panels receive the host's Dear ImGui `&Ui` in `draw` for controls, popups and
+input. With `bed-plugin`'s optional `gpu` feature, `render_output` describes a
+host-owned color target, optional depth attachment, physical size and content
+revision. The host calls `render` with its wgpu device, queue, encoder and target
+after UI/input and before submitting any viewport. Plugins own their pipelines
+and source resources; a device generation identifies when to rebuild them.
+The shared `gpu::Canvas` presents the target and handles viewport DPI sizing.
+Outputs redraw on content changes, resize or device recreation, and are released
+when their panel closes. Plugins do not own native windows or submit frames.
+
+Image and glTF use this same GPU output path. Image decoding stays on a worker;
+the plugin uploads a source texture once per image/device and draws zoom/pan
+into the canvas. Decoded image pixels and each output color target are limited
+to 64 MiB. glTF loading also runs on a worker, with bounds on buffers, decoded
+textures, vertices, indices and nodes. Draco decoding is bounded to 1,000,000
+vertices, 3,000,000 indices and 64 MiB of expanded geometry. glTF textures allow
+64 MiB per image and 128 MiB in total. Neither viewer passes CPU output pixels
+through the host request API.
 
 Run focused suites with `cargo test -p bed-core`, `cargo test -p bed-session`,
 or another crate name. Run the full workspace commands above before submitting

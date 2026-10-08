@@ -228,6 +228,9 @@ pub struct Workbench {
     dock_built: bool,
     scene: u64,
     pending_ini: Option<String>,
+    pending_layout_reset: bool,
+    pending_workspace: Option<WorkspaceSpec>,
+    pending_workspace_files: Vec<(PathBuf, Option<String>, bool)>,
     last_persist: Instant,
     last_state: Option<Value>,
     last_settings_check: Instant,
@@ -309,6 +312,9 @@ impl Workbench {
             dock_built: false,
             scene: 1,
             pending_ini: None,
+            pending_layout_reset: false,
+            pending_workspace: None,
+            pending_workspace_files: Vec::new(),
             last_persist: now,
             last_state: None,
             last_settings_check: now,
@@ -373,6 +379,7 @@ impl Workbench {
         } else if let Some(state) = store.standalone_layout().cloned() {
             self.close_plugin_panels()?;
             self.tabs.clear();
+            self.reset_workspace_layout();
             self.content_search.clear();
             self.active = None;
             self.last_document = None;
@@ -573,6 +580,9 @@ impl Workbench {
         id
     }
     fn largest_dock(&self) -> u32 {
+        if self.pending_layout_reset {
+            return 0;
+        }
         let Some(binding) = &self.context_binding else {
             return self.center_dock;
         };
@@ -652,6 +662,9 @@ impl Workbench {
         self.set_local_workspace(existing.unwrap_or_else(|| WorkspaceSpec::local(text)))
     }
     fn set_local_workspace(&mut self, mut spec: WorkspaceSpec) -> io::Result<bool> {
+        if self.defer_workspace_switch(&spec) {
+            return Ok(true);
+        }
         let root = Path::new(&spec.root);
         let root = std::fs::canonicalize(root)?;
         if !root.is_dir() {
@@ -693,7 +706,15 @@ impl Workbench {
             }
             return Ok(false);
         }
+        let session = EditorSession::with_options(self.session_options(Some(root.clone())))?;
         self.persist_workspace()?;
+        let mut tree = crate::files::file_tree::FileTree::default();
+        tree.preferences = self
+            .store
+            .as_ref()
+            .map(|store| store.tree_preferences(&spec))
+            .unwrap_or_default();
+        tree.refresh_file_tree(&path)?;
         self.session.shutdown(ClosePolicy::Discard)?;
         self.close_plugin_panels()?;
         self.terminal.shutdown();
@@ -710,15 +731,14 @@ impl Workbench {
         self.file_explorer.file_finder.set_project_dir("");
         self.file_explorer.file_finder.set_remote_client(None);
         self.terminal.set_ssh_target(None);
-        self.session = EditorSession::with_options(self.session_options(Some(root.clone())))?;
+        self.reset_workspace_layout();
+        self.session = session;
         self.workspace_spec = Some(spec.clone());
         self.project_root = path.clone();
         self.service_settings = None;
         self.sync_services()?;
         self.file_explorer.project_root = path.clone();
-        self.file_explorer.file_tree.root_node.children.clear();
-        self.restore_tree_preferences(&spec);
-        self.file_explorer.file_tree.refresh_file_tree(&path)?;
+        self.file_explorer.file_tree = tree;
         self.file_explorer.file_finder.set_project_dir(&path);
         self.terminal.set_project_root(&path);
         let restored = self
@@ -731,12 +751,6 @@ impl Workbench {
             self.welcome
                 .set_recent_workspaces(store.recent_workspaces());
         }
-        self.dock_built = false;
-        self.center_dock = 0;
-        self.explorer_dock = 0;
-        self.terminal_dock = 0;
-        self.next_tab = 1;
-        self.last_state = None;
         if let Some(state) = restored {
             self.restore_workspace(&state)?;
         } else {
@@ -747,6 +761,49 @@ impl Workbench {
         }
         self.scene += 1;
         Ok(true)
+    }
+    fn defer_workspace_switch(&mut self, spec: &WorkspaceSpec) -> bool {
+        let inside_frame = self.context_binding.as_ref().is_some_and(|binding| {
+            binding.with_bound_context(|| unsafe { (*sys::igGetCurrentContext()).WithinFrameScope })
+        });
+        if inside_frame {
+            if self
+                .pending_workspace
+                .as_ref()
+                .is_none_or(|pending| pending.identity() != spec.identity())
+            {
+                self.pending_workspace_files.clear();
+            }
+            self.pending_workspace = Some(spec.clone());
+        }
+        inside_frame
+    }
+    fn reset_workspace_layout(&mut self) {
+        self.pending_layout_reset = self.context_binding.as_ref().is_none_or(|binding| {
+            binding.with_bound_context(|| unsafe {
+                if (*sys::igGetCurrentContext()).WithinFrameScope {
+                    true
+                } else {
+                    sys::igClearIniSettings();
+                    false
+                }
+            })
+        });
+        self.pending_ini = None;
+        self.dock_built = false;
+        self.center_dock = 0;
+        self.explorer_dock = 0;
+        self.terminal_dock = 0;
+        self.next_tab = 1;
+        self.last_state = None;
+        self.composition.clear();
+        self.viewport_focus.clear();
+        self.file_dialog = None;
+        self.reload_confirmation = None;
+        self.tab_context = None;
+        self.pending_navigation = None;
+        self.file_explorer.file_finder.cancel_and_close();
+        self.file_explorer.file_finder.set_query("");
     }
     fn session_options(&self, root: Option<PathBuf>) -> SessionOptions {
         let project_services = root.is_some();
@@ -801,6 +858,15 @@ impl Workbench {
     }
     pub fn apply_settings(&mut self, context: &mut Context) -> io::Result<bool> {
         ensure_between_frames(context)?;
+        if self.pending_layout_reset {
+            // Loading ini merges window settings. Clear both the saved settings
+            // and live docking references so previous workspaces cannot rebind
+            // obsolete windows into the new workspace's split containers.
+            context.binding().with_bound_context(|| unsafe {
+                sys::igClearIniSettings();
+            });
+            self.pending_layout_reset = false;
+        }
         if let Some(ini) = self.pending_ini.take() {
             context.binding().with_bound_context(|| unsafe {
                 sys::igLoadIniSettingsFromMemory(ini.as_ptr().cast(), ini.len());
@@ -821,6 +887,20 @@ impl Workbench {
         Ok(applied)
     }
     pub fn tick(&mut self) -> io::Result<()> {
+        if let Some(spec) = self.pending_workspace.take() {
+            let identity = spec.identity();
+            let files = std::mem::take(&mut self.pending_workspace_files);
+            self.set_workspace(spec)?;
+            if self
+                .workspace_spec
+                .as_ref()
+                .is_some_and(|active| active.identity() == identity)
+            {
+                for (path, viewer, additional) in files {
+                    self.open_file_with_viewer(&path, viewer.as_deref(), additional)?;
+                }
+            }
+        }
         self.poll_remote_workspace()?;
         let report = self.session.tick();
         if self.session.is_remote() {
@@ -1002,6 +1082,7 @@ impl Workbench {
             WindowCommand::ResetLayout => {
                 self.dock_built = false;
                 self.pending_ini = None;
+                self.pending_layout_reset = true;
                 self.scene += 1;
             }
             WindowCommand::Projects => self.show_tool(Tool::Projects),
@@ -1535,7 +1616,7 @@ impl Workbench {
         }
     }
     fn build_layout(&mut self, ui: &Ui, size: [f32; 2]) {
-        if self.dock_built {
+        if self.dock_built || self.pending_layout_reset {
             return;
         }
         unsafe {
@@ -2893,6 +2974,9 @@ impl Workbench {
         // An unapplied layout is still authoritative when closing before the
         // first frame. Never replace it with a fresh context's empty settings.
         let ini = self.pending_ini.clone().unwrap_or_else(|| {
+            if self.pending_layout_reset {
+                return String::new();
+            }
             self.context_binding
                 .as_ref()
                 .map(|binding| {
@@ -2947,6 +3031,11 @@ impl Workbench {
             value["id"] = json!(tab.id);
             panels.push(value);
         }
+        let ini = crate::util::workspace_layout::prepare(
+            &ini,
+            panels.iter().filter_map(|panel| panel["id"].as_u64()),
+        )
+        .unwrap_or_default();
         let state = json!({"version":1,"ini":ini,"panels":panels,"focused":self.focused,"active_document_panel":self.active_tab_index().and_then(|index|self.tabs.get(index)).map(|tab|tab.id)});
         if self.last_state.as_ref() != Some(&state) {
             self.store
@@ -2958,9 +3047,38 @@ impl Workbench {
         Ok(())
     }
     fn restore_workspace(&mut self, state: &Value) -> io::Result<()> {
+        let mut state = state.clone();
+        let mut ids = HashSet::new();
+        let invalid_ids = state["panels"].as_array().is_some_and(|panels| {
+            panels.iter().any(|panel| {
+                !panel["id"]
+                    .as_u64()
+                    .is_some_and(|id| id > 0 && id <= u32::MAX as u64 && ids.insert(id))
+            })
+        });
+        if invalid_ids {
+            if let Some(panels) = state["panels"].as_array_mut() {
+                panels.retain(Value::is_object);
+                for (index, panel) in panels.iter_mut().enumerate() {
+                    panel["id"] = json!(index + 1);
+                }
+            }
+            state["ini"] = Value::Null;
+            state["focused"] = Value::Null;
+            state["active_document_panel"] = Value::Null;
+            self.error = Some(
+                "Workspace panel IDs were invalid; restored panels with a default layout".into(),
+            );
+        }
         self.remote_ui.restored_active = state["active_document_panel"].as_u64();
         self.remote_ui.restored_focus = state["focused"].as_u64();
         if self.session.is_remote() {
+            self.remote_ui.restore_order = state["panels"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|panel| panel["id"].as_u64())
+                .collect();
             self.next_tab = state["panels"]
                 .as_array()
                 .into_iter()
@@ -3121,8 +3239,25 @@ impl Workbench {
             }
         }
         if let Some(ini) = state["ini"].as_str().filter(|ini| !ini.is_empty()) {
-            self.pending_ini = Some(ini.to_owned());
-            self.dock_built = true;
+            let ids = state["panels"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|panel| panel["id"].as_u64());
+            match crate::util::workspace_layout::prepare(ini, ids) {
+                Ok(ini) => {
+                    self.pending_ini = Some(ini);
+                    self.dock_built = true;
+                }
+                Err(error) => {
+                    self.error = Some(format!(
+                        "Workspace layout was invalid ({error}); restored panels with a default layout"
+                    ));
+                }
+            }
+        }
+        if self.tabs.is_empty() && self.remote_ui.restore.is_empty() {
+            self.show_tool(Tool::Projects);
         }
         if let Some(index) = self
             .tabs
@@ -3177,7 +3312,7 @@ mod tests {
     use super::*;
     use crate::files::test_support::TempDir;
     use dear_imgui_rs::FramePrepareOptions;
-    fn workspace(dir: &TempDir) -> Workbench {
+    pub(super) fn workspace(dir: &TempDir) -> Workbench {
         let mut settings = Settings::with_paths(
             dir.path("config"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")),
@@ -3276,7 +3411,7 @@ mod tests {
         );
         workbench.cleanup().unwrap();
     }
-    fn frame(context: &mut Context, workbench: &mut Workbench) {
+    pub(super) fn frame(context: &mut Context, workbench: &mut Workbench) {
         context.prepare_frame(FramePrepareOptions::new([1200.0, 800.0], 1.0 / 60.0));
         workbench.render(context.frame()).unwrap();
         drop(context.render_legacy());
@@ -3592,3 +3727,7 @@ mod ui_animation_tests;
 #[cfg(test)]
 #[path = "workbench_feature_tests.rs"]
 mod feature_tests;
+
+#[cfg(test)]
+#[path = "workspace_tests.rs"]
+mod workspace_tests;

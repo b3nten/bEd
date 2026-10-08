@@ -305,6 +305,55 @@ fn workspace_restores_plugin_and_hex_views_with_shared_document_and_state() {
 }
 
 #[test]
+fn workspace_restores_gltf_camera_and_shares_its_bytes_with_hex() {
+    let dir = TempDir::new();
+    let path = dir.write(
+        "project/model.glb",
+        include_bytes!("../tests/fixtures/gltf/cube.glb"),
+    );
+    let camera = json!({"camera": {"target": [2.0, 3.0, 4.0], "yaw": 1.0,
+        "pitch": 0.5, "distance": 12.0}});
+    let mut first = host(&dir);
+    first.open_or_focus(&path).unwrap();
+    let document = first.active_document().unwrap();
+    assert_eq!(
+        first.session.document_kind(document).unwrap(),
+        DocumentKind::Bytes
+    );
+    let Panel::Plugin(panel) = &mut first.tabs.last_mut().unwrap().panel else {
+        panic!("GLB must open in the glTF plugin");
+    };
+    panel.instance = bed_plugin_gltf::GltfPlugin
+        .create_panel(bed_plugin_gltf::PANEL_ID, Some(document), &camera)
+        .unwrap();
+    first
+        .open_file_with_viewer(&path, Some("bed.hex"), true)
+        .unwrap();
+    first.persist_workspace().unwrap();
+    let mut second = host(&dir);
+    second.restore_last_workspace().unwrap();
+    let panel = second
+        .tabs
+        .iter()
+        .find_map(|tab| match &tab.panel {
+            Panel::Plugin(panel) if panel.viewer.as_deref() == Some(bed_plugin_gltf::VIEWER_ID) => {
+                Some(panel)
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(panel.instance.save_state(), camera);
+    let documents: Vec<_> = second
+        .tabs
+        .iter()
+        .filter_map(|tab| tab.panel.document())
+        .collect();
+    assert_eq!(documents.len(), 2);
+    assert_eq!(documents[0], documents[1]);
+    assert_eq!(second.panel_count("hex"), 1);
+}
+
+#[test]
 fn tools_retain_the_last_byte_document_for_save_and_commands() {
     let dir = TempDir::new();
     let text_path = dir.write("project/text.txt", b"text");
@@ -527,16 +576,12 @@ fn restoring_a_focused_tool_keeps_the_last_shared_text_view() {
 }
 
 #[test]
-fn malformed_texture_request_reports_an_error_without_allocating() {
+fn closed_panels_do_not_leave_registered_output_handles() {
     let dir = TempDir::new();
     let mut workbench = host(&dir);
     let handle = TextureHandle::next();
-    workbench.plugins.requests.push(HostRequest::UploadTexture {
-        handle,
-        size: [u32::MAX; 2],
-        rgba: Arc::from(&b""[..]),
-    });
-    workbench.process_plugin_requests().unwrap();
-    assert!(workbench.error.is_some());
-    assert!(!workbench.plugins.images.contains_key(&handle));
+    workbench.set_plugin_texture(handle, dear_imgui_rs::TextureId::new(42));
+    assert!(workbench.plugins.frame.context().texture(handle).is_some());
+    workbench.retain_plugin_textures(&HashSet::new());
+    assert!(workbench.plugins.frame.context().texture(handle).is_none());
 }

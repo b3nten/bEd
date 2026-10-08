@@ -1,13 +1,12 @@
 //! Application adapter for explicitly linked native feature plugins.
 use super::*;
+use bed_plugin::gpu::{GpuContext, RenderOutput, RenderTarget};
 use bed_plugin::{
     CommandContext, HostContext, HostRequest, MenuSlot, Plugin, PluginDocument, PluginPanel,
     Registry, TextureHandle,
 };
 use dear_imgui_rs::TextureId;
 use std::sync::Arc;
-
-pub type PluginTextureImage = (TextureHandle, [u32; 2], Arc<[u8]>, u64);
 
 #[cfg(test)]
 #[path = "plugin_host_tests.rs"]
@@ -42,26 +41,20 @@ impl PluginFrame {
         }
     }
 }
-pub(super) struct TextureImage {
-    pub size: [u32; 2],
-    pub rgba: Arc<[u8]>,
-    pub revision: u64,
-}
 pub(super) struct PluginRuntime {
     pub registry: Registry,
     pub instances: Vec<Box<dyn Plugin>>,
     pub frame: PluginFrame,
     pub requests: Vec<HostRequest>,
-    pub images: HashMap<TextureHandle, TextureImage>,
     pub pending_open: HashMap<String, Option<String>>,
     pending_switch: Option<(PathBuf, String)>,
-    texture_revision: u64,
 }
 impl Default for PluginRuntime {
     fn default() -> Self {
         let instances: Vec<Box<dyn Plugin>> = vec![
             Box::new(bed_plugin_structure::StructurePlugin::default()),
             Box::new(bed_plugin_image::ImagePlugin::default()),
+            Box::new(bed_plugin_gltf::GltfPlugin),
         ];
         let mut registry = Registry::default();
         for plugin in &instances {
@@ -74,10 +67,8 @@ impl Default for PluginRuntime {
             instances,
             frame: PluginFrame::default(),
             requests: Vec::new(),
-            images: HashMap::new(),
             pending_open: HashMap::new(),
             pending_switch: None,
-            texture_revision: 0,
         }
     }
 }
@@ -412,6 +403,14 @@ impl Workbench {
                     .parent()
                     .ok_or_else(|| io::Error::other("File has no parent directory"))?,
             )?;
+            if self.pending_workspace.is_some() {
+                self.pending_workspace_files.push((
+                    canonical,
+                    explicit.map(str::to_owned),
+                    additional,
+                ));
+                return Ok(true);
+            }
         }
         let descriptor = match explicit {
             Some("bed.text" | "bed.hex") => None,
@@ -656,33 +655,6 @@ impl Workbench {
                         namespace[key] = value;
                         self.settings.save_settings()?;
                     }
-                    HostRequest::UploadTexture { handle, size, rgba } => {
-                        let length = u64::from(size[0])
-                            .checked_mul(u64::from(size[1]))
-                            .and_then(|pixels| pixels.checked_mul(4))
-                            .ok_or_else(|| {
-                                io::Error::other("Image dimensions exceed texture limits")
-                            })?;
-                        if size.contains(&0)
-                            || length != rgba.len() as u64
-                            || length > 64 * 1024 * 1024
-                        {
-                            return Err(io::Error::other("Image dimensions exceed texture limits"));
-                        }
-                        self.plugins.texture_revision += 1;
-                        self.plugins.images.insert(
-                            handle,
-                            TextureImage {
-                                size,
-                                rgba,
-                                revision: self.plugins.texture_revision,
-                            },
-                        );
-                    }
-                    HostRequest::ReleaseTexture { handle } => {
-                        self.plugins.images.remove(&handle);
-                        self.plugins.frame.textures.remove(&handle);
-                    }
                     HostRequest::Notify { message } => self.error = Some(message),
                 }
                 Ok(())
@@ -693,15 +665,41 @@ impl Workbench {
         }
         Ok(())
     }
-    pub fn plugin_texture_images(&self) -> Vec<PluginTextureImage> {
-        self.plugins
-            .images
+    pub fn plugin_render_outputs(&self) -> Vec<RenderOutput> {
+        self.tabs
             .iter()
-            .map(|(&handle, image)| (handle, image.size, Arc::clone(&image.rgba), image.revision))
+            .filter_map(|tab| match &tab.panel {
+                Panel::Plugin(panel) => panel.instance.render_output(),
+                _ => None,
+            })
             .collect()
+    }
+    pub fn render_plugin_output(
+        &mut self,
+        handle: TextureHandle,
+        gpu: &mut GpuContext<'_>,
+        target: &RenderTarget,
+    ) -> Result<(), String> {
+        for tab in &mut self.tabs {
+            if let Panel::Plugin(panel) = &mut tab.panel
+                && panel
+                    .instance
+                    .render_output()
+                    .is_some_and(|output| output.handle == handle)
+            {
+                return panel.instance.render(gpu, target);
+            }
+        }
+        Err("Plugin output no longer exists".into())
     }
     pub fn set_plugin_texture(&mut self, handle: TextureHandle, texture: TextureId) {
         self.plugins.frame.textures.insert(handle, texture);
+    }
+    pub fn retain_plugin_textures(&mut self, live: &HashSet<TextureHandle>) {
+        self.plugins
+            .frame
+            .textures
+            .retain(|handle, _| live.contains(handle));
     }
     pub fn invalidate_plugin_textures(&mut self) {
         self.plugins.frame.textures.clear();

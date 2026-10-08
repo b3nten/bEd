@@ -137,7 +137,7 @@ pub(super) struct RemoteUi {
     pub(super) pending_local: Option<WorkspaceSpec>,
     pub(super) restored_active: Option<u64>,
     pub(super) restored_focus: Option<u64>,
-    restore_order: Vec<u64>,
+    pub(super) restore_order: Vec<u64>,
 }
 impl RemoteUi {
     pub(super) fn cancel_connection(&mut self) {
@@ -161,6 +161,9 @@ impl Workbench {
     /// Opening an SSH workspace starts a background connection and validation.
     /// Existing documents remain available until validation and close preflight succeed.
     pub fn set_workspace(&mut self, spec: WorkspaceSpec) -> io::Result<bool> {
+        if self.defer_workspace_switch(&spec) {
+            return Ok(true);
+        }
         if matches!(spec.target, WorkspaceTarget::Local) {
             return self.set_local_workspace(spec);
         }
@@ -485,6 +488,7 @@ impl Workbench {
         self.content_search.clear();
         self.plugins = plugin_host::PluginRuntime::default();
         self.editor_menu_context.clear();
+        self.reset_workspace_layout();
         self.remote_ui = RemoteUi {
             io: Some(RemoteIo::new(client.clone())),
             ..RemoteUi::default()
@@ -495,12 +499,14 @@ impl Workbench {
         self.service_settings = None;
         self.sync_services()?;
         self.file_explorer.project_root = spec.root.clone();
-        self.file_explorer.file_tree.root_node = crate::files::file_tree::FileNode {
-            name: spec.name.clone(),
-            full_path: spec.root.clone(),
-            is_directory: true,
-            is_open: true,
-            children: Vec::new(),
+        self.file_explorer.file_tree = crate::files::file_tree::FileTree {
+            root_node: crate::files::file_tree::FileNode {
+                name: spec.name.clone(),
+                full_path: spec.root.clone(),
+                is_directory: true,
+                is_open: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
         self.restore_tree_preferences(&spec);
@@ -521,19 +527,7 @@ impl Workbench {
             self.welcome
                 .set_recent_workspaces(store.recent_workspaces());
         }
-        self.dock_built = false;
-        self.center_dock = 0;
-        self.explorer_dock = 0;
-        self.terminal_dock = 0;
-        self.next_tab = 1;
-        self.last_state = None;
         if let Some(state) = restored {
-            self.remote_ui.restore_order = state["panels"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|panel| panel["id"].as_u64())
-                .collect();
             self.restore_workspace(&state)?;
         } else {
             self.show_tool(Tool::Explorer);

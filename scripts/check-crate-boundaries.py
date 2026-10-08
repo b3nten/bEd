@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED = {
-    "bed": {"bed-core", "bed-files", "bed-highlight", "bed-lsp", "bed-session", "bed-ui", "bed-terminal", "bed-effects", "bed-remote", "bed-plugin", "bed-plugin-structure", "bed-plugin-image"},
+    "bed": {"bed-core", "bed-files", "bed-highlight", "bed-lsp", "bed-session", "bed-ui", "bed-terminal", "bed-effects", "bed-remote", "bed-plugin", "bed-plugin-structure", "bed-plugin-image", "bed-plugin-gltf"},
     "bed-core": set(),
     "bed-files": {"bed-core", "bed-remote"},
     "bed-highlight": {"bed-core"},
@@ -21,6 +21,7 @@ EXPECTED = {
     "bed-plugin": {"bed-core", "bed-session"},
     "bed-plugin-structure": {"bed-core", "bed-highlight", "bed-plugin", "bed-ui"},
     "bed-plugin-image": {"bed-core", "bed-plugin", "bed-ui"},
+    "bed-plugin-gltf": {"bed-core", "bed-plugin", "bed-ui"},
 }
 HEADLESS = {"bed-core", "bed-files", "bed-highlight", "bed-lsp", "bed-session", "bed-remote", "bed-headless"}
 GUI = {"dear-imgui-rs", "dear-imgui-sys", "dear-imgui-winit", "dear-imgui-wgpu", "winit", "wgpu", "arboard", "rfd", "resvg", "muda", "objc2-app-kit"}
@@ -63,8 +64,14 @@ def check(offline=False):
             seen.add(pid)
             pending.extend(production_dependencies(pid) - seen)
         names = {packages[pid]["name"] for pid in seen}
-        portable_ui = {"bed-ui", "bed-plugin", "bed-plugin-structure", "bed-plugin-image"}
-        forbidden = GUI if name in HEADLESS else {"bed", "bed-terminal", "bed-effects", "winit", "wgpu", "arboard", "rfd"} if name in portable_ui else set()
+        portable_ui = {"bed-ui", "bed-plugin", "bed-plugin-structure", "bed-plugin-image", "bed-plugin-gltf"}
+        forbidden = set()
+        if name in HEADLESS:
+            forbidden = GUI
+        elif name in portable_ui:
+            forbidden = {"bed", "bed-terminal", "bed-effects", "winit", "arboard", "rfd"}
+            if name == "bed-ui":
+                forbidden.add("wgpu")
         assert not names & forbidden, f"{name} crosses its dependency boundary: {sorted(names & forbidden)}"
     print(f"All {len(EXPECTED)} crates respect their production dependency boundaries.")
 

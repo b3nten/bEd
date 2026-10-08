@@ -1,5 +1,7 @@
 //! Native plugin contracts. The application owns documents and processes typed requests.
 //! Plugins are explicitly linked Rust crates; this is not a dynamic-library ABI.
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub use bed_core::editor_state::DocumentKind;
 use bed_core::{buffer::text_buffer::Snapshot, identity::DocumentId};
 use dear_imgui_rs::{TextureId, Ui};
@@ -116,14 +118,6 @@ pub enum HostRequest {
         plugin: String,
         key: String,
         value: Value,
-    },
-    UploadTexture {
-        handle: TextureHandle,
-        size: [u32; 2],
-        rgba: Arc<[u8]>,
-    },
-    ReleaseTexture {
-        handle: TextureHandle,
     },
     Notify {
         message: String,
@@ -353,6 +347,22 @@ pub trait Plugin: Any {
 pub trait PluginPanel: Any {
     fn title(&self, host: &HostContext<'_>) -> String;
     fn draw(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>);
+    /// The host owns this output's allocation and Dear ImGui registration.
+    /// Return None while loading, on failure, or when no output is needed.
+    #[cfg(feature = "gpu")]
+    fn render_output(&self) -> Option<gpu::RenderOutput> {
+        None
+    }
+    /// Called after UI/input and before any viewport is submitted. The host calls
+    /// this only after a revision change, resize, or device recreation.
+    #[cfg(feature = "gpu")]
+    fn render(
+        &mut self,
+        _gpu: &mut gpu::GpuContext<'_>,
+        _target: &gpu::RenderTarget,
+    ) -> Result<(), String> {
+        Ok(())
+    }
     fn save_state(&self) -> Value {
         Value::Null
     }

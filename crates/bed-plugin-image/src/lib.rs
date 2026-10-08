@@ -1,10 +1,11 @@
 //! A small read-only PNG/JPEG viewer implemented entirely through the plugin API.
 use bed_core::identity::DocumentId;
+use bed_plugin::gpu::{Canvas, GpuContext, RenderOutput, RenderTarget};
 use bed_plugin::{
     CommandContext, DocumentKind, HostContext, HostRequest, MenuSlot, Plugin, PluginPanel,
     Registrar, Revision, TextureHandle,
 };
-use dear_imgui_rs::{MouseButton, Ui};
+use dear_imgui_rs::{MouseButton, StyleColor, Ui};
 use serde_json::{Value, json};
 use std::{
     any::Any,
@@ -19,6 +20,17 @@ pub const VIEWER_ID: &str = "bed.image.viewer";
 pub const OPEN_COMMAND: &str = "bed.image.open";
 pub const OPEN_FILE_COMMAND: &str = "bed.image.open-file";
 pub const MAX_DECODED_BYTES: u64 = 64 * 1024 * 1024;
+
+mod render;
+
+#[derive(Clone, Copy, PartialEq)]
+struct CanvasState {
+    size: [f32; 2],
+    pixels: [u32; 2],
+    scale: f32,
+    pan: [f32; 2],
+    background: [f32; 4],
+}
 
 #[derive(Default)]
 pub struct ImagePlugin {}
@@ -173,7 +185,9 @@ pub struct ImagePanel {
     requested: Option<Revision>,
     decoded: Option<DecodedImage>,
     error: Option<String>,
-    upload: bool,
+    gpu: Option<render::ImageGpu>,
+    canvas: Option<CanvasState>,
+    output_revision: u64,
     fit: Option<bool>,
     zoom: f32,
     pan: [f32; 2],
@@ -192,7 +206,9 @@ impl ImagePanel {
             requested: None,
             decoded: None,
             error: None,
-            upload: false,
+            gpu: None,
+            canvas: None,
+            output_revision: 0,
             fit: state["fit"].as_bool(),
             zoom: finite(state["zoom"].as_f64(), 1.0).clamp(0.01, 32.0),
             pan: [
@@ -201,8 +217,10 @@ impl ImagePanel {
             ],
         }
     }
-    fn update(&mut self, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
+    fn update(&mut self, host: &HostContext<'_>) {
         let Some(document) = host.document(self.document) else {
+            self.decoded = None;
+            self.gpu = None;
             return;
         };
         while let Ok(result) = self.decoder.receiver.try_recv() {
@@ -213,14 +231,13 @@ impl ImagePanel {
                 Ok(decoded) => {
                     self.decoded = Some(decoded);
                     self.error = None;
-                    self.upload = true;
+                    self.gpu = None;
+                    self.output_revision += 1;
                 }
                 Err(error) => {
                     self.decoded = None;
                     self.error = Some(error);
-                    requests.push(HostRequest::ReleaseTexture {
-                        handle: self.texture,
-                    });
+                    self.gpu = None;
                 }
             }
         }
@@ -233,19 +250,7 @@ impl ImagePanel {
             self.requested = Some(document.revision);
             self.decoded = None;
             self.error = None;
-            requests.push(HostRequest::ReleaseTexture {
-                handle: self.texture,
-            });
-        }
-        if let Some(decoded) = &self.decoded
-            && (self.upload || host.texture(self.texture).is_none())
-        {
-            requests.push(HostRequest::UploadTexture {
-                handle: self.texture,
-                size: decoded.size,
-                rgba: Arc::clone(&decoded.rgba),
-            });
-            self.upload = false;
+            self.gpu = None;
         }
     }
 }
@@ -262,15 +267,46 @@ impl PluginPanel for ImagePanel {
     fn save_state(&self) -> Value {
         json!({ "fit": self.fit, "zoom": self.zoom, "pan": self.pan })
     }
-    fn close(&mut self, requests: &mut Vec<HostRequest>) {
+    fn close(&mut self, _requests: &mut Vec<HostRequest>) {
         self.decoder.sender = None;
-        requests.push(HostRequest::ReleaseTexture {
+        self.decoded = None;
+        self.gpu = None;
+    }
+    fn render_output(&self) -> Option<RenderOutput> {
+        self.decoded.as_ref()?;
+        Some(RenderOutput {
             handle: self.texture,
-        });
+            size: self.canvas?.pixels,
+            depth: false,
+            revision: self.output_revision,
+        })
+    }
+    fn render(&mut self, gpu: &mut GpuContext<'_>, target: &RenderTarget) -> Result<(), String> {
+        let decoded = self.decoded.as_ref().ok_or("Image is not decoded")?;
+        if self
+            .gpu
+            .as_ref()
+            .is_none_or(|state| state.generation != gpu.generation)
+        {
+            match render::ImageGpu::new(gpu, decoded) {
+                Ok(state) => self.gpu = Some(state),
+                Err(error) => {
+                    self.error = Some(error.clone());
+                    self.decoded = None;
+                    return Err(error);
+                }
+            }
+        }
+        self.gpu.as_ref().unwrap().render(
+            gpu,
+            target,
+            self.canvas.ok_or("Image canvas is not sized")?,
+        );
+        Ok(())
     }
     fn draw(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         let _controls = bed_ui::util::popup_style::controls_style(ui);
-        self.update(host, requests);
+        self.update(host);
         let fit = self.fit.get_or_insert_with(|| {
             host.settings_for(PLUGIN_ID)["fit_by_default"]
                 .as_bool()
@@ -334,18 +370,11 @@ impl PluginPanel for ImagePanel {
             ui.text_disabled("Loading image…");
             return;
         };
-        let Some(texture) = host.texture(self.texture) else {
-            ui.text_disabled("Preparing image…");
-            return;
-        };
-        let canvas = ui.content_region_avail();
-        let canvas = [canvas[0].max(1.0), canvas[1].max(1.0)];
-        let origin = ui.cursor_screen_pos();
+        let canvas = Canvas::show(ui, host, self.texture, "image-canvas");
         let fit_scale =
-            (canvas[0] / decoded.size[0] as f32).min(canvas[1] / decoded.size[1] as f32);
+            (canvas.size[0] / decoded.size[0] as f32).min(canvas.size[1] / decoded.size[1] as f32);
         let mut scale = if *fit { fit_scale } else { self.zoom };
-        ui.invisible_button("image-canvas", canvas);
-        if ui.is_item_hovered() {
+        if canvas.hovered {
             let wheel = ui.io().mouse_wheel();
             if wheel != 0.0 {
                 self.zoom = (scale * 1.2f32.powf(wheel)).clamp(0.01, 32.0);
@@ -353,28 +382,22 @@ impl PluginPanel for ImagePanel {
                 scale = self.zoom;
             }
         }
-        if ui.is_item_active() && ui.is_mouse_dragging(MouseButton::Left) {
+        if canvas.active && ui.is_mouse_dragging(MouseButton::Left) {
             let delta = ui.io().mouse_delta();
             self.pan[0] += delta[0];
             self.pan[1] += delta[1];
         }
-        let size = [
-            decoded.size[0] as f32 * scale,
-            decoded.size[1] as f32 * scale,
-        ];
-        let minimum = [
-            origin[0] + (canvas[0] - size[0]) * 0.5 + self.pan[0],
-            origin[1] + (canvas[1] - size[1]) * 0.5 + self.pan[1],
-        ];
-        let _clip = ui.push_clip_rect(origin, [origin[0] + canvas[0], origin[1] + canvas[1]], true);
-        ui.get_window_draw_list().add_image(
-            texture,
-            minimum,
-            [minimum[0] + size[0], minimum[1] + size[1]],
-            [0.0; 2],
-            [1.0; 2],
-            [1.0; 4],
-        );
+        let state = CanvasState {
+            size: canvas.size,
+            pixels: canvas.pixels,
+            scale,
+            pan: self.pan,
+            background: ui.style_color(StyleColor::WindowBg),
+        };
+        if self.canvas != Some(state) {
+            self.canvas = Some(state);
+            self.output_revision += 1;
+        }
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -437,7 +460,7 @@ mod tests {
         bytes.into_inner().into()
     }
     #[test]
-    fn worker_discards_stale_results_and_close_releases_texture() {
+    fn worker_discards_stale_results_and_close_releases_gpu_output() {
         let mut panel = ImagePanel::new(DocumentId(1), &Value::Null);
         let mut documents = [bed_plugin::PluginDocument {
             id: DocumentId(1),
@@ -452,8 +475,20 @@ mod tests {
         let textures = HashMap::new();
         let settings = Value::Null;
         let mut requests = Vec::new();
-        panel.update(
-            &HostContext {
+        panel.update(&HostContext {
+            documents: &documents,
+            active_document: Some(DocumentId(1)),
+            settings: &settings,
+            textures: &textures,
+            animations: false,
+            workspace: 1,
+            diagnostics: &Value::Null,
+        });
+        documents[0].revision = (1, 2);
+        documents[0].bytes = png(2, 3);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            panel.update(&HostContext {
                 documents: &documents,
                 active_document: Some(DocumentId(1)),
                 settings: &settings,
@@ -461,25 +496,7 @@ mod tests {
                 animations: false,
                 workspace: 1,
                 diagnostics: &Value::Null,
-            },
-            &mut requests,
-        );
-        documents[0].revision = (1, 2);
-        documents[0].bytes = png(2, 3);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            panel.update(
-                &HostContext {
-                    documents: &documents,
-                    active_document: Some(DocumentId(1)),
-                    settings: &settings,
-                    textures: &textures,
-                    animations: false,
-                    workspace: 1,
-                    diagnostics: &Value::Null,
-                },
-                &mut requests,
-            );
+            });
             if panel.decoded.is_some() {
                 break;
             }
@@ -487,16 +504,18 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(panel.decoded.as_ref().unwrap().size, [2, 3]);
-        assert!(requests.iter().all(
-            |request| !matches!(request, HostRequest::UploadTexture { size, .. } if *size != [2, 3])
-        ));
-        requests.clear();
+        panel.canvas = Some(CanvasState {
+            size: [100.0; 2],
+            pixels: [200; 2],
+            scale: 1.0,
+            pan: [0.0; 2],
+            background: [0.0; 4],
+        });
+        assert_eq!(panel.render_output().unwrap().size, [200; 2]);
         panel.close(&mut requests);
         assert!(panel.decoder.sender.is_none());
-        assert!(matches!(
-            requests.as_slice(),
-            [HostRequest::ReleaseTexture { .. }]
-        ));
+        assert!(panel.render_output().is_none());
+        assert!(panel.gpu.is_none());
     }
     #[test]
     fn file_menu_command_uses_captured_path_after_focus_changes() {

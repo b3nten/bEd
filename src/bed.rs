@@ -6,6 +6,7 @@ use bed_effects::{
     shader_manager::ShaderManager, shader_types::OFFSCREEN_FORMAT,
     viewport_effects::ViewportEffectsFactory,
 };
+use bed_plugin::gpu::{GpuContext, RenderTarget};
 #[cfg(test)]
 use bed_session::editor::Editor;
 #[cfg(test)]
@@ -178,10 +179,14 @@ struct Gpu {
     reconfigure_next_frame: bool,
     effects: ShaderManager,
     image_textures: Vec<wgpu::Texture>,
-    plugin_textures: HashMap<
-        bed_plugin::TextureHandle,
-        (dear_imgui_wgpu::ExternalTextureId, wgpu::Texture, u64),
-    >,
+    plugin_textures: HashMap<bed_plugin::TextureHandle, PluginGpuTexture>,
+    generation: u64,
+}
+
+struct PluginGpuTexture {
+    external: dear_imgui_wgpu::ExternalTextureId,
+    target: RenderTarget,
+    rendered_revision: Option<u64>,
 }
 
 impl Gpu {
@@ -281,6 +286,10 @@ impl Gpu {
             effects,
             image_textures: Vec::new(),
             plugin_textures: HashMap::new(),
+            generation: {
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
         })
     }
 
@@ -346,8 +355,8 @@ impl Gpu {
 
     /// Run between frame transactions: no viewport can still refer to a removed view.
     fn sync_plugin_textures(&mut self, workbench: &mut Workbench) -> HostResult<()> {
-        let images = workbench.plugin_texture_images();
-        let live: HashSet<_> = images.iter().map(|(handle, _, _, _)| *handle).collect();
+        let outputs = workbench.plugin_render_outputs();
+        let live: HashSet<_> = outputs.iter().map(|output| output.handle).collect();
         let removed: Vec<_> = self
             .plugin_textures
             .keys()
@@ -355,29 +364,72 @@ impl Gpu {
             .copied()
             .collect();
         for handle in removed {
-            if let Some((external, _, _)) = self.plugin_textures.remove(&handle) {
-                self.route.unregister_external_texture(external)?;
+            if let Some(texture) = self.plugin_textures.remove(&handle) {
+                self.route.unregister_external_texture(texture.external)?;
             }
         }
-        for (handle, [width, height], pixels, revision) in images {
-            if let Some((external, _, current)) = self.plugin_textures.get(&handle)
-                && *current == revision
+        workbench.retain_plugin_textures(&live);
+        for output in outputs {
+            let handle = output.handle;
+            if let Some(texture) = self.plugin_textures.get(&handle)
+                && texture.target.size == output.size
+                && texture.target.depth.is_some() == output.depth
             {
-                workbench.set_plugin_texture(handle, external.texture_id());
+                workbench.set_plugin_texture(handle, texture.external.texture_id());
                 continue;
             }
-            let texture = self.create_rgba_texture(width, height, &pixels)?;
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let external = if let Some((external, _, _)) = self.plugin_textures.get(&handle) {
-                let external = *external;
-                self.route.update_external_texture(external, &view)?;
+            let target = RenderTarget::new(&self.device, output).map_err(io::Error::other)?;
+            let external = if let Some(texture) = self.plugin_textures.get(&handle) {
+                let external = texture.external;
+                self.route.update_external_texture(external, &target.view)?;
                 external
             } else {
-                self.route.register_external_texture(&view)?
+                self.route.register_external_texture(&target.view)?
             };
             workbench.set_plugin_texture(handle, external.texture_id());
-            self.plugin_textures
-                .insert(handle, (external, texture, revision));
+            self.plugin_textures.insert(
+                handle,
+                PluginGpuTexture {
+                    external,
+                    target,
+                    rendered_revision: None,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn render_plugin_outputs(&mut self, workbench: &mut Workbench) -> HostResult<()> {
+        self.sync_plugin_textures(workbench)?;
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Bed plugin canvases"),
+            });
+        let mut rendered = false;
+        for output in workbench.plugin_render_outputs() {
+            let Some(texture) = self.plugin_textures.get_mut(&output.handle) else {
+                continue;
+            };
+            if texture.rendered_revision == Some(output.revision) {
+                continue;
+            }
+            let mut gpu = GpuContext {
+                device: &self.device,
+                queue: &self.queue,
+                encoder: &mut encoder,
+                generation: self.generation,
+            };
+            match workbench.render_plugin_output(output.handle, &mut gpu, &texture.target) {
+                Ok(()) => {
+                    texture.rendered_revision = Some(output.revision);
+                    rendered = true;
+                }
+                Err(error) => workbench.error = Some(error),
+            }
+        }
+        if rendered {
+            self.queue.submit([encoder.finish()]);
         }
         Ok(())
     }
@@ -488,6 +540,11 @@ const PLUGIN_SMOKE_BYTES: &[u8] = &[0, 255, 13, 10, 239, 187, 191, 128, 0, 1];
 struct PluginSmoke {
     image: PathBuf,
     binary: PathBuf,
+    model: PathBuf,
+    embedded_model: PathBuf,
+    model_capture: Option<PathBuf>,
+    model_size: [u32; 2],
+    secondary_before: u64,
     original_handle: Option<bed_plugin::TextureHandle>,
     phase: u8,
 }
@@ -679,6 +736,14 @@ impl Runtime {
         let plugin_smoke = options.plugins.then(|| PluginSmoke {
             image: PathBuf::from(&workbench.project_root).join("image.png"),
             binary: PathBuf::from(&workbench.project_root).join("bytes.bin"),
+            model: PathBuf::from(&workbench.project_root).join("cube.glb"),
+            embedded_model: PathBuf::from(&workbench.project_root).join("cube.gltf"),
+            model_capture: options
+                .capture_path
+                .as_ref()
+                .map(|path| path.with_file_name("gltf.ppm")),
+            model_size: [0; 2],
+            secondary_before: 0,
             original_handle: None,
             phase: 0,
         });
@@ -781,6 +846,13 @@ impl Runtime {
         if let Some(message) = lost {
             eprintln!("bEd: recreating GPU after device loss: {message}");
             self.gpu.route.shutdown(&mut self.context)?;
+            // Existing secondary windows have already run Renderer_CreateWindow.
+            // Recreate platform ownership so the replacement renderer receives
+            // those callbacks again; ImGui retains the panels and their layout.
+            if self.platform.viewports_enabled() {
+                self.platform.disable_viewports(&mut self.context)?;
+                self.platform.enable_viewports(&mut self.context)?;
+            }
             self.gpu = Gpu::new(Arc::clone(&self.window), &mut self.context, &self.platform)?;
             if self.viewport_capture_prefix.is_some() {
                 self.gpu.effect_factory.enable_capture();
@@ -876,6 +948,10 @@ impl Runtime {
             }
         }
         let actions = self.workbench.render(ui)?;
+        // Output textures must be ready before prepare() submits secondary windows.
+        if let Err(error) = self.gpu.render_plugin_outputs(&mut self.workbench) {
+            self.workbench.error = Some(error.to_string());
+        }
         self.platform.prepare_render(ui, &self.window)?;
         let mut effect_settings = self.workbench.settings.shader_settings();
         if let Some(enabled) = self.effects_enabled_override {
@@ -1689,14 +1765,14 @@ impl Runtime {
         result
     }
     fn advance_plugin_fixture(&mut self, smoke: &mut PluginSmoke) -> HostResult<()> {
-        if smoke.phase < 7 && self.started.elapsed() > Duration::from_secs(30) {
+        if smoke.phase < 15 && self.started.elapsed() > Duration::from_secs(45) {
             return Err(io::Error::other(format!(
                 "Plugin smoke timed out in phase {}: {:?}",
                 smoke.phase, self.workbench.error
             ))
             .into());
         }
-        let images = self.workbench.plugin_texture_images();
+        let images = self.workbench.plugin_render_outputs();
         match smoke.phase {
             0 if images.len() == 1 && self.gpu.plugin_textures.len() == 1 => {
                 if self.workbench.panel_count("bed.image.panel") != 1 {
@@ -1704,7 +1780,7 @@ impl Runtime {
                         io::Error::other("PNG extension did not select image plugin").into(),
                     );
                 }
-                smoke.original_handle = Some(images[0].0);
+                smoke.original_handle = Some(images[0].handle);
                 #[cfg(target_os = "macos")]
                 {
                     self.native_menu
@@ -1757,7 +1833,7 @@ impl Runtime {
                 smoke.phase = 4;
             }
             4 if images.len() == 1 && self.gpu.plugin_textures.len() == 1 => {
-                if Some(images[0].0) == smoke.original_handle {
+                if Some(images[0].handle) == smoke.original_handle {
                     return Err(
                         io::Error::other("Closed image panel retained its texture handle").into(),
                     );
@@ -1793,8 +1869,74 @@ impl Runtime {
                     .into());
                 }
                 smoke.phase = 7;
+                self.workbench.open_or_focus(&smoke.model)?;
+            }
+            7 if images.len() == 1 && self.gpu.plugin_textures.len() == 1 => {
+                if self.workbench.panel_count("bed.gltf.panel") != 1 || !images[0].depth {
+                    return Err(io::Error::other(
+                        "GLB did not select the depth-enabled glTF plugin output",
+                    )
+                    .into());
+                }
+                smoke.model_size = images[0].size;
+                self.capture_path = smoke.model_capture.take();
+                self.capture_after_frames = self.rendered_frames + 3;
+                smoke.phase = 8;
+            }
+            8 if self.capture_path.is_none() => {
+                let _ = self
+                    .window
+                    .request_inner_size(PhysicalSize::new(1800, 1200));
+                smoke.phase = 9;
+            }
+            9 if images.len() == 1 && images[0].size != smoke.model_size => {
+                if matches!(self.gpu.route, SurfaceRenderer::Native(_)) {
+                    let panel = self
+                        .workbench
+                        .active_panel_id()
+                        .ok_or_else(|| io::Error::other("glTF panel is not active"))?;
+                    self.workbench.detach_panel_for_smoke(panel, [140.0, 140.0]);
+                }
+                smoke.secondary_before = self.secondary_presentations;
+                smoke.phase = 10;
+            }
+            10 if !matches!(self.gpu.route, SurfaceRenderer::Native(_))
+                || self.secondary_presentations > smoke.secondary_before + 4 =>
+            {
+                *self
+                    .gpu
+                    .device_lost
+                    .lock()
+                    .map_err(|_| io::Error::other("GPU loss state poisoned"))? =
+                    Some("glTF smoke recovery fixture".into());
+                smoke.phase = 11;
+            }
+            11 if images.len() == 1 && self.gpu.plugin_textures.len() == 1 => {
+                if !images[0].depth {
+                    return Err(io::Error::other(
+                        "glTF depth target was lost during GPU recreation",
+                    )
+                    .into());
+                }
+                self.workbench.open_or_focus(&smoke.model)?;
+                self.workbench.dispatch(WindowCommand::Close)?;
+                smoke.phase = 12;
+            }
+            12 if images.is_empty() && self.gpu.plugin_textures.is_empty() => {
+                self.workbench.open_or_focus(&smoke.embedded_model)?;
+                smoke.phase = 13;
+            }
+            13 if images.len() == 1 && self.gpu.plugin_textures.len() == 1 => {
+                self.workbench.dispatch(WindowCommand::Close)?;
+                smoke.phase = 14;
+            }
+            14 if images.is_empty() && self.gpu.plugin_textures.is_empty() => {
+                if self.workbench.panel_count("bed.gltf.panel") != 0 {
+                    return Err(io::Error::other("Closed glTF panel leaked").into());
+                }
+                smoke.phase = 15;
                 eprintln!(
-                    "bEd: plugin smoke verified extension routing, exact-byte hex fallback, native plugin commands, texture close/reopen and GPU recovery"
+                    "bEd: plugin smoke verified image/glTF GPU outputs, GLB/embedded glTF routing, resize, detached presentation, close/reopen and GPU recovery"
                 );
             }
             _ => {}
@@ -1805,7 +1947,7 @@ impl Runtime {
         if self
             .plugin_smoke
             .as_ref()
-            .is_some_and(|smoke| smoke.phase < 7)
+            .is_some_and(|smoke| smoke.phase < 15)
         {
             return false;
         }
@@ -2396,6 +2538,14 @@ pub fn run() -> HostResult<()> {
             &image,
         )?;
         std::fs::write(fixture.0.join("bytes.bin"), PLUGIN_SMOKE_BYTES)?;
+        std::fs::write(
+            fixture.0.join("cube.glb"),
+            include_bytes!("../tests/fixtures/gltf/cube.glb"),
+        )?;
+        std::fs::write(
+            fixture.0.join("cube.gltf"),
+            include_bytes!("../tests/fixtures/gltf/cube.gltf"),
+        )?;
         paths.clear();
         paths.push(fixture.0.clone());
         paths.push(image);

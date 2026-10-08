@@ -52,3 +52,16 @@ and ordinary tests, which consume these committed fixtures. It requires the
 ignored pinned checkout in `reference/ned`; setup and tool requirements are
 documented in `scripts/provenance/README.md`. Original upstream names and
 recorded identifiers remain unchanged so comparisons retain their source history.
+
+`gltf/cube.glb` and `gltf/cube.gltf` are original synthetic fixtures for the
+glTF plugin: the same cube geometry and embedded checker
+texture in binary and JSON containers. Regenerate them with
+`python3 tests/fixtures/gltf/generate.py`. Loader tests exercise both formats;
+opt-in native GPU tests check rendered pixels, depth, alpha masking,
+transparency, camera movement and resizing. The application's `--plugin-smoke`
+also covers image/glTF close/reopen, detached viewports and device recreation.
+
+The Draco loader tests also use `resources/models/LittlestTokyo.glb`, including
+its 71 compressed primitives, eight skinned meshes and four textures. Malformed
+stream tests isolate a small primitive from that asset; the opt-in native GPU
+suite renders the full model. Attribution is in `resources/models/README.md`.

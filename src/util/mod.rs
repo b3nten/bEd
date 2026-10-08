@@ -18,4 +18,5 @@ pub(crate) mod tree_animation;
 pub(crate) mod ui_animations;
 pub mod welcome;
 pub mod windows_window;
+pub(crate) mod workspace_layout;
 pub mod workspace_state;
