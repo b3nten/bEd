@@ -1576,6 +1576,12 @@ impl Runtime {
                 match route {
                     NativeEditRoute::Ignore => {}
                     NativeEditRoute::SelectAllDocument => {
+                        if self
+                            .workbench
+                            .focused_plugin_action(bed_plugin::PanelAction::SelectAll)?
+                        {
+                            continue;
+                        }
                         if self.workbench.focused_hex() {
                             queue_native_edit_shortcut(
                                 &mut self.context,

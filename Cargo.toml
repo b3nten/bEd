@@ -7,7 +7,7 @@ publish = false
 license-file = "LICENSE"
 
 [workspace]
-members = ["crates/bed-core", "crates/bed-files", "crates/bed-highlight", "crates/bed-lsp", "crates/bed-session", "crates/bed-ui", "crates/bed-terminal", "crates/bed-debug", "crates/bed-effects", "crates/bed-remote", "crates/bed-headless", "crates/bed-plugin", "crates/bed-plugin-structure", "crates/bed-plugin-image", "crates/bed-plugin-gltf", "crates/bed-plugin-font", "crates/bed-plugin-audio"]
+members = ["crates/bed-core", "crates/bed-files", "crates/bed-highlight", "crates/bed-lsp", "crates/bed-session", "crates/bed-ui", "crates/bed-terminal", "crates/bed-debug", "crates/bed-effects", "crates/bed-remote", "crates/bed-headless", "crates/bed-plugin", "crates/bed-plugin-structure", "crates/bed-plugin-image", "crates/bed-plugin-gltf", "crates/bed-plugin-font", "crates/bed-plugin-audio", "crates/bed-plugin-csv"]
 default-members = ["."]
 exclude = ["vendor/dear-imgui-sys", "vendor/dear-imgui-winit", "vendor/dear-imgui-wgpu", "vendor/freetype-sys", "vendor/bevy_stl"]
 resolver = "3"
@@ -69,6 +69,7 @@ bed-plugin-image = { path = "crates/bed-plugin-image" }
 bed-plugin-gltf = { path = "crates/bed-plugin-gltf" }
 bed-plugin-font = { path = "crates/bed-plugin-font" }
 bed-plugin-audio = { path = "crates/bed-plugin-audio" }
+bed-plugin-csv = { path = "crates/bed-plugin-csv" }
 
 [dependencies]
 bed-plugin = { workspace = true }
@@ -77,6 +78,7 @@ bed-plugin-image = { workspace = true }
 bed-plugin-gltf = { workspace = true }
 bed-plugin-font = { workspace = true }
 bed-plugin-audio = { workspace = true }
+bed-plugin-csv = { workspace = true }
 chrono = { workspace = true }
 bed-remote = { workspace = true }
 bed-core = { workspace = true }

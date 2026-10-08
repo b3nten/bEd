@@ -2,8 +2,8 @@
 use super::*;
 use bed_plugin::gpu::{GpuContext, RenderOutput, RenderTarget};
 use bed_plugin::{
-    CommandContext, HostContext, HostRequest, MenuSlot, Plugin, PluginDocument, PluginPanel,
-    Registry, TextureHandle,
+    CommandContext, EditToken, HostContext, HostRequest, MenuSlot, PanelAction, Plugin,
+    PluginDocument, PluginPanel, Registry, TextureHandle,
 };
 use dear_imgui_rs::TextureId;
 use std::sync::Arc;
@@ -11,6 +11,10 @@ use std::sync::Arc;
 #[cfg(test)]
 #[path = "plugin_host_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "csv_host_tests.rs"]
+mod csv_tests;
 
 pub(super) struct HostedPanel {
     pub kind: String,
@@ -57,6 +61,7 @@ impl Default for PluginRuntime {
             Box::new(bed_plugin_gltf::GltfPlugin),
             Box::new(bed_plugin_font::FontPlugin),
             Box::new(bed_plugin_audio::AudioPlugin),
+            Box::new(bed_plugin_csv::CsvPlugin),
         ];
         let mut registry = Registry::default();
         for plugin in &instances {
@@ -520,6 +525,119 @@ impl Workbench {
             .iter()
             .any(|tab| Some(tab.id) == self.focused && matches!(tab.panel, Panel::Hex(_)))
     }
+    pub fn focused_document_plugin(&self) -> bool {
+        self.tabs.iter().any(|tab| {
+            Some(tab.id) == self.focused
+                && matches!(&tab.panel, Panel::Plugin(panel) if panel.instance.attached_document().is_some())
+        })
+    }
+    /// Route a native action to the panel that actually owns focus.
+    pub fn focused_plugin_action(&mut self, action: PanelAction) -> io::Result<bool> {
+        let Some(index) = self
+            .tabs
+            .iter()
+            .position(|tab| Some(tab.id) == self.focused)
+        else {
+            return Ok(false);
+        };
+        self.plugin_panel_action(index, action)
+    }
+    pub(super) fn plugin_panel_action(
+        &mut self,
+        index: usize,
+        action: PanelAction,
+    ) -> io::Result<bool> {
+        if !self
+            .tabs
+            .get(index)
+            .is_some_and(|tab| matches!(tab.panel, Panel::Plugin(_)))
+        {
+            return Ok(false);
+        }
+        self.refresh_plugins()?;
+        let Panel::Plugin(panel) = &mut self.tabs[index].panel else {
+            unreachable!();
+        };
+        let mut requests = Vec::new();
+        let handled = panel
+            .instance
+            .action(action, &self.plugins.frame.context(), &mut requests)
+            .map_err(io::Error::other)?;
+        if action == PanelAction::CommitEdit {
+            if requests.iter().any(|request| {
+                !matches!(
+                    request,
+                    HostRequest::ApplyEdits { .. } | HostRequest::ApplyEditsWithResult { .. }
+                )
+            }) {
+                return Err(io::Error::other("CommitEdit may only queue document edits"));
+            }
+            for request in requests {
+                match request {
+                    HostRequest::ApplyEdits {
+                        document,
+                        revision,
+                        edits,
+                    } => {
+                        self.session.apply_edits(document, revision, &edits)?;
+                    }
+                    HostRequest::ApplyEditsWithResult {
+                        token,
+                        document,
+                        revision,
+                        edits,
+                    } => {
+                        self.apply_plugin_edits(token, document, revision, &edits)?;
+                    }
+                    _ => unreachable!("CommitEdit requests were validated"),
+                }
+            }
+        } else {
+            self.plugins.requests.extend(requests);
+            self.process_plugin_requests_inner(true)?;
+        }
+        Ok(handled)
+    }
+    fn apply_plugin_edits(
+        &mut self,
+        token: EditToken,
+        document: DocumentId,
+        revision: bed_plugin::Revision,
+        edits: &[bed_session::editor_session::ByteEdit],
+    ) -> io::Result<()> {
+        let result = self.session.apply_edits(document, revision, edits);
+        let acknowledgement = match &result {
+            Ok(()) => self
+                .session
+                .document_revision(document)
+                .map_err(|error| error.to_string()),
+            Err(error) => Err(error.to_string()),
+        };
+        for tab in &mut self.tabs {
+            if let Panel::Plugin(panel) = &mut tab.panel
+                && panel.instance.attached_document() == Some(document)
+            {
+                panel.instance.edit_result(token, acknowledgement.clone());
+            }
+        }
+        result
+    }
+    pub(super) fn commit_plugin_edits(&mut self, document: DocumentId) -> io::Result<()> {
+        self.process_plugin_requests_inner(true)?;
+        let indices: Vec<_> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, tab)| {
+                (tab.panel.document() == Some(document) && matches!(tab.panel, Panel::Plugin(_)))
+                    .then_some(index)
+            })
+            .collect();
+        for index in indices {
+            self.plugin_panel_action(index, PanelAction::CommitEdit)?;
+        }
+        Ok(())
+    }
     pub fn toolbar_commands(&self) -> Vec<crate::util::command_ui::CommandItem> {
         let mut commands = crate::util::command_ui::core_toolbar_commands();
         commands.retain(|command| command.id != "bed.structure.new");
@@ -585,7 +703,22 @@ impl Workbench {
         Ok(true)
     }
     pub(super) fn process_plugin_requests(&mut self) -> io::Result<()> {
+        self.process_plugin_requests_inner(false)
+    }
+    pub(super) fn process_plugin_requests_inner(&mut self, strict: bool) -> io::Result<()> {
+        let mut failed_edits = HashSet::new();
+        let mut first_error = None;
         for request in std::mem::take(&mut self.plugins.requests) {
+            let edit_document = match &request {
+                HostRequest::ApplyEdits { document, .. }
+                | HostRequest::ApplyEditsWithResult { document, .. } => Some(*document),
+                _ => None,
+            };
+            if let HostRequest::Save { document } = &request
+                && failed_edits.contains(document)
+            {
+                continue;
+            }
             let result: io::Result<()> = (|| {
                 match request {
                     HostRequest::OpenPanel {
@@ -641,7 +774,16 @@ impl Workbench {
                         revision,
                         edits,
                     } => self.session.apply_edits(document, revision, &edits)?,
+                    HostRequest::ApplyEditsWithResult {
+                        token,
+                        document,
+                        revision,
+                        edits,
+                    } => {
+                        self.apply_plugin_edits(token, document, revision, &edits)?;
+                    }
                     HostRequest::Save { document } => {
+                        self.commit_plugin_edits(document)?;
                         if self.session.snapshot(document)?.path.is_empty() {
                             self.save_as(document)?;
                         } else {
@@ -667,9 +809,18 @@ impl Workbench {
             })();
             if let Err(error) = result {
                 self.error = Some(error.to_string());
+                if let Some(document) = edit_document {
+                    failed_edits.insert(document);
+                }
+                if strict && first_error.is_none() {
+                    first_error = Some(error);
+                }
             }
         }
-        Ok(())
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
     pub fn plugin_render_outputs(&self) -> Vec<RenderOutput> {
         self.tabs

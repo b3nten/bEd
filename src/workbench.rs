@@ -1128,6 +1128,9 @@ impl Workbench {
             }
             WindowCommand::Quit => return self.request_close_all(),
             WindowCommand::Find => {
+                if self.focused_plugin_action(bed_plugin::PanelAction::Find)? {
+                    return Ok(true);
+                }
                 if let Some(index) = self.active_tab_index()
                     && let Panel::Document(view) = &mut self.tabs[index].panel
                 {
@@ -1225,6 +1228,7 @@ impl Workbench {
                         "Wait for the remote file action before saving",
                     ));
                 }
+                self.commit_plugin_edits(document)?;
                 let result = if self.session.snapshot(document)?.path.is_empty() {
                     self.save_as(document)
                 } else {
@@ -1237,6 +1241,7 @@ impl Workbench {
                 let Some(document) = self.active_document() else {
                     return Ok(false);
                 };
+                self.commit_plugin_edits(document)?;
                 let result = self.save_as(document);
                 self.restore_save_focus()?;
                 result
@@ -1284,6 +1289,21 @@ impl Workbench {
     fn preflight_close(&mut self, indices: &[usize]) -> io::Result<bool> {
         if self.remote_ui.mutation_pending() {
             return Ok(false);
+        }
+        let closing_panels: Vec<_> = indices
+            .iter()
+            .map(|&index| self.tabs.get(index).map(|tab| tab.id))
+            .collect();
+        self.process_plugin_requests_inner(true)?;
+        if indices
+            .iter()
+            .zip(closing_panels)
+            .any(|(&index, expected)| self.tabs.get(index).map(|tab| tab.id) != expected)
+        {
+            return Ok(false);
+        }
+        for &index in indices {
+            self.plugin_panel_action(index, bed_plugin::PanelAction::CommitEdit)?;
         }
         let closing = indices
             .iter()
@@ -2100,19 +2120,23 @@ impl Workbench {
     }
     fn shortcuts(&mut self, ui: &Ui) -> io::Result<()> {
         self.debug_shortcuts(ui)?;
-        if ui.io().want_text_input() {
-            return Ok(());
-        }
         let ctrl = ui.io().key_ctrl() || ui.io().key_super();
-        if !ctrl {
-            return Ok(());
-        }
-        if self.focused_hex() && ui.is_key_pressed_with_repeat(Key::S, false) {
-            self.handle_action(if ui.io().key_shift() {
+        if ctrl
+            && (self.focused_hex() || self.focused_document_plugin())
+            && ui.is_key_pressed_with_repeat(Key::S, false)
+            && let Err(error) = self.handle_action(if ui.io().key_shift() {
                 HostAction::SaveAs
             } else {
                 HostAction::Save
-            })?;
+            })
+        {
+            self.error = Some(error.to_string());
+        }
+        if ui.io().want_text_input() {
+            return Ok(());
+        }
+        if !ctrl {
+            return Ok(());
         }
         let pressed = |name| {
             self.settings

@@ -354,6 +354,7 @@ dependencies = [
  "bed-lsp",
  "bed-plugin",
  "bed-plugin-audio",
+ "bed-plugin-csv",
  "bed-plugin-font",
  "bed-plugin-gltf",
  "bed-plugin-image",
@@ -485,6 +486,19 @@ dependencies = [
  "bed-plugin",
  "dear-imgui-rs",
  "rodio",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-csv"
+version = "0.1.0"
+dependencies = [
+ "bed-core",
+ "bed-plugin",
+ "bed-session",
+ "dear-imgui-rs",
+ "dear-imgui-sys",
+ "serde",
  "serde_json",
 ]
 

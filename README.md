@@ -80,6 +80,9 @@ WebP, BMP, ICO, TIFF, TGA, PNM (PBM/PGM/PPM/PAM), QOI, DDS (DXT textures), HDR
 and OpenEXR; the model plugin handles GLB, glTF and STL; the font plugin handles
 TTF, OTF, TTC and OTC. The audio plugin handles WAV, MP3, FLAC, Ogg/Vorbis,
 AAC/M4A, AIFF and CAF audio.
+The CSV plugin opens CSV and TSV files as editable tables backed by the same
+text document as Text Editor. Open With can show both views together; edits,
+undo, save, autosave and SSH file handling are shared.
 Other files open in the text editor or the built-in hex editor according to
 their content. Files → right-click → **Open With** selects a viewer explicitly.
 Image, model, font, audio and hex views share the same exact-byte document.
@@ -101,6 +104,38 @@ elapsed/total time and a seek slider. Click or drag the waveform to seek; Space
 toggles playback while the viewer is focused. Opening audio does not start playback.
 Decoding runs in the background with a 256 MiB decoded-sample limit. Position and
 volume are restored with the workspace; closing the view stops playback.
+
+The CSV viewer keeps column headers visible while scrolling and shows source
+record numbers, including in sorted or filtered views. Select cells by clicking,
+dragging or Shift-clicking; use row numbers and column headers to select whole
+rows or columns. Double-click, Enter or F2 edits a cell; typing replaces its
+contents. Enter commits, Tab commits and advances, and Escape cancels. Expand a
+cell to edit multiline text. Values remain literal strings, preserving leading
+zeros and formula-looking text.
+
+Copy, cut and paste use quoted tab-separated ranges suitable for spreadsheets.
+Context menus clear cells, insert/delete rows or columns, and rename headers.
+Each operation is one shared undo step. Paste follows visible row order and
+leaves filtered-out records untouched. Paste can expand the original table;
+sorted or filtered views reject ranges extending past their visible rows. Clear
+sorting and filters before inserting rows.
+
+**Find** visits matching visible cells. Global and per-column filters combine
+with AND and match text without case sensitivity; column filters support
+**contains**, **equals** and **is empty**. Click a header to cycle ascending,
+descending and original order, with **Auto**, **Text** or **Number** sort mode.
+Sorting and filtering change only the view, keeping the saved row order intact.
+**Format…** overrides detected comma/tab/semicolon/pipe delimiters and whether
+the first record is a header. Interpretation controls do not change the file.
+View settings restore with the workspace.
+
+Parsing and filtering run in the background, with clipped table rendering for
+ordinary exports around 100,000 rows. CSV editing supports UTF-8, quoted fields,
+escaped quotes, embedded newlines and ragged records without rewriting untouched
+fields. The viewer limits its index to 128 MiB and tables to 510 columns, in
+addition to the editor's 128 MiB file limit. Malformed or unsupported files offer
+**Open in Text Editor**. Formulas, row/column reordering, typed/date filters and
+filtered-data export are not included.
 
 Hover over a file-tree row to see its type, exact and human-readable size,
 last-modified time (UTC), Git status and link target where applicable. Executable
@@ -444,6 +479,7 @@ live in `crates/`, with concrete APIs and one workspace lockfile:
 | `bed-plugin-gltf` | Static GLB/embedded glTF and STL loading, orbit cameras and Bevy PBR rendering |
 | `bed-plugin-font` | HarfRust sample shaping, FreeType previews, glyph browsing and font inspection |
 | `bed-plugin-audio` | Audio decoding, channel waveforms and native play/pause/seek controls |
+| `bed-plugin-csv` | Shared-text CSV/TSV table editing, background indexing, sorting and filtering |
 | `bed` | Workbench docking, tool panels, settings, resources and native application lifecycle |
 
 Core, files, highlighting, LSP and session compile without GUI backends.
@@ -463,7 +499,7 @@ LSP widgets without exposing mutable frame state. LSP widgets take explicit
 and return navigation actions to the application.
 
 Text Editor, Hex Editor, Files, Settings and Search are host-owned features.
-Structure, Image Viewer and Model Viewer are explicitly linked Rust plugins
+Structure and the image, model, font, audio and CSV viewers are explicitly linked Rust plugins
 registered in the workbench's `PluginRuntime` constructor. Adding a feature means adding its crate
 dependency and one constructor to that list. There is no dynamic loading or
 plugin-to-plugin event bus.
@@ -476,6 +512,13 @@ an attached document so the host includes them in saving, closing and restoratio
 settings, read-only LSP diagnostics and texture handles. `HostRequest` queues
 edits, navigation, document commands, panels, file dialogs and resource changes;
 plugins never need a mutable workbench or direct file-writing path.
+The optional `PluginPanel::action` hook handles focused Find and Select All
+commands. Before saving or closing, the host sends Commit Edit to attached
+panels and applies their revision-checked edits before proceeding; a failed
+commit retains the panel and its draft.
+Panels can submit `ApplyEditsWithResult` with an `EditToken` and receive
+`PluginPanel::edit_result` acknowledgements, keeping pending input until the
+session accepts the edit or reports an error.
 
 `EditorSession::apply_edits` takes byte ranges and an expected document revision.
 The whole transaction is validated before mutation and becomes one undo unit.

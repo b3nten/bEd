@@ -17,6 +17,16 @@ use std::{
 
 pub type Revision = (u64, u64);
 
+/// Correlates a queued edit with its acknowledgement without exposing host panels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct EditToken(pub u64);
+impl EditToken {
+    pub fn next() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PluginDocument {
     pub id: DocumentId,
@@ -101,6 +111,12 @@ pub enum HostRequest {
         revision: Revision,
     },
     ApplyEdits {
+        document: DocumentId,
+        revision: Revision,
+        edits: Vec<bed_session::editor_session::ByteEdit>,
+    },
+    ApplyEditsWithResult {
+        token: EditToken,
         document: DocumentId,
         revision: Revision,
         edits: Vec<bed_session::editor_session::ByteEdit>,
@@ -344,9 +360,31 @@ pub trait Plugin: Any {
     fn as_any(&self) -> &dyn Any;
 }
 
+/// Actions sent to the originating panel by native menus and document lifecycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PanelAction {
+    Find,
+    SelectAll,
+    /// Validate and finish any local edit before saving or closing. Implementations
+    /// may queue only edit requests; the host applies them before continuing.
+    /// An error must retain the draft and prevents the save or close.
+    CommitEdit,
+}
+
 pub trait PluginPanel: Any {
     fn title(&self, host: &HostContext<'_>) -> String;
     fn draw(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>);
+    fn action(
+        &mut self,
+        _action: PanelAction,
+        _host: &HostContext<'_>,
+        _requests: &mut Vec<HostRequest>,
+    ) -> Result<bool, String> {
+        Ok(false)
+    }
+    /// Called after a token-bearing edit is accepted or rejected by the session.
+    /// Acknowledgements allow a panel to retain local input until it is applied.
+    fn edit_result(&mut self, _token: EditToken, _result: Result<Revision, String>) {}
     /// The host owns this output's allocation and Dear ImGui registration.
     /// Return None while loading, on failure, or when no output is needed.
     #[cfg(feature = "gpu")]

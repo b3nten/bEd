@@ -1,0 +1,15 @@
+[package]
+name = "bed-plugin-csv"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license-file = "../../LICENSE"
+
+[dependencies]
+bed-core = { workspace = true }
+bed-plugin = { workspace = true }
+bed-session = { workspace = true }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
