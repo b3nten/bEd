@@ -453,6 +453,20 @@ impl EditorFrame {
                 &self.layout,
             );
         }
+        let breakpoint_row = if debug_column_width > 0.0 && gutter_hovered && !overlay_active {
+            let mouse = ui.io().mouse_pos();
+            let top = gutter_pos[1] + self.layout.editor_top_margin;
+            let inside = mouse[0] >= gutter_pos[0]
+                && mouse[0] < gutter_pos[0] + debug_column_width
+                && mouse[1] >= top
+                && mouse[1] < gutter_pos[1] + self.layout.size[1];
+            let row = ((mouse[1] - top + editor.view.scroll_position[1])
+                / self.layout.line_height.max(1.0))
+            .floor() as i32;
+            (inside && (0..editor.state.line_count()).contains(&row)).then_some(row)
+        } else {
+            None
+        };
         if !gutter_draw.is_null() {
             // The child owns this list until the end of this same Ui frame.
             // EndChild does not destroy it. No draw-list borrow is retained or
@@ -476,25 +490,32 @@ impl EditorFrame {
                         gutter_width,
                         self.source_debug.as_ref(),
                     );
+                    if let Some(row) = breakpoint_row
+                        && self.source_debug.as_ref().is_some_and(|debug| {
+                            !debug
+                                .breakpoints
+                                .iter()
+                                .any(|breakpoint| breakpoint.row == row)
+                        })
+                    {
+                        GutterView::draw_breakpoint_preview(
+                            ui,
+                            &draw,
+                            editor,
+                            &self.layout,
+                            gutter_pos,
+                            row,
+                        );
+                    }
                 },
             );
         }
-        if debug_column_width > 0.0 && gutter_hovered && !overlay_active {
-            let mouse = ui.io().mouse_pos();
-            let top = gutter_pos[1] + self.layout.editor_top_margin;
-            let inside = mouse[0] >= gutter_pos[0]
-                && mouse[0] < gutter_pos[0] + debug_column_width
-                && mouse[1] >= top
-                && mouse[1] < gutter_pos[1] + self.layout.size[1];
-            if inside && ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
-                let row = ((mouse[1] - top + editor.view.scroll_position[1])
-                    / self.layout.line_height.max(1.0))
-                .floor() as i32;
-                if (0..editor.state.line_count()).contains(&row) {
-                    self.source_actions
-                        .push(SourceDebugAction::ToggleBreakpoint { row });
-                    editor.view_mut().request_focus = true;
-                }
+        if let Some(row) = breakpoint_row {
+            ui.set_mouse_cursor(Some(dear_imgui_rs::MouseCursor::Hand));
+            if ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
+                self.source_actions
+                    .push(SourceDebugAction::ToggleBreakpoint { row });
+                editor.view_mut().request_focus = true;
             }
         }
         let hover = self.hover_trigger.info();

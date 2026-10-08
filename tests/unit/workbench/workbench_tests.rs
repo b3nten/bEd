@@ -309,20 +309,79 @@ fn failed_rename_and_trash_preserve_identity_and_writes() {
     assert!(after.disk_conflict.is_none());
     assert!(path.is_file());
     workspace
-        .trash_path_with(&path, |path| std::fs::remove_file(path))
-        .unwrap();
-    workspace
         .session
         .with_commands(workspace.active_view().unwrap(), |commands| {
             commands.paste(b"dirty")
         })
         .unwrap();
-    assert!(workspace.session.save(doc).is_err());
+    workspace
+        .trash_path_with(&path, |path| std::fs::remove_file(path))
+        .unwrap();
+    assert!(workspace.session.snapshot(doc).unwrap().path.is_empty());
+    assert!(!workspace.session.save(doc).unwrap());
     assert!(!path.exists());
     let moved = dir.path("rescued");
     workspace.session.save_as(doc, &moved).unwrap();
     assert!(moved.is_file());
     assert!(!path.exists());
+}
+#[test]
+fn deleting_a_folder_closes_all_clean_views_and_preserves_dirty_documents() {
+    let dir = TempDir::new();
+    let clean = dir.write("project/folder/clean.txt", b"clean");
+    let dirty = dir
+        .write("project/folder/dirty.txt", b"dirty")
+        .canonicalize()
+        .unwrap();
+    let mut workbench = workspace(&dir);
+    workbench.set_project(&dir.path("project")).unwrap();
+    workbench.open_or_focus(&clean).unwrap();
+    let clean_document = workbench.active_document().unwrap();
+    workbench.dispatch(WindowCommand::DuplicateView).unwrap();
+    assert_eq!(workbench.session.view_count(clean_document), 2);
+    workbench.open_or_focus(&dirty).unwrap();
+    let document = workbench.active_document().unwrap();
+    let view = workbench.active_view().unwrap();
+    workbench
+        .session
+        .with_commands(view, |commands| commands.type_text(b"unsaved "))
+        .unwrap();
+    workbench
+        .trash_path_with(&dir.path("project/folder"), |path| {
+            std::fs::remove_dir_all(path)
+        })
+        .unwrap();
+    assert!(workbench.session.snapshot(clean_document).is_err());
+    assert!(
+        workbench
+            .tabs
+            .iter()
+            .all(|tab| tab.panel.document() != Some(clean_document))
+    );
+    let snapshot = workbench.session.snapshot(document).unwrap();
+    assert_eq!(snapshot.bytes, b"unsaved dirty");
+    assert!(snapshot.path.is_empty());
+    assert_eq!(snapshot.original_path.as_deref(), dirty.to_str());
+    assert_eq!(workbench.session.document_for_view(view), Some(document));
+    assert!(
+        workbench
+            .title(
+                workbench
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.panel.document() == Some(document))
+                    .unwrap()
+            )
+            .contains("dirty.txt (deleted)")
+    );
+    workbench
+        .session
+        .with_commands(view, |commands| commands.undo())
+        .unwrap();
+    assert_eq!(
+        workbench.session.snapshot(document).unwrap().bytes,
+        b"dirty"
+    );
 }
 #[test]
 fn failed_group_save_keeps_all_panels_and_terminals() {

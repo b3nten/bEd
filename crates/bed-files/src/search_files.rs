@@ -1,4 +1,4 @@
-//! Cancellable project-search discovery. FileFinder retains ned's full-tree scan.
+//! Cancellable one-shot project-search discovery; live discovery is incremental.
 use crate::file_finder::FileEntry;
 use std::{fs, io, path::Path};
 
@@ -39,7 +39,11 @@ pub(super) fn discover(
         };
         let entry = entry?;
         let path = entry.path();
+        let private_temporary = entry.file_name().to_str().is_some_and(|name| {
+            name.starts_with(".bed-transfer-") || name.starts_with(".bed-save-")
+        });
         let excluded = entry.file_name() == ".git"
+            || private_temporary
             || match (&repository, &workdir) {
                 (Some(repository), Some(workdir)) => {
                     let relative = path.strip_prefix(workdir).map_err(io::Error::other)?;
@@ -179,6 +183,6 @@ mod tests {
         temp.write("plain", b"needle");
         symlink(outside.root(), temp.path("directory-link")).unwrap();
         symlink(temp.path("plain"), temp.path("alias")).unwrap();
-        assert_eq!(paths(temp.root(), false), vec!["plain", "plain"]);
+        assert_eq!(paths(temp.root(), false), vec!["alias", "plain"]);
     }
 }

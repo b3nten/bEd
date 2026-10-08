@@ -67,6 +67,7 @@ impl Workbench {
             .as_ref()
             .is_some_and(|dialog| dialog.visible)
             || self.reload_confirmation.is_some()
+            || self.file_operations.modal_visible()
             || self.modules.explorer.finder_visible();
         config.lsp = bed_module_editor::presentation::LspPresentationOptions {
             background_color: self.settings.background_color(),
@@ -83,6 +84,9 @@ impl Workbench {
         for action in self.modules.explorer.take_actions() {
             let result = match action {
                 ExplorerAction::Tree(action) => self.handle_tree_action(action),
+                ExplorerAction::Import { paths, destination } => {
+                    self.import_files(paths, destination)
+                }
                 ExplorerAction::OpenProjectDialog => {
                     self.dispatch(WindowCommand::OpenFolder).map(|_| ())
                 }

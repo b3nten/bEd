@@ -5,6 +5,7 @@ use bed_plugin::{
     CommandContext, DocumentKind, HostContext, HostRequest, MenuSlot, Plugin, PluginPanel,
     Registrar, Revision, TextureHandle,
 };
+use bed_ui::util::popup_style::tooltip_text;
 use dear_imgui_rs::{MouseButton, StyleColor, Ui};
 use serde_json::Value;
 use std::{
@@ -341,7 +342,7 @@ impl PluginPanel for GltfPanel {
                 }
                 ui.checkbox("Normal vectors", &mut self.settings.normals);
                 if ui.is_item_hovered() {
-                    ui.tooltip_text("Show vertex normals, sampled to at most 6,000 vectors.");
+                    tooltip_text(ui, "Show vertex normals, sampled to at most 6,000 vectors.");
                 }
                 if self.settings.normals {
                     ui.slider_config("Normal length", 0.01, 0.3)
@@ -359,14 +360,17 @@ impl PluginPanel for GltfPanel {
                         .expect("valid blur format")
                         .build(&mut self.settings.skybox_blur);
                     if ui.is_item_hovered() {
-                        ui.tooltip_text("Soften the background while keeping model lighting and reflections sharp.");
+                        tooltip_text(
+                            ui,
+                            "Soften the background while keeping model lighting and reflections sharp.",
+                        );
                     }
                     ui.slider_config("Horizon", -45.0, 45.0)
                         .try_display_format("%.0f°")
                         .expect("valid horizon format")
                         .build(&mut self.settings.horizon);
                     if ui.is_item_hovered() {
-                        ui.tooltip_text("Lower values move the background horizon down.");
+                        tooltip_text(ui, "Lower values move the background horizon down.");
                     }
                 }
                 ui.checkbox("Shadows", &mut self.settings.shadows);

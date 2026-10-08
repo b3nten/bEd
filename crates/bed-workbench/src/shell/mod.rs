@@ -40,6 +40,7 @@ use std::{
 mod debugger;
 #[path = "editor_host.rs"]
 mod editor_host;
+mod file_operations;
 #[path = "module_host.rs"]
 mod module_host;
 #[path = "native_host.rs"]
@@ -241,6 +242,7 @@ pub struct Workbench {
     reload_confirmation: Option<DocumentId>,
     tab_context: Option<u64>,
     pending_tab_close: Option<Vec<u64>>,
+    file_operations: file_operations::FileOperations,
 }
 impl Workbench {
     pub fn new(modules: impl Fn() -> WorkbenchModules + 'static) -> io::Result<Self> {
@@ -319,6 +321,7 @@ impl Workbench {
             reload_confirmation: None,
             tab_context: None,
             pending_tab_close: None,
+            file_operations: file_operations::FileOperations::default(),
         };
         this.refresh_projects();
         this.show_tool(Tool::Projects);
@@ -664,6 +667,7 @@ impl Workbench {
             return Ok(false);
         }
         self.remote_ui.cancel_connection();
+        self.cancel_file_operations();
         if !self.preflight_close(&(0..self.tabs.len()).collect::<Vec<_>>())? {
             if self
                 .session
@@ -678,6 +682,7 @@ impl Workbench {
             return Ok(false);
         }
         let session = EditorSession::with_options(self.session_options(Some(root.clone())))?;
+        self.cancel_file_operations();
         self.persist_workspace()?;
         let mut tree = bed_module_explorer::file_tree::FileTree {
             preferences: self
@@ -688,7 +693,17 @@ impl Workbench {
                 .unwrap_or_default(),
             ..Default::default()
         };
-        tree.refresh_file_tree(&path)?;
+        tree.root_node = bed_module_explorer::file_tree::FileNode {
+            name: Path::new(&path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            full_path: path.clone(),
+            is_directory: true,
+            is_open: true,
+            ..Default::default()
+        };
         self.shutdown_modules()?;
         self.close_plugin_panels()?;
         self.session.shutdown(ClosePolicy::Discard)?;
@@ -854,6 +869,8 @@ impl Workbench {
         Ok(applied)
     }
     pub fn tick(&mut self) -> io::Result<()> {
+        self.poll_file_operations()?;
+        self.poll_workspace_filesystem()?;
         if let Some(spec) = self.pending_workspace.take() {
             let identity = spec.identity();
             let files = std::mem::take(&mut self.pending_workspace_files);
@@ -870,6 +887,11 @@ impl Workbench {
         }
         self.poll_remote_workspace()?;
         let report = self.session.tick();
+        for event in &report.events {
+            if let SessionEvent::Removed { document, path } = event {
+                self.handle_removed_document(*document, path)?;
+            }
+        }
         for module in &mut self.modules.instances {
             module.document_events(&self.session, &report.events)?;
         }
@@ -880,7 +902,6 @@ impl Workbench {
                 }
             }
             self.finish_remote_restoration()?;
-            self.queue_remote_directories(false)?;
         }
         for error in report.errors {
             if let Some(targets) = &self.pending_tab_close {
@@ -1157,6 +1178,7 @@ impl Workbench {
                 let Some(document) = self.active_document() else {
                     return Ok(false);
                 };
+                self.ensure_file_operation_idle(document)?;
                 if self.remote_ui.document_mutating(document) {
                     return Err(io::Error::new(
                         io::ErrorKind::WouldBlock,
@@ -1176,6 +1198,7 @@ impl Workbench {
                 let Some(document) = self.active_document() else {
                     return Ok(false);
                 };
+                self.ensure_file_operation_idle(document)?;
                 self.commit_plugin_edits(document)?;
                 let result = self.save_as(document);
                 self.restore_save_focus()?;
@@ -1207,9 +1230,10 @@ impl Workbench {
         }
         let snapshot = self.session.snapshot(document)?;
         let mut dialog = rfd::FileDialog::new();
-        if !snapshot.path.is_empty() {
+        let suggested_path = snapshot.original_path.as_deref().unwrap_or(&snapshot.path);
+        if !suggested_path.is_empty() {
             dialog = dialog.set_file_name(
-                Path::new(&snapshot.path)
+                Path::new(suggested_path)
                     .file_name()
                     .unwrap_or_default()
                     .to_string_lossy(),
@@ -1251,6 +1275,9 @@ impl Workbench {
             .filter_map(|tab| tab.panel.document())
             .collect::<HashSet<_>>();
         for document in docs {
+            if self.ensure_file_operation_idle(document).is_err() {
+                return Ok(false);
+            }
             if self
                 .tabs
                 .iter()
@@ -1459,6 +1486,76 @@ impl Workbench {
         self.tick_plugins()?;
         Ok(())
     }
+    /// All removal sources converge here after the session has blocked writes.
+    /// Finish staged panel input before deciding whether any data can be closed.
+    pub(super) fn handle_removed_document(
+        &mut self,
+        document: DocumentId,
+        path: &str,
+    ) -> io::Result<()> {
+        if !self
+            .session
+            .with_document(document, |state| !state.path.is_empty())
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        let committed = match self.commit_plugin_edits(document) {
+            Ok(()) => true,
+            Err(error) => {
+                self.error = Some(format!("Deleted file buffer preserved: {error}"));
+                false
+            }
+        };
+        let indices = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, tab)| (tab.panel.document() == Some(document)).then_some(index))
+            .collect::<Vec<_>>();
+        let mut notified = true;
+        for &index in &indices {
+            let tab = &mut self.tabs[index];
+            let mut requests = Vec::new();
+            // Temporarily remove the panel so callback services can borrow the
+            // workbench without aliasing its panel storage.
+            let tab_id = tab.id;
+            let mut tab = self.tabs.remove(index);
+            let result = self.with_module_services(|_, services| {
+                tab.panel.instance.document_removed_with_services(
+                    document,
+                    path,
+                    services,
+                    &mut requests,
+                )
+            });
+            self.tabs.insert(index, tab);
+            debug_assert_eq!(self.tabs[index].id, tab_id);
+            self.modules.requests.extend(requests);
+            if let Err(error) = result {
+                self.error = Some(format!("Deleted file buffer preserved: {error}"));
+                notified = false;
+            }
+        }
+        if !committed || !notified || self.session.with_document(document, |state| state.dirty)? {
+            self.session.detach_removed_document(document)?;
+            self.scene += 1;
+        } else {
+            for index in indices.into_iter().rev() {
+                if let Err(error) = self.remove_tab(index) {
+                    // A cleanup failure must retain the document safely too.
+                    self.session.detach_removed_document(document)?;
+                    self.error = Some(format!("Deleted file buffer preserved: {error}"));
+                    return Ok(());
+                }
+            }
+            if self.session.document_ids().contains(&document) {
+                self.session
+                    .close_document(document, ClosePolicy::Discard)?;
+            }
+        }
+        Ok(())
+    }
     pub fn close_viewport(&mut self, id: u32) -> io::Result<bool> {
         self.update_window_metadata();
         let indices = self
@@ -1479,6 +1576,7 @@ impl Workbench {
         if self.closed {
             return Ok(true);
         }
+        self.cancel_file_operations();
         let indices = (0..self.tabs.len()).collect::<Vec<_>>();
         if !self.preflight_close(&indices)? {
             return Ok(false);
@@ -1510,11 +1608,21 @@ impl Workbench {
         }
     }
     fn title(&self, tab: &Tab) -> String {
-        format!(
-            "{}###bed_tab_{}",
-            tab.panel.instance.title(&self.modules.frame.context()),
-            tab.id
-        )
+        let title = tab
+            .panel
+            .document()
+            .and_then(|document| self.session.original_path(document).ok().flatten())
+            .map(|path| {
+                format!(
+                    "{} (deleted)",
+                    Path::new(path)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                )
+            })
+            .unwrap_or_else(|| tab.panel.instance.title(&self.modules.frame.context()));
+        format!("{}###bed_tab_{}", title, tab.id)
     }
     fn update_window_metadata(&mut self) {
         let mut composition = Vec::with_capacity(self.tabs.len());
@@ -1678,9 +1786,13 @@ impl Workbench {
                 // Native dock tab-list menus are submitted inside DockSpace;
                 // keep their popup padding independent of the zero-pad root.
                 let _menu_style = bed_ui::util::popup_style::context_menu_style(ui);
+                // DockSpace creates a child host, which otherwise inherits
+                // the submenu rounding from the menu style above.
+                let _dock_rounding = ui.push_style_var(StyleVar::ChildRounding(0.0));
                 unsafe {
                     sys::igDockSpace(self.dock_root, [0.0; 2].into(), 0, std::ptr::null());
                 }
+                drop(_dock_rounding);
                 drop(_menu_style);
                 // Popup IDs belong to their submitting window. Keep file
                 // actions rooted here even when their source tab is hidden or
@@ -1896,6 +2008,9 @@ impl Workbench {
     }
 
     fn handle_tree_action(&mut self, action: FileTreeAction) -> io::Result<()> {
+        if self.handle_batch_file_action(&action)? {
+            return Ok(());
+        }
         if let FileTreeAction::Command { command, context } = &action {
             if let Some(viewer) = command.strip_prefix("bed.open_with:") {
                 if let Some(path) = &context.path {
@@ -1923,13 +2038,8 @@ impl Workbench {
                     preferences.to_value(),
                 )?;
             }
-            if self.session.is_remote() {
-                self.queue_remote_directories(true)?;
-            } else {
-                self.file_explorer()
-                    .file_tree
-                    .refresh_file_tree(&self.project_root)?;
-            }
+            let paths = self.modules.explorer.open_directories();
+            self.refresh_file_directories(paths);
             return Ok(());
         }
         if let FileTreeAction::Open(path) = action {
@@ -2106,7 +2216,9 @@ impl Workbench {
             }
             for other in self.session.document_ids() {
                 if other != *id
-                    && self.session.snapshot(other)?.path == destination.to_string_lossy()
+                    && self
+                        .session
+                        .with_document(other, |state| state.path == destination.to_string_lossy())?
                 {
                     return Err(io::Error::new(
                         io::ErrorKind::AlreadyExists,
@@ -2125,7 +2237,7 @@ impl Workbench {
                 return Err(error);
             }
         }
-        self.refresh_files()?;
+        self.refresh_file_directories([source.parent().unwrap().to_string_lossy().into_owned()]);
         Ok(renamed)
     }
     pub fn trash_path(&mut self, source: &Path) -> io::Result<()> {
@@ -2145,10 +2257,12 @@ impl Workbench {
         let source = file_actions::validate_project_entry(Path::new(&self.project_root), source)?;
         let affected = self.affected_documents(&source);
         trash(&source)?;
-        for (id, _) in affected {
+        for (id, path) in affected {
             self.session.invalidate_removed_path(id)?;
+            self.handle_removed_document(id, &path.to_string_lossy())?;
         }
-        self.refresh_files()
+        self.refresh_file_directories([source.parent().unwrap().to_string_lossy().into_owned()]);
+        Ok(())
     }
     fn affected_documents(&self, source: &Path) -> Vec<(DocumentId, PathBuf)> {
         if !self.session.is_remote()
@@ -2161,19 +2275,21 @@ impl Workbench {
             .document_ids()
             .into_iter()
             .filter_map(|id| {
-                let snapshot = self.session.snapshot(id).ok()?;
+                let path = self
+                    .session
+                    .with_document(id, |state| state.path.clone())
+                    .ok()?;
                 let within = if self.session.is_remote() {
                     source.to_str().is_some_and(|source| {
-                        snapshot.path == source
-                            || snapshot
-                                .path
+                        path == source
+                            || path
                                 .strip_prefix(source.trim_end_matches('/'))
                                 .is_some_and(|suffix| suffix.starts_with('/'))
                     })
                 } else {
-                    Path::new(&snapshot.path).starts_with(source)
+                    Path::new(&path).starts_with(source)
                 };
-                within.then_some((id, PathBuf::from(snapshot.path)))
+                within.then_some((id, PathBuf::from(path)))
             })
             .collect()
     }
@@ -2194,13 +2310,13 @@ impl Workbench {
             FileTreeAction::NewFile(directory) => {
                 self.validate_directory(directory)?;
                 let path = file_actions::create_file(Path::new(directory), name)?;
-                self.refresh_files()?;
+                self.refresh_file_directories([directory.clone()]);
                 self.open_or_focus(&path)?;
             }
             FileTreeAction::NewFolder(directory) => {
                 self.validate_directory(directory)?;
                 file_actions::create_folder(Path::new(directory), name)?;
-                self.refresh_files()?;
+                self.refresh_file_directories([directory.clone()]);
             }
             FileTreeAction::Rename(path) => {
                 self.rename_path(Path::new(path), name)?;
@@ -2224,19 +2340,18 @@ impl Workbench {
         Ok(())
     }
     fn refresh_files(&mut self) -> io::Result<()> {
-        if self.session.is_remote() {
-            return self.refresh_remote_files();
-        }
-        self.file_explorer()
-            .file_tree
-            .refresh_file_tree(&self.project_root)?;
-        self.file_explorer()
-            .file_finder
-            .set_project_dir(&self.project_root);
+        self.file_explorer().file_finder.request_refresh();
         self.modules.search.cancel_all();
         Ok(())
     }
+    fn refresh_file_directories(&mut self, directories: impl IntoIterator<Item = String>) {
+        self.file_explorer()
+            .file_finder
+            .refresh_directories(directories);
+        self.modules.search.cancel_all();
+    }
     fn draw_errors(&mut self, ui: &Ui) -> io::Result<()> {
+        self.draw_file_operations(ui)?;
         let _dialog_style = bed_ui::util::popup_style::dialog_style(ui);
         if let Some(error) = self.error.clone() {
             let mut open = true;

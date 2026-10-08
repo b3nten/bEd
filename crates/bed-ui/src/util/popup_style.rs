@@ -6,6 +6,18 @@ pub const POPUP_ROUNDING: f32 = 7.0;
 pub const POPUP_BORDER_SIZE: f32 = 1.0;
 const DIALOG_ROUNDING: f32 = 8.0;
 
+/// Keep tooltips rounded even inside square panels and near viewport edges.
+pub fn tooltip(ui: &Ui, contents: impl FnOnce()) {
+    let _rounding = ui.push_style_var(StyleVar::WindowRounding(POPUP_ROUNDING));
+    let _border = ui.push_style_var(StyleVar::PopupBorderSize(POPUP_BORDER_SIZE));
+    let _viewport = PopupViewport::new(ui);
+    ui.tooltip(contents);
+}
+
+pub fn tooltip_text(ui: &Ui, text: impl AsRef<str>) {
+    tooltip(ui, || ui.text(text));
+}
+
 /// Derive every control state from the active theme's surface, ink and accent.
 pub fn control_colors(
     background: [f32; 4],

@@ -8,6 +8,7 @@ mod runtime;
 use bed_document_session::{DocumentId, EditorSession};
 use bed_editing::{editor_commands::CursorReveal, editor_view_state::Selection};
 use bed_editor_ui::{EditorView, EditorViewOptions, hex_editor::HexEditor};
+use bed_ui::util::popup_style::tooltip_text;
 use bed_workbench_api::{
     CommandContext, DocumentKind, HostContext, HostRequest, Module, ModulePanel, ModuleServices,
     PanelAction, PanelPlacement, Registrar,
@@ -286,7 +287,7 @@ impl ModulePanel for TextPanel {
         {
             ui.text_disabled(&activity);
             if ui.is_item_hovered() {
-                ui.tooltip_text(&activity);
+                tooltip_text(ui, &activity);
             }
         }
         let response = self.view.draw(ui, services.documents, &config.options)?;

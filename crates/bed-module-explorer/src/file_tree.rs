@@ -8,6 +8,8 @@ use std::{collections::BTreeSet, fs, io, path::Path};
 /// Personal, project-scoped tree preferences. Paths use project-relative `/` components.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FileTreePreferences {
+    /// Finder scope is independent of tree visibility filters.
+    pub include_ignored: bool,
     pub hide_gitignored: bool,
     pub hide_hidden: bool,
     pub hidden_paths: BTreeSet<String>,
@@ -15,6 +17,7 @@ pub struct FileTreePreferences {
 impl FileTreePreferences {
     pub fn from_value(value: &Value) -> Self {
         Self {
+            include_ignored: value["include_ignored"].as_bool().unwrap_or(false),
             hide_gitignored: value["hide_gitignored"].as_bool().unwrap_or(false),
             hide_hidden: value["hide_hidden"].as_bool().unwrap_or(false),
             hidden_paths: value["hidden_paths"]
@@ -28,7 +31,7 @@ impl FileTreePreferences {
         }
     }
     pub fn to_value(&self) -> Value {
-        json!({"hide_gitignored":self.hide_gitignored,"hide_hidden":self.hide_hidden,
+        json!({"include_ignored":self.include_ignored,"hide_gitignored":self.hide_gitignored,"hide_hidden":self.hide_hidden,
             "hidden_paths":self.hidden_paths})
     }
     fn manually_hidden(&self, path: &str) -> bool {
@@ -99,10 +102,14 @@ pub struct FileTree {
     pub animations: FileTreeAnimations,
     #[doc(hidden)]
     pub file_info: super::file_info::FileInfoHover,
+    /// The current panel sets this while drawing an accepted native file drag.
+    pub external_drop_target: Option<String>,
+    pub external_drag_position: Option<[f32; 2]>,
 }
 #[derive(Default)]
 pub struct FileTreeAnimations {
     hosts: HashMap<u32, TreeHost>,
+    drag: Option<TreeDrag>,
 }
 #[derive(Default)]
 struct TreeHost {
@@ -112,8 +119,114 @@ struct TreeHost {
     preferences: FileTreePreferences,
     show_hidden: bool,
     last_frame: usize,
+    interaction: FileTreeSelection,
+    popup_selection: Vec<String>,
+    drop_targets: Vec<FileTreeDropTarget>,
+    hover_expand: Option<(String, f64)>,
     #[cfg(test)]
     labels: HashMap<String, [f32; 2]>,
+}
+/// Selection belongs to a Files panel, independently of the active document.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileTreeSelection {
+    pub selected: BTreeSet<String>,
+    pub focused: Option<String>,
+    pub anchor: Option<String>,
+}
+impl FileTreeSelection {
+    pub fn select(&mut self, path: &str, visible: &[String], toggle: bool, range: bool) {
+        if range {
+            let anchor = self.anchor.as_ref().or(self.focused.as_ref());
+            let bounds = anchor.and_then(|anchor| {
+                Some((
+                    visible.iter().position(|p| p == anchor)?,
+                    visible.iter().position(|p| p == path)?,
+                ))
+            });
+            if let Some((start, end)) = bounds {
+                if !toggle {
+                    self.selected.clear();
+                }
+                self.selected
+                    .extend(visible[start.min(end)..=start.max(end)].iter().cloned());
+            } else {
+                self.selected.clear();
+                self.selected.insert(path.to_owned());
+                self.anchor = Some(path.to_owned());
+            }
+        } else if toggle {
+            if !self.selected.remove(path) {
+                self.selected.insert(path.to_owned());
+            }
+            self.anchor = Some(path.to_owned());
+        } else {
+            self.selected.clear();
+            self.selected.insert(path.to_owned());
+            self.anchor = Some(path.to_owned());
+        }
+        self.focused = Some(path.to_owned());
+    }
+    pub fn context_selection(&mut self, path: &str) -> Vec<String> {
+        if !self.selected.contains(path) {
+            self.selected.clear();
+            self.selected.insert(path.to_owned());
+            self.anchor = Some(path.to_owned());
+        }
+        self.focused = Some(path.to_owned());
+        self.selected.iter().cloned().collect()
+    }
+}
+/// Screen-space drop rectangles are retained for native drags, whose pointer
+/// updates do not necessarily pass through ImGui's mouse event queue.
+#[derive(Clone, Debug)]
+pub struct FileTreeDropTarget {
+    pub min: [f32; 2],
+    pub max: [f32; 2],
+    pub destination: String,
+}
+#[derive(Clone, Debug)]
+struct TreeDrag {
+    root: String,
+    paths: Vec<String>,
+}
+/// Remove the workspace root and descendants already represented by an ancestor.
+pub fn mutation_paths(paths: &[String], root: &str) -> Vec<String> {
+    let unique: BTreeSet<_> = paths
+        .iter()
+        .filter(|path| path.as_str() != root)
+        .cloned()
+        .collect();
+    unique
+        .iter()
+        .filter(|path| {
+            let mut parent = parent_directory(path);
+            while !parent.is_empty() && parent != "/" {
+                if unique.contains(&parent) {
+                    return false;
+                }
+                parent = parent_directory(&parent);
+            }
+            true
+        })
+        .cloned()
+        .collect()
+}
+pub fn valid_move_destination(paths: &[String], root: &str, destination: &str) -> bool {
+    !paths.is_empty()
+        && (destination == root || relative_path(root, destination, true).is_some())
+        && paths.iter().all(|source| {
+            source != root
+                && destination != source
+                && !destination
+                    .strip_prefix(source.as_str())
+                    .is_some_and(|tail| tail.starts_with('/'))
+        })
+}
+fn parent_directory(path: &str) -> String {
+    path.rsplit_once('/')
+        .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
+        .unwrap_or("")
+        .to_owned()
 }
 #[derive(Clone)]
 struct TreeRow {
@@ -331,6 +444,17 @@ pub enum FileTreeAction {
     NewFolder(String),
     Rename(String),
     Trash(String),
+    OpenMany(Vec<String>),
+    TrashMany(Vec<String>),
+    Move {
+        paths: Vec<String>,
+        destination: String,
+    },
+    Copy(Vec<String>),
+    Cut(Vec<String>),
+    Paste(String),
+    Duplicate(Vec<String>),
+    Refresh,
     SetHideGitignored(bool),
     SetHideHidden(bool),
     SetShowHidden(bool),
@@ -340,7 +464,8 @@ pub enum FileTreeAction {
     },
 }
 /// Host-owned extension menu. The path belongs to the popup's source row.
-pub type ExtensionMenu<'a> = dyn Fn(&Ui, &str, bool, bool, &mut Vec<FileTreeAction>) + 'a;
+pub type ExtensionMenu<'a> =
+    dyn Fn(&Ui, &str, bool, bool, &[String], &mut Vec<FileTreeAction>) + 'a;
 /// The host provides uploaded upstream icon textures; unavailable icons reserve their space.
 use bed_ui::presentation::FileIcons;
 #[derive(Clone, Copy, Debug)]
@@ -491,16 +616,151 @@ impl FileTree {
                     if ui.menu_item("New Folder…") {
                         actions.push(FileTreeAction::NewFolder(self.root_node.full_path.clone()));
                     }
+                    if ui.menu_item("Paste") {
+                        actions.push(FileTreeAction::Paste(root.clone()));
+                    }
+                    if ui.menu_item("Refresh") {
+                        actions.push(FileTreeAction::Refresh);
+                    }
                     ui.separator();
                     Self::visibility_menu(ui, &visibility, &mut actions);
                     if let Some(extensions) = extensions {
-                        extensions(ui, &root, true, true, &mut actions);
+                        extensions(ui, &root, true, true, &[], &mut actions);
                     }
                     dear_imgui_rs::sys::igEndPopup();
                 }
             }
         }
         actions
+    }
+    pub fn drop_targets(&self, ui: &Ui) -> Vec<FileTreeDropTarget> {
+        let host_id =
+            ui.with_bound_context(|| unsafe { (*dear_imgui_rs::sys::igGetCurrentWindow()).ID });
+        self.animations
+            .hosts
+            .get(&host_id)
+            .map(|host| host.drop_targets.clone())
+            .unwrap_or_default()
+    }
+    fn keyboard_actions(
+        ui: &Ui,
+        root: &mut FileNode,
+        visible: &[String],
+        selection: &mut FileTreeSelection,
+        actions: &mut Vec<FileTreeAction>,
+    ) {
+        use dear_imgui_rs::Key;
+        if !ui.is_window_focused() || ui.io().want_text_input() {
+            return;
+        }
+        fn find<'a>(node: &'a mut FileNode, path: &str) -> Option<&'a mut FileNode> {
+            if node.full_path == path {
+                return Some(node);
+            }
+            node.children.iter_mut().find_map(|node| find(node, path))
+        }
+        let primary = ui.io().key_ctrl() || ui.io().key_super();
+        let focused = selection
+            .focused
+            .as_ref()
+            .and_then(|path| visible.iter().position(|p| p == path));
+        let next = if ui.is_key_pressed(Key::DownArrow) {
+            Some(focused.map_or(0, |i| (i + 1).min(visible.len().saturating_sub(1))))
+        } else if ui.is_key_pressed(Key::UpArrow) {
+            Some(focused.unwrap_or(0).saturating_sub(1))
+        } else if ui.is_key_pressed(Key::Home) {
+            Some(0)
+        } else if ui.is_key_pressed(Key::End) {
+            Some(visible.len().saturating_sub(1))
+        } else {
+            None
+        };
+        if let Some(path) = next.and_then(|index| visible.get(index)) {
+            if primary && !ui.io().key_shift() {
+                selection.focused = Some(path.clone());
+            } else {
+                selection.select(path, visible, primary, ui.io().key_shift());
+            }
+        }
+        if primary && ui.is_key_pressed_with_repeat(Key::A, false) {
+            selection.selected = visible
+                .iter()
+                .filter(|path| *path != &root.full_path)
+                .cloned()
+                .collect();
+        }
+        if let Some(path) = selection.focused.clone() {
+            let parent = parent_directory(&path);
+            if let Some(node) = find(root, &path) {
+                if ui.is_key_pressed(Key::RightArrow) && node.is_directory {
+                    if !node.is_open {
+                        node.is_open = true;
+                    } else if let Some(child) = node.children.first() {
+                        selection.select(&child.full_path, visible, false, false);
+                    }
+                } else if ui.is_key_pressed(Key::LeftArrow) {
+                    if node.is_directory && node.is_open {
+                        node.is_open = false;
+                    } else if visible.contains(&parent) {
+                        selection.select(&parent, visible, false, false);
+                    }
+                }
+            }
+        }
+        let selected: Vec<_> = selection.selected.iter().cloned().collect();
+        let paths = mutation_paths(&selected, &root.full_path);
+        if ui.is_key_pressed_with_repeat(Key::Enter, false)
+            || ui.is_key_pressed_with_repeat(Key::KeypadEnter, false)
+        {
+            let files = selected
+                .iter()
+                .filter(|path| find(root, path).is_some_and(|node| !node.is_directory))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !files.is_empty() {
+                actions.push(FileTreeAction::OpenMany(files));
+            }
+        }
+        if !paths.is_empty() {
+            if primary && ui.is_key_pressed_with_repeat(Key::C, false) {
+                actions.push(FileTreeAction::Copy(paths.clone()));
+            }
+            if primary && ui.is_key_pressed_with_repeat(Key::X, false) {
+                actions.push(FileTreeAction::Cut(paths.clone()));
+            }
+            if primary && ui.is_key_pressed_with_repeat(Key::D, false) {
+                actions.push(FileTreeAction::Duplicate(paths.clone()));
+            }
+            if ui.is_key_pressed_with_repeat(Key::Delete, false)
+                || (primary && ui.is_key_pressed_with_repeat(Key::Backspace, false))
+            {
+                actions.push(FileTreeAction::TrashMany(paths.clone()));
+            }
+            if selected.len() == 1
+                && paths.len() == 1
+                && ui.is_key_pressed_with_repeat(Key::F2, false)
+            {
+                actions.push(FileTreeAction::Rename(paths[0].clone()));
+            }
+        }
+        if primary && ui.is_key_pressed_with_repeat(Key::V, false) {
+            let destination = selection
+                .focused
+                .as_ref()
+                .and_then(|path| find(root, path))
+                .map(|node| {
+                    if node.is_directory {
+                        node.full_path.clone()
+                    } else {
+                        parent_directory(&node.full_path)
+                    }
+                })
+                .unwrap_or_else(|| root.full_path.clone());
+            actions.push(FileTreeAction::Paste(destination));
+        }
+        if ui.is_key_pressed_with_repeat(Key::F5, false) {
+            actions.push(FileTreeAction::Refresh);
+        }
     }
     #[allow(clippy::too_many_arguments)]
     fn draw_rows(
@@ -571,24 +831,53 @@ impl FileTree {
             &visibility,
             &mut rows,
         );
+        fn collect_loaded(
+            node: &FileNode,
+            paths: &mut BTreeSet<String>,
+            files: &mut BTreeSet<String>,
+        ) {
+            paths.insert(node.full_path.clone());
+            if !node.is_directory {
+                files.insert(node.full_path.clone());
+            }
+            for child in &node.children {
+                collect_loaded(child, paths, files);
+            }
+        }
+        let mut loaded_paths = BTreeSet::new();
+        let mut visible_files = BTreeSet::new();
+        collect_loaded(&self.root_node, &mut loaded_paths, &mut visible_files);
         let desired: Vec<_> = rows.iter().map(|(key, _)| key.clone()).collect();
         let frame = ui.frame_count();
         let host_id =
             ui.with_bound_context(|| unsafe { (*dear_imgui_rs::sys::igGetCurrentWindow()).ID });
-        self.animations
-            .hosts
-            .retain(|_, host| frame <= host.last_frame.saturating_add(120));
+
         let host = self.animations.hosts.entry(host_id).or_default();
         let reset = host.root != root
             || host.preferences != self.preferences
             || host.show_hidden != self.show_hidden;
         if reset {
             host.rows.clear();
+            if host.root != root {
+                host.interaction = FileTreeSelection::default();
+                host.popup_selection.clear();
+            }
         }
         host.root = root.clone();
         host.preferences = self.preferences.clone();
         host.show_hidden = self.show_hidden;
         host.last_frame = frame;
+        host.interaction
+            .selected
+            .retain(|path| loaded_paths.contains(path));
+        if host
+            .interaction
+            .focused
+            .as_ref()
+            .is_some_and(|path| !loaded_paths.contains(path))
+        {
+            host.interaction.focused = None;
+        }
         host.rows.extend(rows);
         host.motion
             .update(&desired, ui.time(), frame, style.animations, false, reset);
@@ -603,6 +892,32 @@ impl FileTree {
             + ui.current_font_size() * 0.15;
         let layout = host.motion.layout(ui, row_height);
         let mut actions = Vec::new();
+        let previous_focus = host.interaction.focused.clone();
+        Self::keyboard_actions(
+            ui,
+            &mut self.root_node,
+            &desired,
+            &mut host.interaction,
+            &mut actions,
+        );
+        if previous_focus != host.interaction.focused
+            && let Some(index) = host
+                .interaction
+                .focused
+                .as_ref()
+                .and_then(|focused| host.motion.rows().iter().position(|path| path == focused))
+            && !layout.visible.contains(&index)
+        {
+            ui.set_scroll_from_pos_y(layout.position(index)[1], 0.5);
+        }
+        host.drop_targets.clear();
+        if ui.drag_drop_payload().is_none()
+            && self.external_drop_target.is_none()
+            && !ui.is_mouse_down(dear_imgui_rs::MouseButton::Left)
+        {
+            self.animations.drag = None;
+            host.hover_expand = None;
+        }
         #[cfg(test)]
         host.labels.clear();
         for index in layout.visible.clone() {
@@ -634,16 +949,75 @@ impl FileTree {
                 remote,
                 &visibility,
                 row.hidden,
-                &mut self.error,
                 &mut actions,
                 extensions,
                 &mut self.file_info,
+                &desired,
+                &visible_files,
+                &mut host.interaction,
+                &mut host.popup_selection,
+                &mut host.drop_targets,
+                &mut self.animations.drag,
+                &mut host.hover_expand,
+                self.external_drop_target.as_deref(),
             );
             #[cfg(test)]
             host.labels
                 .insert(node.full_path.clone(), ui.item_rect_min());
         }
+        if let Some(dragging) = self.animations.drag.as_ref()
+            && dragging.root == root
+            && valid_move_destination(&dragging.paths, &root, &root)
+            && ui.is_window_hovered()
+            && !host.drop_targets.iter().any(|target| {
+                let mouse = ui.io().mouse_pos();
+                mouse[0] >= target.min[0]
+                    && mouse[0] < target.max[0]
+                    && mouse[1] >= target.min[1]
+                    && mouse[1] < target.max[1]
+            })
+        {
+            // SAFETY: A custom ImGui target uses the current window's content
+            // rectangle; each successful begin is paired immediately with end.
+            ui.with_bound_context(|| unsafe {
+                let window = &*dear_imgui_rs::sys::igGetCurrentWindow();
+                if dear_imgui_rs::sys::igBeginDragDropTargetCustom(
+                    window.InnerRect,
+                    host_id.wrapping_add(1),
+                ) {
+                    let payload = dear_imgui_rs::sys::igAcceptDragDropPayload(
+                        c"BED_FILES".as_ptr(),
+                        dear_imgui_rs::sys::ImGuiDragDropFlags_AcceptBeforeDelivery,
+                    );
+                    if !payload.is_null() && (*payload).Delivery {
+                        actions.push(FileTreeAction::Move {
+                            paths: dragging.paths.clone(),
+                            destination: root.clone(),
+                        });
+                    }
+                    dear_imgui_rs::sys::igEndDragDropTarget();
+                }
+            });
+        }
         layout.finish(ui);
+        if self.animations.drag.is_some() || self.external_drop_target.is_some() {
+            let pos = self
+                .external_drag_position
+                .unwrap_or_else(|| ui.io().mouse_pos());
+            let window_pos = ui.window_pos();
+            let window_size = ui.window_size();
+            if pos[0] >= window_pos[0] && pos[0] <= window_pos[0] + window_size[0] {
+                let edge = row_height * 1.5;
+                let speed = row_height * 12.0 * ui.io().delta_time();
+                if pos[1] >= window_pos[1] && pos[1] < window_pos[1] + edge {
+                    ui.set_scroll_y((ui.scroll_y() - speed).max(0.0));
+                } else if pos[1] <= window_pos[1] + window_size[1]
+                    && pos[1] > window_pos[1] + window_size[1] - edge
+                {
+                    ui.set_scroll_y(ui.scroll_y() + speed);
+                }
+            }
+        }
         host.rows.retain(|key, _| host.motion.contains(key));
         actions
     }
@@ -661,10 +1035,17 @@ impl FileTree {
         remote: bool,
         visibility: &Visibility<'_>,
         inherited_hidden: bool,
-        error: &mut Option<String>,
         actions: &mut Vec<FileTreeAction>,
         extensions: Option<&ExtensionMenu<'_>>,
         file_info: &mut super::file_info::FileInfoHover,
+        visible: &[String],
+        visible_files: &BTreeSet<String>,
+        selection: &mut FileTreeSelection,
+        popup_selection: &mut Vec<String>,
+        drop_targets: &mut Vec<FileTreeDropTarget>,
+        drag: &mut Option<TreeDrag>,
+        hover_expand: &mut Option<(String, f64)>,
+        external_drop_target: Option<&str>,
     ) {
         let hidden = !root && (inherited_hidden || visibility.hidden(node));
         if hidden && !visibility.show_hidden {
@@ -699,10 +1080,22 @@ impl FileTree {
             }
         });
         let text_size = ui.calc_text_size(&node.name);
-        let required_width = indent + row_pad_x + icon_size + icon_text_gap + text_size[0];
+        let required_width =
+            indent + row_pad_x + font_size * 0.75 + icon_size + icon_text_gap + text_size[0];
         let width = required_width.max(ui.content_region_avail()[0]);
         let clicked = {
-            let _bg = ui.push_style_color(StyleColor::Button, [0.0; 4]);
+            let selected = selection.selected.contains(&node.full_path);
+            let target = external_drop_target == Some(node.full_path.as_str());
+            let _bg = ui.push_style_color(
+                StyleColor::Button,
+                if target {
+                    [0.25, 0.55, 0.95, 0.40]
+                } else if selected {
+                    [0.25, 0.45, 0.75, 0.30]
+                } else {
+                    [0.0; 4]
+                },
+            );
             let text = style.text_color;
             let _hover =
                 ui.push_style_color(StyleColor::ButtonHovered, [text[0], text[1], text[2], 0.13]);
@@ -712,74 +1105,196 @@ impl FileTree {
             let _pad = ui.push_style_var(StyleVar::FramePadding([0.0; 2]));
             ui.button_with_size(format!("##{}", node.full_path), [width, item_height])
         };
-        if ui.is_item_hovered_with_flags(
-            dear_imgui_rs::ItemHoveredFlags::DELAY_NORMAL
-                | dear_imgui_rs::ItemHoveredFlags::NO_SHARED_DELAY,
-        ) {
-            file_info.draw(ui, &node.full_path, visibility.root, remote);
+        let rect_min = ui.item_rect_min();
+        let rect_max = ui.item_rect_max();
+        if selection.focused.as_deref() == Some(node.full_path.as_str()) {
+            let mut color = style.text_color;
+            color[3] *= 0.5;
+            ui.get_window_draw_list()
+                .add_rect(rect_min, rect_max, color)
+                .rounding(font_size * 0.2)
+                .build();
+        }
+        let directory = if node.is_directory {
+            node.full_path.clone()
+        } else {
+            parent_directory(&node.full_path)
+        };
+        drop_targets.push(FileTreeDropTarget {
+            min: rect_min,
+            max: rect_max,
+            destination: directory.clone(),
+        });
+        if clicked {
+            let toggle = ui.io().key_ctrl() || ui.io().key_super();
+            let range = ui.io().key_shift();
+            selection.select(&node.full_path, visible, toggle, range);
+            // Buttons activate on release, after MouseDoubleClicked resets.
+            // The retained click count prevents a double-click from reopening
+            // a file or immediately reversing a folder expansion.
+            let repeated_click = ui.with_bound_context(|| unsafe {
+                (*dear_imgui_rs::sys::igGetIO_Nil()).MouseClickedLastCount[0].is_multiple_of(2)
+            });
+            if !toggle && !range && !repeated_click {
+                if node.is_directory {
+                    node.is_open = !node.is_open;
+                } else {
+                    actions.push(FileTreeAction::Open(node.full_path.clone()));
+                }
+            }
+        }
+        if !root && let Some(_source) = ui.drag_drop_source_config("BED_FILES").begin_payload(0_u32)
+        {
+            if !selection.selected.contains(&node.full_path) {
+                selection.select(&node.full_path, visible, false, false);
+            }
+            if drag.is_none() {
+                *drag = Some(TreeDrag {
+                    root: visibility.root.to_owned(),
+                    paths: mutation_paths(
+                        &selection.selected.iter().cloned().collect::<Vec<_>>(),
+                        visibility.root,
+                    ),
+                });
+            }
+            if let Some(drag) = drag.as_ref() {
+                ui.text(format!("Move {} item(s)", drag.paths.len()));
+            }
+        }
+        if let Some(dragging) = drag.as_ref()
+            && dragging.root == visibility.root
+            && valid_move_destination(&dragging.paths, visibility.root, &directory)
+            && let Some(target) = ui.drag_drop_target()
+            && let Some(Ok(payload)) = target.accept_payload::<u32, _>(
+                "BED_FILES",
+                dear_imgui_rs::DragDropTargetFlags::BEFORE_DELIVERY,
+            )
+        {
+            if payload.delivery {
+                actions.push(FileTreeAction::Move {
+                    paths: dragging.paths.clone(),
+                    destination: directory.clone(),
+                });
+            }
+            if node.is_directory && !node.is_open {
+                match hover_expand {
+                    Some((path, since)) if path == &node.full_path => {
+                        if ui.time() - *since >= 0.65 {
+                            node.is_open = true;
+                        }
+                    }
+                    _ => *hover_expand = Some((node.full_path.clone(), ui.time())),
+                }
+            }
+        }
+        if external_drop_target == Some(node.full_path.as_str())
+            && node.is_directory
+            && !node.is_open
+        {
+            match hover_expand {
+                Some((path, since)) if path == &node.full_path => {
+                    if ui.time() - *since >= 0.65 {
+                        node.is_open = true;
+                    }
+                }
+                _ => *hover_expand = Some((node.full_path.clone(), ui.time())),
+            }
         }
         if context_menu {
+            if ui.is_item_clicked_with_button(dear_imgui_rs::MouseButton::Right) {
+                *popup_selection = selection.context_selection(&node.full_path);
+            }
             let _menu_style = bed_ui::util::popup_style::context_menu_style(ui);
             if let Some(_menu) = ui.begin_popup_context_item() {
-                let directory = if node.is_directory {
-                    node.full_path.clone()
-                } else if remote {
-                    node.full_path
-                        .rsplit_once('/')
-                        .map(|(parent, _)| {
-                            if parent.is_empty() {
-                                "/".to_owned()
-                            } else {
-                                parent.to_owned()
-                            }
-                        })
-                        .unwrap_or_default()
-                } else {
-                    Path::new(&node.full_path)
-                        .parent()
-                        .unwrap_or(Path::new(""))
-                        .to_string_lossy()
-                        .into_owned()
-                };
+                let captured = popup_selection.clone();
+                let mutating = mutation_paths(&captured, visibility.root);
+                let files: Vec<_> = captured
+                    .iter()
+                    .filter(|path| visible_files.contains(*path))
+                    .cloned()
+                    .collect();
+                if !root
+                    && ui.menu_item_enabled_selected_no_shortcut("Open", false, !files.is_empty())
+                {
+                    actions.push(FileTreeAction::OpenMany(files));
+                }
                 if ui.menu_item("New File…") {
                     actions.push(FileTreeAction::NewFile(directory.clone()));
                 }
                 if ui.menu_item("New Folder…") {
-                    actions.push(FileTreeAction::NewFolder(directory));
+                    actions.push(FileTreeAction::NewFolder(directory.clone()));
                 }
-                if !root {
+                if ui.menu_item("Paste") {
+                    actions.push(FileTreeAction::Paste(directory));
+                }
+                if !mutating.is_empty() {
                     ui.separator();
-                    if ui.menu_item("Rename…") {
-                        actions.push(FileTreeAction::Rename(node.full_path.clone()));
+                    if ui.menu_item("Cut") {
+                        actions.push(FileTreeAction::Cut(mutating.clone()));
+                    }
+                    if ui.menu_item("Copy") {
+                        actions.push(FileTreeAction::Copy(mutating.clone()));
+                    }
+                    if ui.menu_item("Duplicate") {
+                        actions.push(FileTreeAction::Duplicate(mutating.clone()));
+                    }
+                    if ui.menu_item_enabled_selected_no_shortcut(
+                        "Rename…",
+                        false,
+                        captured.len() == 1,
+                    ) {
+                        actions.push(FileTreeAction::Rename(captured[0].clone()));
                     }
                     if ui.menu_item(if remote { "Delete…" } else { "Move to Trash" }) {
-                        actions.push(FileTreeAction::Trash(node.full_path.clone()));
+                        if mutating.len() == 1 {
+                            actions.push(FileTreeAction::Trash(mutating[0].clone()));
+                        } else {
+                            actions.push(FileTreeAction::TrashMany(mutating));
+                        }
                     }
-                    let manually_hidden = relative_path(visibility.root, &node.full_path, remote)
-                        .is_some_and(|path| visibility.preferences.hidden_paths.contains(&path));
-                    if ui.menu_item(if manually_hidden {
-                        "Unhide from File Tree"
-                    } else {
-                        "Hide from File Tree"
-                    }) {
-                        actions.push(FileTreeAction::SetPathHidden {
-                            path: node.full_path.clone(),
-                            hidden: !manually_hidden,
-                        });
+                    if captured.len() == 1 {
+                        let manually_hidden =
+                            relative_path(visibility.root, &node.full_path, remote).is_some_and(
+                                |path| visibility.preferences.hidden_paths.contains(&path),
+                            );
+                        if ui.menu_item(if manually_hidden {
+                            "Unhide from File Tree"
+                        } else {
+                            "Hide from File Tree"
+                        }) {
+                            actions.push(FileTreeAction::SetPathHidden {
+                                path: node.full_path.clone(),
+                                hidden: !manually_hidden,
+                            });
+                        }
                     }
                 }
                 ui.separator();
                 Self::visibility_menu(ui, visibility, actions);
                 if let Some(extensions) = extensions {
-                    extensions(ui, &node.full_path, node.is_directory, false, actions);
+                    extensions(
+                        ui,
+                        &node.full_path,
+                        node.is_directory,
+                        false,
+                        &captured,
+                        actions,
+                    );
                 }
             }
+        }
+        if ui.is_item_hovered_with_flags(
+            dear_imgui_rs::ItemHoveredFlags::DELAY_NORMAL
+                | dear_imgui_rs::ItemHoveredFlags::NO_SHARED_DELAY,
+        ) && drag.is_none()
+        {
+            file_info.draw(ui, &node.full_path, visibility.root, remote);
         }
         // Dim labels and icons only; keep context-menu text fully legible.
         let _dim =
             hidden.then(|| ui.push_style_var(StyleVar::Alpha(ui.clone_style().alpha() * 0.45)));
         let center_y = row_origin[1] + item_height * 0.5;
-        let icon_x = row_origin[0] + indent + row_pad_x;
+        let icon_x = row_origin[0] + indent + row_pad_x + font_size * 0.75;
         let text_x = icon_x + icon_size + icon_text_gap;
         ui.set_cursor_pos([icon_x, center_y - icon_size * 0.5]);
         if let Some(icon) = icon {
@@ -822,19 +1337,18 @@ impl FileTree {
         }
         drop(_dim);
         if node.is_directory {
-            if clicked {
-                node.is_open = !node.is_open;
-                if node.is_open && !remote {
-                    let path = node.full_path.clone();
-                    if let Err(failure) =
-                        Self::build_filtered(Path::new(&path), node, visibility, error)
-                    {
-                        *error = Some(failure.to_string());
-                    }
-                }
-            }
-        } else if clicked {
-            actions.push(FileTreeAction::Open(node.full_path.clone()));
+            let x = rect_min[0] + indent + row_pad_x + font_size * 0.3;
+            let y = rect_min[1] + item_height * 0.5;
+            let r = font_size * 0.2;
+            let points = if node.is_open {
+                [[x - r, y - r * 0.6], [x + r, y - r * 0.6], [x, y + r]]
+            } else {
+                [[x - r * 0.6, y - r], [x - r * 0.6, y + r], [x + r, y]]
+            };
+            ui.get_window_draw_list()
+                .add_triangle(points[0], points[1], points[2], style.text_color)
+                .filled(true)
+                .build();
         }
     }
 }
@@ -843,6 +1357,275 @@ impl FileTree {
 mod tests {
     use super::*;
     use crate::test_support::TempDir;
+    #[test]
+    fn selection_toggle_ranges_and_popup_capture_are_independent() {
+        let visible: Vec<String> = ["/p/a", "/p/b", "/p/c", "/p/d"].map(str::to_owned).to_vec();
+        let mut first = FileTreeSelection::default();
+        let second = FileTreeSelection::default();
+        first.select("/p/b", &visible, false, false);
+        first.select("/p/d", &visible, false, true);
+        assert_eq!(
+            first.selected,
+            BTreeSet::from(["/p/b".into(), "/p/c".into(), "/p/d".into()])
+        );
+        assert_eq!(first.anchor.as_deref(), Some("/p/b"));
+        first.select("/p/c", &visible, true, false);
+        assert!(!first.selected.contains("/p/c"));
+        let captured = first.context_selection("/p/d");
+        assert_eq!(captured, ["/p/b", "/p/d"]);
+        first.select("/p/a", &visible, false, false);
+        assert_eq!(
+            captured,
+            ["/p/b", "/p/d"],
+            "popup keeps its originating selection"
+        );
+        assert!(
+            second.selected.is_empty(),
+            "another panel has independent selection"
+        );
+        assert_eq!(first.context_selection("/p/c"), ["/p/c"]);
+    }
+    #[test]
+    fn ranges_use_visible_order_and_recover_from_a_hidden_anchor() {
+        let visible = vec!["/p/a".into(), "/p/d".into(), "/p/f".into()];
+        let mut selection = FileTreeSelection::default();
+        selection.select("/p/a", &visible, false, false);
+        selection.select("/p/f", &visible, false, true);
+        assert_eq!(selection.selected.len(), 3);
+        assert!(!selection.selected.contains("/p/b"));
+        selection.anchor = Some("/p/hidden".into());
+        selection.select("/p/d", &visible, false, true);
+        assert_eq!(selection.selected, BTreeSet::from(["/p/d".into()]));
+    }
+    #[test]
+    fn recursive_operations_deduplicate_descendants_and_reject_invalid_moves() {
+        let paths: Vec<String> = [
+            "/p",
+            "/p/folder/child",
+            "/p/folder",
+            "/p/folder-other",
+            "/p/folder",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        assert_eq!(
+            mutation_paths(&paths, "/p"),
+            ["/p/folder", "/p/folder-other"]
+        );
+        let source = vec!["/p/folder".into()];
+        assert!(valid_move_destination(&source, "/p", "/p"));
+        assert!(valid_move_destination(&source, "/p", "/p/folder-other"));
+        for destination in ["/p/folder", "/p/folder/child", "/p-other", "/p/../escape"] {
+            assert!(
+                !valid_move_destination(&source, "/p", destination),
+                "invalid target: {destination}"
+            );
+        }
+        assert!(!valid_move_destination(&["/p".into()], "/p", "/p/child"));
+    }
+    #[test]
+    fn native_selection_keyboard_and_cross_panel_drag_use_complete_selection() {
+        use dear_imgui_rs::{
+            Condition, Context, FramePrepareOptions, Key, MouseButton, WindowFlags,
+        };
+        fn frame(context: &mut Context, tree: &mut FileTree) -> Vec<FileTreeAction> {
+            context.prepare_frame(FramePrepareOptions::new([740.0, 300.0], 1.0 / 60.0));
+            let ui = context.frame();
+            let mut actions = Vec::new();
+            for (title, left) in [("First Files", 0.0), ("Second Files", 370.0)] {
+                ui.window(title)
+                    .position([left, 0.0], Condition::Always)
+                    .size([360.0, 300.0], Condition::Always)
+                    .flags(
+                        WindowFlags::NO_TITLE_BAR | WindowFlags::NO_MOVE | WindowFlags::NO_RESIZE,
+                    )
+                    .build(|| {
+                        actions.extend(tree.display_backend_actions(
+                            ui,
+                            "",
+                            &FileTreeStyle {
+                                animations: false,
+                                ..Default::default()
+                            },
+                            None,
+                            None,
+                            true,
+                        ));
+                    });
+            }
+            drop(context.render_legacy());
+            actions
+        }
+        fn click(
+            context: &mut Context,
+            tree: &mut FileTree,
+            point: [f32; 2],
+        ) -> Vec<FileTreeAction> {
+            let mut actions = Vec::new();
+            context.io_mut().add_mouse_pos_event(point);
+            for down in [true, false] {
+                context
+                    .io_mut()
+                    .add_mouse_button_event(MouseButton::Left, down);
+                actions.extend(frame(context, tree));
+            }
+            actions
+        }
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut tree = FileTree {
+            root_node: FileNode {
+                name: "project".into(),
+                full_path: "/fixture".into(),
+                is_directory: true,
+                is_open: true,
+                children: vec![
+                    FileNode {
+                        name: "target".into(),
+                        full_path: "/fixture/target".into(),
+                        is_directory: true,
+                        ..Default::default()
+                    },
+                    FileNode {
+                        name: "a".into(),
+                        full_path: "/fixture/a".into(),
+                        ..Default::default()
+                    },
+                    FileNode {
+                        name: "b".into(),
+                        full_path: "/fixture/b".into(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        frame(&mut context, &mut tree);
+        frame(&mut context, &mut tree);
+        let first_id = *tree
+            .animations
+            .hosts
+            .iter()
+            .min_by(|(_, a), (_, b)| {
+                a.labels["/fixture/a"][0].total_cmp(&b.labels["/fixture/a"][0])
+            })
+            .unwrap()
+            .0;
+        let second_id = *tree
+            .animations
+            .hosts
+            .keys()
+            .find(|id| **id != first_id)
+            .unwrap();
+        let point = |tree: &FileTree, id: u32, path: &str| {
+            let pos = tree.animations.hosts[&id].labels[path];
+            [pos[0] + 2.0, pos[1] + 5.0]
+        };
+        let a = point(&tree, first_id, "/fixture/a");
+        assert_eq!(
+            click(&mut context, &mut tree, a),
+            [FileTreeAction::Open("/fixture/a".into())],
+            "single click selects and opens the file"
+        );
+        context.io_mut().add_key_event(Key::ModSuper, true);
+        let b = point(&tree, first_id, "/fixture/b");
+        assert!(click(&mut context, &mut tree, b).is_empty());
+        context.io_mut().add_key_event(Key::ModSuper, false);
+        frame(&mut context, &mut tree);
+        assert_eq!(
+            tree.animations.hosts[&first_id].interaction.selected,
+            BTreeSet::from(["/fixture/a".into(), "/fixture/b".into()])
+        );
+        assert!(
+            tree.animations.hosts[&second_id]
+                .interaction
+                .selected
+                .is_empty()
+        );
+        context.io_mut().add_key_event(Key::Enter, true);
+        assert_eq!(
+            frame(&mut context, &mut tree),
+            [FileTreeAction::OpenMany(vec![
+                "/fixture/a".into(),
+                "/fixture/b".into()
+            ])]
+        );
+        context.io_mut().add_key_event(Key::Enter, false);
+        frame(&mut context, &mut tree);
+        // Begin from an already selected row and drag into the other Files panel.
+        context.io_mut().add_mouse_pos_event(a);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        frame(&mut context, &mut tree);
+        let target = point(&tree, second_id, "/fixture/target");
+        context.io_mut().add_mouse_pos_event(target);
+        frame(&mut context, &mut tree);
+        frame(&mut context, &mut tree);
+        assert_eq!(
+            tree.animations.drag.as_ref().unwrap().paths,
+            ["/fixture/a", "/fixture/b"]
+        );
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, false);
+        let actions = frame(&mut context, &mut tree);
+        assert_eq!(
+            actions,
+            [FileTreeAction::Move {
+                paths: vec!["/fixture/a".into(), "/fixture/b".into()],
+                destination: "/fixture/target".into()
+            }]
+        );
+        let folder = point(&tree, first_id, "/fixture/target");
+        assert!(click(&mut context, &mut tree, folder).is_empty());
+        assert!(
+            tree.root_node.children[0].is_open,
+            "folder label expands on single click"
+        );
+        assert_eq!(
+            tree.animations.hosts[&first_id].interaction.selected,
+            BTreeSet::from(["/fixture/target".into()])
+        );
+        assert!(click(&mut context, &mut tree, folder).is_empty());
+        assert!(
+            tree.root_node.children[0].is_open,
+            "double click must not reverse expansion"
+        );
+        for _ in 0..24 {
+            frame(&mut context, &mut tree);
+        }
+        context.io_mut().add_key_event(Key::ModSuper, true);
+        assert!(click(&mut context, &mut tree, folder).is_empty());
+        assert!(
+            tree.root_node.children[0].is_open,
+            "modifier clicks only change selection"
+        );
+        context.io_mut().add_key_event(Key::ModSuper, false);
+        frame(&mut context, &mut tree);
+        let font_size = context
+            .binding()
+            .with_bound_context(|| unsafe { dear_imgui_rs::sys::igGetFontSize() });
+        let arrow = [folder[0] - font_size * 1.7, folder[1]];
+        assert!(click(&mut context, &mut tree, arrow).is_empty());
+        assert!(
+            !tree.root_node.children[0].is_open,
+            "disclosure click toggles and selects"
+        );
+        assert_eq!(
+            tree.animations.hosts[&first_id].interaction.selected,
+            BTreeSet::from(["/fixture/target".into()])
+        );
+    }
     #[test]
     fn branch_motion_eases_height_keeps_current_hit_targets_and_reverses() {
         use dear_imgui_rs::{Condition, Context, FramePrepareOptions, MouseButton, WindowFlags};
@@ -901,6 +1684,9 @@ mod tests {
             .set_ini_filename(None::<std::path::PathBuf>)
             .unwrap();
         context.style_mut().set_window_padding([0.0; 2]);
+        context.binding().with_bound_context(|| unsafe {
+            (*dear_imgui_rs::sys::igGetIO_Nil()).MouseDoubleClickTime = 0.001;
+        });
         context
             .font_atlas()
             .try_claim_legacy_renderer()
@@ -948,7 +1734,7 @@ mod tests {
             "file indentation must be half the original 0.9 font sizes"
         );
         let branch = host.labels["/fixture/branch"];
-        let branch_click = [branch[0] + 2.0, branch[1] + font_size * 0.5];
+        let branch_click = [branch[0] - font_size * 1.7, branch[1] + font_size * 0.5];
         assert!(click(&mut context, &mut tree, branch_click, MouseButton::Left).is_empty());
         assert!(!tree.root_node.children[0].is_open);
         frame(&mut context, &mut tree, 0.001);
@@ -1397,7 +2183,7 @@ mod tests {
         // Exercise an item menu from a zero-padding content window and a
         // background menu from the Files panel's compact two-pixel padding.
         for (mouse, inherited_padding, expected_items) in
-            [([60.0, 24.0], [0.0; 2], 8), ([240.0, 180.0], [2.0; 2], 5)]
+            [([60.0, 24.0], [0.0; 2], 13), ([240.0, 180.0], [2.0; 2], 7)]
         {
             let mut context = Context::create();
             context.set_ini_filename(None::<PathBuf>).unwrap();
@@ -1443,11 +2229,10 @@ mod tests {
             let font_size = context
                 .binding()
                 .with_bound_context(|| unsafe { dear_imgui_rs::sys::igGetFontSize() });
-            let expected_height = if expected_items == 5 {
-                5.0 * font_size + 16.0 + 5.0
-            } else {
-                8.0 * font_size + 28.0 + 10.0
-            };
+            let separators = if expected_items == 7 { 1.0 } else { 2.0 };
+            let expected_height = expected_items as f32 * font_size
+                + (expected_items - 1) as f32 * 4.0
+                + separators * 5.0;
             assert!(
                 (popup.content_height - expected_height).abs() < 0.1,
                 "expected {expected_items} menu items, native height {} vs {expected_height}",
@@ -1466,7 +2251,12 @@ mod tests {
                 .io_mut()
                 .add_mouse_button_event(MouseButton::Left, false);
             let (actions, _) = frame(&mut context, &mut tree);
-            assert_eq!(actions, vec![FileTreeAction::NewFile("/fixture".into())]);
+            let expected = if expected_items == 7 {
+                FileTreeAction::NewFile("/fixture".into())
+            } else {
+                FileTreeAction::OpenMany(vec!["/fixture/file.rs".into()])
+            };
+            assert_eq!(actions, vec![expected]);
         }
     }
 }

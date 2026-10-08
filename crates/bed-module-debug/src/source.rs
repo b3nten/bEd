@@ -254,6 +254,21 @@ impl SourceDebugState {
                     previous,
                     path,
                 } => {
+                    if path.is_empty() {
+                        // A deleted dirty buffer has no debugger file binding.
+                        // Keep breakpoints at their original filename so a
+                        // future recreation can resolve them, never at "".
+                        self.paths.remove(document);
+                        self.current.remove(previous);
+                        if let Some(items) = self.breakpoints.get_mut(previous) {
+                            for item in items {
+                                item.status = BreakpointStatus::Pending;
+                                item.message.clear();
+                            }
+                        }
+                        affected.insert(previous.clone());
+                        continue;
+                    }
                     if let Some(mut items) = self.breakpoints.remove(previous) {
                         for item in &mut items {
                             item.status = BreakpointStatus::Pending;
@@ -299,7 +314,9 @@ impl SourceDebugState {
                         affected.insert(path);
                     }
                 }
-                SessionEvent::Saved { document, .. } | SessionEvent::Conflict { document, .. } => {
+                SessionEvent::Saved { document, .. }
+                | SessionEvent::Conflict { document, .. }
+                | SessionEvent::Removed { document, .. } => {
                     touched.insert(*document);
                 }
                 SessionEvent::ViewDetached { .. } => {}
@@ -747,6 +764,34 @@ mod tests {
         state.begin_launch(&session).unwrap();
         assert!(!state.changed(renamed));
         assert_eq!(state.bindings(renamed), vec![(survivor, 1)]);
+    }
+
+    #[test]
+    fn a_deleted_detached_buffer_keeps_breakpoints_at_the_original_path() {
+        let dir = TempDir::new();
+        let path = dir
+            .write("removed.rs", b"fn main() {}\n")
+            .canonicalize()
+            .unwrap();
+        let path = path.to_str().unwrap();
+        let mut session = EditorSession::new();
+        let document = session.open_file(path.as_ref()).unwrap();
+        let view = session.create_view(document).unwrap();
+        let mut state = SourceDebugState::default();
+        drain(&mut state, &mut session);
+        state.toggle(path, 0, 0);
+        session
+            .with_commands(view, |commands| commands.type_text(b"// unsaved\n"))
+            .unwrap();
+        drain(&mut state, &mut session);
+        fs::remove_file(path).unwrap();
+        session.invalidate_removed_path(document).unwrap();
+        session.detach_removed_document(document).unwrap();
+        drain(&mut state, &mut session);
+        assert!(state.breakpoints.contains_key(path));
+        assert!(!state.breakpoints.contains_key(""));
+        assert!(!state.current.contains_key(""));
+        assert!(!state.paths.contains_key(&document));
     }
 
     #[test]

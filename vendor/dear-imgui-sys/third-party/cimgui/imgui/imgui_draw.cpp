@@ -6105,12 +6105,15 @@ void ImGui::RenderArrowPointingAt(ImDrawList* draw_list, ImVec2 pos, ImVec2 half
     }
 }
 
-// This is less wide than RenderArrow() and we use in dock nodes instead of the regular RenderArrow() to denote a change of functionality,
-// and because the saved space means that the left-most tab label can stay at exactly the same position as the label of a loose window.
+// Bed: draw a compact six-dot grip within the original dock menu button bounds.
 void ImGui::RenderArrowDockMenu(ImDrawList* draw_list, ImVec2 p_min, float sz, ImU32 col)
 {
-    draw_list->AddRectFilled(p_min + ImVec2(sz * 0.20f, sz * 0.15f), p_min + ImVec2(sz * 0.80f, sz * 0.30f), col);
-    RenderArrowPointingAt(draw_list, p_min + ImVec2(sz * 0.50f, sz * 0.85f), ImVec2(sz * 0.30f, sz * 0.40f), ImGuiDir_Down, col);
+    const ImVec2 center = p_min + ImVec2(sz * 0.50f, sz * 0.50f);
+    const float spacing = sz * 0.22f;
+    const float radius = ImMax(sz * 0.065f, 0.75f);
+    for (int row = 0; row < 3; row++)
+        for (int column = 0; column < 2; column++)
+            draw_list->AddCircleFilled(center + ImVec2((column - 0.5f) * spacing, (row - 1.0f) * spacing), radius, col, 8);
 }
 
 static inline float ImAcos01(float x)

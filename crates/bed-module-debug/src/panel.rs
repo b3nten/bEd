@@ -1,5 +1,6 @@
 //! Immediate-mode debugger presentation. Actions are applied after drawing.
 use super::*;
+use bed_ui::util::popup_style::tooltip_text;
 use dear_imgui_rs::{Condition, InputTextFlags};
 
 impl Debugger {
@@ -72,7 +73,8 @@ impl Debugger {
                 actions.push(Action::ShowTerminal);
             }
             if ui.is_item_hovered() {
-                ui.tooltip_text(
+                tooltip_text(
+                    ui,
                     "Program input and output. Debugger expressions and LLDB messages appear in the Console tab.",
                 );
             }
@@ -310,7 +312,8 @@ impl Debugger {
             .build();
         ui.checkbox("Stop on Entry", &mut profile.stop_on_entry);
         if ui.is_item_hovered() {
-            ui.tooltip_text(
+            tooltip_text(
+                ui,
                 "Pause before main, which can stop in loader or startup code without source. Continue (F5) to reach your breakpoints.",
             );
         }
@@ -352,7 +355,8 @@ impl Debugger {
                 };
             }
             if ui.is_item_hovered() {
-                ui.tooltip_text(
+                tooltip_text(
+                    ui,
                     "Automatic enables readable Rust values for Cargo profiles and Rust workspaces. Choose Enabled for a standalone Rust executable. Pretty printers follow the project's Rust toolchain.",
                 );
             }
@@ -632,7 +636,7 @@ fn draw_variables(
         if ui.is_item_hovered()
             && let Some(type_name) = &variable.type_name
         {
-            ui.tooltip_text(type_name);
+            tooltip_text(ui, type_name);
         }
     }
 }

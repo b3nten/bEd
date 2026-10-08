@@ -136,7 +136,7 @@ impl FileInfoHover {
         let wrap_width = (ui.current_font_size() * 36.0)
             .min((ui.window_viewport().work_size()[0] - padding[0] * 4.0).max(1.0));
         let _padding = ui.push_style_var(StyleVar::WindowPadding(padding));
-        ui.tooltip(|| {
+        bed_ui::util::popup_style::tooltip(ui, || {
             // text_wrapped() resets wrapping to the current window width,
             // preventing an auto-sized tooltip from growing past a narrow one.
             let _wrap = ui.push_text_wrap_pos(ui.cursor_pos()[0] + wrap_width);

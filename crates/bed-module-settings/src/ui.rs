@@ -4,6 +4,7 @@ use bed_editing::util::color::{blend, ensure_contrast};
 use bed_settings::theme::ThemeDraft;
 use bed_settings::{EffectPreset, Settings, font::Font};
 use bed_ui::icons::Icons;
+use bed_ui::util::popup_style::tooltip_text;
 use dear_imgui_rs::{
     Condition, Key, MouseButton, PopupQueryFlags, StyleColor, StyleVar, Ui, WindowFlags,
     WindowHoveredFlags,
@@ -22,18 +23,16 @@ pub enum SettingsCategory {
     Appearance,
     ThemeEditor,
     Editor,
-    Terminal,
     Effects,
     Keybindings,
     Extensions,
 }
 impl SettingsCategory {
-    const ALL: [(Self, &'static str); 8] = [
+    const ALL: [(Self, &'static str); 7] = [
         (Self::General, "General"),
         (Self::Appearance, "Appearance"),
         (Self::ThemeEditor, "Theme Editor"),
         (Self::Editor, "Editor"),
-        (Self::Terminal, "Terminal"),
         (Self::Effects, "Effects"),
         (Self::Keybindings, "Keybindings"),
         (Self::Extensions, "Extensions"),
@@ -407,7 +406,6 @@ impl SettingsView<'_> {
                 SettingsCategory::General => {
                     ui.text("General");
                     ui.separator();
-                    self.draw_boolean(ui, "File Explorer", "sidebar_visible", true);
                     self.draw_boolean(ui, "Limit frame rate", "fps_toggle", true);
                     for (label, key, default) in [
                         ("Frame rate", "fps_target", 57.0),
@@ -449,12 +447,6 @@ impl SettingsView<'_> {
                 }
                 SettingsCategory::ThemeEditor => {
                     crate::theme_editor::draw(ui, &mut self.window.theme_editor, self.service);
-                }
-                SettingsCategory::Terminal => {
-                    ui.text("Terminal");
-                    ui.separator();
-                    self.draw_boolean(ui, "Show Terminal", "terminal_visible", true);
-                    ui.text_wrapped("Font and size follow Appearance settings.");
                 }
                 SettingsCategory::Effects => {
                     if shaders_available {
@@ -632,7 +624,8 @@ impl SettingsView<'_> {
             self.persist_ui();
         }
         if ui.is_item_hovered() {
-            ui.tooltip_text(
+            tooltip_text(
+                ui,
                 "Save files after typing stops. New files require a path before autosave can run.",
             );
         }

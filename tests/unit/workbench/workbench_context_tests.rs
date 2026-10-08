@@ -520,7 +520,7 @@ fn file_tree_menus_dispatch_exact_paths_and_protect_project_root_actions() {
     assert!(tree_mouse(&mut context, &mut tree, file, MouseButton::Right, true).is_empty());
     assert!(tree_mouse(&mut context, &mut tree, file, MouseButton::Right, false).is_empty());
     tree_frame(&mut context, &mut tree);
-    let rename = tree_popup_item(&context, 2, 1);
+    let rename = tree_popup_item(&context, 7, 1);
     assert!(tree_mouse(&mut context, &mut tree, rename, MouseButton::Left, true).is_empty());
     assert_eq!(
         tree_mouse(&mut context, &mut tree, rename, MouseButton::Left, false),
@@ -623,9 +623,9 @@ fn file_tree_visibility_menus_toggle_hide_reveal_and_unhide_exact_paths() {
     // Clicking the checked menu again must emit the inverse state.
     for enabled in [true, false] {
         for (index, action) in [
-            (2, FileTreeAction::SetHideGitignored(enabled)),
-            (3, FileTreeAction::SetHideHidden(enabled)),
-            (4, FileTreeAction::SetShowHidden(enabled)),
+            (4, FileTreeAction::SetHideGitignored(enabled)),
+            (5, FileTreeAction::SetHideHidden(enabled)),
+            (6, FileTreeAction::SetShowHidden(enabled)),
         ] {
             let actions = click_item(&mut context, &mut tree, background, index, 1);
             assert_eq!(actions.as_slice(), std::slice::from_ref(&action));
@@ -640,14 +640,14 @@ fn file_tree_visibility_menus_toggle_hide_reveal_and_unhide_exact_paths() {
         hidden: true,
     };
     assert_eq!(
-        click_item(&mut context, &mut tree, file_row, 4, 1).as_slice(),
+        click_item(&mut context, &mut tree, file_row, 9, 1).as_slice(),
         std::slice::from_ref(&hide)
     );
     tree.apply_visibility_action(&hide, false);
     tree_frame(&mut context, &mut tree);
     let reveal = FileTreeAction::SetShowHidden(true);
     assert_eq!(
-        click_item(&mut context, &mut tree, background, 4, 1).as_slice(),
+        click_item(&mut context, &mut tree, background, 6, 1).as_slice(),
         std::slice::from_ref(&reveal)
     );
     tree.apply_visibility_action(&reveal, false);
@@ -667,7 +667,7 @@ fn file_tree_visibility_menus_toggle_hide_reveal_and_unhide_exact_paths() {
         hidden: false,
     };
     assert_eq!(
-        click_item(&mut context, &mut tree, file_row, 4, 1).as_slice(),
+        click_item(&mut context, &mut tree, file_row, 9, 1).as_slice(),
         std::slice::from_ref(&unhide)
     );
     tree.apply_visibility_action(&unhide, false);

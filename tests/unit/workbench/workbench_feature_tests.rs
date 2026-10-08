@@ -56,6 +56,7 @@ fn panels_meet_the_native_titlebar_with_square_content_corners() {
     workbench.root_top_inset = 32.0;
     let mut context = initialize(&mut workbench);
     context.style_mut().set_window_rounding(12.0);
+    context.style_mut().set_child_rounding(9.0);
     let padding = context.style().window_padding();
     for _ in 0..3 {
         frame(&mut context, &mut workbench);
@@ -66,11 +67,17 @@ fn panels_meet_the_native_titlebar_with_square_content_corners() {
             let window = sys::igFindWindowByName(title.as_ptr()).as_ref().unwrap();
             assert!(window.DockIsActive());
             assert_eq!(window.WindowRounding, 0.0);
-            let host = (*window.DockNode).HostWindow.as_ref().unwrap();
-            assert_eq!(host.WindowRounding, 0.0);
         }
+        let title = std::ffi::CString::new(format!(
+            "##bed_workspace/DockSpace_{:08X}",
+            workbench.dock_root
+        ))
+        .unwrap();
+        let host = sys::igFindWindowByName(title.as_ptr()).as_ref().unwrap();
+        assert_eq!(host.WindowRounding, 0.0);
     });
     assert_eq!(context.style().window_rounding(), 12.0);
+    assert_eq!(context.style().child_rounding(), 9.0);
     assert_eq!(context.style().window_padding(), padding);
 }
 

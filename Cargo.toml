@@ -40,7 +40,7 @@ members = [
     "crates/bed-workbench",
 ]
 default-members = ["."]
-exclude = ["vendor/dear-imgui-sys", "vendor/dear-imgui-winit", "vendor/dear-imgui-wgpu", "vendor/freetype-sys", "vendor/bevy_stl"]
+exclude = ["vendor/arboard", "vendor/dear-imgui-sys", "vendor/dear-imgui-winit", "vendor/dear-imgui-wgpu", "vendor/freetype-sys", "vendor/bevy_stl"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -60,7 +60,7 @@ dear-imgui-wgpu = { version = "=0.18.0", default-features = false, features = ["
 winit = "=0.30.13"
 wgpu = "=29.0.4"
 bevy_stl = { version = "=0.18.0", default-features = false }
-arboard = { version = "=3.6.1", default-features = false }
+arboard = { version = "=3.6.1", default-features = false, features = ["wayland-data-control"] }
 rfd = "=0.17.2"
 serde_json = "1"
 fontdb = { version = "=0.24.0", default-features = false, features = ["std", "fs", "fontconfig"] }
@@ -147,6 +147,9 @@ serde_json = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+x11-dl = "=2.21.0"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { workspace = true }
 objc2 = { workspace = true }
@@ -160,6 +163,7 @@ path = "tests/lsp_transport.rs"
 harness = false
 
 [patch.crates-io]
+arboard = { path = "vendor/arboard" }
 dear-imgui-sys = { path = "vendor/dear-imgui-sys" }
 dear-imgui-winit = { path = "vendor/dear-imgui-winit" }
 dear-imgui-wgpu = { path = "vendor/dear-imgui-wgpu" }

@@ -213,7 +213,7 @@ fn enabling_remote_autosave_schedules_existing_unsaved_edits() {
 }
 #[cfg(unix)]
 #[test]
-fn remote_open_save_rename_and_remove_keep_document_identity() {
+fn remote_open_save_rename_keep_identity_and_remove_closes_clean_views() {
     let temp = TempDir::new();
     let project = temp.path("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -254,19 +254,8 @@ fn remote_open_save_rename_and_remove_keep_document_identity() {
     assert_eq!(workbench.session.document_for_view(view), Some(document));
     workbench.trash_path(&renamed).unwrap();
     wait(&mut workbench, |w| !w.remote_ui.mutation_pending());
-    assert!(
-        workbench
-            .session
-            .snapshot(document)
-            .unwrap()
-            .disk_conflict
-            .is_some()
-    );
-    assert_eq!(
-        workbench.session.snapshot(document).unwrap().bytes,
-        b"edited hello"
-    );
-    assert_eq!(workbench.session.document_for_view(view), Some(document));
+    assert!(workbench.session.snapshot(document).is_err());
+    assert_eq!(workbench.session.document_for_view(view), None);
     assert!(!renamed.exists());
 }
 #[cfg(unix)]
@@ -844,4 +833,53 @@ fn live_ssh_workbench_connection_edit_conflict_and_reconnect() {
     workbench.remote_ui = RemoteUi::default();
     assert!(workbench.session.document_ids().is_empty());
     drop(fixture);
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_activation_cancels_local_file_jobs_before_save_preflight() {
+    let temp = TempDir::new();
+    let source = temp
+        .write("local/source.txt", b"source")
+        .canonicalize()
+        .unwrap();
+    let destination = temp
+        .write("local/destination/source.txt", b"destination")
+        .canonicalize()
+        .unwrap();
+    std::fs::create_dir_all(temp.path("remote")).unwrap();
+    let remote_root = temp.path("remote").canonicalize().unwrap();
+    let mut workbench = super::super::tests::workspace(&temp);
+    workbench.set_project(&temp.path("local")).unwrap();
+    workbench.open_or_focus(&source).unwrap();
+    workbench
+        .handle_tree_action(FileTreeAction::Move {
+            paths: vec![source.to_str().unwrap().into()],
+            destination: destination.parent().unwrap().to_str().unwrap().into(),
+        })
+        .unwrap();
+    let spec = WorkspaceSpec {
+        name: "Connected remote workspace".into(),
+        root: remote_root.to_str().unwrap().into(),
+        target: WorkspaceTarget::Ssh {
+            host: "test-host".into(),
+        },
+    };
+    workbench.remote_ui.ready = Some(ConnectionResult {
+        reconnect: false,
+        result: Ok(ConnectedWorkspace {
+            spec,
+            target: SshTarget::new("test-host"),
+            client: client(),
+        }),
+    });
+    workbench.poll_remote_workspace().unwrap();
+    assert!(
+        workbench.session.is_remote(),
+        "a paused file job must not cause the validated connection to be dropped"
+    );
+    assert_eq!(workbench.project_root, remote_root.to_str().unwrap());
+    assert_eq!(std::fs::read(source).unwrap(), b"source");
+    assert_eq!(std::fs::read(destination).unwrap(), b"destination");
+    workbench.cleanup().unwrap();
 }

@@ -63,3 +63,15 @@ across frames in persistent postprocess targets.
 Checkboxes paint their square and check mark at 70% of the native frame size,
 centered within the original bounds. Row layout, label baseline, keyboard
 navigation, and the full click target are preserved globally.
+
+Dock menu buttons draw a centered six-dot grip in place of the block-and-arrow
+icon. The grip scales with the font size and uses muted text alpha at rest,
+returning to full text alpha while hovered or held. Button bounds, tab layout,
+navigation, the window menu, and dragging/undocking behavior remain native.
+
+Dock nodes use a separate close-button rendering variant: an outlined panel
+with a header divider and a small cross inside. It shares the grip's muted
+resting alpha and full hover/held alpha, and its tooltip reads "Close panel and
+all its tabs". Individual tab/window close buttons keep the original cross.
+Native close-button interaction, docking layout, and close-all behavior are
+preserved, and the existing C binding for `CloseButton` is unchanged.

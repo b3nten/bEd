@@ -34,6 +34,26 @@ impl GutterView {
         }
     }
 
+    pub fn draw_breakpoint_preview(
+        ui: &Ui,
+        draw: &DrawListMut<'_>,
+        editor: &Editor,
+        layout: &ViewLayout,
+        pos: [f32; 2],
+        row: i32,
+    ) {
+        let width = Self::debug_column_width(ui, true);
+        let center = [
+            pos[0] + width * 0.32,
+            pos[1] + layout.editor_top_margin + (row as f32 + 0.5) * layout.line_height
+                - editor.view.scroll_position[1],
+        ];
+        let radius = (layout.line_height * 0.24).min(width * 0.25);
+        let mut color = bed_ui::presentation::readable_color(ui, [0.93, 0.25, 0.28, 1.0]);
+        color[3] = 0.45;
+        draw.add_circle(center, radius, color).filled(true).build();
+    }
+
     pub fn draw(
         ui: &Ui,
         draw: &DrawListMut<'_>,

@@ -64,15 +64,39 @@ Tree**. Choices are saved per project in `~/.config/bed/workspaces.json`, separa
 for local and SSH projects; both filters start off. **Show Hidden Files** temporarily
 reveals filtered entries dimmed, with **Unhide from File Tree** for manually hidden
 paths. Hiding a folder covers its subtree. These controls affect only the tree.
-The Git-ignore filter needs Git installed on the project’s machine. SSH directory
-metadata and byte documents use protocol v3; bEd automatically installs the matching helper.
+The Git-ignore filter needs Git installed on the project’s machine. The file finder
+excludes `.git` and Git-ignored entries by default; its **Include Ignored** option is
+saved separately from tree visibility. Discovery builds an index in the background,
+then follows filesystem events and refreshes affected directories. A degraded
+watcher reports its status and falls back to a scan every 30 seconds. SSH projects
+use the same index in the remote helper. Protocol v5 adds filesystem events and
+bounded file transfers; bEd automatically installs the matching helper.
+
+In Files, a single click selects an entry and opens the file or expands/collapses
+the folder. Cmd/Ctrl-click toggles selection, Shift-click selects a range, and Enter
+opens selected files. Each Files panel keeps
+its own selection. The context menu supports bulk open, copy, cut, paste, duplicate
+and delete; drag selected files or folders onto a folder to move them. Local deletion
+uses Trash. SSH deletion asks once before permanently removing the selection.
+Dropping files or folders from the desktop onto Files copies them into the hovered
+folder, a hovered file's parent, or the project root. Other panels can handle native
+file drops through their optional panel callback.
+
+Copy and Paste use the native file clipboard. Copying from SSH downloads a local
+staging copy before publishing it; Paste uploads desktop files into SSH projects.
+Cut moves entries within the same bEd workspace. File operations run in the
+background with progress, cancellation and conflict choices. File transfers stream
+independently of the editor's document size limit and preserve symbolic links.
 
 A document can appear in several views. Its text, undo, autosave, highlighting,
 Git and LSP services are shared; cursors, selections, find and scrolling belong
 to each view. Named files autosave after one second of inactivity by default;
 Settings provides an **Autosave code files** toggle and **Autosave delay** control.
-External disk
-changes reload clean buffers; dirty buffers offer Reload, Keep Buffer or Save As.
+External disk changes reload clean buffers; dirty buffers offer Reload, Keep Buffer
+or Save As. Deleting a file closes every clean panel attached to it. Unsaved text or
+panel drafts remain in detached buffers with their views and undo history, and need
+Save As. Panels receive a removal notification before cleanup. Identifiable moves
+update open document paths without losing their views or history.
 
 File opening checks registered plugin extensions first; registration order resolves
 overlapping claims. The bundled image plugin handles PNG/APNG, JPEG, SVG, GIF,
@@ -595,7 +619,11 @@ instances, so the shell can host a feature without owning its controller.
 Legacy text/hex viewer IDs and saved panel
 kinds remain supported.
 
-The explorer module owns its tree and file finder. Each search panel owns its
+The explorer module owns its tree and file finder, backed by a shared asynchronous
+workspace filesystem index. Panels can accept native file drops through
+`ModulePanel::external_files_with_services` and prepare for deleted documents through
+`ModulePanel::document_removed_with_services`; both callbacks are optional.
+Each search panel owns its
 query, results and worker. The project picker owns its UI and submits concrete
 workspace actions. Settings panels borrow the authoritative application settings;
 profile changes, persistence and native menu updates continue to use that shared

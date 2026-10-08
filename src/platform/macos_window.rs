@@ -31,6 +31,39 @@ const CONTROL_WIDTH: f64 = 26.0;
 const CONTROL_HEIGHT: f64 = 22.0;
 const CONTROL_SPACING: f64 = 2.0;
 
+/// OS file dragging does not reliably produce Winit CursorMoved events.
+/// Read AppKit's live desktop position and use Winit's top-left screen origin.
+pub fn external_drag_position() -> Option<[f32; 2]> {
+    MainThreadMarker::new()?;
+    let event_class = AnyClass::get(c"NSEvent")?;
+    let screen_class = AnyClass::get(c"NSScreen")?;
+    // SAFETY: Called on the native event-loop thread; both classes are AppKit
+    // system classes and all returned Objective-C objects are retained.
+    unsafe {
+        let point: NSPoint = msg_send![event_class, mouseLocation];
+        let screens: Retained<NSArray<AnyObject>> = msg_send![screen_class, screens];
+        let screen = screens.firstObject()?;
+        let frame: NSRect = msg_send![&screen, frame];
+        Some([
+            point.x as f32,
+            (frame.origin.y + frame.size.height - point.y) as f32,
+        ])
+    }
+}
+
+/// Modifier changes during AppKit's native drag loop may bypass Winit's queue.
+pub fn external_drag_modifiers() -> Option<bed_workbench_api::ExternalFileModifiers> {
+    MainThreadMarker::new()?;
+    let flags = objc2_app_kit::NSEvent::modifierFlags_class();
+    use objc2_app_kit::NSEventModifierFlags as Flags;
+    Some(bed_workbench_api::ExternalFileModifiers {
+        control: flags.contains(Flags::Control),
+        shift: flags.contains(Flags::Shift),
+        alt: flags.contains(Flags::Option),
+        super_key: flags.contains(Flags::Command),
+    })
+}
+
 #[derive(Default)]
 struct Actions {
     pending: RefCell<Vec<String>>,

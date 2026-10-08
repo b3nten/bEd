@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
+pub const TRANSFER_CHUNK_BYTES: usize = 1024 * 1024;
 // JSON arrays of u8 require at most four bytes per input byte. Keep headroom
 // for a full file and its request metadata.
 pub const MAX_FILE_BYTES: usize = 128 * 1024 * 1024;
@@ -21,6 +22,48 @@ pub struct DirectoryEntry {
     pub is_directory: bool,
     pub is_symlink: bool,
     pub is_gitignored: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TransferEntry {
+    pub len: u64,
+    pub is_directory: bool,
+    pub is_symlink: bool,
+    pub symlink_target: Option<String>,
+    pub modified_ns: Option<u64>,
+    pub mode: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FilesystemChange {
+    Created { path: String },
+    Modified { path: String },
+    Removed { path: String },
+    Renamed { from: String, to: String },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DirectoryListing {
+    pub path: String,
+    pub entries: Vec<DirectoryEntry>,
+    pub warning: Option<String>,
+}
+
+/// A monotonic filesystem generation; full snapshots occur only at startup or
+/// explicit/overflow recovery. Ordinary notifications contain index deltas.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorkspaceUpdate {
+    pub root: String,
+    pub generation: u64,
+    pub changes: Vec<FilesystemChange>,
+    pub dirty_directories: Vec<String>,
+    pub directories: Vec<DirectoryListing>,
+    pub indexed_files: Option<Vec<String>>,
+    pub indexed_added: Vec<String>,
+    pub indexed_removed: Vec<String>,
+    pub degraded: Option<String>,
+    pub ready: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -87,6 +130,61 @@ pub enum Request {
     ListFiles {
         root: String,
     },
+    WatchWorkspace {
+        root: String,
+        include_ignored: bool,
+    },
+    PollWorkspace {
+        watch_id: u64,
+    },
+    RefreshWorkspace {
+        watch_id: u64,
+        include_ignored: bool,
+    },
+    WatchDirectory {
+        watch_id: u64,
+        path: String,
+    },
+    RefreshWorkspaceDirectory {
+        watch_id: u64,
+        path: String,
+    },
+    UnwatchWorkspace {
+        watch_id: u64,
+    },
+    TransferStat {
+        root: String,
+        path: String,
+    },
+    ReadFileChunk {
+        root: String,
+        path: String,
+        offset: u64,
+        max_bytes: usize,
+    },
+    WriteFileChunk {
+        root: String,
+        path: String,
+        offset: u64,
+        bytes: Vec<u8>,
+        create: bool,
+        mode: Option<u32>,
+    },
+    CommitFileTransfer {
+        root: String,
+        temporary: String,
+        path: String,
+        replace: bool,
+    },
+    CreateSymlink {
+        root: String,
+        path: String,
+        target: String,
+    },
+    RemoveEmptyDirectory {
+        root: String,
+        path: String,
+    },
     WriteFile {
         root: String,
         path: String,
@@ -152,6 +250,18 @@ pub enum Response {
     Files {
         paths: Vec<String>,
     },
+    WorkspaceWatch {
+        watch_id: u64,
+    },
+    WorkspaceUpdates {
+        updates: Vec<WorkspaceUpdate>,
+    },
+    TransferStat {
+        entry: TransferEntry,
+    },
+    FileChunk {
+        bytes: Vec<u8>,
+    },
     Written {
         baseline: FileBaseline,
     },
@@ -178,6 +288,7 @@ pub enum ErrorKind {
     NotFound,
     PermissionDenied,
     AlreadyExists,
+    CrossesDevices,
     InvalidInput,
     Conflict,
     UnsupportedVersion,
@@ -204,6 +315,7 @@ impl RemoteError {
             ErrorKind::NotFound => io::ErrorKind::NotFound,
             ErrorKind::PermissionDenied => io::ErrorKind::PermissionDenied,
             ErrorKind::AlreadyExists => io::ErrorKind::AlreadyExists,
+            ErrorKind::CrossesDevices => io::ErrorKind::CrossesDevices,
             ErrorKind::InvalidInput | ErrorKind::UnsupportedVersion | ErrorKind::TooLarge => {
                 io::ErrorKind::InvalidInput
             }
@@ -220,6 +332,7 @@ impl From<io::Error> for RemoteError {
             io::ErrorKind::NotFound => ErrorKind::NotFound,
             io::ErrorKind::PermissionDenied => ErrorKind::PermissionDenied,
             io::ErrorKind::AlreadyExists => ErrorKind::AlreadyExists,
+            io::ErrorKind::CrossesDevices => ErrorKind::CrossesDevices,
             io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => ErrorKind::InvalidInput,
             _ => ErrorKind::Other,
         };

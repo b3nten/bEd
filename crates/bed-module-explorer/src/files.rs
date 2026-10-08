@@ -24,8 +24,7 @@ impl FileExplorer {
         self.file_finder.poll();
     }
     pub fn refresh_file_tree(&mut self) {
-        if let Err(error) = self.file_tree.refresh_file_tree(&self.project_root) {
-            eprintln!("Error accessing directory {}: {error}", self.project_root);
-        }
+        self.file_finder
+            .refresh_directories(self.file_tree.open_directories());
     }
 }

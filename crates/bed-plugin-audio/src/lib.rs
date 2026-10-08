@@ -4,6 +4,7 @@ use bed_plugin::{
     CommandContext, DocumentKind, HostContext, HostRequest, MenuSlot, Plugin, PluginPanel,
     Registrar, Revision,
 };
+use bed_ui::util::popup_style::tooltip_text;
 use dear_imgui_rs::{Key, MouseButton, StyleColor, Ui};
 use rodio::{OutputStream, OutputStreamBuilder, Sink};
 use serde_json::{Value, json};
@@ -319,7 +320,7 @@ impl AudioPanel {
             );
         }
         if ui.is_item_hovered() {
-            ui.tooltip_text("Click or drag to seek");
+            tooltip_text(ui, "Click or drag to seek");
         }
         let draw = ui.get_window_draw_list();
         let max = [min[0] + size[0], min[1] + size[1]];

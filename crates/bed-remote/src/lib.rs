@@ -7,8 +7,11 @@ mod deployment;
 mod file_info;
 mod filesystem;
 mod protocol;
+mod transfers;
+mod workspace_filesystem;
 
 pub use client::{RemoteClient, SshTarget, remote_command, shell_quote};
 pub use deployment::{expand_ssh_path, prepare_ssh_target};
 pub use filesystem::{LocalBackend, git_ignored_paths, serve, serve_with};
 pub use protocol::*;
+pub use workspace_filesystem::WorkspaceFilesystem;

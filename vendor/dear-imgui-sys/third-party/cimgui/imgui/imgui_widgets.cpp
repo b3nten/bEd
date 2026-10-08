@@ -904,6 +904,12 @@ bool ImGui::ArrowButton(const char* str_id, ImGuiDir dir)
 // Button to close a window
 bool ImGui::CloseButton(ImGuiID id, const ImVec2& pos)
 {
+    return CloseButtonEx(id, pos, false);
+}
+
+// Bed: share native close-button interaction with a distinct panel-wide icon.
+bool ImGui::CloseButtonEx(ImGuiID id, const ImVec2& pos, bool close_panel)
+{
     ImGuiContext& g = *GImGui;
     ImGuiWindow* window = g.CurrentWindow;
 
@@ -929,10 +935,18 @@ bool ImGui::CloseButton(ImGuiID id, const ImVec2& pos)
     if (hovered)
         window->DrawList->AddRectFilled(bb.Min, bb.Max, bg_col);
     RenderNavCursor(bb, id, ImGuiNavRenderCursorFlags_Compact);
-    const ImU32 cross_col = GetColorU32(ImGuiCol_Text);
-    const ImVec2 cross_center = bb.GetCenter() - ImVec2(0.5f, 0.5f);
-    const float cross_extent = g.FontSize * 0.5f * 0.7071f - 1.0f;
-    const float cross_thickness = 1.0f * (float)(int)g.Style._MainScale; // FIXME-DPI
+    const ImU32 cross_col = GetColorU32(ImGuiCol_Text, (close_panel && !hovered && !held) ? 0.55f : 1.0f);
+    const ImVec2 cross_center = close_panel ? bb.Min + ImVec2(g.FontSize * 0.50f, g.FontSize * 0.60f) : bb.GetCenter() - ImVec2(0.5f, 0.5f);
+    const float cross_extent = close_panel ? g.FontSize * 0.12f : g.FontSize * 0.5f * 0.7071f - 1.0f;
+    const float cross_thickness = close_panel ? ImMax(g.FontSize / 16.0f, 1.0f) : 1.0f * (float)(int)g.Style._MainScale; // FIXME-DPI
+    if (close_panel)
+    {
+        const ImVec2 panel_min = bb.Min + ImVec2(g.FontSize * 0.12f, g.FontSize * 0.16f);
+        const ImVec2 panel_max = bb.Min + ImVec2(g.FontSize * 0.88f, g.FontSize * 0.84f);
+        const float header_y = bb.Min.y + g.FontSize * 0.36f;
+        window->DrawList->AddRect(panel_min, panel_max, cross_col, 0.0f, cross_thickness, ImDrawFlags_None);
+        window->DrawList->AddLine(ImVec2(panel_min.x, header_y), ImVec2(panel_max.x, header_y), cross_col, cross_thickness);
+    }
     window->DrawList->AddLine(cross_center + ImVec2(+cross_extent, +cross_extent), cross_center + ImVec2(-cross_extent, -cross_extent), cross_col, cross_thickness);
     window->DrawList->AddLine(cross_center + ImVec2(+cross_extent, -cross_extent), cross_center + ImVec2(-cross_extent, +cross_extent), cross_col, cross_thickness);
 
@@ -955,7 +969,7 @@ bool ImGui::CollapseButton(ImGuiID id, const ImVec2& pos, ImGuiDockNode* dock_no
     // Render
     //bool is_dock_menu = (window->DockNodeAsHost && !window->Collapsed);
     ImU32 bg_col = GetColorU32((held && hovered) ? ImGuiCol_ButtonActive : hovered ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
-    ImU32 text_col = GetColorU32(ImGuiCol_Text);
+    ImU32 text_col = GetColorU32(ImGuiCol_Text, (dock_node && !hovered && !held) ? 0.55f : 1.0f);
     if (hovered || held)
         window->DrawList->AddRectFilled(bb.Min, bb.Max, bg_col);
     RenderNavCursor(bb, id, ImGuiNavRenderCursorFlags_Compact);

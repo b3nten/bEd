@@ -1,4 +1,5 @@
 //! Local and SSH project picker with recent workspaces.
+use bed_ui::util::popup_style::tooltip_text;
 use bed_workbench_api::workspace::{WorkspaceSpec, WorkspaceTarget};
 use dear_imgui_rs::{ChildFlags, StyleVar, TreeNodeFlags, Ui};
 use std::path::PathBuf;
@@ -199,7 +200,7 @@ impl Welcome {
                     if ui.is_item_hovered() {
                         let _tooltip_padding =
                             ui.push_style_var(StyleVar::WindowPadding([fs * 0.6, fs * 0.4]));
-                        ui.tooltip_text(&location);
+                        tooltip_text(ui, &location);
                     }
                     ui.set_cursor_pos(next_row);
                 }

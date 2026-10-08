@@ -250,6 +250,7 @@ struct ActionState {
     actions: Vec<PanelAction>,
     draft: Option<Draft>,
     closes: usize,
+    removals: Vec<String>,
     pending_token: Option<EditToken>,
     acknowledgements: Vec<(EditToken, Result<Revision, String>)>,
 }
@@ -360,6 +361,17 @@ impl PluginPanel for ActionPanel {
     fn close(&mut self, _: &mut Vec<HostRequest>) {
         self.shared.borrow_mut().closes += 1;
     }
+    fn document_removed_with_services(
+        &mut self,
+        document: DocumentId,
+        path: &str,
+        _: &mut bed_workbench_api::ModuleServices<'_>,
+        _: &mut Vec<HostRequest>,
+    ) -> io::Result<()> {
+        assert_eq!(document, self.document);
+        self.shared.borrow_mut().removals.push(path.to_owned());
+        Ok(())
+    }
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -406,6 +418,93 @@ fn draft(workbench: &Workbench, shared: &Rc<RefCell<ActionState>>, document: Doc
         range: 0..4,
         bytes: b"changed".to_vec(),
     });
+}
+
+#[test]
+fn deletion_commits_panel_drafts_then_preserves_the_document_and_undo() {
+    let dir = TempDir::new();
+    let path = dir
+        .write("project/source.txt", b"name,value\nfirst,001\n")
+        .canonicalize()
+        .unwrap();
+    let mut workbench = host(&dir);
+    workbench.open_or_focus(&path).unwrap();
+    let document = workbench.active_document().unwrap();
+    let (shared, panel) = attach_probe(&mut workbench, document);
+    draft(&workbench, &shared, document);
+    workbench
+        .trash_path_with(&path, |path| fs::remove_file(path))
+        .unwrap();
+    let snapshot = workbench.session.snapshot(document).unwrap();
+    assert_eq!(snapshot.bytes, b"changed,value\nfirst,001\n");
+    assert!(snapshot.path.is_empty());
+    assert!(snapshot.disk_conflict.is_none());
+    assert!(shared.borrow().draft.is_none());
+    assert_eq!(shared.borrow().removals, [path.to_string_lossy()]);
+    assert_eq!(shared.borrow().closes, 0);
+    assert!(workbench.tabs.iter().any(|tab| tab.id == panel));
+    workbench.session.undo_document(document).unwrap();
+    assert_eq!(
+        workbench.session.snapshot(document).unwrap().bytes,
+        b"name,value\nfirst,001\n"
+    );
+    assert!(!path.exists());
+}
+
+#[test]
+fn deletion_preserves_a_clean_buffer_with_an_invalid_uncommitted_draft() {
+    let dir = TempDir::new();
+    let path = dir.write("project/source.txt", b"name,value\n");
+    let mut workbench = host(&dir);
+    workbench.open_or_focus(&path).unwrap();
+    let document = workbench.active_document().unwrap();
+    let (shared, panel) = attach_probe(&mut workbench, document);
+    draft(&workbench, &shared, document);
+    shared.borrow_mut().draft.as_mut().unwrap().revision.0 += 1;
+    workbench
+        .trash_path_with(&path, |path| fs::remove_file(path))
+        .unwrap();
+    let snapshot = workbench.session.snapshot(document).unwrap();
+    assert!(snapshot.path.is_empty());
+    assert!(snapshot.dirty);
+    assert_eq!(snapshot.bytes, b"name,value\n");
+    assert!(shared.borrow().draft.is_some());
+    assert_eq!(shared.borrow().closes, 0);
+    assert!(workbench.tabs.iter().any(|tab| tab.id == panel));
+    assert!(
+        workbench
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("Draft is stale"))
+    );
+}
+
+#[test]
+fn clean_external_deletion_notifies_panels_before_closing_them_once() {
+    let dir = TempDir::new();
+    let path = dir
+        .write("project/source.txt", b"name,value\n")
+        .canonicalize()
+        .unwrap();
+    let mut workbench = host(&dir);
+    workbench.open_or_focus(&path).unwrap();
+    let document = workbench.active_document().unwrap();
+    let (shared, _) = attach_probe(&mut workbench, document);
+    fs::remove_file(&path).unwrap();
+    let until = Instant::now() + Duration::from_secs(3);
+    while workbench.session.snapshot(document).is_ok() {
+        workbench.tick().unwrap();
+        assert!(
+            Instant::now() < until,
+            "deleted clean document did not close"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(workbench.session.snapshot(document).is_err());
+    assert_eq!(shared.borrow().removals, [path.to_string_lossy()]);
+    assert_eq!(shared.borrow().closes, 1);
+    workbench.tick().unwrap();
+    assert_eq!(shared.borrow().closes, 1);
 }
 
 #[test]

@@ -119,6 +119,14 @@ impl FileFinder {
             )
             .build(|| {
                 ui.text("Find File");
+                ui.same_line();
+                let mut include_ignored = self.include_ignored();
+                if ui.checkbox("Include Ignored", &mut include_ignored) {
+                    self.set_include_ignored(include_ignored);
+                }
+                if let Some(status) = &self.discovery_status {
+                    ui.text_wrapped(status);
+                }
                 ui.spacing();
                 ui.spacing();
                 if ui.is_key_pressed(Key::UpArrow) && self.selected_index > 0 {

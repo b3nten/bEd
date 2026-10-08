@@ -9,6 +9,7 @@ license-file = "../../LICENSE"
 test-support = []
 
 [dependencies]
+bed-ui = { workspace = true }
 bed-editing = { workspace = true }
 bed-document-session = { workspace = true }
 bed-editor-ui = { workspace = true }

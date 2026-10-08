@@ -141,6 +141,45 @@ pub trait FileDialogService {
     fn pick_file(&mut self, directory: &Path, extensions: &[&str]) -> Option<PathBuf>;
 }
 
+/// Native file-list clipboard access supplied by the desktop host.
+/// Clipboard imports always copy; cut state is retained only by the workbench.
+pub trait FileClipboardService {
+    fn read_files(&mut self) -> std::io::Result<Vec<PathBuf>>;
+    fn write_files(&mut self, paths: &[PathBuf]) -> std::io::Result<()>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExternalFileDragPhase {
+    Hover,
+    Drop,
+    Cancel,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExternalFileDrag {
+    pub paths: Vec<PathBuf>,
+    /// Desktop logical coordinates, matching panel rectangles.
+    pub position: [f32; 2],
+    pub viewport: u32,
+    pub phase: ExternalFileDragPhase,
+    pub modifiers: ExternalFileModifiers,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ExternalFileModifiers {
+    pub control: bool,
+    pub shift: bool,
+    pub alt: bool,
+    pub super_key: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ExternalFileDropResponse {
+    #[default]
+    Ignored,
+    Accepted,
+}
+
 pub struct HostContext<'a> {
     pub documents: &'a [PluginDocument],
     pub active_document: Option<DocumentId>,
@@ -677,6 +716,17 @@ pub enum PanelAction {
 /// A visible module surface hosted by the workbench. Panels retain local view
 /// state while documents, edits, and history remain in shared services.
 pub trait ModulePanel: Any {
+    /// Optional OS file drop interception. Ignored drops use the host's normal
+    /// file/project opening behavior; accepted drops belong to this panel.
+    fn external_files_with_services(
+        &mut self,
+        _event: &ExternalFileDrag,
+        _host: &HostContext<'_>,
+        _services: &mut ModuleServices<'_>,
+        _requests: &mut Vec<HostRequest>,
+    ) -> std::io::Result<ExternalFileDropResponse> {
+        Ok(ExternalFileDropResponse::Ignored)
+    }
     fn persist(&self) -> bool {
         true
     }
@@ -714,6 +764,17 @@ pub trait ModulePanel: Any {
         requests: &mut Vec<HostRequest>,
     ) -> io::Result<()> {
         self.close(requests);
+        Ok(())
+    }
+    /// Called before the host closes a clean deleted document or detaches a
+    /// dirty buffer. Panels may release resources associated with its old path.
+    fn document_removed_with_services(
+        &mut self,
+        _document: DocumentId,
+        _path: &str,
+        _services: &mut ModuleServices<'_>,
+        _requests: &mut Vec<HostRequest>,
+    ) -> io::Result<()> {
         Ok(())
     }
 

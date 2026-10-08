@@ -28,6 +28,18 @@ impl LocalBackend {
                 }
                 Ok(Response::Hello { version })
             }
+            request @ (Request::WatchWorkspace { .. }
+            | Request::PollWorkspace { .. }
+            | Request::RefreshWorkspace { .. }
+            | Request::WatchDirectory { .. }
+            | Request::RefreshWorkspaceDirectory { .. }
+            | Request::UnwatchWorkspace { .. }) => crate::workspace_filesystem::call(request),
+            request @ (Request::TransferStat { .. }
+            | Request::ReadFileChunk { .. }
+            | Request::WriteFileChunk { .. }
+            | Request::CommitFileTransfer { .. }
+            | Request::CreateSymlink { .. }
+            | Request::RemoveEmptyDirectory { .. }) => crate::transfers::call(request),
             Request::Canonicalize {
                 root,
                 path,
@@ -276,7 +288,7 @@ fn protect_root(root: &Path, path: &Path) -> ServiceResult<()> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
+pub(crate) fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
     let source = CString::new(source.as_os_str().as_bytes())
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
@@ -349,7 +361,7 @@ fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn rename_no_replace(_source: &Path, _destination: &Path) -> io::Result<()> {
+pub(crate) fn rename_no_replace(_source: &Path, _destination: &Path) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "atomic no-replace rename is unsupported on this host",

@@ -104,6 +104,12 @@ pub enum SessionEvent {
         document: DocumentId,
         message: String,
     },
+    /// The host must finish panel drafts before closing clean documents or
+    /// detaching dirty ones. Writes are blocked until that decision is made.
+    Removed {
+        document: DocumentId,
+        path: String,
+    },
     PathChanged {
         document: DocumentId,
         previous: String,
@@ -128,6 +134,8 @@ pub struct DocumentSnapshot {
     pub kind: DocumentKind,
     pub id: DocumentId,
     pub path: String,
+    /// Display name retained after deletion; an empty `path` requires Save As.
+    pub original_path: Option<String>,
     pub bytes: Vec<u8>,
     pub version: i32,
     pub generation: u64,
@@ -161,6 +169,8 @@ struct DocumentEntry {
     notifications: Rc<RefCell<Vec<Notification>>>,
     highlight_edits: Vec<PendingEdit>,
     removed: bool,
+    removal_pending_since: Option<Instant>,
+    original_path: Option<String>,
     allow_recreate: bool,
     autosave_paused: bool,
     git_initialized: bool,
@@ -304,6 +314,7 @@ impl EditorSession {
             kind: state.kind,
             id: document,
             path: state.path.clone(),
+            original_path: entry.original_path.clone(),
             bytes: state.join(),
             version: state.version,
             generation: entry.editor.document_generation(),
@@ -467,6 +478,8 @@ impl EditorSession {
                 notifications,
                 highlight_edits: Vec::new(),
                 removed: false,
+                removal_pending_since: None,
+                original_path: None,
                 allow_recreate: false,
                 autosave_paused: false,
                 git_initialized: self.options.git && text,
@@ -984,6 +997,16 @@ impl EditorSession {
         if self.remote.is_some() {
             return self.queue_remote_save(document, None);
         }
+        let entry = self.entry(document)?;
+        if !entry.editor.state.path.is_empty()
+            && (entry.removed || !Path::new(&entry.editor.state.path).try_exists()?)
+        {
+            self.invalidate_removed_path(document)?;
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "File was removed; use Save As before saving",
+            ));
+        }
         let monitoring = self.options.monitoring;
         let entry = self.entry_mut(document)?;
         guard_write(entry)?;
@@ -1118,6 +1141,8 @@ impl EditorSession {
         entry.editor.save_service.on_did_edit(&entry.editor.state);
         entry.highlight_edits.clear();
         entry.removed = false;
+        entry.original_path = None;
+        entry.removal_pending_since = None;
         entry.allow_recreate = false;
         let watch = if remote {
             Ok(())
@@ -1154,18 +1179,72 @@ impl EditorSession {
     /// After successful trash/delete, cancel writes before the next service tick.
     pub fn invalidate_removed_path(&mut self, document: DocumentId) -> io::Result<()> {
         let entry = self.entry_mut(document)?;
+        if entry.removed || entry.editor.state.path.is_empty() {
+            return Ok(());
+        }
         entry.removed = true;
+        entry.removal_pending_since = None;
         entry.allow_recreate = false;
         entry.editor.save_service.cancel_pending();
         entry.monitor.reset();
-        entry.editor.disk_conflict = Some("File was removed from disk.".into());
-        self.queued.push(SessionEvent::Conflict {
+        entry.editor.disk_conflict = None;
+        let path = entry.editor.state.path.clone();
+        self.queued.push(SessionEvent::Removed { document, path });
+        Ok(())
+    }
+    /// Preserve a deleted document and its views/history as a Save As buffer.
+    /// The host calls this after attempting to commit every attached panel draft.
+    pub fn detach_removed_document(&mut self, document: DocumentId) -> io::Result<()> {
+        self.ensure_running()?;
+        let previous = self.entry(document)?.editor.state.path.clone();
+        if previous.is_empty() {
+            return Ok(());
+        }
+        let key = format!("bed:untitled:{}", document.0);
+        if self.document_kind(document)? == DocumentKind::Text {
+            let old_key = self.entry(document)?.editor.history_key().to_owned();
+            self.history.borrow_mut().rekey_file(&old_key, &key)?;
+        }
+        if let Some(pool) = &mut self.lsp
+            && let Err(error) = pool.unregister_document(document)
+        {
+            self.record_error(Some(document), "lsp", &error);
+        }
+        let entry = self.entry_mut(document)?;
+        entry.editor.bind_lsp_client(None);
+        entry.editor.set_history_key(Some(key));
+        entry.editor.detach_document_path();
+        // Even a clean disk buffer with an invalid panel draft must prompt for
+        // Save As when subsequently closed, rather than silently losing it.
+        entry.editor.state.dirty = true;
+        entry.editor.save_service.cancel_pending();
+        entry.editor.disk_conflict = None;
+        entry
+            .editor
+            .git
+            .borrow_mut()
+            .on_document_opened(&entry.editor.state, false);
+        entry.monitor.reset();
+        entry.original_path = Some(previous.clone());
+        entry.removed = false;
+        entry.removal_pending_since = None;
+        entry.allow_recreate = false;
+        self.paths.retain(|_, id| *id != document);
+        self.forget_remote_document(document, true);
+        self.queued.push(SessionEvent::PathChanged {
             document,
-            message: "File was removed from disk.".into(),
+            previous,
+            path: String::new(),
         });
         Ok(())
     }
+    pub fn original_path(&self, document: DocumentId) -> io::Result<Option<&str>> {
+        Ok(self.entry(document)?.original_path.as_deref())
+    }
     pub fn keep_buffer(&mut self, document: DocumentId) -> io::Result<()> {
+        if self.entry(document)?.removed {
+            return self.detach_removed_document(document);
+        }
         if self.remote.is_some() {
             return self.queue_remote_keep(document);
         }
@@ -1290,7 +1369,10 @@ impl EditorSession {
             self.last_monitor = Some(Instant::now());
         }
         for id in self.document_ids() {
-            if monitor
+            let confirm_removal = self.documents[&id]
+                .removal_pending_since
+                .is_some_and(|since| since.elapsed() >= Duration::from_millis(250));
+            if (monitor || confirm_removal)
                 && self.remote.is_none()
                 && let Err(error) = self.poll_monitor(id)
             {
@@ -1307,7 +1389,10 @@ impl EditorSession {
                 self.tick_remote_document(id, monitor);
             } else if self.options.autosave.is_some() && !self.documents[&id].autosave_paused {
                 let entry = self.documents.get_mut(&id).unwrap();
-                let result = if entry.editor.disk_conflict.is_some() {
+                let result = if entry.removed
+                    || entry.removal_pending_since.is_some()
+                    || entry.editor.disk_conflict.is_some()
+                {
                     entry.editor.save_service.cancel_pending();
                     Ok(false)
                 } else if entry.editor.state.dirty && !entry.editor.state.path.is_empty() {
@@ -1327,6 +1412,9 @@ impl EditorSession {
                         }
                     }
                     Ok(false) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        let _ = self.invalidate_removed_path(id);
+                    }
                     Err(error) => self.record_error(Some(id), "autosave", &error),
                 }
             }
@@ -1348,6 +1436,16 @@ impl EditorSession {
     }
     pub fn take_events(&mut self) -> Vec<SessionEvent> {
         std::mem::take(&mut self.queued)
+    }
+    /// A shared workspace watcher can refresh an affected open document without
+    /// waiting for the standalone monitor interval. Missing paths are confirmed
+    /// after a short grace period so atomic saves and renames can settle.
+    pub fn notify_disk_change(&mut self, document: DocumentId) -> io::Result<()> {
+        if self.remote.is_some() {
+            self.queue_remote_monitor(document)
+        } else {
+            self.poll_monitor(document)
+        }
     }
     pub fn shutdown(&mut self, policy: ClosePolicy) -> io::Result<TickReport> {
         if self.stopped {
@@ -1650,8 +1748,20 @@ impl EditorSession {
             return Ok(());
         }
         let path = PathBuf::from(&entry.editor.state.path);
+        if let Some(since) = entry.removal_pending_since {
+            if !path.try_exists()? {
+                return if since.elapsed() >= Duration::from_millis(250) {
+                    self.invalidate_removed_path(document)
+                } else {
+                    Ok(())
+                };
+            }
+            entry.removal_pending_since = None;
+            entry.editor.save_service.on_did_edit(&entry.editor.state);
+        }
         let change = match entry.monitor.poll(&path) {
             Ok(change) => change,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
             Err(error) => {
                 let message = error.to_string();
                 let repeated = entry.editor.disk_conflict.as_deref() == Some(&message);
@@ -1666,7 +1776,9 @@ impl EditorSession {
             return Ok(());
         };
         if change.kind == FileChangeKind::Removed {
-            return self.invalidate_removed_path(document);
+            entry.removal_pending_since = Some(Instant::now());
+            entry.editor.save_service.cancel_pending();
+            return Ok(());
         }
         let mut bytes = entry.editor.state.join();
         if entry.editor.state.utf8_bom {
@@ -1776,11 +1888,10 @@ fn guard_write(entry: &mut DocumentEntry) -> io::Result<()> {
     if entry.removed
         || (!entry.allow_recreate && !Path::new(&entry.editor.state.path).try_exists()?)
     {
-        entry.removed = true;
-        entry.editor.disk_conflict = Some("File was removed from disk.".into());
         entry.editor.save_service.cancel_pending();
-        return Err(io::Error::other(
-            "File was removed; use Save As or explicitly keep the buffer before saving",
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "File was removed; use Save As before saving",
         ));
     }
     if entry.editor.disk_conflict.is_some() {

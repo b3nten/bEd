@@ -20,6 +20,7 @@ fn main() {
     finder.set_project_dir("/remote/project");
     finder.start_background_thread();
     wait_until(|| finder.poll());
+    finder.toggle_window();
     assert_eq!(finder.filtered_list[0].full_path, "/remote/project/file.rs");
     assert_eq!(finder.filtered_list[0].relative_path, "file.rs");
 
@@ -70,12 +71,41 @@ fn wait_until(mut condition: impl FnMut() -> bool) {
 fn serve_fixture() {
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
+    let mut workspace = String::new();
+    let mut initial = true;
     while let Some(frame) = read_frame::<_, RequestFrame>(&mut input).unwrap() {
         let response = match frame.request {
             Request::Hello { version } => Response::Hello { version },
             Request::ListFiles { root } => Response::Files {
                 paths: vec![format!("{root}/file.rs")],
             },
+            Request::WatchWorkspace { root, .. } => {
+                workspace = root;
+                initial = true;
+                Response::WorkspaceWatch { watch_id: 1 }
+            }
+            Request::PollWorkspace { .. } => {
+                let updates = if initial {
+                    initial = false;
+                    vec![bed_remote::WorkspaceUpdate {
+                        root: workspace.clone(),
+                        generation: 1,
+                        indexed_files: Some(vec![format!("{workspace}/file.rs")]),
+                        ready: true,
+                        ..Default::default()
+                    }]
+                } else {
+                    vec![]
+                };
+                Response::WorkspaceUpdates { updates }
+            }
+            Request::RefreshWorkspace { .. } => {
+                initial = true;
+                Response::Unit
+            }
+            Request::WatchDirectory { .. }
+            | Request::RefreshWorkspaceDirectory { .. }
+            | Request::UnwatchWorkspace { .. } => Response::Unit,
             Request::Search {
                 root,
                 query,

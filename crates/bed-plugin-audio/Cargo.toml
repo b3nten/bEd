@@ -6,6 +6,7 @@ publish = false
 license-file = "../../LICENSE"
 
 [dependencies]
+bed-ui = { workspace = true }
 bed-editing = { workspace = true }
 bed-plugin = { workspace = true }
 dear-imgui-rs = { workspace = true }

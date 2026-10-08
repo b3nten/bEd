@@ -99,6 +99,10 @@ impl std::fmt::Debug for RemoteClient {
 }
 
 impl RemoteClient {
+    /// Whether two handles share the same live transport and capability scope.
+    pub fn same_connection(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.connection, &other.connection)
+    }
     pub fn launch_ssh(target: &SshTarget) -> io::Result<Self> {
         if target.host.is_empty()
             || target.host.starts_with('-')

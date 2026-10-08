@@ -4,6 +4,7 @@ pub mod content_search;
 pub mod file_finder;
 pub mod file_monitor;
 pub mod files;
+pub mod operations;
 pub mod search_files;
 pub mod tree_ignore;
 

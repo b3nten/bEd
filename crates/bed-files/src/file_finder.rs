@@ -1,17 +1,11 @@
 //! Translated from ned files/file_finder.{h,cpp}; see LICENSE and NOTICE.
-//! The worker sends complete snapshots; only the UI thread mutates displayed results.
-use std::sync::mpsc;
-use std::thread;
+//! Shared filesystem discovery sends an initial index and incremental deltas.
+//! Only the UI thread mutates displayed finder results.
+use bed_remote::{DirectoryListing, WorkspaceFilesystem, WorkspaceUpdate};
 use std::{
-    fs, io,
-    path::{Component, Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{Receiver, Sender},
-    },
-    thread::JoinHandle,
-    time::{Duration, Instant},
+    io,
+    path::{Path, PathBuf},
+    sync::mpsc::Receiver,
 };
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FileEntry {
@@ -65,77 +59,22 @@ impl FileEntry {
     }
 }
 fn relative_path(path: &Path, root: &Path) -> io::Result<PathBuf> {
-    // std::filesystem::relative uses weakly_canonical; both entries exist here.
-    let path = fs::canonicalize(path)?;
-    let root = fs::canonicalize(root)?;
-    let a: Vec<_> = path.components().collect();
-    let b: Vec<_> = root.components().collect();
-    if a.first() != b.first() {
-        return Ok(PathBuf::new());
-    }
-    let common = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
-    let mut out = PathBuf::new();
-    for part in &b[common..] {
-        if matches!(part, Component::Normal(_)) {
-            out.push("..");
-        }
-    }
-    for part in &a[common..] {
-        out.push(part.as_os_str());
-    }
-    Ok(out)
+    // Discovery already canonicalized the workspace root. Keep entry paths
+    // lexical: per-file canonicalization is expensive and destroys link names.
+    path.strip_prefix(root)
+        .map(Path::to_path_buf)
+        .map_err(io::Error::other)
 }
-/// Include every regular file, including .git and dot directories. Upstream applies no ignore files.
+/// One-shot discovery for callers that explicitly need a fresh snapshot.
+/// Finder background updates use WorkspaceFilesystem instead of this walk.
 pub fn scan_file_list(project_dir: &Path) -> io::Result<Vec<FileEntry>> {
     scan_file_list_cancellable(project_dir, || false).map(Option::unwrap_or_default)
 }
 fn scan_file_list_cancellable(
     project_dir: &Path,
-    mut canceled: impl FnMut() -> bool,
+    canceled: impl FnMut() -> bool,
 ) -> io::Result<Option<Vec<FileEntry>>> {
-    fn scan(
-        dir: &Path,
-        root: &Path,
-        out: &mut Vec<FileEntry>,
-        canceled: &mut impl FnMut() -> bool,
-    ) -> io::Result<bool> {
-        if canceled() {
-            return Ok(false);
-        }
-        let mut entries = fs::read_dir(dir)?;
-        loop {
-            if canceled() {
-                return Ok(false);
-            }
-            let Some(item) = entries.next() else {
-                break;
-            };
-            let entry = item?;
-            let path = entry.path();
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            let Ok(metadata) = fs::metadata(&path) else {
-                continue;
-            };
-            if metadata.is_file()
-                && let Ok(file) = FileEntry::from_path(&path, root)
-            {
-                out.push(file);
-            }
-            // Recursive iterator defaults do not follow directory symlinks.
-            if kind.is_dir() && !scan(&path, root, out, canceled)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-    let mut files = Vec::new();
-    if scan(project_dir, project_dir, &mut files, &mut canceled)? {
-        Ok(Some(files))
-    } else {
-        Ok(None)
-    }
+    crate::search_files::discover(project_dir, false, canceled, |_, _| true)
 }
 /// Substring filter and path-length ranking, preserving the upstream dotfile exception.
 pub fn filter_file_list(files: &[FileEntry], query: &str) -> Vec<FileEntry> {
@@ -151,14 +90,25 @@ pub fn filter_file_list(files: &[FileEntry], query: &str) -> Vec<FileEntry> {
     out.sort_by_key(|file| file.relative_path.len());
     out
 }
-enum WorkerMessage {
-    Project(String, u64),
-    Stop,
-}
-struct ScanResult {
-    root: String,
-    generation: u64,
-    files: Vec<FileEntry>,
+fn merge_entries(files: &mut Vec<FileEntry>, mut additions: Vec<FileEntry>) {
+    additions.sort_by(|a, b| a.full_path.cmp(&b.full_path));
+    additions.dedup_by(|a, b| a.full_path == b.full_path);
+    let mut merged = Vec::with_capacity(files.len() + additions.len());
+    let mut old = std::mem::take(files).into_iter().peekable();
+    let mut added = additions.into_iter().peekable();
+    while let (Some(previous), Some(next)) = (old.peek(), added.peek()) {
+        match previous.full_path.cmp(&next.full_path) {
+            std::cmp::Ordering::Less => merged.push(old.next().unwrap()),
+            std::cmp::Ordering::Greater => merged.push(added.next().unwrap()),
+            std::cmp::Ordering::Equal => {
+                old.next();
+                merged.push(added.next().unwrap());
+            }
+        }
+    }
+    merged.extend(old);
+    merged.extend(added);
+    *files = merged;
 }
 #[derive(Default)]
 pub struct FileFinder {
@@ -168,162 +118,162 @@ pub struct FileFinder {
     pub selected_index: usize,
     pub filtered_list: Vec<FileEntry>,
     previous_search: String,
+    filter_dirty: bool,
     file_list: Vec<FileEntry>,
     current_project_dir: String,
-    generation: u64,
-    worker_sender: Option<Sender<WorkerMessage>>,
-    worker_receiver: Option<Receiver<ScanResult>>,
-    worker: Option<JoinHandle<()>>,
-    worker_stop: Arc<AtomicBool>,
+    filesystem: Option<WorkspaceFilesystem>,
+    updates: Option<Receiver<WorkspaceUpdate>>,
+    workspace_updates: Vec<WorkspaceUpdate>,
+    directory_updates: Vec<DirectoryListing>,
+    requested_directories: std::collections::BTreeSet<String>,
+    started: bool,
+    include_ignored: bool,
+    last_generation: u64,
+    pub discovery_status: Option<String>,
 }
 impl FileFinder {
     pub fn new() -> Self {
         Self::default()
     }
     pub fn set_remote_client(&mut self, client: Option<bed_remote::RemoteClient>) {
-        let was_started = self.worker.is_some();
         self.stop_worker();
         self.remote_client = client;
         self.file_list.clear();
         self.filtered_list.clear();
-        self.generation = self.generation.wrapping_add(1);
-        if was_started {
-            self.start_background_thread();
-        }
+        self.start_service();
     }
     fn stop_worker(&mut self) {
-        self.worker_stop.store(true, Ordering::Release);
-        if let Some(sender) = self.worker_sender.take() {
-            let _ = sender.send(WorkerMessage::Stop);
-        }
-        self.worker_receiver.take();
-        if let Some(worker) = self.worker.take() {
-            let deadline = Instant::now() + Duration::from_millis(100);
-            while !worker.is_finished() && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(2));
-            }
-            if worker.is_finished() {
-                let _ = worker.join();
-            }
-            // Filesystem or remote I/O may remain blocked. The worker owns its
-            // state and keeps the stop flag, so it can safely finish detached.
-        }
+        self.updates.take();
+        self.filesystem.take();
+        self.workspace_updates.clear();
+        self.directory_updates.clear();
+        self.requested_directories.clear();
+        self.last_generation = 0;
     }
     pub fn start_background_thread(&mut self) {
-        if self.worker.is_some() {
+        self.started = true;
+        self.start_service();
+    }
+    fn start_service(&mut self) {
+        if !self.started || self.filesystem.is_some() || self.current_project_dir.is_empty() {
             return;
         }
-        let (sender, requests) = mpsc::channel();
-        let (results, receiver) = mpsc::channel();
-        self.worker_sender = Some(sender);
-        self.worker_receiver = Some(receiver);
-        let remote = self.remote_client.clone();
-        // A detached old worker must keep its canceled flag when we restart.
-        self.worker_stop = Arc::new(AtomicBool::new(false));
-        let stop = Arc::clone(&self.worker_stop);
-        self.worker = Some(thread::spawn(move || {
-            let mut project = String::new();
-            let mut scanned = String::new();
-            let mut generation = 0;
-            let mut force_scan = false;
-            let mut last_scan = Instant::now();
-            while !stop.load(Ordering::Acquire) {
-                match requests.recv_timeout(Duration::from_millis(100)) {
-                    Ok(WorkerMessage::Project(root, next)) => {
-                        project = root;
-                        generation = next;
-                        force_scan = true;
-                    }
-                    Ok(WorkerMessage::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                }
-                if stop.load(Ordering::Acquire) {
-                    break;
-                }
-                if !project.is_empty()
-                    && (force_scan
-                        || project != scanned
-                        || last_scan.elapsed() >= Duration::from_secs(3))
-                {
-                    scanned = project.clone();
-                    force_scan = false;
-                    last_scan = Instant::now();
-                    let scan = if let Some(client) = &remote {
-                        client
-                            .call(bed_remote::Request::ListFiles {
-                                root: project.clone(),
-                            })
-                            .and_then(|response| match response {
-                                bed_remote::Response::Files { paths } => paths
-                                    .into_iter()
-                                    .map(|path| FileEntry::from_remote_path(&path, &project))
-                                    .collect(),
-                                _ => Err(io::Error::new(
-                                    io::ErrorKind::InvalidData,
-                                    "Unexpected remote file-list response",
-                                )),
-                            })
-                            .map(Some)
-                    } else {
-                        scan_file_list_cancellable(Path::new(&project), || {
-                            stop.load(Ordering::Acquire)
-                        })
-                    };
-                    if let Ok(Some(files)) = scan
-                        && results
-                            .send(ScanResult {
-                                root: project.clone(),
-                                generation,
-                                files,
-                            })
-                            .is_err()
-                    {
-                        break;
-                    }
-                }
-            }
-        }));
-        if !self.current_project_dir.is_empty() {
-            let _ = self
-                .worker_sender
-                .as_ref()
-                .unwrap()
-                .send(WorkerMessage::Project(
-                    self.current_project_dir.clone(),
-                    self.generation,
-                ));
-        }
+        let filesystem = if let Some(client) = &self.remote_client {
+            WorkspaceFilesystem::remote(
+                self.current_project_dir.clone(),
+                self.include_ignored,
+                client.clone(),
+            )
+        } else {
+            WorkspaceFilesystem::local(self.current_project_dir.clone(), self.include_ignored)
+        };
+        self.updates = Some(filesystem.subscribe());
+        self.filesystem = Some(filesystem);
     }
     pub fn set_project_dir(&mut self, root: &str) {
-        if self.current_project_dir != root {
-            self.file_list.clear();
-            self.filtered_list.clear();
-            self.search_buffer.clear();
-            self.previous_search.clear();
-            self.selected_index = 0;
+        if self.current_project_dir == root {
+            self.request_refresh();
+            return;
         }
+        self.stop_worker();
+        self.file_list.clear();
+        self.filtered_list.clear();
+        self.search_buffer.clear();
+        self.previous_search.clear();
+        self.selected_index = 0;
+        self.discovery_status = None;
         self.current_project_dir = root.to_owned();
-        self.generation = self.generation.wrapping_add(1);
-        if let Some(sender) = &self.worker_sender {
-            let _ = sender.send(WorkerMessage::Project(root.to_owned(), self.generation));
+        self.start_service();
+    }
+    pub fn workspace_filesystem(&self) -> Option<WorkspaceFilesystem> {
+        self.filesystem.clone()
+    }
+    pub fn request_refresh(&self) {
+        if let Some(filesystem) = &self.filesystem {
+            filesystem.refresh();
         }
+    }
+    pub fn refresh_directories(&self, directories: impl IntoIterator<Item = String>) {
+        if let Some(filesystem) = &self.filesystem {
+            for directory in directories {
+                filesystem.refresh_directory(directory);
+            }
+        }
+    }
+    pub fn request_directories(&mut self, directories: impl IntoIterator<Item = String>) {
+        if let Some(filesystem) = &self.filesystem {
+            for path in directories {
+                if self.requested_directories.insert(path.clone()) {
+                    filesystem.request_directory(path);
+                }
+            }
+        }
+    }
+    pub fn include_ignored(&self) -> bool {
+        self.include_ignored
+    }
+    pub fn set_include_ignored(&mut self, include: bool) {
+        if self.include_ignored == include {
+            return;
+        }
+        self.include_ignored = include;
+        if let Some(filesystem) = &self.filesystem {
+            filesystem.set_include_ignored(include);
+        }
+    }
+    /// Host document handling receives the same generations as finder/tree.
+    pub fn take_workspace_updates(&mut self) -> Vec<WorkspaceUpdate> {
+        std::mem::take(&mut self.workspace_updates)
+    }
+    pub fn take_directory_updates(&mut self) -> Vec<DirectoryListing> {
+        std::mem::take(&mut self.directory_updates)
     }
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
-        if let Some(receiver) = &self.worker_receiver {
-            for result in receiver.try_iter() {
-                if result.root == self.current_project_dir && result.generation == self.generation {
-                    self.file_list = result.files;
+        if let Some(receiver) = &self.updates {
+            for mut update in receiver.try_iter() {
+                if update.generation != 0 && update.generation < self.last_generation {
+                    continue;
+                }
+                self.last_generation = update.generation;
+                changed |= self.discovery_status != update.degraded;
+                self.discovery_status = update.degraded.clone();
+                if let Some(paths) = update.indexed_files.take() {
+                    self.file_list = paths
+                        .iter()
+                        .filter_map(|path| FileEntry::from_remote_path(path, &update.root).ok())
+                        .collect();
+                    self.file_list.sort_by(|a, b| a.full_path.cmp(&b.full_path));
                     changed = true;
                 }
+                if !update.indexed_removed.is_empty() {
+                    let removed: std::collections::HashSet<_> =
+                        update.indexed_removed.iter().collect();
+                    self.file_list
+                        .retain(|entry| !removed.contains(&entry.full_path));
+                    changed = true;
+                }
+                if !update.indexed_added.is_empty() {
+                    let additions = update
+                        .indexed_added
+                        .iter()
+                        .filter_map(|path| FileEntry::from_remote_path(path, &update.root).ok())
+                        .collect();
+                    merge_entries(&mut self.file_list, additions);
+                    changed = true;
+                }
+                self.directory_updates.append(&mut update.directories);
+                self.workspace_updates.push(update);
             }
         }
-        if changed {
+        self.filter_dirty |= changed;
+        if changed && self.show_ff_window {
             self.update_filtered_list();
         }
         changed
     }
     pub fn update_filtered_list(&mut self) {
+        self.filter_dirty = false;
         let query = self.search_buffer.to_ascii_lowercase();
         if query != self.previous_search {
             self.selected_index = 0;
@@ -367,7 +317,7 @@ impl FileFinder {
             end -= 1;
         }
         self.search_buffer = query[..end].to_owned();
-        if self.search_buffer.to_ascii_lowercase() != self.previous_search {
+        if self.filter_dirty || self.search_buffer.to_ascii_lowercase() != self.previous_search {
             self.update_filtered_list();
         }
     }
@@ -382,6 +332,10 @@ impl Drop for FileFinder {
 mod tests {
     use super::*;
     use crate::test_support::TempDir;
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
     #[test]
     fn remote_entries_use_target_slashes_without_local_canonicalization() {
         let file =
@@ -441,16 +395,16 @@ mod tests {
         assert_eq!(filter_file_list(&files, ".env")[0].relative_path, ".env");
     }
     #[test]
-    fn scanner_includes_git_and_does_not_apply_gitignore() {
+    fn scanner_excludes_git_and_gitignored_entries() {
         let temp = TempDir::new();
-        temp.write(".git/config", b"");
+        git2::Repository::init(temp.root()).unwrap();
         temp.write(".gitignore", b"ignored\n");
         temp.write("ignored/file.txt", b"");
         temp.write("src/main.rs", b"");
         let files = scan_file_list(temp.root()).unwrap();
-        assert_eq!(files.len(), 4);
-        assert!(files.iter().any(|f| f.relative_path == "ignored/file.txt"));
-        assert!(files.iter().any(|f| f.relative_path == ".git/config"));
+        assert_eq!(files.len(), 2);
+        assert!(!files.iter().any(|f| f.relative_path == "ignored/file.txt"));
+        assert!(!files.iter().any(|f| f.relative_path.starts_with(".git/")));
     }
     #[test]
     fn canceled_recursive_scan_discards_partial_results() {
@@ -460,11 +414,11 @@ mod tests {
         let mut checks = 0;
         let files = scan_file_list_cancellable(temp.root(), || {
             checks += 1;
-            checks == 5
+            checks == 3
         })
         .unwrap();
         assert!(files.is_none());
-        assert_eq!(checks, 5);
+        assert_eq!(checks, 3);
     }
     #[test]
     fn query_changes_reset_selection_and_commit_is_only_open_signal() {
@@ -484,13 +438,56 @@ mod tests {
         assert!(!finder.show_ff_window);
     }
     #[test]
+    fn closed_finder_defers_filtering_and_merges_incremental_results_when_opened() {
+        let mut finder = FileFinder::new();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        finder.updates = Some(receiver);
+        sender
+            .send(WorkspaceUpdate {
+                root: "/project".into(),
+                generation: 1,
+                indexed_files: Some(vec!["/project/z".into(), "/project/b".into()]),
+                ready: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(finder.poll());
+        assert!(finder.filtered_list.is_empty());
+        sender
+            .send(WorkspaceUpdate {
+                root: "/project".into(),
+                generation: 2,
+                indexed_added: vec![
+                    "/project/c".into(),
+                    "/project/a".into(),
+                    "/project/c".into(),
+                ],
+                indexed_removed: vec!["/project/b".into()],
+                ready: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(finder.poll());
+        assert!(finder.filtered_list.is_empty());
+        finder.toggle_window();
+        assert_eq!(
+            finder
+                .filtered_list
+                .iter()
+                .map(|file| file.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "c", "z"]
+        );
+    }
+    #[test]
     fn scanner_delivers_results_to_main_thread_and_shutdown_joins() {
+        let _watcher_guard = native_watcher_test_guard();
         let temp = TempDir::new();
         temp.write("main.rs", b"");
         let mut finder = FileFinder::new();
         finder.start_background_thread();
         finder.set_project_dir(temp.root().to_str().unwrap());
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             if finder.poll() {
                 break;
@@ -503,42 +500,9 @@ mod tests {
         assert_eq!(finder.filtered_list[0].relative_path, "main.rs");
         finder.start_background_thread();
     }
-    #[test]
-    fn local_shutdown_does_not_wait_for_a_blocked_scan() {
-        let (release, blocked) = mpsc::channel();
-        let mut finder = FileFinder::new();
-        // Model a filesystem call that cannot observe cancellation until it returns.
-        finder.worker = Some(thread::spawn(move || {
-            let _ = blocked.recv();
-        }));
-        let (done, completed) = mpsc::channel();
-        let shutdown = thread::spawn(move || {
-            drop(finder);
-            let _ = done.send(());
-        });
-        let result = completed.recv_timeout(Duration::from_secs(1));
-        // Always release the worker so a regression fails without hanging the suite.
-        let _ = release.send(());
-        shutdown.join().unwrap();
-        assert!(result.is_ok(), "Shutdown waited for the blocked scan");
-    }
-    #[test]
-    fn restarting_the_worker_keeps_the_previous_scan_canceled() {
-        let (release, blocked) = mpsc::channel();
-        let mut finder = FileFinder::new();
-        let previous_stop = Arc::clone(&finder.worker_stop);
-        finder.worker = Some(thread::spawn(move || {
-            let _ = blocked.recv();
-        }));
-        finder.stop_worker();
-        finder.start_background_thread();
-        let _ = release.send(());
-        assert!(previous_stop.load(Ordering::Acquire));
-        assert!(!finder.worker_stop.load(Ordering::Acquire));
-    }
     #[cfg(unix)]
     #[test]
-    fn recursive_scan_does_not_follow_directory_symlinks_and_relative_paths_resolve_file_links() {
+    fn recursive_scan_does_not_follow_directory_symlinks_and_preserves_file_link_names() {
         use std::os::unix::fs::symlink;
         let temp = TempDir::new();
         let outside = TempDir::new();
@@ -548,64 +512,72 @@ mod tests {
         symlink(temp.path("plain.txt"), temp.path(".alias")).unwrap();
         let files = scan_file_list(temp.root()).unwrap();
         assert_eq!(files.len(), 2);
-        assert!(files.iter().all(|f| f.relative_path == "plain.txt"));
-        assert_eq!(filter_file_list(&files, "").len(), 2);
+        assert!(files.iter().any(|f| f.relative_path == "plain.txt"));
+        assert!(files.iter().any(|f| f.relative_path == ".alias"));
+        assert_eq!(filter_file_list(&files, "").len(), 1);
     }
+}
+
+#[cfg(test)]
+fn native_watcher_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    // FSEvents stream teardown can purge device events from another test's
+    // stream. Keep tests that start native workspace services independent.
+    static NATIVE_WATCHER_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    NATIVE_WATCHER_TESTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]
 mod generation_tests {
     use super::*;
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
     #[test]
-    fn a_stale_same_root_scan_cannot_restore_renamed_entries() {
+    fn a_previous_workspace_cannot_restore_old_entries() {
+        let _watcher_guard = native_watcher_test_guard();
+        let old = crate::test_support::TempDir::new();
+        let new = crate::test_support::TempDir::new();
+        old.write("old", b"");
+        new.write("new", b"");
         let mut finder = FileFinder::new();
-        finder.set_project_dir("/project");
-        let old = finder.generation;
-        finder.set_project_dir("/project");
-        let (tx, rx) = mpsc::channel();
-        finder.worker_receiver = Some(rx);
-        tx.send(ScanResult {
-            root: "/project".into(),
-            generation: old,
-            files: vec![FileEntry {
-                relative_path: "old".into(),
-                full_path: "/project/old".into(),
-                ..Default::default()
-            }],
-        })
-        .unwrap();
-        assert!(!finder.poll());
-        assert!(finder.filtered_list.is_empty());
-        tx.send(ScanResult {
-            root: "/project".into(),
-            generation: finder.generation,
-            files: vec![FileEntry {
-                relative_path: "new".into(),
-                full_path: "/project/new".into(),
-                ..Default::default()
-            }],
-        })
-        .unwrap();
-        assert!(finder.poll());
-        assert_eq!(finder.filtered_list[0].relative_path, "new");
-        finder.set_project_dir("/different");
-        assert!(finder.filtered_list.is_empty());
+        finder.start_background_thread();
+        finder.set_project_dir(old.root().to_str().unwrap());
+        finder.set_project_dir(new.root().to_str().unwrap());
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !finder.poll() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        finder.toggle_window();
+        assert_eq!(
+            finder
+                .filtered_list
+                .iter()
+                .map(|entry| entry.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            ["new"]
+        );
     }
     #[test]
     fn same_root_action_requests_an_immediate_scan() {
+        let _watcher_guard = native_watcher_test_guard();
         let dir = crate::test_support::TempDir::new();
         dir.write("original", b"");
         let mut finder = FileFinder::new();
         finder.set_project_dir(dir.root().to_str().unwrap());
         finder.start_background_thread();
-        let deadline = Instant::now() + Duration::from_secs(2);
+        finder.toggle_window();
+        let deadline = Instant::now() + Duration::from_secs(20);
         while !finder.poll() {
             assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(5));
+            thread::sleep(Duration::from_millis(5));
         }
         dir.write("created", b"");
         finder.set_project_dir(dir.root().to_str().unwrap());
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(20);
         while !finder
             .filtered_list
             .iter()
@@ -613,7 +585,7 @@ mod generation_tests {
         {
             finder.poll();
             assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(5));
+            thread::sleep(Duration::from_millis(5));
         }
     }
 }

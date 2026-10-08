@@ -5,6 +5,7 @@ use bed_lsp::{
     lsp_config::resolve_server_paths,
     workspace_lsp::WorkspaceLsp,
 };
+use bed_ui::util::popup_style::tooltip_text;
 use dear_imgui_rs::{
     Condition, Key, MouseButton, StyleColor, TableColumnFlags, TableColumnWidth, TableFlags, Ui,
     WindowFlags, sys,
@@ -284,7 +285,7 @@ impl LspDashboard {
                         ui.table_set_column_index(1);
                         ui.text(display_path(&info.server_path));
                         if ui.is_item_hovered() {
-                            ui.tooltip_text(&info.server_path);
+                            tooltip_text(ui, &info.server_path);
                         }
                         ui.table_set_column_index(2);
                         ui.text_colored(

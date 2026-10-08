@@ -309,7 +309,7 @@ fn one_autosave_for_two_views_keeps_shared_undo_after_save() {
 }
 
 #[test]
-fn tick_error_does_not_starve_later_docs_or_recreate_removed_paths() {
+fn removal_does_not_starve_later_docs_or_recreate_removed_paths() {
     let temp = Fixture::new();
     let bad = temp.file("bad.txt", b"bad");
     let good = temp.file("good.txt", b"good");
@@ -330,9 +330,9 @@ fn tick_error_does_not_starve_later_docs_or_recreate_removed_paths() {
     assert_eq!(fs::read(&good).unwrap(), b"Ygood");
     assert!(
         report
-            .errors
+            .events
             .iter()
-            .any(|e| e.document == Some(d1) && e.service == "autosave")
+            .any(|e| matches!(e, SessionEvent::Removed { document, .. } if *document == d1))
     );
     assert!(session.snapshot(d1).unwrap().dirty);
     assert!(!session.snapshot(d2).unwrap().dirty);

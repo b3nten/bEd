@@ -1,11 +1,6 @@
-deleting files should close open panels with those contents
-support external file dnd for panels. panels can ignore, meaning default behavior (current)
-file panel needs file and folder relocation dnd, multiselection, etc
-per panel zoom and reset via tab richt click
+per panel zoom and reset via tab right click
 code folding in editor
-panel fade-in anim needs to be longer
-menu cleanup
-	should have one canonical place for each item
-	rename "new" prepension to "open"
 reorder toolbar menu items
 improve project search
+formatted viewers for json, markdown, toml, etc
+	- perhaps opened by a button somewhere in editor when available.

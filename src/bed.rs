@@ -61,6 +61,15 @@ pub(crate) fn block_on<T>(future: impl Future<Output = T>) -> T {
 }
 
 struct NativeClipboard(arboard::Clipboard);
+struct NativeFileClipboard(arboard::Clipboard);
+impl bed_workbench_api::FileClipboardService for NativeFileClipboard {
+    fn read_files(&mut self) -> io::Result<Vec<PathBuf>> {
+        self.0.get().file_list().map_err(io::Error::other)
+    }
+    fn write_files(&mut self, paths: &[PathBuf]) -> io::Result<()> {
+        self.0.set().file_list(paths).map_err(io::Error::other)
+    }
+}
 impl ClipboardBackend for NativeClipboard {
     fn get(&mut self) -> Option<String> {
         self.0.get_text().ok()
@@ -512,6 +521,9 @@ impl Gpu {
 }
 
 struct Runtime {
+    external_drag_paths: Vec<PathBuf>,
+    external_drag_viewport: u32,
+    pending_file_drop: Option<bed_workbench_api::ExternalFileDrag>,
     #[cfg(target_os = "macos")]
     native_menu: crate::platform::macos_menu::MacOsMenu,
     #[cfg(target_os = "macos")]
@@ -636,6 +648,58 @@ impl LifecycleSmoke {
 }
 
 impl Runtime {
+    fn external_drag_modifiers(&self) -> bed_workbench_api::ExternalFileModifiers {
+        #[cfg(target_os = "macos")]
+        if let Some(modifiers) = crate::platform::macos_window::external_drag_modifiers() {
+            return modifiers;
+        }
+        #[cfg(target_os = "linux")]
+        if let Some([control, shift, alt, super_key]) =
+            crate::platform::linux_window::external_drag_modifiers(&self.window)
+        {
+            return bed_workbench_api::ExternalFileModifiers {
+                control,
+                shift,
+                alt,
+                super_key,
+            };
+        }
+        let io = self.context.io();
+        bed_workbench_api::ExternalFileModifiers {
+            control: io.key_ctrl(),
+            shift: io.key_shift(),
+            alt: io.key_alt(),
+            super_key: io.key_super(),
+        }
+    }
+    fn external_drag_position(&self) -> [f32; 2] {
+        #[cfg(target_os = "macos")]
+        if let Some(mut position) = crate::platform::macos_window::external_drag_position() {
+            if !self
+                .context
+                .io()
+                .config_flags()
+                .contains(dear_imgui_rs::ConfigFlags::VIEWPORTS_ENABLE)
+                && let Ok(origin) = self.window.inner_position()
+            {
+                let origin = origin.to_logical::<f32>(self.window.scale_factor());
+                position[0] -= origin.x;
+                position[1] -= origin.y;
+            }
+            return position;
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(position) = crate::platform::linux_window::external_drag_position(
+            &self.window,
+            self.context
+                .io()
+                .config_flags()
+                .contains(dear_imgui_rs::ConfigFlags::VIEWPORTS_ENABLE),
+        ) {
+            return position;
+        }
+        self.context.io().mouse_pos()
+    }
     fn new(
         event_loop: &ActiveEventLoop,
         mut workbench: Workbench,
@@ -658,6 +722,9 @@ impl Runtime {
         let mut context = Context::create();
         if let Ok(clipboard) = arboard::Clipboard::new() {
             context.set_clipboard_backend(NativeClipboard(clipboard));
+        }
+        if let Ok(clipboard) = arboard::Clipboard::new() {
+            workbench.set_file_clipboard(Box::new(NativeFileClipboard(clipboard)));
         }
         workbench.initialize(&mut context, WorkbenchHostMode::Fullscreen)?;
         let mut platform = WinitPlatform::new(&mut context)?;
@@ -752,6 +819,9 @@ impl Runtime {
             phase: 0,
         });
         Ok(Self {
+            external_drag_paths: Vec::new(),
+            external_drag_viewport: 0,
+            pending_file_drop: None,
             #[cfg(target_os = "macos")]
             native_menu,
             #[cfg(target_os = "macos")]
@@ -2142,13 +2212,60 @@ impl ApplicationHandler for Bed {
                 }
             }
             WindowEvent::DroppedFile(path) => {
-                let result = if path.is_dir() {
-                    runtime.workbench.set_project(&path)
-                } else {
-                    runtime.workbench.open_or_focus(&path)
+                let position = runtime.external_drag_position();
+                let modifiers = runtime.external_drag_modifiers();
+                let event = runtime.pending_file_drop.get_or_insert_with(|| {
+                    bed_workbench_api::ExternalFileDrag {
+                        paths: Vec::new(),
+                        position,
+                        viewport: native.viewport_id,
+                        phase: bed_workbench_api::ExternalFileDragPhase::Drop,
+                        modifiers,
+                    }
+                });
+                event.paths.push(path);
+            }
+            WindowEvent::HoveredFile(path) => {
+                runtime.external_drag_viewport = native.viewport_id;
+                if !runtime.external_drag_paths.contains(&path) {
+                    runtime.external_drag_paths.push(path);
+                }
+                let event = bed_workbench_api::ExternalFileDrag {
+                    paths: runtime.external_drag_paths.clone(),
+                    position: runtime.external_drag_position(),
+                    viewport: native.viewport_id,
+                    phase: bed_workbench_api::ExternalFileDragPhase::Hover,
+                    modifiers: runtime.external_drag_modifiers(),
                 };
-                if let Err(error) = result {
+                if let Err(error) = runtime.workbench.external_file_drag(event) {
                     runtime.workbench.error = Some(error.to_string());
+                }
+            }
+            WindowEvent::HoveredFileCancelled => {
+                runtime.external_drag_paths.clear();
+                let event = bed_workbench_api::ExternalFileDrag {
+                    paths: Vec::new(),
+                    position: runtime.external_drag_position(),
+                    viewport: native.viewport_id,
+                    phase: bed_workbench_api::ExternalFileDragPhase::Cancel,
+                    modifiers: runtime.external_drag_modifiers(),
+                };
+                if let Err(error) = runtime.workbench.external_file_drag(event) {
+                    runtime.workbench.error = Some(error.to_string());
+                }
+            }
+            WindowEvent::CursorMoved { .. } => {
+                if !runtime.external_drag_paths.is_empty() {
+                    let event = bed_workbench_api::ExternalFileDrag {
+                        paths: runtime.external_drag_paths.clone(),
+                        position: runtime.external_drag_position(),
+                        viewport: native.viewport_id,
+                        phase: bed_workbench_api::ExternalFileDragPhase::Hover,
+                        modifiers: runtime.external_drag_modifiers(),
+                    };
+                    if let Err(error) = runtime.workbench.external_file_drag(event) {
+                        runtime.workbench.error = Some(error.to_string());
+                    }
                 }
             }
             _ => {}
@@ -2157,6 +2274,28 @@ impl ApplicationHandler for Bed {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if self.closing {
             return;
+        }
+        if let Some(runtime) = &mut self.runtime
+            && let Some(event) = runtime.pending_file_drop.take()
+        {
+            runtime.external_drag_paths.clear();
+            if let Err(error) = runtime.workbench.external_file_drag(event) {
+                runtime.workbench.error = Some(error.to_string());
+            }
+        }
+        if let Some(runtime) = &mut self.runtime
+            && !runtime.external_drag_paths.is_empty()
+        {
+            let event = bed_workbench_api::ExternalFileDrag {
+                paths: runtime.external_drag_paths.clone(),
+                position: runtime.external_drag_position(),
+                viewport: runtime.external_drag_viewport,
+                phase: bed_workbench_api::ExternalFileDragPhase::Hover,
+                modifiers: runtime.external_drag_modifiers(),
+            };
+            if let Err(error) = runtime.workbench.external_file_drag(event) {
+                runtime.workbench.error = Some(error.to_string());
+            }
         }
         #[cfg(target_os = "macos")]
         if let Some(runtime) = &mut self.runtime {

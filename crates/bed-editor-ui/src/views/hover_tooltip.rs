@@ -73,7 +73,9 @@ pub fn render_hover_popup(
     });
     let _padding = ui.push_style_var(StyleVar::WindowPadding([fs * 0.6, fs * 0.4]));
     let _minimum = ui.push_style_var(StyleVar::WindowMinSize([1.0; 2]));
-    let _rounding = ui.push_style_var(StyleVar::WindowRounding(fs * 0.35));
+    let _rounding = ui.push_style_var(StyleVar::WindowRounding(
+        bed_ui::util::popup_style::POPUP_ROUNDING,
+    ));
     let _border = ui.push_style_var(StyleVar::WindowBorderSize(1.0));
     let _scrollbar = ui.push_style_var(StyleVar::ScrollbarSize(fs * 0.65));
     let _background =

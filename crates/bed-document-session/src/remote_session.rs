@@ -315,6 +315,12 @@ impl EditorSession {
         {
             return Ok(false);
         }
+        if destination.is_none() && entry.removed {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "File was removed; use Save As before saving",
+            ));
+        }
         if destination.is_none() && entry.editor.disk_conflict.is_some() {
             return Err(io::Error::other(
                 "File changed on disk; reload or keep the buffer before saving",
@@ -428,6 +434,9 @@ impl EditorSession {
     pub(super) fn queue_remote_reload(&mut self, document: DocumentId) -> io::Result<()> {
         self.queue_read(document, ReadMode::Reload)
     }
+    pub(super) fn queue_remote_monitor(&mut self, document: DocumentId) -> io::Result<()> {
+        self.queue_read(document, ReadMode::Monitor)
+    }
     pub(super) fn queue_remote_keep(&mut self, document: DocumentId) -> io::Result<()> {
         self.queue_read(document, ReadMode::Keep)
     }
@@ -439,6 +448,17 @@ impl EditorSession {
             return;
         }
         let entry = &self.documents[&id];
+        if entry.removed || entry.editor.state.path.is_empty() {
+            return;
+        }
+        if let Some(since) = entry.removal_pending_since {
+            if since.elapsed() >= Duration::from_millis(250)
+                && let Err(error) = self.queue_read(id, ReadMode::Monitor)
+            {
+                self.record_error(Some(id), "remote", &error);
+            }
+            return;
+        }
         let autosave = self.options.autosave.is_some()
             && !entry.autosave_paused
             && entry.editor.state.dirty
@@ -570,6 +590,40 @@ impl EditorSession {
                     ) {
                         self.remote.as_mut().unwrap().connected = false;
                     }
+                    let removed_document = document.filter(|id| {
+                        error.kind() == io::ErrorKind::NotFound
+                            && self
+                                .documents
+                                .get(id)
+                                .is_some_and(|entry| match &operation {
+                                    Operation::Read { .. } => true,
+                                    Operation::Save { path, .. } => {
+                                        *path == entry.editor.state.path
+                                    }
+                                    _ => false,
+                                })
+                    });
+                    if let Some(id) = removed_document {
+                        let monitor_read = matches!(
+                            operation,
+                            Operation::Read {
+                                mode: ReadMode::Monitor,
+                                ..
+                            }
+                        );
+                        let entry = self.documents.get_mut(&id).unwrap();
+                        if monitor_read
+                            && !entry
+                                .removal_pending_since
+                                .is_some_and(|since| since.elapsed() >= Duration::from_millis(250))
+                        {
+                            entry.removal_pending_since.get_or_insert_with(Instant::now);
+                            entry.editor.save_service.cancel_pending();
+                        } else {
+                            let _ = self.invalidate_removed_path(id);
+                        }
+                        continue;
+                    }
                     if let Some(id) = document
                         && let Some(entry) = self.documents.get_mut(&id)
                         && matches!(
@@ -577,21 +631,6 @@ impl EditorSession {
                             io::ErrorKind::WouldBlock | io::ErrorKind::NotFound
                         )
                     {
-                        if matches!(
-                            operation,
-                            Operation::Read {
-                                mode: ReadMode::Keep,
-                                ..
-                            }
-                        ) && error.kind() == io::ErrorKind::NotFound
-                        {
-                            self.remote.as_mut().unwrap().baselines.remove(&id);
-                            entry.editor.disk_conflict = None;
-                            entry.removed = false;
-                            entry.allow_recreate = true;
-                            entry.editor.save_service.on_did_edit(&entry.editor.state);
-                            continue;
-                        }
                         entry.editor.disk_conflict = Some(error.to_string());
                         entry.editor.save_service.cancel_pending();
                         entry.removed = error.kind() == io::ErrorKind::NotFound;
@@ -699,6 +738,8 @@ impl EditorSession {
                     self.remote.as_mut().unwrap().baselines.insert(id, baseline);
                     entry.editor.disk_conflict = None;
                     entry.removed = false;
+                    entry.original_path = None;
+                    entry.removal_pending_since = None;
                     entry.allow_recreate = false;
                     let saved_current_version = entry.editor.state.version == version;
                     if saved_current_version {
@@ -747,6 +788,9 @@ impl EditorSession {
                         && self.remote.as_ref().unwrap().saving.contains(&id)
                     {
                         continue;
+                    }
+                    if entry.removal_pending_since.take().is_some() {
+                        entry.editor.save_service.on_did_edit(&entry.editor.state);
                     }
                     let changed =
                         self.remote

@@ -748,6 +748,7 @@ impl Workbench {
                         self.apply_plugin_edits(token, document, revision, &edits)?;
                     }
                     HostRequest::Save { document } => {
+                        self.ensure_file_operation_idle(document)?;
                         self.commit_plugin_edits(document)?;
                         if self.session.snapshot(document)?.path.is_empty() {
                             self.save_as(document)?;
@@ -954,6 +955,7 @@ impl Workbench {
             || self.active_overlay() != Overlay::None
             || self.file_dialog.is_some()
             || self.reload_confirmation.is_some()
+            || self.file_operations.modal_visible()
             || self.modules.explorer.finder_visible()
         {
             return Ok(());

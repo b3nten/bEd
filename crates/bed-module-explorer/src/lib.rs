@@ -25,7 +25,6 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     io,
     rc::{Rc, Weak},
-    time::{Duration, Instant},
 };
 
 pub const MODULE_ID: &str = "bed.explorer";
@@ -38,6 +37,8 @@ pub const FIND_COMMAND: &str = "bed.explorer.find_file";
 #[derive(Clone, Debug)]
 pub struct TreeMenuContext {
     pub command: CommandContext,
+    /// Complete selection captured when this popup opened.
+    pub selected_paths: Vec<String>,
     pub directory: bool,
     pub background: bool,
 }
@@ -55,6 +56,10 @@ impl TreeMenuContext {
 
 /// A Files-specific extension point; other panel types need not implement it.
 pub trait TreeMenuExtension {
+    /// Existing extensions operate on one originating path until they opt in.
+    fn supports_multiple_selection(&self) -> bool {
+        false
+    }
     fn draw(
         &self,
         ui: &Ui,
@@ -91,6 +96,9 @@ impl ExplorerExtensions {
             .filter_map(Weak::upgrade)
             .collect();
         for provider in providers {
+            let _disabled = ui.begin_disabled_with_cond(
+                context.selected_paths.len() > 1 && !provider.supports_multiple_selection(),
+            );
             provider.draw(ui, context, host, actions);
         }
     }
@@ -146,7 +154,8 @@ impl RegistryMenus {
             if ui.menu_item_enabled_selected_no_shortcut(
                 &item.label,
                 false,
-                item.enabled.get(path).copied().unwrap_or(false),
+                context.selected_paths.len() <= 1
+                    && item.enabled.get(path).copied().unwrap_or(false),
             ) {
                 actions.push(FileTreeAction::Command {
                     command: item.id.clone(),
@@ -155,6 +164,7 @@ impl RegistryMenus {
             }
         }
         if !context.directory
+            && context.selected_paths.len() <= 1
             && let Some(_menu) = ui.begin_menu("Open With")
         {
             for (id, label) in &self.viewers {
@@ -185,8 +195,14 @@ pub struct ExplorerConfig {
 pub enum ExplorerAction {
     Tree(FileTreeAction),
     OpenProjectDialog,
+    Import {
+        paths: Vec<std::path::PathBuf>,
+        destination: String,
+    },
     PreferencesChanged(FileTreePreferences),
-    RefreshRemote { force: bool },
+    RefreshRemote {
+        force: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -219,6 +235,12 @@ impl ExplorerHandle {
     }
     pub fn take_actions(&self) -> Vec<ExplorerAction> {
         std::mem::take(&mut *self.actions.borrow_mut())
+    }
+    /// Lifecycle consumers drain the same stream used by tree/finder discovery.
+    pub fn take_filesystem_updates(&self) -> Vec<bed_remote::WorkspaceUpdate> {
+        let mut state = self.file_explorer.borrow_mut();
+        state.file_finder.poll();
+        state.file_finder.take_workspace_updates()
     }
     pub fn finder_visible(&self) -> bool {
         self.file_explorer.borrow().file_finder.show_ff_window
@@ -364,14 +386,8 @@ impl ExplorerHandle {
                             state.file_tree.preferences.clone(),
                         ));
                 }
-                if remote {
-                    self.actions
-                        .borrow_mut()
-                        .push(ExplorerAction::RefreshRemote { force: true });
-                } else {
-                    let root = state.project_root.clone();
-                    state.file_tree.refresh_file_tree(&root)?;
-                }
+                let directories = state.file_tree.open_directories();
+                state.file_finder.refresh_directories(directories);
                 requests.push(HostRequest::Invalidate);
             } else {
                 self.actions.borrow_mut().push(ExplorerAction::Tree(action));
@@ -393,14 +409,10 @@ fn context_for_path(path: &str, host: &HostContext<'_>) -> CommandContext {
 
 pub struct ExplorerModule {
     handle: ExplorerHandle,
-    last_refresh: Instant,
 }
 impl ExplorerModule {
     pub fn new(handle: ExplorerHandle) -> Self {
-        Self {
-            handle,
-            last_refresh: Instant::now(),
-        }
+        Self { handle }
     }
     pub fn handle(&self) -> &ExplorerHandle {
         &self.handle
@@ -460,29 +472,38 @@ impl Module for ExplorerModule {
         }
         Ok(Box::new(ExplorerPanel {
             handle: self.handle.clone(),
+            drop_targets: Vec::new(),
+            drop_root: String::new(),
+            panel_bounds: None,
+            external_destination: None,
+            external_position: None,
         }))
     }
     fn tick_with_services(
         &mut self,
         _: &HostContext<'_>,
-        services: &mut ModuleServices<'_>,
+        _services: &mut ModuleServices<'_>,
         requests: &mut Vec<HostRequest>,
     ) -> io::Result<()> {
         let mut state = self.handle.file_explorer.borrow_mut();
+        let include_ignored = state.file_tree.preferences.include_ignored;
+        state.file_finder.set_include_ignored(include_ignored);
         if state.file_finder.poll() {
             requests.push(HostRequest::Invalidate);
         }
-        if !state.project_root.is_empty() && self.last_refresh.elapsed() > Duration::from_secs(2) {
-            self.last_refresh = Instant::now();
-            if !services.documents.is_remote() {
-                let root = state.project_root.clone();
-                state.file_tree.refresh_file_tree(&root)?;
-            } else {
-                self.handle
-                    .actions
-                    .borrow_mut()
-                    .push(ExplorerAction::RefreshRemote { force: true });
+        let directories = state.file_tree.open_directories();
+        state.file_finder.request_directories(directories);
+        let directory_updates = state.file_finder.take_directory_updates();
+        if !directory_updates.is_empty() {
+            for directory in directory_updates {
+                state
+                    .file_tree
+                    .apply_directory(&directory.path, directory.entries);
+                if let Some(warning) = directory.warning {
+                    state.file_tree.error = Some(warning);
+                }
             }
+            requests.push(HostRequest::Invalidate);
         }
         if let Some(error) = state.file_tree.error.take() {
             requests.push(HostRequest::Notify { message: error });
@@ -497,6 +518,19 @@ impl Module for ExplorerModule {
             .borrow_mut()
             .file_finder
             .render_window(ui, &config.finder_style, Some(&config.icons));
+        {
+            let mut state = self.handle.file_explorer.borrow_mut();
+            let include_ignored = state.file_finder.include_ignored();
+            if state.file_tree.preferences.include_ignored != include_ignored {
+                state.file_tree.preferences.include_ignored = include_ignored;
+                self.handle
+                    .actions
+                    .borrow_mut()
+                    .push(ExplorerAction::PreferencesChanged(
+                        state.file_tree.preferences.clone(),
+                    ));
+            }
+        }
         match action {
             FileFinderAction::Open(path) => {
                 requests.push(HostRequest::OpenFile { path, viewer: None })
@@ -513,14 +547,14 @@ impl Module for ExplorerModule {
             .unwrap_or_default();
         state.file_tree.show_hidden = false;
         state.file_tree.error = None;
+        let include_ignored = state.file_tree.preferences.include_ignored;
+        state.file_finder.set_include_ignored(include_ignored);
     }
     fn save_workspace(&self) -> Value {
-        self.handle
-            .file_explorer
-            .borrow()
-            .file_tree
-            .preferences
-            .to_value()
+        let state = self.handle.file_explorer.borrow();
+        let mut value = state.file_tree.preferences.to_value();
+        value["include_ignored"] = Value::Bool(state.file_finder.include_ignored());
+        value
     }
     fn shutdown(&mut self, _: &mut ModuleServices<'_>) {
         // Replacing the finder drops its worker even if an embedding host keeps
@@ -540,10 +574,44 @@ impl Module for ExplorerModule {
 
 pub struct ExplorerPanel {
     handle: ExplorerHandle,
+    drop_targets: Vec<file_tree::FileTreeDropTarget>,
+    drop_root: String,
+    panel_bounds: Option<([f32; 2], [f32; 2])>,
+    external_destination: Option<String>,
+    external_position: Option<[f32; 2]>,
 }
 impl ExplorerPanel {
     pub fn handle(&self) -> &ExplorerHandle {
         &self.handle
+    }
+    pub fn drop_destination_at(&self, position: [f32; 2]) -> Option<String> {
+        let contains = |min: [f32; 2], max: [f32; 2]| {
+            position[0] >= min[0]
+                && position[0] < max[0]
+                && position[1] >= min[1]
+                && position[1] < max[1]
+        };
+        let root = self.handle.file_explorer.borrow().project_root.clone();
+        if root.is_empty() || self.drop_root != root {
+            return None;
+        }
+        let (min, max) = self.panel_bounds?;
+        if !contains(min, max) {
+            return None;
+        }
+        if let Some(target) = self
+            .drop_targets
+            .iter()
+            .find(|target| contains(target.min, target.max))
+        {
+            return Some(target.destination.clone());
+        }
+        Some(root)
+    }
+    pub fn set_external_drop_position(&mut self, position: Option<[f32; 2]>) {
+        self.external_position = position;
+        self.external_destination =
+            position.and_then(|position| self.drop_destination_at(position));
     }
 }
 impl ModulePanel for ExplorerPanel {
@@ -562,7 +630,13 @@ impl ModulePanel for ExplorerPanel {
         requests: &mut Vec<HostRequest>,
     ) -> io::Result<()> {
         let root = self.handle.file_explorer.borrow().project_root.clone();
+        self.drop_root = root.clone();
+        self.panel_bounds = Some(ui.with_bound_context(|| unsafe {
+            let rect = (*dear_imgui_rs::sys::igGetCurrentWindow()).InnerClipRect;
+            ([rect.Min.x, rect.Min.y], [rect.Max.x, rect.Max.y])
+        }));
         if root.is_empty() {
+            self.drop_targets.clear();
             ui.text_disabled("Open a project to browse files");
             if ui.button("Open Folder") {
                 self.handle
@@ -597,9 +671,11 @@ impl ModulePanel for ExplorerPanel {
                      path: &str,
                      directory: bool,
                      background: bool,
+                     selected_paths: &[String],
                      actions: &mut Vec<FileTreeAction>| {
             let context = TreeMenuContext {
                 command: context_for_path(path, host),
+                selected_paths: selected_paths.to_vec(),
                 directory,
                 background,
             };
@@ -608,6 +684,12 @@ impl ModulePanel for ExplorerPanel {
         };
         let actions = {
             let mut state = self.handle.file_explorer.borrow_mut();
+            if let Some(status) = &state.file_finder.discovery_status {
+                ui.text_disabled("File watching degraded — periodic refresh active");
+                if ui.is_item_hovered() {
+                    ui.tooltip_text(status);
+                }
+            }
             state.file_tree.file_info.configure(
                 config.workspace_identity,
                 &root,
@@ -615,7 +697,9 @@ impl ModulePanel for ExplorerPanel {
             );
             let mut style = config.tree_style;
             style.rainbow_time = ui.time() as f32;
-            state.file_tree.display_backend_actions_with_menu(
+            state.file_tree.external_drop_target = self.external_destination.clone();
+            state.file_tree.external_drag_position = self.external_position;
+            let actions = state.file_tree.display_backend_actions_with_menu(
                 ui,
                 active_path,
                 &style,
@@ -623,9 +707,51 @@ impl ModulePanel for ExplorerPanel {
                 Some(&modified),
                 remote,
                 Some(&menus),
-            )
+            );
+            self.drop_targets = state.file_tree.drop_targets(ui);
+            state.file_tree.external_drop_target = None;
+            state.file_tree.external_drag_position = None;
+            actions
         };
         self.handle.submit(actions, remote, requests)
+    }
+    fn external_files_with_services(
+        &mut self,
+        event: &bed_workbench_api::ExternalFileDrag,
+        _: &HostContext<'_>,
+        _: &mut ModuleServices<'_>,
+        requests: &mut Vec<HostRequest>,
+    ) -> io::Result<bed_workbench_api::ExternalFileDropResponse> {
+        use bed_workbench_api::{ExternalFileDragPhase, ExternalFileDropResponse};
+        if event.phase == ExternalFileDragPhase::Cancel {
+            self.set_external_drop_position(None);
+            requests.push(HostRequest::Invalidate);
+            return Ok(ExternalFileDropResponse::Accepted);
+        }
+        let Some(destination) = self.drop_destination_at(event.position) else {
+            self.set_external_drop_position(None);
+            return Ok(ExternalFileDropResponse::Ignored);
+        };
+        match event.phase {
+            ExternalFileDragPhase::Hover => {
+                self.external_destination = Some(destination);
+                self.external_position = Some(event.position);
+            }
+            ExternalFileDragPhase::Drop => {
+                self.external_destination = None;
+                self.external_position = None;
+                self.handle
+                    .actions
+                    .borrow_mut()
+                    .push(ExplorerAction::Import {
+                        paths: event.paths.clone(),
+                        destination,
+                    });
+            }
+            ExternalFileDragPhase::Cancel => unreachable!(),
+        }
+        requests.push(HostRequest::Invalidate);
+        Ok(ExternalFileDropResponse::Accepted)
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -646,6 +772,49 @@ pub(crate) mod test_support;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_drop_destinations_use_pointer_rectangles_and_reject_stale_workspaces() {
+        let handle = ExplorerHandle::default();
+        handle.borrow_mut().project_root = "/project".into();
+        let mut panel = ExplorerPanel {
+            handle: handle.clone(),
+            drop_targets: vec![file_tree::FileTreeDropTarget {
+                min: [0.0, 20.0],
+                max: [100.0, 40.0],
+                destination: "/project/src".into(),
+            }],
+            drop_root: "/project".into(),
+            panel_bounds: Some(([10.0, 10.0], [200.0, 200.0])),
+            external_destination: None,
+            external_position: None,
+        };
+        assert_eq!(
+            panel.drop_destination_at([50.0, 30.0]).as_deref(),
+            Some("/project/src")
+        );
+        assert_eq!(
+            panel.drop_destination_at([150.0, 150.0]).as_deref(),
+            Some("/project")
+        );
+        assert_eq!(
+            panel.drop_destination_at([5.0, 30.0]),
+            None,
+            "clipped rows cannot capture native drops outside their panel"
+        );
+        panel.set_external_drop_position(Some([50.0, 30.0]));
+        assert_eq!(panel.external_destination.as_deref(), Some("/project/src"));
+        assert_eq!(panel.external_position, Some([50.0, 30.0]));
+        handle.borrow_mut().project_root = "/different".into();
+        assert_eq!(
+            panel.drop_destination_at([50.0, 30.0]),
+            None,
+            "an old panel rectangle cannot mutate the previous project"
+        );
+        handle.borrow_mut().project_root.clear();
+        assert_eq!(panel.drop_destination_at([50.0, 30.0]), None);
+        panel.set_external_drop_position(None);
+        assert!(panel.external_destination.is_none());
+    }
     #[test]
     fn files_panels_share_feature_state_and_preserve_independent_host_lifetimes() {
         let handle = ExplorerHandle::default();
@@ -737,7 +906,8 @@ mod tests {
                 .iter()
                 .filter(|action| matches!(action, ExplorerAction::RefreshRemote { force: true }))
                 .count(),
-            2
+            0,
+            "Directory refreshes use the shared filesystem service"
         );
         assert_eq!(
             requests

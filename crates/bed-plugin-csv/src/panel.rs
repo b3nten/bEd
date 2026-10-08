@@ -5,6 +5,7 @@ use crate::{
 use bed_document_session::editor_session::ByteEdit;
 use bed_editing::identity::DocumentId;
 use bed_plugin::{EditToken, HostContext, HostRequest, PanelAction, PluginPanel, Revision};
+use bed_ui::util::popup_style::tooltip_text;
 use dear_imgui_rs::{
     FocusedFlags, InputTextCallback, InputTextFlags, Key, ListClipper, MouseButton, StyleVar,
     TableColumnFlags, TableColumnWidth, TableFlags, TableRowFlags, Ui,
@@ -1078,10 +1079,10 @@ impl CsvPanel {
                 self.cycle_sort(column);
             }
             if ui.is_item_hovered() {
-                ui.tooltip_text(format!(
-                    "{}\nClick to sort; right-click for column operations",
-                    name
-                ));
+                tooltip_text(
+                    ui,
+                    format!("{}\nClick to sort; right-click for column operations", name),
+                );
             }
             if let Some(_popup) = ui.begin_popup_context_item_with_label(Some("column-menu")) {
                 if !self
@@ -1222,7 +1223,7 @@ impl CsvPanel {
                         self.select(row, column, true);
                     }
                     if hovered && (cell.len() > 50 || cell.contains(['\r', '\n'])) {
-                        ui.tooltip_text(cell.as_ref());
+                        tooltip_text(ui, cell.as_ref());
                     }
                     if let Some(_popup) = ui.begin_popup_context_item_with_label(Some("cell-menu"))
                     {

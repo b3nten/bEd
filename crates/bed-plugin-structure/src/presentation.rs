@@ -1,6 +1,7 @@
 //! Source outline presentation. Workbench owns document targeting and navigation.
 use bed_editing::identity::DocumentId;
 use bed_highlight::outline::{OutlineKey, OutlineResult, OutlineService, OutlineStatus};
+use bed_ui::util::popup_style::tooltip_text;
 use bed_ui::util::tree_animation::TreeAnimation;
 use dear_imgui_rs::{Condition, StyleVar, Ui};
 use std::collections::{HashMap, HashSet};
@@ -43,7 +44,7 @@ impl StructurePanel {
             .unwrap_or("Untitled");
         ui.text(filename);
         if ui.is_item_hovered() && !key.path.is_empty() {
-            ui.tooltip_text(&key.path);
+            tooltip_text(ui, &key.path);
         }
         ui.same_line();
         ui.text_disabled(&key.language_id);
@@ -173,7 +174,7 @@ impl StructurePanel {
                             .push((node.id, ui.item_rect_min(), ui.item_rect_max()));
                     }
                     if motion.interactive && ui.is_item_hovered() {
-                        ui.tooltip_text(format!("{} · {}", node.kind, node.label));
+                        tooltip_text(ui, format!("{} · {}", node.kind, node.label));
                     }
                     if indent > 0.0 {
                         ui.unindent_by(indent);

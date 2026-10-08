@@ -59,14 +59,11 @@ struct ConnectedWorkspace {
 struct RemoteIo {
     requests: mpsc::SyncSender<(Operation, Request)>,
     completed: mpsc::Receiver<(Operation, io::Result<Response>)>,
-    pending_directories: HashSet<String>,
-    loaded_directories: HashSet<String>,
 }
 #[derive(Clone)]
 enum Operation {
-    Directory(String),
     CreateFile(String),
-    CreateDirectory,
+    CreateDirectory(String),
     Rename {
         source: String,
         target: String,
@@ -74,12 +71,13 @@ enum Operation {
     },
     Remove {
         documents: Vec<DocumentId>,
+        path: String,
     },
 }
 impl Operation {
     fn documents(&self) -> &[DocumentId] {
         match self {
-            Self::Rename { documents, .. } | Self::Remove { documents } => documents,
+            Self::Rename { documents, .. } | Self::Remove { documents, .. } => documents,
             _ => &[],
         }
     }
@@ -99,8 +97,6 @@ impl RemoteIo {
         Self {
             requests,
             completed,
-            pending_directories: HashSet::new(),
-            loaded_directories: HashSet::new(),
         }
     }
     fn queue(&self, operation: Operation, request: Request) -> io::Result<()> {
@@ -323,6 +319,9 @@ impl Workbench {
                         self.refresh_projects();
                         return Ok(());
                     }
+                    // Finish committed path changes while the old panels and
+                    // services still exist, then perform close/save preflight.
+                    self.cancel_file_operations();
                     match self.preflight_close(&(0..self.tabs.len()).collect::<Vec<_>>()) {
                         Ok(true) => self.activate_remote_workspace(spec, target, client)?,
                         Ok(false) => {
@@ -357,29 +356,18 @@ impl Workbench {
             .map(|io| io.completed.try_iter().collect())
             .unwrap_or_default();
         for (operation, result) in completions {
-            if let Operation::Directory(path) = &operation
-                && let Some(io) = &mut self.remote_ui.io
-            {
-                io.pending_directories.remove(path);
-                io.loaded_directories.insert(path.clone());
-            }
             let documents = operation.documents().to_vec();
-            if !matches!(operation, Operation::Directory(_)) {
-                self.remote_ui.mutation_pending = false;
-            }
+            self.remote_ui.mutation_pending = false;
             let result = (|| match (operation, result) {
-                (Operation::Directory(path), Ok(Response::Directory { entries, warning })) => {
-                    self.modules.explorer.apply_directory(&path, entries);
-                    if let Some(warning) = warning {
-                        self.error = Some(warning);
-                    }
-                    Ok(())
-                }
                 (Operation::CreateFile(path), Ok(Response::Unit)) => {
                     self.open_or_focus(Path::new(&path))?;
-                    self.refresh_remote_files()
+                    self.refresh_file_parent(&path);
+                    Ok(())
                 }
-                (Operation::CreateDirectory, Ok(Response::Unit)) => self.refresh_remote_files(),
+                (Operation::CreateDirectory(path), Ok(Response::Unit)) => {
+                    self.refresh_file_parent(&path);
+                    Ok(())
+                }
                 (
                     Operation::Rename {
                         source,
@@ -389,21 +377,25 @@ impl Workbench {
                     Ok(Response::Unit),
                 ) => {
                     for id in documents {
-                        if let Ok(snapshot) = self.session.snapshot(id) {
-                            let destination =
-                                remote_rebound_path(&source, &target, &snapshot.path)?;
+                        if let Ok(path) = self.session.with_document(id, |state| state.path.clone())
+                        {
+                            let destination = remote_rebound_path(&source, &target, &path)?;
                             self.session.rebind_path(id, Path::new(&destination))?;
                         }
                     }
-                    self.refresh_remote_files()
+                    self.refresh_file_parent(&source);
+                    Ok(())
                 }
-                (Operation::Remove { documents }, Ok(Response::Unit)) => {
+                (Operation::Remove { documents, path }, Ok(Response::Unit)) => {
                     for id in documents {
-                        if self.session.snapshot(id).is_ok() {
+                        if let Ok(path) = self.session.with_document(id, |state| state.path.clone())
+                        {
                             self.session.invalidate_removed_path(id)?;
+                            self.handle_removed_document(id, &path)?;
                         }
                     }
-                    self.refresh_remote_files()
+                    self.refresh_file_parent(&path);
+                    Ok(())
                 }
                 (_, Err(error)) => Err(error),
                 _ => Err(io::Error::new(
@@ -427,6 +419,7 @@ impl Workbench {
         target: SshTarget,
         client: RemoteClient,
     ) -> io::Result<()> {
+        self.cancel_file_operations();
         self.session
             .reconnect_remote_with_target(client.clone(), target.clone())?;
         self.terminal.set_ssh_target(Some(target));
@@ -472,6 +465,7 @@ impl Workbench {
             client.clone(),
             spec.root.clone(),
         )?;
+        self.cancel_file_operations();
         self.persist_workspace()?;
         self.shutdown_modules()?;
         self.close_plugin_panels()?;
@@ -547,39 +541,17 @@ impl Workbench {
             return Ok(());
         }
         let paths = self.modules.explorer.open_directories();
-        let classify_gitignored = self
-            .modules
-            .explorer
-            .borrow()
-            .file_tree
-            .preferences
-            .hide_gitignored;
-        let Some(io) = &mut self.remote_ui.io else {
-            return Ok(());
-        };
-        for path in paths {
-            if io.pending_directories.contains(&path)
-                || (!refresh && io.loaded_directories.contains(&path))
-            {
-                continue;
-            }
-            io.queue(
-                Operation::Directory(path.clone()),
-                Request::ReadDirectory {
-                    root: self.project_root.clone(),
-                    path: path.clone(),
-                    classify_gitignored,
-                },
-            )?;
-            io.pending_directories.insert(path);
+        if refresh {
+            self.refresh_file_directories(paths);
+        } else {
+            self.file_explorer().file_finder.request_directories(paths);
         }
         Ok(())
     }
-    pub(super) fn refresh_remote_files(&mut self) -> io::Result<()> {
-        self.queue_remote_directories(true)?;
-        self.modules.explorer.refresh_finder();
-        self.modules.search.cancel_all();
-        Ok(())
+    fn refresh_file_parent(&mut self, path: &str) {
+        if let Some((parent, _)) = path.rsplit_once('/') {
+            self.refresh_file_directories([parent.to_owned()]);
+        }
     }
     pub(super) fn queue_remote_file_action(
         &mut self,
@@ -623,7 +595,7 @@ impl Workbench {
             FileTreeAction::NewFolder(directory) => {
                 let path = remote_join(directory, name);
                 (
-                    Operation::CreateDirectory,
+                    Operation::CreateDirectory(path.clone()),
                     Request::CreateDirectory { root, path },
                 )
             }
@@ -670,7 +642,10 @@ impl Workbench {
                     .is_directory(path)
                     .unwrap_or(false);
                 (
-                    Operation::Remove { documents },
+                    Operation::Remove {
+                        documents,
+                        path: path.clone(),
+                    },
                     Request::Remove {
                         root,
                         path: path.clone(),

@@ -1,5 +1,7 @@
 //! Real framed subprocess I/O around local editing, with delayed acknowledgements.
-use bed_document_session::{ByteEdit, ClosePolicy, DocumentKind, EditorSession, SessionOptions};
+use bed_document_session::{
+    ByteEdit, ClosePolicy, DocumentKind, EditorSession, SessionEvent, SessionOptions,
+};
 use bed_editing::editor_commands::CursorReveal;
 use bed_remote::{LocalBackend, RemoteClient, Request, SshTarget, serve_with};
 use std::{
@@ -224,6 +226,58 @@ fn main() {
     assert_eq!(open(&mut aliases, &alias), canonical);
     assert_eq!(aliases.document_ids(), vec![canonical]);
     aliases.shutdown(ClosePolicy::Discard).unwrap();
+
+    // Remote monitoring confirms missing files after the same atomic-save
+    // grace period; detached dirty buffers retain identity, views and undo.
+    let missing = root.join("deleted-remote.txt");
+    fs::write(&missing, b"original").unwrap();
+    let mut deleted = self::session(root, client(false), true);
+    let doc = open(&mut deleted, &missing);
+    let view = deleted.create_view(doc).unwrap();
+    deleted
+        .with_commands(view, |commands| commands.type_text(b"unsaved "))
+        .unwrap();
+    fs::remove_file(&missing).unwrap();
+    let started = Instant::now();
+    deleted.notify_disk_change(doc).unwrap();
+    loop {
+        let report = deleted.tick();
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert!(
+            !report
+                .events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::Conflict { .. }))
+        );
+        if report.events.iter().any(
+            |event| matches!(event, SessionEvent::Removed { document, .. } if *document == doc),
+        ) {
+            assert!(started.elapsed() >= Duration::from_millis(250));
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(5));
+    }
+    deleted.detach_removed_document(doc).unwrap();
+    assert!(deleted.snapshot(doc).unwrap().path.is_empty());
+    assert_eq!(
+        deleted.snapshot(doc).unwrap().original_path.as_deref(),
+        missing.to_str()
+    );
+    assert_eq!(deleted.document_for_view(view), Some(doc));
+    assert_eq!(deleted.document_for_path(&missing), None);
+    assert_eq!(deleted.snapshot(doc).unwrap().bytes, b"unsaved original");
+    deleted
+        .with_commands(view, |commands| commands.undo())
+        .unwrap();
+    assert_eq!(deleted.snapshot(doc).unwrap().bytes, b"original");
+    let rescued = root.join("rescued-remote.txt");
+    deleted.save_as(doc, &rescued).unwrap();
+    wait(&mut deleted, |session| !session.save_pending(doc));
+    assert_eq!(fs::read(rescued).unwrap(), b"original");
+    assert!(deleted.snapshot(doc).unwrap().original_path.is_none());
+    assert!(!missing.exists());
+    deleted.shutdown(ClosePolicy::Discard).unwrap();
 
     // A failed read of a superseded path cannot mark the rebound document removed.
     let old = root.join("stale-read-old.txt");

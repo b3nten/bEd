@@ -239,6 +239,14 @@ impl Editor {
         }
     }
 
+    /// Detaching a removed file preserves syntax and edit history while making
+    /// stale asynchronous responses ineligible for this document.
+    pub(crate) fn detach_document_path(&mut self) {
+        self.document_generation = self.document_generation.wrapping_add(1);
+        self.ops.bump_generation();
+        self.state.path.clear();
+    }
+
     pub fn open(&mut self, path: &Path) -> io::Result<()> {
         let absolute = std::fs::canonicalize(path)?;
         let path = absolute

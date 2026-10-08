@@ -23,7 +23,7 @@ struct Fixture {
 impl Fixture {
     fn new(raw: &[u8]) -> Self {
         let temp = temp_dir::TempDir::new();
-        let path = temp.write("document.txt", raw);
+        let path = temp.write("document.txt", raw).canonicalize().unwrap();
         let mut session = EditorSession::with_options(SessionOptions {
             project_root: Some(temp.root().to_owned()),
             monitoring: true,
@@ -162,20 +162,124 @@ fn keep_buffer_accepts_disk_baseline_and_allows_explicit_save() {
     assert!(!fx.snapshot().dirty);
 }
 #[test]
-fn removed_file_requires_keep_then_explicit_save_to_recreate() {
+fn removed_file_emits_one_removal_and_detaches_without_recreating() {
     let mut fx = Fixture::new(b"preserved");
-    fs::remove_file(&fx.path).unwrap();
-    assert!(!fx.reloaded());
-    assert!(fx.snapshot().disk_conflict.is_some());
-    assert_eq!(fx.snapshot().bytes, b"preserved");
     fx.edit(|c| c.type_text(b"local "));
+    let before = fx.snapshot();
+    let second = fx.session.create_view(fx.doc).unwrap();
+    fx.session.set_scroll(fx.view, 14.0, 35.0).unwrap();
+    let view = fx.session.view_snapshot(fx.view).unwrap();
+    fs::remove_file(&fx.path).unwrap();
+    let pending = fx.poll();
+    assert!(
+        !pending
+            .events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::Removed { .. }))
+    );
+    let report = fx.poll();
+    assert!(report.errors.is_empty());
+    assert_eq!(report.events.iter().filter(|event| matches!(event, SessionEvent::Removed { document, path } if *document == fx.doc && std::path::Path::new(path) == fx.path)).count(), 1);
+    assert!(
+        !report
+            .events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::Conflict { .. }))
+    );
+    assert!(fx.snapshot().disk_conflict.is_none());
+    assert_eq!(fx.snapshot().bytes, before.bytes);
     assert!(fx.save().is_err());
     assert!(!fx.path.exists());
-    fx.session.keep_buffer(fx.doc).unwrap();
+    assert!(
+        fx.poll()
+            .events
+            .iter()
+            .all(|event| !matches!(event, SessionEvent::Removed { .. }))
+    );
+    fx.session.detach_removed_document(fx.doc).unwrap();
+    let detached = fx.snapshot();
+    assert!(detached.path.is_empty());
+    assert_eq!(detached.original_path.as_deref(), fx.path.to_str());
+    assert_eq!(detached.bytes, before.bytes);
+    assert_eq!(fx.session.document_for_view(second), Some(fx.doc));
+    assert_eq!(fx.session.document_for_path(&fx.path), None);
+    assert_eq!(
+        fx.session.view_snapshot(fx.view).unwrap().scroll_position,
+        view.scroll_position
+    );
+    fx.autosave();
+    fx.poll();
     assert!(!fx.path.exists());
-    assert!(fx.save().unwrap());
-    assert_eq!(fs::read(&fx.path).unwrap(), b"local preserved");
-    assert!(!fx.reloaded());
+    assert!(!fx.save().unwrap());
+    fx.edit(|c| c.undo());
+    assert_eq!(fx.snapshot().bytes, b"preserved");
+    let rescued = fx.temp.root().join("rescued.txt");
+    assert!(fx.session.save_as(fx.doc, &rescued).unwrap());
+    assert!(fx.snapshot().original_path.is_none());
+    assert_eq!(fs::read(&rescued).unwrap(), b"preserved");
+    assert!(!fx.path.exists());
+}
+#[test]
+fn recreated_path_opens_separately_from_a_detached_buffer() {
+    let mut fx = Fixture::new(b"old");
+    fx.edit(|c| c.type_text(b"unsaved "));
+    fs::remove_file(&fx.path).unwrap();
+    fx.poll();
+    fx.session.detach_removed_document(fx.doc).unwrap();
+    fx.external(b"new");
+    let recreated = fx.session.open_file(&fx.path).unwrap();
+    assert_ne!(recreated, fx.doc);
+    assert_eq!(fx.session.document_for_path(&fx.path), Some(recreated));
+    assert_eq!(fx.snapshot().bytes, b"unsaved old");
+    assert_eq!(fx.session.snapshot(recreated).unwrap().bytes, b"new");
+}
+#[test]
+fn a_temporary_missing_path_during_atomic_save_does_not_remove_the_document() {
+    let mut fx = Fixture::new(b"original");
+    let backup = fx.temp.root().join("backup.txt");
+    fs::rename(&fx.path, &backup).unwrap();
+    fx.session.notify_disk_change(fx.doc).unwrap();
+    assert!(fx.session.take_events().is_empty());
+    fx.external(b"replacement");
+    fx.session.notify_disk_change(fx.doc).unwrap();
+    let events = fx.session.take_events();
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event, SessionEvent::Removed { .. }))
+    );
+    assert_eq!(fx.snapshot().bytes, b"replacement");
+    assert_eq!(fx.snapshot().path, fx.path.to_str().unwrap());
+    thread::sleep(Duration::from_millis(270));
+    assert!(
+        fx.poll()
+            .events
+            .iter()
+            .all(|event| !matches!(event, SessionEvent::Removed { .. }))
+    );
+}
+#[test]
+fn a_reliable_rename_during_removal_grace_keeps_dirty_buffer_and_undo() {
+    let mut fx = Fixture::new(b"original");
+    fx.edit(|c| c.type_text(b"local "));
+    let target = fx.temp.root().join("renamed.txt");
+    fs::rename(&fx.path, &target).unwrap();
+    fx.session.notify_disk_change(fx.doc).unwrap();
+    fx.session.rebind_path(fx.doc, &target).unwrap();
+    thread::sleep(Duration::from_millis(270));
+    let events = fx.poll().events;
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event, SessionEvent::Removed { .. }))
+    );
+    assert_eq!(
+        fx.snapshot().path,
+        target.canonicalize().unwrap().to_str().unwrap()
+    );
+    assert_eq!(fx.snapshot().bytes, b"local original");
+    fx.edit(|c| c.undo());
+    assert_eq!(fx.snapshot().bytes, b"original");
 }
 #[test]
 fn self_save_does_not_reload_or_reset_caret_or_undo() {
