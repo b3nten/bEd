@@ -39,6 +39,10 @@ fn main() {
             "child_cwd_environment_tty_and_literal_argv",
             child_environment,
         ),
+        (
+            "child_environment_removals_and_override_precedence",
+            child_environment_removals,
+        ),
         ("initial_size_and_queued_resize", resize),
         ("fifo_utf8_and_control_bytes", input),
         ("main_thread_parser_replies_to_real_child", parser_replies),
@@ -276,6 +280,23 @@ fn resize() {
     capture.wait(&mut pty, "SIZE:91,37");
     #[cfg(unix)]
     assert!(capture.contains("PIXELS:728,592"));
+    bounded_shutdown(&mut pty);
+}
+fn child_environment_removals() {
+    let host_path = std::env::var_os("PATH");
+    let mut configuration = options("interactive");
+    configuration.env_remove = vec!["PATH".into(), "TERM".into(), "BED_PTY_TEST".into()];
+    configuration
+        .env
+        .insert("BED_PTY_TEST".into(), "override wins".into());
+    let mut pty = TerminalPty::spawn(&configuration, size(512, 48)).unwrap();
+    let mut capture = ready(&mut pty);
+    pty.write(b"REMOVED_ENV\n").unwrap();
+    capture.wait(&mut pty, "REMOVED_ENV_END");
+    assert!(capture.contains("PATH_ABSENT:true"));
+    assert!(capture.contains("TERM_ABSENT:true"));
+    assert!(capture.contains("OVERRIDE:override wins"));
+    assert_eq!(std::env::var_os("PATH"), host_path);
     bounded_shutdown(&mut pty);
 }
 fn input() {
@@ -531,6 +552,15 @@ fn child(scenario: &str) {
                 println!("REPORT_END");
             }
             "SIZE" => child_size(),
+            "REMOVED_ENV" => {
+                println!("PATH_ABSENT:{}", std::env::var_os("PATH").is_none());
+                println!("TERM_ABSENT:{}", std::env::var_os("TERM").is_none());
+                println!(
+                    "OVERRIDE:{}",
+                    std::env::var("BED_PTY_TEST").unwrap_or_default()
+                );
+                println!("REMOVED_ENV_END");
+            }
             "HEX" => println!("HEX:{}", hexadecimal(&read_until(b'\n'))),
             "REPLY" => {
                 print!("\x1b[2J\x1b[H\x1b[6n");

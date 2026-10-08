@@ -131,10 +131,10 @@ pub(crate) fn prepare(
         if kind == "DockSpace" && !fields.contains_key("Window") {
             return Err("Missing dock space window");
         }
-        if let Some(value) = fields.get("Window") {
-            if hex(value)? == 0 || parent.is_some() {
-                return Err("Invalid dock space window");
-            }
+        if let Some(value) = fields.get("Window")
+            && (hex(value)? == 0 || parent.is_some())
+        {
+            return Err("Invalid dock space window");
         }
         if let Some(value) = fields.get("Selected") {
             hex(value)?;
@@ -156,10 +156,10 @@ pub(crate) fn prepare(
             "NoWindowMenuButton",
             "NoCloseButton",
         ] {
-            if let Some(value) = fields.get(key) {
-                if !matches!(*value, "0" | "1") {
-                    return Err("Invalid dock flag");
-                }
+            if let Some(value) = fields.get(key)
+                && !matches!(*value, "0" | "1")
+            {
+                return Err("Invalid dock flag");
             }
         }
         nodes.insert(

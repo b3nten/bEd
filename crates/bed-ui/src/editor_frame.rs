@@ -1,5 +1,6 @@
 //! Presentation frame translated from ned editor/editor_frame.cpp. The basic
 //! Draws the custom document views and coordinates exclusive service overlays.
+use crate::source_debug::{SourceDebugAction, SourceDebugPresentation};
 use crate::{
     editor_input::{EditorInput, HostAction},
     util::{editor_finder::EditorFinder, editor_line_jump::EditorLineJump},
@@ -92,6 +93,8 @@ pub struct EditorFrame {
     frame_dismissed: bool,
     last_mouse_pos: [f32; 2],
     last_scroll: [f32; 2],
+    pub source_debug: Option<SourceDebugPresentation>,
+    source_actions: Vec<SourceDebugAction>,
 }
 
 impl EditorFrame {
@@ -147,6 +150,8 @@ impl EditorFrame {
             frame_dismissed: false,
             last_mouse_pos: [0.0; 2],
             last_scroll: [0.0; 2],
+            source_debug: None,
+            source_actions: Vec::new(),
         }
     }
 
@@ -254,6 +259,7 @@ impl EditorFrame {
         editor: &mut ViewContext<'_>,
         input: &mut EditorInput,
     ) -> Vec<HostAction> {
+        self.source_actions.clear();
         let primary = ui.io().key_ctrl() || ui.io().key_super();
         if let Some(keep) = self.exclusive_overlay.get() {
             self.close_internal_overlays_except(keep);
@@ -334,10 +340,13 @@ impl EditorFrame {
             origin[1] + self.layout.size[1],
         ];
         editor.view_mut().cursor_blink_time += ui.io().delta_time();
-        let gutter_width =
-            GutterView::width(ui, &editor.state) + GutterView::diagnostic_column_width(ui, editor);
+        let debug_column_width = GutterView::debug_column_width(ui, self.source_debug.is_some());
+        let gutter_width = GutterView::width(ui, &editor.state)
+            + GutterView::diagnostic_column_width(ui, editor)
+            + debug_column_width;
         let mut gutter_pos = ui.cursor_screen_pos();
         let mut gutter_draw = std::ptr::null_mut();
+        let mut gutter_hovered = false;
         let _gutter_border = ui.push_style_var(StyleVar::ChildBorderSize(0.0));
         let _gutter_padding = ui.push_style_var(StyleVar::WindowPadding([0.0; 2]));
         ui.child_window("LineNumbers")
@@ -347,6 +356,7 @@ impl EditorFrame {
                 gutter_pos = ui.cursor_screen_pos();
                 gutter_draw =
                     ui.with_bound_context(|| unsafe { dear_imgui_rs::sys::igGetWindowDrawList() });
+                gutter_hovered = ui.is_window_hovered();
             });
         drop(_gutter_padding);
         drop(_gutter_border);
@@ -403,12 +413,15 @@ impl EditorFrame {
                 self.minimap.interact(ui, state, view, &self.layout);
                 self.update_scroll(ui, editor);
                 self.update_hover_trigger(ui, editor, gutter_pos, gutter_width);
-                TextView::draw_with_highlight(
+                TextView::draw_with_debug_highlight(
                     ui,
                     &editor.state,
                     &editor.view,
                     &self.layout,
                     Some(&editor.highlight),
+                    self.source_debug
+                        .as_ref()
+                        .and_then(|debug| debug.execution_row),
                 );
                 if let Some(diagnostics) = &editor.diagnostics {
                     TextView::draw_diagnostics(
@@ -454,9 +467,35 @@ impl EditorFrame {
                     gutter_pos[1] + self.layout.size[1],
                 ],
                 || {
-                    GutterView::draw(ui, &draw, editor, &self.layout, gutter_pos, gutter_width);
+                    GutterView::draw_with_debug(
+                        ui,
+                        &draw,
+                        editor,
+                        &self.layout,
+                        gutter_pos,
+                        gutter_width,
+                        self.source_debug.as_ref(),
+                    );
                 },
             );
+        }
+        if debug_column_width > 0.0 && gutter_hovered && !overlay_active {
+            let mouse = ui.io().mouse_pos();
+            let top = gutter_pos[1] + self.layout.editor_top_margin;
+            let inside = mouse[0] >= gutter_pos[0]
+                && mouse[0] < gutter_pos[0] + debug_column_width
+                && mouse[1] >= top
+                && mouse[1] < gutter_pos[1] + self.layout.size[1];
+            if inside && ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
+                let row = ((mouse[1] - top + editor.view.scroll_position[1])
+                    / self.layout.line_height.max(1.0))
+                .floor() as i32;
+                if (0..editor.state.line_count()).contains(&row) {
+                    self.source_actions
+                        .push(SourceDebugAction::ToggleBreakpoint { row });
+                    editor.view_mut().request_focus = true;
+                }
+            }
         }
         let hover = self.hover_trigger.info();
         if hover.active
@@ -473,6 +512,10 @@ impl EditorFrame {
             .render_retained_diagnostic(ui, overlay_active);
         drop(_spacing);
         actions
+    }
+
+    pub fn take_source_actions(&mut self) -> Vec<SourceDebugAction> {
+        std::mem::take(&mut self.source_actions)
     }
 
     pub fn hover_info(&self) -> Info {

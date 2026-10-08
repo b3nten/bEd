@@ -5,6 +5,7 @@ pub mod editor_view;
 pub mod hex_editor;
 pub mod lsp;
 pub mod presentation;
+pub mod source_debug;
 pub mod util;
 pub mod views;
 
@@ -18,6 +19,9 @@ pub(crate) mod test_support;
 
 pub use editor_input::{DefinitionRequest, HostAction};
 pub use editor_view::{EditorView, EditorViewOptions, ViewPresentation, ViewResponse};
+pub use source_debug::{
+    BreakpointStatus, SourceBreakpoint, SourceDebugAction, SourceDebugPresentation,
+};
 
 #[cfg(test)]
 mod theme_tests;

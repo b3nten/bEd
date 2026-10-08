@@ -97,6 +97,8 @@ pub struct FileTree {
     pub error: Option<String>,
     #[doc(hidden)]
     pub animations: FileTreeAnimations,
+    #[doc(hidden)]
+    pub file_info: super::file_info::FileInfoHover,
 }
 #[derive(Default)]
 pub struct FileTreeAnimations {
@@ -635,6 +637,7 @@ impl FileTree {
                 &mut self.error,
                 &mut actions,
                 extensions,
+                &mut self.file_info,
             );
             #[cfg(test)]
             host.labels
@@ -661,6 +664,7 @@ impl FileTree {
         error: &mut Option<String>,
         actions: &mut Vec<FileTreeAction>,
         extensions: Option<&ExtensionMenu<'_>>,
+        file_info: &mut super::file_info::FileInfoHover,
     ) {
         let hidden = !root && (inherited_hidden || visibility.hidden(node));
         if hidden && !visibility.show_hidden {
@@ -708,6 +712,12 @@ impl FileTree {
             let _pad = ui.push_style_var(StyleVar::FramePadding([0.0; 2]));
             ui.button_with_size(format!("##{}", node.full_path), [width, item_height])
         };
+        if ui.is_item_hovered_with_flags(
+            dear_imgui_rs::ItemHoveredFlags::DELAY_NORMAL
+                | dear_imgui_rs::ItemHoveredFlags::NO_SHARED_DELAY,
+        ) {
+            file_info.draw(ui, &node.full_path, visibility.root, remote);
+        }
         if context_menu {
             let _menu_style = crate::util::context_menu_style(ui);
             if let Some(_menu) = ui.begin_popup_context_item() {

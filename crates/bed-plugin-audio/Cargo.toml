@@ -1,0 +1,13 @@
+[package]
+name = "bed-plugin-audio"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license-file = "../../LICENSE"
+
+[dependencies]
+bed-core = { workspace = true }
+bed-plugin = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+rodio = { workspace = true }

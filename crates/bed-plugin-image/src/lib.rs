@@ -1,4 +1,4 @@
-//! A small read-only PNG/JPEG viewer implemented entirely through the plugin API.
+//! A read-only raster and SVG viewer implemented entirely through the plugin API.
 use bed_core::identity::DocumentId;
 use bed_plugin::gpu::{Canvas, GpuContext, RenderOutput, RenderTarget};
 use bed_plugin::{
@@ -9,7 +9,6 @@ use dear_imgui_rs::{MouseButton, StyleColor, Ui};
 use serde_json::{Value, json};
 use std::{
     any::Any,
-    io::Cursor,
     sync::{Arc, mpsc},
     thread,
 };
@@ -21,7 +20,9 @@ pub const OPEN_COMMAND: &str = "bed.image.open";
 pub const OPEN_FILE_COMMAND: &str = "bed.image.open-file";
 pub const MAX_DECODED_BYTES: u64 = 64 * 1024 * 1024;
 
+mod formats;
 mod render;
+use formats::{SUPPORTED_EXTENSIONS, decode, supported_path};
 
 #[derive(Clone, Copy, PartialEq)]
 struct CanvasState {
@@ -44,12 +45,11 @@ impl Plugin for ImagePlugin {
             VIEWER_ID,
             "Image Viewer",
             PANEL_ID,
-            &["png", "jpg", "jpeg"],
+            SUPPORTED_EXTENSIONS,
             DocumentKind::Bytes,
         );
         registrar.command(OPEN_COMMAND, "Open Image…", Some("image"));
         registrar.command(OPEN_FILE_COMMAND, "Open in Image Viewer", Some("image"));
-        registrar.toolbar(OPEN_COMMAND);
         registrar.menu(MenuSlot::Application, OPEN_COMMAND);
         registrar.menu(MenuSlot::File, OPEN_FILE_COMMAND);
         registrar.settings("bed.image.settings", "Image Viewer");
@@ -120,14 +120,6 @@ impl Plugin for ImagePlugin {
         self
     }
 }
-fn supported_path(path: &str) -> bool {
-    path.rsplit_once('.').is_some_and(|(_, extension)| {
-        ["png", "jpg", "jpeg"]
-            .iter()
-            .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-    })
-}
-
 #[derive(Clone)]
 struct DecodedImage {
     size: [u32; 2],
@@ -136,6 +128,7 @@ struct DecodedImage {
 struct DecodeJob {
     revision: Revision,
     bytes: Arc<[u8]>,
+    path: String,
 }
 struct DecodeResult {
     revision: Revision,
@@ -159,7 +152,7 @@ impl Decoder {
                 }
                 let result = DecodeResult {
                     revision: job.revision,
-                    result: decode(&job.bytes),
+                    result: decode(&job.bytes, &job.path),
                 };
                 if results.send(result).is_err() {
                     break;
@@ -245,6 +238,7 @@ impl ImagePanel {
             && self.decoder.submit(DecodeJob {
                 revision: document.revision,
                 bytes: Arc::clone(&document.bytes),
+                path: document.path.clone(),
             })
         {
             self.requested = Some(document.revision);
@@ -404,49 +398,12 @@ impl PluginPanel for ImagePanel {
     }
 }
 
-fn validate_dimensions(width: u32, height: u32) -> Result<(), String> {
-    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > MAX_DECODED_BYTES / 4 {
-        return Err("Image exceeds the 64 MiB decoded-pixel limit".into());
-    }
-    Ok(())
-}
-fn reader(bytes: &[u8]) -> Result<image::ImageReader<Cursor<&[u8]>>, String> {
-    let mut reader = image::ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|error| error.to_string())?;
-    if !matches!(
-        reader.format(),
-        Some(image::ImageFormat::Png | image::ImageFormat::Jpeg)
-    ) {
-        return Err("Only PNG and JPEG images are supported".into());
-    }
-    let mut limits = image::Limits::default();
-    limits.max_alloc = Some(MAX_DECODED_BYTES);
-    limits.max_image_width = Some((MAX_DECODED_BYTES / 4) as u32);
-    limits.max_image_height = Some((MAX_DECODED_BYTES / 4) as u32);
-    reader.limits(limits);
-    Ok(reader)
-}
-fn decode(bytes: &[u8]) -> Result<DecodedImage, String> {
-    let (width, height) = reader(bytes)?
-        .into_dimensions()
-        .map_err(|error| error.to_string())?;
-    validate_dimensions(width, height)?;
-    let rgba = reader(bytes)?
-        .decode()
-        .map_err(|error| error.to_string())?
-        .into_rgba8();
-    Ok(DecodedImage {
-        size: [width, height],
-        rgba: rgba.into_raw().into(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{
         collections::HashMap,
+        io::Cursor,
         time::{Duration, Instant},
     };
     fn png(width: u32, height: u32) -> Arc<[u8]> {
@@ -542,40 +499,19 @@ mod tests {
         );
     }
     #[test]
-    fn png_and_jpeg_decode_with_exact_dimensions_and_rgba_size() {
-        for format in [image::ImageFormat::Png, image::ImageFormat::Jpeg] {
-            let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
-                3,
-                2,
-                image::Rgb([255, 64, 32]),
-            ));
-            let mut bytes = Cursor::new(Vec::new());
-            image.write_to(&mut bytes, format).unwrap();
-            let decoded = decode(bytes.get_ref()).unwrap();
-            assert_eq!(decoded.size, [3, 2]);
-            assert_eq!(decoded.rgba.len(), 24);
-            assert!(decoded.rgba.chunks(4).all(|pixel| pixel[3] == 255));
-        }
-    }
-    #[test]
-    fn invalid_and_oversized_images_are_rejected() {
-        assert!(decode(b"not an image").is_err());
-        assert!(validate_dimensions(4096, 4096).is_ok());
-        assert!(validate_dimensions(4097, 4096).is_err());
-        assert!(validate_dimensions(u32::MAX, u32::MAX).is_err());
-        assert!(validate_dimensions(0, 1).is_err());
-    }
-    #[test]
     fn image_registration_exercises_contributions_and_extension_matching() {
         let mut registry = bed_plugin::Registry::default();
         registry.register(&ImagePlugin::default()).unwrap();
-        assert_eq!(
-            registry.viewer_for_path("/images/a.JPEG").unwrap().id,
-            VIEWER_ID
-        );
+        for extension in SUPPORTED_EXTENSIONS {
+            let path = format!("/images/a.{}", extension.to_ascii_uppercase());
+            assert_eq!(registry.viewer_for_path(&path).unwrap().id, VIEWER_ID);
+            assert!(supported_path(&path));
+        }
         assert!(registry.viewer_for_path("file.rs").is_none());
+        assert!(!supported_path("/images.svg/file"));
+        assert!(!supported_path("C:\\images.svg\\file"));
         assert_eq!(registry.settings.len(), 1);
-        assert_eq!(registry.toolbar.len(), 1);
+        assert!(registry.toolbar.is_empty());
         assert!(
             registry
                 .menus

@@ -1,0 +1,21 @@
+[package]
+name = "bed-debug"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license-file = "../../LICENSE"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+bed-terminal = { path = "../bed-terminal", default-features = false }
+
+[[test]]
+name = "dap_session"
+path = "tests/dap_session.rs"
+harness = false

@@ -51,6 +51,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "debugger.rs"]
+mod debugger;
 #[path = "plugin_host.rs"]
 mod plugin_host;
 #[path = "remote_workbench.rs"]
@@ -69,6 +71,7 @@ pub enum WorkbenchHostMode {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowCommand {
+    Debug,
     NewDocument,
     NewTerminal,
     NewExplorer,
@@ -103,6 +106,7 @@ pub enum WindowCommand {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tool {
+    Debug,
     Explorer,
     Settings,
     Projects,
@@ -114,6 +118,7 @@ enum Tool {
 impl Tool {
     fn name(self) -> &'static str {
         match self {
+            Self::Debug => "Debug",
             Self::Explorer => "Files",
             Self::Settings => "Settings",
             Self::Projects => "Projects",
@@ -125,6 +130,7 @@ impl Tool {
     }
     fn key(self) -> &'static str {
         match self {
+            Self::Debug => "debug",
             Self::Explorer => "explorer",
             Self::Settings => "settings",
             Self::Projects => "projects",
@@ -136,6 +142,7 @@ impl Tool {
     }
     fn from_key(key: &str) -> Option<Self> {
         [
+            Self::Debug,
             Self::Explorer,
             Self::Settings,
             Self::Projects,
@@ -211,6 +218,7 @@ pub struct Workbench {
     last_document: Option<DocumentId>,
     focused: Option<u64>,
     lsp_ui: LspUi,
+    debugger: debugger::Debugger,
     content_search: HashMap<u64, ContentSearch>,
     plugins: PluginRuntime,
     editor_menu_context: HashMap<ViewId, bed_plugin::CommandContext>,
@@ -295,6 +303,7 @@ impl Workbench {
             last_document: None,
             focused: None,
             lsp_ui: LspUi::default(),
+            debugger: debugger::Debugger::default(),
             content_search: HashMap::new(),
             plugins: PluginRuntime::default(),
             editor_menu_context: HashMap::new(),
@@ -708,13 +717,16 @@ impl Workbench {
         }
         let session = EditorSession::with_options(self.session_options(Some(root.clone())))?;
         self.persist_workspace()?;
-        let mut tree = crate::files::file_tree::FileTree::default();
-        tree.preferences = self
-            .store
-            .as_ref()
-            .map(|store| store.tree_preferences(&spec))
-            .unwrap_or_default();
+        let mut tree = crate::files::file_tree::FileTree {
+            preferences: self
+                .store
+                .as_ref()
+                .map(|store| store.tree_preferences(&spec))
+                .unwrap_or_default(),
+            ..Default::default()
+        };
         tree.refresh_file_tree(&path)?;
+        self.stop_debugger();
         self.session.shutdown(ClosePolicy::Discard)?;
         self.close_plugin_panels()?;
         self.terminal.shutdown();
@@ -735,6 +747,7 @@ impl Workbench {
         self.session = session;
         self.workspace_spec = Some(spec.clone());
         self.project_root = path.clone();
+        self.restore_debugger_settings();
         self.service_settings = None;
         self.sync_services()?;
         self.file_explorer.project_root = path.clone();
@@ -903,6 +916,7 @@ impl Workbench {
         }
         self.poll_remote_workspace()?;
         let report = self.session.tick();
+        self.debug_document_events(&report.events)?;
         if self.session.is_remote() {
             for event in &report.events {
                 if let SessionEvent::Opened { document } = event {
@@ -939,6 +953,7 @@ impl Workbench {
             }
         }
         self.terminal.poll()?;
+        self.tick_debugger()?;
         self.file_explorer.poll();
         for search in self.content_search.values_mut() {
             search.poll();
@@ -976,6 +991,7 @@ impl Workbench {
     }
     pub fn dispatch(&mut self, command: WindowCommand) -> io::Result<bool> {
         match command {
+            WindowCommand::Debug => self.show_debugger(),
             WindowCommand::NewDocument => {
                 if self.project_root.is_empty() {
                     self.session.configure(self.session_options(None))?;
@@ -1457,7 +1473,9 @@ impl Workbench {
                 }
             }
             Panel::Terminal(id) => {
-                self.terminal.close_session_id(id);
+                if !self.debugger.owns_terminal(id) {
+                    self.terminal.close_session_id(id);
+                }
             }
             Panel::Hex(_) => {}
             Panel::Plugin(mut panel) => panel.instance.close(&mut self.plugins.requests),
@@ -1512,6 +1530,7 @@ impl Workbench {
         }
         self.persist_workspace()?;
         self.session.shutdown(ClosePolicy::Discard)?;
+        self.stop_debugger();
         self.close_plugin_panels()?;
         self.terminal.shutdown();
         self.tabs.clear();
@@ -1638,12 +1657,20 @@ impl Workbench {
             if self
                 .tabs
                 .iter()
-                .any(|tab| matches!(tab.panel, Panel::Terminal(_)))
+                .any(|tab| matches!(tab.panel, Panel::Terminal(_) | Panel::Tool(Tool::Debug)))
             {
                 sys::igDockBuilderSplitNode(
                     center,
                     sys::ImGuiDir_Down,
-                    0.25,
+                    if self
+                        .tabs
+                        .iter()
+                        .any(|tab| matches!(tab.panel, Panel::Tool(Tool::Debug)))
+                    {
+                        0.4
+                    } else {
+                        0.25
+                    },
                     &mut bottom,
                     &mut rest,
                 );
@@ -1655,7 +1682,7 @@ impl Workbench {
             for tab in &mut self.tabs {
                 tab.dock = Some(match tab.panel {
                     Panel::Tool(Tool::Explorer) => self.explorer_dock,
-                    Panel::Terminal(_) => self.terminal_dock,
+                    Panel::Terminal(_) | Panel::Tool(Tool::Debug) => self.terminal_dock,
                     _ => self.center_dock,
                 });
             }
@@ -1824,6 +1851,10 @@ impl Workbench {
                                         .ok()
                                 });
                                 let remote = self.session.is_remote();
+                                self.file_explorer.file_tree.file_info.configure(
+                                    self.workspace_spec.as_ref().map(|s| s.identity()).unwrap_or_default(),
+                                    &self.project_root, self.session.remote_client(),
+                                );
                                 let session = &self.session;
                                 let modified = |path: &str| {
                                     if remote {
@@ -1947,6 +1978,7 @@ impl Workbench {
                             }
                             Ok(())
                         }
+                        Panel::Tool(Tool::Debug) => self.draw_debugger(ui),
                         Panel::Tool(Tool::LspDashboard) => {
                             if let Some(pool) = self.session.lsp_mut() {
                                 if let Some(action) =
@@ -2067,6 +2099,7 @@ impl Workbench {
         Ok(actions)
     }
     fn shortcuts(&mut self, ui: &Ui) -> io::Result<()> {
+        self.debug_shortcuts(ui)?;
         if ui.io().want_text_input() {
             return Ok(());
         }
@@ -2138,6 +2171,7 @@ impl Workbench {
             }
         }
         let options = EditorViewOptions {
+            source_debug: self.debug_source_presentation(view.document_id())?,
             font: None,
             rainbow_mode: self.settings.rainbow(),
             minimap_enabled: self.settings.bool("minimap", true),
@@ -2153,6 +2187,10 @@ impl Workbench {
         };
         view.set_navigation_animations(self.settings.bool("ui_animations", true));
         let response = view.draw(ui, &mut self.session, &options)?;
+        for action in &response.source_actions {
+            let bed_ui::editor_view::SourceDebugAction::ToggleBreakpoint { row } = *action;
+            self.toggle_debug_breakpoint(view.document_id(), row)?;
+        }
         if response.focused {
             self.active = Some(view.id());
         }
@@ -2161,6 +2199,7 @@ impl Workbench {
         }
         actions.extend(response.actions);
         self.text_context_menu(ui, view)?;
+        self.draw_debug_hover(ui, view)?;
         let session = &self.session;
         self.lsp_ui
             .retain_requests(|origin| session.accepts_lsp_origin(origin));
@@ -2962,6 +3001,7 @@ impl Workbench {
         Ok(())
     }
     fn persist_workspace(&mut self) -> io::Result<()> {
+        self.persist_debugger_settings()?;
         for tab in &mut self.tabs {
             if let Panel::Hex(view) = &mut tab.panel {
                 view.synchronize(&self.session)?;
@@ -3004,6 +3044,9 @@ impl Workbench {
                     json!({"kind":"document","path":snapshot.path,"selections":state.selections.iter().map(|s|[s.head_row,s.head_column,s.anchor_row,s.anchor_column]).collect::<Vec<_>>(),"primary":state.primary_index,"scroll":state.scroll_position})
                 }
                 Panel::Terminal(id) => {
+                    if self.terminal.is_command_session(*id) {
+                        continue;
+                    }
                     json!({"kind":"terminal","cwd":self.terminal.working_directory(*id)})
                 }
                 Panel::Hex(view) => {

@@ -15,6 +15,7 @@ source revision:
 | `freetype-sys` | 0.23.0 | Static bundled zlib linkage and target-correct headers for the FreeType/libpng build |
 | `dear-imgui-winit` | 0.18.0 | Owned viewport snapshots for event routing and a native teardown fix |
 | `dear-imgui-wgpu` | 0.18.0 | Per-viewport postprocessing and GPU capture surface usage |
+| `bevy_stl` | 0.18.0 | Bevy 0.19.1 compatibility and a shared byte-loading entry point for bounded document snapshots |
 
 Read each fork's `BED_PATCHES.md` for details and source revisions. The native
 FreeType, libpng, PlutoSVG and PlutoVG sources below these forks support the same

@@ -7,7 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED = {
-    "bed": {"bed-core", "bed-files", "bed-highlight", "bed-lsp", "bed-session", "bed-ui", "bed-terminal", "bed-effects", "bed-remote", "bed-plugin", "bed-plugin-structure", "bed-plugin-image", "bed-plugin-gltf"},
+    "bed": {"bed-core", "bed-files", "bed-highlight", "bed-lsp", "bed-session", "bed-ui", "bed-terminal", "bed-debug", "bed-effects", "bed-remote", "bed-plugin", "bed-plugin-structure", "bed-plugin-image", "bed-plugin-gltf", "bed-plugin-font", "bed-plugin-audio"},
+    "bed-debug": set(),
     "bed-core": set(),
     "bed-files": {"bed-core", "bed-remote"},
     "bed-highlight": {"bed-core"},
@@ -22,8 +23,10 @@ EXPECTED = {
     "bed-plugin-structure": {"bed-core", "bed-highlight", "bed-plugin", "bed-ui"},
     "bed-plugin-image": {"bed-core", "bed-plugin", "bed-ui"},
     "bed-plugin-gltf": {"bed-core", "bed-plugin", "bed-ui"},
+    "bed-plugin-font": {"bed-core", "bed-plugin", "bed-ui"},
+    "bed-plugin-audio": {"bed-core", "bed-plugin"},
 }
-HEADLESS = {"bed-core", "bed-files", "bed-highlight", "bed-lsp", "bed-session", "bed-remote", "bed-headless"}
+HEADLESS = {"bed-core", "bed-files", "bed-highlight", "bed-lsp", "bed-session", "bed-remote", "bed-headless", "bed-debug"}
 GUI = {"dear-imgui-rs", "dear-imgui-sys", "dear-imgui-winit", "dear-imgui-wgpu", "winit", "wgpu", "arboard", "rfd", "resvg", "muda", "objc2-app-kit"}
 
 
@@ -64,7 +67,7 @@ def check(offline=False):
             seen.add(pid)
             pending.extend(production_dependencies(pid) - seen)
         names = {packages[pid]["name"] for pid in seen}
-        portable_ui = {"bed-ui", "bed-plugin", "bed-plugin-structure", "bed-plugin-image", "bed-plugin-gltf"}
+        portable_ui = {"bed-ui", "bed-plugin", "bed-plugin-structure", "bed-plugin-image", "bed-plugin-gltf", "bed-plugin-font", "bed-plugin-audio"}
         forbidden = set()
         if name in HEADLESS:
             forbidden = GUI

@@ -40,7 +40,7 @@ Architecture: $arch
 Maintainer: bEd contributors
 Section: editors
 Priority: optional
-Depends: libc6, libgcc-s1, libstdc++6, libx11-6, libxcursor1, libxrandr2, libxi6, libxkbcommon0, libwayland-client0, libvulkan1
+Depends: libc6, libgcc-s1, libstdc++6, libx11-6, libxcursor1, libxrandr2, libxi6, libxkbcommon0, libwayland-client0, libvulkan1, libasound2t64 | libasound2
 Description: bEd desktop editor with embeddable document views
  Desktop text editor with syntax highlighting, Git, language servers,
  terminals and SSH workspaces. See the bundled PORTING.md for details.

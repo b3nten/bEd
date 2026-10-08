@@ -1,6 +1,9 @@
 //! Bed's custom document view inside the host's existing Dear ImGui frame.
 //! Host-owned: containers, windows, context, backends, fonts, menus and effects.
 //! Source attribution: LICENSE, NOTICE and UPSTREAM_REVISION.
+pub use crate::source_debug::{
+    BreakpointStatus, SourceBreakpoint, SourceDebugAction, SourceDebugPresentation,
+};
 use crate::{
     editor_frame::EditorFrame,
     editor_input::{DefinitionRequest, EditorInput, HostAction},
@@ -18,6 +21,7 @@ pub struct EditorViewOptions {
     pub minimap_enabled: bool,
     pub line_jump_key: Option<Key>,
     pub block_input: bool,
+    pub source_debug: Option<SourceDebugPresentation>,
 }
 
 impl Default for EditorViewOptions {
@@ -30,6 +34,7 @@ impl Default for EditorViewOptions {
             minimap_enabled: false,
             line_jump_key: Some(Key::Semicolon),
             block_input: false,
+            source_debug: None,
         }
     }
 }
@@ -41,6 +46,7 @@ pub struct ViewResponse {
     pub generation: u64,
     pub focused: bool,
     pub actions: Vec<HostAction>,
+    pub source_actions: Vec<SourceDebugAction>,
     pub definition_request: Option<DefinitionRequest>,
 }
 /// Geometry and hover data for host menus and LSP presentation. Frame internals stay private.
@@ -130,6 +136,7 @@ impl EditorView {
             self.frame.minimap_enabled = self.minimap_enabled(options.minimap_enabled);
             self.frame.line_jump_key = options.line_jump_key;
             self.frame.external_overlay = options.block_input;
+            self.frame.source_debug = options.source_debug.clone();
             let mut response = None;
             ui.child_window(format!("##bed_view_{}", self.id.0))
                 .size(options.size)
@@ -148,6 +155,7 @@ impl EditorView {
                             generation: editor.document_generation(),
                             focused: ui.is_window_focused_with_flags(FocusedFlags::CHILD_WINDOWS),
                             actions,
+                            source_actions: self.frame.take_source_actions(),
                             definition_request: self.input.take_definition_request(),
                         }
                     }));
@@ -163,6 +171,7 @@ impl EditorView {
                         generation: snapshot.generation,
                         focused: false,
                         actions: Vec::new(),
+                        source_actions: Vec::new(),
                         definition_request: None,
                     })
                 }
@@ -410,6 +419,129 @@ mod tests {
         assert_eq!(
             session.view_snapshot(right.id()).unwrap().selections,
             cursor.selections
+        );
+    }
+
+    fn debug_frame(
+        context: &mut Context,
+        session: &mut EditorSession,
+        view: &mut EditorView,
+        presentation: Option<SourceDebugPresentation>,
+        blocked: bool,
+    ) -> (ViewResponse, [f32; 2]) {
+        context.prepare_frame(FramePrepareOptions::new([800.0, 500.0], 1.0));
+        let ui = context.frame();
+        let mut response = None;
+        let mut target = [0.0; 2];
+        ui.window("Debug source host")
+            .position([0.0; 2], Condition::Always)
+            .size([780.0, 450.0], Condition::Always)
+            .flags(WindowFlags::NO_TITLE_BAR | WindowFlags::NO_MOVE | WindowFlags::NO_RESIZE)
+            .build(|| {
+                response = Some(
+                    view.draw(
+                        ui,
+                        session,
+                        &EditorViewOptions {
+                            size: [700.0, 360.0],
+                            rainbow_mode: false,
+                            source_debug: presentation,
+                            block_input: blocked,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap(),
+                );
+                let layout = view.frame.layout;
+                target = [
+                    layout.pane_pos[0]
+                        + crate::views::gutter_view::GutterView::debug_column_width(ui, true)
+                            * 0.32,
+                    layout.pane_pos[1] + layout.editor_top_margin + layout.line_height * 2.4,
+                ];
+            });
+        drop(context.render_legacy());
+        (response.unwrap(), target)
+    }
+
+    #[test]
+    fn source_breakpoint_click_uses_scrolled_row_without_changing_caret_and_respects_overlays() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut session = EditorSession::new();
+        let bytes = (0..100)
+            .map(|row| format!("source row {row}\n"))
+            .collect::<String>();
+        let document = session.create_document(bytes.as_bytes()).unwrap();
+        let mut view = EditorView::new(&mut session, document).unwrap();
+        view.set_navigation_animations(false);
+        session
+            .with_commands(view.id(), |commands| {
+                commands.set_selection(0, 0, 0, 6, CursorReveal::Ensure);
+            })
+            .unwrap();
+        let debug = Some(SourceDebugPresentation::default());
+        debug_frame(&mut context, &mut session, &mut view, debug.clone(), false);
+        let line_height = view.frame.layout.line_height;
+        session
+            .set_scroll(view.id(), 0.0, line_height * 40.0)
+            .unwrap();
+        let (_, target) = debug_frame(&mut context, &mut session, &mut view, debug.clone(), false);
+        debug_frame(&mut context, &mut session, &mut view, debug.clone(), false);
+        assert!(
+            (session.view_snapshot(view.id()).unwrap().scroll_position[1] - line_height * 40.0)
+                .abs()
+                < 1.0
+        );
+        let before = session.view_snapshot(view.id()).unwrap().selections;
+        context.io_mut().add_mouse_pos_event(target);
+        debug_frame(&mut context, &mut session, &mut view, debug.clone(), false);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        let (response, _) =
+            debug_frame(&mut context, &mut session, &mut view, debug.clone(), false);
+        assert_eq!(
+            response.source_actions,
+            vec![SourceDebugAction::ToggleBreakpoint { row: 42 }]
+        );
+        assert_eq!(session.view_snapshot(view.id()).unwrap().selections, before);
+        assert_eq!(session.snapshot(document).unwrap().bytes, bytes.as_bytes());
+        let (response, _) =
+            debug_frame(&mut context, &mut session, &mut view, debug.clone(), false);
+        assert!(
+            response.source_actions.is_empty(),
+            "holding the button must not repeat"
+        );
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, false);
+        debug_frame(&mut context, &mut session, &mut view, debug.clone(), true);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        let (response, _) = debug_frame(&mut context, &mut session, &mut view, debug, true);
+        assert!(response.source_actions.is_empty());
+        assert_eq!(session.view_snapshot(view.id()).unwrap().selections, before);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, false);
+        debug_frame(&mut context, &mut session, &mut view, None, false);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        let (response, _) = debug_frame(&mut context, &mut session, &mut view, None, false);
+        assert!(
+            response.source_actions.is_empty(),
+            "ordinary embeds do not emit debug actions"
         );
     }
 }

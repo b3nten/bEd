@@ -55,6 +55,8 @@ impl Default for PluginRuntime {
             Box::new(bed_plugin_structure::StructurePlugin::default()),
             Box::new(bed_plugin_image::ImagePlugin::default()),
             Box::new(bed_plugin_gltf::GltfPlugin),
+            Box::new(bed_plugin_font::FontPlugin),
+            Box::new(bed_plugin_audio::AudioPlugin),
         ];
         let mut registry = Registry::default();
         for plugin in &instances {
@@ -533,6 +535,9 @@ impl Workbench {
             }
         }
         for item in &mut commands {
+            if item.id == "bed.debug.show" && self.debugger.active() {
+                item.label = "Debug (active session)".into();
+            }
             if item.id.starts_with("bed.editor.split_") {
                 item.enabled = self.active_document().is_some();
             }
@@ -566,6 +571,7 @@ impl Workbench {
                 TitlebarAction::Settings => WindowCommand::NewSettings,
                 TitlebarAction::Search => WindowCommand::NewContentSearch,
                 TitlebarAction::Diagnostics => WindowCommand::NewDiagnostics,
+                TitlebarAction::Debug => WindowCommand::Debug,
                 TitlebarAction::Structure => WindowCommand::NewStructure,
                 TitlebarAction::SplitRight => WindowCommand::SplitRight,
                 TitlebarAction::SplitDown => WindowCommand::SplitDown,

@@ -49,6 +49,9 @@ pub struct PtyOptions {
     pub working_directory: Option<PathBuf>,
     pub shell: Option<TerminalShell>,
     pub env: HashMap<String, String>,
+    /// Remove inherited variables after terminal defaults are applied. Explicit
+    /// entries in `env` take precedence over removal, without changing the host.
+    pub env_remove: Vec<String>,
 }
 impl PtyOptions {
     /// Run an interactive remote login shell through the system SSH client.
@@ -417,7 +420,7 @@ mod platform {
         fs::File,
         os::{
             fd::{AsRawFd, FromRawFd},
-            unix::process::CommandExt,
+            unix::process::{CommandExt, ExitStatusExt},
         },
         process::{Child, Command},
     };
@@ -503,8 +506,11 @@ mod platform {
                     std::env::var("SHELL").unwrap_or_else(|_| user.2.clone()),
                 )
                 .env("TERM", "st-256color")
-                .env("TERM_PROGRAM", "st-imgui")
-                .envs(&options.env);
+                .env("TERM_PROGRAM", "st-imgui");
+            for key in &options.env_remove {
+                command.env_remove(key);
+            }
+            command.envs(&options.env);
             // SAFETY: only async-signal-safe libc calls execute between fork and
             // exec. All strings/environment/cwd/stdio setup occurs in Command.
             unsafe {
@@ -566,7 +572,7 @@ mod platform {
         }
         pub fn shutdown(&mut self) {
             self.file.take(); // Kernel HUP reaches the foreground interactive job.
-            if self.child.try_wait().ok().flatten().is_some() {
+            if self.reported_exit || self.next_child_event().is_some() {
                 return;
             }
             let group = -(self.child.id() as i32);
@@ -576,7 +582,7 @@ mod platform {
             }
             let deadline = Instant::now() + Duration::from_millis(100);
             while Instant::now() < deadline {
-                if self.child.try_wait().ok().flatten().is_some() {
+                if self.next_child_event().is_some() {
                     return;
                 }
                 thread::sleep(Duration::from_millis(5));
@@ -585,7 +591,19 @@ mod platform {
                 libc::kill(group, libc::SIGKILL);
             }
             let _ = self.child.kill();
-            let _ = self.child.wait(); // Worker owns this wait; never the UI thread.
+            // Worker owns this wait; never the UI thread. Avoid Child's cached
+            // status, which cannot distinguish a debugger stop from an exit.
+            loop {
+                let mut status = 0;
+                let pid = unsafe { libc::waitpid(self.child.id() as i32, &mut status, 0) };
+                if pid > 0 && (libc::WIFEXITED(status) || libc::WIFSIGNALED(status)) {
+                    self.reported_exit = true;
+                    break;
+                }
+                if pid < 0 && io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+                    break;
+                }
+            }
         }
     }
     impl Drop for Pty {
@@ -629,13 +647,40 @@ mod platform {
             if self.reported_exit {
                 return None;
             }
-            match self.child.try_wait() {
-                Ok(Some(status)) => {
+            let mut status = 0;
+            let pid = unsafe {
+                libc::waitpid(self.child.id() as libc::pid_t, &mut status, libc::WNOHANG)
+            };
+            if pid > 0 {
+                // Traced children can report stops even without WUNTRACED.
+                // Child::try_wait caches those as an ExitStatus, so use raw
+                // waitpid and retain ownership through stop/continue events.
+                if libc::WIFEXITED(status) || libc::WIFSIGNALED(status) {
                     self.reported_exit = true;
-                    Some(ChildEvent::Exited(Some(status)))
+                    return Some(ChildEvent::Exited(Some(ExitStatus::from_raw(status))));
                 }
-                Ok(None) => None,
-                Err(_) => {
+                return None;
+            }
+            if pid == 0 {
+                return None;
+            }
+            let error = io::Error::last_os_error();
+            match error.raw_os_error() {
+                Some(libc::EINTR) => None,
+                Some(libc::ECHILD) => {
+                    // LLDB/debugserver can temporarily own wait notifications
+                    // after attaching to a child. Closing its PTY here would
+                    // send SIGHUP and kill an otherwise live debug session.
+                    let exists = unsafe { libc::kill(self.child.id() as libc::pid_t, 0) };
+                    if exists == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+                    {
+                        None
+                    } else {
+                        self.reported_exit = true;
+                        Some(ChildEvent::Exited(None))
+                    }
+                }
+                _ => {
                     self.reported_exit = true;
                     Some(ChildEvent::Exited(None))
                 }
@@ -1138,9 +1183,23 @@ mod platform {
         // Windows environment names are case-insensitive. A host's lowercase
         // override must win just as its uppercase spelling would.
         for (key, value) in [("TERM", "st-256color"), ("MSYS", "enable_pcon")] {
-            if !overrides.keys().any(|name| name.eq_ignore_ascii_case(key)) {
+            if !overrides.keys().any(|name| name.eq_ignore_ascii_case(key))
+                && !options
+                    .env_remove
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(key))
+            {
                 overrides.insert(key.into(), value.into());
             }
+        }
+        for key in &options.env_remove {
+            if key.is_empty() || key.contains('=') || key.contains('\0') {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Invalid terminal environment key",
+                ));
+            }
+            values.remove(&OsStr::new(key).to_ascii_uppercase());
         }
         for (key, value) in overrides {
             if key.is_empty() || key.contains('=') {

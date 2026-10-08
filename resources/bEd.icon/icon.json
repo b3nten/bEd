@@ -1,0 +1,55 @@
+{
+  "features" : [
+    "refractivity"
+  ],
+  "fill" : {
+    "linear-gradient" : [
+      "display-p3:1.00000,0.60423,0.00000,1.00000",
+      "display-p3:0.96783,0.00000,0.95228,1.00000"
+    ]
+  },
+  "groups" : [
+    {
+      "blend-mode" : "screen",
+      "blur-material" : 0.5,
+      "layers" : [
+        {
+          "blend-mode" : "normal",
+          "fill" : "none",
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "bed-svgrepo-com.svg",
+          "name" : "bed-svgrepo-com",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              9,
+              0
+            ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "refractivity" : {
+        "depth" : 0.053515625,
+        "enabled" : true,
+        "strength" : 0.20015625
+      },
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.39
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

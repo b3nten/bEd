@@ -11,4 +11,5 @@ bed-plugin = { workspace = true, features = ["gpu"] }
 bed-ui = { workspace = true }
 dear-imgui-rs = { workspace = true }
 serde_json = { workspace = true }
-image = { workspace = true }
+image = { workspace = true, features = ["bmp", "dds", "exr", "gif", "hdr", "ico", "pnm", "qoi", "tga", "tiff", "webp"] }
+resvg = { workspace = true, features = ["text", "system-fonts", "raster-images"] }

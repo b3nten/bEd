@@ -282,6 +282,18 @@ fn subprocess_git_baseline_and_status_handle_subdirectory_roots() {
     fs::write(temp.0.join("src/a"), b"changed").unwrap();
     let root = temp.0.join("src").to_str().unwrap().to_owned();
     let client = temp.client();
+    let Response::FileInfo { info } = client
+        .call(Request::FileInfo {
+            root: root.clone(),
+            path: "a".into(),
+        })
+        .unwrap()
+    else {
+        panic!("expected file metadata over stdio")
+    };
+    assert_eq!(info.size, 7);
+    assert_eq!(info.git.as_deref(), Some("Working tree: modified"));
+    assert!(info.modified_unix_seconds.is_some());
     assert_eq!(
         client
             .call(Request::GitBaseline {

@@ -477,6 +477,7 @@ impl Workbench {
         )?;
         self.persist_workspace()?;
         self.session.shutdown(ClosePolicy::Discard)?;
+        self.stop_debugger();
         self.close_plugin_panels()?;
         self.terminal.shutdown();
         self.tabs.clear();
@@ -496,6 +497,7 @@ impl Workbench {
         self.session = session;
         self.project_root = spec.root.clone();
         self.workspace_spec = Some(spec.clone());
+        self.restore_debugger_settings();
         self.service_settings = None;
         self.sync_services()?;
         self.file_explorer.project_root = spec.root.clone();

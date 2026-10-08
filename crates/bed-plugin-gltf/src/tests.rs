@@ -14,6 +14,220 @@ fn load(value: &Value) -> Result<Scene, String> {
     model::load(&serde_json::to_vec(value).unwrap())
 }
 
+fn add_float_attribute(value: &mut Value, semantic: &str, dimensions: &str, data: &[f32]) {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let bytes: Vec<_> = data
+        .iter()
+        .flat_map(|component| component.to_le_bytes())
+        .collect();
+    let buffer = value["buffers"].as_array().unwrap().len();
+    let view = value["bufferViews"].as_array().unwrap().len();
+    let accessor = value["accessors"].as_array().unwrap().len();
+    value["buffers"].as_array_mut().unwrap().push(json!({
+        "byteLength":bytes.len(),
+        "uri":format!("data:application/octet-stream;base64,{}", STANDARD.encode(bytes))
+    }));
+    value["bufferViews"].as_array_mut().unwrap().push(json!({
+        "buffer":buffer,"byteLength":data.len() * 4
+    }));
+    value["accessors"].as_array_mut().unwrap().push(json!({
+        "bufferView":view,"componentType":5126,"count":24,"type":dimensions
+    }));
+    value["meshes"][0]["primitives"][0]["attributes"][semantic] = json!(accessor);
+}
+
+#[test]
+fn pbr_material_maps_keep_independent_uv_sets_and_samplers() {
+    use gltf::texture::{MagFilter, MinFilter, WrappingMode};
+    let mut value = asset();
+    add_float_attribute(&mut value, "TEXCOORD_1", "VEC2", &[0.25, 0.75].repeat(24));
+    value["samplers"] = json!([
+        {"wrapS":33071,"wrapT":33648,"magFilter":9728,"minFilter":9984},
+        {"wrapS":10497,"wrapT":33071,"magFilter":9729,"minFilter":9987}
+    ]);
+    value["textures"] = json!([{"source":0,"sampler":0},{"source":0,"sampler":1}]);
+    value["materials"][0] = json!({
+        "pbrMetallicRoughness": {
+            "baseColorFactor":[0.2,0.3,0.4,0.8],
+            "baseColorTexture":{"index":0,"texCoord":0},
+            "metallicFactor":0.45,"roughnessFactor":0.75,
+            "metallicRoughnessTexture":{"index":1,"texCoord":1}
+        },
+        "normalTexture":{"index":1,"texCoord":1,"scale":0.3},
+        "occlusionTexture":{"index":0,"texCoord":0,"strength":0.6},
+        "emissiveFactor":[0.1,0.2,0.3],
+        "emissiveTexture":{"index":1,"texCoord":1},
+        "alphaMode":"MASK","alphaCutoff":0.25,"doubleSided":true
+    });
+    let scene = load(&value).unwrap();
+    let primitive = &scene.primitives[0];
+    let material = &primitive.material;
+    assert_eq!(material.color, [0.2, 0.3, 0.4, 0.8]);
+    assert_eq!(material.metallic, 0.45);
+    assert_eq!(material.roughness, 0.75);
+    assert_eq!(material.normal_scale, 0.3);
+    assert_eq!(material.occlusion_strength, 0.6);
+    assert_eq!(material.emissive, [0.1, 0.2, 0.3]);
+    assert_eq!(material.alpha, gltf::material::AlphaMode::Mask);
+    assert_eq!(material.cutoff, 0.25);
+    assert!(material.double_sided);
+    for info in [material.texture, material.occlusion_texture]
+        .into_iter()
+        .flatten()
+    {
+        assert_eq!(info.image, 0);
+        assert_eq!(info.tex_coord, 0);
+        assert_eq!(
+            info.sampler.wrap,
+            [WrappingMode::ClampToEdge, WrappingMode::MirroredRepeat]
+        );
+        assert_eq!(info.sampler.mag_filter, Some(MagFilter::Nearest));
+        assert_eq!(
+            info.sampler.min_filter,
+            Some(MinFilter::NearestMipmapNearest)
+        );
+    }
+    for info in [
+        material.metallic_roughness_texture,
+        material.normal_texture,
+        material.emissive_texture,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        assert_eq!(info.image, 0);
+        assert_eq!(info.tex_coord, 1);
+        assert_eq!(
+            info.sampler.wrap,
+            [WrappingMode::Repeat, WrappingMode::ClampToEdge]
+        );
+        assert_eq!(info.sampler.mag_filter, Some(MagFilter::Linear));
+        assert_eq!(info.sampler.min_filter, Some(MinFilter::LinearMipmapLinear));
+    }
+    assert_ne!(primitive.vertices[0].uv0, primitive.vertices[0].uv1);
+    assert_eq!(primitive.vertices[0].uv1, [0.25, 0.75]);
+}
+
+#[test]
+fn implicit_material_uses_gltf_pbr_defaults() {
+    let mut value = asset();
+    value["meshes"][0]["primitives"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("material");
+    let scene = load(&value).unwrap();
+    let material = &scene.primitives[0].material;
+    assert_eq!(material.color, [1.0; 4]);
+    assert_eq!([material.metallic, material.roughness], [1.0; 2]);
+    assert_eq!(
+        [material.normal_scale, material.occlusion_strength],
+        [1.0; 2]
+    );
+    assert_eq!(material.emissive, [0.0; 3]);
+    assert!(material.texture.is_none());
+    assert!(material.metallic_roughness_texture.is_none());
+    assert!(material.normal_texture.is_none());
+    assert!(material.occlusion_texture.is_none());
+    assert!(material.emissive_texture.is_none());
+    assert!(!scene.primitives[0].has_tangents);
+}
+
+#[test]
+fn all_material_maps_require_supported_present_uv_sets() {
+    for path in [
+        "/pbrMetallicRoughness/baseColorTexture",
+        "/pbrMetallicRoughness/metallicRoughnessTexture",
+        "/normalTexture",
+        "/occlusionTexture",
+        "/emissiveTexture",
+    ] {
+        for tex_coord in [0, 1, 2] {
+            let mut value = asset();
+            if tex_coord == 0 {
+                value["meshes"][0]["primitives"][0]["attributes"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("TEXCOORD_0");
+            }
+            let material = &mut value["materials"][0];
+            let binding = json!({"index":0,"texCoord":tex_coord});
+            if path.starts_with("/pbrMetallicRoughness/") {
+                material["pbrMetallicRoughness"][path.rsplit('/').next().unwrap()] = binding;
+            } else {
+                material[path.trim_start_matches('/')] = binding;
+            }
+            let error = load(&value).err().unwrap();
+            assert!(
+                error.contains(&format!("TEXCOORD_{tex_coord}")),
+                "{path}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn authored_tangents_follow_node_reflection_and_are_validated() {
+    let mut value = asset();
+    add_float_attribute(
+        &mut value,
+        "TANGENT",
+        "VEC4",
+        &[1.0, 0.0, 0.0, 1.0].repeat(24),
+    );
+    value["nodes"][0]["scale"] = json!([-2.0, 1.0, 1.0]);
+    let scene = load(&value).unwrap();
+    assert!(scene.primitives[0].has_tangents);
+    assert_eq!(
+        scene.primitives[0].vertices[0].tangent,
+        [-1.0, 0.0, 0.0, -1.0]
+    );
+    let accessor = value["accessors"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap();
+    accessor["type"] = json!("VEC3");
+    assert!(load(&value).is_err());
+}
+
+#[test]
+fn non_finite_normals_and_invalid_tangent_handedness_are_rejected() {
+    for (semantic, dimensions, data) in [
+        ("NORMAL", "VEC3", vec![f32::NAN, 0.0, 1.0]),
+        ("TANGENT", "VEC4", vec![1.0, 0.0, 0.0, 0.0]),
+        ("TANGENT", "VEC4", vec![f32::INFINITY, 0.0, 0.0, 1.0]),
+    ] {
+        let mut value = asset();
+        add_float_attribute(&mut value, semantic, dimensions, &data.repeat(24));
+        assert!(load(&value).is_err(), "{semantic}: {data:?}");
+    }
+}
+
+#[test]
+fn degenerate_authored_tangents_request_regeneration() {
+    let mut value = asset();
+    add_float_attribute(
+        &mut value,
+        "TANGENT",
+        "VEC4",
+        &[0.0, 0.0, 0.0, 1.0].repeat(24),
+    );
+    assert!(!load(&value).unwrap().primitives[0].has_tangents);
+    add_float_attribute(
+        &mut value,
+        "TANGENT",
+        "VEC4",
+        &[1.0, 0.0, 0.0, 1.0].repeat(24),
+    );
+    value["meshes"][0]["primitives"][0]["attributes"]
+        .as_object_mut()
+        .unwrap()
+        .remove("NORMAL");
+    // Flat normals change the per-corner basis, so authored tangents must be
+    // regenerated against the resulting geometry and normal-map UV channel.
+    assert!(!load(&value).unwrap().primitives[0].has_tangents);
+}
+
 fn tokyo_bytes() -> Vec<u8> {
     std::fs::read(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -327,6 +541,7 @@ fn worker_reloads_revisions_and_closing_releases_the_output() {
         pixels: [320, 240],
         camera: panel.camera,
         background: [0.0; 4],
+        settings: panel.settings,
     });
     assert!(panel.render_output().unwrap().depth);
     documents[0].revision = (1, 2);
@@ -353,10 +568,51 @@ fn worker_reloads_revisions_and_closing_releases_the_output() {
 }
 
 #[test]
-fn registration_routes_both_formats_and_commands_use_the_captured_path() {
+fn worker_loads_stl_snapshots_and_restores_appearance() {
+    let document = DocumentId(19);
+    let documents = [bed_plugin::PluginDocument {
+        id: document,
+        path: "ssh://example/project/part.STL".into(),
+        kind: DocumentKind::Bytes,
+        language_id: String::new(),
+        revision: (1, 1),
+        dirty: false,
+        bytes: b"solid part\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid part\n".as_slice().into(),
+        text: None,
+    }];
+    let state = json!({"render": {"lighting": 1, "skybox": true, "shadows": false, "ao": false, "exposure": 1.0}});
+    let mut panel = GltfPanel::new(document, &state);
+    let textures = HashMap::new();
+    let host = HostContext {
+        documents: &documents,
+        active_document: Some(document),
+        settings: &Value::Null,
+        textures: &textures,
+        animations: false,
+        workspace: 1,
+        diagnostics: &Value::Null,
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        panel.update(&host);
+        assert!(panel.error.is_none(), "{:?}", panel.error);
+        if panel.scene.is_some() {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(panel.scene.as_ref().unwrap().triangles(), 1);
+    assert_eq!(panel.save_state()["render"], state["render"]);
+    panel.close(&mut Vec::new());
+    assert!(panel.render_output().is_none());
+}
+
+#[test]
+fn registration_routes_model_formats_and_commands_use_the_captured_path() {
     let mut registry = bed_plugin::Registry::default();
     registry.register(&GltfPlugin).unwrap();
-    for path in ["model.GLB", "model.gltf"] {
+    for path in ["model.GLB", "model.gltf", "part.STL"] {
         assert_eq!(registry.viewer_for_path(path).unwrap().id, VIEWER_ID);
     }
     let textures = HashMap::new();

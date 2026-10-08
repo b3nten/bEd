@@ -1,5 +1,7 @@
 use crate::model::Scene;
-use glam::{Mat4, Vec3};
+#[cfg(test)]
+use glam::Mat4;
+use glam::Vec3;
 use serde_json::{Value, json};
 
 const FOV: f32 = std::f32::consts::FRAC_PI_4;
@@ -72,6 +74,7 @@ impl Camera {
         self.distance =
             (self.distance * (-wheel * 0.15).exp()).clamp(radius * 0.02, radius * 1000.0);
     }
+    #[cfg(test)]
     pub fn view_projection(self, aspect: f32, radius: f32) -> Mat4 {
         let near = (radius * 0.001).max(1e-6);
         let far = (self.distance + radius * 20.0).max(near * 100.0);

@@ -8,3 +8,4 @@ license-file = "../../LICENSE"
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+object = { workspace = true }

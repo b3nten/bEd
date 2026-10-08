@@ -6,7 +6,7 @@ use bed_effects::{
     shader_manager::ShaderManager, shader_types::OFFSCREEN_FORMAT,
     viewport_effects::ViewportEffectsFactory,
 };
-use bed_plugin::gpu::{GpuContext, RenderTarget};
+use bed_plugin::gpu::{DeviceErrorHandlers, GpuContext, RenderTarget, renderer_device_descriptor};
 #[cfg(test)]
 use bed_session::editor::Editor;
 #[cfg(test)]
@@ -24,7 +24,7 @@ use std::{
     future::Future,
     io::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
     task::{Poll, Wake, Waker},
     time::{Duration, Instant},
 };
@@ -168,6 +168,7 @@ impl SurfaceRenderer {
 
 struct Gpu {
     instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -175,7 +176,7 @@ struct Gpu {
     route: SurfaceRenderer,
     effect_factory: ViewportEffectsFactory,
     scene_generation: u64,
-    device_lost: Arc<Mutex<Option<String>>>,
+    error_handlers: DeviceErrorHandlers,
     reconfigure_next_frame: bool,
     effects: ShaderManager,
     image_textures: Vec<wgpu::Texture>,
@@ -205,10 +206,8 @@ impl Gpu {
             force_fallback_adapter: false,
             ..Default::default()
         }))?;
-        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("Bed GPU"),
-            ..Default::default()
-        }))?;
+        let (device, queue) =
+            block_on(adapter.request_device(&renderer_device_descriptor(&adapter)))?;
         let size = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
@@ -225,20 +224,12 @@ impl Gpu {
         // NED disables swap-interval pacing and caps the application loop from
         // settings. Fall back to a supported surface mode on each backend.
         config.present_mode = wgpu::PresentMode::AutoNoVsync;
-        config.color_space = wgpu::SurfaceColorSpace::Auto;
         if capabilities.usages.contains(wgpu::TextureUsages::COPY_SRC) {
             config.usage |= wgpu::TextureUsages::COPY_SRC;
         }
         surface.configure(&device, &config);
-        let device_lost = Arc::new(Mutex::new(None));
-        let lost = Arc::clone(&device_lost);
-        device.set_device_lost_callback(move |reason, message| {
-            if reason != wgpu::DeviceLostReason::Destroyed
-                && let Ok(mut slot) = lost.lock()
-            {
-                *slot = Some(message);
-            }
-        });
+        let error_handlers = DeviceErrorHandlers::default();
+        error_handlers.install(&device);
         let effect_factory = ViewportEffectsFactory::default();
         let mut viewport_config = WgpuViewportSurfaceConfig::from(&config);
         viewport_config.output_format = Some(config.format);
@@ -274,6 +265,7 @@ impl Gpu {
         );
         Ok(Self {
             instance,
+            adapter,
             surface,
             device,
             queue,
@@ -281,7 +273,7 @@ impl Gpu {
             route,
             effect_factory,
             scene_generation: 0,
-            device_lost,
+            error_handlers,
             reconfigure_next_frame: false,
             effects,
             image_textures: Vec::new(),
@@ -415,12 +407,19 @@ impl Gpu {
                 continue;
             }
             let mut gpu = GpuContext {
+                instance: &self.instance,
+                adapter: &self.adapter,
                 device: &self.device,
                 queue: &self.queue,
                 encoder: &mut encoder,
+                error_handlers: Some(&self.error_handlers),
                 generation: self.generation,
             };
-            match workbench.render_plugin_output(output.handle, &mut gpu, &texture.target) {
+            let result = workbench.render_plugin_output(output.handle, &mut gpu, &texture.target);
+            // Embedded engines may install their own device callbacks at startup.
+            // Keep later canvases, UI submission and recovery owned by this host.
+            self.error_handlers.install(&self.device);
+            match result {
                 Ok(()) => {
                     texture.rendered_revision = Some(output.revision);
                     rendered = true;
@@ -511,6 +510,8 @@ struct Runtime {
     viewport_capture_prefix: Option<PathBuf>,
     capture_after_frames: u32,
     capture_completed: bool,
+    debugger_smoke: bool,
+    debugger_ready: bool,
     lifecycle: Option<LifecycleSmoke>,
     appearance: Option<AppearanceSmoke>,
     #[cfg(target_os = "macos")]
@@ -531,6 +532,7 @@ struct RuntimeOptions {
     appearance: bool,
     native_appearance: bool,
     menu_edit: bool,
+    debugger: bool,
     plugins: bool,
     viewports: bool,
     main_only: bool,
@@ -768,6 +770,8 @@ impl Runtime {
             viewport_capture_prefix,
             capture_after_frames: options.capture_after_frames.unwrap_or(2),
             capture_completed: false,
+            debugger_smoke: options.debugger,
+            debugger_ready: false,
             lifecycle: options.lifecycle.then(LifecycleSmoke::new),
             appearance,
             #[cfg(target_os = "macos")]
@@ -837,12 +841,19 @@ impl Runtime {
         if let Err(error) = self.workbench.tick() {
             self.workbench.error = Some(error.to_string());
         }
-        let lost = self
-            .gpu
-            .device_lost
-            .lock()
-            .ok()
-            .and_then(|mut slot| slot.take());
+        if self.debugger_smoke {
+            self.debugger_ready = self.workbench.debug_smoke_ready()?;
+            if !self.debugger_ready && self.rendered_frames > 1800 {
+                return Err(io::Error::other(
+                    "Debugger smoke timed out before inspection was ready",
+                )
+                .into());
+            }
+        }
+        if let Some(error) = self.gpu.error_handlers.take_error() {
+            self.workbench.error = Some(format!("GPU rendering error: {error}"));
+        }
+        let lost = self.gpu.error_handlers.take_device_lost();
         if let Some(message) = lost {
             eprintln!("bEd: recreating GPU after device loss: {message}");
             self.gpu.route.shutdown(&mut self.context)?;
@@ -1049,6 +1060,7 @@ impl Runtime {
                 &effect_settings,
             );
             let capture_now = self.capture_path.is_some()
+                && (!self.debugger_smoke || self.debugger_ready)
                 && self.rendered_frames >= self.capture_after_frames.saturating_sub(1)
                 && self
                     .appearance
@@ -1101,7 +1113,7 @@ impl Runtime {
                 None
             };
             self.gpu.queue.submit([encoder.finish()]);
-            self.gpu.queue.present(surface_frame);
+            surface_frame.present();
             if let Some((buffer, stride, extent)) = readback {
                 let (sender, receiver) = std::sync::mpsc::channel();
                 buffer
@@ -1114,7 +1126,7 @@ impl Runtime {
                     timeout: Some(Duration::from_secs(10)),
                 })?;
                 receiver.recv_timeout(Duration::from_secs(10))??;
-                let bytes = buffer.slice(..).get_mapped_range()?;
+                let bytes = buffer.slice(..).get_mapped_range();
                 let path = self.capture_path.take().expect("capture was requested");
                 write_ppm(
                     &path,
@@ -1838,12 +1850,9 @@ impl Runtime {
                         io::Error::other("Closed image panel retained its texture handle").into(),
                     );
                 }
-                *self
-                    .gpu
-                    .device_lost
-                    .lock()
-                    .map_err(|_| io::Error::other("GPU loss state poisoned"))? =
-                    Some("plugin smoke recovery fixture".into());
+                self.gpu
+                    .error_handlers
+                    .report_device_lost("plugin smoke recovery fixture");
                 smoke.phase = 5;
             }
             5 => {
@@ -1880,7 +1889,9 @@ impl Runtime {
                 }
                 smoke.model_size = images[0].size;
                 self.capture_path = smoke.model_capture.take();
-                self.capture_after_frames = self.rendered_frames + 3;
+                // Allow Bevy asset preparation and temporal AO to settle before
+                // recording the model viewer's native presentation.
+                self.capture_after_frames = self.rendered_frames + 20;
                 smoke.phase = 8;
             }
             8 if self.capture_path.is_none() => {
@@ -1903,12 +1914,9 @@ impl Runtime {
             10 if !matches!(self.gpu.route, SurfaceRenderer::Native(_))
                 || self.secondary_presentations > smoke.secondary_before + 4 =>
             {
-                *self
-                    .gpu
-                    .device_lost
-                    .lock()
-                    .map_err(|_| io::Error::other("GPU loss state poisoned"))? =
-                    Some("glTF smoke recovery fixture".into());
+                self.gpu
+                    .error_handlers
+                    .report_device_lost("glTF smoke recovery fixture");
                 smoke.phase = 11;
             }
             11 if images.len() == 1 && self.gpu.plugin_textures.len() == 1 => {
@@ -1944,6 +1952,9 @@ impl Runtime {
         Ok(())
     }
     fn smoke_complete(&self, smoke_test: bool) -> bool {
+        if self.debugger_smoke && !self.debugger_ready {
+            return false;
+        }
         if self
             .plugin_smoke
             .as_ref()
@@ -2331,6 +2342,7 @@ fn native_menu_command(
         MenuAction::NewSettings => WindowCommand::NewSettings,
         MenuAction::NewProjects | MenuAction::Projects => WindowCommand::NewProjects,
         MenuAction::NewDiagnostics | MenuAction::Diagnostics => WindowCommand::NewDiagnostics,
+        MenuAction::Debug => WindowCommand::Debug,
         MenuAction::Structure | MenuAction::NewStructure => WindowCommand::NewStructure,
         MenuAction::NewReferences => WindowCommand::NewReferences,
         MenuAction::NewLspDashboard | MenuAction::LspDashboard => WindowCommand::NewLspDashboard,
@@ -2464,6 +2476,9 @@ pub fn run() -> HostResult<()> {
         } else if argument == "--menu-smoke" {
             options.menu_edit = true;
             smoke_test = true;
+        } else if argument == "--debug-smoke" {
+            options.debugger = true;
+            smoke_test = true;
         } else if argument == "--plugin-smoke" {
             options.plugins = true;
             smoke_test = true;
@@ -2476,7 +2491,7 @@ pub fn run() -> HostResult<()> {
             resume_workspace = false;
         } else if argument == "--help" || argument == "-h" {
             println!(
-                "Usage: bed [FILE_OR_FOLDER] [--smoke-test | --lifecycle-smoke | --effects-smoke]\n           [--appearance-smoke] [--platform-smoke] [--menu-smoke] [--plugin-smoke] [--viewports-smoke]\n           [--main-only-smoke] [--capture-frame OUTPUT.ppm] [--capture-after-frames N]\n           [--config-dir DIRECTORY]\n\nCmd/Ctrl+O open · Cmd/Ctrl+S save · Cmd/Ctrl+F find · Cmd/Ctrl+; go to line\n--menu-smoke uses an isolated temporary document/config to verify autosave and native Undo/Redo."
+                "Usage: bed [FILE_OR_FOLDER] [--smoke-test | --lifecycle-smoke | --effects-smoke]\n           [--appearance-smoke] [--platform-smoke] [--menu-smoke] [--plugin-smoke] [--viewports-smoke]\n           [--debug-smoke] [--main-only-smoke] [--capture-frame OUTPUT.ppm] [--capture-after-frames N]\n           [--config-dir DIRECTORY]\n\nCmd/Ctrl+O open · Cmd/Ctrl+S save · Cmd/Ctrl+F find · Cmd/Ctrl+; go to line\n--menu-smoke uses an isolated temporary document/config to verify autosave and native Undo/Redo."
             );
             return Ok(());
         } else {
@@ -2573,6 +2588,9 @@ pub fn run() -> HostResult<()> {
         } else {
             workbench.open_or_focus(&path)?;
         }
+    }
+    if options.debugger {
+        workbench.debug_smoke_setup()?;
     }
     #[cfg(target_os = "linux")]
     let event_loop = {

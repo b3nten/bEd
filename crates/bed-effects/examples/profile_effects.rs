@@ -175,7 +175,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 timeout: Some(Duration::from_secs(30)),
             })?;
             receiver.recv_timeout(Duration::from_secs(30))??;
-            let data = readback.slice(..).get_mapped_range()?;
+            let data = readback.slice(..).get_mapped_range();
             if batch > 0 {
                 for pair in data.as_chunks::<16>().0 {
                     let start = u64::from_ne_bytes(pair[..8].try_into()?);

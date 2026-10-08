@@ -477,6 +477,11 @@ fn draw_tool_icon(
                 .filled(true)
                 .build();
         }
+        TitlebarAction::Debug => {
+            dl.add_triangle(p0, [p0[0], p1[1]], [p1[0], c[1]], ink)
+                .thickness(stroke)
+                .build();
+        }
         TitlebarAction::Structure => {
             let trunk = c[0] - s * 0.65;
             dl.add_line([trunk, p0[1]], [trunk, p1[1]], ink)
@@ -979,7 +984,7 @@ mod tests {
     }
 
     #[test]
-    fn toolbar_measured_geometry_and_all_eight_click_actions() {
+    fn toolbar_measured_geometry_and_all_core_click_actions() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
@@ -1008,16 +1013,7 @@ mod tests {
         }
         toolbar_frame(&mut context, &mut host, &settings, 800.0);
         let rects = host.rects.clone();
-        for (rect, expected) in rects.iter().zip([
-            TitlebarAction::Sidebar,
-            TitlebarAction::Terminal,
-            TitlebarAction::Search,
-            TitlebarAction::Structure,
-            TitlebarAction::Diagnostics,
-            TitlebarAction::SplitRight,
-            TitlebarAction::SplitDown,
-            TitlebarAction::Settings,
-        ]) {
+        for (rect, expected) in rects.iter().zip(TitlebarAction::ALL) {
             context.io_mut().add_mouse_pos_event([
                 (rect.min[0] + rect.max[0]) * 0.5,
                 (rect.min[1] + rect.max[1]) * 0.5,
@@ -1087,7 +1083,10 @@ mod tests {
         }
         frame(&mut context, &mut host, 800.0);
         let rects = host.rects.clone();
-        for (index, expected) in [(8, Some("image.open")), (9, None)] {
+        for (index, expected) in [
+            (TitlebarAction::ALL.len(), Some("image.open")),
+            (TitlebarAction::ALL.len() + 1, None),
+        ] {
             let rect = rects[index];
             context.io_mut().add_mouse_pos_event([
                 (rect.min[0] + rect.max[0]) * 0.5,

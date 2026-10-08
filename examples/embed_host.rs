@@ -148,7 +148,9 @@ impl Host {
             compatible_surface: Some(&surface),
             ..Default::default()
         }))?;
-        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
+        let (device, queue) = block_on(
+            adapter.request_device(&bed_plugin::gpu::renderer_device_descriptor(&adapter)),
+        )?;
         let size = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
@@ -353,7 +355,7 @@ impl Host {
             None
         };
         self.queue.submit([encoder.finish()]);
-        self.queue.present(frame);
+        frame.present();
         if let Some((buffer, stride, extent)) = readback {
             let (sender, receiver) = std::sync::mpsc::channel();
             buffer
@@ -366,7 +368,7 @@ impl Host {
                 timeout: Some(Duration::from_secs(10)),
             })?;
             receiver.recv_timeout(Duration::from_secs(10))??;
-            let bytes = buffer.slice(..).get_mapped_range()?;
+            let bytes = buffer.slice(..).get_mapped_range();
             let path = capture.take().unwrap();
             let mut output = io::BufWriter::new(fs::File::create(&path)?);
             write!(output, "P6\n{} {}\n255\n", extent.width, extent.height)?;

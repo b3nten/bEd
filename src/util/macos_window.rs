@@ -595,6 +595,7 @@ fn install_controls(
             Some("search") => &["magnifyingglass"],
             Some("structure") => &["list.bullet.indent", "list.bullet"],
             Some("diagnostics") => &["exclamationmark.triangle", "exclamationmark.circle"],
+            Some("debug") => &["ladybug", "play.circle"],
             Some("split_right") => &["rectangle.split.2x1", "square.split.2x1"],
             Some("split_down") => &["rectangle.split.1x2", "square.split.1x2"],
             Some("gear" | "settings") => &["gearshape", "gear"],

@@ -8,9 +8,13 @@ welcome-screen PNG artwork and the upstream ned application icons were removed
 from Bed's runtime resources; original sources remain in the pinned reference.
 
 Bed's application artwork is bed.png, bed.icns and bed.ico, derived from the
-original Bed artwork documented in bed-icon-concept.txt. The Windows ICO
-packages the unchanged PNG frames from bed.icns using
+supplied Icon Composer export ../bEd-iOS-Default-1024@1x.png. The editable
+source is ../bEd.icon, including Assets/bed-svgrepo-com.svg, whose embedded
+notice credits SVG Repo. bed.png preserves the export unchanged; bed.icns
+contains standard and Retina sizes generated with sips and iconutil. The
+Windows ICO packages the unchanged PNG frames from bed.icns using
 scripts/build-windows-icon.py; it does not resample or redraw them.
+The previous gold-b artwork remains documented in bed-icon-concept.txt.
 
 The upstream icon list references the following absent assets; lookups use its
 original default fallback: c-sharp.svg, docker.svg, javascript.svg, markdown.svg, python.svg, react.svg, ruby.svg, rust.svg, shell.svg, terraform.svg, tsconfig.svg, typescript.svg, vala.svg.

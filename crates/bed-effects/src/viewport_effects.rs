@@ -63,11 +63,7 @@ impl ViewportEffectsFactory {
                 .recv_timeout(Duration::from_secs(10))
                 .map_err(|error| error.to_string())?
                 .map_err(|error| error.to_string())?;
-            let data = capture
-                .buffer
-                .slice(..)
-                .get_mapped_range()
-                .map_err(|error| error.to_string())?;
+            let data = capture.buffer.slice(..).get_mapped_range();
             let pixels = data.to_vec();
             drop(data);
             capture.buffer.unmap();

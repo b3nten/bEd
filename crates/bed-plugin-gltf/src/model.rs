@@ -13,18 +13,39 @@ const MAX_NODES: usize = 100_000;
 pub(super) struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
-    pub uv: [f32; 2],
+    pub uv0: [f32; 2],
+    pub uv1: [f32; 2],
+    pub tangent: [f32; 4],
     pub color: [f32; 4],
 }
 pub(super) struct Image {
     pub size: [u32; 2],
     pub rgba: Arc<[u8]>,
 }
+#[derive(Clone, Copy, Debug)]
+pub(super) struct TextureSampler {
+    pub wrap: [gltf::texture::WrappingMode; 2],
+    pub mag_filter: Option<gltf::texture::MagFilter>,
+    pub min_filter: Option<gltf::texture::MinFilter>,
+}
+#[derive(Clone, Copy, Debug)]
+pub(super) struct TextureInfo {
+    pub image: usize,
+    pub tex_coord: u32,
+    pub sampler: TextureSampler,
+}
 pub(super) struct Material {
     pub color: [f32; 4],
-    pub texture: Option<usize>,
-    pub wrap: [gltf::texture::WrappingMode; 2],
-    pub nearest: bool,
+    pub texture: Option<TextureInfo>,
+    pub metallic: f32,
+    pub roughness: f32,
+    pub metallic_roughness_texture: Option<TextureInfo>,
+    pub normal_texture: Option<TextureInfo>,
+    pub normal_scale: f32,
+    pub occlusion_texture: Option<TextureInfo>,
+    pub occlusion_strength: f32,
+    pub emissive: [f32; 3],
+    pub emissive_texture: Option<TextureInfo>,
     pub alpha: gltf::material::AlphaMode,
     pub cutoff: f32,
     pub double_sided: bool,
@@ -34,7 +55,7 @@ pub(super) struct Primitive {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub material: Material,
-    pub center: Vec3,
+    pub has_tangents: bool,
 }
 pub(super) struct Scene {
     pub primitives: Vec<Primitive>,
@@ -184,17 +205,23 @@ pub(super) fn load(bytes: &[u8]) -> Result<Scene, String> {
                         accessor.data_type() == DataType::F32
                             && accessor.dimensions() == Dimensions::Vec3
                     }
+                    gltf::Semantic::Tangents => {
+                        accessor.data_type() == DataType::F32
+                            && accessor.dimensions() == Dimensions::Vec4
+                    }
                     gltf::Semantic::TexCoords(_) => {
                         matches!(
                             accessor.data_type(),
                             DataType::U8 | DataType::U16 | DataType::F32
                         ) && accessor.dimensions() == Dimensions::Vec2
+                            && (accessor.data_type() == DataType::F32 || accessor.normalized())
                     }
                     gltf::Semantic::Colors(_) => {
                         matches!(
                             accessor.data_type(),
                             DataType::U8 | DataType::U16 | DataType::F32
                         ) && matches!(accessor.dimensions(), Dimensions::Vec3 | Dimensions::Vec4)
+                            && (accessor.data_type() == DataType::F32 || accessor.normalized())
                     }
                     gltf::Semantic::Joints(set) => {
                         if palette.is_some() && set != 0 {
@@ -213,7 +240,6 @@ pub(super) fn load(bytes: &[u8]) -> Result<Scene, String> {
                         ) && accessor.dimensions() == Dimensions::Vec4
                             && (accessor.data_type() == DataType::F32 || accessor.normalized())
                     }
-                    _ => true,
                 };
                 if !valid {
                     return Err(
@@ -239,7 +265,57 @@ pub(super) fn load(bytes: &[u8]) -> Result<Scene, String> {
             }
             let material = primitive.material();
             let pbr = material.pbr_metallic_roughness();
-            let color_texture = pbr.base_color_texture();
+            let normal_texture = material.normal_texture();
+            let occlusion_texture = material.occlusion_texture();
+            let material = Material {
+                color: pbr.base_color_factor(),
+                texture: pbr
+                    .base_color_texture()
+                    .map(|info| texture_info(info.texture(), info.tex_coord()))
+                    .transpose()?,
+                metallic: pbr.metallic_factor(),
+                roughness: pbr.roughness_factor(),
+                metallic_roughness_texture: pbr
+                    .metallic_roughness_texture()
+                    .map(|info| texture_info(info.texture(), info.tex_coord()))
+                    .transpose()?,
+                normal_texture: normal_texture
+                    .as_ref()
+                    .map(|info| texture_info(info.texture(), info.tex_coord()))
+                    .transpose()?,
+                normal_scale: normal_texture.as_ref().map_or(1.0, |info| info.scale()),
+                occlusion_texture: occlusion_texture
+                    .as_ref()
+                    .map(|info| texture_info(info.texture(), info.tex_coord()))
+                    .transpose()?,
+                occlusion_strength: occlusion_texture
+                    .as_ref()
+                    .map_or(1.0, |info| info.strength()),
+                emissive: material.emissive_factor(),
+                emissive_texture: material
+                    .emissive_texture()
+                    .map(|info| texture_info(info.texture(), info.tex_coord()))
+                    .transpose()?,
+                alpha: material.alpha_mode(),
+                cutoff: material.alpha_cutoff().unwrap_or(0.5),
+                double_sided: material.double_sided(),
+                unlit: material.unlit(),
+            };
+            if !material
+                .color
+                .into_iter()
+                .chain(material.emissive)
+                .chain([
+                    material.metallic,
+                    material.roughness,
+                    material.normal_scale,
+                    material.occlusion_strength,
+                    material.cutoff,
+                ])
+                .all(f32::is_finite)
+            {
+                return Err("Material contains non-finite values".into());
+            }
             let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(|b| b.as_ref()));
             let mut positions: Vec<_> = reader
                 .read_positions()
@@ -249,13 +325,32 @@ pub(super) fn load(bytes: &[u8]) -> Result<Scene, String> {
                 continue;
             }
             let mut normal_values: Option<Vec<_>> = reader.read_normals().map(Iterator::collect);
-            let uv: Option<Vec<_>> = reader
-                .read_tex_coords(color_texture.as_ref().map_or(0, |t| t.tex_coord()))
-                .map(|v| v.into_f32().collect());
+            // Normalization deliberately maps degenerate vectors to zero, so
+            // reject non-finite source data before it can hide an invalid input.
+            if positions
+                .iter()
+                .chain(normal_values.iter().flatten())
+                .any(|value| !value.iter().all(|component| component.is_finite()))
+            {
+                return Err("Mesh contains non-finite vertex data".into());
+            }
+            let mut tangent_values: Option<Vec<_>> = reader.read_tangents().map(Iterator::collect);
+            if tangent_values.as_ref().is_some_and(|values| {
+                values.iter().any(|value| {
+                    !value.iter().all(|component| component.is_finite())
+                        || ![-1.0, 1.0].contains(&value[3])
+                })
+            }) {
+                return Err("Mesh contains invalid tangent data".into());
+            }
+            let uv0: Option<Vec<_>> = reader.read_tex_coords(0).map(|v| v.into_f32().collect());
+            let uv1: Option<Vec<_>> = reader.read_tex_coords(1).map(|v| v.into_f32().collect());
             let colors: Option<Vec<_>> = reader.read_colors(0).map(|v| v.into_rgba_f32().collect());
             for count in [
                 normal_values.as_ref().map(Vec::len),
-                uv.as_ref().map(Vec::len),
+                tangent_values.as_ref().map(Vec::len),
+                uv0.as_ref().map(Vec::len),
+                uv1.as_ref().map(Vec::len),
                 colors.as_ref().map(Vec::len),
             ]
             .into_iter()
@@ -265,8 +360,23 @@ pub(super) fn load(bytes: &[u8]) -> Result<Scene, String> {
                     return Err("Mesh vertex attributes have mismatched lengths".into());
                 }
             }
-            if color_texture.is_some() && uv.is_none() {
-                return Err("Textured mesh is missing its texture coordinates".into());
+            for info in [
+                material.texture,
+                material.metallic_roughness_texture,
+                material.normal_texture,
+                material.occlusion_texture,
+                material.emissive_texture,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if (info.tex_coord == 0 && uv0.is_none()) || (info.tex_coord == 1 && uv1.is_none())
+                {
+                    return Err(format!(
+                        "Textured mesh is missing TEXCOORD_{} texture coordinates",
+                        info.tex_coord
+                    ));
+                }
             }
             if let Some(palette) = &palette {
                 let joints: Vec<_> = reader
@@ -282,6 +392,7 @@ pub(super) fn load(bytes: &[u8]) -> Result<Scene, String> {
                 crate::skin::bake(
                     &mut positions,
                     normal_values.as_deref_mut(),
+                    tangent_values.as_deref_mut(),
                     &joints,
                     &weights,
                     palette,
@@ -309,11 +420,31 @@ pub(super) fn load(bytes: &[u8]) -> Result<Scene, String> {
                 let normal = normal_values.as_ref().map_or(Vec3::Y, |values| {
                     (normals * Vec3::from_array(values[index])).normalize_or_zero()
                 });
-                let uv = uv.as_ref().map_or([0.0; 2], |values| values[index]);
+                let uv0 = uv0.as_ref().map_or([0.0; 2], |values| values[index]);
+                let uv1 = uv1.as_ref().map_or([0.0; 2], |values| values[index]);
+                let tangent = tangent_values.as_ref().map_or([0.0; 4], |values| {
+                    let value = values[index];
+                    let direction = transform
+                        .transform_vector3(Vec3::new(value[0], value[1], value[2]))
+                        .normalize_or_zero();
+                    [
+                        direction.x,
+                        direction.y,
+                        direction.z,
+                        value[3]
+                            * if palette.is_some() {
+                                1.0
+                            } else {
+                                determinant.signum()
+                            },
+                    ]
+                });
                 let color = colors.as_ref().map_or([1.0; 4], |values| values[index]);
                 if !position.is_finite()
                     || !normal.is_finite()
-                    || !uv.into_iter().all(f32::is_finite)
+                    || !uv0.into_iter().all(f32::is_finite)
+                    || !uv1.into_iter().all(f32::is_finite)
+                    || !tangent.into_iter().all(f32::is_finite)
                     || !color.into_iter().all(f32::is_finite)
                 {
                     return Err("Mesh contains non-finite vertex data".into());
@@ -323,7 +454,9 @@ pub(super) fn load(bytes: &[u8]) -> Result<Scene, String> {
                 vertices.push(Vertex {
                     position: position.to_array(),
                     normal: normal.to_array(),
-                    uv,
+                    uv0,
+                    uv1,
+                    tangent,
                     color,
                 });
             }
@@ -352,33 +485,17 @@ pub(super) fn load(bytes: &[u8]) -> Result<Scene, String> {
             if indices.is_empty() {
                 continue;
             }
-            let texture = color_texture.as_ref().map(|info| info.texture());
-            let sampler = texture.as_ref().map(|texture| texture.sampler());
-            let center = vertices
-                .iter()
-                .map(|v| Vec3::from_array(v.position))
-                .sum::<Vec3>()
-                / vertices.len() as f32;
             primitives.push(Primitive {
+                has_tangents: tangent_values.is_some()
+                    && normal_values.is_some()
+                    && vertices.iter().all(|vertex| {
+                        Vec3::from_slice(&vertex.tangent[..3]).length_squared() > 0.0
+                            && [-1.0, 1.0].contains(&vertex.tangent[3])
+                            && Vec3::from_array(vertex.normal).length_squared() > 0.0
+                    }),
                 vertices,
                 indices,
-                center,
-                material: Material {
-                    color: pbr.base_color_factor(),
-                    texture: texture.as_ref().map(|texture| texture.source().index()),
-                    wrap: sampler
-                        .as_ref()
-                        .map_or([gltf::texture::WrappingMode::Repeat; 2], |s| {
-                            [s.wrap_s(), s.wrap_t()]
-                        }),
-                    nearest: sampler
-                        .as_ref()
-                        .is_some_and(|s| s.mag_filter() == Some(gltf::texture::MagFilter::Nearest)),
-                    alpha: material.alpha_mode(),
-                    cutoff: material.alpha_cutoff().unwrap_or(0.5),
-                    double_sided: material.double_sided(),
-                    unlit: material.unlit(),
-                },
+                material,
             });
         }
     }
@@ -397,6 +514,24 @@ pub(super) fn load(bytes: &[u8]) -> Result<Scene, String> {
         animations: gltf.animations().len(),
         draco_primitives,
         posed_meshes,
+    })
+}
+
+fn texture_info(texture: gltf::Texture<'_>, tex_coord: u32) -> Result<TextureInfo, String> {
+    if tex_coord > 1 {
+        return Err(format!(
+            "Texture uses TEXCOORD_{tex_coord}; the glTF preview supports TEXCOORD_0 and TEXCOORD_1"
+        ));
+    }
+    let sampler = texture.sampler();
+    Ok(TextureInfo {
+        image: texture.source().index(),
+        tex_coord,
+        sampler: TextureSampler {
+            wrap: [sampler.wrap_s(), sampler.wrap_t()],
+            mag_filter: sampler.mag_filter(),
+            min_filter: sampler.min_filter(),
+        },
     })
 }
 

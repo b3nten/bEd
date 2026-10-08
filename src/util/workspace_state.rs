@@ -222,6 +222,19 @@ impl WorkspaceStore {
             .get(spec.identity())?
             .get("layout")
     }
+    /// Debug configuration belongs to the project, independent of open panels.
+    pub fn debug_settings(&self, spec: &WorkspaceSpec) -> Option<&Value> {
+        self.state
+            .get("workspaces")?
+            .get(spec.identity())?
+            .get("debug")
+    }
+    pub fn save_debug_settings(&mut self, spec: &WorkspaceSpec, settings: Value) -> io::Result<()> {
+        let _lock = self.reload_for_write()?;
+        self.ensure_record(spec);
+        self.state["workspaces"][spec.identity()]["debug"] = settings;
+        self.save()
+    }
     /// Older configurations resume the most recent project. An explicit null
     /// means the last window had no project open.
     pub fn last_workspace(&self) -> Option<WorkspaceSpec> {

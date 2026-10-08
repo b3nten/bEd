@@ -314,19 +314,31 @@ extraction sections below supersede the old single-buffer and BedEmbed design.
 ## Dependencies
 
 The manifests of all three Dear ImGui adapters were inspected before selection.
-`dear-imgui-wgpu` 0.18 defaults to `wgpu-30`, its wgpu dependency is `30.0`,
-and its Dear ImGui dependency is `0.18`. `dear-imgui-winit` 0.18 uses winit 0.30.
+`dear-imgui-wgpu` 0.18 is configured with default features disabled and its
+`wgpu-29` backend selected to share wgpu 29 with Bevy 0.19.1. Its Dear ImGui
+dependency is `0.18`. `dear-imgui-winit` 0.18 uses winit 0.30.
 Cargo.lock contains one compatible version of each GUI dependency. Local Rust
 is stable 1.98.1 on macOS arm64.
+
+The windowless Bevy renderer shares the host's instance, adapter, device, queue
+and output textures. Device creation uses adapter limits and supported
+nonexperimental features, with mappable primary buffers disabled on discrete
+GPUs. Bevy's renderer callbacks are restored to the host immediately after
+initialization, and captured device loss feeds the existing device-generation
+recovery path. SSAO is enabled only when its storage-texture requirements are
+available. ImGui retains its original unorm output view while Bevy renders
+through an additional sRGB view of the same texture.
 
 | Direct crate | Locked version | Purpose |
 | --- | --- | --- |
 | `dear-imgui-rs` | 0.18.0 | Context, fonts, custom draw lists and overlay widgets; source build with the FreeType backend |
 | `dear-imgui-sys` | 0.18.0, patched path | Enable bundled FreeType in the same compatible native binding; the high-level crate does not forward this feature |
 | `dear-imgui-winit` | 0.18.0, patched path | Winit input, focus, cursor, DPI and IME integration plus owned viewport routing |
-| `dear-imgui-wgpu` | 0.18.0, patched path | Render ImGui draw data through wgpu 30 with viewport effects/capture hooks |
+| `dear-imgui-wgpu` | 0.18.0, patched path | Render ImGui draw data through wgpu 29 with viewport effects/capture hooks |
 | `winit` | 0.30.13 | Owned desktop application/event loop and windows |
-| `wgpu` | 30.0.1 | GPU device, queue, surface and presentation |
+| `wgpu` | 29.0.4 | Shared host/Bevy GPU device, queue, surface and presentation |
+| `bevy` | 0.19.1 | Windowless PBR model renderer sharing the host's GPU and output texture |
+| `bevy_stl` | 0.18.0, patched path | ASCII/binary STL loading from document bytes; compatibility patch for Bevy 0.19.1 |
 | `arboard` | 3.6.1 | Text-only platform clipboard; default image features disabled |
 | `rfd` | 0.17.2 | Native open/save dialogs and unsaved-close prompt |
 | `serde_json` | 1.0.151 | Upstream-compatible profiles, keybinds/history and LSP JSON-RPC data |
@@ -888,15 +900,14 @@ stale replies after edits or closure remain rejected. Hosts can handle the
 typed request in ViewResponse and choose their own navigation/layout policy.
 The keyboard LSP dispatcher now accepts the editor's Cmd/Ctrl modifiers.
 
-Bed now has original application artwork: a muted gold geometric lowercase b
-on a charcoal rounded tile, generated with the built-in image_gen tool. The
-source concept and exact prompt are recorded in
-`resources/icons/bed-icon-concept.png` and `bed-icon-concept.txt`; `bed.png` is
-the 1024px master and `bed.icns` includes macOS standard and Retina sizes.
-macOS and Debian packaging use the Bed artwork instead of the upstream Ned
-logo. Upstream assets remain preserved. Validation: PNG dimensions/alpha,
-successful macOS iconutil conversion, ICNS file signature, and shell syntax
-checks for both changed packaging scripts. No new dependencies were added.
+Bed's application artwork uses the supplied orange-to-pink bed icon from
+`resources/bEd.icon`, exported as `resources/bEd-iOS-Default-1024@1x.png`.
+`resources/icons/bed.png` preserves that 1024px export, including its Display
+P3 profile and transparency. `bed.icns` includes macOS standard and Retina
+sizes generated with sips and iconutil; `bed.ico` packages its PNG frames
+using `scripts/build-windows-icon.py`. macOS, Windows and Debian packaging
+use these assets. The previous gold-b concept and prompt remain in
+`resources/icons/bed-icon-concept.png` and `bed-icon-concept.txt`.
 
 Follow-up validation on macOS arm64:
 
@@ -1384,3 +1395,24 @@ isolated customized legacy profile into bed.json, preserving every original byte
 The relocated original model verifier passes 872 assertions in 72 cases. Original
 fixture bytes are unchanged. Native Linux/Windows execution and full desktop
 release bundles remain CI checks rather than claimed local acceptance.
+
+## Bevy model rendering and STL
+
+The Model Viewer keeps the existing `bed.gltf.*` plugin, panel, viewer and
+command IDs for workspace compatibility. Its bounded background importer now
+retains glTF metallic/roughness, normal, emissive and occlusion maps, independent
+samplers and UV channels for Bevy's PBR materials. Draco meshes and authored skin
+poses retain the existing decoder path. ASCII and binary STL load through the
+patched `bevy_stl` byte loader with a neutral PBR material; the input is bounded
+to 64 MiB and 333,333 facets. Lighting presets, skyboxes, shadows, exposure and
+optional screen-space AO are saved alongside the orbit camera.
+
+Host/all-target checking and all 21 plugin-host integration tests pass, including
+STL routing, shared Hex edits and model appearance/camera restoration. Native
+Metal readback verifies sRGB rendering into the host's unorm texture and callback
+restoration; both existing effects fixtures pass on wgpu 29. The desktop plugin
+smoke passes 70 frames and five secondary presentations, covering model resize,
+detached presentation, close/reopen and two GPU recovery cycles. The model capture
+at `target/bevy-host-smoke/gltf.png` was inspected. Package license collection
+includes the Bevy, patched `bevy_stl` and `stl_io` notices. Native Linux/Windows
+acceptance is configured in CI and has not been run locally.

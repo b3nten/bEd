@@ -4,6 +4,7 @@
 //! no GUI, GPU, platform window, or editor document dependencies.
 mod client;
 mod deployment;
+mod file_info;
 mod filesystem;
 mod protocol;
 

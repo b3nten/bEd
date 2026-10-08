@@ -1,4 +1,4 @@
-//! Static glTF scene viewer using the shared plugin GPU output contract.
+//! glTF and STL model viewer with a shared-device, windowless Bevy renderer.
 use bed_core::identity::DocumentId;
 use bed_plugin::gpu::{Canvas, GpuContext, RenderOutput, RenderTarget};
 use bed_plugin::{
@@ -20,6 +20,7 @@ mod model;
 mod native_tests;
 mod render;
 mod skin;
+mod stl;
 #[cfg(test)]
 mod tests;
 use camera::Camera;
@@ -38,16 +39,16 @@ impl Plugin for GltfPlugin {
         PLUGIN_ID
     }
     fn register(&self, registrar: &mut Registrar<'_>) {
-        registrar.panel(PANEL_ID, "glTF Viewer");
+        registrar.panel(PANEL_ID, "Model Viewer");
         registrar.viewer(
             VIEWER_ID,
-            "glTF Viewer",
+            "Model Viewer",
             PANEL_ID,
-            &["gltf", "glb"],
+            &["gltf", "glb", "stl"],
             DocumentKind::Bytes,
         );
         registrar.command(OPEN_COMMAND, "Open 3D Model…", Some("image"));
-        registrar.command(OPEN_FILE_COMMAND, "Open in glTF Viewer", Some("image"));
+        registrar.command(OPEN_FILE_COMMAND, "Open in Model Viewer", Some("image"));
         registrar.menu(MenuSlot::Application, OPEN_COMMAND);
         registrar.menu(MenuSlot::File, OPEN_FILE_COMMAND);
     }
@@ -60,7 +61,7 @@ impl Plugin for GltfPlugin {
         command != OPEN_FILE_COMMAND
             || context.path.as_deref().is_some_and(|path| {
                 path.rsplit_once('.').is_some_and(|(_, extension)| {
-                    ["glb", "gltf"]
+                    ["glb", "gltf", "stl"]
                         .iter()
                         .any(|ext| ext.eq_ignore_ascii_case(extension))
                 })
@@ -110,6 +111,7 @@ impl Plugin for GltfPlugin {
 struct LoadJob {
     revision: Revision,
     bytes: Arc<[u8]>,
+    stl: bool,
 }
 struct LoadResult {
     revision: Revision,
@@ -130,7 +132,11 @@ impl Loader {
                 }
                 let result = LoadResult {
                     revision: job.revision,
-                    scene: model::load(&job.bytes),
+                    scene: if job.stl {
+                        stl::load(&job.bytes)
+                    } else {
+                        model::load(&job.bytes)
+                    },
                 };
                 if results.send(result).is_err() {
                     break;
@@ -148,6 +154,7 @@ struct CanvasState {
     pixels: [u32; 2],
     camera: Camera,
     background: [f32; 4],
+    settings: render::Settings,
 }
 
 pub struct GltfPanel {
@@ -162,6 +169,9 @@ pub struct GltfPanel {
     canvas: Option<CanvasState>,
     output_revision: u64,
     gpu: Option<render::SceneGpu>,
+    settings: render::Settings,
+    settle_frames: u8,
+    failed_generation: Option<u64>,
 }
 impl GltfPanel {
     fn new(document: DocumentId, state: &Value) -> Self {
@@ -178,6 +188,9 @@ impl GltfPanel {
             canvas: None,
             output_revision: 0,
             gpu: None,
+            settings: render::Settings::restore(state),
+            settle_frames: render::SETTLE_FRAMES,
+            failed_generation: None,
         }
     }
     fn update(&mut self, host: &HostContext<'_>) {
@@ -195,7 +208,9 @@ impl GltfPanel {
                     self.scene = Some(scene);
                     self.error = None;
                     self.gpu = None;
+                    self.failed_generation = None;
                     self.output_revision += 1;
+                    self.settle_frames = render::SETTLE_FRAMES;
                 }
                 Err(error) => {
                     self.scene = None;
@@ -210,6 +225,10 @@ impl GltfPanel {
                     .try_send(LoadJob {
                         revision: document.revision,
                         bytes: Arc::clone(&document.bytes),
+                        stl: document
+                            .path
+                            .rsplit_once('.')
+                            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("stl")),
                     })
                     .is_ok()
             })
@@ -218,6 +237,7 @@ impl GltfPanel {
             self.scene = None;
             self.gpu = None;
             self.error = None;
+            self.failed_generation = None;
         }
     }
 }
@@ -225,14 +245,16 @@ impl PluginPanel for GltfPanel {
     fn title(&self, host: &HostContext<'_>) -> String {
         host.document(self.document)
             .and_then(|d| d.path.rsplit(['/', '\\']).next())
-            .unwrap_or("glTF Viewer")
+            .unwrap_or("Model Viewer")
             .to_owned()
     }
     fn attached_document(&self) -> Option<DocumentId> {
         Some(self.document)
     }
     fn save_state(&self) -> Value {
-        self.camera.save()
+        let mut state = self.camera.save();
+        state["render"] = self.settings.save();
+        state
     }
     fn close(&mut self, _: &mut Vec<HostRequest>) {
         self.loader.sender = None;
@@ -249,6 +271,14 @@ impl PluginPanel for GltfPanel {
         })
     }
     fn render(&mut self, gpu: &mut GpuContext<'_>, target: &RenderTarget) -> Result<(), String> {
+        if self.failed_generation == Some(gpu.generation) {
+            // Acknowledge this revision once so the host can cache the failure.
+            // Retain the scene to retry when the host replaces the GPU device.
+            return Ok(());
+        }
+        if self.failed_generation.take().is_some() {
+            self.error = None;
+        }
         let scene = self.scene.as_ref().ok_or("glTF scene is not loaded")?;
         if self
             .gpu
@@ -256,22 +286,32 @@ impl PluginPanel for GltfPanel {
             .is_none_or(|state| state.generation != gpu.generation)
         {
             match render::SceneGpu::new(gpu, scene) {
-                Ok(state) => self.gpu = Some(state),
+                Ok(state) => {
+                    self.gpu = Some(state);
+                    self.settle_frames = render::SETTLE_FRAMES;
+                }
                 Err(error) => {
                     self.error = Some(error.clone());
-                    self.scene = None;
+                    self.failed_generation = Some(gpu.generation);
                     return Err(error);
                 }
             }
         }
         let canvas = self.canvas.ok_or("glTF canvas is not sized")?;
-        self.gpu.as_ref().unwrap().render(
+        let result = self.gpu.as_mut().unwrap().render(
             gpu,
             target,
             canvas.camera,
             scene.radius(),
             canvas.background,
-        )
+            canvas.settings,
+        );
+        if let Err(error) = &result {
+            self.error = Some(error.clone());
+            self.failed_generation = Some(gpu.generation);
+            self.gpu = None;
+        }
+        result
     }
     fn draw(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         let _controls = bed_ui::util::popup_style::controls_style(ui);
@@ -280,6 +320,34 @@ impl PluginPanel for GltfPanel {
         ui.same_line();
         if ui.button("Info") {
             ui.open_popup("gltf-information");
+        }
+        ui.same_line();
+        if ui.button("Appearance") {
+            ui.open_popup("model-appearance");
+        }
+        {
+            let _popup = bed_ui::util::popup_style::context_menu_style(ui);
+            if let Some(_popup) = ui.begin_popup("model-appearance") {
+                let mut lighting = self.settings.lighting.index();
+                if ui.combo_simple_string("Lighting", &mut lighting, &render::Lighting::NAMES) {
+                    self.settings.lighting = render::Lighting::from_index(lighting);
+                }
+                ui.checkbox("Skybox", &mut self.settings.skybox);
+                ui.checkbox("Shadows", &mut self.settings.shadows);
+                let ao_supported = self.gpu.as_ref().is_none_or(|gpu| gpu.ao_supported);
+                {
+                    let _disabled = ui.begin_disabled_with_cond(!ao_supported);
+                    ui.checkbox("Ambient occlusion", &mut self.settings.ao);
+                }
+                if !ao_supported {
+                    ui.text_disabled("Ambient occlusion is unavailable on this GPU");
+                }
+                ui.slider_config("Exposure", -4.0, 4.0)
+                    .build(&mut self.settings.exposure);
+                if ui.button("Reset Appearance") {
+                    self.settings = render::Settings::default();
+                }
+            }
         }
         ui.same_line();
         ui.text_disabled("Drag to orbit · Right-drag to pan · Scroll to zoom");
@@ -314,7 +382,6 @@ impl PluginPanel for GltfPanel {
                         ));
                     }
                 }
-                ui.text_wrapped("Static preview with base-color textures, vertex colors, and studio lighting. Animation playback and full PBR materials are not supported yet.");
             }
         }
         ui.separator();
@@ -362,10 +429,17 @@ impl PluginPanel for GltfPanel {
             pixels: canvas.pixels,
             camera: self.camera,
             background: ui.style_color(StyleColor::WindowBg),
+            settings: self.settings,
         };
         if self.canvas != Some(state) {
             self.canvas = Some(state);
             self.output_revision += 1;
+            self.settle_frames = render::SETTLE_FRAMES;
+        } else if self.settle_frames > 0 || self.gpu.as_ref().is_some_and(|gpu| gpu.pending()) {
+            // Bevy's environment filtering and temporal AA need a few frames.
+            // Return to revision-cached rendering after the image settles.
+            self.output_revision += 1;
+            self.settle_frames = self.settle_frames.saturating_sub(1);
         }
     }
     fn as_any(&self) -> &dyn Any {

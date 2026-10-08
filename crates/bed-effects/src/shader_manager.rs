@@ -561,7 +561,7 @@ mod tests {
             .recv_timeout(Duration::from_secs(10))
             .unwrap()
             .unwrap();
-        let data = buffer.slice(..).get_mapped_range().unwrap();
+        let data = buffer.slice(..).get_mapped_range();
         let pixels = data
             .chunks_exact(stride as usize)
             .flat_map(|row| row[..extent.width as usize * 4].iter().copied())

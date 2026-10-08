@@ -29,6 +29,7 @@ pub enum MenuAction {
     NewSettings,
     NewProjects,
     NewDiagnostics,
+    Debug,
     NewStructure,
     NewReferences,
     NewLspDashboard,
@@ -312,6 +313,7 @@ impl MacOsMenu {
         add(&view, MenuAction::LspDashboard, "Language Server Dashboard")?;
         add(&view, MenuAction::Projects, "Projects")?;
         add(&view, MenuAction::Diagnostics, "Diagnostics")?;
+        add(&view, MenuAction::Debug, "Debug")?;
         add(&view, MenuAction::Structure, "Structure")?;
         for (action, title) in [
             (MenuAction::NewExplorer, "New File Explorer"),
@@ -640,7 +642,7 @@ pub fn input_shortcut(action: MenuAction, settings: &Settings) -> Option<(Key, b
         NewTerminal => (Key::T, true),
         NewExplorer | NewSettings | NewProjects | NewDiagnostics | NewReferences
         | NewLspDashboard | NewContentSearch | DuplicateView | SplitRight | SplitDown
-        | ResetLayout | Projects | Diagnostics | Structure | NewStructure => {
+        | ResetLayout | Projects | Diagnostics | Structure | NewStructure | Debug => {
             return None;
         }
         OpenFolder => (Key::O, false),

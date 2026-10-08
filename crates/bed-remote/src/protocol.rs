@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 // JSON arrays of u8 require at most four bytes per input byte. Keep headroom
 // for a full file and its request metadata.
 pub const MAX_FILE_BYTES: usize = 128 * 1024 * 1024;
@@ -21,6 +21,25 @@ pub struct DirectoryEntry {
     pub is_directory: bool,
     pub is_symlink: bool,
     pub is_gitignored: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct FileInfo {
+    pub file_type: String,
+    pub size: u64,
+    pub modified_unix_seconds: Option<i64>,
+    pub is_directory: bool,
+    pub symlink_target: Option<String>,
+    pub readonly: bool,
+    pub git: Option<String>,
+    pub binary: Option<BinaryInfo>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct BinaryInfo {
+    pub format: String,
+    pub architecture: String,
+    pub debug_symbols: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -60,6 +79,10 @@ pub enum Request {
         root: String,
         path: String,
         classify_gitignored: bool,
+    },
+    FileInfo {
+        root: String,
+        path: String,
     },
     ListFiles {
         root: String,
@@ -122,6 +145,9 @@ pub enum Response {
         entries: Vec<DirectoryEntry>,
         /// Classification failures preserve the listing and leave entries visible.
         warning: Option<String>,
+    },
+    FileInfo {
+        info: FileInfo,
     },
     Files {
         paths: Vec<String>,

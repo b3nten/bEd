@@ -135,6 +135,17 @@ impl TextView {
         layout: &ViewLayout,
         highlight: Option<&EditorHighlight>,
     ) {
+        Self::draw_with_debug_highlight(ui, state, view, layout, highlight, None);
+    }
+
+    pub fn draw_with_debug_highlight(
+        ui: &Ui,
+        state: &EditorState,
+        view: &EditorViewState,
+        layout: &ViewLayout,
+        highlight: Option<&EditorHighlight>,
+        execution_row: Option<i32>,
+    ) {
         if layout.line_height <= 0.0 || state.line_count() <= 0 {
             return;
         }
@@ -153,6 +164,16 @@ impl TextView {
                     color[3] = 0.055;
                     color
                 }),
+            )
+            .filled(true)
+            .build();
+        }
+        if let Some(row) = execution_row.filter(|row| (first..=last).contains(row)) {
+            let y = layout.text_pos[1] + row as f32 * layout.line_height;
+            draw.add_rect(
+                [window_pos[0] + 6.0, y],
+                [window_pos[0] + ui.window_width(), y + layout.line_height],
+                native_color(ui, [0.95, 0.68, 0.12, 0.19]),
             )
             .filled(true)
             .build();
@@ -417,6 +438,58 @@ mod tests {
             );
             let reference = vertices(ui)[before + actual.len()..].to_vec();
             assert_eq!(actual, reference);
+        });
+    }
+
+    #[test]
+    fn execution_highlight_tracks_its_source_row_independently_of_caret() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut editor = Editor::new();
+        editor.set_content(b"first\nsecond\nthird\nfourth");
+        editor.view.row = 0;
+        render(&mut context, |ui, layout| {
+            let before = vertices(ui).len();
+            TextView::draw_with_debug_highlight(
+                ui,
+                &editor.state,
+                &editor.view,
+                layout,
+                None,
+                Some(2),
+            );
+            let actual = &vertices(ui)[before..];
+            let execution_color = native_color(ui, [0.95, 0.68, 0.12, 0.19]);
+            let execution: Vec<_> = actual
+                .iter()
+                .filter(|vertex| vertex.col == execution_color)
+                .collect();
+            assert_eq!(execution.len(), 4);
+            let top = layout.text_pos[1] + 2.0 * layout.line_height;
+            assert!(
+                execution
+                    .iter()
+                    .all(|vertex| vertex.pos.y >= top && vertex.pos.y <= top + layout.line_height)
+            );
+            assert_eq!(editor.view.row, 0);
+            assert_eq!(editor.state.join(), b"first\nsecond\nthird\nfourth");
+        });
+        render(&mut context, |ui, layout| {
+            let before = vertices(ui).len();
+            TextView::draw_with_debug_highlight(
+                ui,
+                &editor.state,
+                &editor.view,
+                layout,
+                None,
+                Some(100),
+            );
+            let execution_color = native_color(ui, [0.95, 0.68, 0.12, 0.19]);
+            assert!(
+                vertices(ui)[before..]
+                    .iter()
+                    .all(|vertex| vertex.col != execution_color)
+            );
         });
     }
 

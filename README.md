@@ -12,7 +12,7 @@ cargo run --locked -- path/to/project path/to/file.rs
 Run without paths to resume the last workspace, or use `--new-window` for the
 project picker. Recent projects remember their open
 files, independent views, tool panels, terminal working directories and docking
-layout. Documents, Files, terminals, Settings, Search, References, Diagnostics,
+layout. Documents, Files, terminals, Debug, Settings, Search, References, Diagnostics,
 Structure and Language Servers are ordinary ImGui tabs. Drag tabs between groups, split
 panels or detach them into native windows. macOS has native menus through Muda.
 On macOS, **File → New Window** (Cmd+Shift+N) or **New Window** in the Dock
@@ -75,11 +75,15 @@ External disk
 changes reload clean buffers; dirty buffers offer Reload, Keep Buffer or Save As.
 
 File opening checks registered plugin extensions first; registration order resolves
-overlapping claims. The bundled image plugin handles PNG and JPEG; the glTF
-plugin handles GLB and glTF. Other files open in the text editor or the built-in
-hex editor according to their content. Files → right-click → **Open With**
-selects a viewer explicitly. Image, glTF and hex views share the same exact-byte
-document. Switching between text and bytes saves
+overlapping claims. The bundled image plugin handles PNG/APNG, JPEG, SVG, GIF,
+WebP, BMP, ICO, TIFF, TGA, PNM (PBM/PGM/PPM/PAM), QOI, DDS (DXT textures), HDR
+and OpenEXR; the model plugin handles GLB, glTF and STL; the font plugin handles
+TTF, OTF, TTC and OTC. The audio plugin handles WAV, MP3, FLAC, Ogg/Vorbis,
+AAC/M4A, AIFF and CAF audio.
+Other files open in the text editor or the built-in hex editor according to
+their content. Files → right-click → **Open With** selects a viewer explicitly.
+Image, model, font, audio and hex views share the same exact-byte document.
+Switching between text and bytes saves
 and closes its views before reopening; a cancelled or failed save keeps them open.
 
 The hex editor shows offsets, hexadecimal bytes and ASCII. Click or Shift-click
@@ -89,14 +93,47 @@ text. Undo/redo and save use the usual shortcuts. Byte documents preserve BOMs,
 line endings and arbitrary bytes, and share save/autosave/conflict handling with
 text documents; their undo history stays in memory. The image viewer supports
 Fit, 100%, zoom and pan, plus an information popup and a default-fit setting.
-The glTF viewer previews static, self-contained models with base-color textures,
-vertex colors, depth testing, transparency and studio lighting. Drag to orbit,
+Animated images show a still preview. SVGs render at their document dimensions
+with transparency, system fonts and embedded images; external image paths are
+ignored. Raster decoding and SVG output share a 64 MiB decoded-pixel limit.
+The audio viewer shows a waveform for each channel, play/pause, restart, volume,
+elapsed/total time and a seek slider. Click or drag the waveform to seek; Space
+toggles playback while the viewer is focused. Opening audio does not start playback.
+Decoding runs in the background with a 256 MiB decoded-sample limit. Position and
+volume are restored with the workspace; closing the view stops playback.
+
+Hover over a file-tree row to see its type, exact and human-readable size,
+last-modified time (UTC), Git status and link target where applicable. Executable
+and object files also show architecture and embedded debug information or external
+debug-file references. Inspection runs in the background, caches results for five
+seconds and works in local and SSH workspaces.
+The Model Viewer uses Bevy to render static, self-contained glTF/GLB models and
+ASCII or binary STL meshes. glTF materials support metallic/roughness shading,
+normal maps, emissive maps, baked ambient occlusion, vertex colors and transparency.
+Lighting presets, environment skyboxes and screen-space ambient occlusion controls
+let you inspect models under different conditions; screen-space AO requires a
+compatible GPU. Drag to orbit,
 right/middle-drag to pan, scroll to zoom, and double-click or choose **Frame All**
-to reset the framing. Camera state is restored with the workspace. Export GLB or
+to reset the framing. Camera and lighting state are restored with the workspace. Export GLB or
 glTF with embedded buffers and PNG/JPEG textures. Draco-compressed meshes are
 decoded in Rust, and skins are shown in their authored pose with up to four
-joint influences per vertex. Companion files, morph targets, animation playback
-and full PBR materials are not supported yet.
+joint influences per vertex. Companion files, morph targets and animation playback
+are not supported yet. STL loading uses `bevy_stl` and a neutral material.
+
+The font viewer opens TTF, OTF, TTC, OTC, WOFF and WOFF2 fonts, with editable
+sample text, size and direction controls,
+ligature and kerning toggles, a scrolling glyph browser with enlarged previews and
+font-unit metrics, collection face selection, and font metadata and licensing
+text. Jump to a glyph by character, `U+0041`, or numeric glyph ID; unencoded
+alternates and ligatures are included. Copy encoded characters from the inspector.
+Drag or scroll the sample preview to pan. View settings are restored with the
+workspace, and font previews refresh after edits in a shared hex view, including
+for SSH files. HarfRust shapes each sample line as one script/direction run;
+FreeType rasterizes it independently of the editor font atlas. Wuff decodes webfonts
+in memory on the preview worker; hex editing and saving preserve the original
+compressed file. Samples are limited to 16 KiB and 256 lines, and font files to
+64 MiB before and after decoding. Automatic mixed-script/bidi paragraph layout,
+fallback fonts and variable-axis controls are not supported yet.
 
 SSH projects use the same local editor: typing, undo, selections and highlighting
 stay on your machine. Files, search, Git, language servers and shells run on the
@@ -221,6 +258,76 @@ Servers; diagnostics arrive as analysis completes.
 Install Rust's server separately with `rustup component add rust-analyzer
 rust-src`; `rust-src` enables standard-library analysis.
 
+## Debugging
+
+The dockable **Debug** panel launches local Rust and C/C++ programs with
+`lldb-dap` on macOS and Linux. Install an LLVM 18 or newer adapter separately;
+bEd does not download LLDB. Adapter discovery checks a configured executable,
+then `PATH`, then `xcrun --find lldb-dap` on macOS. An installed `lldb` command
+alone is insufficient: the toolchain must also provide `lldb-dap`.
+See [LLDB's adapter setup documentation](https://lldb.llvm.org/use/lldbdap.html)
+for toolchain and package options.
+
+Open **Debug** from the titlebar or application menus and create a named launch
+profile. A **Manual** profile selects a binary built with debug symbols and an
+optional shell build command, such as `make debug`. A **Cargo** profile discovers
+workspace packages and binary, example, unit-test and integration-test targets
+from a manifest. Choose the target and feature settings; bEd builds it and reads
+Cargo's artifact messages to find the resulting executable, including hashed
+test binaries. Cargo test profiles provide an optional test-name filter.
+
+Set program arguments, working directory, environment overrides and optional
+source-directory mappings in the profile. Arguments are passed literally to the
+program. An empty working directory uses the workspace root; build commands also
+run from that root. **Stop on Entry** starts enabled. Profiles, the selected
+profile and watch expressions are remembered per workspace.
+
+Click the breakpoint gutter beside a source line, or press **F9**, to toggle a
+breakpoint. The **Breakpoints** tab lists locations and lets you navigate,
+disable, enable or remove them. Breakpoints are shared by views of the same file
+and last until the project is closed or bEd exits. They survive program restarts
+but are not saved with the workspace.
+
+**Start** saves modified named files, runs the configured build, then launches
+only if the build succeeds. **Build Output** keeps build progress and failures.
+The program uses a **Program: <executable>** terminal for interactive input and
+output; **Show Program Terminal** reveals it. Debugger expressions and LLDB
+messages appear in Debug's **Console** tab. At a stop, bEd reveals the source
+line and **Inspect** shows threads, stack frames,
+expandable variables and watches. Select a frame to navigate and inspect it.
+Hover a simple source expression while paused for its runtime value. The
+**Console** has separate Expression and LLDB Command modes.
+
+**Stop on entry** can pause in the system loader before application code runs.
+Such frames may have no local source; press **F5** to continue to a breakpoint.
+Turn off **Stop on entry** to run directly to a breakpoint.
+
+- **F5:** Start or Continue; **Shift+F5:** Stop.
+- **F9:** Toggle Breakpoint.
+- **F10:** Step Over; **F11:** Step Into; **Shift+F11:** Step Out.
+
+The panel also provides Pause and Restart. Restart stops the program, rebuilds
+and launches again. Function keys keep their terminal behavior when a terminal
+has focus. Closing Debug leaves the session running; its active-session
+indicator reopens the panel. Switching projects or quitting stops the program.
+Closing its program terminal hides that tab; **Show Program Terminal** reopens
+the same terminal. Stopped program terminals retain their output and do not
+restart as shells.
+
+Editing source during a session marks it as changed from the launched build.
+Execution highlights and runtime hovers are suppressed for changed files, and
+new or moved breakpoints wait for restart. Disable and remove existing
+breakpoints at any time. Source mappings pair a build-time directory with its
+local directory; unavailable source does not prevent stack or variable
+inspection.
+
+The initial debugger supports one launched session per local workspace.
+SSH debugging, attaching to existing processes, core dumps, conditional
+breakpoints, logpoints, memory/disassembly views and editing variables are not
+included. Windows continues to run the editor and shows debugging as unavailable.
+
+## Embedding
+
 Embedding uses document views with an explicit service configuration. The host
 owns its context, fonts/style, clipboard, containers, windows and frame/GPU
 lifecycle. The session can own autosave, monitoring, history, Git, highlighting
@@ -258,6 +365,7 @@ cargo clippy --workspace --locked --all-targets -- -D warnings
 cargo test --workspace --locked --all-targets
 cargo test -p bed-effects --locked --lib native_shader -- --ignored --nocapture
 cargo test -p bed-plugin-gltf --locked native_ -- --ignored --nocapture
+cargo test -p bed-plugin --locked --features gpu native_shared_target -- --ignored --nocapture
 cargo run --locked -- --platform-smoke --lifecycle-smoke \
   --config-dir /tmp/bed-native-config path/to/project path/to/file.rs
 cargo run --locked -- --viewports-smoke \
@@ -308,6 +416,7 @@ live in `crates/`, with concrete APIs and one workspace lockfile:
 | `bed-files` | Bounded reads, monitoring, file discovery/filtering and cancellable project search |
 | `bed-highlight` | Tree-sitter grammars, queries, incremental spans, themes and workers |
 | `bed-lsp` | JSON-RPC/process transport, synchronization, diagnostics and workspace language servers |
+| `bed-debug` | LLDB DAP transport, debugger sessions, asynchronous builds and Cargo target discovery |
 | `bed-session` | Shared document/view registry, save/autosave, history, Git and service coordination |
 | `bed-ui` | Custom document widgets, input, find/line-jump, minimap and LSP presentation |
 | `bed-terminal` | Grid/parser, PTY workers, shell sessions, input/rendering and fonts |
@@ -316,8 +425,10 @@ live in `crates/`, with concrete APIs and one workspace lockfile:
 | `bed-headless` | Remote filesystem, search and Git services without a GUI |
 | `bed-plugin` | Native plugin contracts, contributions, snapshots, typed host requests and optional GPU canvases |
 | `bed-plugin-structure` | Source outline panel and its worker coordination |
-| `bed-plugin-image` | Read-only PNG/JPEG panels, bounded background decoding and GPU drawing |
-| `bed-plugin-gltf` | Static GLB/embedded glTF loading, orbit cameras and GPU scene rendering |
+| `bed-plugin-image` | Read-only raster/SVG panels, bounded background decoding and GPU drawing |
+| `bed-plugin-gltf` | Static GLB/embedded glTF and STL loading, orbit cameras and Bevy PBR rendering |
+| `bed-plugin-font` | HarfRust sample shaping, FreeType previews, glyph browsing and font inspection |
+| `bed-plugin-audio` | Audio decoding, channel waveforms and native play/pause/seek controls |
 | `bed` | Workbench docking, tool panels, settings, resources and native application lifecycle |
 
 Core, files, highlighting, LSP and session compile without GUI backends.
@@ -337,7 +448,7 @@ LSP widgets without exposing mutable frame state. LSP widgets take explicit
 and return navigation actions to the application.
 
 Text Editor, Hex Editor, Files, Settings and Search are host-owned features.
-Structure, Image Viewer and glTF Viewer are explicitly linked Rust plugins
+Structure, Image Viewer and Model Viewer are explicitly linked Rust plugins
 registered in the workbench's `PluginRuntime` constructor. Adding a feature means adding its crate
 dependency and one constructor to that list. There is no dynamic loading or
 plugin-to-plugin event bus.
@@ -361,20 +472,29 @@ documents.
 Panels receive the host's Dear ImGui `&Ui` in `draw` for controls, popups and
 input. With `bed-plugin`'s optional `gpu` feature, `render_output` describes a
 host-owned color target, optional depth attachment, physical size and content
-revision. The host calls `render` with its wgpu device, queue, encoder and target
+revision. The host calls `render` with its wgpu instance, adapter, device, queue, encoder and target
 after UI/input and before submitting any viewport. Plugins own their pipelines
 and source resources; a device generation identifies when to rebuild them.
 The shared `gpu::Canvas` presents the target and handles viewport DPI sizing.
 Outputs redraw on content changes, resize or device recreation, and are released
-when their panel closes. Plugins do not own native windows or submit frames.
+when their panel closes. Native windows remain host-owned. Embedded renderers
+may submit their own commands on the shared queue during `render`, before the
+host submits its canvas and UI commands; they must not depend on commands still
+pending in the supplied encoder. Embedded renderers restore the host's device
+callbacks after initialization and forward any device loss so host recovery
+continues to rebuild all plugin resources.
 
-Image and glTF use this same GPU output path. Image decoding stays on a worker;
+Image and model viewers use this same GPU output path. Image decoding stays on a worker;
 the plugin uploads a source texture once per image/device and draws zoom/pan
 into the canvas. Decoded image pixels and each output color target are limited
-to 64 MiB. glTF loading also runs on a worker, with bounds on buffers, decoded
+to 64 MiB. Model loading also runs on a worker, with bounds on buffers, decoded
 textures, vertices, indices and nodes. Draco decoding is bounded to 1,000,000
 vertices, 3,000,000 indices and 64 MiB of expanded geometry. glTF textures allow
-64 MiB per image and 128 MiB in total. Neither viewer passes CPU output pixels
+64 MiB per image and 128 MiB in total. Bevy shares the host's wgpu device and
+renders directly into its target; the host registers that texture with ImGui.
+STL input is limited to 64 MiB and 333,333 facets (fewer than 1,000,000 expanded
+vertices). Both formats load from document snapshots in local and SSH workspaces.
+Neither viewer passes CPU output pixels
 through the host request API.
 
 Run focused suites with `cargo test -p bed-core`, `cargo test -p bed-session`,

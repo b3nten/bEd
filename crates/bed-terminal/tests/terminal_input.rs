@@ -226,6 +226,7 @@ mod unix {
                     vec!["--noprofile".into(), "--norc".into(), "-i".into()],
                 )),
                 env,
+                ..PtyOptions::default()
             };
             let mut pipe = Pipe(
                 TerminalPty::spawn(

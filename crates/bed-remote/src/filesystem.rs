@@ -48,6 +48,15 @@ impl LocalBackend {
                     baseline,
                 })
             }
+            Request::FileInfo { root, path } => {
+                let root = canonical_root(&root)?;
+                let entry = resolve_entry(&root, &path)?;
+                // Inspect the link itself; never follow an external target to read its bytes.
+                let target = resolve(&root, &path, false).ok();
+                crate::file_info::inspect(&root, &entry, target.as_deref())
+                    .map(|info| Response::FileInfo { info })
+                    .map_err(Into::into)
+            }
             Request::ReadDirectory {
                 root,
                 path,
@@ -1325,6 +1334,160 @@ mod tests {
             Response::GitStatus {
                 entries: Vec::new()
             }
+        );
+    }
+
+    fn info(temp: &Temp, path: &str) -> FileInfo {
+        let Response::FileInfo { info } = LocalBackend
+            .call(Request::FileInfo {
+                root: temp.root(),
+                path: path.into(),
+            })
+            .unwrap()
+        else {
+            panic!("expected file information")
+        };
+        info
+    }
+
+    #[test]
+    fn file_information_sniffs_content_and_reports_stat_without_reading_directories() {
+        let temp = Temp::new();
+        fs::write(temp.0.join("picture.dat"), b"\x89PNG\r\n\x1a\nimage").unwrap();
+        let details = info(&temp, "picture.dat");
+        assert_eq!(details.file_type, "PNG image");
+        assert_eq!(details.size, 13);
+        assert!(details.modified_unix_seconds.is_some());
+        assert!(!details.is_directory);
+        assert!(details.binary.is_none());
+        assert!(details.git.is_none());
+        assert!(info(&temp, ".").is_directory);
+        assert_eq!(
+            LocalBackend
+                .call(Request::FileInfo {
+                    root: temp.root(),
+                    path: "../escape".into()
+                })
+                .unwrap_err()
+                .kind,
+            ErrorKind::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn file_information_distinguishes_clean_staged_modified_ignored_and_untracked_git_files() {
+        let temp = Temp::new();
+        assert!(git(&temp.0, &["init", "-q"]).unwrap().status.success());
+        fs::write(temp.0.join("tracked.rs"), b"original").unwrap();
+        assert!(
+            git(&temp.0, &["add", "--", "tracked.rs"])
+                .unwrap()
+                .status
+                .success()
+        );
+        assert_eq!(
+            info(&temp, "tracked.rs").git.as_deref(),
+            Some("Staged: added")
+        );
+        assert!(
+            git(
+                &temp.0,
+                &[
+                    "-c",
+                    "user.name=Bed",
+                    "-c",
+                    "user.email=bed@example.test",
+                    "commit",
+                    "-qm",
+                    "fixture"
+                ]
+            )
+            .unwrap()
+            .status
+            .success()
+        );
+        assert_eq!(
+            info(&temp, "tracked.rs").git.as_deref(),
+            Some("Tracked · clean")
+        );
+        fs::write(temp.0.join("tracked.rs"), b"modified").unwrap();
+        assert_eq!(
+            info(&temp, "tracked.rs").git.as_deref(),
+            Some("Working tree: modified")
+        );
+        fs::write(temp.0.join("literal[1].rs"), b"untracked").unwrap();
+        assert_eq!(
+            info(&temp, "literal[1].rs").git.as_deref(),
+            Some("Untracked")
+        );
+        fs::write(temp.0.join(".gitignore"), b"*.log\n").unwrap();
+        fs::write(temp.0.join("build.log"), b"ignored").unwrap();
+        assert_eq!(info(&temp, "build.log").git.as_deref(), Some("Ignored"));
+    }
+
+    fn elf_fixture(debug: bool) -> Vec<u8> {
+        let names = b"\0.shstrtab\0.debug_info\0";
+        let mut bytes = vec![0_u8; 256 + names.len() + 1];
+        bytes[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+        bytes[16..18].copy_from_slice(&1_u16.to_le_bytes());
+        bytes[18..20].copy_from_slice(&62_u16.to_le_bytes());
+        bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[40..48].copy_from_slice(&64_u64.to_le_bytes());
+        bytes[52..54].copy_from_slice(&64_u16.to_le_bytes());
+        bytes[58..60].copy_from_slice(&64_u16.to_le_bytes());
+        bytes[60..62].copy_from_slice(&(if debug { 3_u16 } else { 2 }).to_le_bytes());
+        bytes[62..64].copy_from_slice(&1_u16.to_le_bytes());
+        bytes[128..132].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[132..136].copy_from_slice(&3_u32.to_le_bytes());
+        bytes[152..160].copy_from_slice(&256_u64.to_le_bytes());
+        bytes[160..168].copy_from_slice(&(names.len() as u64).to_le_bytes());
+        bytes[192..196].copy_from_slice(&11_u32.to_le_bytes());
+        bytes[196..200].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[216..224].copy_from_slice(&(256_u64 + names.len() as u64).to_le_bytes());
+        bytes[224..232].copy_from_slice(&1_u64.to_le_bytes());
+        bytes[256..256 + names.len()].copy_from_slice(names);
+        bytes
+    }
+    #[test]
+    fn binary_information_checks_debug_sections_and_reports_architecture() {
+        let temp = Temp::new();
+        for debug in [true, false] {
+            fs::write(temp.0.join("binary"), elf_fixture(debug)).unwrap();
+            let binary = info(&temp, "binary").binary.unwrap();
+            assert_eq!(binary.format, "Elf");
+            assert_eq!(binary.architecture, "X86_64");
+            assert_eq!(
+                binary.debug_symbols,
+                if debug {
+                    "Embedded debug information"
+                } else {
+                    "No embedded debug information"
+                }
+            );
+        }
+        let mut malformed = elf_fixture(true);
+        malformed[40..48].copy_from_slice(&u64::MAX.to_le_bytes());
+        fs::write(temp.0.join("bad"), malformed).unwrap();
+        assert!(info(&temp, "bad").binary.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_information_reports_symlinks_without_reading_external_targets() {
+        use std::os::unix::fs::symlink;
+        let temp = Temp::new();
+        let outside = Temp::new();
+        fs::write(outside.0.join("secret"), b"\x89PNG\r\n\x1a\n").unwrap();
+        symlink(outside.0.join("secret"), temp.0.join("external")).unwrap();
+        let details = info(&temp, "external");
+        assert!(details.symlink_target.is_some());
+        assert_eq!(details.file_type, "Symbolic link (target unavailable)");
+        fs::write(temp.0.join("inside.rs"), b"text").unwrap();
+        symlink("inside.rs", temp.0.join("link")).unwrap();
+        assert_eq!(info(&temp, "link").size, 4);
+        assert_eq!(
+            info(&temp, "link").symlink_target.as_deref(),
+            Some("inside.rs")
         );
     }
 }

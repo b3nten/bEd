@@ -15,6 +15,7 @@ pub enum TitlebarAction {
     Settings,
     Search,
     Diagnostics,
+    Debug,
     Structure,
     SplitRight,
     SplitDown,
@@ -28,6 +29,7 @@ impl TitlebarAction {
             Self::Settings => "bed.settings.new",
             Self::Search => "bed.search.new",
             Self::Diagnostics => "bed.diagnostics.new",
+            Self::Debug => "bed.debug.show",
             Self::Structure => "bed.structure.new",
             Self::SplitRight => "bed.editor.split_right",
             Self::SplitDown => "bed.editor.split_down",
@@ -40,12 +42,13 @@ impl TitlebarAction {
             .find(|action| action.command_id() == id)
     }
 
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Sidebar,
         Self::Terminal,
         Self::Search,
         Self::Structure,
         Self::Diagnostics,
+        Self::Debug,
         Self::SplitRight,
         Self::SplitDown,
         Self::Settings,
@@ -62,6 +65,7 @@ pub fn core_toolbar_commands() -> Vec<CommandItem> {
             ("New Project Search", "search"),
             ("New Structure", "structure"),
             ("New Diagnostics", "diagnostics"),
+            ("Debug", "debug"),
             ("Split Editor Right", "split_right"),
             ("Split Editor Down", "split_down"),
             ("New Settings", "gear"),

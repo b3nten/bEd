@@ -7,22 +7,26 @@ publish = false
 license-file = "LICENSE"
 
 [workspace]
-members = ["crates/bed-core", "crates/bed-files", "crates/bed-highlight", "crates/bed-lsp", "crates/bed-session", "crates/bed-ui", "crates/bed-terminal", "crates/bed-effects", "crates/bed-remote", "crates/bed-headless", "crates/bed-plugin", "crates/bed-plugin-structure", "crates/bed-plugin-image", "crates/bed-plugin-gltf"]
+members = ["crates/bed-core", "crates/bed-files", "crates/bed-highlight", "crates/bed-lsp", "crates/bed-session", "crates/bed-ui", "crates/bed-terminal", "crates/bed-debug", "crates/bed-effects", "crates/bed-remote", "crates/bed-headless", "crates/bed-plugin", "crates/bed-plugin-structure", "crates/bed-plugin-image", "crates/bed-plugin-gltf", "crates/bed-plugin-font", "crates/bed-plugin-audio"]
 default-members = ["."]
-exclude = ["vendor/dear-imgui-sys", "vendor/dear-imgui-winit", "vendor/dear-imgui-wgpu", "vendor/freetype-sys"]
+exclude = ["vendor/dear-imgui-sys", "vendor/dear-imgui-winit", "vendor/dear-imgui-wgpu", "vendor/freetype-sys", "vendor/bevy_stl"]
 resolver = "3"
 
 [workspace.dependencies]
 dear-imgui-rs = { version = "=0.18.0", features = ["build-from-source", "freetype"] }
 dear-imgui-sys = { version = "=0.18.0", features = ["bundled-freetype"] }
 dear-imgui-winit = { version = "=0.18.0", features = ["multi-viewport"] }
-dear-imgui-wgpu = { version = "=0.18.0", features = ["multi-viewport-winit"] }
+dear-imgui-wgpu = { version = "=0.18.0", default-features = false, features = ["wgpu-29", "multi-viewport-winit"] }
 winit = "=0.30.13"
-wgpu = "=30.0.1"
+wgpu = "=29.0.4"
+bevy_stl = { version = "=0.18.0", default-features = false }
 arboard = { version = "=3.6.1", default-features = false }
 rfd = "=0.17.2"
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+harfrust = "=0.14.0"
+wuff = { version = "=0.2.9", default-features = false, features = ["brotli"] }
+flate2 = "=1.1.10"
 gltf = { version = "=1.4.1", default-features = false, features = ["utils", "names", "extensions", "KHR_materials_unlit"] }
 draco-core = { version = "=2.2.1", default-features = false, features = ["decoder", "edgebreaker_valence_decode", "legacy_bitstream_decode"] }
 glam = "=0.33.12"
@@ -37,6 +41,9 @@ alacritty_terminal = { version = "=0.26.0", default-features = false }
 polling = "=3.11.0"
 unicode-width = "=0.2.2"
 trash = "=5.2.9"
+rodio = { version = "=0.21.1", default-features = false, features = ["playback", "symphonia-all"] }
+object = { version = "=0.37.3", default-features = false, features = ["read", "std"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 
 cc = "=1.6.0"
 libc = "=0.2.190"
@@ -53,18 +60,24 @@ bed-lsp = { path = "crates/bed-lsp" }
 bed-session = { path = "crates/bed-session" }
 bed-ui = { path = "crates/bed-ui" }
 bed-terminal = { path = "crates/bed-terminal" }
+bed-debug = { path = "crates/bed-debug" }
 bed-effects = { path = "crates/bed-effects" }
 bed-remote = { path = "crates/bed-remote" }
 bed-plugin = { path = "crates/bed-plugin" }
 bed-plugin-structure = { path = "crates/bed-plugin-structure" }
 bed-plugin-image = { path = "crates/bed-plugin-image" }
 bed-plugin-gltf = { path = "crates/bed-plugin-gltf" }
+bed-plugin-font = { path = "crates/bed-plugin-font" }
+bed-plugin-audio = { path = "crates/bed-plugin-audio" }
 
 [dependencies]
 bed-plugin = { workspace = true }
 bed-plugin-structure = { workspace = true }
 bed-plugin-image = { workspace = true }
 bed-plugin-gltf = { workspace = true }
+bed-plugin-font = { workspace = true }
+bed-plugin-audio = { workspace = true }
+chrono = { workspace = true }
 bed-remote = { workspace = true }
 bed-core = { workspace = true }
 bed-files = { workspace = true }
@@ -73,6 +86,7 @@ bed-lsp = { workspace = true }
 bed-session = { workspace = true }
 bed-ui = { workspace = true }
 bed-terminal = { workspace = true }
+bed-debug = { workspace = true }
 bed-effects = { workspace = true }
 dear-imgui-rs = { workspace = true }
 dear-imgui-sys = { workspace = true }
@@ -111,3 +125,4 @@ harness = false
 dear-imgui-sys = { path = "vendor/dear-imgui-sys" }
 dear-imgui-winit = { path = "vendor/dear-imgui-winit" }
 dear-imgui-wgpu = { path = "vendor/dear-imgui-wgpu" }
+bevy_stl = { path = "vendor/bevy_stl" }

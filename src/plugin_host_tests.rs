@@ -147,6 +147,72 @@ fn registered_viewers_precede_content_detection_and_core_fallbacks() {
 }
 
 #[test]
+fn audio_and_hex_use_the_same_byte_document_and_switch_back_to_the_audio_viewer() {
+    let dir = TempDir::new();
+    let path = dir.write("project/tone.WAV", b"RIFF audio snapshot");
+    let mut workbench = host(&dir);
+    workbench.open_or_focus(&path).unwrap();
+    let document = workbench.active_document().unwrap();
+    assert_eq!(
+        workbench.session.document_kind(document).unwrap(),
+        DocumentKind::Bytes
+    );
+    assert!(
+        matches!(&workbench.tabs.last().unwrap().panel, Panel::Plugin(panel)
+        if panel.viewer.as_deref() == Some(bed_plugin_audio::VIEWER_ID))
+    );
+    workbench
+        .open_file_with_viewer(&path, Some("bed.hex"), true)
+        .unwrap();
+    assert_eq!(workbench.active_document(), Some(document));
+    workbench
+        .open_file_with_viewer(&path, Some(bed_plugin_audio::VIEWER_ID), true)
+        .unwrap();
+    assert_eq!(workbench.active_document(), Some(document));
+    assert_eq!(
+        workbench.active_snapshot().unwrap().bytes,
+        b"RIFF audio snapshot"
+    );
+    assert_eq!(fs::read(path).unwrap(), b"RIFF audio snapshot");
+}
+
+#[test]
+fn expanded_image_formats_route_to_bytes_and_svg_can_open_as_source() {
+    let dir = TempDir::new();
+    let svg_bytes = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3 2">
+        <rect width="3" height="2" fill="red"/>
+    </svg>"#;
+    let svg = dir.write("project/picture.SVG", svg_bytes);
+    let mut workbench = host(&dir);
+    for path in [
+        svg.clone(),
+        dir.write("project/picture.WebP", b"image snapshot"),
+        dir.write("project/picture.GIF", b"image snapshot"),
+        dir.write("project/picture.TGA", b"image snapshot"),
+    ] {
+        workbench.open_or_focus(&path).unwrap();
+        assert_eq!(
+            workbench
+                .session
+                .document_kind(workbench.active_document().unwrap())
+                .unwrap(),
+            DocumentKind::Bytes
+        );
+        assert!(matches!(&workbench.tabs.last().unwrap().panel,
+            Panel::Plugin(panel) if panel.viewer.as_deref() == Some(bed_plugin_image::VIEWER_ID)));
+    }
+    workbench
+        .open_file_with_viewer(&svg, Some("bed.text"), false)
+        .unwrap();
+    assert!(matches!(
+        workbench.tabs.last().unwrap().panel,
+        Panel::Document(_)
+    ));
+    assert_eq!(workbench.active_snapshot().unwrap().bytes, svg_bytes);
+    assert_eq!(fs::read(&svg).unwrap(), svg_bytes);
+}
+
+#[test]
 fn image_and_hex_share_edits_and_last_panel_close_saves() {
     let dir = TempDir::new();
     let path = dir.write("project/picture.png", b"original");
@@ -312,7 +378,9 @@ fn workspace_restores_gltf_camera_and_shares_its_bytes_with_hex() {
         include_bytes!("../tests/fixtures/gltf/cube.glb"),
     );
     let camera = json!({"camera": {"target": [2.0, 3.0, 4.0], "yaw": 1.0,
-        "pitch": 0.5, "distance": 12.0}});
+        "pitch": 0.5, "distance": 12.0},
+        "render": {"lighting": 2, "skybox": true, "shadows": false,
+            "ao": false, "exposure": 1.5}});
     let mut first = host(&dir);
     first.open_or_focus(&path).unwrap();
     let document = first.active_document().unwrap();
@@ -351,6 +419,159 @@ fn workspace_restores_gltf_camera_and_shares_its_bytes_with_hex() {
     assert_eq!(documents.len(), 2);
     assert_eq!(documents[0], documents[1]);
     assert_eq!(second.panel_count("hex"), 1);
+}
+
+#[test]
+fn stl_viewer_routes_and_shares_byte_edits_with_hex() {
+    let dir = TempDir::new();
+    let bytes = b"solid triangle\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid triangle\n";
+    let path = dir.write("project/triangle.STL", bytes);
+    let mut workbench = host(&dir);
+    workbench.open_or_focus(&path).unwrap();
+    let document = workbench.active_document().unwrap();
+    assert_eq!(
+        workbench.session.document_kind(document).unwrap(),
+        DocumentKind::Bytes
+    );
+    let Panel::Plugin(panel) = &workbench.tabs.last().unwrap().panel else {
+        panic!("STL must open in the model plugin");
+    };
+    assert_eq!(panel.viewer.as_deref(), Some(bed_plugin_gltf::VIEWER_ID));
+    workbench
+        .open_file_with_viewer(&path, Some("bed.hex"), true)
+        .unwrap();
+    assert_eq!(workbench.active_document(), Some(document));
+    edit(&mut workbench, document, 0..1, b"S");
+    workbench.refresh_plugins().unwrap();
+    let snapshot = workbench
+        .plugins
+        .frame
+        .documents
+        .iter()
+        .find(|snapshot| snapshot.id == document)
+        .unwrap();
+    assert_eq!(snapshot.bytes[0], b'S');
+    assert_eq!(&snapshot.bytes[1..], &bytes[1..]);
+    workbench.session.undo_document(document).unwrap();
+    workbench.persist_workspace().unwrap();
+
+    let mut restored = host(&dir);
+    restored.restore_last_workspace().unwrap();
+    let documents: Vec<_> = restored
+        .tabs
+        .iter()
+        .filter_map(|tab| tab.panel.document())
+        .collect();
+    assert_eq!(documents.len(), 2);
+    assert_eq!(documents[0], documents[1]);
+    assert_eq!(restored.panel_count(bed_plugin_gltf::PANEL_ID), 1);
+    assert_eq!(restored.panel_count("hex"), 1);
+}
+
+#[test]
+fn font_viewer_routes_restores_state_and_shares_byte_edits_with_hex() {
+    let dir = TempDir::new();
+    let bytes = include_bytes!("../resources/fonts/SourceCodePro-Regular.ttf");
+    let path = dir.write("project/typeface.TTF", bytes);
+    let mut first = host(&dir);
+    first.open_or_focus(&path).unwrap();
+    let document = first.active_document().unwrap();
+    assert_eq!(
+        first.session.document_kind(document).unwrap(),
+        DocumentKind::Bytes
+    );
+    let Panel::Plugin(panel) = &mut first.tabs.last_mut().unwrap().panel else {
+        panic!("TTF must open in the font plugin");
+    };
+    assert_eq!(panel.viewer.as_deref(), Some(bed_plugin_font::VIEWER_ID));
+    panel.instance = bed_plugin_font::FontPlugin.create_panel(
+        bed_plugin_font::PANEL_ID, Some(document),
+        &json!({"view": 1, "size": 72, "sample": "office سلام", "selected": 36, "ligatures": false}),
+    ).unwrap();
+    let expected = panel.instance.save_state();
+    first
+        .open_file_with_viewer(&path, Some("bed.hex"), true)
+        .unwrap();
+    assert_eq!(first.active_document(), Some(document));
+    edit(&mut first, document, 0..1, b"x");
+    first.refresh_plugins().unwrap();
+    let plugin_document = first
+        .plugins
+        .frame
+        .documents
+        .iter()
+        .find(|d| d.id == document)
+        .unwrap();
+    assert_eq!(plugin_document.bytes[0], b'x');
+    first.session.undo_document(document).unwrap();
+    first.persist_workspace().unwrap();
+    let mut second = host(&dir);
+    second.restore_last_workspace().unwrap();
+    let font = second
+        .tabs
+        .iter()
+        .find_map(|tab| match &tab.panel {
+            Panel::Plugin(panel) if panel.viewer.as_deref() == Some(bed_plugin_font::VIEWER_ID) => {
+                Some(panel)
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(font.instance.save_state(), expected);
+    let attached: Vec<_> = second
+        .tabs
+        .iter()
+        .filter_map(|tab| tab.panel.document())
+        .collect();
+    assert_eq!(attached.len(), 2);
+    assert_eq!(attached[0], attached[1]);
+    assert_eq!(second.panel_count("hex"), 1);
+}
+
+#[test]
+fn webfont_viewers_save_compressed_bytes_and_share_hex_undo() {
+    let fonts: [(&str, &[u8]); 2] = [
+        (
+            "WOFF",
+            include_bytes!("../crates/bed-plugin-font/tests/fixtures/SourceCodePro-Regular.woff"),
+        ),
+        (
+            "woff2",
+            include_bytes!("../crates/bed-plugin-font/tests/fixtures/SourceCodePro-Regular.woff2"),
+        ),
+    ];
+    for (extension, original) in fonts {
+        let dir = TempDir::new();
+        let path = dir.write(&format!("project/typeface.{extension}"), original);
+        let mut workbench = host(&dir);
+        workbench.open_or_focus(&path).unwrap();
+        let document = workbench.active_document().unwrap();
+        let Panel::Plugin(panel) = &workbench.tabs.last().unwrap().panel else {
+            panic!("{extension} must open in the font plugin");
+        };
+        assert_eq!(panel.viewer.as_deref(), Some(bed_plugin_font::VIEWER_ID));
+        workbench
+            .open_file_with_viewer(&path, Some("bed.hex"), true)
+            .unwrap();
+        assert_eq!(workbench.active_document(), Some(document));
+        edit(&mut workbench, document, 0..1, b"x");
+        workbench.handle_action(HostAction::Save).unwrap();
+        let mut edited = original.to_vec();
+        edited[0] = b'x';
+        assert_eq!(fs::read(&path).unwrap(), edited);
+        workbench.session.undo_document(document).unwrap();
+        workbench.handle_action(HostAction::Save).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), original);
+        workbench.refresh_plugins().unwrap();
+        let plugin_document = workbench
+            .plugins
+            .frame
+            .documents
+            .iter()
+            .find(|d| d.id == document)
+            .unwrap();
+        assert_eq!(plugin_document.bytes.as_ref(), original);
+    }
 }
 
 #[test]

@@ -21,6 +21,7 @@ struct Session {
     ended: bool,
     working_directory: Option<PathBuf>,
     ssh_target: Option<bed_remote::SshTarget>,
+    command_title: Option<String>,
     last_reported_title: String,
 }
 impl Session {
@@ -33,6 +34,7 @@ impl Session {
             ended: false,
             working_directory: None,
             ssh_target,
+            command_title: None,
             last_reported_title: "Terminal".into(),
         }
     }
@@ -40,6 +42,9 @@ impl Session {
         self.pty.is_some() && !self.ended
     }
     fn title(&self) -> String {
+        if let Some(title) = &self.command_title {
+            return tab_title(title);
+        }
         let foreground = self.pty.as_ref().and_then(|pty| {
             self.ssh_target
                 .is_none()
@@ -109,6 +114,57 @@ impl BedTerminal {
         self.want_focus = true;
         self.sessions[self.active].id
     }
+    /// Launch an owned local command immediately, without a shell wrapper.
+    /// Arguments and environment are passed literally through `PtyOptions`.
+    /// The returned child PID can answer a DAP `runInTerminal` request. These
+    /// sessions never restart automatically or through the terminal Restart UI.
+    pub fn new_command_session(
+        &mut self,
+        options: PtyOptions,
+        title: impl Into<String>,
+    ) -> io::Result<(u64, u32)> {
+        if options.shell.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Command terminal requires an executable",
+            ));
+        }
+        let pty = TerminalPty::spawn(&options, default_window_size())?;
+        let process_id = pty.process_id();
+        self.add_session();
+        let session = &mut self.sessions[self.active];
+        session.working_directory = options.working_directory;
+        session.ssh_target = None;
+        session.command_title = Some(title.into());
+        session.pty = Some(pty);
+        self.visible = true;
+        self.want_focus = true;
+        self.needs_font_resync = true;
+        Ok((session.id, process_id))
+    }
+    /// Command transcripts should not be restored as ordinary shell sessions.
+    pub fn is_command_session(&self, id: u64) -> bool {
+        self.sessions
+            .iter()
+            .find(|session| session.id == id)
+            .is_some_and(|session| session.command_title.is_some())
+    }
+    /// Terminate the child while retaining its terminal screen and scrollback.
+    pub fn stop_session_id(&mut self, id: u64) -> bool {
+        let Some(session) = self.sessions.iter_mut().find(|session| session.id == id) else {
+            return false;
+        };
+        if let Some(pty) = session.pty.as_mut() {
+            let _ = SessionPipe {
+                pty,
+                ended: &mut session.ended,
+            }
+            .pump(&mut session.terminal);
+        }
+        session.shutdown();
+        session.ended = true;
+        true
+    }
     pub fn session_ids(&self) -> Vec<u64> {
         self.sessions.iter().map(|s| s.id).collect()
     }
@@ -165,11 +221,13 @@ impl BedTerminal {
         }
         if self.sessions[index].ended {
             ui.text_disabled("Session ended");
-            ui.same_line();
-            if ui.button(format!("Restart###restart_terminal_{id}")) {
-                self.ensure_shell(index)?;
-                self.active = index;
-                self.want_focus = true;
+            if self.sessions[index].command_title.is_none() {
+                ui.same_line();
+                if ui.button(format!("Restart###restart_terminal_{id}")) {
+                    self.ensure_shell(index)?;
+                    self.active = index;
+                    self.want_focus = true;
+                }
             }
         }
         if self.want_focus && self.active == index {
@@ -344,7 +402,7 @@ impl BedTerminal {
         }
     }
     fn ensure_shell(&mut self, index: usize) -> io::Result<()> {
-        if self.sessions[index].alive() {
+        if self.sessions[index].alive() || self.sessions[index].command_title.is_some() {
             return Ok(());
         }
         self.sessions[index].shutdown();
@@ -373,15 +431,7 @@ impl BedTerminal {
                 );
             }
         }
-        let pty = TerminalPty::spawn(
-            &options,
-            WindowSize {
-                num_cols: 80,
-                num_lines: 24,
-                cell_width: 8,
-                cell_height: 16,
-            },
-        )?;
+        let pty = TerminalPty::spawn(&options, default_window_size())?;
         self.sessions[index].terminal = Terminal::new(80, 24);
         if let Some(theme) = &self.theme {
             self.sessions[index].terminal.set_theme(theme);
@@ -476,7 +526,17 @@ impl BedTerminal {
                         Err(error) => result = Err(error),
                     }
                 }
-                if let Err(error) = self.ensure_shell(i) {
+                if self.sessions[i].command_title.is_some() {
+                    let id = self.sessions[i].id;
+                    match self.render_session(ui, fonts, id) {
+                        Ok(changed) => {
+                            if let Ok(value) = &mut result {
+                                *value |= changed;
+                            }
+                        }
+                        Err(error) => result = Err(error),
+                    }
+                } else if let Err(error) = self.ensure_shell(i) {
                     ui.text("Terminal session ended. Click + or press Cmd/Ctrl+T.");
                     result = Err(error);
                 } else {
@@ -515,6 +575,15 @@ impl BedTerminal {
             sys::igEndTabBar();
         }
         result
+    }
+}
+
+fn default_window_size() -> WindowSize {
+    WindowSize {
+        num_cols: 80,
+        num_lines: 24,
+        cell_width: 8,
+        cell_height: 16,
     }
 }
 
@@ -699,6 +768,86 @@ fn transparent_view() -> TerminalView {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn command_sessions_start_eagerly_keep_transcript_and_cannot_restart_as_shell() {
+        use crate::terminal_pty::TerminalShell;
+        use std::time::{Duration, Instant};
+        let mut terminal = BedTerminal::new_empty();
+        terminal.set_ssh_target(Some(bed_remote::SshTarget::new("unused-host")));
+        let (id, pid) = terminal
+            .new_command_session(
+                PtyOptions {
+                    shell: Some(TerminalShell::new(
+                        "/bin/sh",
+                        vec!["-c".into(), "printf 'DEBUG_OUTPUT'; exec sleep 10".into()],
+                    )),
+                    working_directory: Some(PathBuf::from("/")),
+                    ..PtyOptions::default()
+                },
+                "Debug program",
+            )
+            .unwrap();
+        assert!(pid > 0);
+        assert!(terminal.is_started());
+        assert!(terminal.is_command_session(id));
+        assert!(!terminal.is_command_session(id + 1));
+        assert_eq!(terminal.sessions[0].pty.as_ref().unwrap().process_id(), pid);
+        assert!(terminal.sessions[0].ssh_target.is_none());
+        assert_eq!(terminal.session_title(id).as_deref(), Some("Debug program"));
+        let transcript = |terminal: &BedTerminal| {
+            (0..12)
+                .map(|col| terminal.sessions[0].terminal.cell(0, col).character)
+                .collect::<String>()
+        };
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while transcript(&terminal) != "DEBUG_OUTPUT" && Instant::now() < deadline {
+            terminal.poll().unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(transcript(&terminal), "DEBUG_OUTPUT");
+        assert!(terminal.stop_session_id(id));
+        assert!(!terminal.is_started());
+        assert!(terminal.sessions[0].pty.is_none());
+        assert!(terminal.sessions[0].ended);
+        terminal.ensure_shell(0).unwrap();
+        terminal.hide();
+        terminal.set_visible(true, false).unwrap();
+        assert!(terminal.sessions[0].pty.is_none());
+        assert_eq!(transcript(&terminal), "DEBUG_OUTPUT");
+        assert!(terminal.stop_session_id(id));
+        assert!(!terminal.stop_session_id(id + 1));
+        assert!(terminal.close_session_id(id));
+        assert!(terminal.session_ids().is_empty());
+    }
+
+    #[test]
+    fn command_spawn_failure_does_not_allocate_a_session_or_fallback_to_shell() {
+        use crate::terminal_pty::TerminalShell;
+        let mut terminal = BedTerminal::new_empty();
+        assert!(
+            terminal
+                .new_command_session(PtyOptions::default(), "Debug")
+                .is_err()
+        );
+        assert!(
+            terminal
+                .new_command_session(
+                    PtyOptions {
+                        shell: Some(TerminalShell::new(
+                            "/missing-bed-debug-command/program",
+                            Vec::new(),
+                        )),
+                        ..PtyOptions::default()
+                    },
+                    "Debug",
+                )
+                .is_err()
+        );
+        assert!(terminal.session_ids().is_empty());
+        assert_eq!(terminal.new_session(), 1);
+    }
+
     #[test]
     fn sessions_capture_their_target_and_root_across_project_switches() {
         let mut terminal = BedTerminal::new_empty();
