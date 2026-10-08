@@ -379,8 +379,9 @@ fn workspace_restores_gltf_camera_and_shares_its_bytes_with_hex() {
     );
     let camera = json!({"camera": {"target": [2.0, 3.0, 4.0], "yaw": 1.0,
         "pitch": 0.5, "distance": 12.0},
-        "render": {"lighting": 2, "skybox": true, "shadows": false,
-            "ao": false, "exposure": 1.5}});
+        "render": {"lighting": 4, "display": 3, "normals": true,
+            "normal_length": 0.125, "skybox": true, "skybox_blur": 0.5, "horizon": -18.0,
+            "shadows": false, "ao": false, "exposure": 1.5}});
     let mut first = host(&dir);
     first.open_or_focus(&path).unwrap();
     let document = first.active_document().unwrap();

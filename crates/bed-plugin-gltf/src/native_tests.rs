@@ -1,6 +1,7 @@
 //! Pixel assertions on the real GPU; opt in on machines with a native adapter.
 use super::{
     camera::Camera,
+    debug_views::DisplayMode,
     model::{Image, Material, Primitive, Scene, TextureInfo, TextureSampler, Vertex},
     render::{Lighting, SETTLE_FRAMES, SceneGpu, Settings},
 };
@@ -413,10 +414,28 @@ fn sphere(metallic: f32, roughness: f32) -> Scene {
 
 fn changed_pixels(a: &[u8], b: &[u8]) -> usize {
     assert_eq!(a.len(), b.len());
-    a.chunks_exact(4)
-        .zip(b.chunks_exact(4))
+    a.as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.as_chunks::<4>().0)
         .filter(|(a, b)| (0..3).any(|channel| a[channel].abs_diff(b[channel]) > 10))
         .count()
+}
+
+fn capture(name: &str, pixels: &[u8], size: [u32; 2]) {
+    let Some(directory) = std::env::var_os("BED_MODEL_CAPTURE_DIR") else {
+        return;
+    };
+    let directory = std::path::PathBuf::from(directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    image::save_buffer(
+        directory.join(format!("{name}.png")),
+        pixels,
+        size[0],
+        size[1],
+        image::ColorType::Rgba8,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -485,7 +504,9 @@ fn native_pbr_lighting_skybox_and_target_resize() {
     assert_eq!(resized.len(), 192 * 128 * 4);
     assert!(
         resized
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel[0] > 30 && pixel[1] > 30)
     );
 }
@@ -534,10 +555,547 @@ endsolid tetrahedron
     let values = pixels(&gpu, &scene, camera, [128; 2]);
     assert!(
         values
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|pixel| pixel[..3].iter().all(|channel| *channel > 20))
             .count()
             > 1000,
         "STL geometry must render with the shared lit material"
+    );
+}
+
+#[test]
+#[ignore = "requires a native GPU adapter"]
+fn native_debug_modes_overlay_and_normal_lines() {
+    let gpu = device();
+    let mut scene = overlap(gltf::material::AlphaMode::Opaque, 1.0);
+    scene.primitives.truncate(1);
+    scene.minimum = Vec3::new(-1.0, -1.0, 1.0);
+    scene.maximum = Vec3::new(1.0, 1.0, 1.0);
+    let camera = Camera {
+        target: Vec3::Z,
+        yaw: 0.0,
+        pitch: 0.0,
+        distance: 4.0,
+    };
+    let mut renderer = gpu.renderer(&scene);
+    let center = |values: &[u8]| values[(64 * 128 + 64) * 4..(64 * 128 + 64) * 4 + 3].to_vec();
+    let render = |renderer: &mut SceneGpu, display| {
+        render_pixels(
+            &gpu,
+            renderer,
+            &scene,
+            camera,
+            [128; 2],
+            Settings {
+                display,
+                ..Settings::default()
+            },
+        )
+    };
+    let shaded = render(&mut renderer, DisplayMode::Shaded);
+    capture("shaded", &shaded, [128; 2]);
+    assert!(
+        center(&shaded)[0] > 80,
+        "the triangle must cover the center"
+    );
+    let wireframe = render(&mut renderer, DisplayMode::Wireframe);
+    capture("wireframe", &wireframe, [128; 2]);
+    assert!(
+        center(&wireframe).iter().all(|channel| *channel < 10),
+        "wireframe must remove the filled triangle interior"
+    );
+    assert!(
+        wireframe
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[..3].iter().any(|channel| *channel > 40))
+            .count()
+            > 30,
+        "wireframe must still draw the triangle edges"
+    );
+    let overlay = render(&mut renderer, DisplayMode::WireframeOverlay);
+    capture("wireframe-overlay", &overlay, [128; 2]);
+    assert!(
+        center(&shaded)
+            .iter()
+            .zip(center(&overlay))
+            .all(|(a, b)| a.abs_diff(b) < 15),
+        "wireframe overlay must retain the shaded triangle interior"
+    );
+    assert!(
+        changed_pixels(&shaded, &overlay) > 30,
+        "wireframe overlay must visibly add triangle edges"
+    );
+    let normals = render(&mut renderer, DisplayMode::Normals);
+    capture("normals", &normals, [128; 2]);
+    let normal = center(&normals);
+    assert!(
+        normal[2] > normal[0].saturating_add(20) && normal[2] > normal[1].saturating_add(20),
+        "a +Z-facing normal must use the blue normal visualization: {normal:?}"
+    );
+    let restored = render(&mut renderer, DisplayMode::Shaded);
+    assert!(
+        center(&shaded)
+            .iter()
+            .zip(center(&restored))
+            .all(|(a, b)| a.abs_diff(b) < 15),
+        "returning to Shaded must restore the imported material"
+    );
+    let oblique = Camera {
+        yaw: 0.5,
+        pitch: 0.35,
+        ..camera
+    };
+    let without_lines = render_pixels(
+        &gpu,
+        &mut renderer,
+        &scene,
+        oblique,
+        [128; 2],
+        Settings::default(),
+    );
+    let with_lines = render_pixels(
+        &gpu,
+        &mut renderer,
+        &scene,
+        oblique,
+        [128; 2],
+        Settings {
+            normals: true,
+            normal_length: 0.25,
+            ..Settings::default()
+        },
+    );
+    capture("normal-vectors", &with_lines, [128; 2]);
+    assert!(
+        changed_pixels(&without_lines, &with_lines) > 5,
+        "normal lines must extend visibly from the mesh in an oblique view"
+    );
+}
+
+#[test]
+#[ignore = "requires a native GPU adapter"]
+fn native_environment_resolution_transitions() {
+    let gpu = device();
+    let glossy = sphere(1.0, 0.08);
+    let (mut camera, _) = Camera::restore(&serde_json::Value::Null);
+    camera.fit(&glossy, 1.0);
+    let mut renderer = gpu.renderer(&glossy);
+
+    // The normal viewer starts with a 64-pixel procedural environment. Bundled
+    // HDRIs use 256-pixel cubemaps, so switching either way must replace the
+    // filtered maps and their mip chains on this same renderer.
+    let mut previous = render_pixels(
+        &gpu,
+        &mut renderer,
+        &glossy,
+        camera,
+        [128; 2],
+        Settings::default(),
+    );
+    for lighting in [
+        Lighting::StudioSmall08,
+        Lighting::KiaraDawn,
+        Lighting::Outdoor,
+        Lighting::StudioSmall08,
+    ] {
+        let current = render_pixels(
+            &gpu,
+            &mut renderer,
+            &glossy,
+            camera,
+            [128; 2],
+            Settings {
+                lighting,
+                ..Settings::default()
+            },
+        );
+        assert!(
+            changed_pixels(&previous, &current) > 200,
+            "switching to {lighting:?} must update model reflections"
+        );
+        previous = current;
+    }
+
+    for lighting in [Lighting::Outdoor, Lighting::KiaraDawn] {
+        let current = render_pixels(
+            &gpu,
+            &mut renderer,
+            &glossy,
+            camera,
+            [128; 2],
+            Settings {
+                lighting,
+                skybox: true,
+                ..Settings::default()
+            },
+        );
+        assert!(
+            changed_pixels(&previous, &current) > 1000,
+            "switching to {lighting:?} must update the visible environment"
+        );
+        previous = current;
+    }
+
+    // Also change resolution before the initial environment's filtering has
+    // settled, as when the user quickly selects another lighting preset.
+    let mut renderer = gpu.renderer(&glossy);
+    let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let target = RenderTarget::new(
+        &gpu.device,
+        RenderOutput {
+            handle: TextureHandle(1),
+            size: [128; 2],
+            depth: true,
+            revision: 1,
+        },
+    )
+    .unwrap();
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    for lighting in [
+        Lighting::Studio,
+        Lighting::StudioSmall08,
+        Lighting::KiaraDawn,
+        Lighting::Outdoor,
+        Lighting::KiaraDawn,
+    ] {
+        renderer
+            .render(
+                &mut gpu.context(&mut encoder),
+                &target,
+                camera,
+                glossy.radius(),
+                [0.0, 0.0, 0.0, 1.0],
+                Settings {
+                    lighting,
+                    skybox: true,
+                    ..Settings::default()
+                },
+            )
+            .unwrap();
+    }
+    gpu.assert_valid(scope);
+    let settled = render_pixels(
+        &gpu,
+        &mut renderer,
+        &glossy,
+        camera,
+        [128; 2],
+        Settings {
+            lighting: Lighting::KiaraDawn,
+            skybox: true,
+            ..Settings::default()
+        },
+    );
+    assert!(
+        changed_pixels(&previous, &settled) < 300,
+        "rapid preset changes must settle on the selected HDRI"
+    );
+}
+
+#[test]
+#[ignore = "requires a native GPU adapter"]
+fn native_embedded_hdri_lighting_and_lowered_horizon() {
+    let gpu = device();
+    let glossy = sphere(1.0, 0.08);
+    let (mut camera, _) = Camera::restore(&serde_json::Value::Null);
+    camera.fit(&glossy, 1.0);
+    let mut renderer = gpu.renderer(&glossy);
+    let studio_settings = Settings {
+        lighting: Lighting::StudioSmall08,
+        ..Settings::default()
+    };
+    let studio = render_pixels(
+        &gpu,
+        &mut renderer,
+        &glossy,
+        camera,
+        [128; 2],
+        studio_settings,
+    );
+    capture("studio-hdri-reflections", &studio, [128; 2]);
+    let dawn_settings = Settings {
+        lighting: Lighting::KiaraDawn,
+        ..Settings::default()
+    };
+    let dawn = render_pixels(
+        &gpu,
+        &mut renderer,
+        &glossy,
+        camera,
+        [128; 2],
+        dawn_settings,
+    );
+    capture("dawn-hdri-reflections", &dawn, [128; 2]);
+    assert!(
+        changed_pixels(&studio, &dawn) > 200,
+        "the bundled studio and dawn HDRIs must produce distinct reflections"
+    );
+    let dawn_sky = render_pixels(
+        &gpu,
+        &mut renderer,
+        &glossy,
+        camera,
+        [128; 2],
+        Settings {
+            skybox: true,
+            ..dawn_settings
+        },
+    );
+    capture("dawn-hdri-skybox", &dawn_sky, [128; 2]);
+    assert!(
+        changed_pixels(&dawn, &dawn_sky) > 1000,
+        "the bundled HDRI must also render as the skybox"
+    );
+
+    // An unlit surface isolates horizon changes from changes to reflections.
+    // Its center stays in place while the visible environment rotates lower.
+    let mut scene = overlap(gltf::material::AlphaMode::Opaque, 1.0);
+    scene.primitives.truncate(1);
+    let mut renderer = gpu.renderer(&scene);
+    let camera = Camera {
+        target: Vec3::ZERO,
+        yaw: 0.0,
+        pitch: 0.0,
+        distance: 4.0,
+    };
+    let horizon_settings = Settings {
+        skybox: true,
+        horizon: 30.0,
+        ..dawn_settings
+    };
+    let high = render_pixels(
+        &gpu,
+        &mut renderer,
+        &scene,
+        camera,
+        [128; 2],
+        horizon_settings,
+    );
+    let low = render_pixels(
+        &gpu,
+        &mut renderer,
+        &scene,
+        camera,
+        [128; 2],
+        Settings {
+            horizon: -30.0,
+            ..horizon_settings
+        },
+    );
+    capture("horizon-raised", &high, [128; 2]);
+    capture("horizon-lowered", &low, [128; 2]);
+    assert!(
+        changed_pixels(&high, &low) > 1000,
+        "lowering the horizon must visibly change the environment background"
+    );
+    let center = (64 * 128 + 64) * 4;
+    assert!(
+        high[center..center + 3]
+            .iter()
+            .zip(&low[center..center + 3])
+            .all(|(a, b)| a.abs_diff(*b) < 10),
+        "lowering the horizon must preserve the model's position and unlit color"
+    );
+}
+
+#[test]
+#[ignore = "requires a native GPU adapter"]
+fn native_skybox_blur_preserves_reflections_and_survives_environment_switching() {
+    let gpu = device();
+    let glossy = sphere(1.0, 0.08);
+    let (mut camera, _) = Camera::restore(&serde_json::Value::Null);
+    camera.fit(&glossy, 1.0);
+    let mut renderer = gpu.renderer(&glossy);
+    let settings = Settings {
+        lighting: Lighting::KiaraDawn,
+        skybox: true,
+        ..Settings::default()
+    };
+    // Warm shader compilation and environment filtering before comparison.
+    render_pixels(&gpu, &mut renderer, &glossy, camera, [128; 2], settings);
+    let sharp = render_pixels(&gpu, &mut renderer, &glossy, camera, [128; 2], settings);
+    let soft = render_pixels(
+        &gpu,
+        &mut renderer,
+        &glossy,
+        camera,
+        [128; 2],
+        Settings {
+            skybox_blur: 0.25,
+            ..settings
+        },
+    );
+    capture("skybox-soft", &soft, [128; 2]);
+    let blurred_settings = Settings {
+        skybox_blur: 0.75,
+        ..settings
+    };
+    let blurred = render_pixels(
+        &gpu,
+        &mut renderer,
+        &glossy,
+        camera,
+        [128; 2],
+        blurred_settings,
+    );
+    capture("skybox-sharp", &sharp, [128; 2]);
+    capture("skybox-blurred", &blurred, [128; 2]);
+    assert!(
+        changed_pixels(&sharp, &blurred) > 1000,
+        "skybox blur must visibly change the HDRI background"
+    );
+
+    // Only sample the outer border, well away from the sphere and its edge.
+    // Neighbor differences measure background detail independently of brightness.
+    let background_detail = |pixels: &[u8]| {
+        let mut detail = 0_u64;
+        let background = |x: usize, y: usize| !(20..108).contains(&x) || !(20..108).contains(&y);
+        for y in 0..127 {
+            for x in 0..127 {
+                if !background(x, y) {
+                    continue;
+                }
+                let pixel = (y * 128 + x) * 4;
+                for (nx, ny) in [(x + 1, y), (x, y + 1)] {
+                    if background(nx, ny) {
+                        let neighbor = (ny * 128 + nx) * 4;
+                        for channel in 0..3 {
+                            detail += u64::from(
+                                pixels[pixel + channel].abs_diff(pixels[neighbor + channel]),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        detail
+    };
+    let sharp_detail = background_detail(&sharp);
+    let soft_detail = background_detail(&soft);
+    let blurred_detail = background_detail(&blurred);
+    assert!(
+        blurred_detail * 4 < sharp_detail * 3,
+        "blur must reduce background detail: sharp {sharp_detail}, blurred {blurred_detail}"
+    );
+    assert!(
+        blurred_detail < soft_detail && soft_detail < sharp_detail,
+        "intermediate blur must preserve more detail: sharp {sharp_detail}, soft {soft_detail}, blurred {blurred_detail}"
+    );
+
+    // The center lies entirely inside the glossy sphere. Blurring the skybox
+    // must leave its PBR reflection image and sampler unchanged.
+    let mut reflection_difference = 0_u64;
+    for y in 48..80 {
+        for x in 48..80 {
+            let pixel = (y * 128 + x) * 4;
+            for channel in 0..3 {
+                reflection_difference +=
+                    u64::from(sharp[pixel + channel].abs_diff(blurred[pixel + channel]));
+            }
+        }
+    }
+    assert!(
+        reflection_difference < 32 * 32 * 3 * 3,
+        "skybox blur must preserve model shading and reflections: total difference {reflection_difference}"
+    );
+    let restored = render_pixels(&gpu, &mut renderer, &glossy, camera, [128; 2], settings);
+    capture("skybox-restored", &restored, [128; 2]);
+    let restored_detail = background_detail(&restored);
+    let restored_difference: u64 = sharp
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(restored.as_chunks::<4>().0)
+        .map(|(a, b)| {
+            (0..3)
+                .map(|channel| u64::from(a[channel].abs_diff(b[channel])))
+                .sum::<u64>()
+        })
+        .sum();
+    // TAA jitter changes fine rock edges between captures. Check restoration
+    // by its recovered detail and mean color error instead of pixel identity.
+    assert!(
+        restored_detail * 5 > sharp_detail * 4
+            && restored_detail * 4 < sharp_detail * 5
+            && restored_difference < 128 * 128 * 3 * 4,
+        "zero blur must restore the sharp HDRI: sharp detail {sharp_detail}, restored {restored_detail}, total RGB difference {restored_difference}"
+    );
+
+    // Procedural cubemaps have seven mip levels; bundled HDRIs have nine.
+    // Exercise both directions and slider limits on the same live renderer.
+    for (lighting, skybox_blur) in [
+        (Lighting::Outdoor, 1.0),
+        (Lighting::StudioSmall08, 0.25),
+        (Lighting::KiaraDawn, 1.0),
+        (Lighting::Studio, 0.0),
+        (Lighting::KiaraDawn, 0.75),
+    ] {
+        render_pixels(
+            &gpu,
+            &mut renderer,
+            &glossy,
+            camera,
+            [128; 2],
+            Settings {
+                lighting,
+                skybox_blur,
+                ..settings
+            },
+        );
+    }
+
+    // Switch again before environment filtering finishes, as when the user
+    // moves the blur slider while choosing a different HDRI.
+    let mut renderer = gpu.renderer(&glossy);
+    let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let target = RenderTarget::new(
+        &gpu.device,
+        RenderOutput {
+            handle: TextureHandle(1),
+            size: [128; 2],
+            depth: true,
+            revision: 1,
+        },
+    )
+    .unwrap();
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    for (lighting, skybox_blur) in [
+        (Lighting::Studio, 1.0),
+        (Lighting::StudioSmall08, 0.5),
+        (Lighting::Outdoor, 0.0),
+        (Lighting::KiaraDawn, 1.0),
+        (Lighting::KiaraDawn, 0.75),
+    ] {
+        renderer
+            .render(
+                &mut gpu.context(&mut encoder),
+                &target,
+                camera,
+                glossy.radius(),
+                [0.0, 0.0, 0.0, 1.0],
+                Settings {
+                    lighting,
+                    skybox_blur,
+                    ..settings
+                },
+            )
+            .unwrap();
+    }
+    gpu.assert_valid(scope);
+    let settled = render_pixels(
+        &gpu,
+        &mut renderer,
+        &glossy,
+        camera,
+        [128; 2],
+        blurred_settings,
+    );
+    assert!(
+        changed_pixels(&blurred, &settled) < 300,
+        "rapid HDRI and blur changes must settle on the selected background"
     );
 }

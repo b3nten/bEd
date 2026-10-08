@@ -1405,7 +1405,13 @@ samplers and UV channels for Bevy's PBR materials. Draco meshes and authored ski
 poses retain the existing decoder path. ASCII and binary STL load through the
 patched `bevy_stl` byte loader with a neutral PBR material; the input is bounded
 to 64 MiB and 333,333 facets. Lighting presets, skyboxes, shadows, exposure and
-optional screen-space AO are saved alongside the orbit camera.
+optional screen-space AO are saved alongside the orbit camera. Appearance also
+supports wireframe-only, wireframe overlay, normal colors and bounded normal-vector
+overlays. These use line-list meshes and unlit materials, without requiring native
+polygon-line GPU features. The skybox horizon defaults lower and can be adjusted
+independently of geometry and lighting. Two CC0 Poly Haven Radiance HDRIs are
+embedded in the binary, decoded as floating-point cubemaps and filtered by Bevy
+for lighting and reflections; they require no runtime downloads.
 
 Host/all-target checking and all 21 plugin-host integration tests pass, including
 STL routing, shared Hex edits and model appearance/camera restoration. Native
@@ -1416,3 +1422,22 @@ detached presentation, close/reopen and two GPU recovery cycles. The model captu
 at `target/bevy-host-smoke/gltf.png` was inspected. Package license collection
 includes the Bevy, patched `bevy_stl` and `stl_io` notices. Native Linux/Windows
 acceptance is configured in CI and has not been run locally.
+
+The complete workspace test suite passes with the inspection modes and embedded
+HDRIs. Eight native Metal fixtures verify mode transitions, shaded wire overlays,
+normal vectors, distinct HDRI reflections and horizon movement without changing
+the model's position. Optional `BED_MODEL_CAPTURE_DIR` retains PNG readbacks for
+visual review. Poly Haven asset provenance and the CC0 dedication ship under
+`LICENSES/polyhaven`.
+
+Changing environment presets recreates Bevy's filtered reflection maps so their
+dimensions and mip chain follow the selected source. Native regression coverage
+includes 64px procedural to 256px HDRI transitions in both directions and rapid
+preset changes before filtering settles.
+
+Skybox blur samples Bevy's filtered environment mips through a separate GPU image
+sampler. The background's blur setting is saved with the workspace; the lighting
+and reflection maps keep their original samplers. The alias follows regenerated
+maps when switching between procedural environments and HDRIs.
+Native Metal readbacks verify progressive background blur, preserved model
+reflections, sharp restoration and rapid environment changes with blur enabled.

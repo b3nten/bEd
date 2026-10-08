@@ -14,12 +14,15 @@ use std::{
 };
 
 mod camera;
+mod debug_views;
 mod draco;
+mod environment;
 mod model;
 #[cfg(test)]
 mod native_tests;
 mod render;
 mod skin;
+mod skybox_blur;
 mod stl;
 #[cfg(test)]
 mod tests;
@@ -293,6 +296,7 @@ impl PluginPanel for GltfPanel {
                 Err(error) => {
                     self.error = Some(error.clone());
                     self.failed_generation = Some(gpu.generation);
+                    self.gpu = None;
                     return Err(error);
                 }
             }
@@ -328,11 +332,40 @@ impl PluginPanel for GltfPanel {
         {
             let _popup = bed_ui::util::popup_style::context_menu_style(ui);
             if let Some(_popup) = ui.begin_popup("model-appearance") {
+                let mut display = self.settings.display.index();
+                if ui.combo_simple_string("View", &mut display, &debug_views::DisplayMode::NAMES) {
+                    self.settings.display = debug_views::DisplayMode::from_index(display);
+                }
+                ui.checkbox("Normal vectors", &mut self.settings.normals);
+                if ui.is_item_hovered() {
+                    ui.tooltip_text("Show vertex normals, sampled to at most 6,000 vectors.");
+                }
+                if self.settings.normals {
+                    ui.slider_config("Normal length", 0.01, 0.3)
+                        .build(&mut self.settings.normal_length);
+                }
+                ui.separator();
                 let mut lighting = self.settings.lighting.index();
                 if ui.combo_simple_string("Lighting", &mut lighting, &render::Lighting::NAMES) {
                     self.settings.lighting = render::Lighting::from_index(lighting);
                 }
                 ui.checkbox("Skybox", &mut self.settings.skybox);
+                if self.settings.skybox {
+                    ui.slider_config("Skybox blur", 0.0, 1.0)
+                        .try_display_format("%.2f")
+                        .expect("valid blur format")
+                        .build(&mut self.settings.skybox_blur);
+                    if ui.is_item_hovered() {
+                        ui.tooltip_text("Soften the background while keeping model lighting and reflections sharp.");
+                    }
+                    ui.slider_config("Horizon", -45.0, 45.0)
+                        .try_display_format("%.0f°")
+                        .expect("valid horizon format")
+                        .build(&mut self.settings.horizon);
+                    if ui.is_item_hovered() {
+                        ui.tooltip_text("Lower values move the background horizon down.");
+                    }
+                }
                 ui.checkbox("Shadows", &mut self.settings.shadows);
                 let ao_supported = self.gpu.as_ref().is_none_or(|gpu| gpu.ao_supported);
                 {

@@ -103,6 +103,7 @@ enum Action {
     Frame(i64),
     Thread(i64),
     Variables(i64),
+    RetryVariables(i64),
     Evaluate(String, EvaluateContext),
     Watch(String),
     RemoveWatch(usize),
@@ -182,14 +183,17 @@ impl Workbench {
             )));
         }
         Ok(self.debugger.session.as_ref().is_some_and(|session| {
+            let mut locals = session
+                .scopes
+                .iter()
+                .filter(|scope| {
+                    scope.is_locals() && !scope.expensive && scope.variables_reference > 0
+                })
+                .peekable();
             session.state == SessionState::Stopped
                 && session.selected_frame.is_some()
-                && !session.scopes.is_empty()
-                && session
-                    .scopes
-                    .iter()
-                    .filter(|scope| !scope.expensive && scope.variables_reference > 0)
-                    .all(|scope| session.variables.contains_key(&scope.variables_reference))
+                && locals.peek().is_some()
+                && locals.all(|scope| session.variables.contains_key(&scope.variables_reference))
         }))
     }
 
@@ -595,6 +599,11 @@ impl Workbench {
                     session.load_variables(reference)?;
                 }
             }
+            Action::RetryVariables(reference) => {
+                if let Some(session) = &mut self.debugger.session {
+                    session.retry_variables(reference)?;
+                }
+            }
             Action::Evaluate(expression, context) => {
                 let session = self
                     .debugger
@@ -997,7 +1006,7 @@ impl Workbench {
             ),
             stop_on_entry: profile.stop_on_entry,
             breakpoints,
-            init_commands: Vec::new(),
+            init_commands: artifact.init_commands,
         };
         append_log(
             &mut self.debugger.console_log,

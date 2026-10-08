@@ -86,7 +86,17 @@ pub struct Scope {
     pub name: String,
     pub variables_reference: i64,
     #[serde(default)]
+    pub presentation_hint: Option<String>,
+    #[serde(default)]
     pub expensive: bool,
+}
+impl Scope {
+    /// Only local variables load automatically. LLDB can mark Globals and
+    /// Registers inexpensive even when fetching them blocks other requests.
+    pub fn is_locals(&self) -> bool {
+        self.presentation_hint.as_deref() == Some("locals")
+            || self.name.eq_ignore_ascii_case("locals")
+    }
 }
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -170,6 +180,14 @@ enum PendingKind {
     Pause,
     Disconnect,
 }
+impl PendingKind {
+    fn is_inspection(&self) -> bool {
+        matches!(
+            self,
+            Self::Threads | Self::Frames | Self::Scopes | Self::Variables(_) | Self::Evaluate
+        )
+    }
+}
 struct Pending {
     kind: PendingKind,
     stop_generation: u64,
@@ -185,6 +203,8 @@ pub struct DebugSession {
     pub frames: Vec<StackFrame>,
     pub scopes: Vec<Scope>,
     pub variables: HashMap<i64, Vec<Variable>>,
+    /// Failed loads stay visible until explicitly retried or inspection changes.
+    pub variable_errors: HashMap<i64, String>,
     pub selected_thread: Option<i64>,
     pub selected_frame: Option<i64>,
     pub stop_generation: u64,
@@ -226,6 +246,7 @@ impl DebugSession {
             frames: Vec::new(),
             scopes: Vec::new(),
             variables: HashMap::new(),
+            variable_errors: HashMap::new(),
             selected_thread: None,
             selected_frame: None,
             stop_generation: 0,
@@ -271,6 +292,9 @@ impl DebugSession {
             .send(&json!({"seq":seq,"type":"request","command":command,"arguments":arguments}))?;
         let timeout = match kind {
             PendingKind::Launch | PendingKind::Initialize => 30,
+            // Expanding large Rust application types can spend significant time
+            // in LLDB's formatters even when the debuggee is already paused.
+            PendingKind::Variables(_) => 60,
             PendingKind::Disconnect => 2,
             _ => 15,
         };
@@ -323,6 +347,13 @@ impl DebugSession {
                 let Some(pending) = self.pending.remove(&id) else {
                     continue;
                 };
+                if pending.kind.is_inspection()
+                    && (pending.stop_generation != self.stop_generation
+                        || pending.selection_generation != self.selection_generation
+                        || self.state != SessionState::Stopped)
+                {
+                    continue;
+                }
                 match pending.kind {
                     PendingKind::Disconnect => {
                         self.state = SessionState::Terminated;
@@ -336,6 +367,9 @@ impl DebugSession {
                         request_id: id,
                         result: Err("Expression evaluation timed out".into()),
                     }),
+                    PendingKind::Variables(reference) => {
+                        self.variable_error(reference, "Loading variables timed out".into());
+                    }
                     PendingKind::Breakpoints(_) => {
                         self.startup_breakpoints = self.startup_breakpoints.saturating_sub(1);
                         self.events
@@ -367,10 +401,33 @@ impl DebugSession {
     fn invalidate_inspection(&mut self) {
         self.stop_generation += 1;
         self.selection_generation += 1;
+        self.discard_inspection_requests();
         self.frames.clear();
         self.scopes.clear();
         self.variables.clear();
+        self.variable_errors.clear();
         self.selected_frame = None;
+    }
+    fn discard_inspection_requests(&mut self) {
+        self.pending.retain(|id, pending| {
+            if matches!(pending.kind, PendingKind::Evaluate) {
+                self.events.push(DebugEvent::Evaluated {
+                    request_id: *id,
+                    result: Err("Frame changed or program resumed".into()),
+                });
+            }
+            !pending.kind.is_inspection()
+        });
+    }
+    fn variable_error(&mut self, reference: i64, error: String) {
+        self.variable_errors.insert(reference, error.clone());
+        // The scope owns this recoverable error. A global error banner would
+        // remain after retrying successfully or selecting another frame.
+        self.events.push(DebugEvent::Output {
+            category: "console".into(),
+            output: format!("{error}\n"),
+        });
+        self.events.push(DebugEvent::Changed);
     }
     fn require_stopped(&self) -> io::Result<()> {
         if self.state != SessionState::Stopped {
@@ -507,9 +564,11 @@ impl DebugSession {
         self.require_stopped()?;
         self.selected_thread = Some(id);
         self.selection_generation += 1;
+        self.discard_inspection_requests();
         self.frames.clear();
         self.scopes.clear();
         self.variables.clear();
+        self.variable_errors.clear();
         self.selected_frame = None;
         self.request(
             "stackTrace",
@@ -521,8 +580,10 @@ impl DebugSession {
         self.require_stopped()?;
         self.selected_frame = Some(id);
         self.selection_generation += 1;
+        self.discard_inspection_requests();
         self.scopes.clear();
         self.variables.clear();
+        self.variable_errors.clear();
         self.request("scopes", json!({"frameId":id}), PendingKind::Scopes)
     }
     pub fn load_variables(&mut self, reference: i64) -> io::Result<u64> {
@@ -530,7 +591,8 @@ impl DebugSession {
         if reference <= 0 {
             return Err(io::Error::other("Value has no children"));
         }
-        if self.variables.contains_key(&reference) {
+        if self.variables.contains_key(&reference) || self.variable_errors.contains_key(&reference)
+        {
             return Ok(0);
         }
         if let Some((id, _)) = self.pending.iter().find(|(_, p)| {
@@ -547,6 +609,11 @@ impl DebugSession {
         )
     }
     pub fn request_variables(&mut self, reference: i64) -> io::Result<u64> {
+        self.load_variables(reference)
+    }
+    pub fn retry_variables(&mut self, reference: i64) -> io::Result<u64> {
+        self.require_stopped()?;
+        self.variable_errors.remove(&reference);
         self.load_variables(reference)
     }
     pub fn evaluate(
@@ -651,15 +718,7 @@ impl DebugSession {
         let success = message["success"].as_bool() == Some(true);
         let stale = pending.stop_generation != self.stop_generation
             || pending.selection_generation != self.selection_generation;
-        if matches!(
-            pending.kind,
-            PendingKind::Threads
-                | PendingKind::Frames
-                | PendingKind::Scopes
-                | PendingKind::Variables(_)
-                | PendingKind::Evaluate
-        ) && (stale || self.state != SessionState::Stopped)
-        {
+        if pending.kind.is_inspection() && (stale || self.state != SessionState::Stopped) {
             if matches!(pending.kind, PendingKind::Evaluate) {
                 self.events.push(DebugEvent::Evaluated {
                     request_id: id,
@@ -682,6 +741,7 @@ impl DebugSession {
                     request_id: id,
                     result: Err(error),
                 }),
+                PendingKind::Variables(reference) => self.variable_error(reference, error),
                 PendingKind::Breakpoints(path) => {
                     self.startup_breakpoints = self.startup_breakpoints.saturating_sub(1);
                     if self.breakpoint_requests.get(&path) == Some(&id) {
@@ -775,7 +835,7 @@ impl DebugSession {
                 let references: Vec<_> = self
                     .scopes
                     .iter()
-                    .filter(|s| !s.expensive && s.variables_reference > 0)
+                    .filter(|s| s.is_locals() && !s.expensive && s.variables_reference > 0)
                     .map(|s| s.variables_reference)
                     .collect();
                 for reference in references {

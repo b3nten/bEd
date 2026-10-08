@@ -518,6 +518,7 @@ dependencies = [
  "draco-core",
  "glam 0.33.12",
  "gltf",
+ "half",
  "image",
  "serde_json",
 ]

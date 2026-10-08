@@ -1,6 +1,7 @@
 //! A windowless Bevy renderer driven by Bed, sharing its device, queue and output texture.
 use crate::{
     camera::Camera as OrbitCamera,
+    debug_views::{DebugViews, DisplayMode},
     model::{Scene, TextureInfo},
 };
 use bed_plugin::gpu::{GpuContext, RenderTarget, wgpu};
@@ -66,9 +67,17 @@ pub(super) enum Lighting {
     Studio,
     Outdoor,
     Neutral,
+    StudioSmall08,
+    KiaraDawn,
 }
 impl Lighting {
-    pub const NAMES: [&'static str; 3] = ["Studio", "Outdoor", "Neutral"];
+    pub const NAMES: [&'static str; 5] = [
+        "Studio",
+        "Outdoor",
+        "Neutral",
+        "Studio Small 08 (HDRI)",
+        "Kiara Dawn (HDRI)",
+    ];
     pub fn index(self) -> usize {
         self as usize
     }
@@ -76,6 +85,8 @@ impl Lighting {
         match index {
             1 => Self::Outdoor,
             2 => Self::Neutral,
+            3 => Self::StudioSmall08,
+            4 => Self::KiaraDawn,
             _ => Self::Studio,
         }
     }
@@ -84,7 +95,12 @@ impl Lighting {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Settings {
     pub lighting: Lighting,
+    pub display: DisplayMode,
+    pub normals: bool,
+    pub normal_length: f32,
     pub skybox: bool,
+    pub skybox_blur: f32,
+    pub horizon: f32,
     pub shadows: bool,
     pub ao: bool,
     pub exposure: f32,
@@ -93,7 +109,12 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             lighting: Lighting::Studio,
+            display: DisplayMode::Shaded,
+            normals: false,
+            normal_length: 0.08,
             skybox: false,
+            skybox_blur: 0.0,
+            horizon: -12.0,
             shadows: true,
             ao: true,
             exposure: 0.0,
@@ -105,7 +126,24 @@ impl Settings {
         let mut result = Self::default();
         let value = &state["render"];
         result.lighting = Lighting::from_index(value["lighting"].as_u64().unwrap_or(0) as usize);
+        result.display = DisplayMode::from_index(value["display"].as_u64().unwrap_or(0) as usize);
+        result.normals = value["normals"].as_bool().unwrap_or(result.normals);
+        result.normal_length = value["normal_length"]
+            .as_f64()
+            .filter(|x| x.is_finite())
+            .unwrap_or(f64::from(result.normal_length))
+            .clamp(0.01, 0.3) as f32;
         result.skybox = value["skybox"].as_bool().unwrap_or(result.skybox);
+        result.skybox_blur = value["skybox_blur"]
+            .as_f64()
+            .filter(|x| x.is_finite())
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0) as f32;
+        result.horizon = value["horizon"]
+            .as_f64()
+            .filter(|x| x.is_finite())
+            .unwrap_or(f64::from(result.horizon))
+            .clamp(-45.0, 45.0) as f32;
         result.shadows = value["shadows"].as_bool().unwrap_or(result.shadows);
         result.ao = value["ao"].as_bool().unwrap_or(result.ao);
         result.exposure = value["exposure"]
@@ -116,7 +154,10 @@ impl Settings {
         result
     }
     pub fn save(self) -> Value {
-        json!({ "lighting": self.lighting.index(), "skybox": self.skybox, "shadows": self.shadows, "ao": self.ao, "exposure": self.exposure })
+        json!({ "lighting": self.lighting.index(), "display": self.display.index(),
+            "normals": self.normals, "normal_length": self.normal_length,
+            "skybox": self.skybox, "skybox_blur": self.skybox_blur, "horizon": self.horizon,
+            "shadows": self.shadows, "ao": self.ao, "exposure": self.exposure })
     }
 }
 
@@ -127,7 +168,9 @@ pub(super) struct SceneGpu {
     camera: Entity,
     key: Entity,
     fill: Entity,
-    environments: [Handle<Image>; 3],
+    environments: [Handle<Image>; 5],
+    skybox_image: Handle<Image>,
+    debug: DebugViews,
     center: Vec3,
     radius: f32,
     settings: Option<Settings>,
@@ -177,6 +220,7 @@ impl SceneGpu {
                 .disable::<TerminalCtrlCHandlerPlugin>()
                 .disable::<LogPlugin>(),
         );
+        let skybox_image = crate::skybox_blur::install(&mut app);
         app.init_resource::<RenderFailure>();
         app.add_plugins(bevy_stl::StlPlugin);
         app.insert_resource(RenderErrorHandler(|error, world, _| {
@@ -205,6 +249,7 @@ impl SceneGpu {
         let normalization =
             Transform::from_scale(Vec3::splat(radius.recip())).with_translation(-center / radius);
         let mut textures = HashMap::new();
+        let mut surfaces = Vec::with_capacity(scene.primitives.len());
         for primitive in &scene.primitives {
             let mut mesh = Mesh::new(
                 PrimitiveTopology::TriangleList,
@@ -331,14 +376,22 @@ impl SceneGpu {
                 .world_mut()
                 .resource_mut::<Assets<StandardMaterial>>()
                 .add(material);
-            app.world_mut()
-                .spawn((Mesh3d(mesh), MeshMaterial3d(material), normalization));
+            surfaces.push(
+                app.world_mut()
+                    .spawn((Mesh3d(mesh), MeshMaterial3d(material), normalization))
+                    .id(),
+            );
         }
-        let environments = std::array::from_fn(|index| {
-            app.world_mut()
-                .resource_mut::<Assets<Image>>()
-                .add(environment(Lighting::from_index(index)))
-        });
+        let debug = DebugViews::new(app.world_mut(), scene, &surfaces, normalization);
+        let mut environments = Vec::with_capacity(Lighting::NAMES.len());
+        for index in 0..Lighting::NAMES.len() {
+            let image = match index {
+                3.. => crate::environment::bundled(index - 3)?,
+                _ => environment(Lighting::from_index(index)),
+            };
+            environments.push(app.world_mut().resource_mut::<Assets<Image>>().add(image));
+        }
+        let environments = environments.try_into().unwrap();
         let camera = app
             .world_mut()
             .spawn((
@@ -376,6 +429,8 @@ impl SceneGpu {
             key,
             fill,
             environments,
+            skybox_image,
+            debug,
             center,
             radius,
             settings: None,
@@ -427,6 +482,18 @@ impl SceneGpu {
         if self.settings != Some(settings) {
             self.configure(settings);
             self.settings = Some(settings);
+        }
+        self.debug
+            .update_view(self.app.world_mut(), (eye - focus).normalize_or_zero());
+        // Skyboxes are infinitely distant: moving the model cannot lower their
+        // horizon. Pitch the background around the camera's right axis instead,
+        // keeping the model and environment lighting fixed as the view orbits.
+        {
+            let mut entity = self.app.world_mut().entity_mut(self.camera);
+            let right = entity.get::<Transform>().unwrap().right().as_vec3();
+            if let Some(mut skybox) = entity.get_mut::<Skybox>() {
+                skybox.rotation = Quat::from_axis_angle(right, settings.horizon.to_radians());
+            }
         }
         self.app.world_mut().entity_mut(self.key).insert(
             CascadeShadowConfigBuilder {
@@ -480,10 +547,20 @@ impl SceneGpu {
             .is_some()
     }
     fn configure(&mut self, settings: Settings) {
+        self.debug.apply(
+            self.app.world_mut(),
+            settings.display,
+            settings.normals,
+            settings.normal_length,
+        );
         let (key, fill, tint, intensity) = match settings.lighting {
             Lighting::Studio => (18000.0, 4500.0, Color::srgb(1.0, 0.94, 0.86), 1800.0),
             Lighting::Outdoor => (32000.0, 1000.0, Color::srgb(1.0, 0.97, 0.90), 2400.0),
             Lighting::Neutral => (10000.0, 10000.0, Color::WHITE, 1200.0),
+            // Let the photographed environment supply the lighting rather than
+            // baking the procedural presets' key/fill into HDRI appearances.
+            Lighting::StudioSmall08 => (0.0, 0.0, Color::WHITE, 1800.0),
+            Lighting::KiaraDawn => (0.0, 0.0, Color::WHITE, 1800.0),
         };
         self.app
             .world_mut()
@@ -491,7 +568,7 @@ impl SceneGpu {
             .insert(DirectionalLight {
                 color: tint,
                 illuminance: key,
-                shadow_maps_enabled: settings.shadows,
+                shadow_maps_enabled: settings.shadows && key > 0.0,
                 ..default()
             });
         self.app
@@ -503,25 +580,42 @@ impl SceneGpu {
                 ..default()
             });
         let environment = self.environments[settings.lighting.index()].clone();
+        crate::skybox_blur::configure(&mut self.app, settings.skybox_blur);
         let mut entity = self.app.world_mut().entity_mut(self.camera);
-        // Bevy creates EnvironmentMapLight only once. Keep the generated
-        // probe's intensity in sync when changing an existing preset.
-        if let Some(mut light) = entity.get_mut::<EnvironmentMapLight>() {
-            light.intensity = intensity;
+        // Bevy allocates filtered maps only without EnvironmentMapLight. Drop
+        // the previous outputs when the source changes so their dimensions and
+        // mip chain match both the 64px presets and the 256px HDRI cubemaps.
+        if self
+            .settings
+            .is_none_or(|old| old.lighting != settings.lighting)
+        {
+            entity.remove::<EnvironmentMapLight>();
+            entity.insert(GeneratedEnvironmentMapLight {
+                environment_map: environment.clone(),
+                intensity,
+                ..default()
+            });
         }
-        entity.insert(GeneratedEnvironmentMapLight {
-            environment_map: environment.clone(),
-            intensity,
-            ..default()
-        });
         if settings.skybox {
             entity.insert(Skybox {
-                image: Some(environment),
+                image: Some(if settings.skybox_blur > 0.0 {
+                    self.skybox_image.clone()
+                } else {
+                    environment
+                }),
                 brightness: intensity,
                 ..default()
             });
         } else {
             entity.remove::<Skybox>();
+        }
+        if self
+            .settings
+            .is_some_and(|old| old.skybox_blur != settings.skybox_blur)
+        {
+            // Discard stale background samples so the blur slider responds
+            // immediately rather than blending in the previous skybox detail.
+            entity.get_mut::<TemporalAntiAliasing>().unwrap().reset = true;
         }
         if settings.ao && self.ao_supported {
             entity.insert(ScreenSpaceAmbientOcclusion {
@@ -607,7 +701,7 @@ fn image_handle(
     )
 }
 fn adjust_pixels(rgba: &mut [u8], kind: ImageKind) {
-    for pixel in rgba.chunks_exact_mut(4) {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
         match kind {
             ImageKind::Normal(scale) if scale != 1.0 => {
                 let mut normal = Vec3::new(
@@ -674,6 +768,7 @@ fn environment(lighting: Lighting) -> Image {
                         }
                     }
                     Lighting::Neutral => Vec3::splat(0.5 + direction.y * 0.15),
+                    Lighting::StudioSmall08 | Lighting::KiaraDawn => unreachable!(),
                 };
                 rgba.extend(
                     color
@@ -720,9 +815,14 @@ mod tests {
     fn render_settings_restore_old_sessions_and_bound_exposure() {
         assert_eq!(Settings::restore(&Value::Null), Settings::default());
         let settings = Settings {
-            lighting: Lighting::Outdoor,
+            lighting: Lighting::KiaraDawn,
+            display: DisplayMode::WireframeOverlay,
+            normals: true,
+            normal_length: 0.12,
             exposure: 2.0,
             skybox: true,
+            skybox_blur: 0.65,
+            horizon: -20.0,
             ..default()
         };
         assert_eq!(
@@ -733,5 +833,21 @@ mod tests {
             Settings::restore(&json!({"render": {"exposure": 999, "lighting": 99}})).exposure,
             4.0
         );
+        let invalid = Settings::restore(&json!({"render": {
+            "display": 99, "normal_length": -5.0, "horizon": -999.0, "skybox_blur": 999.0
+        }}));
+        assert_eq!(invalid.display, DisplayMode::Shaded);
+        assert_eq!(invalid.normal_length, 0.01);
+        assert_eq!(invalid.horizon, -45.0);
+        assert_eq!(invalid.skybox_blur, 1.0);
+        assert_eq!(
+            Settings::restore(&json!({"render": {"skybox_blur": -5.0}})).skybox_blur,
+            0.0
+        );
+        let legacy = Settings::restore(&json!({"render": {"lighting": 1, "skybox": true}}));
+        assert_eq!(legacy.lighting, Lighting::Outdoor);
+        assert_eq!(legacy.horizon, -12.0);
+        assert_eq!(legacy.skybox_blur, 0.0);
+        assert_eq!(legacy.display, DisplayMode::Shaded);
     }
 }

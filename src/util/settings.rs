@@ -729,10 +729,7 @@ impl Settings {
         let popup_bg = ui.push_style_color(StyleColor::PopupBg, surface);
         let border_color =
             ui.push_style_color(StyleColor::Border, blend(self.text_color(), surface, 0.30));
-        let grab = ui.push_style_color(
-            StyleColor::ScrollbarGrab,
-            blend(self.text_color(), surface, 0.35),
-        );
+        let grab = ui.push_style_color(StyleColor::ScrollbarGrab, [0.0; 4]);
         let grab_hover = ui.push_style_color(
             StyleColor::ScrollbarGrabHovered,
             blend(self.text_color(), surface, 0.50),

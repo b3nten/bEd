@@ -55,7 +55,8 @@ pub fn control_colors(
         (StyleColor::ResizeGripHovered, surface(0.40)),
         (StyleColor::ResizeGripActive, accent),
         (StyleColor::ScrollbarBg, [0.0; 4]),
-        (StyleColor::ScrollbarGrab, surface(0.35)),
+        // Native hover/active states reveal the scrollbar without changing layout.
+        (StyleColor::ScrollbarGrab, [0.0; 4]),
         (StyleColor::ScrollbarGrabHovered, surface(0.50)),
         (StyleColor::ScrollbarGrabActive, surface(0.65)),
         (StyleColor::TableHeaderBg, surface(0.06)),

@@ -28,8 +28,10 @@ fn adapter(scenario: &str) {
     let mut input = BufReader::new(io::stdin());
     let mut launch = None;
     let mut configured = false;
-    let mut delayed = None;
+    let mut delayed: Option<Value> = None;
     let mut delayed_breakpoint = None;
+    let mut expansion_allowed = false;
+    let mut variable_attempts = 0;
     while let Ok(request) = read_frame(&mut input) {
         if request["type"] == "response" {
             assert_eq!(request["command"], "runInTerminal");
@@ -93,15 +95,53 @@ fn adapter(scenario: &str) {
                 &request,
                 json!({"stackFrames":[{"id":10,"name":"main","source":{"path":"/tmp/test.cpp"},"line":3,"column":1}],"totalFrames":1}),
             ),
-            "scopes" => response(
-                &request,
-                json!({"scopes":[{"name":"Locals","variablesReference":20,"expensive":false}]}),
-            ),
-            "variables" => response(
-                &request,
-                json!({"variables":[{"name":"count","value":"42","type":"int","variablesReference":0}]}),
-            ),
+            "scopes" => {
+                if let Some(previous) = delayed.take() {
+                    send(
+                        json!({"seq":101,"type":"response","request_seq":previous["seq"],"command":"variables","success":false,"message":"Old frame failed"}),
+                    );
+                }
+                let mut scopes =
+                    vec![json!({"name":"Locals","variablesReference":20,"expensive":false})];
+                if scenario == "lazy-scopes" {
+                    scopes
+                        .push(json!({"name":"Globals","variablesReference":21,"expensive":false}));
+                    scopes.push(
+                        json!({"name":"Registers","variablesReference":22,"expensive":false}),
+                    );
+                }
+                response(&request, json!({"scopes":scopes}));
+            }
+            "variables" => {
+                let reference = request["arguments"]["variablesReference"].as_i64().unwrap();
+                if scenario == "lazy-scopes" && reference != 20 {
+                    assert!(expansion_allowed, "scope loaded before expansion");
+                }
+                if reference == 30 {
+                    variable_attempts += 1;
+                    if scenario == "stale-variable" {
+                        delayed = Some(request);
+                        continue;
+                    }
+                    if variable_attempts == 1 {
+                        if scenario == "variable-timeout" {
+                            continue;
+                        }
+                        if scenario == "variable-error" {
+                            send(
+                                json!({"seq":101,"type":"response","request_seq":request["seq"],"command":"variables","success":false,"message":"Cannot inspect this value"}),
+                            );
+                            continue;
+                        }
+                    }
+                }
+                response(
+                    &request,
+                    json!({"variables":[{"name":"count","value":"42","type":"int","variablesReference":0}]}),
+                );
+            }
             "evaluate" => {
+                expansion_allowed = true;
                 if scenario == "stale" {
                     delayed = Some(request);
                 } else {
@@ -288,6 +328,74 @@ fn variable_expansion_requests_are_deduplicated() {
     poll_until(&mut session, |s, _| s.variables.contains_key(&30));
     assert_eq!(session.load_variables(30).unwrap(), 0);
 }
+fn globals_and_registers_load_only_after_expansion() {
+    let mut session = session("lazy-scopes");
+    poll_until(&mut session, |s, _| s.variables.contains_key(&20));
+    assert_eq!(session.scopes.len(), 3);
+    assert!(!session.variables.contains_key(&21));
+    assert!(!session.variables.contains_key(&22));
+    let request = session
+        .evaluate("allow_expansion", EvaluateContext::Watch, None)
+        .unwrap();
+    poll_until(&mut session, |_, events| {
+        events.iter().any(|event| matches!(event, DebugEvent::Evaluated {request_id,..} if *request_id == request))
+    });
+    session.load_variables(21).unwrap();
+    session.load_variables(22).unwrap();
+    poll_until(&mut session, |s, _| {
+        s.variables.contains_key(&21) && s.variables.contains_key(&22)
+    });
+}
+fn failed_variables_require_explicit_retry(scenario: &str) {
+    let mut session = session(scenario);
+    poll_until(&mut session, |s, _| s.variables.contains_key(&20));
+    session.load_variables(30).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(65);
+    while !session.variable_errors.contains_key(&30) {
+        let events = session.poll();
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, DebugEvent::Error(_))),
+            "A recoverable variable failure must not leave a global error"
+        );
+        assert_eq!(session.state, SessionState::Stopped);
+        assert!(Instant::now() < deadline, "variable error was not recorded");
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(!session.variables.contains_key(&30));
+    for _ in 0..3 {
+        assert_eq!(session.load_variables(30).unwrap(), 0);
+        session.poll();
+    }
+    assert!(session.retry_variables(30).unwrap() > 0);
+    assert!(!session.variable_errors.contains_key(&30));
+    poll_until(&mut session, |s, _| s.variables.contains_key(&30));
+    assert_eq!(session.variables[&30][0].value, "42");
+}
+fn variable_errors_are_cleared_when_the_frame_changes() {
+    let mut session = session("variable-error");
+    poll_until(&mut session, |s, _| s.variables.contains_key(&20));
+    session.load_variables(30).unwrap();
+    poll_until(&mut session, |s, _| s.variable_errors.contains_key(&30));
+    session.select_frame(11).unwrap();
+    assert!(session.variable_errors.is_empty());
+    poll_until(&mut session, |s, _| s.variables.contains_key(&20));
+}
+fn stale_variable_errors_are_discarded() {
+    let mut session = session("stale-variable");
+    poll_until(&mut session, |s, _| s.variables.contains_key(&20));
+    session.load_variables(30).unwrap();
+    session.select_frame(11).unwrap();
+    let events = poll_until(&mut session, |s, _| s.variables.contains_key(&20));
+    assert!(session.variable_errors.is_empty());
+    assert!(!session.variables.contains_key(&30));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, DebugEvent::Error(_)))
+    );
+}
 fn main() {
     let arguments: Vec<_> = std::env::args().collect();
     if arguments.get(1).map(String::as_str) == Some("--mock-adapter") {
@@ -312,6 +420,24 @@ fn main() {
         (
             "variable_expansion_deduplicates",
             variable_expansion_requests_are_deduplicated,
+        ),
+        (
+            "scope_expansion_is_lazy",
+            globals_and_registers_load_only_after_expansion,
+        ),
+        ("variable_failure_requires_retry", || {
+            failed_variables_require_explicit_retry("variable-error")
+        }),
+        ("variable_timeout_requires_retry", || {
+            failed_variables_require_explicit_retry("variable-timeout")
+        }),
+        (
+            "frame_change_clears_variable_errors",
+            variable_errors_are_cleared_when_the_frame_changes,
+        ),
+        (
+            "stale_variable_errors_are_discarded",
+            stale_variable_errors_are_discarded,
         ),
     ] {
         test();

@@ -580,7 +580,9 @@ fn worker_loads_stl_snapshots_and_restores_appearance() {
         bytes: b"solid part\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid part\n".as_slice().into(),
         text: None,
     }];
-    let state = json!({"render": {"lighting": 1, "skybox": true, "shadows": false, "ao": false, "exposure": 1.0}});
+    let state = json!({"render": {"lighting": 3, "display": 2, "normals": true,
+        "normal_length": 0.125, "skybox": true, "skybox_blur": 0.5, "horizon": -18.0,
+        "shadows": false, "ao": false, "exposure": 1.0}});
     let mut panel = GltfPanel::new(document, &state);
     let textures = HashMap::new();
     let host = HostContext {

@@ -110,11 +110,15 @@ seconds and works in local and SSH workspaces.
 The Model Viewer uses Bevy to render static, self-contained glTF/GLB models and
 ASCII or binary STL meshes. glTF materials support metallic/roughness shading,
 normal maps, emissive maps, baked ambient occlusion, vertex colors and transparency.
-Lighting presets, environment skyboxes and screen-space ambient occlusion controls
-let you inspect models under different conditions; screen-space AO requires a
-compatible GPU. Drag to orbit,
+The **Appearance** menu offers shaded, wireframe, wireframe overlay and normal-color
+views, with optional normal vectors. Lighting presets include two embedded Poly
+Haven HDRIs, Studio Small 08 and Kiara Dawn, which work offline for both lighting
+and skyboxes. The horizon control lowers or raises the background independently
+of the model. Skybox blur softens the background while preserving model lighting
+and reflection detail. Shadows, exposure and screen-space ambient occlusion are adjustable;
+screen-space AO requires a compatible GPU. Drag to orbit,
 right/middle-drag to pan, scroll to zoom, and double-click or choose **Frame All**
-to reset the framing. Camera and lighting state are restored with the workspace. Export GLB or
+to reset the framing. Camera and appearance state are restored with the workspace. Export GLB or
 glTF with embedded buffers and PNG/JPEG textures. Draco-compressed meshes are
 decoded in Rust, and skins are shown in their authored pose with up to four
 joint influences per vertex. Companion files, morph targets and animation playback
@@ -275,6 +279,17 @@ workspace packages and binary, example, unit-test and integration-test targets
 from a manifest. Choose the target and feature settings; bEd builds it and reads
 Cargo's artifact messages to find the resulting executable, including hashed
 test binaries. Cargo test profiles provide an optional test-name filter.
+
+Rust pretty printers load automatically for Cargo profiles and workspaces with a
+`Cargo.toml`, using the project's Rust toolchain. Locals show readable Rust types
+such as `String`, `Vec` and `HashMap`, with expandable contents. Watches and hover
+show formatted summaries. For a standalone Rust binary, set
+**Advanced → Rust pretty printers** to **Enabled**; choose **Disabled** to turn
+them off. If the toolchain's pretty printers are unavailable, debugging continues
+and **Build Output** explains why. Struct fields load when expanded; bEd disables
+Rust's recursive struct summaries so large application values remain inspectable.
+Locals load first; expand Globals or Registers to inspect those scopes. A failed
+variable load shows its error and a **Retry** button.
 
 Set program arguments, working directory, environment overrides and optional
 source-directory mappings in the profile. Arguments are passed literally to the

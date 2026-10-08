@@ -343,6 +343,28 @@ impl Debugger {
             ui.input_text("Adapter executable", &mut self.adapter_path)
                 .hint("Automatic lldb-dap discovery when empty")
                 .build();
+            use bed_debug::profile::RustFormatterMode;
+            let mut rust_formatters = match profile.rust_formatters {
+                RustFormatterMode::Auto => 0,
+                RustFormatterMode::Enabled => 1,
+                RustFormatterMode::Disabled => 2,
+            };
+            if ui.combo_simple_string(
+                "Rust pretty printers",
+                &mut rust_formatters,
+                &["Automatic", "Enabled", "Disabled"],
+            ) {
+                profile.rust_formatters = match rust_formatters {
+                    1 => RustFormatterMode::Enabled,
+                    2 => RustFormatterMode::Disabled,
+                    _ => RustFormatterMode::Auto,
+                };
+            }
+            if ui.is_item_hovered() {
+                ui.tooltip_text(
+                    "Automatic enables readable Rust values for Cargo profiles and Rust workspaces. Choose Enabled for a standalone Rust executable. Pretty printers follow the project's Rust toolchain.",
+                );
+            }
             ui.text_disabled("Environment overrides (applied to build and program)");
             let mut environment: Vec<_> = profile
                 .env
@@ -461,9 +483,9 @@ impl Debugger {
                 if let Some(session) = &self.session {
                     for scope in &session.scopes {
                         if let Some(_tree) = ui
-                            .tree_node_config(format!("scope_{}", scope.variables_reference))
+                            .tree_node_config(format!("scope_name_{}", scope.name))
                             .label(&scope.name)
-                            .opened(!scope.expensive, Condition::FirstUseEver)
+                            .opened(scope.is_locals(), Condition::FirstUseEver)
                             .push()
                         {
                             draw_variables(ui, session, scope.variables_reference, actions, 0);
@@ -583,8 +605,16 @@ fn draw_variables(
     actions: &mut Vec<Action>,
     depth: usize,
 ) {
+    let _id = ui.push_id(&format!("variables_{reference}"));
     if depth >= 16 {
         ui.text_disabled("Expand further using the console.");
+        return;
+    }
+    if let Some(error) = session.variable_errors.get(&reference) {
+        ui.text_wrapped(error);
+        if ui.small_button("Retry") {
+            actions.push(Action::RetryVariables(reference));
+        }
         return;
     }
     let Some(variables) = session.variables.get(&reference) else {
@@ -621,6 +651,104 @@ mod tests {
     use super::*;
     use dear_imgui_rs::{Context, FramePrepareOptions, WindowFlags};
     use std::ffi::CStr;
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn inspection_loads_only_locals_and_variable_errors_require_explicit_retry() {
+        use dear_imgui_rs::MouseButton;
+
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context.set_ini_filename(None::<PathBuf>).unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut session = DebugSession::launch_with_args(
+            Path::new("/bin/sleep"),
+            &["30".into()],
+            LaunchConfig {
+                program: "/unused/program".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        session.state = SessionState::Stopped;
+        session.scopes = serde_json::from_value(json!([
+            {"name":"Locals", "variablesReference":10, "expensive":false},
+            {"name":"Globals", "variablesReference":20, "expensive":false},
+            {"name":"Registers", "variablesReference":30, "expensive":false}
+        ]))
+        .unwrap();
+        let mut debugger = Debugger {
+            session: Some(session),
+            ..Default::default()
+        };
+        for _ in 0..2 {
+            context.prepare_frame(FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0));
+            let ui = context.frame();
+            let mut actions = Vec::new();
+            ui.window("scope_defaults")
+                .position([0.0, 0.0], Condition::Always)
+                .size([600.0, 320.0], Condition::Always)
+                .build(|| debugger.draw_inspection(ui, true, &mut actions));
+            assert!(matches!(actions.as_slice(), [Action::Variables(10)]));
+            drop(context.render_legacy());
+        }
+
+        let session = debugger.session.as_mut().unwrap();
+        session.variable_errors.insert(
+            10,
+            "Loading variables timed out. Try again when needed.".into(),
+        );
+        session
+            .variable_errors
+            .insert(20, "The adapter could not read these variables.".into());
+
+        fn error_frame(
+            context: &mut Context,
+            session: &DebugSession,
+        ) -> (Vec<Action>, [[f32; 2]; 2], [u32; 2]) {
+            context.prepare_frame(FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0));
+            let ui = context.frame();
+            let mut actions = Vec::new();
+            let mut points = [[0.0; 2]; 2];
+            let mut ids = [0; 2];
+            ui.window("variable_errors")
+                .position([0.0, 0.0], Condition::Always)
+                .size([420.0, 260.0], Condition::Always)
+                .flags(WindowFlags::NO_TITLE_BAR)
+                .build(|| {
+                    for (index, reference) in [10, 20].into_iter().enumerate() {
+                        draw_variables(ui, session, reference, &mut actions, 0);
+                        let min = ui.item_rect_min();
+                        let max = ui.item_rect_max();
+                        points[index] = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
+                        ids[index] = ui.with_bound_context(|| unsafe { sys::igGetItemID() });
+                    }
+                });
+            drop(context.render_legacy());
+            (actions, points, ids)
+        }
+        for _ in 0..2 {
+            let (actions, _, ids) = error_frame(&mut context, session);
+            assert!(actions.is_empty(), "Errors must not retry every frame");
+            assert_ne!(ids[0], ids[1], "Each Retry button needs a distinct ID");
+        }
+        let (_, points, _) = error_frame(&mut context, session);
+        context.io_mut().add_mouse_pos_event(points[1]);
+        assert!(error_frame(&mut context, session).0.is_empty());
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        assert!(error_frame(&mut context, session).0.is_empty());
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, false);
+        let actions = error_frame(&mut context, session).0;
+        assert!(matches!(actions.as_slice(), [Action::RetryVariables(20)]));
+    }
 
     #[test]
     fn compact_panel_keeps_inspection_visible_with_errors_and_source_notices() {

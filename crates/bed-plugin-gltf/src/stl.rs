@@ -335,7 +335,7 @@ endsolid triangle\n";
 
     #[test]
     fn binary_empty_count_trailing_bytes_and_unstable_bounds_are_rejected() {
-        assert!(error(&vec![0; 84]).contains("no triangle"));
+        assert!(error(&[0; 84]).contains("no triangle"));
         let mut bytes = triangle_binary();
         bytes.push(0);
         assert!(error(&bytes).contains("length"));

@@ -111,7 +111,7 @@ jobs:
       - name: Native model renderer and shared GPU fixtures
         run: |
           cargo test -p bed-plugin --locked --features gpu native_shared_target -- --ignored --nocapture
-          cargo test -p bed-plugin-gltf --locked native_ -- --ignored --nocapture
+          cargo test -p bed-plugin-gltf --locked native_ -- --ignored --test-threads=1 --nocapture
       - name: Native lifecycle and GPU capture (macOS)
         if: runner.os == 'macOS'
         run: target/release/bed --platform-smoke --lifecycle-smoke --capture-after-frames 30 --capture-frame target/native-window.ppm --config-dir target/native-config src/main.rs

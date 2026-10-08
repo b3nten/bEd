@@ -204,7 +204,6 @@ impl Gpu {
             power_preference: wgpu::PowerPreference::LowPower,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
-            ..Default::default()
         }))?;
         let (device, queue) =
             block_on(adapter.request_device(&renderer_device_descriptor(&adapter)))?;

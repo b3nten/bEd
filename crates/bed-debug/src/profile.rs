@@ -15,6 +15,7 @@ pub struct DebugProfile {
     pub cwd: String,
     pub env: BTreeMap<String, String>,
     pub source_map: Vec<[String; 2]>,
+    pub rust_formatters: RustFormatterMode,
     pub stop_on_entry: bool,
 }
 impl Default for DebugProfile {
@@ -29,9 +30,21 @@ impl Default for DebugProfile {
             cwd: String::new(),
             env: BTreeMap::new(),
             source_map: Vec::new(),
+            rust_formatters: RustFormatterMode::Auto,
             stop_on_entry: true,
         }
     }
+}
+
+/// Whether to load the project's Rust toolchain pretty printers for LLDB.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RustFormatterMode {
+    /// Enable for Cargo profiles and workspaces with a Cargo manifest.
+    #[default]
+    Auto,
+    Enabled,
+    Disabled,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

@@ -4,15 +4,15 @@
 
 use bed_debug::{
     DebugEvent, DebugSession, EvaluateContext, EvaluateResult, LaunchConfig, SessionState,
-    SourceBreakpoint,
+    SourceBreakpoint, Variable,
 };
 use bed_terminal::terminal_pty::{PtyEvent, PtyOptions, TerminalPty, TerminalShell, WindowSize};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -51,6 +51,25 @@ fn main() {
     let mut text = String::new();
     io::stdin().read_line(&mut text).unwrap();
     println!("NATIVE_INPUT:{}", text.trim_end());
+}
+"#;
+
+const RUST_FORMATTERS: &str = r#"use std::collections::HashMap;
+struct Composite {
+    label: String,
+    numbers: Vec<i32>,
+}
+#[inline(never)]
+fn inspect_collections() {
+    let text = String::from("Rust formatter text");
+    let numbers = vec![13_i32, 21, 34];
+    let lookup = HashMap::from([(String::from("answer"), 42_i32)]);
+    let composite = Composite { label: String::from("nested formatter text"), numbers: vec![5, 8] };
+    std::hint::black_box((&text, &numbers, &lookup, &composite.label, &composite.numbers)); // NATIVE_BREAKPOINT
+    println!("RUST_FORMATTERS_DONE:{}:{}:{}", text, numbers.len(), lookup.len());
+}
+fn main() {
+    inspect_collections();
 }
 "#;
 
@@ -142,6 +161,17 @@ struct Harness {
 }
 impl Harness {
     fn launch(adapter: &Path, fixture: &Fixture) -> Self {
+        Self::launch_with_init_commands(adapter, fixture, Vec::new())
+    }
+
+    fn launch_with_init_commands(
+        adapter: &Path,
+        fixture: &Fixture,
+        mut init_commands: Vec<String>,
+    ) -> Self {
+        // Some Linux CI kernels forbid personality(ADDR_NO_RANDOMIZE).
+        // The fixture does not depend on fixed instruction addresses.
+        init_commands.insert(0, "settings set target.disable-aslr false".into());
         let config = LaunchConfig {
             program: fixture.program.to_str().unwrap().into(),
             cwd: fixture.directory.to_str().unwrap().into(),
@@ -154,9 +184,7 @@ impl Harness {
                 }],
             )]
             .into(),
-            // Some Linux CI kernels forbid personality(ADDR_NO_RANDOMIZE).
-            // The fixture does not depend on fixed instruction addresses.
-            init_commands: vec!["settings set target.disable-aslr false".into()],
+            init_commands,
             ..LaunchConfig::default()
         };
         Self {
@@ -299,6 +327,25 @@ impl Harness {
             host.evaluations.contains_key(&id)
         });
         self.evaluations.remove(&id).unwrap().unwrap()
+    }
+
+    fn local(&self, name: &str) -> Variable {
+        self.session
+            .variables
+            .values()
+            .flatten()
+            .find(|variable| variable.name == name)
+            .unwrap_or_else(|| panic!("Missing local {name}: {:?}", self.session.variables))
+            .clone()
+    }
+
+    fn expand(&mut self, reference: i64) -> Vec<Variable> {
+        assert!(reference > 0, "Expected synthetic variable children");
+        self.session.load_variables(reference).unwrap();
+        self.wait("synthetic variable children", |host| {
+            host.session.variables.contains_key(&reference)
+        });
+        self.session.variables[&reference].clone()
     }
 }
 
@@ -473,4 +520,130 @@ fn real_lldb_launch_breakpoint_variables_and_stdin() {
     let rust = Fixture::compile("rust", RUST);
     debug_fixture(&adapter, &rust);
     shutdown_paused_fixture(&adapter, &cpp);
+}
+
+#[test]
+#[ignore = "requires installed LLDB 18+, Rust compiler/formatters, and local debugger permission"]
+fn real_lldb_rust_formatters_show_summaries_and_collection_children() {
+    let override_path = std::env::var_os("BED_LLDB_DAP").map(PathBuf::from);
+    let adapter = bed_debug::discovery::discover_adapter(override_path.as_deref()).unwrap();
+    let fixture = Fixture::compile("rust", RUST_FORMATTERS);
+    let formatters = bed_debug::rust_formatters::discover(
+        &fixture.directory,
+        &BTreeMap::new(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(
+        !formatters.commands.is_empty(),
+        "Rust formatter discovery returned no commands: {:?}",
+        formatters.notice
+    );
+    let mut host = Harness::launch_with_init_commands(&adapter, &fixture, formatters.commands);
+    let adapter_pid = host.session.adapter_process_id();
+    host.wait("Rust formatter fixture entry stop", |host| {
+        host.session.state == SessionState::Stopped && !host.session.frames.is_empty()
+    });
+    host.session.continue_execution().unwrap();
+    host.wait("Rust collection breakpoint and locals", |host| {
+        host.session.state == SessionState::Stopped
+            && host.session.frames.first().is_some_and(|frame| {
+                frame.source.as_deref() == fixture.source.to_str()
+                    && frame.line == fixture.breakpoint_line as usize
+            })
+            && ["text", "numbers", "lookup", "composite"]
+                .into_iter()
+                .all(|name| {
+                    host.session
+                        .variables
+                        .values()
+                        .flatten()
+                        .any(|variable| variable.name == name)
+                })
+    });
+    assert!(host.breakpoint_verified);
+    let text = host.local("text");
+    assert!(
+        text.value.contains("Rust formatter text"),
+        "String should show its text instead of allocator fields: {text:?}\n{}",
+        host.log
+    );
+    let numbers = host.local("numbers");
+    assert!(
+        numbers.value.contains("size=3"),
+        "Vec should summarize its length: {numbers:?}"
+    );
+    let elements = host.expand(numbers.variables_reference);
+    for (index, value) in [13, 21, 34].into_iter().enumerate() {
+        assert!(
+            elements.iter().any(|variable| {
+                variable.name == format!("[{index}]") && variable.value == value.to_string()
+            }),
+            "Vec should expose element [{index}] = {value}: {elements:?}"
+        );
+    }
+    let lookup = host.local("lookup");
+    assert!(
+        lookup.value.contains("size=1"),
+        "HashMap should summarize its length: {lookup:?}"
+    );
+    let entries = host.expand(lookup.variables_reference);
+    let entry = entries
+        .iter()
+        .find(|variable| variable.name == "[0]")
+        .unwrap_or_else(|| panic!("HashMap should expose its entry: {entries:?}"));
+    let pair = host.expand(entry.variables_reference);
+    assert!(
+        pair.iter()
+            .any(|variable| variable.value.contains("answer"))
+            && pair.iter().any(|variable| variable.value == "42"),
+        "HashMap entry should show its String key and numeric value: {pair:?}"
+    );
+    let composite = host.local("composite");
+    assert!(
+        !composite.value.contains("nested formatter text"),
+        "Application structs should expose fields without recursively summarizing them: {composite:?}"
+    );
+    let fields = host.expand(composite.variables_reference);
+    assert!(
+        fields
+            .iter()
+            .any(|variable| variable.name == "label"
+                && variable.value.contains("nested formatter text"))
+            && fields
+                .iter()
+                .any(|variable| variable.name == "numbers" && variable.value.contains("size=2")),
+        "Expanded application fields should retain String and Vec formatters: {fields:?}"
+    );
+    for context in [EvaluateContext::Watch, EvaluateContext::Hover] {
+        let result = host.evaluate("text", context);
+        assert!(
+            result.result.contains("Rust formatter text"),
+            "String expression should also use the formatter: {result:?}"
+        );
+    }
+    let debuggee_pid = host.terminal.as_ref().unwrap().process_id();
+    host.session.continue_execution().unwrap();
+    host.wait("Rust formatter fixture clean exit", |host| {
+        host.session.state == SessionState::Terminated
+            && host.session.exit_code == Some(0)
+            && host.terminal_exited
+            && host.output_contains("RUST_FORMATTERS_DONE:Rust formatter text:3:1")
+    });
+    assert!(
+        !host.log.contains("ERROR:") && !host.log.contains("Traceback"),
+        "Rust formatters should load without errors: {}",
+        host.log
+    );
+    for pid in [adapter_pid, debuggee_pid] {
+        assert_eq!(
+            unsafe { libc::kill(pid as libc::pid_t, 0) },
+            -1,
+            "Process {pid} survived the Rust formatter fixture"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
 }

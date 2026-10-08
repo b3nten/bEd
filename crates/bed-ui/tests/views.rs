@@ -261,10 +261,10 @@ fn paint_geometry_and_byte_measurements_match_upstream() {
                     let compact_width = GutterView::width(ui, &editor.state)
                         + GutterView::diagnostic_column_width(ui, &editor);
                     // The user requested compact document-dependent gutters.
-                    // Keep the unchanged original's recorded panel width here
-                    // to compare its paint leaf and marker geometry exactly;
+                    // Remove the 6px trimmed from upstream's trailing padding
+                    // so its recorded text and marker positions still match;
                     // the native Frame regression covers the compact layout.
-                    let width = case["gutter_width"].as_f64().unwrap() as f32;
+                    let width = case["gutter_width"].as_f64().unwrap() as f32 - 6.0;
                     assert!(
                         compact_width <= width + 0.0001,
                         "{name}: compact gutter fits the historical reservation"

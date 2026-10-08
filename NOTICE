@@ -49,3 +49,8 @@ Bundled Linux remote helpers statically link musl libc by Rich Felker and
 contributors. Its MIT license and additional copyright notices are retained in
 LICENSES/musl-COPYRIGHT.txt, copied from the native build environment's complete
 musl copyright file.
+
+The Model Viewer embeds Studio Small 08 by Sergej Majboroda and Kiara 1 Dawn
+by Greg Zaal, downloaded from Poly Haven (formerly HDRI Haven). Both HDRIs are
+CC0 1.0 Universal; artist/source/checksum records and the full dedication are
+retained in LICENSES/polyhaven.

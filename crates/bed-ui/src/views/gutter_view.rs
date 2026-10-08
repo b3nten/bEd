@@ -5,13 +5,17 @@ use bed_core::editor_state::EditorState;
 use bed_session::editor::Editor;
 use dear_imgui_rs::{DrawListMut, StyleColor, Ui, sys};
 
+const LEADING_PADDING: f32 = 2.0;
+const TRAILING_PADDING: f32 = 4.0;
+
 pub struct GutterView;
 
 impl GutterView {
     pub fn width(ui: &Ui, state: &EditorState) -> f32 {
-        // Keep upstream's 2px leading and 10px trailing spacing, reserving
-        // digits for this document rather than a minimum of three digits.
-        ui.calc_text_size(state.line_count().max(1).to_string())[0] + 12.0
+        // Reserve only this document's digits and a little space on each side.
+        ui.calc_text_size(state.line_count().max(1).to_string())[0]
+            + LEADING_PADDING
+            + TRAILING_PADDING
     }
 
     pub fn diagnostic_column_width(ui: &Ui, editor: &Editor) -> f32 {
@@ -24,7 +28,7 @@ impl GutterView {
 
     pub fn debug_column_width(ui: &Ui, enabled: bool) -> f32 {
         if enabled {
-            (ui.current_font_size() * 1.3).max(16.0)
+            (ui.current_font_size() * 0.9).max(16.0)
         } else {
             0.0
         }
@@ -106,7 +110,7 @@ impl GutterView {
                 muted_color
             };
             let label = (row + 1).to_string();
-            let x = pos[0] + width - ui.calc_text_size(&label)[0] - 10.0;
+            let x = pos[0] + width - ui.calc_text_size(&label)[0] - TRAILING_PADDING;
             let y = pos[1] + layout.editor_top_margin + row as f32 * layout.line_height
                 - view.scroll_position[1];
             if let Some(debug) = debug {

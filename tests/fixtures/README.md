@@ -43,8 +43,8 @@ rasterization, the whole Frame layout, or tooltip activation.
 Native application capture and platform acceptance checks remain separate.
 
 Bed's requested compact gutter reserves the document's actual digit count.
-The draw-leaf comparison supplies the unchanged original's recorded gutter
-width to isolate marker positions, text alignment, colors, and clipping;
+The draw-leaf comparison subtracts the 6px trimmed from trailing padding from
+the original's recorded gutter width to preserve marker and text positions;
 the live Frame regression verifies the compact panel's leading space.
 
 Regeneration is optional provenance tooling, separate from Bed's Rust builds

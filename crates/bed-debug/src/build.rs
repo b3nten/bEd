@@ -1,7 +1,7 @@
 use crate::{
     discovery,
     process::{self, Stream},
-    profile::{CargoLaunch, DebugProfile},
+    profile::{CargoLaunch, DebugProfile, RustFormatterMode},
 };
 use serde_json::Value;
 use std::{
@@ -21,6 +21,7 @@ use std::{
 pub struct BuildArtifact {
     pub program: PathBuf,
     pub environment: BTreeMap<String, String>,
+    pub init_commands: Vec<String>,
 }
 #[derive(Clone, Debug)]
 pub enum BuildEvent {
@@ -39,6 +40,7 @@ pub struct BuildRequest {
     workspace: PathBuf,
     env: BTreeMap<String, String>,
     program: PathBuf,
+    rust_formatters: bool,
 }
 fn resolve(root: &Path, path: &str) -> PathBuf {
     let path = Path::new(path);
@@ -71,6 +73,13 @@ impl BuildRequest {
         Ok(Self {
             command,
             program: resolve(&workspace, &profile.program),
+            rust_formatters: match profile.rust_formatters {
+                RustFormatterMode::Auto => {
+                    profile.cargo.is_some() || workspace.join("Cargo.toml").is_file()
+                }
+                RustFormatterMode::Enabled => true,
+                RustFormatterMode::Disabled => false,
+            },
             workspace,
             env: profile.env.clone(),
         })
@@ -308,9 +317,25 @@ fn build(
     if !program.is_file() {
         return Err(format!("Executable does not exist: {}", program.display()));
     }
+    let init_commands = if request.rust_formatters {
+        let formatters =
+            crate::rust_formatters::discover(&request.workspace, &request.env, cancel)?;
+        if let Some(notice) = formatters.notice {
+            process::log(logs, format!("{notice}\n"), cancel);
+        } else if !formatters.commands.is_empty() {
+            process::log(logs, "Loading Rust pretty printers.\n".into(), cancel);
+        }
+        formatters.commands
+    } else {
+        Vec::new()
+    };
+    if cancel.load(Ordering::Acquire) {
+        return Err("Build cancelled".into());
+    }
     Ok(BuildArtifact {
         program,
         environment,
+        init_commands,
     })
 }
 
