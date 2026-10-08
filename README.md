@@ -244,7 +244,7 @@ cargo fmt --all --check
 python3 scripts/check-crate-boundaries.py
 cargo clippy --workspace --locked --all-targets -- -D warnings
 cargo test --workspace --locked --all-targets
-cargo test -p bed-effects --locked --lib native_shader_fixtures -- --ignored --nocapture
+cargo test -p bed-effects --locked --lib native_shader -- --ignored --nocapture
 cargo run --locked -- --platform-smoke --lifecycle-smoke \
   --config-dir /tmp/bed-native-config path/to/project path/to/file.rs
 cargo run --locked -- --viewports-smoke \
@@ -259,6 +259,23 @@ OUTPUT.ppm --capture-after-frames 30` captures GPU output. macOS is verified
 first; native Linux/Windows CI is configured and its results are required before
 claiming every-platform acceptance. The pinned viewport backend supports native
 undocking on macOS, Windows and X11; Wayland retains internal docking/floating.
+
+To measure shader cost on your GPU, run:
+
+```sh
+cargo run --release --locked -p bed-effects --example profile_effects -- 3024 1964
+# Optionally include a settings profile as the third argument:
+cargo run --release --locked -p bed-effects --example profile_effects -- 3024 1964 ~/bed/config/solarized-light.json
+```
+
+Dimensions are physical pixels. The profiler uses GPU timestamps, discards a
+warmup batch, and reports median/p95 times over 300 frames per configuration,
+including comparisons with bloom disabled. It measures postprocessing alone in
+continuous batches; UI rendering, presentation, CPU work and power consumption
+are excluded. GPU clocks and other graphics workloads can affect the results.
+The editor redraws even while idle to animate effects, at `fps_target` when
+focused and `fps_target_unfocused` otherwise. High FPS targets increase GPU work;
+lowering bloom intensity does not reduce its 25-sample cost unless it reaches zero.
 
 bEd's original buffer and editing algorithms were translated from
 [nealmick/ned](https://github.com/nealmick/ned). [PORTING.md](PORTING.md) records

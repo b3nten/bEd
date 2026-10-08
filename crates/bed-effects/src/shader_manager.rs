@@ -125,6 +125,7 @@ pub struct ShaderManager {
     sampler: wgpu::Sampler,
     output_srgb: bool,
     last_settings: Option<ShaderSettings>,
+    frame_timestamps: Option<(wgpu::QuerySet, u32)>,
 }
 impl ShaderManager {
     pub fn new(
@@ -206,6 +207,7 @@ impl ShaderManager {
             sampler,
             output_srgb: output_format.is_srgb(),
             last_settings: None,
+            frame_timestamps: None,
         }
     }
     fn bind_group(
@@ -291,6 +293,12 @@ impl ShaderManager {
             crt_inputs,
         });
     }
+    /// Time the next postprocessing frame with two consecutive timestamp queries.
+    /// The device must have `TIMESTAMP_QUERY` enabled. Both the optional burn-in
+    /// pass and CRT presentation are included; subsequent frames are untimed.
+    pub fn timestamp_next_frame(&mut self, queries: &wgpu::QuerySet, first_query: u32) {
+        self.frame_timestamps = Some((queries.clone(), first_query));
+    }
     pub fn render_with_effects(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -299,6 +307,16 @@ impl ShaderManager {
         time: f32,
         settings: &ShaderSettings,
     ) {
+        let timestamps = self.frame_timestamps.take();
+        let writes = |begin: bool, end: bool| {
+            timestamps
+                .as_ref()
+                .map(|(query_set, first)| wgpu::RenderPassTimestampWrites {
+                    query_set,
+                    beginning_of_pass_write_index: begin.then_some(*first),
+                    end_of_pass_write_index: end.then_some(*first + 1),
+                })
+        };
         if self.last_settings != Some(*settings) {
             self.invalidate_history();
             self.last_settings = Some(*settings);
@@ -324,6 +342,7 @@ impl ShaderManager {
                 &self.burn_in,
                 &temporal.burn_inputs[previous],
                 "Bed burn-in pass",
+                writes(true, false),
             );
             temporal.accum.swap = !temporal.accum.swap;
             Self::render_pass(
@@ -332,6 +351,7 @@ impl ShaderManager {
                 &self.crt,
                 &temporal.crt_inputs[current],
                 "Bed CRT pass",
+                writes(false, true),
             );
         } else {
             Self::render_pass(
@@ -340,6 +360,7 @@ impl ShaderManager {
                 &self.crt,
                 &self.crt_input,
                 "Bed sharp presentation",
+                writes(true, true),
             );
         }
     }
@@ -349,9 +370,11 @@ impl ShaderManager {
         shader: &Shader,
         input: &wgpu::BindGroup,
         label: &str,
+        timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(label),
+            timestamp_writes,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: output,
                 depth_slice: None,
@@ -555,6 +578,103 @@ mod tests {
                 (i16::from(actual) - i16::from(expected)).abs() <= tolerance,
                 "channel {index}: got {actual}, expected {expected} ± {tolerance}"
             );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a native GPU adapter; run with --ignored on desktop CI"]
+    fn native_shader_optimized_matches_original() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter =
+            block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).unwrap();
+        let (device, queue) =
+            block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+        let reference_source = format!(
+            "{}\n{}",
+            include_str!("fragment.wgsl")
+                .replace("fn sample_bloom(", "fn unused_optimized_bloom(")
+                .replace("fn apply_curvature(", "fn unused_optimized_curvature("),
+            include_str!("fixtures/original_bloom_curvature.wgsl"),
+        );
+        for (width, height) in [(63, 31), (128, 64)] {
+            for format in [OFFSCREEN_FORMAT, OFFSCREEN_FORMAT.add_srgb_suffix()] {
+                let mut optimized = ShaderManager::new(&device, width, height, format);
+                let mut reference = ShaderManager::new(&device, width, height, format);
+                reference.crt = Shader::new(
+                    &device,
+                    "Original CRT reference",
+                    &reference_source,
+                    &reference.layout,
+                    format,
+                );
+                let output = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("Optimized shader comparison"),
+                    size: optimized.fb.texture.size(),
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                });
+                // Irregular, high-contrast input catches kernel weights, sampling
+                // offsets, clamped edges and fractional curvature coordinates.
+                let pattern: Vec<u8> = (0..height)
+                    .flat_map(|y| {
+                        (0..width).flat_map(move |x| {
+                            [
+                                ((x * 71 + y * 37) % 256) as u8,
+                                ((x * 3 + y * 131) % 256) as u8,
+                                if (x + y) % 3 == 0 { 255 } else { 0 },
+                                255,
+                            ]
+                        })
+                    })
+                    .collect();
+                upload(&queue, &optimized.fb.texture, &pattern);
+                upload(&queue, &reference.fb.texture, &pattern);
+                let sharp = ShaderSettings::subtle();
+                for settings in [
+                    ShaderSettings {
+                        enabled: false,
+                        ..sharp
+                    },
+                    sharp,
+                    ShaderSettings::legacy(),
+                    ShaderSettings {
+                        bloom_intensity: 1.0,
+                        ..neutral(true)
+                    },
+                    ShaderSettings {
+                        curvature_intensity: 0.5,
+                        ..neutral(true)
+                    },
+                    ShaderSettings {
+                        curvature_intensity: -0.5,
+                        ..sharp
+                    },
+                ] {
+                    for time in [0.0, 2.0, 4.95] {
+                        let actual = render_readback(
+                            &device,
+                            &queue,
+                            &mut optimized,
+                            &output,
+                            &settings,
+                            time,
+                        );
+                        let expected = render_readback(
+                            &device,
+                            &queue,
+                            &mut reference,
+                            &output,
+                            &settings,
+                            time,
+                        );
+                        assert_pixels_close(&actual, &expected, 2);
+                    }
+                }
+            }
         }
     }
 

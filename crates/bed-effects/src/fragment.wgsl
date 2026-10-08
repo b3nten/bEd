@@ -9,16 +9,41 @@ fn random(co: vec2<f32>) -> f32 {
 }
 fn random2(co: vec2<f32>) -> f32 { return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453123); }
 fn sample_bloom(uv: vec2<f32>, offset: f32) -> vec3<f32> {
-    var bloom = vec3(0.0);
-    var total = 0.0;
-    for (var x: i32 = -2; x <= 2; x += 1) {
-        for (var y: i32 = -2; y <= 2; y += 1) {
-            let xy = vec2(f32(x), f32(y));
-            let sample_uv = uv + xy * offset / params.resolution;
-            let weight = 1.0 - length(xy) * 0.1;
-            if weight > 0.0 { bloom += sample_current(sample_uv).rgb * weight; total += weight; }
-        }
-    }
+    // Keep the original radial 5x5 kernel and two-texel spacing. Explicit taps
+    // let the GPU schedule texture reads together, without nested dynamic loops
+    // and per-tap length/division calculations at physical display resolution.
+    let step = vec2(offset) / params.resolution;
+    let w22 = 1.0 - sqrt(8.0) * 0.1;
+    let w21 = 1.0 - sqrt(5.0) * 0.1;
+    let w11 = 1.0 - sqrt(2.0) * 0.1;
+    let w20 = 0.8;
+    let w10 = 0.9;
+    var bloom = sample_current(uv + vec2(-2.0, -2.0) * step).rgb * w22;
+    bloom += sample_current(uv + vec2(-2.0, -1.0) * step).rgb * w21;
+    bloom += sample_current(uv + vec2(-2.0,  0.0) * step).rgb * w20;
+    bloom += sample_current(uv + vec2(-2.0,  1.0) * step).rgb * w21;
+    bloom += sample_current(uv + vec2(-2.0,  2.0) * step).rgb * w22;
+    bloom += sample_current(uv + vec2(-1.0, -2.0) * step).rgb * w21;
+    bloom += sample_current(uv + vec2(-1.0, -1.0) * step).rgb * w11;
+    bloom += sample_current(uv + vec2(-1.0,  0.0) * step).rgb * w10;
+    bloom += sample_current(uv + vec2(-1.0,  1.0) * step).rgb * w11;
+    bloom += sample_current(uv + vec2(-1.0,  2.0) * step).rgb * w21;
+    bloom += sample_current(uv + vec2( 0.0, -2.0) * step).rgb * w20;
+    bloom += sample_current(uv + vec2( 0.0, -1.0) * step).rgb * w10;
+    bloom += sample_current(uv).rgb;
+    bloom += sample_current(uv + vec2( 0.0,  1.0) * step).rgb * w10;
+    bloom += sample_current(uv + vec2( 0.0,  2.0) * step).rgb * w20;
+    bloom += sample_current(uv + vec2( 1.0, -2.0) * step).rgb * w21;
+    bloom += sample_current(uv + vec2( 1.0, -1.0) * step).rgb * w11;
+    bloom += sample_current(uv + vec2( 1.0,  0.0) * step).rgb * w10;
+    bloom += sample_current(uv + vec2( 1.0,  1.0) * step).rgb * w11;
+    bloom += sample_current(uv + vec2( 1.0,  2.0) * step).rgb * w21;
+    bloom += sample_current(uv + vec2( 2.0, -2.0) * step).rgb * w22;
+    bloom += sample_current(uv + vec2( 2.0, -1.0) * step).rgb * w21;
+    bloom += sample_current(uv + vec2( 2.0,  0.0) * step).rgb * w20;
+    bloom += sample_current(uv + vec2( 2.0,  1.0) * step).rgb * w21;
+    bloom += sample_current(uv + vec2( 2.0,  2.0) * step).rgb * w22;
+    let total = 4.0 * (w22 + w11 + w20 + w10) + 8.0 * w21 + 1.0;
     return bloom / total;
 }
 fn add_jitter(uv: vec2<f32>, time: f32) -> vec2<f32> {
@@ -78,11 +103,10 @@ fn apply_pulse(color: vec3<f32>, time: f32) -> vec3<f32> { return color * (sin(t
 fn apply_curvature(uv: vec2<f32>, intensity: f32) -> vec2<f32> {
     if intensity == 0.0 { return uv; }
     let center = uv - vec2(0.5);
-    var radius = length(center);
-    let angle = atan2(center.y, center.x);
-    let distortion = intensity * 0.25 * pow(radius, 2.0);
-    radius *= 1.0 + distortion;
-    let distorted = vec2(0.5) + radius * vec2(cos(angle), sin(angle));
+    // The original polar-coordinate round trip is a radial scale. Express it
+    // directly to avoid sqrt, atan2, pow, sin and cos for every display pixel.
+    let distortion = intensity * 0.25 * dot(center, center);
+    let distorted = vec2(0.5) + center * (1.0 + distortion);
     return clamp(distorted, vec2(0.001), vec2(0.999));
 }
 fn apply_color_shift(uv: vec2<f32>, time: f32) -> vec3<f32> {
