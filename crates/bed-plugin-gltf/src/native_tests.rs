@@ -227,8 +227,7 @@ fn native_textured_scene_camera_and_resized_output() {
 #[ignore = "requires a native GPU adapter"]
 fn native_littlest_tokyo_draco_and_static_skin() {
     let bytes = std::fs::read(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../resources/models/LittlestTokyo.glb"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/LittlestTokyo.glb"),
     )
     .unwrap();
     let scene = super::model::load(&bytes).unwrap();

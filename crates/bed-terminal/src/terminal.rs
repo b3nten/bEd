@@ -18,7 +18,7 @@ use alacritty_terminal::{
         Mode, NamedColor, PrivateMode, Processor, Rgb, StandardCharset, TabulationClearMode,
     },
 };
-use bed_core::util::color::{blend, ensure_contrast};
+use bed_editing::util::color::{blend, ensure_contrast};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::OnceLock};
 use unicode_width::UnicodeWidthChar;
 
@@ -170,6 +170,8 @@ struct Size {
     cols: usize,
     rows: usize,
 }
+
+const SCROLLBACK_LINES: usize = 10_000;
 impl Dimensions for Size {
     fn columns(&self) -> usize {
         self.cols
@@ -220,7 +222,7 @@ impl Terminal {
         };
         let events = EventQueue::default();
         let config = Config {
-            scrolling_history: 0,
+            scrolling_history: SCROLLBACK_LINES,
             semantic_escape_chars: " ".into(),
             default_cursor_style: CursorStyle {
                 shape: CursorShape::Block,
@@ -361,7 +363,14 @@ impl Terminal {
         }
     }
     pub fn cell(&self, row: usize, col: usize) -> TerminalCell {
-        let cell = &self.term.grid()[Line(row as i32)][Column(col)];
+        self.grid_cell(row as i32, col)
+    }
+    /// A cell in the viewport, including retained output above the live screen.
+    pub fn display_cell(&self, row: usize, col: usize) -> TerminalCell {
+        self.grid_cell(row as i32 - self.display_offset() as i32, col)
+    }
+    fn grid_cell(&self, row: i32, col: usize) -> TerminalCell {
+        let cell = &self.term.grid()[Line(row)][Column(col)];
         let mut mode = 0;
         for (native, original) in [
             (Flags::BOLD, ATTR_BOLD),
@@ -387,14 +396,30 @@ impl Terminal {
             bg: color(cell.bg),
         }
     }
+    pub fn display_offset(&self) -> usize {
+        self.term.grid().display_offset()
+    }
+    pub fn history_size(&self) -> usize {
+        self.term.grid().history_size()
+    }
     pub fn scroll_display(&mut self, lines: i32) {
-        self.term.scroll_display(Scroll::Delta(lines));
+        let before = self.display_offset();
+        self.term.scroll_display(Scroll::Delta(
+            lines.clamp(-(SCROLLBACK_LINES as i32), SCROLLBACK_LINES as i32),
+        ));
+        if self.display_offset() != before {
+            // Selection coordinates belong to the viewport that was selected.
+            self.clear_selection();
+        }
     }
 
     /// Parse on the main thread; all generated PTY replies are returned to the
     /// caller, which owns the transport. Partial escapes/UTF-8 survive calls.
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<TerminalEvent> {
         if !bytes.is_empty() {
+            if self.display_offset() != 0 {
+                self.clear_selection();
+            }
             self.revision = self.revision.wrapping_add(1);
         }
         let mut offset = 0;
@@ -652,8 +677,14 @@ impl Terminal {
         }
         let offset = (self.term.grid().cursor.point.line.0 as usize + 1).saturating_sub(rows);
         self.revision = self.revision.wrapping_add(1);
-        let active = resized_grid(self.term.grid(), cols, rows, offset);
-        let inactive = resized_grid(&self.inactive_grid, cols, rows, offset);
+        let active = resized_grid(self.term.grid(), cols, rows, offset, !self.modes.alt_screen);
+        let inactive = resized_grid(
+            &self.inactive_grid,
+            cols,
+            rows,
+            offset,
+            self.modes.alt_screen,
+        );
         self.term.resize(Size { cols, rows });
         *self.term.grid_mut() = active;
         self.inactive_grid = inactive;
@@ -795,11 +826,11 @@ impl Terminal {
         }
     }
     fn line_length(&self, row: usize) -> usize {
-        if self.cell(row, self.cols() - 1).mode & ATTR_WRAP != 0 {
+        if self.display_cell(row, self.cols() - 1).mode & ATTR_WRAP != 0 {
             return self.cols();
         }
         let mut length = self.cols();
-        while length > 0 && self.cell(row, length - 1).character == ' ' {
+        while length > 0 && self.display_cell(row, length - 1).character == ' ' {
             length -= 1;
         }
         length
@@ -865,20 +896,21 @@ impl Terminal {
             SelectionSnap::Line => {
                 at.col = if direction < 0 { 0 } else { self.cols() - 1 };
                 if direction < 0 {
-                    while at.row > 0 && self.cell(at.row - 1, self.cols() - 1).mode & ATTR_WRAP != 0
+                    while at.row > 0
+                        && self.display_cell(at.row - 1, self.cols() - 1).mode & ATTR_WRAP != 0
                     {
                         at.row -= 1;
                     }
                 } else {
                     while at.row + 1 < self.rows()
-                        && self.cell(at.row, self.cols() - 1).mode & ATTR_WRAP != 0
+                        && self.display_cell(at.row, self.cols() - 1).mode & ATTR_WRAP != 0
                     {
                         at.row += 1;
                     }
                 }
             }
             SelectionSnap::Word => {
-                let mut previous = self.cell(at.row, at.col);
+                let mut previous = self.display_cell(at.row, at.col);
                 let mut delimiter = previous.character == ' ';
                 loop {
                     let mut x = at.col as i32 + direction;
@@ -894,14 +926,14 @@ impl Terminal {
                         } else {
                             (y as usize, x as usize)
                         };
-                        if self.cell(wrap_y, wrap_x).mode & ATTR_WRAP == 0 {
+                        if self.display_cell(wrap_y, wrap_x).mode & ATTR_WRAP == 0 {
                             break;
                         }
                     }
                     if x as usize >= self.line_length(y as usize) {
                         break;
                     }
-                    let cell = self.cell(y as usize, x as usize);
+                    let cell = self.display_cell(y as usize, x as usize);
                     let next_delimiter = cell.character == ' ';
                     if cell.mode & ATTR_WDUMMY == 0
                         && (delimiter != next_delimiter
@@ -953,11 +985,11 @@ impl Terminal {
                 self.cols() - 1
             };
             let mut end = (last_x + 1).min(length);
-            while end > first && self.cell(row, end - 1).character == ' ' {
+            while end > first && self.display_cell(row, end - 1).character == ' ' {
                 end -= 1;
             }
             for col in first..end {
-                let cell = self.cell(row, col);
+                let cell = self.display_cell(row, col);
                 if cell.mode & ATTR_WDUMMY == 0 {
                     result.push(cell.character);
                 }
@@ -966,7 +998,7 @@ impl Terminal {
             // trailing spaces were trimmed), then emits LF for a real break.
             let wrapped = end
                 .checked_sub(1)
-                .is_some_and(|last| self.cell(row, last).mode & ATTR_WRAP != 0);
+                .is_some_and(|last| self.display_cell(row, last).mode & ATTR_WRAP != 0);
             if (row < selection.end.row || last_x >= length) && (!wrapped || selection.rectangular)
             {
                 result.push('\n');
@@ -990,8 +1022,23 @@ fn color(color: Color) -> TerminalColor {
         }),
     }
 }
-fn resized_grid(old: &Grid<Cell>, cols: usize, rows: usize, offset: usize) -> Grid<Cell> {
-    let mut result = Grid::new(rows, cols, 0);
+fn resized_grid(
+    old: &Grid<Cell>,
+    cols: usize,
+    rows: usize,
+    offset: usize,
+    primary: bool,
+) -> Grid<Cell> {
+    // Retain history without reflowing or pulling old output into the live
+    // screen on height growth. Top rows displaced by a shrink enter history.
+    let history = if primary {
+        (old.history_size() + offset).min(SCROLLBACK_LINES)
+    } else {
+        0
+    };
+    let mut result = Grid::new(rows, cols, history);
+    result.initialize_all();
+    result.update_history(if primary { SCROLLBACK_LINES } else { 0 });
     let blank = Cell {
         c: ' ',
         fg: old.cursor.template.fg,
@@ -999,15 +1046,22 @@ fn resized_grid(old: &Grid<Cell>, cols: usize, rows: usize, offset: usize) -> Gr
         flags: Flags::empty(),
         extra: None,
     };
-    for row in 0..rows {
+    for row in -(history as i32)..rows as i32 {
+        let source = row + offset as i32;
         for col in 0..cols {
-            result[Line(row as i32)][Column(col)] =
-                if row + offset < old.screen_lines() && col < old.columns() {
-                    old[Line((row + offset) as i32)][Column(col)].clone()
-                } else {
-                    blank.clone()
-                };
+            result[Line(row)][Column(col)] = if source >= old.topmost_line().0
+                && source < old.screen_lines() as i32
+                && col < old.columns()
+            {
+                old[Line(source)][Column(col)].clone()
+            } else {
+                blank.clone()
+            };
         }
+    }
+    if old.display_offset() != 0 {
+        let display_offset = (old.display_offset() + offset).min(history);
+        result.scroll_display(Scroll::Delta(display_offset as i32));
     }
     result.cursor = old.cursor.clone();
     result.cursor.point.line = Line(result.cursor.point.line.0.min(rows as i32 - 1));
@@ -1393,7 +1447,10 @@ impl Handler for Terminal {
                     self.clear_region(0, 0, self.cols() - 1, cursor.line.0 as usize - 1);
                 }
             }
-            ClearMode::Saved => {}
+            ClearMode::Saved => {
+                self.term.grid_mut().clear_history();
+                self.clear_selection();
+            }
         }
     }
     fn erase_chars(&mut self, count: usize) {
@@ -1526,12 +1583,7 @@ impl Handler for Terminal {
         if count == 0 {
             return;
         }
-        self.clear_region(
-            0,
-            self.scroll_top,
-            self.cols() - 1,
-            self.scroll_top + count - 1,
-        );
+        // Preserve outgoing cells so the primary grid can archive them.
         self.term.scroll_up(count);
         self.scroll_selection(self.scroll_top, -(count as i32));
         self.clear_region(

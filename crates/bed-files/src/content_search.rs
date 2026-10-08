@@ -15,7 +15,7 @@ use std::{
 };
 
 use crate::{file_finder::FileEntry, files::read_file_raw};
-use bed_core::editor_state::EditorState;
+use bed_editing::editor_state::EditorState;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContentMatch {

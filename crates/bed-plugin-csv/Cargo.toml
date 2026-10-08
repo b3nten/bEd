@@ -6,9 +6,9 @@ publish = false
 license-file = "../../LICENSE"
 
 [dependencies]
-bed-core = { workspace = true }
+bed-editing = { workspace = true }
 bed-plugin = { workspace = true }
-bed-session = { workspace = true }
+bed-document-session = { workspace = true }
 dear-imgui-rs = { workspace = true }
 dear-imgui-sys = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

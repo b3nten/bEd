@@ -43,3 +43,13 @@ focus/docking algorithms.
 
 Unused experimental node-info and central-node mutation accessors were removed
 during repository cleanup. Only the ID and tab-bar Bed accessors remain.
+
+The native docking tab-list popup uses `SetNextWindowViewport` in
+`DockNodeWindowMenuUpdate` instead of setting an explicit popup position.
+This keeps the popup in its originating native viewport after a group is
+detached. ImGui still chooses its placement and handles the menu contents.
+
+The original Rust binding `LICENSE-MIT` and `LICENSE-APACHE` files are copied
+unchanged from repository commit `95f279150e95c728952db3e79226c687167ccf73`.
+The published crate archive omitted these workspace-root notices; they are
+retained here alongside the native sources' separate notices.

@@ -223,11 +223,6 @@ fn run_ssh(target: &SshTarget, command: &str, input: Option<File>) -> io::Result
 }
 
 fn run_process(mut command: Command, input: Option<File>, timeout: Duration) -> io::Result<String> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
     command
         .stdin(input.map(Stdio::from).unwrap_or_else(Stdio::null))
         .stdout(Stdio::piped())

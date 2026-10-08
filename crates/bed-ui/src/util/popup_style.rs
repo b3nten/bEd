@@ -1,5 +1,5 @@
 //! Theme and spacing shared by Bed's controls and popups.
-use bed_core::util::color::{blend, ensure_contrast};
+use bed_editing::util::color::{blend, ensure_contrast};
 use dear_imgui_rs::{ColorStackToken, StyleColor, StyleStackToken, StyleVar, Ui};
 
 pub const POPUP_ROUNDING: f32 = 7.0;
@@ -245,7 +245,7 @@ pub fn context_menu_style(ui: &Ui) -> ContextMenuStyle<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bed_core::util::color::contrast_ratio;
+    use bed_editing::util::color::contrast_ratio;
     #[test]
     fn light_and_dark_controls_keep_readable_text_and_disabled_labels() {
         for (background, text, accent) in [

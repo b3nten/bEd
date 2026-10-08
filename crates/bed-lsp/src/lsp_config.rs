@@ -99,7 +99,6 @@ pub struct ServerDiscoveryEnvironment {
     pub cargo_home: Option<PathBuf>,
     pub home: Option<PathBuf>,
     pub current_directory: PathBuf,
-    pub executable_extensions: Vec<OsString>,
 }
 impl ServerDiscoveryEnvironment {
     pub fn current() -> Self {
@@ -108,20 +107,10 @@ impl ServerDiscoveryEnvironment {
             cargo_home: std::env::var_os("CARGO_HOME")
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from),
-            home: std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+            home: std::env::var_os("HOME")
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from),
             current_directory: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            executable_extensions: if cfg!(windows) {
-                std::env::var("PATHEXT")
-                    .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
-                    .split(';')
-                    .filter(|extension| !extension.is_empty())
-                    .map(OsString::from)
-                    .collect()
-            } else {
-                Vec::new()
-            },
         }
     }
     pub fn cargo_bin(&self) -> Option<PathBuf> {
@@ -147,15 +136,14 @@ pub fn resolve_server_paths_with_environment(
     environment: &ServerDiscoveryEnvironment,
 ) -> Option<PathBuf> {
     for configured in paths {
-        let expanded = expand_environment_variables(configured);
-        let path = Path::new(&expanded);
+        let path = Path::new(configured);
         let literal = environment.absolute(path);
         // Keep upstream's explicit configured-file precedence. Spawn reports a
         // permission error for a configured non-executable, rather than hiding it.
         if literal.is_file() {
             return Some(literal);
         }
-        if path.components().count() != 1 || expanded.contains(['/', '\\']) {
+        if path.components().count() != 1 {
             continue;
         }
         let mut directories: Vec<PathBuf> = environment
@@ -164,32 +152,19 @@ pub fn resolve_server_paths_with_environment(
             .map(std::env::split_paths)
             .map(Iterator::collect)
             .unwrap_or_default();
-        if (expanded == "rust-analyzer" || expanded.eq_ignore_ascii_case("rust-analyzer.exe"))
+        if configured == "rust-analyzer"
             && let Some(bin) = environment.cargo_bin()
         {
             directories.push(bin);
         }
         for directory in directories {
             let candidate = environment.absolute(&directory).join(path);
-            for candidate in executable_candidates(&candidate, &environment.executable_extensions) {
-                if executable_file(&candidate) {
-                    return Some(candidate);
-                }
+            if executable_file(&candidate) {
+                return Some(candidate);
             }
         }
     }
     None
-}
-fn executable_candidates(path: &Path, extensions: &[OsString]) -> Vec<PathBuf> {
-    let mut candidates = vec![path.to_owned()];
-    if path.extension().is_none() {
-        for extension in extensions {
-            let mut filename = path.as_os_str().to_owned();
-            filename.push(extension);
-            candidates.push(PathBuf::from(filename));
-        }
-    }
-    candidates
 }
 fn executable_file(path: &Path) -> bool {
     let Ok(metadata) = path.metadata() else {
@@ -198,15 +173,8 @@ fn executable_file(path: &Path) -> bool {
     if !metadata.is_file() {
         return false;
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
 }
 
 /// Ensure Cargo/rustc remain discoverable for a GUI-launched rust-analyzer.
@@ -235,29 +203,6 @@ pub fn server_child_path(program: &Path) -> io::Result<OsString> {
         }
     }
     std::env::join_paths(unique).map_err(io::Error::other)
-}
-pub fn expand_environment_variables(path: &str) -> String {
-    if cfg!(windows) {
-        expand_with_environment(path, |name| std::env::var(name).ok())
-    } else {
-        path.to_owned()
-    }
-}
-fn expand_with_environment(path: &str, mut variable: impl FnMut(&str) -> Option<String>) -> String {
-    let mut result = path.to_owned();
-    let mut position = 0;
-    while let Some(start) = result[position..].find('%').map(|index| index + position) {
-        let Some(end) = result[start + 1..].find('%').map(|index| index + start + 1) else {
-            break;
-        };
-        if let Some(value) = variable(&result[start + 1..end]) {
-            result.replace_range(start..=end, &value);
-            position = start + value.len();
-        } else {
-            position = end + 1;
-        }
-    }
-    result
 }
 fn read_json(path: &std::path::Path) -> std::io::Result<serde_json::Value> {
     let bytes = std::fs::read(path)?;
@@ -338,7 +283,6 @@ mod tests {
             cargo_home: Some(temp.path("custom-cargo")),
             home: Some(temp.path("home")),
             current_directory: temp.root().to_owned(),
-            ..Default::default()
         };
         let paths = vec!["rust-analyzer".into()];
         assert_eq!(
@@ -389,35 +333,6 @@ mod tests {
                 &environment
             ),
             Some(target)
-        );
-    }
-    #[test]
-    fn configured_windows_extensions_are_resolved_without_a_shell() {
-        use crate::test_support::TempDir;
-        let temp = TempDir::new();
-        let server = temp.write("tools/server.EXE", b"executable fixture");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&server, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        let environment = ServerDiscoveryEnvironment {
-            path: Some(std::env::join_paths([server.parent().unwrap()]).unwrap()),
-            current_directory: temp.root().to_owned(),
-            executable_extensions: vec![".EXE".into()],
-            ..Default::default()
-        };
-        assert_eq!(
-            resolve_server_paths_with_environment(&["server".into()], &environment),
-            Some(server)
-        );
-    }
-    #[test]
-    fn windows_percent_expansion_keeps_unknown_and_does_not_reexpand_values() {
-        assert_eq!(
-            expand_with_environment("C:/%USER%/%MISSING%/%USER%/%", |name| (name == "USER")
-                .then(|| "é%NESTED%".into())),
-            "C:/é%NESTED%/%MISSING%/é%NESTED%/%"
         );
     }
 }

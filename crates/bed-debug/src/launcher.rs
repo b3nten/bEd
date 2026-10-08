@@ -13,7 +13,6 @@ pub const FLAG: &str = "--debug-launch-target";
 /// requests retain their original command. Arguments following the target are
 /// opaque, including any strings which resemble launcher flags.
 pub fn arguments(args: &[String], host_exe: &Path) -> Option<Vec<String>> {
-    #[cfg(unix)]
     if args.len() >= 7
         && args[1] == "--comm-file"
         && args[3] == "--debugger-pid"
@@ -27,8 +26,6 @@ pub fn arguments(args: &[String], host_exe: &Path) -> Option<Vec<String>> {
         command.extend_from_slice(&args[1..]);
         return Some(command);
     }
-    #[cfg(not(unix))]
-    let _ = (args, host_exe);
     None
 }
 
@@ -48,21 +45,9 @@ pub fn rewrite_terminal_request(
 /// after `FLAG`. Success replaces this process with the requested debuggee;
 /// callers must exit if an error is returned.
 pub fn run(args: impl IntoIterator<Item = OsString>) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        unix::run(args.into_iter().collect())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = args;
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "The debugger launcher is supported on macOS and Linux",
-        ))
-    }
+    unix::run(args.into_iter().collect())
 }
 
-#[cfg(unix)]
 mod unix {
     use super::*;
     use serde_json::{Value, json};

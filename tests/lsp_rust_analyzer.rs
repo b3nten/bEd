@@ -1,11 +1,11 @@
 //! Opt-in acceptance against the real installed rust-analyzer, without fake
 //! server responses or changes to the user's LSP configuration.
-use bed_core::editor_commands::CursorReveal;
-use bed_lsp::{lsp_locations::from_definition_result, workspace_lsp::WorkspaceLsp};
-use bed_session::{
+use bed_document_session::{
     ClosePolicy, EditorSession, SessionOptions,
     editor_session::{DocumentId, ViewId, WorkspaceId},
 };
+use bed_editing::editor_commands::CursorReveal;
+use bed_lsp::{lsp_locations::from_definition_result, workspace_lsp::WorkspaceLsp};
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -26,7 +26,7 @@ impl Drop for Cleanup {
 
 fn existing_user_config() -> PathBuf {
     let config = PathBuf::from(
-        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        std::env::var_os("HOME")
             .expect("a home directory is required for the user's existing LSP configuration"),
     )
     .join("bed/config/lsp.json");

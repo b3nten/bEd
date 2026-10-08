@@ -1,5 +1,5 @@
 //! Read-only font inspection with HarfRust shaping and FreeType rasterization.
-use bed_core::identity::DocumentId;
+use bed_editing::identity::DocumentId;
 use bed_plugin::gpu::{Canvas, GpuContext, RenderOutput, RenderTarget};
 use bed_plugin::{
     CommandContext, DocumentKind, HostContext, HostRequest, MenuSlot, Plugin, PluginPanel,
@@ -101,6 +101,9 @@ impl Plugin for FontPlugin {
         )))
     }
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }
@@ -753,6 +756,9 @@ impl PluginPanel for FontPanel {
         );
     }
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }

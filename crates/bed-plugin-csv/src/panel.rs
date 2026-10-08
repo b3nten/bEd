@@ -2,9 +2,9 @@ use crate::{
     model::{self, ColumnFilter, FilterOp, Sort, SortMode, Table},
     worker::{Job, View, Worker},
 };
-use bed_core::identity::DocumentId;
+use bed_document_session::editor_session::ByteEdit;
+use bed_editing::identity::DocumentId;
 use bed_plugin::{EditToken, HostContext, HostRequest, PanelAction, PluginPanel, Revision};
-use bed_session::editor_session::ByteEdit;
 use dear_imgui_rs::{
     FocusedFlags, InputTextCallback, InputTextFlags, Key, ListClipper, MouseButton, StyleVar,
     TableColumnFlags, TableColumnWidth, TableFlags, TableRowFlags, Ui,
@@ -1325,6 +1325,14 @@ impl PluginPanel for CsvPanel {
                 self.sync(host);
                 self.select_all();
             }
+            PanelAction::Undo | PanelAction::Redo if self.draft.is_some() => return Ok(false),
+            PanelAction::Undo => requests.push(HostRequest::Undo {
+                document: self.document,
+            }),
+            PanelAction::Redo => requests.push(HostRequest::Redo {
+                document: self.document,
+            }),
+            PanelAction::GoToLine => return Ok(false),
             PanelAction::CommitEdit => self.commit(host, requests)?,
         }
         Ok(true)
@@ -1386,6 +1394,9 @@ impl PluginPanel for CsvPanel {
         }
     }
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }

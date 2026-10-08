@@ -10,7 +10,7 @@ use crate::{
     message_handler::{MAX_STDERR_BYTES, RpcEvent, RpcSession},
     process::ProcessOptions,
 };
-use bed_core::editor_events::DocumentChange;
+use bed_editing::editor_events::DocumentChange;
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,

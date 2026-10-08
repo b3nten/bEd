@@ -1,7 +1,7 @@
 //! Source-preserving CSV indexing and edits. All offsets refer to one immutable
 //! text-document revision; callers apply the returned edits as one transaction.
 
-use bed_session::editor_session::ByteEdit;
+use bed_document_session::editor_session::ByteEdit;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,

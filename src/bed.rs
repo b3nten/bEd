@@ -1,16 +1,16 @@
-//! Bed's standalone winit/wgpu host. Editing and document code remain
-//! independent of these backends.
-use crate::util::settings::Settings;
 use crate::workbench::{WindowCommand, Workbench, WorkbenchHostMode};
+#[cfg(test)]
+use bed_document_session::editor::Editor;
+#[cfg(test)]
+use bed_editor_ui::editor_input::EditorInput;
 use bed_effects::{
     shader_manager::ShaderManager, shader_types::OFFSCREEN_FORMAT,
     viewport_effects::ViewportEffectsFactory,
 };
-use bed_plugin::gpu::{DeviceErrorHandlers, GpuContext, RenderTarget, renderer_device_descriptor};
-#[cfg(test)]
-use bed_session::editor::Editor;
-#[cfg(test)]
-use bed_ui::editor_input::EditorInput;
+use bed_settings::Settings;
+use bed_workbench_api::gpu::{
+    DeviceErrorHandlers, GpuContext, RenderTarget, renderer_device_descriptor,
+};
 use dear_imgui_rs::{ClipboardBackend, Context, TextureId};
 use dear_imgui_wgpu::{
     FramebufferExtent, WgpuInitInfo, WgpuRenderer, WgpuViewportSurfaceConfig,
@@ -180,7 +180,7 @@ struct Gpu {
     reconfigure_next_frame: bool,
     effects: ShaderManager,
     image_textures: Vec<wgpu::Texture>,
-    plugin_textures: HashMap<bed_plugin::TextureHandle, PluginGpuTexture>,
+    plugin_textures: HashMap<bed_workbench_api::TextureHandle, PluginGpuTexture>,
     generation: u64,
 }
 
@@ -284,7 +284,7 @@ impl Gpu {
         })
     }
 
-    fn upload_rgba(&mut self, image: &crate::util::icons::RgbaImage) -> HostResult<TextureId> {
+    fn upload_rgba(&mut self, image: &bed_ui::icons::RgbaImage) -> HostResult<TextureId> {
         let texture = self.create_rgba_texture(image.width, image.height, &image.pixels)?;
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let texture_id = self.route.register_external_texture(&view)?.texture_id();
@@ -488,12 +488,10 @@ impl Gpu {
 
 struct Runtime {
     #[cfg(target_os = "macos")]
-    native_menu: crate::util::macos_menu::MacOsMenu,
+    native_menu: crate::platform::macos_menu::MacOsMenu,
     #[cfg(target_os = "macos")]
-    native_window: crate::util::macos_window::MacOsWindow,
-    #[cfg(target_os = "windows")]
-    native_window: crate::util::windows_window::WindowsWindow,
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    native_window: crate::platform::macos_window::MacOsWindow,
+    #[cfg(target_os = "macos")]
     viewport_themes: std::collections::HashMap<WindowId, ([f32; 4], [f32; 4])>,
     window: Arc<Window>,
     gpu: Gpu,
@@ -546,7 +544,7 @@ struct PluginSmoke {
     model_capture: Option<PathBuf>,
     model_size: [u32; 2],
     secondary_before: u64,
-    original_handle: Option<bed_plugin::TextureHandle>,
+    original_handle: Option<bed_workbench_api::TextureHandle>,
     phase: u8,
 }
 struct AppearanceSmoke {
@@ -631,25 +629,8 @@ impl Runtime {
                 .with_fullsize_content_view(true)
                 .with_has_shadow(true)
         };
-        #[cfg(target_os = "windows")]
-        let attributes = attributes.with_decorations(false);
         let window = Arc::new(event_loop.create_window(attributes)?);
         let mut context = Context::create();
-        // Tests use disposable configuration and no persisted desktop geometry.
-        context.set_ini_filename(
-            if options.viewports
-                || options.menu_edit
-                || options.plugins
-                || options.lifecycle
-                || options.appearance
-                || options.native_appearance
-                || options.capture_path.is_some()
-            {
-                None
-            } else {
-                Some(workbench.settings.config_dir.join("workspace.ini"))
-            },
-        )?;
         if let Ok(clipboard) = arboard::Clipboard::new() {
             context.set_clipboard_backend(NativeClipboard(clipboard));
         }
@@ -682,20 +663,17 @@ impl Runtime {
             gpu.effect_factory.enable_capture();
         }
         #[cfg(target_os = "macos")]
-        let mut native_window = crate::util::macos_window::MacOsWindow::configure(
+        let mut native_window = crate::platform::macos_window::MacOsWindow::configure(
             &window,
             workbench.settings.number("mac_background_opacity", 0.5),
             workbench.settings.bool("mac_blur_enabled", true),
         )?;
-        #[cfg(target_os = "windows")]
-        let native_window =
-            crate::util::windows_window::WindowsWindow::configure(Arc::clone(&window))?;
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        #[cfg(target_os = "macos")]
         {
             workbench.root_top_inset = native_window.titlebar_inset();
         }
         #[cfg(target_os = "macos")]
-        let mut native_menu = crate::util::macos_menu::MacOsMenu::install(&workbench.settings)?;
+        let mut native_menu = crate::platform::macos_menu::MacOsMenu::install(&workbench.settings)?;
         #[cfg(target_os = "macos")]
         {
             native_window.set_commands(&workbench.toolbar_commands())?;
@@ -751,9 +729,9 @@ impl Runtime {
         Ok(Self {
             #[cfg(target_os = "macos")]
             native_menu,
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            #[cfg(target_os = "macos")]
             native_window,
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            #[cfg(target_os = "macos")]
             viewport_themes: Default::default(),
             window,
             gpu,
@@ -803,7 +781,7 @@ impl Runtime {
             }])
         }
     }
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     fn update_viewport_themes(&mut self) -> HostResult<()> {
         let windows = self.windows()?;
         self.viewport_themes.retain(|id, _| {
@@ -820,14 +798,7 @@ impl Runtime {
             if self.viewport_themes.get(&id) == Some(&theme) {
                 continue;
             }
-            #[cfg(target_os = "macos")]
-            crate::util::macos_window::MacOsWindow::apply_theme_to_window(
-                &viewport.window,
-                theme.0,
-                theme.1,
-            )?;
-            #[cfg(target_os = "windows")]
-            crate::util::windows_window::WindowsWindow::apply_theme_to_window(
+            crate::platform::macos_window::MacOsWindow::apply_theme_to_window(
                 &viewport.window,
                 theme.0,
                 theme.1,
@@ -905,30 +876,13 @@ impl Runtime {
                 self.workbench.dispatch_command(&id)?;
             }
         }
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        #[cfg(target_os = "macos")]
         self.update_viewport_themes()?;
         self.platform
             .prepare_frame(&mut self.context, &self.window)?;
         let frame = self.context.begin_frame();
         let ui = frame.ui();
-        #[cfg(target_os = "windows")]
-        {
-            let commands = self.workbench.toolbar_commands();
-            let application_commands = self.workbench.application_commands();
-            let toolbar_actions = self.native_window.draw_titlebar_commands_with_menu(
-                ui,
-                &self.workbench.settings,
-                &self.workbench.icons,
-                &title,
-                &commands,
-                &application_commands,
-            );
-            for id in toolbar_actions {
-                self.workbench.dispatch_command(&id)?;
-            }
-            self.workbench.root_top_inset = self.native_window.titlebar_inset();
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        #[cfg(target_os = "linux")]
         {
             let toolbar = self.workbench.toolbar_commands();
             let application = self.workbench.application_commands();
@@ -1186,7 +1140,7 @@ impl Runtime {
             }
             (1, 4..) => {
                 settings.settings =
-                    crate::util::settings::read_json(&settings.config_dir.join("amber.json"))?;
+                    bed_settings::read_json(&settings.config_dir.join("amber.json"))?;
                 settings.request_apply();
                 smoke.phase = 2;
             }
@@ -1202,7 +1156,7 @@ impl Runtime {
     }
     #[cfg(target_os = "macos")]
     fn advance_native_appearance_after_frame(&mut self) -> HostResult<()> {
-        use crate::util::macos_window::TitlebarAction;
+        use crate::platform::macos_window::TitlebarAction;
         let Some(smoke) = &mut self.native_smoke else {
             return Ok(());
         };
@@ -1213,11 +1167,11 @@ impl Runtime {
         match (smoke.phase, self.rendered_frames) {
             (0, 2..) => {
                 self.native_menu
-                    .perform_for_smoke(crate::util::macos_menu::MenuAction::Find)?;
+                    .perform_for_smoke(crate::platform::macos_menu::MenuAction::Find)?;
                 smoke.phase = 1;
             }
             (1, 4..) => {
-                if self.workbench.active_overlay() != bed_core::editor_events::Overlay::Find {
+                if self.workbench.active_overlay() != bed_editing::editor_events::Overlay::Find {
                     return Err(
                         io::Error::other("native menu Find did not target active view").into(),
                     );
@@ -1280,12 +1234,12 @@ impl Runtime {
                     }
                 }
                 for action in [
-                    crate::util::macos_menu::MenuAction::NewExplorer,
-                    crate::util::macos_menu::MenuAction::NewTerminal,
-                    crate::util::macos_menu::MenuAction::NewSettings,
-                    crate::util::macos_menu::MenuAction::NewContentSearch,
-                    crate::util::macos_menu::MenuAction::NewDiagnostics,
-                    crate::util::macos_menu::MenuAction::NewStructure,
+                    crate::platform::macos_menu::MenuAction::NewExplorer,
+                    crate::platform::macos_menu::MenuAction::NewTerminal,
+                    crate::platform::macos_menu::MenuAction::NewSettings,
+                    crate::platform::macos_menu::MenuAction::NewContentSearch,
+                    crate::platform::macos_menu::MenuAction::NewDiagnostics,
+                    crate::platform::macos_menu::MenuAction::NewStructure,
                 ] {
                     self.native_menu.perform_for_smoke(action)?;
                 }
@@ -1362,7 +1316,7 @@ impl Runtime {
     }
     #[cfg(target_os = "macos")]
     fn advance_menu_edit_after_frame(&mut self) -> HostResult<()> {
-        use crate::util::macos_menu::MenuAction;
+        use crate::platform::macos_menu::MenuAction;
         let Some(smoke) = &mut self.menu_smoke else {
             return Ok(());
         };
@@ -1385,7 +1339,7 @@ impl Runtime {
                         0,
                         0,
                         false,
-                        bed_core::editor_commands::CursorReveal::Ensure,
+                        bed_editing::editor_commands::CursorReveal::Ensure,
                     );
                     editor.view_mut().request_focus = true;
                 })?;
@@ -1518,7 +1472,7 @@ impl Runtime {
     }
     #[cfg(target_os = "macos")]
     fn process_native_menu(&mut self) -> HostResult<bool> {
-        use crate::util::macos_menu::MenuAction;
+        use crate::platform::macos_menu::MenuAction;
         // NewFrame reconciles the native focused viewport before the workspace
         // identifies its active panel. Keep menu events queued until that frame.
         if self.focus_needs_frame {
@@ -1566,8 +1520,20 @@ impl Runtime {
                     | MenuAction::SelectAll
             ) {
                 let terminal = self.workbench.focused_terminal();
+                if !dispatch.keyboard && !terminal && !self.context.io().want_text_input() {
+                    let panel_action = match action {
+                        MenuAction::Undo => Some(bed_workbench_api::PanelAction::Undo),
+                        MenuAction::Redo => Some(bed_workbench_api::PanelAction::Redo),
+                        _ => None,
+                    };
+                    if let Some(panel_action) = panel_action
+                        && self.workbench.focused_plugin_action(panel_action)?
+                    {
+                        continue;
+                    }
+                }
                 let route = if dispatch.keyboard {
-                    crate::util::macos_menu::input_shortcut(action, &self.workbench.settings)
+                    crate::platform::macos_menu::input_shortcut(action, &self.workbench.settings)
                         .map(|(key, shift)| NativeEditRoute::Shortcut(key, shift || dispatch.shift))
                         .unwrap_or(NativeEditRoute::Ignore)
                 } else {
@@ -1576,27 +1542,8 @@ impl Runtime {
                 match route {
                     NativeEditRoute::Ignore => {}
                     NativeEditRoute::SelectAllDocument => {
-                        if self
-                            .workbench
-                            .focused_plugin_action(bed_plugin::PanelAction::SelectAll)?
-                        {
-                            continue;
-                        }
-                        if self.workbench.focused_hex() {
-                            queue_native_edit_shortcut(
-                                &mut self.context,
-                                dear_imgui_rs::Key::A,
-                                false,
-                            );
-                        } else if self
-                            .workbench
-                            .active_view()
-                            .and_then(|view| self.workbench.session.document_for_view(view))
-                            == self.workbench.active_document()
-                        {
-                            self.workbench
-                                .with_active_view(|editor| editor.commands().select_all())?;
-                        }
+                        self.workbench
+                            .focused_plugin_action(bed_workbench_api::PanelAction::SelectAll)?;
                     }
                     NativeEditRoute::Shortcut(key, shift) => {
                         queue_native_edit_shortcut(&mut self.context, key, shift)
@@ -2336,10 +2283,10 @@ fn validate_native_split(
 
 #[cfg(target_os = "macos")]
 fn native_menu_command(
-    action: crate::util::macos_menu::MenuAction,
+    action: crate::platform::macos_menu::MenuAction,
     keyboard: bool,
 ) -> Option<WindowCommand> {
-    use crate::util::macos_menu::MenuAction;
+    use crate::platform::macos_menu::MenuAction;
     Some(match action {
         MenuAction::NewDocument => WindowCommand::NewDocument,
         MenuAction::NewTerminal => WindowCommand::NewTerminal,
@@ -2385,11 +2332,11 @@ enum NativeEditRoute {
 }
 #[cfg(target_os = "macos")]
 fn native_edit_route(
-    action: crate::util::macos_menu::MenuAction,
+    action: crate::platform::macos_menu::MenuAction,
     terminal_focused: bool,
     text_input_focused: bool,
 ) -> NativeEditRoute {
-    use crate::util::macos_menu::MenuAction;
+    use crate::platform::macos_menu::MenuAction;
     use dear_imgui_rs::Key;
     if terminal_focused
         && matches!(
@@ -2553,10 +2500,14 @@ pub fn run() -> HostResult<()> {
         std::fs::create_dir(&root)?;
         let fixture = TemporaryMenuFixture(root);
         let image = fixture.0.join("image.png");
-        std::fs::copy(
-            Settings::get_app_resources_path().join("resources/icons/bed.png"),
-            &image,
-        )?;
+        let resources = Settings::get_app_resources_path();
+        let icon = resources.join("resources/icons/bed.png");
+        let icon = if icon.is_file() {
+            icon
+        } else {
+            resources.join("assets/bEd-iOS-Default-1024@1x.png")
+        };
+        std::fs::copy(icon, &image)?;
         std::fs::write(fixture.0.join("bytes.bin"), PLUGIN_SMOKE_BYTES)?;
         std::fs::write(
             fixture.0.join("cube.glb"),
@@ -2580,7 +2531,7 @@ pub fn run() -> HostResult<()> {
         Some(path) => Settings::with_paths(path, Settings::get_app_resources_path())?,
         None => Settings::new()?,
     };
-    let mut workbench = Workbench::with_settings(settings);
+    let mut workbench = Workbench::with_settings(settings, crate::builtins::modules);
     if paths.is_empty()
         && resume_workspace
         && let Err(error) = workbench.restore_last_workspace()
@@ -2608,7 +2559,7 @@ pub fn run() -> HostResult<()> {
             EventLoop::new()?
         }
     };
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     let event_loop = EventLoop::new()?;
     let mut app = Bed {
         workbench: Some(workbench),
@@ -2675,283 +2626,5 @@ fn write_ppm(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn native_edit_shortcuts_undo_and_redo_once_without_inserting_characters() {
-        use bed_ui::views::view_layout::ViewLayout;
-        use dear_imgui_rs::{Condition, FramePrepareOptions, Key};
-        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let mut context = Context::create();
-        context.set_ini_filename(None::<PathBuf>).unwrap();
-        context
-            .font_atlas()
-            .try_claim_legacy_renderer()
-            .unwrap()
-            .build();
-        let mut editor = Editor::new();
-        // A named in-memory document records upstream undo without touching any
-        // source file or scheduling a disk save in this input-only fixture.
-        editor
-            .api()
-            .open_document("test://native-menu", b"baseline");
-        editor.commands().type_text(b"!");
-        let mut input = EditorInput::default();
-        let mut render = |context: &mut Context, editor: &mut Editor| {
-            context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], 1.0 / 60.0));
-            let ui = context.frame();
-            ui.window("Native menu editing")
-                .position([0.0; 2], Condition::Always)
-                .size([640.0, 480.0], Condition::Always)
-                .build(|| {
-                    ui.set_window_focus(None);
-                    assert!(
-                        input
-                            .process(ui, &mut editor.view_context(), &ViewLayout::default())
-                            .is_empty()
-                    );
-                });
-            drop(context.render_legacy());
-        };
-        render(&mut context, &mut editor);
-        assert_eq!(editor.state.join(), b"!baseline");
-        queue_native_edit_shortcut(&mut context, Key::Z, false);
-        for _ in 0..4 {
-            render(&mut context, &mut editor);
-        }
-        assert_eq!(editor.state.join(), b"baseline");
-        queue_native_edit_shortcut(&mut context, Key::Z, true);
-        for _ in 0..4 {
-            render(&mut context, &mut editor);
-        }
-        assert_eq!(editor.state.join(), b"!baseline");
-        assert!(!context.io().key_ctrl());
-        assert!(!context.io().key_super());
-        assert!(!context.io().key_shift());
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn native_mouse_menu_copy_and_paste_use_terminal_clipboard_shortcuts() {
-        use crate::util::macos_menu::MenuAction;
-        use bed_terminal::{
-            terminal::{SelectionSnap, Terminal},
-            terminal_font::TerminalFonts,
-            terminal_view::{TerminalIo, TerminalView},
-        };
-        use dear_imgui_rs::{Condition, FramePrepareOptions};
-        use std::{cell::RefCell, rc::Rc};
-        #[derive(Default)]
-        struct Pipe(Vec<Vec<u8>>);
-        impl TerminalIo for Pipe {
-            fn pump(&mut self, _: &mut Terminal) -> io::Result<bool> {
-                Ok(false)
-            }
-            fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
-                self.0.push(bytes.to_vec());
-                Ok(())
-            }
-            fn resize(&mut self, _: usize, _: usize, _: f32, _: f32) -> io::Result<()> {
-                Ok(())
-            }
-        }
-        struct Clipboard(Rc<RefCell<String>>);
-        impl ClipboardBackend for Clipboard {
-            fn get(&mut self) -> Option<String> {
-                Some(self.0.borrow().clone())
-            }
-            fn set(&mut self, text: &str) {
-                *self.0.borrow_mut() = text.into();
-            }
-        }
-        fn render(
-            context: &mut Context,
-            view: &mut TerminalView,
-            terminal: &mut Terminal,
-            pipe: &mut Pipe,
-        ) {
-            context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], 1.0 / 60.0));
-            let ui = context.frame();
-            let font = ui.current_font();
-            let fonts = TerminalFonts {
-                regular: Some(font),
-                bold: Some(font),
-                italic: Some(font),
-                bold_italic: Some(font),
-                size: 13.0,
-                ..TerminalFonts::default()
-            };
-            ui.window("Native menu terminal canvas")
-                .position([0.0; 2], Condition::Always)
-                .size([640.0, 480.0], Condition::Always)
-                .build(|| {
-                    ui.set_window_focus(None);
-                    ui.set_keyboard_focus_here();
-                    view.draw(ui, terminal, &fonts, pipe).unwrap();
-                });
-            drop(context.render_legacy());
-        }
-        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let mut context = Context::create();
-        context.set_ini_filename(None::<PathBuf>).unwrap();
-        context
-            .font_atlas()
-            .try_claim_legacy_renderer()
-            .unwrap()
-            .build();
-        let clipboard = Rc::new(RefCell::new(String::new()));
-        context.set_clipboard_backend(Clipboard(Rc::clone(&clipboard)));
-        let mut view = TerminalView::default();
-        let mut terminal = Terminal::new(80, 24);
-        let mut pipe = Pipe::default();
-        for _ in 0..2 {
-            render(&mut context, &mut view, &mut terminal, &mut pipe);
-        }
-        terminal.feed(b"abc");
-        terminal.select_start(0, 0, SelectionSnap::None);
-        terminal.select_extend(2, 0, false, false);
-        terminal.select_extend(2, 0, false, true);
-        let NativeEditRoute::Shortcut(key, shift) =
-            native_edit_route(MenuAction::Copy, true, false)
-        else {
-            panic!("copy must route to terminal input")
-        };
-        queue_native_edit_shortcut(&mut context, key, shift);
-        for _ in 0..4 {
-            render(&mut context, &mut view, &mut terminal, &mut pipe);
-        }
-        assert_eq!(&*clipboard.borrow(), "abc");
-        assert!(
-            pipe.0.is_empty(),
-            "mouse Copy must never send Ctrl-C to the shell"
-        );
-        terminal.feed(b"\x1b[?2004h");
-        *clipboard.borrow_mut() = "raw\n\x1b[31m".into();
-        let NativeEditRoute::Shortcut(key, shift) =
-            native_edit_route(MenuAction::Paste, true, false)
-        else {
-            panic!("paste must route to terminal input")
-        };
-        queue_native_edit_shortcut(&mut context, key, shift);
-        for _ in 0..4 {
-            render(&mut context, &mut view, &mut terminal, &mut pipe);
-        }
-        assert_eq!(pipe.0.concat(), b"\x1b[200~raw\n\x1b[31m\x1b[201~");
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn native_panel_clicks_create_and_configured_shortcuts_reveal() {
-        use crate::util::macos_menu::MenuAction;
-        for (action, create, reveal) in [
-            (
-                MenuAction::Explorer,
-                WindowCommand::NewExplorer,
-                WindowCommand::Explorer,
-            ),
-            (
-                MenuAction::Terminal,
-                WindowCommand::NewTerminal,
-                WindowCommand::Terminal,
-            ),
-            (
-                MenuAction::Settings,
-                WindowCommand::NewSettings,
-                WindowCommand::Settings,
-            ),
-            (
-                MenuAction::FindProject,
-                WindowCommand::NewContentSearch,
-                WindowCommand::FindProject,
-            ),
-        ] {
-            assert_eq!(native_menu_command(action, false), Some(create));
-            assert_eq!(native_menu_command(action, true), Some(reveal));
-        }
-        for (action, command) in [
-            (MenuAction::NewExplorer, WindowCommand::NewExplorer),
-            (MenuAction::NewTerminal, WindowCommand::NewTerminal),
-            (MenuAction::NewSettings, WindowCommand::NewSettings),
-            (MenuAction::Projects, WindowCommand::NewProjects),
-            (MenuAction::Diagnostics, WindowCommand::NewDiagnostics),
-            (MenuAction::Structure, WindowCommand::NewStructure),
-            (MenuAction::NewStructure, WindowCommand::NewStructure),
-            (MenuAction::NewReferences, WindowCommand::NewReferences),
-            (MenuAction::LspDashboard, WindowCommand::NewLspDashboard),
-        ] {
-            assert_eq!(native_menu_command(action, false), Some(command));
-            assert_eq!(native_menu_command(action, true), Some(command));
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn native_edit_actions_respect_terminal_and_text_input_ownership() {
-        use crate::util::macos_menu::MenuAction;
-        use dear_imgui_rs::Key;
-        for action in [
-            MenuAction::Undo,
-            MenuAction::Redo,
-            MenuAction::Cut,
-            MenuAction::SelectAll,
-        ] {
-            assert_eq!(
-                native_edit_route(action, true, false),
-                NativeEditRoute::Ignore
-            );
-        }
-        assert_eq!(
-            native_edit_route(MenuAction::Copy, true, false),
-            NativeEditRoute::Shortcut(Key::C, true)
-        );
-        assert_eq!(
-            native_edit_route(MenuAction::Paste, true, false),
-            NativeEditRoute::Shortcut(Key::V, true)
-        );
-        assert_eq!(
-            native_edit_route(MenuAction::SelectAll, false, true),
-            NativeEditRoute::Shortcut(Key::A, false)
-        );
-        assert_eq!(
-            native_edit_route(MenuAction::SelectAll, false, false),
-            NativeEditRoute::SelectAllDocument
-        );
-    }
-
-    #[test]
-    fn screenshot_exports_bgra_padded_rows_in_display_order() {
-        let path =
-            std::env::temp_dir().join(format!("bed-screenshot-test-{}.ppm", std::process::id()));
-        let pixels = [
-            30, 20, 10, 255, 60, 50, 40, 255, 0, 0, 0, 0, 90, 80, 70, 255, 120, 110, 100, 255, 0,
-            0, 0, 0,
-        ];
-        write_ppm(
-            &path,
-            &pixels,
-            2,
-            2,
-            12,
-            wgpu::TextureFormat::Bgra8UnormSrgb,
-        )
-        .unwrap();
-        let bytes = std::fs::read(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        assert_eq!(&bytes[..11], b"P6\n2 2\n255\n");
-        assert_eq!(
-            &bytes[11..],
-            &[10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120]
-        );
-    }
-
-    #[test]
-    fn screenshot_rejects_incompatible_extent_before_creating_file() {
-        let path =
-            std::env::temp_dir().join(format!("bed-screenshot-invalid-{}.ppm", std::process::id()));
-        assert!(write_ppm(&path, &[0; 4], 2, 2, 8, wgpu::TextureFormat::Rgba8Unorm).is_err());
-        assert!(write_ppm(&path, &[0; 16], 2, 2, 4, wgpu::TextureFormat::Bgra8Unorm).is_err());
-        assert!(!path.exists());
-    }
-}
+#[path = "../tests/unit/native/host_tests.rs"]
+mod tests;

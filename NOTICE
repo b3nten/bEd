@@ -12,11 +12,15 @@ in resources/fonts/ATTRIBUTION.txt and resources/icons/ATTRIBUTION.txt.
 Tree-sitter runtime and grammar providers use published Cargo packages. Release
 packages retain their licenses under LICENSES/dependencies/cargo/; original
 highlight query attribution remains in resources/queries and the source history.
-Grammar notices omitted from published archives are retained unchanged at their
-exact release revisions in LICENSES/tree-sitter, with recorded source URLs.
+Grammar notices omitted from published archives are retained unchanged in
+LICENSES/tree-sitter-NOTICES.txt. Their exact release revisions, source URLs
+and checksums are recorded in LICENSES/tree-sitter-sources.json.
 
 Dear ImGui, cimgui, and dear-imgui-sys 0.18.0 retain the original notices under
 vendor/dear-imgui-sys. Bed's native binding changes are recorded in BED_PATCHES.md.
+The original Rust binding MIT/Apache-2.0 notices are retained at the roots of
+vendor/dear-imgui-sys, vendor/dear-imgui-winit and vendor/dear-imgui-wgpu,
+copied unchanged from revision 95f279150e95c728952db3e79226c687167ccf73.
 
 Portions of this software are copyright © 2023 The FreeType Project
 (www.freetype.org). All rights reserved. FreeType 2.13.2 is used under the
@@ -40,10 +44,10 @@ Source License 1.1 in LICENSES/terminal-adapter-BSL-1.1.txt, including its
 non-commercial additional use grant and April 27, 2030 change date.
 The Alacritty terminal engine is used under Apache-2.0.
 
-The native macOS menu uses muda 0.21.0 by the Tauri Programme within The
-Commons Conservancy and contributors. Its MIT notice is preserved in
-LICENSES/muda-MIT.txt. Release packages include additional dependency notices
-collected from the pinned Cargo packages and vendored native sources.
+The native macOS menu uses muda by the Tauri Programme within The Commons
+Conservancy and contributors. Release packages include its original notices
+and other dependency notices collected from the locked Cargo packages and
+vendored native sources.
 
 Bundled Linux remote helpers statically link musl libc by Rich Felker and
 contributors. Its MIT license and additional copyright notices are retained in

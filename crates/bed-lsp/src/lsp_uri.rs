@@ -58,8 +58,6 @@ impl LspUri {
         let native = absolute
             .to_str()
             .ok_or_else(|| invalid("Document path is not UTF-8"))?;
-        #[cfg(windows)]
-        let native = format!("/{native}");
         Ok(Self {
             scheme: "file".into(),
             authority: Some(String::new()),
@@ -84,9 +82,6 @@ impl LspUri {
         })
     }
     pub fn fs_path(&self) -> String {
-        #[cfg(windows)]
-        return self.path.strip_prefix('/').unwrap_or(&self.path).to_owned();
-        #[cfg(not(windows))]
         self.path.clone()
     }
     pub fn is_valid(&self) -> bool {
@@ -221,12 +216,5 @@ mod tests {
         assert_eq!(remote.authority(), "host");
         assert_eq!(remote.path(), "/tmp/source.rs");
         assert!(LspUri::parse("file://host?query").is_err());
-    }
-    #[cfg(windows)]
-    #[test]
-    fn windows_fs_path_differs_from_link_path() {
-        let uri = LspUri::parse("file:///C%3A/project/a.rs").unwrap();
-        assert_eq!(uri.path(), "/C:/project/a.rs");
-        assert_eq!(uri.fs_path(), "C:/project/a.rs");
     }
 }

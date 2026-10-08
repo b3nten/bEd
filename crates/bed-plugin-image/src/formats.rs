@@ -311,7 +311,10 @@ mod tests {
     #[test]
     fn svg_displays_embedded_images_and_ignores_external_files() {
         let embedded = png_data_url(&encoded(ImageFormat::Png));
-        let external = concat!(env!("CARGO_MANIFEST_DIR"), "/../../resources/icons/bed.png");
+        let external = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/bEd-iOS-Default-1024@1x.png"
+        );
         assert!(std::path::Path::new(external).exists());
         let svg = format!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="6" height="2">

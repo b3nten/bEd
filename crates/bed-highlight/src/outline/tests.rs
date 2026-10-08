@@ -1,5 +1,5 @@
 use super::*;
-use bed_core::editor_state::EditorState;
+use bed_editing::editor_state::EditorState;
 
 fn key(language: &str) -> OutlineKey {
     OutlineKey {

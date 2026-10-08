@@ -159,17 +159,10 @@ fn build(
     let program = match request.command {
         BuildCommand::None => request.program,
         BuildCommand::Shell(script) => {
-            #[cfg(unix)]
             let mut command = {
                 let mut c =
                     Command::new(std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into()));
                 c.args(["-lc", &script]);
-                c
-            };
-            #[cfg(windows)]
-            let mut command = {
-                let mut c = Command::new("cmd.exe");
-                c.args(["/C", &script]);
                 c
             };
             command.current_dir(&request.workspace);

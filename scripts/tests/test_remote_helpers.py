@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 SPEC = importlib.util.spec_from_file_location(
-    "remote_helpers", Path(__file__).resolve().parents[1] / "package-remote-helpers.py")
+    "remote_helpers", Path(__file__).resolve().parents[1] / "lib/remote-helpers.py")
 HELPERS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(HELPERS)
 
@@ -37,7 +37,7 @@ def bundle(source, target):
     manifest = {"format_version": 1, "target": target, "version": HELPERS.package_version(),
                 "protocol_version": HELPERS.protocol_version(), "sha256": HELPERS.digest(binary)}
     (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    for name in ("LICENSE", "NOTICE", "UPSTREAM_REVISION", "LICENSES/musl-COPYRIGHT.txt",
+    for name in ("LICENSE", "NOTICE", "LICENSES/musl-COPYRIGHT.txt",
                  "LICENSES/dependencies/index.json"):
         path = directory / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -121,7 +121,7 @@ class StaticHelperTests(unittest.TestCase):
             text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 1)
         self.assertIn("Building the desktop binary does not build or stage", result.stderr)
-        self.assertIn("bash scripts/build-remote-helpers.sh", result.stderr)
+        self.assertIn("bash scripts/lib/build-remote-helpers.sh", result.stderr)
         self.assertIn("requires running Docker", result.stderr)
         self.assertIn("C compiler run only in Linux containers", result.stderr)
         self.assertIn("matching Bed release", result.stderr)

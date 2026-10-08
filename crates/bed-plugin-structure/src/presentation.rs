@@ -1,5 +1,5 @@
 //! Source outline presentation. Workbench owns document targeting and navigation.
-use bed_core::identity::DocumentId;
+use bed_editing::identity::DocumentId;
 use bed_highlight::outline::{OutlineKey, OutlineResult, OutlineService, OutlineStatus};
 use bed_ui::util::tree_animation::TreeAnimation;
 use dear_imgui_rs::{Condition, StyleVar, Ui};

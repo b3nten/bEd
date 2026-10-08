@@ -17,21 +17,21 @@ pub fn read_file_bytes(path: &Path) -> io::Result<ReadFile> {
     read_file(path, false)
 }
 
-pub fn classify_bytes(bytes: &[u8]) -> bed_core::editor_state::DocumentKind {
+pub fn classify_bytes(bytes: &[u8]) -> bed_editing::editor_state::DocumentKind {
     let prefix = &bytes[..bytes.len().min(1024)];
     let junk = prefix
         .iter()
         .filter(|&&c| c == 0 || (c < 32 && c != b'\n' && c != b'\r' && c != b'\t'))
         .count();
     if !prefix.is_empty() && junk > prefix.len() / 10 {
-        bed_core::editor_state::DocumentKind::Bytes
+        bed_editing::editor_state::DocumentKind::Bytes
     } else {
-        bed_core::editor_state::DocumentKind::Text
+        bed_editing::editor_state::DocumentKind::Text
     }
 }
 
 pub fn validate_text_bytes(bytes: &[u8]) -> io::Result<()> {
-    if classify_bytes(bytes) == bed_core::editor_state::DocumentKind::Bytes {
+    if classify_bytes(bytes) == bed_editing::editor_state::DocumentKind::Bytes {
         return Err(io::Error::new(io::ErrorKind::InvalidData, BINARY_ERROR));
     }
     Ok(())

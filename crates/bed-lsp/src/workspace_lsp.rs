@@ -7,7 +7,7 @@ use crate::{
     lsp_config::LspConfig,
     message_handler::RpcEvent,
 };
-use bed_core::{
+use bed_editing::{
     identity::{DocumentId, ViewId, WorkspaceId},
     util::doc_path,
 };

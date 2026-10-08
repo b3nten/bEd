@@ -11,8 +11,8 @@ use std::sync::OnceLock;
 
 const SIDE: u32 = 256;
 const SOURCES: [&[u8]; 2] = [
-    include_bytes!("../assets/environments/studio_small_08_1k.hdr"),
-    include_bytes!("../assets/environments/kiara_1_dawn_1k.hdr"),
+    include_bytes!("../resources/environments/studio_small_08_1k.hdr"),
+    include_bytes!("../resources/environments/kiara_1_dawn_1k.hdr"),
 ];
 static CUBEMAPS: [OnceLock<Result<Image, String>>; 2] = [const { OnceLock::new() }; 2];
 

@@ -51,11 +51,6 @@ pub(crate) fn run(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
     let child = command.spawn().map_err(|e| e.to_string())?;
     let mut owner = Owner {
         child,

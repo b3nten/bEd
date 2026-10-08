@@ -1,11 +1,11 @@
 // Translated from nealmick/ned editor/services/highlight/tree_sitter.{h,cpp}.
-// Pinned by UPSTREAM_REVISION; MIT/X Consortium license in LICENSE.
+// Source revision and attribution in NOTICE; MIT/X Consortium license in LICENSE.
 //! Snapshot parsing, incremental tree edits, and prioritized query captures.
 use crate::capture_map::{
     THEME_KEYS, ThemeSlot, capture_priority, is_none_capture, is_string_capture, subtract_ranges,
     theme_slot_for_capture,
 };
-use bed_core::{
+use bed_editing::{
     buffer::text_buffer::Snapshot,
     editor_operations::{OpKind, PendingEdit},
     editor_state::EditorState,
@@ -313,21 +313,19 @@ fn query_file_for_executable(name: &str, executable: Option<&Path>) -> PathBuf {
         && let Some(parent) = exe.parent()
     {
         candidates.push(parent.join("queries").join(name));
-        // Portable/Linux packages put the binary in usr/bin and resources in
-        // usr/share/Bed. Keep executable-local overrides first, as upstream does.
-        candidates.push(parent.join("../share/Bed/queries").join(name));
+        // Packaged queries share the resources tree used by fonts and config.
+        // Keep executable-local overrides ahead of the installed resources.
+        candidates.push(parent.join("../share/Bed/resources/queries").join(name));
         if let Some(contents) = parent.parent() {
-            candidates.push(contents.join("Resources/queries").join(name));
+            candidates.push(contents.join("Resources/resources/queries").join(name));
         }
     }
     candidates.extend([
         PathBuf::from("queries").join(name),
         PathBuf::from("resources/queries").join(name),
-        PathBuf::from("editor/services/highlight/queries").join(name),
     ]);
     if cfg!(target_os = "linux") {
-        candidates.push(PathBuf::from("/usr/share/Bed/queries").join(name));
-        candidates.push(PathBuf::from("/usr/lib/Bed/queries").join(name));
+        candidates.push(PathBuf::from("/usr/share/Bed/resources/queries").join(name));
     }
     candidates
         .into_iter()
@@ -1252,35 +1250,41 @@ mod resource_tests {
 
     #[test]
     fn installed_queries_resolve_from_binary_and_keep_local_override_priority() {
-        let temp = TempDir::new();
-        let executable = temp.write("usr/bin/bed", b"path fixture");
-        let name = "bed-packaged-query-resolution.scm";
-        let installed = temp.write(
-            &format!("usr/share/Bed/queries/{name}"),
-            b"(identifier) @variable",
-        );
-        let found = query_file_for_executable(name, Some(&executable));
-        assert_eq!(
-            std::fs::canonicalize(&found).unwrap(),
-            std::fs::canonicalize(&installed).unwrap()
-        );
-        assert_eq!(std::fs::read(found).unwrap(), b"(identifier) @variable");
-        let local = temp.write(
-            &format!("usr/bin/queries/{name}"),
-            b"(identifier) @function",
-        );
-        assert_eq!(query_file_for_executable(name, Some(&executable)), local);
-        std::fs::remove_file(local).unwrap();
-        std::fs::remove_file(installed).unwrap();
-        let mac = temp.write(
-            &format!("usr/Resources/queries/{name}"),
-            b"(identifier) @type",
-        );
-        assert_eq!(query_file_for_executable(name, Some(&executable)), mac);
-        std::fs::remove_file(mac).unwrap();
-        assert_eq!(
-            query_file_for_executable(name, Some(&executable)),
-            PathBuf::from("bundled").join(name)
-        );
+        for (binary_directory, resource_directory) in [
+            ("usr/bin", "usr/share/Bed/resources"),
+            (
+                "Bed.app/Contents/MacOS",
+                "Bed.app/Contents/Resources/resources",
+            ),
+        ] {
+            let temp = TempDir::new();
+            let executable = temp.write(&format!("{binary_directory}/bed"), b"path fixture");
+            let name = "bed-packaged-query-resolution.scm";
+            let installed = temp.write(
+                &format!("{resource_directory}/queries/{name}"),
+                b"(identifier) @variable",
+            );
+            let found = query_file_for_executable(name, Some(&executable));
+            assert_eq!(
+                std::fs::canonicalize(&found).unwrap(),
+                std::fs::canonicalize(&installed).unwrap()
+            );
+            assert_eq!(std::fs::read(found).unwrap(), b"(identifier) @variable");
+            let local = temp.write(
+                &format!("{binary_directory}/queries/{name}"),
+                b"(identifier) @function",
+            );
+            assert_eq!(query_file_for_executable(name, Some(&executable)), local);
+            std::fs::remove_file(local).unwrap();
+            assert_eq!(
+                std::fs::canonicalize(query_file_for_executable(name, Some(&executable))).unwrap(),
+                std::fs::canonicalize(&installed).unwrap()
+            );
+            std::fs::remove_file(installed).unwrap();
+            assert_eq!(
+                query_file_for_executable(name, Some(&executable)),
+                PathBuf::from("bundled").join(name)
+            );
+        }
     }
 }

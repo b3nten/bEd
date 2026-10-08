@@ -6,41 +6,113 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EXPECTED = {
-    "bed": {"bed-core", "bed-files", "bed-highlight", "bed-lsp", "bed-session", "bed-ui", "bed-terminal", "bed-debug", "bed-effects", "bed-remote", "bed-plugin", "bed-plugin-structure", "bed-plugin-image", "bed-plugin-gltf", "bed-plugin-font", "bed-plugin-audio", "bed-plugin-csv"},
+MODULES = {
+    "bed-module-editor", "bed-module-debug", "bed-module-explorer",
+    "bed-module-search", "bed-module-terminal", "bed-module-projects",
+    "bed-module-settings",
+}
+VIEWERS = {
+    "bed-plugin-structure", "bed-plugin-image", "bed-plugin-gltf",
+    "bed-plugin-font", "bed-plugin-audio", "bed-plugin-csv",
+}
+# These are allowed direct edges, not required implementation dependencies.
+# Removing an unused dependency must not require weakening a boundary check.
+ALLOWED_INTERNAL = {
+    "bed": {
+        "bed-workbench", "bed-workbench-api", "bed-editing", "bed-files",
+        "bed-highlight", "bed-lsp", "bed-document-session", "bed-ui",
+        "bed-editor-ui", "bed-settings", "bed-terminal", "bed-debug",
+        "bed-effects", "bed-effects-config", "bed-remote", "bed-plugin",
+    } | MODULES | VIEWERS,
+    "bed-workbench": {
+        "bed-workbench-api", "bed-editing", "bed-files", "bed-highlight",
+        "bed-lsp", "bed-document-session", "bed-ui", "bed-editor-ui",
+        "bed-settings", "bed-terminal", "bed-remote",
+    } | MODULES,
+    "bed-workbench-api": {"bed-editing", "bed-document-session"},
+    "bed-module-editor": {
+        "bed-editing", "bed-document-session", "bed-ui", "bed-editor-ui",
+        "bed-lsp", "bed-workbench-api",
+    },
+    "bed-module-debug": {
+        "bed-editing", "bed-document-session", "bed-editor-ui", "bed-debug",
+        "bed-workbench-api",
+    },
+    "bed-module-explorer": {
+        "bed-editing", "bed-files", "bed-remote", "bed-document-session",
+        "bed-ui", "bed-workbench-api",
+    },
+    "bed-module-search": {
+        "bed-files", "bed-remote", "bed-document-session", "bed-ui",
+        "bed-workbench-api",
+    },
+    "bed-module-terminal": {"bed-document-session", "bed-workbench-api"},
+    "bed-module-projects": {
+        "bed-document-session", "bed-ui", "bed-workbench-api",
+    },
+    "bed-module-settings": {
+        "bed-editing", "bed-document-session", "bed-settings", "bed-ui",
+        "bed-workbench-api",
+    },
+    "bed-settings": {
+        "bed-editing", "bed-document-session", "bed-highlight", "bed-ui",
+        "bed-effects-config",
+    },
     "bed-debug": set(),
-    "bed-core": set(),
-    "bed-files": {"bed-core", "bed-remote"},
-    "bed-highlight": {"bed-core"},
-    "bed-lsp": {"bed-core", "bed-remote"},
-    "bed-session": {"bed-core", "bed-files", "bed-highlight", "bed-lsp", "bed-remote"},
-    "bed-ui": {"bed-core", "bed-session", "bed-highlight", "bed-lsp"},
-    "bed-terminal": {"bed-core", "bed-remote"},
-    "bed-effects": set(),
+    "bed-editing": set(),
+    "bed-files": {"bed-editing", "bed-remote"},
+    "bed-highlight": {"bed-editing"},
+    "bed-lsp": {"bed-editing", "bed-remote"},
+    "bed-document-session": {
+        "bed-editing", "bed-files", "bed-highlight", "bed-lsp", "bed-remote",
+    },
+    "bed-ui": {"bed-editing"},
+    "bed-editor-ui": {
+        "bed-editing", "bed-document-session", "bed-highlight", "bed-ui",
+    },
+    "bed-terminal": {"bed-editing", "bed-remote"},
+    "bed-effects": {"bed-effects-config"},
+    "bed-effects-config": set(),
     "bed-remote": set(),
     "bed-headless": {"bed-remote", "bed-files"},
-    "bed-plugin": {"bed-core", "bed-session"},
-    "bed-plugin-structure": {"bed-core", "bed-highlight", "bed-plugin", "bed-ui"},
-    "bed-plugin-image": {"bed-core", "bed-plugin", "bed-ui"},
-    "bed-plugin-gltf": {"bed-core", "bed-plugin", "bed-ui"},
-    "bed-plugin-font": {"bed-core", "bed-plugin", "bed-ui"},
-    "bed-plugin-audio": {"bed-core", "bed-plugin"},
-    "bed-plugin-csv": {"bed-core", "bed-plugin", "bed-session"},
+    "bed-plugin": {"bed-workbench-api"},
+    "bed-plugin-structure": {
+        "bed-editing", "bed-highlight", "bed-plugin", "bed-ui",
+    },
+    "bed-plugin-image": {"bed-editing", "bed-plugin", "bed-ui"},
+    "bed-plugin-gltf": {"bed-editing", "bed-plugin", "bed-ui"},
+    "bed-plugin-font": {"bed-editing", "bed-plugin", "bed-ui"},
+    "bed-plugin-audio": {"bed-editing", "bed-plugin"},
+    "bed-plugin-csv": {"bed-editing", "bed-plugin", "bed-document-session"},
 }
-HEADLESS = {"bed-core", "bed-files", "bed-highlight", "bed-lsp", "bed-session", "bed-remote", "bed-headless", "bed-debug"}
-GUI = {"dear-imgui-rs", "dear-imgui-sys", "dear-imgui-winit", "dear-imgui-wgpu", "winit", "wgpu", "arboard", "rfd", "resvg", "muda", "objc2-app-kit"}
+HEADLESS = {
+    "bed-editing", "bed-files", "bed-highlight", "bed-lsp",
+    "bed-document-session", "bed-remote", "bed-headless", "bed-debug",
+    "bed-effects-config",
+}
+GUI = {
+    "dear-imgui-rs", "dear-imgui-sys", "dear-imgui-winit", "dear-imgui-wgpu",
+    "winit", "wgpu", "arboard", "rfd", "resvg", "muda", "objc2-app-kit",
+}
+NATIVE_BACKENDS = {
+    "winit", "arboard", "rfd", "muda", "objc2-app-kit",
+    "dear-imgui-winit", "dear-imgui-wgpu",
+}
+PORTABLE_UI = {
+    "bed-ui", "bed-editor-ui", "bed-settings", "bed-workbench-api", "bed-plugin",
+} | MODULES | VIEWERS
 
 
 def check(offline=False):
     command = ["cargo", "metadata", "--locked", "--format-version", "1"]
     if offline:
         command.append("--offline")
-    metadata = json.loads(subprocess.check_output(
-        command, cwd=ROOT,
-    ))
+    metadata = json.loads(subprocess.check_output(command, cwd=ROOT))
     packages = {p["id"]: p for p in metadata["packages"]}
     members = {packages[pid]["name"]: packages[pid] for pid in metadata["workspace_members"]}
-    assert members.keys() == EXPECTED.keys(), f"Unexpected workspace members: {sorted(members)}"
+    assert members.keys() == ALLOWED_INTERNAL.keys(), (
+        f"Unexpected workspace members: {sorted(members.keys() ^ ALLOWED_INTERNAL.keys())}"
+    )
     # Prefer published dependencies; local forks must document an active Bed patch.
     for package in packages.values():
         if package["source"] is not None or package["id"] in metadata["workspace_members"]:
@@ -51,14 +123,19 @@ def check(offline=False):
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
 
     def production_dependencies(pid):
-        # Dev dependencies may deliberately bring GUI fixtures into an integration suite.
-        return {dep["pkg"] for dep in nodes[pid]["deps"]
-                if any(kind["kind"] != "dev" for kind in dep["dep_kinds"])}
+        # Dev dependencies deliberately bring viewer fixtures into the shell tests.
+        return {
+            dep["pkg"] for dep in nodes[pid]["deps"]
+            if any(kind["kind"] != "dev" for kind in dep["dep_kinds"])
+        }
 
     for name, package in members.items():
-        internal = {packages[pid]["name"] for pid in production_dependencies(package["id"])
-                    if packages[pid]["name"] in EXPECTED}
-        assert internal == EXPECTED[name], f"{name}: expected {EXPECTED[name]}, found {internal}"
+        direct = {
+            packages[pid]["name"] for pid in production_dependencies(package["id"])
+        }
+        internal = direct & members.keys()
+        unexpected = internal - ALLOWED_INTERNAL[name]
+        assert not unexpected, f"{name}: forbidden direct dependencies: {sorted(unexpected)}"
         seen = set()
         pending = list(production_dependencies(package["id"]))
         while pending:
@@ -68,16 +145,38 @@ def check(offline=False):
             seen.add(pid)
             pending.extend(production_dependencies(pid) - seen)
         names = {packages[pid]["name"] for pid in seen}
-        portable_ui = {"bed-ui", "bed-plugin", "bed-plugin-structure", "bed-plugin-image", "bed-plugin-gltf", "bed-plugin-font", "bed-plugin-audio", "bed-plugin-csv"}
         forbidden = set()
         if name in HEADLESS:
             forbidden = GUI
-        elif name in portable_ui:
-            forbidden = {"bed", "bed-terminal", "bed-effects", "winit", "arboard", "rfd"}
+        elif name in PORTABLE_UI:
+            forbidden = NATIVE_BACKENDS | {
+                "bed", "bed-workbench", "bed-terminal", "bed-effects",
+            }
             if name == "bed-ui":
-                forbidden.add("wgpu")
-        assert not names & forbidden, f"{name} crosses its dependency boundary: {sorted(names & forbidden)}"
-    print(f"All {len(EXPECTED)} crates respect their production dependency boundaries.")
+                forbidden |= {
+                    "bed-document-session", "bed-editor-ui", "bed-highlight",
+                    "bed-lsp", "bed-workbench-api", "wgpu",
+                } | MODULES | VIEWERS
+            elif name == "bed-editor-ui":
+                # Document services may use LSP; the widget has no direct LSP or
+                # workbench dependency and only consumes neutral presentation data.
+                assert "bed-lsp" not in direct, "Editor widgets must not depend directly on LSP"
+                forbidden |= {"bed-workbench-api"} | MODULES | VIEWERS
+        elif name == "bed-workbench":
+            # Dialogs/Trash are shell services. Native windows, clipboard and the
+            # ImGui platform/renderer backends remain with the desktop host.
+            forbidden = {
+                "bed", "winit", "arboard", "muda", "dear-imgui-winit",
+                "dear-imgui-wgpu", "bed-effects",
+            } | VIEWERS
+            # rfd can itself use AppKit; the shell must not import AppKit directly.
+            assert not direct & (NATIVE_BACKENDS - {"rfd"}), (
+                f"Workbench imports native host APIs: {sorted(direct & (NATIVE_BACKENDS - {'rfd'}))}"
+            )
+        assert not names & forbidden, (
+            f"{name} crosses its dependency boundary: {sorted(names & forbidden)}"
+        )
+    print(f"All {len(members)} crates respect their production dependency boundaries.")
 
 
 if __name__ == "__main__":

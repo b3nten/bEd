@@ -348,29 +348,7 @@ fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
     }
 }
 
-#[cfg(windows)]
-fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn MoveFileExW(source: *const u16, destination: *const u16, flags: u32) -> i32;
-    }
-    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-    let destination: Vec<u16> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    // SAFETY: Both strings are NUL-terminated and live throughout the call;
-    // flags=0 forbids replacing an existing destination.
-    if unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), 0) } != 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn rename_no_replace(_source: &Path, _destination: &Path) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,

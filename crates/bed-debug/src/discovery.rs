@@ -24,15 +24,8 @@ pub fn discover_adapter(override_path: Option<&Path>) -> io::Result<PathBuf> {
         if !metadata.is_file() {
             return false;
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            metadata.permissions().mode() & 0o111 != 0
-        }
-        #[cfg(not(unix))]
-        {
-            true
-        }
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
     }
     fn find(name: &Path) -> Option<PathBuf> {
         if name.is_absolute() || name.components().count() > 1 {

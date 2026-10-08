@@ -1,4 +1,4 @@
-//! Bed effects components. Attribution: workspace LICENSE, NOTICE and UPSTREAM_REVISION.
+//! Bed effects components. Attribution: workspace LICENSE and NOTICE.
 pub mod shader;
 pub mod shader_manager;
 pub mod shader_types;

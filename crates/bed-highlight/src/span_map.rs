@@ -1,7 +1,7 @@
 // Translated from nealmick/ned editor/services/highlight/span_map.{h,cpp}.
-// Pinned by UPSTREAM_REVISION; MIT/X Consortium license in LICENSE.
+// Source revision and attribution in NOTICE; MIT/X Consortium license in LICENSE.
 use crate::tree_sitter::{ColorRangeMap, ColorSpan, LineColorSpans};
-use bed_core::editor_operations::{OpKind, PendingEdit};
+use bed_editing::editor_operations::{OpKind, PendingEdit};
 
 #[derive(Default, Debug)]
 pub struct SpanMap {

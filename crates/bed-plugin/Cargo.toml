@@ -6,12 +6,7 @@ publish = false
 license-file = "../../LICENSE"
 
 [features]
-gpu = ["dep:wgpu", "dear-imgui-rs/multi-viewport"]
+gpu = ["bed-workbench-api/gpu"]
 
 [dependencies]
-bed-core = { workspace = true }
-bed-session = { workspace = true }
-dear-imgui-rs = { workspace = true }
-dear-imgui-sys = { workspace = true }
-serde_json = { workspace = true }
-wgpu = { workspace = true, optional = true }
+bed-workbench-api = { workspace = true }

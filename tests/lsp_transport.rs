@@ -1,9 +1,15 @@
 //! A deterministic stdio language server lives inside this test executable.
 //! Cargo runs this target with harness=false; no installed interpreter/server is
 //! required and the application gains no test-only CLI modes.
+use bed_settings::Settings;
 use std::io;
 
-use bed_core::editor_events::DocumentChange;
+use bed_document_session::{
+    editor::Editor,
+    editor_session::{ClosePolicy, DocumentId, EditorSession, SessionOptions, ViewId, WorkspaceId},
+};
+use bed_editing::editor_events::DocumentChange;
+use bed_editor_ui::editor_view::{EditorView, EditorViewOptions};
 use bed_lsp::{
     connection::{Connection, encode_packet, write_packet},
     jsonrpc::{
@@ -16,14 +22,7 @@ use bed_lsp::{
     process::ProcessOptions,
     workspace_lsp::{LspRequestOrigin, WorkspaceLsp},
 };
-use bed_session::{
-    editor::Editor,
-    editor_session::{ClosePolicy, DocumentId, EditorSession, SessionOptions, ViewId, WorkspaceId},
-};
-use bed_ui::{
-    editor_view::{EditorView, EditorViewOptions},
-    lsp::lsp_ui::{ContextLspAction, LspUi},
-};
+use bed_module_editor::lsp::lsp_ui::{ContextLspAction, LspUi};
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -194,6 +193,7 @@ fn main() {
 }
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
+const STDERR_DRAIN_SENTINEL: &str = "\n[stderr complete]\n";
 struct Fixture {
     root: PathBuf,
     client: LspClient,
@@ -418,7 +418,7 @@ fn work_done_progress_is_main_thread_owned_and_resets() {
     // The actual docked dashboard body must draw active server work inside the
     // caller's native window, then stop presenting it as active after end.
     {
-        use bed_ui::lsp::lsp_dashboard::LspDashboard;
+        use bed_module_editor::lsp::lsp_dashboard::LspDashboard;
         use dear_imgui_rs::{Condition, Context, FramePrepareOptions, sys};
         let mut context = Context::create();
         context.set_ini_filename(None::<PathBuf>).unwrap();
@@ -803,11 +803,22 @@ fn literal_argv_and_missing_executable() {
 }
 
 fn stderr_drain_is_bounded() {
-    let mut fixture = Fixture::new("stderr");
+    let mut fixture = Fixture::new("stderr-drain");
     fixture.ready();
+    // Initialization arrives on stdout; its independent reader can finish
+    // before the stderr reader consumes the end of the fixture's burst.
+    wait_until(|| {
+        fixture.client.poll();
+        fixture
+            .client
+            .stderr_text()
+            .ends_with(STDERR_DRAIN_SENTINEL)
+    });
     let bytes = fixture.client.take_stderr();
     assert_eq!(bytes.len(), MAX_STDERR_BYTES);
-    assert!(bytes.iter().all(|byte| *byte == b'x'));
+    let prefix_length = bytes.len() - STDERR_DRAIN_SENTINEL.len();
+    assert!(bytes[..prefix_length].iter().all(|byte| *byte == b'x'));
+    assert_eq!(&bytes[prefix_length..], STDERR_DRAIN_SENTINEL.as_bytes());
     assert!(fixture.client.take_stderr().is_empty());
 }
 
@@ -907,9 +918,12 @@ fn editor_bridge_synchronizes_edits_save_and_switch() {
     editor
         .api()
         .open_document(&fixture.document, "a😀b\n".as_bytes());
-    editor
-        .commands()
-        .set_cursor(0, 5, false, bed_core::editor_commands::CursorReveal::Ensure);
+    editor.commands().set_cursor(
+        0,
+        5,
+        false,
+        bed_editing::editor_commands::CursorReveal::Ensure,
+    );
     editor.commands().type_text(b"X");
     assert!(editor.save().unwrap());
     assert_eq!(fs::read(&fixture.document).unwrap(), "a😀Xb\n".as_bytes());
@@ -988,8 +1002,8 @@ fn native_fixture_supports_navigation_hover_and_diagnostics() {
 }
 
 fn shared_session_save_diagnostics_render_in_each_custom_view() {
-    use bed_core::editor_commands::CursorReveal;
-    use bed_ui::views::diagnostic_style::severity_color;
+    use bed_editing::editor_commands::CursorReveal;
+    use bed_editor_ui::views::diagnostic_style::severity_color;
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions, sys};
 
     let fixture = PoolFixture::new(9900, "basic");
@@ -1604,11 +1618,8 @@ struct NavigationWorkbench {
 }
 impl NavigationWorkbench {
     fn new() -> Self {
-        use bed::{
-            util::settings::Settings,
-            workbench::{WindowCommand, Workbench, WorkbenchHostMode},
-        };
-        use bed_core::editor_commands::CursorReveal;
+        use bed::workbench::{WindowCommand, Workbench, WorkbenchHostMode};
+        use bed_editing::editor_commands::CursorReveal;
         let fixture = PoolFixture::new(9910, "basic");
         let path = fixture.root.join("navigation.rs");
         fs::write(&path, "é🙂symbol\nline target\nlast\n").unwrap();
@@ -1635,7 +1646,7 @@ impl NavigationWorkbench {
         settings.terminal_visible = false;
         let mut context = dear_imgui_rs::Context::create();
         context.set_ini_filename(None::<PathBuf>).unwrap();
-        let mut workbench = Workbench::with_settings(settings);
+        let mut workbench = Workbench::with_settings(settings, bed::builtins::modules);
         workbench
             .initialize(&mut context, WorkbenchHostMode::Fullscreen)
             .unwrap();
@@ -1892,7 +1903,7 @@ fn workbench_multiple_and_stale_definitions_use_guarded_routes() {
 }
 
 fn workbench_primary_click_sends_clicked_utf16_position() {
-    use bed_ui::views::view_layout::{glyph_advance, line_column_x};
+    use bed_editor_ui::views::view_layout::{glyph_advance, line_column_x};
     use dear_imgui_rs::{Key, MouseButton, sys};
     let mut fixture = NavigationWorkbench::new();
     fixture.configure(fixture.location(1, 2));
@@ -2226,8 +2237,12 @@ fn mock_server(scenario: &str) {
             .unwrap();
         return;
     }
-    if scenario == "stderr" {
-        io::stderr().write_all(&vec![b'x'; 256 * 1024]).unwrap();
+    if matches!(scenario, "stderr" | "stderr-drain") {
+        let mut stderr = io::stderr().lock();
+        stderr.write_all(&vec![b'x'; 256 * 1024]).unwrap();
+        if scenario == "stderr-drain" {
+            stderr.write_all(STDERR_DRAIN_SENTINEL.as_bytes()).unwrap();
+        }
     }
     let input = io::stdin();
     let output = io::stdout();

@@ -1,0 +1,13 @@
+[package]
+name = "bed-module-projects"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license-file = "../../LICENSE"
+
+[dependencies]
+bed-document-session = { workspace = true }
+bed-ui = { workspace = true }
+bed-workbench-api = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }

@@ -69,7 +69,7 @@ impl Face {
             return Err("Font must contain between 1 byte and 64 MiB".into());
         }
         let length = ft::FT_Long::try_from(bytes.len()).map_err(|_| "Font is too large")?;
-        // FT_Long is 32-bit on Windows, so this conversion can fail there.
+        // Validate the length against the font library's native C integer type.
         #[allow(clippy::unnecessary_fallible_conversions)]
         let face_index =
             ft::FT_Long::try_from(index).map_err(|_| "Collection face index is too large")?;

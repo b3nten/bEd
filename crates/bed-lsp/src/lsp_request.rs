@@ -92,7 +92,7 @@ impl<T> LspRequestState<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bed_core::identity::{DocumentId, ViewId, WorkspaceId};
+    use bed_editing::identity::{DocumentId, ViewId, WorkspaceId};
     #[test]
     fn routed_replies_require_exact_workspace_document_version_view_and_ticket() {
         let state = LspRequestState::new();

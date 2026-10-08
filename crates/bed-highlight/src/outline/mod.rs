@@ -1,7 +1,7 @@
 //! Definition outlines from bundled grammars, independent of syntax highlighting.
 //! One cancellable worker consumes only the latest immutable buffer snapshot.
 use crate::{highlight_service::SKIP_TREE_SITTER_BYTES, tree_sitter::detect_language};
-use bed_core::{buffer::text_buffer::Snapshot, identity::DocumentId};
+use bed_editing::{buffer::text_buffer::Snapshot, identity::DocumentId};
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},

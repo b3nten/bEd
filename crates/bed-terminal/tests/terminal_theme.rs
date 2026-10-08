@@ -1,4 +1,4 @@
-use bed_core::util::color::contrast_ratio;
+use bed_editing::util::color::contrast_ratio;
 use bed_terminal::terminal::{Terminal, TerminalColor, TerminalTheme};
 
 fn theme(background: [f32; 4]) -> TerminalTheme {

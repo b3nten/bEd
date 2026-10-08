@@ -25,6 +25,6 @@ Direct asset URLs:
 
 The API-provided MD5 checksums are respectively
 `de3ba64222895aca876b1d1c2e0cf81a` and `fcefd321c51b468ead9d5e1a369a3735`.
-Original files are at `crates/bed-plugin-gltf/assets/environments/`. At runtime,
+Original files are at `crates/bed-plugin-gltf/resources/environments/`. At runtime,
 Bed bilinearly resamples them to 256-pixel cube faces in linear RGBA16Float;
 this retains HDR values for Bevy's image-based lighting filter.

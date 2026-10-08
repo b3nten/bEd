@@ -6,7 +6,7 @@ publish = false
 license-file = "../../LICENSE"
 
 [dependencies]
-bed-core = { workspace = true }
+bed-editing = { workspace = true }
 bed-highlight = { workspace = true }
 bed-plugin = { workspace = true }
 bed-ui = { workspace = true }

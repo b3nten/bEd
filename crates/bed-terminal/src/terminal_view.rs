@@ -233,7 +233,7 @@ pub fn render_ops(
         let mut run = Vec::new();
         let mut count = 0;
         for col in 0..term.cols() {
-            let mut cell = term.cell(row, col);
+            let mut cell = term.display_cell(row, col);
             if cell.mode == ATTR_WDUMMY {
                 continue;
             }
@@ -277,7 +277,7 @@ pub fn render_ops(
         paint.rows.push(ops);
     }
     let cursor = term.cursor();
-    if !cursor.visible || focused && cursor.blinking && !cursor_on {
+    if term.display_offset() != 0 || !cursor.visible || focused && cursor.blinking && !cursor_on {
         return paint;
     }
     let row = cursor.row.min(term.rows().saturating_sub(1));
@@ -443,6 +443,7 @@ pub struct TerminalView {
     rectangular: bool,
     last_motion: [i32; 2],
     previous_mouse_mode: u8,
+    scroll_remainder: f32,
     geometry: PaintMetrics,
     grid: [usize; 2],
     paint: TerminalPaint,
@@ -466,6 +467,7 @@ impl Default for TerminalView {
             rectangular: false,
             last_motion: [-1, -1],
             previous_mouse_mode: 0,
+            scroll_remainder: 0.0,
             geometry: PaintMetrics {
                 cw: 8.0,
                 ch: 16.0,
@@ -498,8 +500,9 @@ impl TerminalView {
     fn tick_blink(&mut self, time: f64, terminal: &Terminal) -> bool {
         let ms = time * 1000.0;
         let mut changed = false;
-        let has_blink = (0..terminal.rows())
-            .any(|r| (0..terminal.cols()).any(|c| terminal.cell(r, c).mode & ATTR_BLINK != 0));
+        let has_blink = (0..terminal.rows()).any(|r| {
+            (0..terminal.cols()).any(|c| terminal.display_cell(r, c).mode & ATTR_BLINK != 0)
+        });
         if ms - self.blink_timer >= 800.0 {
             self.blink_timer = ms;
             self.blink = if has_blink { !self.blink } else { true };
@@ -528,6 +531,9 @@ impl TerminalView {
         bytes: &[u8],
         echo: bool,
     ) -> io::Result<()> {
+        if echo {
+            terminal.scroll_display(-(terminal.display_offset() as i32));
+        }
         if echo && terminal.cursor().blinking {
             self.cursor_on = true;
             self.cursor_timer = ui.time() * 1000.0;
@@ -665,11 +671,6 @@ impl TerminalView {
                         let bounds = [lo[0], lo[1], hi[0], hi[1]];
                         let scale = size / baked.size();
                         pos[1] += (ch - (bounds[3] - bounds[1]) * scale) * 0.5 - bounds[1] * scale;
-                        #[cfg(windows)]
-                        if character as u32 > 0xffff {
-                            pos[0] += (cw * 2.0 - (bounds[2] - bounds[0]) * scale) * 0.5
-                                - bounds[0] * scale;
-                        }
                     }
                     pos
                 },
@@ -825,6 +826,7 @@ impl TerminalView {
             self.selecting = false;
             self.last_motion = [-1, -1];
             self.previous_mouse_mode = mouse_mode;
+            self.scroll_remainder = 0.0;
         }
         let input = ui.io();
         let hovered = ui.is_item_hovered();
@@ -922,13 +924,23 @@ impl TerminalView {
                 changed = true;
             }
             if hovered && input.mouse_wheel() != 0.0 {
-                let shift_only = input.key_shift()
-                    && !input.key_ctrl()
-                    && !input.key_alt()
-                    && !input.key_super();
-                let bytes = wheel_bytes(input.mouse_wheel() > 0.0, shift_only);
-                self.input_write(ui, terminal, io, bytes, true)?;
-                changed = true;
+                if modes.alt_screen {
+                    let shift_only = input.key_shift()
+                        && !input.key_ctrl()
+                        && !input.key_alt()
+                        && !input.key_super();
+                    let bytes = wheel_bytes(input.mouse_wheel() > 0.0, shift_only);
+                    self.input_write(ui, terminal, io, bytes, true)?;
+                    changed = true;
+                } else {
+                    // Retain fractional trackpad input between frames.
+                    self.scroll_remainder += input.mouse_wheel() * 3.0;
+                    let lines = self.scroll_remainder as i32;
+                    self.scroll_remainder -= lines as f32;
+                    let before = terminal.display_offset();
+                    terminal.scroll_display(lines);
+                    changed |= terminal.display_offset() != before;
+                }
             }
         }
         Ok(changed
@@ -1489,7 +1501,7 @@ mod tests {
         assert_eq!(pipe.writes.len(), before);
     }
     #[test]
-    fn native_mouse_selection_and_reporting_are_clamped_and_source_wheel_is_not_scrollback() {
+    fn native_mouse_selection_and_reporting_are_clamped() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let (mut context, _) = setup();
         let mut view = TerminalView::default();
@@ -1514,9 +1526,10 @@ mod tests {
             .add_mouse_button_event(MouseButton::Left, false);
         frame(&mut context, &mut view, &mut term, &mut pipe, true);
         assert_eq!(term.selection_text().as_deref(), Some("hello"));
+        let before = pipe.writes.len();
         context.io_mut().add_mouse_wheel_event([0.0, 1.0]);
         frame(&mut context, &mut view, &mut term, &mut pipe, true);
-        assert_eq!(pipe.writes.last().unwrap(), b"\x19");
+        assert_eq!(pipe.writes.len(), before);
         term.feed(b"\x1b[?1000h\x1b[?1006h");
         context
             .io_mut()
@@ -1530,6 +1543,120 @@ mod tests {
         frame(&mut context, &mut view, &mut term, &mut pipe, true);
         let expected = mouse_packet(2, term.cols() - 1, term.rows() - 1, 0, true, true);
         assert_eq!(pipe.writes.last().unwrap(), &expected);
+    }
+    #[test]
+    fn native_shell_wheel_repaints_history_and_typing_returns_to_live_output() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let (mut context, _) = setup();
+        let mut view = TerminalView::default();
+        let mut term = Terminal::new(80, 24);
+        let mut pipe = Pipe::default();
+        let origin = frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        let line_count = term.rows() + 20;
+        for line in 0..line_count {
+            term.feed(format!("line {line:03}\r\n").as_bytes());
+        }
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        let live_rows = view.paint.rows.clone();
+        let painted_top = |view: &TerminalView| {
+            view.paint.rows[0]
+                .iter()
+                .filter_map(|op| match op {
+                    DrawOp::Text { character, .. } => Some(*character),
+                    _ => None,
+                })
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        };
+        let live_top = line_count - term.rows() + 1;
+        assert_eq!(painted_top(&view), format!("line {live_top:03}"));
+        context
+            .io_mut()
+            .add_mouse_pos_event([origin[0] + 3.0, origin[1] + 3.0]);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        context.io_mut().add_mouse_wheel_event([0.0, 1.0]);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        assert_eq!(term.display_offset(), 3);
+        assert_eq!(painted_top(&view), format!("line {:03}", live_top - 3));
+        assert_ne!(view.paint.rows, live_rows);
+        assert!(view.paint.overlay.is_empty(), "History has no live cursor");
+        assert!(pipe.writes.is_empty(), "Shell scrolling must stay local");
+
+        context.io_mut().add_mouse_pos_event([630.0, 460.0]);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        context.io_mut().add_mouse_wheel_event([0.0, 1.0]);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        assert_eq!(term.display_offset(), 3, "Unhovered wheel must not scroll");
+        assert!(pipe.writes.is_empty());
+
+        context
+            .io_mut()
+            .add_mouse_pos_event([origin[0] + 3.0, origin[1] + 3.0]);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        context.io_mut().add_mouse_wheel_event([0.0, -1.0]);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        assert_eq!(term.display_offset(), 0);
+        assert_eq!(view.paint.rows, live_rows);
+        assert!(pipe.writes.is_empty());
+
+        context.io_mut().add_mouse_wheel_event([0.0, 1.0]);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        assert_eq!(term.display_offset(), 3);
+        context.io_mut().add_input_characters_utf8("x");
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        assert_eq!(term.display_offset(), 0);
+        assert_eq!(pipe.writes, vec![b"x".to_vec()]);
+        assert_eq!(view.paint.rows, live_rows);
+    }
+    #[test]
+    fn native_fractional_wheel_accumulates_and_application_modes_receive_wheel() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let (mut context, _) = setup();
+        let mut view = TerminalView::default();
+        let mut term = Terminal::new(80, 24);
+        let mut pipe = Pipe::default();
+        let origin = frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        for line in 0..term.rows() + 20 {
+            term.feed(format!("line {line:03}\r\n").as_bytes());
+        }
+        context
+            .io_mut()
+            .add_mouse_pos_event([origin[0] + 3.0, origin[1] + 3.0]);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        // These binary fractions produce less than one line per event, but
+        // together must move the viewport instead of being rounded away.
+        for expected_offset in [0, 0, 1] {
+            context.io_mut().add_mouse_wheel_event([0.0, 0.125]);
+            frame(&mut context, &mut view, &mut term, &mut pipe, true);
+            assert_eq!(term.display_offset(), expected_offset);
+        }
+        context.io_mut().add_mouse_wheel_event([0.0, -0.375]);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        assert_eq!(term.display_offset(), 0);
+        assert!(pipe.writes.is_empty());
+
+        term.feed(b"\x1b[?1000h\x1b[?1006h");
+        context.io_mut().add_mouse_wheel_event([0.0, 1.0]);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        context.io_mut().add_mouse_wheel_event([0.0, -1.0]);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        assert_eq!(
+            pipe.writes,
+            vec![b"\x1b[<64;1;1M".to_vec(), b"\x1b[<65;1;1M".to_vec()]
+        );
+        assert_eq!(term.display_offset(), 0);
+
+        pipe.writes.clear();
+        term.feed(b"\x1b[?1000l\x1b[?1006l\x1b[?1049h");
+        context.io_mut().add_mouse_wheel_event([0.0, 1.0]);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        context.io_mut().add_mouse_wheel_event([0.0, -1.0]);
+        frame(&mut context, &mut view, &mut term, &mut pipe, true);
+        assert_eq!(pipe.writes, vec![b"\x19".to_vec(), b"\x05".to_vec()]);
+        assert_eq!(term.display_offset(), 0);
     }
     #[test]
     fn native_focus_reports_change_once_and_unfocused_text_is_not_sent() {

@@ -1,5 +1,5 @@
 //! A read-only raster and SVG viewer implemented entirely through the plugin API.
-use bed_core::identity::DocumentId;
+use bed_editing::identity::DocumentId;
 use bed_plugin::gpu::{Canvas, GpuContext, RenderOutput, RenderTarget};
 use bed_plugin::{
     CommandContext, DocumentKind, HostContext, HostRequest, MenuSlot, Plugin, PluginPanel,
@@ -117,6 +117,9 @@ impl Plugin for ImagePlugin {
         false
     }
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }
@@ -394,6 +397,9 @@ impl PluginPanel for ImagePanel {
         }
     }
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }

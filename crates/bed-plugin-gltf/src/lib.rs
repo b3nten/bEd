@@ -1,5 +1,5 @@
 //! glTF and STL model viewer with a shared-device, windowless Bevy renderer.
-use bed_core::identity::DocumentId;
+use bed_editing::identity::DocumentId;
 use bed_plugin::gpu::{Canvas, GpuContext, RenderOutput, RenderTarget};
 use bed_plugin::{
     CommandContext, DocumentKind, HostContext, HostRequest, MenuSlot, Plugin, PluginPanel,
@@ -107,6 +107,9 @@ impl Plugin for GltfPlugin {
         )))
     }
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }
@@ -476,6 +479,9 @@ impl PluginPanel for GltfPanel {
         }
     }
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }

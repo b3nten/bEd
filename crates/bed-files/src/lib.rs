@@ -1,4 +1,5 @@
-//! Bed files components. Attribution: workspace LICENSE, NOTICE and UPSTREAM_REVISION.
+//! Bed files components. Attribution: workspace LICENSE and NOTICE.
+pub mod actions;
 pub mod content_search;
 pub mod file_finder;
 pub mod file_monitor;

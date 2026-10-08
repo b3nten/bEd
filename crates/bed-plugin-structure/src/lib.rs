@@ -1,6 +1,6 @@
 //! Source outline plugin. It consumes immutable host snapshots and requests navigation.
 pub mod presentation;
-use bed_core::identity::DocumentId;
+use bed_editing::identity::DocumentId;
 use bed_highlight::outline::{OutlineKey, OutlineService};
 use bed_plugin::{
     CommandContext, DocumentKind, HostContext, HostRequest, MenuSlot, Plugin, PluginPanel,
@@ -127,6 +127,9 @@ impl Plugin for StructurePlugin {
     fn as_any(&self) -> &dyn Any {
         self
     }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 pub struct StructurePanel {
@@ -163,12 +166,15 @@ impl PluginPanel for StructurePanel {
     fn as_any(&self) -> &dyn Any {
         self
     }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bed_core::editor_state::EditorState;
+    use bed_editing::editor_state::EditorState;
     use bed_plugin::PluginDocument;
     use std::{
         collections::HashMap,

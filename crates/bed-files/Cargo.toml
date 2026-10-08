@@ -6,10 +6,13 @@ publish = false
 license-file = "../../LICENSE"
 
 [dependencies]
-bed-core = { workspace = true }
+bed-editing = { workspace = true }
 bed-remote = { workspace = true }
 git2 = { workspace = true }
 regex = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
 [[test]]
 name = "remote_services"

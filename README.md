@@ -202,33 +202,53 @@ their own toolchain requirements.
 Source checkouts use helpers under `target/remote-helpers/<Rust target>/`;
 `BED_REMOTE_HELPERS_DIR` can select another bundle directory. Copy the CI
 `bed-remote-helper-*` artifacts there, or stage a native Linux musl build with
-`python3 scripts/package-remote-helpers.py stage --target aarch64-unknown-linux-musl`
+`python3 scripts/lib/remote-helpers.py stage --target aarch64-unknown-linux-musl`
 (use `x86_64-unknown-linux-musl` for x86-64). Cargo does not build these target
 binaries automatically when running the desktop from source.
 
-To build, package, and install bEd on macOS:
+The supported desktop build platforms are macOS and Linux. Packaging has two
+entry points:
 
 ```sh
-bash scripts/build-macos.sh
+bash scripts/package-macos.sh
+bash scripts/package-linux.sh
 ```
 
-This requires Rust, Xcode Command Line Tools, Python 3, and a running Docker
-engine (Docker Desktop or OrbStack). The script builds static Linux x86-64 and
-ARM64 helpers in Rust/GCC containers, builds the native desktop, packages
-`target/dist/bEd.app` and its ZIP, and copies the app to `/Applications/bEd.app`.
-Use `--no-install` to leave the app in `target/dist`. Docker is a build dependency;
-the installed app and SSH servers do not need it or a compiler. Container build
-caches make subsequent builds incremental.
+Run the script for the current platform. Both build the release desktop binary,
+prepare missing static Linux x86-64 and ARM64 SSH helpers, and write packages to
+`target/dist`. macOS produces `bEd.app` and a ZIP; Linux produces a tar archive
+and a Debian package when `dpkg-deb` is available. Add `--install` on macOS to
+install `/Applications/bEd.app`.
+Packaging requires Rust, Python 3 and the platform's native build tools
+(Xcode Command Line Tools on macOS; ImageMagick and the development libraries
+listed in `.github/workflows/ci.yml` on Linux).
+Building missing SSH helpers requires a running Docker engine; prebuilt helper
+bundles avoid that dependency. The installed app and remote servers do not need
+Docker or a compiler.
 
-If the desktop is already built, prepare its helpers and package it with:
+To package an existing desktop binary and validated helper bundles:
 
 ```sh
-bash scripts/build-remote-helpers.sh
-bash scripts/pack-mac.sh
+bash scripts/package-macos.sh --skip-build
+# Or, on Linux:
+bash scripts/package-linux.sh --skip-build
 ```
 
 Alternatively, extract both matching `bed-remote-helper-*` CI artifacts into
 `target/remote-helpers` before packaging; that avoids a local Docker build.
+Shared packaging implementation lives in `scripts/lib`, and the Linux desktop
+CI driver lives in `scripts/ci`. Run their checks with
+`python3 -m unittest discover -s scripts/tests`.
+
+`assets/` holds the editable icon project, its exported PNG and sample models
+used by tests. These source files are excluded from packages. `resources/`
+holds runtime fonts, interface icons, configuration and highlighting queries.
+Embedded model-viewer lighting files live in that crate's `resources/` directory.
+Packaging copies runtime resources, generates the macOS ICNS or Linux launcher
+PNGs from the icon export, and installs icons, desktop metadata, licenses and
+SSH helpers in their platform locations. Generated files stay in the build output.
+After editing `assets/bEd.icon` in Icon Composer, update
+`assets/bEd-iOS-Default-1024@1x.png` with a new 1024-pixel export before packaging.
 
 Remote saves are asynchronous and check the previously loaded disk baseline.
 They preserve BOM/line-ending bytes and clear dirty state only after the relevant
@@ -374,7 +394,7 @@ inspection.
 The initial debugger supports one launched session per local workspace.
 SSH debugging, attaching to existing processes, core dumps, conditional
 breakpoints, logpoints, memory/disassembly views and editing variables are not
-included. Windows continues to run the editor and shows debugging as unavailable.
+included.
 
 ## Embedding
 
@@ -384,8 +404,8 @@ lifecycle. The session can own autosave, monitoring, history, Git, highlighting
 and LSP; default options enable no disk/process services and seed no config.
 
 ```rust
-use bed_session::EditorSession;
-use bed_ui::{EditorView, EditorViewOptions};
+use bed_document_session::EditorSession;
+use bed_editor_ui::{EditorView, EditorViewOptions};
 
 let mut session = EditorSession::new();
 let document = session.create_document(b"Hello, bEd\n")?;
@@ -399,10 +419,9 @@ let report = session.tick();
 Call `session.request_focus(view.id())` when the host focuses a view. Use
 `EditorSession::with_options(SessionOptions { .. })` to opt into services, and
 explicit Save/Discard/Cancel close policies. Dropping views or sessions does not
-save documents or history. Use `bed-session` and `bed-ui` directly; the previous
-`bed` embedding re-exports and `bed_embed` facade have been removed. See
-[the host example](examples/embed_host.rs), which renders two views of one document
-inside host-owned windows with winit/wgpu.
+save documents or history. Use `bed-document-session` and `bed-editor-ui` directly.
+The [embedding tests](crates/bed-editor-ui/tests/embedding.rs) cover multiple views
+of shared documents inside host-owned containers and frames.
 Persistent history and LSP options require an explicit `project_root`.
 `ViewResponse.definition_request` carries Cmd/Ctrl-click navigation with the
 clicked row and UTF-8 byte column. The embedding host decides how to resolve
@@ -415,21 +434,21 @@ cargo clippy --workspace --locked --all-targets -- -D warnings
 cargo test --workspace --locked --all-targets
 cargo test -p bed-effects --locked --lib native_shader -- --ignored --nocapture
 cargo test -p bed-plugin-gltf --locked native_ -- --ignored --nocapture
-cargo test -p bed-plugin --locked --features gpu native_shared_target -- --ignored --nocapture
+cargo test -p bed-workbench-api --locked --features gpu native_shared_target -- --ignored --nocapture
 cargo run --locked -- --platform-smoke --lifecycle-smoke \
   --config-dir /tmp/bed-native-config path/to/project path/to/file.rs
 cargo run --locked -- --viewports-smoke \
   --config-dir /tmp/bed-viewport-config path/to/project path/to/file.rs
 cargo run --locked -- --menu-smoke
 cargo run --locked -- --plugin-smoke
-cargo run --locked --example embed_host -- --smoke-test
+cargo test --locked -p bed-editor-ui --test embedding
 ```
 
 Native checks need a desktop session and graphics backend. `--capture-frame
 OUTPUT.ppm --capture-after-frames 30` captures GPU output. macOS is verified
-first; native Linux/Windows CI is configured and its results are required before
-claiming every-platform acceptance. The pinned viewport backend supports native
-undocking on macOS, Windows and X11; Wayland retains internal docking/floating.
+first; native Linux CI is configured and must pass before claiming Linux runtime
+acceptance. The pinned viewport backend supports native undocking on macOS and
+X11; Wayland retains internal docking/floating.
 
 To measure shader cost on your GPU, run:
 
@@ -449,43 +468,75 @@ focused and `fps_target_unfocused` otherwise. High FPS targets increase GPU work
 lowering bloom intensity does not reduce its 25-sample cost unless it reaches zero.
 
 bEd's original buffer and editing algorithms were translated from
-[nealmick/ned](https://github.com/nealmick/ned). [PORTING.md](PORTING.md) records
-source provenance, mappings, dependencies and validation. Original notices and
-assets remain attributed in [NOTICE](NOTICE) and accompanying licenses.
+[nealmick/ned](https://github.com/nealmick/ned). Original source credits and
+retained asset notices are recorded in [NOTICE](NOTICE) and accompanying licenses.
 Translated terminal portions retain the upstream
 [Business Source License](LICENSES/terminal-adapter-BSL-1.1.txt).
+The project has not switched to GPLv3: the terminal translation's current
+non-commercial terms require permission or an independent replacement first.
+Changing the application license would still require retaining third-party
+license and attribution notices. `NOTICE` records those components;
+the active dependency versions are recorded in `Cargo.lock`. Normal development
+uses Rust tests and committed regression fixtures; it does not require the
+original C++ checkout or port-verification tooling.
 
 ## Workspace architecture
 
-The root `bed` package composes the desktop application. Reusable components
-live in `crates/`, with concrete APIs and one workspace lockfile:
+The `bed-workbench` crate owns docking, focus, shared services, workspace
+storage, command dispatch and panel composition. The root `bed` package owns
+native windows, clipboard and rendering, and selects built-in features in
+`src/builtins.rs`. It supplies those instances through `WorkbenchModules`.
+All panels are registered by modules, including the text/hex editor,
+language tools, debugger, file explorer, project search, project picker, settings
+and terminals. Built-in modules use the same hosting contracts as linked plugins.
+Reusable components live in `crates/`, with concrete APIs and one workspace lockfile:
 
 | Crate | Owns |
 | --- | --- |
-| `bed-core` | Custom text buffer, state, editing commands, selections, events, undo, UTF-8/path helpers and IDs |
+| `bed-editing` | Custom text buffer, state, editing commands, selections, events, undo, UTF-8/path helpers and IDs |
 | `bed-files` | Bounded reads, monitoring, file discovery/filtering and cancellable project search |
 | `bed-highlight` | Tree-sitter grammars, queries, incremental spans, themes and workers |
 | `bed-lsp` | JSON-RPC/process transport, synchronization, diagnostics and workspace language servers |
 | `bed-debug` | LLDB DAP transport, debugger sessions, asynchronous builds and Cargo target discovery |
-| `bed-session` | Shared document/view registry, save/autosave, history, Git and service coordination |
-| `bed-ui` | Custom document widgets, input, find/line-jump, minimap and LSP presentation |
+| `bed-document-session` | Shared document/view registry, save/autosave, history, Git and service coordination |
+| `bed-ui` | Shared control/popup styling, tree animation, readable colors, CPU icon rasterization and file-icon contracts |
+| `bed-editor-ui` | Embeddable text/hex widgets, input, find/line-jump, minimap, diagnostic painting and concrete editor extension contracts |
+| `bed-settings` | Authoritative profiles, persistence, keybindings, appearance policy and font-atlas configuration |
+| `bed-workbench-api` | Module/panel lifecycle, registration, snapshots, host requests, scoped document/terminal/dialog services and optional GPU canvases |
+| `bed-module-editor` | Text/hex panels, editor commands and menus, language-server presentation, diagnostics, references and language-server panels |
+| `bed-module-debug` | Debugger feature state, inspection panel, commands, terminal coordination and source-debugging editor contributions |
+| `bed-module-explorer` | File-tree and file-finder presentation, file inspection and tree extension points |
+| `bed-module-search` | Independent project-search panels and their result workers |
+| `bed-module-terminal` | Terminal panels over the shared terminal session service |
+| `bed-module-projects` | Project-picker presentation and workspace-opening requests |
+| `bed-module-settings` | Settings panel UI over the shared settings service and registered settings sections |
 | `bed-terminal` | Grid/parser, PTY workers, shell sessions, input/rendering and fonts |
+| `bed-effects-config` | Renderer-independent appearance parameters and preset serialization |
 | `bed-effects` | wgpu shader passes and viewport postprocessing |
 | `bed-remote` | Versioned RPC, SSH transport and automatic helper deployment |
 | `bed-headless` | Remote filesystem, search and Git services without a GUI |
-| `bed-plugin` | Native plugin contracts, contributions, snapshots, typed host requests and optional GPU canvases |
+| `bed-plugin` | Compatibility reexports of `bed-workbench-api`, including the `Plugin`/`PluginPanel` names |
 | `bed-plugin-structure` | Source outline panel and its worker coordination |
 | `bed-plugin-image` | Read-only raster/SVG panels, bounded background decoding and GPU drawing |
 | `bed-plugin-gltf` | Static GLB/embedded glTF and STL loading, orbit cameras and Bevy PBR rendering |
 | `bed-plugin-font` | HarfRust sample shaping, FreeType previews, glyph browsing and font inspection |
 | `bed-plugin-audio` | Audio decoding, channel waveforms and native play/pause/seek controls |
 | `bed-plugin-csv` | Shared-text CSV/TSV table editing, background indexing, sorting and filtering |
-| `bed` | Workbench docking, tool panels, settings, resources and native application lifecycle |
+| `bed-workbench` | Application shell, module hosting, docking, document/workspace lifecycle and service adapters |
+| `bed` | Native application startup, winit/wgpu integration, platform chrome/menus and built-in module composition |
 
-Core, files, highlighting, LSP and session compile without GUI backends.
-Document UI depends on Dear ImGui and the shared services, without native
-windows, GPU backends, terminal or application settings. The terminal crate
-keeps its parser/PTY and presentation modules together; disabling its default
+Editing, files, highlighting, LSP, debugger backend and document-session crates
+compile without GUI backends. Generic `bed-ui` has no editor-widget, document-session
+or LSP dependency. `bed-editor-ui` depends on Dear ImGui and shared document
+services, without workbench panels, native windows or a direct LSP dependency.
+`EditorFrame` coordinates one editor widget's drawing; application frames and
+docking belong to the host and workbench. Language-server requests, navigation
+results, hover interaction and dashboards live in `bed-module-editor`.
+The workbench may use native file dialogs and Trash, while the native application
+owns window/event-loop and renderer backends. Settings and rendering share
+appearance parameters through `bed-effects-config`, so settings does not require
+the renderer. The terminal crate keeps its parser/PTY and presentation modules
+together; disabling its default
 `ui` feature provides the parser and PTY services without Dear ImGui.
 Its translated portions retain the Terminal Adapter license recorded in NOTICE.
 
@@ -494,30 +545,75 @@ read-only document/service access. Text edits go through commands; saves,
 path changes and document replacement go through the session. The scope restores
 view ownership and transforms sibling selections even if a consumer panics.
 `EditorView::presentation()` exposes geometry/hover data for host menus and
-LSP widgets without exposing mutable frame state. LSP widgets take explicit
-`LspPresentationOptions`. File/search panels wrap GUI-free discovery services
-and return navigation actions to the application.
+LSP widgets without exposing mutable frame state. The editor module's LSP widgets
+take explicit `bed_module_editor::presentation::LspPresentationOptions`.
+File/search panels wrap GUI-free discovery services and return navigation actions
+to the application.
 
-Text Editor, Hex Editor, Files, Settings and Search are host-owned features.
-Structure and the image, model, font, audio and CSV viewers are explicitly linked Rust plugins
-registered in the workbench's `PluginRuntime` constructor. Adding a feature means adding its crate
-dependency and one constructor to that list. There is no dynamic loading or
-plugin-to-plugin event bus.
+`ModuleRuntime` registers the injected built-in features and linked viewers
+together. Every tab contains a `HostedPanel` created through the registry; the shell uses the same
+creation, drawing, focus, close and restoration path for native and plugin panels.
+A module owns feature state independently of its panels; closing the debugger
+panel does not stop a debug session. Built-in feature implementations live in
+their module crates. The native application decides which modules to load; the
+shell does not construct linked viewers itself. Its viewer dependencies used
+by regression fixtures are development dependencies.
+`Module` supplies registration, commands, background ticks, document events,
+workspace persistence and shutdown. `ModulePanel` supplies drawing, focus actions,
+document attachment, view-state restoration and persistence eligibility. Panel
+metadata declares singleton behavior, initial layout and placement for newly opened
+instances, so the shell can host a feature without owning its controller.
+Legacy text/hex viewer IDs and saved panel
+kinds remain supported.
 
-Implement `bed_plugin::Plugin` to register namespaced commands, panel factories,
+The explorer module owns its tree and file finder. Each search panel owns its
+query, results and worker. The project picker owns its UI and submits concrete
+workspace actions. Settings panels borrow the authoritative application settings;
+profile changes, persistence and native menu updates continue to use that shared
+state. Terminal panels render shared terminal sessions. Closing a terminal panel
+respects sessions retained by another feature, and command transcripts are omitted
+from workspace restoration.
+
+Implement `bed_workbench_api::Module` to register namespaced commands, panel factories,
 file viewers, toolbar buttons, application/file/folder/tree-background/selected-text
-menu entries, and settings sections. Panels implement `PluginPanel` and can declare
+menu entries, and settings sections. Panels implement `ModulePanel` and can declare
 an attached document so the host includes them in saving, closing and restoration.
-`HostContext` provides immutable document snapshots, captured command context,
-settings, read-only LSP diagnostics and texture handles. `HostRequest` queues
+Registration validates module namespaces, unique contributions and aliases, one
+fallback viewer per document kind, and unambiguous legacy panel kinds before
+adding any contribution. `HostContext` provides immutable document snapshots,
+settings, read-only LSP diagnostics and texture handles. Commands receive a
+`CommandContext` captured at their originating UI surface. `HostRequest` queues
 edits, navigation, document commands, panels, file dialogs and resource changes;
-plugins never need a mutable workbench or direct file-writing path.
-The optional `PluginPanel::action` hook handles focused Find and Select All
-commands. Before saving or closing, the host sends Commit Edit to attached
-panels and applies their revision-checked edits before proceeding; a failed
+modules never need a mutable workbench. Native modules can also use scoped
+`ModuleServices` for session operations, terminal launches and file picking.
+The host retains document ownership and supplies platform adapters for terminals
+and dialogs. Optional native services use `ScopedServices`: the host lends concrete
+types for one callback, and taking a service removes it from that scope so distinct
+services can be borrowed together safely. Settings panels use this to edit the
+actual `Settings` service, with registered sections supplied through the concrete
+`SettingsContributions` interface. Existing `bed_plugin::Plugin` and `PluginPanel`
+names alias the same contracts for linked plugins.
+
+Feature-specific extension APIs live with the feature. The editor's
+`bed_editor_ui::extensions::SourceDebugExtension` supplies breakpoint/execution
+presentation, breakpoint actions and runtime hover rendering. The debugger
+registers one provider with `EditorExtensions`; all relevant text views consume
+it without the workbench interpreting debugger decorations. Registrations are
+weak, and callbacks run after releasing the editor's document borrow. This is a
+concrete editor capability, rather than a protocol every panel must implement.
+Hover callbacks retain the originating editor child's UI scope; hidden views and
+presentations whose document changed during drawing do not receive callbacks.
+The editor also exposes `EditorMenuExtension` with captured document selections,
+and the explorer exposes `TreeMenuExtension` with the originating file or folder.
+Features can add their own typed extension points. There is no universal
+module-to-module message bus or dynamic plugin loader.
+
+The optional `ModulePanel::action` hook handles focused Find, Go to Line,
+Select All, Undo and Redo commands. Before saving or closing, the host sends
+Commit Edit to attached panels and applies their revision-checked edits before proceeding; a failed
 commit retains the panel and its draft.
 Panels can submit `ApplyEditsWithResult` with an `EditToken` and receive
-`PluginPanel::edit_result` acknowledgements, keeping pending input until the
+`ModulePanel::edit_result` acknowledgements, keeping pending input until the
 session accepts the edit or reports an error.
 
 `EditorSession::apply_edits` takes byte ranges and an expected document revision.
@@ -527,8 +623,14 @@ use exact splice history and skip text services. Existing text-only embedding AP
 retain their behavior; `open_file_auto` and `open_file_with_kind` opt into byte
 documents.
 
+Direct embedding through `bed-document-session` and `bed-editor-ui` does not
+require the workbench or module host. `bed-editing` owns the GUI-independent
+editing model and history; it is shared by text, hex and table panels.
+`bed-editor-ui` draws those documents, and `bed-module-editor` adds workbench
+panel lifecycle, editor menus and language-service interaction.
+
 Panels receive the host's Dear ImGui `&Ui` in `draw` for controls, popups and
-input. With `bed-plugin`'s optional `gpu` feature, `render_output` describes a
+input. With `bed-workbench-api`'s optional `gpu` feature, `render_output` describes a
 host-owned color target, optional depth attachment, physical size and content
 revision. The host calls `render` with its wgpu instance, adapter, device, queue, encoder and target
 after UI/input and before submitting any viewport. Plugins own their pipelines
@@ -555,6 +657,8 @@ vertices). Both formats load from document snapshots in local and SSH workspaces
 Neither viewer passes CPU output pixels
 through the host request API.
 
-Run focused suites with `cargo test -p bed-core`, `cargo test -p bed-session`,
-or another crate name. Run the full workspace commands above before submitting
-changes; plain `cargo run` continues to launch the desktop application.
+Run focused suites with `cargo test -p bed-editing`,
+`cargo test -p bed-document-session`, `cargo test -p bed-editor-ui` or another crate
+name. Workbench integration fixtures live in `tests/unit/workbench`; native
+application fixtures live in `tests/unit/native`. Run the full workspace commands
+above before submitting changes; plain `cargo run` continues to launch the desktop application.

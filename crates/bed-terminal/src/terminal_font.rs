@@ -199,7 +199,6 @@ impl TerminalFonts {
                     let config = FontConfig::new()
                         .merge_mode(true)
                         .font_loader_flags(FontLoaderFlags::LOAD_COLOR | FontLoaderFlags::BITMAP);
-                    #[cfg(not(windows))]
                     let config = config.rasterizer_density(20.0 / self.size);
                     sources.push(emoji.source(self.size, config));
                 }
@@ -245,8 +244,6 @@ fn regular_path(root: &Path) -> Option<PathBuf> {
     let paths = vec![
         #[cfg(target_os = "macos")]
         PathBuf::from("/System/Library/Fonts/Menlo.ttc"),
-        #[cfg(windows)]
-        windows_fonts().join("consola.ttf"),
         #[cfg(all(unix, not(target_os = "macos")))]
         PathBuf::from("/usr/share/fonts/truetype/msttcorefonts/Menlo.ttf"),
         #[cfg(all(unix, not(target_os = "macos")))]
@@ -258,15 +255,6 @@ fn regular_path(root: &Path) -> Option<PathBuf> {
     first_file(paths)
 }
 fn variant_path(index: usize) -> Option<PathBuf> {
-    #[cfg(windows)]
-    return [
-        "consola.ttf",
-        "consolab.ttf",
-        "consolai.ttf",
-        "consolaz.ttf",
-    ]
-    .get(index)
-    .map(|name| windows_fonts().join(name));
     #[cfg(all(unix, not(target_os = "macos")))]
     return [
         "DejaVuSansMono.ttf",
@@ -302,11 +290,6 @@ fn cjk_paths() -> Vec<PathBuf> {
         PathBuf::from("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc"),
         PathBuf::from("/System/Library/Fonts/Hiragino Sans GB.ttc"),
     ];
-    #[cfg(windows)]
-    return vec![
-        windows_fonts().join("msgothic.ttc"),
-        windows_fonts().join("msyh.ttc"),
-    ];
     #[cfg(all(unix, not(target_os = "macos")))]
     return vec![PathBuf::from(
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -316,16 +299,9 @@ fn emoji_paths(root: &Path) -> Vec<PathBuf> {
     vec![
         #[cfg(target_os = "macos")]
         PathBuf::from("/System/Library/Fonts/Apple Color Emoji.ttc"),
-        #[cfg(windows)]
-        windows_fonts().join("seguiemj.ttf"),
         root.join("resources/fonts/Emoji.ttf"),
     ]
 }
-#[cfg(windows)]
-fn windows_fonts() -> PathBuf {
-    PathBuf::from(std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into())).join("Fonts")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

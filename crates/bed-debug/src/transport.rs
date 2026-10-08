@@ -125,11 +125,6 @@ impl DapTransport {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x0800_0000);
-        }
         let mut child = command.spawn()?;
         let mut stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");

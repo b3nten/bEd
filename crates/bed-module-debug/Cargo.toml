@@ -1,0 +1,18 @@
+[package]
+name = "bed-module-debug"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license-file = "../../LICENSE"
+
+[features]
+test-support = []
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-document-session = { workspace = true }
+bed-editor-ui = { workspace = true }
+bed-debug = { workspace = true }
+bed-workbench-api = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }

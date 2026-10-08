@@ -6,7 +6,7 @@ use crate::{
     lsp_config::{LanguageServerInfo, LspConfig},
     lsp_uri::LspUri,
 };
-use bed_core::{editor_events::DocumentChange, util::doc_path};
+use bed_editing::{editor_events::DocumentChange, util::doc_path};
 use serde_json::{Value, json};
 use std::{collections::HashSet, io};
 

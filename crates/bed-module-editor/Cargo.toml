@@ -1,0 +1,16 @@
+[package]
+name = "bed-module-editor"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license-file = "../../LICENSE"
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-lsp = { workspace = true }
+bed-workbench-api = { workspace = true }
+bed-document-session = { workspace = true }
+bed-ui = { workspace = true }
+bed-editor-ui = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }

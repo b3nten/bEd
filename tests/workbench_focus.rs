@@ -1,12 +1,10 @@
 //! Native ImGui focus/input checks for the workspace panels and shared views.
 //! ned workbench.cpp supplies docking/focus behavior; the Session ownership and
 //! docked tool tabs are Bed extensions. See LICENSE and NOTICE.
-use bed::{
-    util::settings::Settings,
-    workbench::{WindowCommand, Workbench, WorkbenchHostMode},
-};
-use bed_core::{editor_commands::CursorReveal, editor_view_state::Selection};
-use bed_session::editor_session::{DocumentId, ViewId};
+use bed::workbench::{WindowCommand, Workbench, WorkbenchHostMode};
+use bed_document_session::editor_session::{DocumentId, ViewId};
+use bed_editing::{editor_commands::CursorReveal, editor_view_state::Selection};
+use bed_settings::Settings;
 use dear_imgui_rs::{Context, FramePrepareOptions, Key, sys};
 use serde_json::json;
 use std::{
@@ -53,7 +51,7 @@ impl Fixture {
         ] {
             settings.settings[key] = json!(false);
         }
-        let mut workbench = Workbench::with_settings(settings);
+        let mut workbench = Workbench::with_settings(settings, bed::builtins::modules);
         workbench
             .initialize(context, WorkbenchHostMode::Floating)
             .unwrap();

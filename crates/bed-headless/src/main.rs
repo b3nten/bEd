@@ -1,3 +1,6 @@
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+compile_error!("Bed's native helper supports macOS and Linux only.");
+
 use std::{
     io,
     process::{Command, ExitCode, Stdio},

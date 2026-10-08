@@ -219,11 +219,7 @@ fn child_environment() {
     let host_custom = std::env::var_os("BED_PTY_TEST");
     #[cfg(unix)]
     let host_sigchld = sigchld_handler();
-    let executable = directory.0.join(if cfg!(windows) {
-        "fixture with spaces.exe"
-    } else {
-        "fixture with spaces"
-    });
+    let executable = directory.0.join("fixture with spaces");
     fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
     let literal = vec![
         "one two",
@@ -248,11 +244,6 @@ fn child_environment() {
     assert!(capture.contains("ENV_TERM:st-256color"));
     #[cfg(unix)]
     assert!(capture.contains("ENV_PROGRAM:st-imgui"));
-    #[cfg(windows)]
-    assert!(capture.contains(&format!(
-        "ENV_PROGRAM:{}",
-        host_program.as_deref().unwrap_or_default().to_string_lossy()
-    )));
     assert!(capture.contains("ENV_CUSTOM:child value"));
     assert!(capture.contains(&format!(
         "CWD:{}",
@@ -644,32 +635,4 @@ fn assert_reaped(pid: u32) {
         io::Error::last_os_error().raw_os_error(),
         Some(libc::ECHILD)
     );
-}
-#[cfg(windows)]
-fn raw_child_stdio() {
-    use windows_sys::Win32::System::Console::*;
-    let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
-    let output = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
-    let mut mode = 0;
-    assert_ne!(unsafe { GetConsoleMode(input, &mut mode) }, 0);
-    mode &= !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT);
-    mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
-    assert_ne!(unsafe { SetConsoleMode(input, mode) }, 0);
-    assert_ne!(unsafe { GetConsoleMode(output, &mut mode) }, 0);
-    assert_ne!(
-        unsafe { SetConsoleMode(output, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) },
-        0
-    );
-}
-#[cfg(windows)]
-fn child_size() {
-    use windows_sys::Win32::System::Console::*;
-    let output = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
-    let mut info = std::mem::MaybeUninit::<CONSOLE_SCREEN_BUFFER_INFO>::uninit();
-    assert_ne!(
-        unsafe { GetConsoleScreenBufferInfo(output, info.as_mut_ptr()) },
-        0
-    );
-    let info = unsafe { info.assume_init() };
-    println!("SIZE:{},{}", info.dwSize.X, info.dwSize.Y);
 }

@@ -35,8 +35,8 @@ jobs:
         run: |
           target/${{ matrix.target }}/release/bed-headless --protocol-version
           python3 -m unittest discover -s scripts/tests
-      - name: Stage helper with provenance and licenses
-        run: python3 scripts/package-remote-helpers.py stage --target ${{ matrix.target }}
+      - name: Stage helper with build metadata and licenses
+        run: python3 scripts/lib/remote-helpers.py stage --target ${{ matrix.target }}
       - name: Upload static helper bundle
         uses: actions/upload-artifact@v4
         with:
@@ -48,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
@@ -58,7 +58,7 @@ jobs:
           components: rustfmt, clippy
       - name: Linux native window/GPU runtime
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb openbox mesa-vulkan-drivers libvulkan1 libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libasound2-dev
+        run: sudo apt-get update && sudo apt-get install -y xvfb openbox mesa-vulkan-drivers libvulkan1 libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libasound2-dev imagemagick
       - name: Linux LLDB adapter and fixture compiler
         if: runner.os == 'Linux'
         run: sudo apt-get install -y lldb-18 clang
@@ -72,7 +72,7 @@ jobs:
         run: cargo test --workspace --locked --all-targets
       - name: Headless services and terminal transport
         run: |
-          cargo check --locked -p bed-headless -p bed-session
+          cargo check --locked -p bed-headless -p bed-document-session
           cargo test --locked -p bed-terminal --no-default-features
       - name: Native LLDB debugging fixtures (Linux, LLVM 18)
         if: runner.os == 'Linux'
@@ -89,9 +89,9 @@ jobs:
           xcrun lldb-dap --version
           cargo test -p bed-debug --locked --test native_lldb -- --ignored --nocapture
       - name: Release binary
-        run: cargo build --locked --release -p bed -p bed-headless --bin bed --bin bed-headless --example embed_host
+        run: cargo build --locked --release -p bed -p bed-headless --bin bed --bin bed-headless
       - name: Package standalone headless helper and licenses
-        run: python3 scripts/package-headless.py
+        run: python3 scripts/lib/remote-helpers.py standalone
       - name: Download bundled remote helpers
         uses: actions/download-artifact@v4
         with:
@@ -99,7 +99,7 @@ jobs:
           merge-multiple: true
           path: target/remote-helpers
       - name: Validate bundled remote helpers
-        run: python3 scripts/package-remote-helpers.py validate
+        run: python3 scripts/lib/remote-helpers.py validate
       - name: Upload standalone headless helper
         uses: actions/upload-artifact@v4
         with:
@@ -110,7 +110,7 @@ jobs:
         run: cargo test -p bed-effects --locked --lib native_shader_fixtures -- --ignored --nocapture
       - name: Native model renderer and shared GPU fixtures
         run: |
-          cargo test -p bed-plugin --locked --features gpu native_shared_target -- --ignored --nocapture
+          cargo test -p bed-workbench-api --locked --features gpu native_shared_target -- --ignored --nocapture
           cargo test -p bed-plugin-gltf --locked native_ -- --ignored --test-threads=1 --nocapture
       - name: Native lifecycle and GPU capture (macOS)
         if: runner.os == 'macOS'
@@ -126,47 +126,15 @@ jobs:
           target/release/bed target/native-project target/native-project/main.rs --viewports-smoke --capture-after-frames 30 --capture-frame target/native-viewports.ppm --config-dir target/native-viewport-config
           test -s target/native-viewports-secondary-1.ppm
           target/release/bed --main-only-smoke --capture-after-frames 30 --capture-frame target/native-internal.ppm --config-dir target/native-internal-config
-      - name: Native host-owned embedding (macOS)
-        if: runner.os == 'macOS'
-        run: target/release/examples/embed_host --smoke-test --capture-frame target/native-embedded.ppm
       - name: Native lifecycle and GPU capture (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a scripts/ci-linux-native.sh
-      - name: Native lifecycle and GPU capture (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $process = Start-Process target/release/bed.exe -ArgumentList '--lifecycle-smoke --capture-after-frames 30 --capture-frame target/native-window.ppm --config-dir target/native-config src/main.rs' -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "Bed native smoke failed: $($process.ExitCode)" }
-          if (!(Test-Path target/native-window.ppm)) { throw 'Native GPU capture is missing.' }
-      - name: Native host-owned embedding (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $process = Start-Process target/release/examples/embed_host.exe -ArgumentList '--smoke-test --capture-frame target/native-embedded.ppm' -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "Bed embedding smoke failed: $($process.ExitCode)" }
-          if (!(Test-Path target/native-embedded.ppm)) { throw 'Embedding GPU capture is missing.' }
-      - name: Detached native windows and per-window CRT (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force target/native-project | Out-Null
-          Copy-Item src/main.rs target/native-project/main.rs
-          $process = Start-Process target/release/bed.exe -ArgumentList 'target/native-project target/native-project/main.rs --viewports-smoke --capture-after-frames 30 --capture-frame target/native-viewports.ppm --config-dir target/native-viewport-config' -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "Bed detached-window smoke failed: $($process.ExitCode)" }
-          if (!(Test-Path target/native-viewports-secondary-1.ppm)) { throw 'Secondary GPU capture is missing.' }
-          $process = Start-Process target/release/bed.exe -ArgumentList '--main-only-smoke --capture-after-frames 30 --capture-frame target/native-internal.ppm --config-dir target/native-internal-config' -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "Bed internal-renderer smoke failed: $($process.ExitCode)" }
+        run: xvfb-run -a scripts/ci/linux-native.sh
       - name: Package macOS app
         if: runner.os == 'macOS'
-        run: scripts/pack-mac.sh
+        run: scripts/package-macos.sh --skip-build
       - name: Package Linux archive and Debian package
         if: runner.os == 'Linux'
-        run: scripts/pack-deb.sh
-      - name: Package Windows portable app
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: scripts/pack-win.ps1
+        run: scripts/package-linux.sh --skip-build
       - name: Upload packages and native capture
         uses: actions/upload-artifact@v4
         with:
@@ -177,7 +145,6 @@ jobs:
             target/dist/*.deb
             target/native-window.ppm
             target/native-menu-undo.ppm
-            target/native-embedded.ppm
             target/native-viewports*.ppm
             target/native-internal.ppm
           if-no-files-found: error

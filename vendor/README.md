@@ -22,6 +22,17 @@ FreeType, libpng, PlutoSVG and PlutoVG sources below these forks support the sam
 bundled font backend; their original notices remain alongside them. These are
 build inputs, not a requirement to install those libraries on a remote SSH host.
 
-Original editor source history and behavioral fixture generators are documented
-in `PORTING.md`, `UPSTREAM_REVISION`, `UPSTREAM_SUBMODULES` and
-`scripts/provenance/README.md`. They do not select Bed's dependency versions.
+All five forks are active build dependencies. Keep their source, tests and patch
+records together so upgrades can be compared with the published versions.
+Nested build caches, package-cache markers, runtime `imgui.ini` files, redundant
+dependency lockfiles and dependency CI workflows are omitted. Bed's root
+`Cargo.lock` and `.github/workflows/ci.yml` control builds and validation.
+
+The original MIT/Apache notices for the three Dear ImGui Rust binding crates
+are retained at each crate root. They come from upstream revision
+`95f279150e95c728952db3e79226c687167ccf73`, matching their recorded package
+provenance, and are included in release packages by the shared notice collector.
+
+Original source credits are retained in `NOTICE` and fixture documentation.
+The original C++ checkout and port-verification scripts are not part of the
+development workflow. Active dependency versions come from `Cargo.lock`.

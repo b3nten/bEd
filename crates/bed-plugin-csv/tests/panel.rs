@@ -1,4 +1,4 @@
-use bed_core::identity::DocumentId;
+use bed_editing::identity::DocumentId;
 use bed_plugin::{
     DocumentKind, HostContext, HostRequest, PanelAction, PluginDocument, PluginPanel,
 };

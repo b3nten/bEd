@@ -122,11 +122,6 @@ impl RemoteClient {
     }
 
     pub fn launch_command(mut command: Command) -> io::Result<Self> {
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW, matching LSP children.
-        }
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

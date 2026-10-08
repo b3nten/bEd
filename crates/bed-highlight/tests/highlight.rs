@@ -1,6 +1,6 @@
 // Translated from nealmick/ned tests/editor/{capture_map,highlight_queries,
-// highlight_service}_test.cpp at UPSTREAM_REVISION. License in LICENSE/NOTICE.
-use bed_core::{
+// highlight_service}_test.cpp at 2d3e9b53b0ebc44c6da6901ff242a95edaa4a1ff. License in LICENSE/NOTICE.
+use bed_editing::{
     editor_operations::{EditorOperations, OpKind, TextOp},
     editor_state::EditorState,
 };

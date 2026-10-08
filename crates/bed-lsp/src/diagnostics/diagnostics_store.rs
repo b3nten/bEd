@@ -1,11 +1,11 @@
 //! Translated from ned diagnostics_store.{h,cpp}; see LICENSE and NOTICE.
-use bed_core::util::doc_path;
+use bed_editing::util::doc_path;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
 
-pub use bed_core::diagnostic::{DiagnosticItem, diagnostic_contains};
+pub use bed_editing::diagnostic::{DiagnosticItem, diagnostic_contains};
 
 #[derive(Default, Debug)]
 struct Store {

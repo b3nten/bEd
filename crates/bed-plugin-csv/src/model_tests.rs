@@ -539,7 +539,7 @@ fn hundred_thousand_rows_filter_sort_and_edit_keep_source_row_identity() {
 #[test]
 #[ignore = "manual end-to-end structural-edit performance measurement"]
 fn benchmark_hundred_thousand_row_column_transaction() {
-    use bed_session::EditorSession;
+    use bed_document_session::EditorSession;
     use std::time::Instant;
 
     let mut text = String::from("id,value\n");

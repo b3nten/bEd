@@ -1,0 +1,162 @@
+[
+  {
+    "name": "tree-sitter-bash",
+    "version": "0.23.3",
+    "revision": "487734f87fd87118028a65a4599352fa99c9cde8",
+    "repository": "https://github.com/tree-sitter/tree-sitter-bash",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-bash/487734f87fd87118028a65a4599352fa99c9cde8/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
+  },
+  {
+    "name": "tree-sitter-c",
+    "version": "0.23.4",
+    "revision": "3efee11f784605d44623d7dadd6cd12a0f73ea92",
+    "repository": "https://github.com/tree-sitter/tree-sitter-c",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-c/3efee11f784605d44623d7dadd6cd12a0f73ea92/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+  },
+  {
+    "name": "tree-sitter-c-sharp",
+    "version": "0.23.1",
+    "revision": "362a8a41b265056592a0c3771664a21d23a71392",
+    "repository": "https://github.com/tree-sitter/tree-sitter-c-sharp",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-c-sharp/362a8a41b265056592a0c3771664a21d23a71392/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "778fb7d63b8c1844da315648c02f325c4713a6f4a5d19644fd413421422776d3"
+  },
+  {
+    "name": "tree-sitter-cpp",
+    "version": "0.23.4",
+    "revision": "f41e1a044c8a84ea9fa8577fdd2eab92ec96de02",
+    "repository": "https://github.com/tree-sitter/tree-sitter-cpp",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-cpp/f41e1a044c8a84ea9fa8577fdd2eab92ec96de02/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+  },
+  {
+    "name": "tree-sitter-css",
+    "version": "0.23.2",
+    "revision": "c0d581e32d183a536731ed6c3a72758b27e20411",
+    "repository": "https://github.com/tree-sitter/tree-sitter-css",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-css/c0d581e32d183a536731ed6c3a72758b27e20411/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78"
+  },
+  {
+    "name": "tree-sitter-go",
+    "version": "0.23.4",
+    "revision": "3c3775faa968158a8b4ac190a7fda867fd5fb748",
+    "repository": "https://github.com/tree-sitter/tree-sitter-go",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-go/3c3775faa968158a8b4ac190a7fda867fd5fb748/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+  },
+  {
+    "name": "tree-sitter-html",
+    "version": "0.23.2",
+    "revision": "5a5ca8551a179998360b4a4ca2c0f366a35acc03",
+    "repository": "https://github.com/tree-sitter/tree-sitter-html",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-html/5a5ca8551a179998360b4a4ca2c0f366a35acc03/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+  },
+  {
+    "name": "tree-sitter-java",
+    "version": "0.23.5",
+    "revision": "94703d5a6bed02b98e438d7cad1136c01a60ba2c",
+    "repository": "https://github.com/tree-sitter/tree-sitter-java",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-java/94703d5a6bed02b98e438d7cad1136c01a60ba2c/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "52ed137b039cd9c46409bc22e89938af911c95b157feae2d040b51e6084369a7"
+  },
+  {
+    "name": "tree-sitter-javascript",
+    "version": "0.23.1",
+    "revision": "3a837b6f3658ca3618f2022f8707e29739c91364",
+    "repository": "https://github.com/tree-sitter/tree-sitter-javascript",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-javascript/3a837b6f3658ca3618f2022f8707e29739c91364/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+  },
+  {
+    "name": "tree-sitter-json",
+    "version": "0.24.8",
+    "revision": "ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24",
+    "repository": "https://github.com/tree-sitter/tree-sitter-json",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-json/ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+  },
+  {
+    "name": "tree-sitter-kotlin-codanna",
+    "version": "0.3.9",
+    "revision": "7f675c3e2c60cab4c63eb623b9e669fa27df0419",
+    "repository": "https://github.com/bartolli/tree-sitter-kotlin",
+    "url": "https://raw.githubusercontent.com/bartolli/tree-sitter-kotlin/7f675c3e2c60cab4c63eb623b9e669fa27df0419/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "948495f61768f7de26bcc61113d8cd95f50bbc15adb678c28c941c6c8fcd5903"
+  },
+  {
+    "name": "tree-sitter-python",
+    "version": "0.23.6",
+    "revision": "bffb65a8cfe4e46290331dfef0dbf0ef3679de11",
+    "repository": "https://github.com/tree-sitter/tree-sitter-python",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-python/bffb65a8cfe4e46290331dfef0dbf0ef3679de11/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "d724405ce238a22c0d35769c5a36b386ad5958192efe8bbb304fb2896254575f"
+  },
+  {
+    "name": "tree-sitter-ruby",
+    "version": "0.23.1",
+    "revision": "71bd32fb7607035768799732addba884a37a6210",
+    "repository": "https://github.com/tree-sitter/tree-sitter-ruby",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-ruby/71bd32fb7607035768799732addba884a37a6210/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "ee006f02a3d856df282e409be2a86e24a65bb573a98b9c28343771141351bb6b"
+  },
+  {
+    "name": "tree-sitter-rust",
+    "version": "0.24.0",
+    "revision": "18b0515fca567f5a10aee9978c6d2640e878671a",
+    "repository": "https://github.com/tree-sitter/tree-sitter-rust",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-rust/18b0515fca567f5a10aee9978c6d2640e878671a/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "31d5b6f4243d5c7c6e1c4ebbbb9f6407bd1457a08bcc4f706521710341acba36"
+  },
+  {
+    "name": "tree-sitter-toml-ng",
+    "version": "0.7.0",
+    "revision": "64b56832c2cffe41758f28e05c756a3a98d16f41",
+    "repository": "https://github.com/tree-sitter-grammars/tree-sitter-toml",
+    "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-toml/64b56832c2cffe41758f28e05c756a3a98d16f41/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "b727eee929bee836e8102cecf749a795b199f291b58c885bcd81cae727ac5a46"
+  },
+  {
+    "name": "tree-sitter-typescript",
+    "version": "0.23.2",
+    "revision": "f975a621f4e7f532fe322e13c4f79495e0a7b2e7",
+    "repository": "https://github.com/tree-sitter/tree-sitter-typescript",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-typescript/f975a621f4e7f532fe322e13c4f79495e0a7b2e7/LICENSE",
+    "file": "tree-sitter-NOTICES.txt",
+    "sha256": "448224066d1937ff9b5861347eb684458fa113e3f6b0fa83d93a6053ef409fdb",
+    "original_notice_sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
+  }
+]

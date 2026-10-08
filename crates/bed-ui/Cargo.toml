@@ -6,13 +6,7 @@ publish = false
 license-file = "../../LICENSE"
 
 [dependencies]
-bed-core = { workspace = true }
-bed-session = { workspace = true }
-bed-highlight = { workspace = true }
-bed-lsp = { workspace = true }
+bed-editing = { workspace = true }
 dear-imgui-rs = { workspace = true }
 dear-imgui-sys = { workspace = true }
-serde_json = { workspace = true }
-
-[dev-dependencies]
-git2 = { workspace = true }
+resvg = { workspace = true }

@@ -1,11 +1,11 @@
 // Translated from nealmick/ned editor/services/highlight/highlight_service.{h,cpp}.
-// Pinned by UPSTREAM_REVISION; MIT/X Consortium license in LICENSE.
+// Source revision and attribution in NOTICE; MIT/X Consortium license in LICENSE.
 use crate::{
     capture_map::ThemeSlot,
     span_map::SpanMap,
     tree_sitter::{ColorSpan, ParseKind, ParseResult, ParseSnapshot, ThemeColors, TreeSitter},
 };
-use bed_core::{
+use bed_editing::{
     editor_operations::{EditorOperations, PendingEdit},
     editor_state::EditorState,
 };

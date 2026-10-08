@@ -636,12 +636,8 @@ mod theme_tests {
     fn themes_update_existing_future_and_restarted_sessions_without_losing_osc_colors() {
         let mut terminal = BedTerminal::with_pty_options(PtyOptions {
             shell: Some(crate::terminal_pty::TerminalShell::new(
-                if cfg!(windows) { "cmd.exe" } else { "/bin/sh" },
-                if cfg!(windows) {
-                    vec!["/c".into(), "exit 0".into()]
-                } else {
-                    vec!["-c".into(), "exit 0".into()]
-                },
+                "/bin/sh",
+                vec!["-c".into(), "exit 0".into()],
             )),
             ..PtyOptions::default()
         });

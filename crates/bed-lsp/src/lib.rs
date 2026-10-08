@@ -1,4 +1,4 @@
-//! Bed lsp components. Attribution: workspace LICENSE, NOTICE and UPSTREAM_REVISION.
+//! Bed lsp components. Attribution: workspace LICENSE and NOTICE.
 pub mod connection;
 pub mod diagnostics;
 pub mod jsonrpc;

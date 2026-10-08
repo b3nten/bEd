@@ -1,7 +1,7 @@
 // Test-only translation of nealmick/ned tests/monaco/text_model.{h,cpp}, pinned
-// by UPSTREAM_REVISION. MIT/X Consortium; see LICENSE and NOTICE.
+// at 2d3e9b53b0ebc44c6da6901ff242a95edaa4a1ff. MIT/X Consortium; see LICENSE and NOTICE.
 // Preserve the upstream one-based byte-coordinate facade over the real model.
-use bed_core::{
+use bed_editing::{
     editor_operations::{EditorOperations, OpKind, TextOp},
     editor_state::EditorState,
     util::utf8::snap_to_utf8_char_boundary,

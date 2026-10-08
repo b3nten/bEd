@@ -1,5 +1,5 @@
 // Translated from nealmick/ned editor/services/highlight/capture_map.h.
-// Pinned by UPSTREAM_REVISION; MIT/X Consortium license in LICENSE.
+// Source revision and attribution in NOTICE; MIT/X Consortium license in LICENSE.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum ThemeSlot {

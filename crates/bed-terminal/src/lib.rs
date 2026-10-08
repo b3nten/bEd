@@ -1,4 +1,4 @@
-//! Bed terminal components. Attribution: workspace LICENSE, NOTICE and UPSTREAM_REVISION.
+//! Bed terminal components. Attribution: workspace LICENSE and NOTICE.
 #[cfg(feature = "ui")]
 pub mod bed_terminal;
 mod process_title;

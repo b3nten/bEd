@@ -1,8 +1,3 @@
-#![cfg_attr(
-    all(target_os = "windows", not(debug_assertions)),
-    windows_subsystem = "windows"
-)]
-
 fn main() {
     if std::env::args_os().nth(1).as_deref()
         == Some(std::ffi::OsStr::new(bed_debug::launcher::FLAG))

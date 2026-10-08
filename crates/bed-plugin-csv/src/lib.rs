@@ -3,7 +3,7 @@ mod model;
 mod panel;
 mod worker;
 
-use bed_core::identity::DocumentId;
+use bed_editing::identity::DocumentId;
 use bed_plugin::{
     CommandContext, DocumentKind, HostContext, HostRequest, MenuSlot, Plugin, PluginPanel,
     Registrar,
@@ -90,6 +90,9 @@ impl Plugin for CsvPlugin {
         )))
     }
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }
