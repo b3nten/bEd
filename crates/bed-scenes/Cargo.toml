@@ -15,4 +15,4 @@ gltf = { workspace = true }
 bevy = { version = "=0.19.1", default-features = false, features = ["std", "async_executor", "multi_threaded", "reflect_auto_register", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_log", "png"] }
 
 [dev-dependencies]
-image = { workspace = true }
+image = { workspace = true, features = ["gif"] }

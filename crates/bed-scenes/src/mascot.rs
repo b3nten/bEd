@@ -162,14 +162,13 @@ impl ModulePanel for MascotPanel {
         Some([0.0; 2])
     }
     fn draw(&mut self, ui: &Ui, host: &HostContext<'_>, _: &mut Vec<HostRequest>) {
-        let settings_id = match self.scene.kind {
-            SceneKind::Bed => "bed.mascot",
-            SceneKind::Duck => "bed.duck",
+        let muted = match self.scene.kind {
+            SceneKind::Bed => false,
+            SceneKind::Duck => !host.settings_for("bed.duck")["squeaks_enabled"]
+                .as_bool()
+                .unwrap_or(true),
             SceneKind::Bedtime | SceneKind::WelcomeBed => unreachable!("Not a mascot panel"),
         };
-        let muted = !host.settings_for(settings_id)["squeaks_enabled"]
-            .as_bool()
-            .unwrap_or(true);
         if muted
             && !self.muted
             && let Some((_, sink)) = &self.audio
@@ -333,7 +332,8 @@ mod tests {
                         let mascot = panel.as_any().downcast_ref::<MascotPanel>().unwrap();
                         assert_eq!(
                             mascot.muted,
-                            !settings[settings_id]["squeaks_enabled"].as_bool().unwrap()
+                            settings_id == "bed.duck"
+                                && !settings[settings_id]["squeaks_enabled"].as_bool().unwrap()
                         );
                     });
                 drop(_padding);

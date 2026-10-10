@@ -3,8 +3,12 @@ use crate::{
     model::{self, Auth, KeyValue, Request, ResolvedRequest},
     worker::BodyPresentation,
 };
+use bed_ui::{
+    presentation::{fit_text, readable_color, same_line_if_fits},
+    util::popup_style::{controls_style, tooltip, tooltip_text},
+};
 use bed_workbench_api::{HostContext, HostRequest, ModulePanel, ModuleServices};
-use dear_imgui_rs::{ImString, ListClipper, MouseCursor, Ui, WindowFlags};
+use dear_imgui_rs::{ImString, ListClipper, MouseCursor, StyleColor, StyleVar, Ui};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{any::Any, cell::RefCell, ffi::CString, rc::Rc};
@@ -105,88 +109,130 @@ impl ModulePanel for HttpPanel {
     }
 
     fn draw(&mut self, ui: &Ui, _: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
+        let _controls = controls_style(ui);
+        let fs = ui.current_font_size();
+        let _spacing = ui.push_style_var(StyleVar::ItemSpacing([fs * 0.5, fs * 0.3]));
+        let _padding = ui.push_style_var(StyleVar::FramePadding([fs * 0.45, fs * 0.2]));
+        let _rounding = ui.push_style_var(StyleVar::ChildRounding(fs * 0.35));
+        let style = ui.clone_style();
+        let gap = style.item_spacing()[0];
+        let button_width =
+            |label: &str| ui.calc_text_size(label)[0] + style.frame_padding()[0] * 2.0;
         let shared = Rc::clone(&self.shared);
         let data = shared.borrow();
         let mut actions = Vec::new();
-        ui.text("HTTP Client");
-        ui.same_line();
-        ui.text_disabled(if self.persistent {
-            "Saved in this workspace · Requests run on this computer"
-        } else {
-            "Requests run on this computer"
-        });
+        if ui.button("New request") {
+            actions.push(Action::Create);
+        }
+        same_line_if_fits(ui, button_width("Delete"));
+        {
+            let _disabled = ui.begin_disabled_with_cond(data.selected.is_none());
+            if ui.button("Delete")
+                && let Some(id) = data.selected
+            {
+                actions.push(Action::Delete { id });
+            }
+        }
+        let count = format!(
+            "{} request{}",
+            data.requests.len(),
+            if data.requests.len() == 1 { "" } else { "s" }
+        );
+        same_line_if_fits(ui, ui.calc_text_size(&count)[0]);
+        ui.align_text_to_frame_padding();
+        ui.text_disabled(count);
+        if ui.is_item_hovered() {
+            tooltip_text(
+                ui,
+                if self.persistent {
+                    "Saved in this workspace. Requests run on this computer."
+                } else {
+                    "Requests run on this computer."
+                },
+            );
+        }
         if let Some(error) = &data.error {
-            ui.text_wrapped(error);
+            ui.text_colored(
+                readable_color(ui, [0.95, 0.35, 0.3, 1.0]),
+                fit_text(ui, error, ui.content_region_avail()[0]),
+            );
+            if ui.is_item_hovered() {
+                detail_tooltip(ui, error);
+            }
         }
         if let Some(active) = &data.active {
             if ui.small_button("Cancel") {
                 actions.push(Action::Cancel);
             }
-            ui.same_line();
-            ui.text_wrapped(format!(
-                "Running {} {}…",
-                active.request.method, active.request.url
-            ));
+            let running = format!("Running {} {}…", active.request.method, active.request.url);
+            same_line_if_fits(ui, fs * 8.0);
+            ui.text_disabled(fit_text(ui, &running, ui.content_region_avail()[0]));
+            if ui.is_item_hovered() {
+                detail_tooltip(ui, &running);
+            }
             requests.push(HostRequest::Invalidate);
         }
         ui.separator();
-        let size = ui.content_region_avail();
-        let gap = ui.clone_style().item_spacing()[0];
-        let list_width = ((size[0] - 6.0 - gap * 2.0) * self.state.list_fraction).max(1.0);
-        ui.child_window("http-requests")
-            .size([list_width, size[1]])
-            .border(true)
-            .build(ui, || {
-                if ui.button("New") {
-                    actions.push(Action::Create);
-                }
-                ui.same_line();
-                {
-                    let _disabled = ui.begin_disabled_with_cond(data.selected.is_none());
-                    if ui.button("Delete")
-                        && let Some(id) = data.selected
-                    {
-                        actions.push(Action::Delete { id });
-                    }
-                }
-                ui.separator();
-                let height = ui.text_line_height_with_spacing();
-                for index in ListClipper::new(data.requests.len())
-                    .items_height(height)
-                    .begin(ui)
-                    .iter()
-                {
-                    let request = &data.requests[index];
-                    let name = if request.name.is_empty() {
-                        "Untitled request"
-                    } else {
-                        &request.name
-                    };
-                    if ui
-                        .selectable_config(format!("{name}##http-request-{}", request.id))
-                        .selected(data.selected == Some(request.id))
-                        .build()
-                    {
+        // A narrow dock gets a picker; the split layout keeps both columns usable.
+        let wide = ui.content_region_avail()[0] >= fs * 48.0;
+        if !wide {
+            let selected = data
+                .selected
+                .and_then(|id| data.requests.iter().find(|r| r.id == id));
+            let width = ui.content_region_avail()[0].max(1.0);
+            ui.set_next_item_width(width);
+            let preview = selected.map_or("Select a request", request_name);
+            if let Some(_combo) = ui.begin_combo(
+                "##http-request-picker",
+                fit_text(ui, preview, (width - fs * 2.5).max(1.0)),
+            ) {
+                for request in &data.requests {
+                    if request_item(ui, request, data.selected == Some(request.id)) {
                         actions.push(Action::Select { id: request.id });
                     }
-                    if ui.is_item_hovered() {
-                        ui.tooltip_text(format!("{} {}", request.method, request.url));
-                    }
                 }
-            });
-        ui.same_line();
-        ui.invisible_button("http-list-splitter", [6.0, size[1].max(1.0)]);
-        if ui.is_item_hovered() || ui.is_item_active() {
-            ui.set_mouse_cursor(Some(MouseCursor::ResizeEW));
+            }
         }
-        if ui.is_item_active() {
-            self.state.list_fraction = (self.state.list_fraction
-                + ui.io().mouse_delta()[0] / size[0].max(1.0))
-            .clamp(0.15, 0.6);
+        let size = ui.content_region_avail();
+        let splitter = fs * 0.35;
+        if wide {
+            let list_width = (size[0] * self.state.list_fraction)
+                .clamp(fs * 12.0, size[0] - fs * 30.0 - splitter - gap * 2.0);
+            ui.child_window("http-requests")
+                .size([list_width, size[1].max(1.0)])
+                .border(true)
+                .build(ui, || {
+                    ui.text_disabled("Requests");
+                    ui.separator();
+                    let height = ui.text_line_height_with_spacing();
+                    for index in ListClipper::new(data.requests.len())
+                        .items_height(height)
+                        .begin(ui)
+                        .iter()
+                    {
+                        let request = &data.requests[index];
+                        if request_item(ui, request, data.selected == Some(request.id)) {
+                            actions.push(Action::Select { id: request.id });
+                        }
+                    }
+                    if data.requests.is_empty() {
+                        ui.text_wrapped("Create a request to get started.");
+                    }
+                });
+            ui.same_line();
+            ui.invisible_button("http-list-splitter", [splitter, size[1].max(1.0)]);
+            if ui.is_item_hovered() || ui.is_item_active() {
+                ui.set_mouse_cursor(Some(MouseCursor::ResizeEW));
+            }
+            if ui.is_item_active() {
+                self.state.list_fraction = (self.state.list_fraction
+                    + ui.io().mouse_delta()[0] / size[0].max(1.0))
+                .clamp(0.15, 0.6);
+            }
+            ui.same_line();
         }
-        ui.same_line();
         ui.child_window("http-details")
-            .size([0.0, size[1]])
+            .size([0.0, size[1].max(1.0)])
             .build(ui, || {
                 let Some(request) = data
                     .selected
@@ -208,19 +254,30 @@ impl ModulePanel for HttpPanel {
                 let draft = self.draft.as_mut().expect("selected request has a draft");
                 let mut changed = false;
                 let mut run = false;
-                let request_height =
-                    ((ui.content_region_avail()[1] - 12.0) * self.state.request_fraction).max(1.0);
+                let split_height =
+                    (ui.content_region_avail()[1] - splitter - style.item_spacing()[1] * 2.0)
+                        .max(1.0);
+                let min_request = (fs * 11.0).min(split_height * 0.6);
+                let min_response = (fs * 9.0).min(split_height * 0.4);
+                let request_height = (split_height * self.state.request_fraction)
+                    .clamp(min_request, (split_height - min_response).max(min_request));
                 ui.child_window("http-request-editor")
                     .size([0.0, request_height])
                     .border(true)
                     .build(ui, || {
-                        ui.text_disabled("Name");
-                        ui.same_line();
                         ui.set_next_item_width(ui.content_region_avail()[0].max(1.0));
                         changed |= ui
                             .input_text("##request-name", &mut draft.request.name)
+                            .hint("Request name")
                             .build();
-                        ui.set_next_item_width(110.0);
+                        if ui.is_item_hovered() {
+                            tooltip_text(ui, "Request name");
+                        }
+                        let width = ui.content_region_avail()[0].max(1.0);
+                        let method_width = (fs * 7.0).min(width);
+                        let inline =
+                            width >= method_width + button_width("Run") + gap * 2.0 + fs * 12.0;
+                        ui.set_next_item_width(method_width);
                         let method_label = if draft.custom_method {
                             "Custom"
                         } else {
@@ -248,26 +305,42 @@ impl ModulePanel for HttpPanel {
                                 draft.custom_method = true;
                             }
                         }
-                        ui.same_line();
-                        ui.set_next_item_width(
-                            (ui.content_region_avail()[0] - 50.0 - gap).max(40.0),
-                        );
-                        changed |= ui
-                            .input_text("##request-url", &mut draft.request.url)
-                            .hint("https://example.com")
-                            .build();
-                        ui.same_line();
+                        if inline {
+                            ui.same_line();
+                            ui.set_next_item_width(
+                                (ui.content_region_avail()[0] - button_width("Run") - gap).max(1.0),
+                            );
+                            changed |= ui
+                                .input_text("##request-url", &mut draft.request.url)
+                                .hint("https://example.com")
+                                .build();
+                        }
+                        same_line_if_fits(ui, button_width("Run"));
                         {
                             let _disabled = ui.begin_disabled_with_cond(
                                 data.active.is_some() || model::resolve(&draft.request).is_err(),
+                            );
+                            let _accent = ui.push_style_color(
+                                StyleColor::Button,
+                                ui.style_color(StyleColor::Header),
                             );
                             if ui.button("Run") {
                                 run = true;
                             }
                         }
+                        if !inline {
+                            ui.set_next_item_width(ui.content_region_avail()[0].max(1.0));
+                            changed |= ui
+                                .input_text("##request-url", &mut draft.request.url)
+                                .hint("https://example.com")
+                                .build();
+                        }
                         if draft.custom_method {
-                            ui.set_next_item_width(160.0);
-                            changed |= ui.input_text("Method", &mut draft.request.method).build();
+                            ui.text_disabled("Custom method");
+                            ui.set_next_item_width(ui.content_region_avail()[0].max(1.0));
+                            changed |= ui
+                                .input_text("##custom-method", &mut draft.request.method)
+                                .build();
                         }
                         ui.separator();
                         for (index, (label, tab)) in [
@@ -280,9 +353,15 @@ impl ModulePanel for HttpPanel {
                         .enumerate()
                         {
                             if index != 0 {
-                                ui.same_line();
+                                same_line_if_fits(ui, button_width(label));
                             }
-                            if ui.radio_button_bool(label, self.state.editor_tab == tab) {
+                            let _selected = (self.state.editor_tab == tab).then(|| {
+                                ui.push_style_color(
+                                    StyleColor::Button,
+                                    ui.style_color(StyleColor::Header),
+                                )
+                            });
+                            if ui.button(label) {
                                 self.state.editor_tab = tab;
                             }
                         }
@@ -302,7 +381,8 @@ impl ModulePanel for HttpPanel {
                                         &mut draft.body,
                                         [
                                             ui.content_region_avail()[0].max(1.0),
-                                            ui.content_region_avail()[1].max(40.0),
+                                            ui.content_region_avail()[1]
+                                                .max(ui.frame_height() * 2.0),
                                         ],
                                     )
                                     .build()
@@ -317,8 +397,10 @@ impl ModulePanel for HttpPanel {
                                     Auth::Bearer { .. } => 1,
                                     Auth::Basic { .. } => 2,
                                 };
+                                ui.text_disabled("Authentication");
+                                ui.set_next_item_width(ui.content_region_avail()[0].max(1.0));
                                 if ui.combo_simple_string(
-                                    "Authentication",
+                                    "##authentication",
                                     &mut mode,
                                     &["None", "Bearer token", "Basic"],
                                 ) {
@@ -335,17 +417,29 @@ impl ModulePanel for HttpPanel {
                                     changed = true;
                                 }
                                 match &mut draft.request.auth {
-                                    Auth::None => ui.text_disabled(
+                                    Auth::None => ui.text_wrapped(
                                         "Use headers for other authentication schemes.",
                                     ),
                                     Auth::Bearer { token } => {
+                                        ui.text_disabled("Token");
+                                        ui.set_next_item_width(
+                                            ui.content_region_avail()[0].max(1.0),
+                                        );
                                         changed |=
-                                            ui.input_text("Token", token).password(true).build()
+                                            ui.input_text("##token", token).password(true).build()
                                     }
                                     Auth::Basic { username, password } => {
-                                        changed |= ui.input_text("Username", username).build();
+                                        ui.text_disabled("Username");
+                                        ui.set_next_item_width(
+                                            ui.content_region_avail()[0].max(1.0),
+                                        );
+                                        changed |= ui.input_text("##username", username).build();
+                                        ui.text_disabled("Password");
+                                        ui.set_next_item_width(
+                                            ui.content_region_avail()[0].max(1.0),
+                                        );
                                         changed |= ui
-                                            .input_text("Password", password)
+                                            .input_text("##password", password)
                                             .password(true)
                                             .build();
                                     }
@@ -365,7 +459,7 @@ impl ModulePanel for HttpPanel {
                 }
                 ui.invisible_button(
                     "http-response-splitter",
-                    [ui.content_region_avail()[0].max(1.0), 6.0],
+                    [ui.content_region_avail()[0].max(1.0), splitter],
                 );
                 if ui.is_item_hovered() || ui.is_item_active() {
                     ui.set_mouse_cursor(Some(MouseCursor::ResizeNS));
@@ -378,7 +472,6 @@ impl ModulePanel for HttpPanel {
                 ui.child_window("http-response")
                     .size([0.0, 0.0])
                     .border(true)
-                    .flags(WindowFlags::HORIZONTAL_SCROLLBAR)
                     .build(ui, || {
                         ui.text("Response");
                         if let Err(error) = &resolved {
@@ -386,7 +479,7 @@ impl ModulePanel for HttpPanel {
                         }
                         let Some(result) = data.results.get(&request.id) else {
                             self.response_cache = None;
-                            ui.text_disabled("Run this request to inspect its response.");
+                            ui.text_wrapped("Run this request to inspect its response.");
                             return;
                         };
                         if !matches!(&resolved, Ok(current) if *current == result.request) {
@@ -398,44 +491,89 @@ impl ModulePanel for HttpPanel {
                                 ui.text_wrapped(error);
                             }
                             Ok(response) => {
-                                ui.text(format!(
-                                    "{} {} · {:.0} ms · {} bytes{}",
-                                    response.version,
-                                    response.status,
-                                    response.elapsed.as_secs_f64() * 1000.0,
+                                if matches!(&resolved, Ok(current) if *current == result.request) {
+                                    same_line_if_fits(
+                                        ui,
+                                        ui.calc_text_size(response.status.to_string())[0],
+                                    );
+                                }
+                                let status_color = match response.status {
+                                    200..=299 => [0.4, 0.75, 0.5, 1.0],
+                                    300..=399 => [0.4, 0.65, 0.95, 1.0],
+                                    400..=499 => [0.95, 0.7, 0.3, 1.0],
+                                    _ => [0.95, 0.35, 0.3, 1.0],
+                                };
+                                ui.text_colored(
+                                    readable_color(ui, status_color),
+                                    response.status.to_string(),
+                                );
+                                if ui.is_item_hovered() {
+                                    tooltip_text(
+                                        ui,
+                                        format!("{} {}", response.version, response.status),
+                                    );
+                                }
+                                let timing =
+                                    format!("{:.0} ms", response.elapsed.as_secs_f64() * 1000.0);
+                                same_line_if_fits(ui, ui.calc_text_size(&timing)[0]);
+                                ui.text_disabled(timing);
+                                let bytes = format!(
+                                    "{} bytes{}",
                                     response.bytes.len(),
                                     if response.truncated {
-                                        " collected (truncated at 8 MiB)"
+                                        " · truncated"
                                     } else {
                                         ""
                                     }
+                                );
+                                same_line_if_fits(ui, ui.calc_text_size(&bytes)[0]);
+                                ui.text_disabled(fit_text(
+                                    ui,
+                                    &bytes,
+                                    ui.content_region_avail()[0],
                                 ));
-                                ui.text_wrapped(&response.final_url);
-                                if let BodyPresentation::Text { raw, .. } = &response.presentation {
-                                    if ui.small_button("Copy response") {
+                                if response.truncated && ui.is_item_hovered() {
+                                    tooltip_text(ui, "Response collection stopped at 8 MiB.");
+                                }
+                                ui.text_disabled(fit_text(
+                                    ui,
+                                    &response.final_url,
+                                    ui.content_region_avail()[0],
+                                ));
+                                if ui.is_item_hovered() {
+                                    detail_tooltip(ui, &response.final_url);
+                                }
+                                // Keep copy actions in one menu so the body keeps its space.
+                                if ui.small_button("Copy") {
+                                    ui.open_popup("http-copy");
+                                }
+                                if let Some(_popup) = ui.begin_popup("http-copy") {
+                                    if let BodyPresentation::Text { raw, .. } =
+                                        &response.presentation
+                                        && ui.menu_item("Response body")
+                                    {
                                         copy(ui, raw);
                                     }
-                                    ui.same_line();
+                                    if ui.menu_item("Response headers") {
+                                        copy(ui, &header_text(&response.headers));
+                                    }
+                                    if ui.menu_item("Request") {
+                                        copy(ui, &request_text(&result.request));
+                                    }
                                 }
-                                if ui.small_button("Copy headers") {
-                                    copy(ui, &header_text(&response.headers));
-                                }
-                                ui.same_line();
-                                if ui.small_button("Copy request") {
-                                    copy(ui, &request_text(&result.request));
-                                }
-                                for (index, (label, tab)) in [
+                                for (label, tab) in [
                                     ("Formatted", ResponseTab::Formatted),
                                     ("Raw", ResponseTab::Raw),
-                                    ("Response headers", ResponseTab::Headers),
-                                ]
-                                .into_iter()
-                                .enumerate()
-                                {
-                                    if index != 0 {
-                                        ui.same_line();
-                                    }
-                                    if ui.radio_button_bool(label, self.state.response_tab == tab) {
+                                    ("Headers", ResponseTab::Headers),
+                                ] {
+                                    same_line_if_fits(ui, button_width(label));
+                                    let _selected = (self.state.response_tab == tab).then(|| {
+                                        ui.push_style_color(
+                                            StyleColor::Button,
+                                            ui.style_color(StyleColor::Header),
+                                        )
+                                    });
+                                    if ui.button(label) {
                                         self.state.response_tab = tab;
                                     }
                                 }
@@ -470,7 +608,7 @@ impl ModulePanel for HttpPanel {
                                         BodyPresentation::Binary { .. }
                                     )
                                 {
-                                    ui.text_disabled("Binary response · first 4 KiB in hex");
+                                    ui.text_wrapped("Binary response · first 4 KiB in hex");
                                 }
                                 let cache = self
                                     .response_cache
@@ -524,24 +662,49 @@ impl ModulePanel for HttpPanel {
 }
 
 fn edit_rows(ui: &Ui, label: &str, rows: &mut Vec<KeyValue>) -> bool {
+    let fs = ui.current_font_size();
+    let style = ui.clone_style();
+    let gap = style.item_spacing()[0];
+    let remove_width = ui.calc_text_size("×")[0] + style.frame_padding()[0] * 2.0;
     let mut changed = false;
     let mut removed = None;
     for (index, row) in rows.iter_mut().enumerate() {
         let _id = ui.push_id(&format!("{label}-{index}"));
+        let width = ui.content_region_avail()[0].max(1.0);
+        let inline = width >= fs * 28.0;
         changed |= ui.checkbox("##enabled", &mut row.enabled);
+        if ui.is_item_hovered() {
+            tooltip_text(ui, format!("Include this {label}"));
+        }
         ui.same_line();
-        let width = ((ui.content_region_avail()[0] - 75.0) * 0.4).max(40.0);
-        ui.set_next_item_width(width);
+        let fields_width = (ui.content_region_avail()[0] - remove_width - gap).max(1.0);
+        ui.set_next_item_width(if inline {
+            (fields_width - gap) * 0.4
+        } else {
+            fields_width
+        });
         changed |= ui.input_text("##name", &mut row.name).hint("Name").build();
+        if inline {
+            ui.same_line();
+            ui.set_next_item_width((ui.content_region_avail()[0] - remove_width - gap).max(1.0));
+            changed |= ui
+                .input_text("##value", &mut row.value)
+                .hint("Value")
+                .build();
+        }
         ui.same_line();
-        ui.set_next_item_width((ui.content_region_avail()[0] - 65.0).max(40.0));
-        changed |= ui
-            .input_text("##value", &mut row.value)
-            .hint("Value")
-            .build();
-        ui.same_line();
-        if ui.small_button("Remove") {
+        if ui.button("×") {
             removed = Some(index);
+        }
+        if ui.is_item_hovered() {
+            tooltip_text(ui, format!("Remove {label}"));
+        }
+        if !inline {
+            ui.set_next_item_width(width);
+            changed |= ui
+                .input_text("##value", &mut row.value)
+                .hint("Value")
+                .build();
         }
     }
     if let Some(index) = removed {
@@ -553,6 +716,46 @@ fn edit_rows(ui: &Ui, label: &str, rows: &mut Vec<KeyValue>) -> bool {
         changed = true;
     }
     changed
+}
+
+fn request_name(request: &Request) -> &str {
+    if request.name.is_empty() {
+        "Untitled request"
+    } else {
+        &request.name
+    }
+}
+
+fn request_item(ui: &Ui, request: &Request, selected: bool) -> bool {
+    let label = fit_text(ui, request_name(request), ui.content_region_avail()[0]);
+    let position = ui.cursor_screen_pos();
+    let clicked = ui
+        .selectable_config(format!("##http-request-{}", request.id))
+        .size([ui.content_region_avail()[0], ui.text_line_height()])
+        .selected(selected)
+        .build();
+    // Draw the name literally, including any ImGui label delimiters in a saved name.
+    ui.get_window_draw_list()
+        .add_text(position, ui.style_color(StyleColor::Text), label);
+    if ui.is_item_hovered() {
+        detail_tooltip(
+            ui,
+            &format!(
+                "{}\n{} {}",
+                request_name(request),
+                request.method,
+                request.url
+            ),
+        );
+    }
+    clicked
+}
+
+fn detail_tooltip(ui: &Ui, text: &str) {
+    tooltip(ui, || {
+        let _wrap = ui.push_text_wrap_pos(ui.current_font_size() * 36.0);
+        ui.text(text);
+    });
 }
 
 fn finite_fraction(value: f32, default: f32) -> f32 {
@@ -651,11 +854,15 @@ mod tests {
     }
 
     fn frame(context: &mut Context, panel: &mut HttpPanel) -> usize {
+        frame_at_size(context, panel, [1000.0, 800.0])
+    }
+
+    fn frame_at_size(context: &mut Context, panel: &mut HttpPanel, size: [f32; 2]) -> usize {
         context.prepare_frame(FramePrepareOptions::new([1000.0, 800.0], 1.0 / 60.0));
         let ui = context.frame();
         ui.window("HTTP fixture")
             .position([0.0, 0.0], Condition::Always)
-            .size([1000.0, 800.0], Condition::Always)
+            .size(size, Condition::Always)
             .build(|| {
                 panel.draw(
                     ui,
@@ -675,6 +882,145 @@ mod tests {
                 );
             });
         context.render_legacy().total_vtx_count()
+    }
+
+    #[test]
+    fn resizing_keeps_forms_and_response_inside_the_panel() {
+        use dear_imgui_rs::sys;
+        use std::ffi::CStr;
+
+        let _lock = IMGUI_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let shared = fixture();
+        {
+            let mut data = shared.borrow_mut();
+            let request = &mut data.requests[0];
+            request.name =
+                "A saved request with a very long name and Unicode characters · 日本語".into();
+            request.url =
+                "https://example.com/a/very/long/path/that/should/not/expand/the/panel".into();
+            request.method = "CUSTOM".into();
+            request.auth = Auth::Basic {
+                username: "example".into(),
+                password: "saved-secret".into(),
+            };
+            request.params = vec![KeyValue {
+                enabled: true,
+                name: "expand".into(),
+                value: "members,permissions".into(),
+            }];
+            request.headers = vec![KeyValue {
+                enabled: false,
+                name: "content-type".into(),
+                value: "application/json".into(),
+            }];
+            let resolved = model::resolve(request).unwrap();
+            data.active = Some(crate::ActiveRun {
+                run: 2,
+                id: 1,
+                request: resolved.clone(),
+            });
+            data.error = Some("An error with a long explanation\nand another line of details that must leave room for the request editor.".into());
+            data.results.insert(1, RunResult {
+                run: 1,
+                request: resolved,
+                outcome: Ok(Response {
+                    status: 404,
+                    version: "HTTP/1.1".into(),
+                    final_url: "https://example.com/a/very/long/redirected/path/that/should/not/expand/the/panel".into(),
+                    elapsed: Duration::from_millis(125),
+                    headers: vec![("content-type".into(), "application/json".into())],
+                    bytes: b"{}".to_vec(),
+                    truncated: true,
+                    presentation: BodyPresentation::Text { raw: "{}".into(), pretty_json: None },
+                }),
+            });
+        }
+        let original = shared.borrow().requests.clone();
+        let mut panel = HttpPanel::new(shared.clone(), &Value::Null);
+        for size in [
+            [240.0, 600.0],
+            [320.0, 320.0],
+            [480.0, 260.0],
+            [700.0, 240.0],
+            [1000.0, 800.0],
+        ] {
+            for tab in [
+                EditorTab::Params,
+                EditorTab::Headers,
+                EditorTab::Body,
+                EditorTab::Auth,
+            ] {
+                panel.state.editor_tab = tab;
+                for response_tab in [
+                    ResponseTab::Formatted,
+                    ResponseTab::Raw,
+                    ResponseTab::Headers,
+                ] {
+                    panel.state.response_tab = response_tab;
+                    // ImGui computes scroll ranges from the preceding frame's content.
+                    for _ in 0..3 {
+                        assert!(frame_at_size(&mut context, &mut panel, size) > 0);
+                    }
+                    context.binding().with_bound_context(|| unsafe {
+                        let native = &*sys::igGetCurrentContext();
+                        let mut panes = 0;
+                        for index in 0..native.Windows.Size as usize {
+                            let window = &**native.Windows.Data.add(index);
+                            let name = CStr::from_ptr(window.Name).to_string_lossy();
+                            let local_name = name.rsplit('/').next().unwrap();
+                            let is_pane = [
+                                "http-requests_",
+                                "http-details_",
+                                "http-request-editor_",
+                                "http-response_",
+                            ]
+                            .iter()
+                            .any(|prefix| local_name.starts_with(prefix));
+                            if !window.Active || (name != "HTTP fixture" && !is_pane) {
+                                continue;
+                            }
+                            assert!(
+                                window.ScrollMax.x <= 1.0,
+                                "Horizontal overflow in {name}: {}, size {size:?}, tab {}",
+                                window.ScrollMax.x,
+                                tab as u8
+                            );
+                            if local_name.starts_with("http-request-editor_")
+                                || local_name.starts_with("http-response_")
+                            {
+                                panes += 1;
+                                assert!(
+                                    window.Size.y >= 30.0,
+                                    "Both panes must retain usable height"
+                                );
+                                let parent = &*window.ParentWindow;
+                                assert!(window.Pos.x >= parent.InnerRect.Min.x);
+                                assert!(window.Pos.y >= parent.InnerRect.Min.y);
+                                assert!(
+                                    window.Pos.x + window.Size.x <= parent.InnerRect.Max.x + 1.0
+                                );
+                                assert!(
+                                    window.Pos.y + window.Size.y <= parent.InnerRect.Max.y + 1.0,
+                                    "Pane extends past the panel: {name}, size {size:?}"
+                                );
+                            }
+                        }
+                        assert_eq!(panes, 2, "Request and response must remain visible");
+                    });
+                }
+            }
+        }
+        assert_eq!(shared.borrow().requests, original);
+        assert!(shared.borrow().actions.is_empty());
     }
 
     fn click(context: &mut Context, panel: &mut HttpPanel, point: [f32; 2]) {

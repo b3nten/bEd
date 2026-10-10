@@ -33,7 +33,12 @@ model is used unchanged to exercise Draco decoding and static skin posing.
 
 `house.glb` and `house2.glb`, with their corresponding `.blend` sources, are
 available for scene composition, extracting objects and editing geometry. The
-Ducky and bEdtime scenes generate their geometry in code.
+Ducky generates its geometry in code. bEdtime embeds `bed.glb` (the binary glTF
+export of `bed.blend`) in a procedural moonlit bedroom, with a reading lamp,
+window and furnishings. Its camera follows a gentle orbit; stars twinkle,
+dust drifts, leaves sway and lamplight varies. The editor theme colors the
+blanket, rug, books, walls, sky and lighting. Disabling UI animations freezes
+the camera and room animation.
 
 The source record supplied for `house.glb` is retained in `house.licence`:
 [Bedroom on CGTrader](https://www.cgtrader.com/free-3d-models/architectural/other/bedroom-04e35825-4a7a-4a50-b368-f383b160c2eb).

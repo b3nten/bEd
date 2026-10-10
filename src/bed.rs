@@ -413,12 +413,11 @@ fn draw_bedtime(
     if size[0] < 1.0 || size[1] < 1.0 {
         return Ok(());
     }
-    let scale = viewport.framebuffer_scale();
-    let factor = (1920.0 / (size[0] * scale[0]).max(size[1] * scale[1]).max(1.0)).min(1.0);
-    let pixels = [
-        (size[0] * scale[0] * factor).max(1.0) as u32,
-        (size[1] * scale[1] * factor).max(1.0) as u32,
-    ];
+    let pixels = crate::bedtime::scene_pixels(
+        size,
+        viewport.framebuffer_scale(),
+        ui.io().display_framebuffer_scale(),
+    );
     scene.update(
         pixels,
         bed_scenes::SceneFrame {
@@ -474,7 +473,7 @@ fn draw_bedtime(
         }
     }
     // SAFETY: the viewport and foreground list belong to this live, bound frame.
-    // Select the foreground draw list for the viewport showing this editor.
+    // Select the foreground draw list for the focused native window.
     let draw = unsafe {
         let viewport = dear_imgui_rs::sys::igFindViewportByID(viewport_id);
         dear_imgui_rs::DrawListMut::from_raw_mut(
@@ -496,11 +495,6 @@ fn draw_bedtime(
             [1.0; 4],
         );
     }
-    draw.add_text(
-        [pos[0] + 24.0, end[1] - 40.0],
-        accent,
-        "bEdtime · Move or press a key to wake",
-    );
     Ok(())
 }
 
@@ -1528,18 +1522,9 @@ impl Runtime {
             eprintln!("bEd: plugin smoke closed an output after UI drawing");
         }
         let blocked = !self.external_drag_paths.is_empty()
-            || ui.is_any_item_active()
             || ui.is_mouse_down(dear_imgui_rs::MouseButton::Left)
-            || ui.is_mouse_down(dear_imgui_rs::MouseButton::Right)
-            || ui.is_popup_open_with_flags(
-                "",
-                dear_imgui_rs::PopupQueryFlags::ANY_POPUP_ID
-                    | dear_imgui_rs::PopupQueryFlags::ANY_POPUP_LEVEL,
-            );
-        let eligible = self
-            .workbench
-            .bedtime_viewport()
-            .filter(|viewport| !blocked && focused_viewports.contains(viewport));
+            || ui.is_mouse_down(dear_imgui_rs::MouseButton::Right);
+        let eligible = focused_viewports.iter().copied().min().filter(|_| !blocked);
         let delay = self
             .workbench
             .settings

@@ -20,24 +20,22 @@ use std::{
 pub enum SettingsCategory {
     #[default]
     General,
-    Appearance,
+    Bedtime,
+    Performance,
     ThemeEditor,
-    Editor,
     Effects,
     Keybindings,
     Extensions,
-    DefaultViewers,
 }
 impl SettingsCategory {
-    const ALL: [(Self, &'static str); 8] = [
+    const ALL: [(Self, &'static str); 7] = [
         (Self::General, "General"),
-        (Self::Appearance, "Appearance"),
+        (Self::Bedtime, "Bedtime"),
+        (Self::Performance, "Performance"),
         (Self::ThemeEditor, "Theme Editor"),
-        (Self::Editor, "Editor"),
         (Self::Effects, "Effects"),
         (Self::Keybindings, "Keybindings"),
         (Self::Extensions, "Extensions"),
-        (Self::DefaultViewers, "Default viewers"),
     ];
 }
 
@@ -431,20 +429,35 @@ impl SettingsView<'_> {
                     ui.text_disabled(
                         "Save Default Layout sets the arrangement for new workspaces.",
                     );
-                    ui.spacing();
-                    let mut squeaks = self.settings["plugins"]["bed.mascot"]["squeaks_enabled"]
-                        .as_bool()
-                        .unwrap_or(true);
-                    if ui.checkbox("Bed squeaks", &mut squeaks) {
-                        if !self.settings["plugins"].is_object() {
-                            self.settings["plugins"] = json!({});
-                        }
-                        if !self.settings["plugins"]["bed.mascot"].is_object() {
-                            self.settings["plugins"]["bed.mascot"] = json!({});
-                        }
-                        self.settings["plugins"]["bed.mascot"]["squeaks_enabled"] = json!(squeaks);
-                        self.persist_ui();
+                    if ui.button("Open Settings JSON") {
+                        self.request_config_file = Some(self.settings_path.clone());
                     }
+                    ui.dummy([0.0, ui.current_font_size()]);
+                    ui.text("Appearance");
+                    ui.separator();
+                    self.draw_theme_selector(ui);
+                    self.draw_main_settings(ui);
+                    if !self.is_embedded {
+                        self.draw_mac_settings(ui);
+                    }
+                    self.draw_boolean(ui, "UI Animations", "ui_animations", true);
+                    self.draw_boolean(ui, "Rainbow cursor and line numbers", "rainbow", true);
+                    ui.dummy([0.0, ui.current_font_size()]);
+                    ui.text("Editor");
+                    ui.separator();
+                    self.draw_autosave_settings(ui);
+                    self.draw_boolean(ui, "Minimap", "minimap", true);
+                    self.draw_boolean(ui, "Syntax highlighting", "treesitter", true);
+                    self.draw_boolean(ui, "Git changed lines", "git_changed_lines", true);
+                    if editor.lsp_client().is_some() && ui.button("LSP Dashboard") {
+                        self.request_lsp_dashboard = true;
+                    }
+                    ui.dummy([0.0, ui.current_font_size()]);
+                    self.draw_default_viewers(ui);
+                }
+                SettingsCategory::Bedtime => {
+                    ui.text("Bedtime");
+                    ui.separator();
                     self.draw_boolean(ui, "bEdtime when idle", "bedtime_enabled", true);
                     let mut delay = self.number("bedtime_delay_seconds", 60.0);
                     if ui.slider("bEdtime delay (seconds)", 10.0, 1800.0, &mut delay) {
@@ -454,7 +467,10 @@ impl SettingsView<'_> {
                         self.persist_ui();
                     }
                     ui.text_disabled("Move the mouse or press a key to wake the editor.");
-                    ui.spacing();
+                }
+                SettingsCategory::Performance => {
+                    ui.text("Performance");
+                    ui.separator();
                     self.draw_boolean(ui, "Limit frame rate", "fps_toggle", true);
                     for (label, key, default) in [
                         ("Frame rate", "fps_target", 57.0),
@@ -467,31 +483,6 @@ impl SettingsView<'_> {
                         if ui.is_item_deactivated_after_edit() {
                             self.persist_ui();
                         }
-                    }
-                    if ui.button("Open Settings JSON") {
-                        self.request_config_file = Some(self.settings_path.clone());
-                    }
-                }
-                SettingsCategory::Appearance => {
-                    ui.text("Appearance");
-                    ui.separator();
-                    self.draw_theme_selector(ui);
-                    self.draw_main_settings(ui);
-                    if !self.is_embedded {
-                        self.draw_mac_settings(ui);
-                    }
-                    self.draw_boolean(ui, "UI Animations", "ui_animations", true);
-                    self.draw_boolean(ui, "Rainbow cursor and line numbers", "rainbow", true);
-                }
-                SettingsCategory::Editor => {
-                    ui.text("Editor");
-                    ui.separator();
-                    self.draw_autosave_settings(ui);
-                    self.draw_boolean(ui, "Minimap", "minimap", true);
-                    self.draw_boolean(ui, "Syntax highlighting", "treesitter", true);
-                    self.draw_boolean(ui, "Git changed lines", "git_changed_lines", true);
-                    if editor.lsp_client().is_some() && ui.button("LSP Dashboard") {
-                        self.request_lsp_dashboard = true;
                     }
                 }
                 SettingsCategory::ThemeEditor => {
@@ -510,7 +501,6 @@ impl SettingsView<'_> {
                         self.persist_ui();
                     }
                 }
-                SettingsCategory::DefaultViewers => self.draw_default_viewers(ui),
             });
     }
     fn draw_default_viewers(&mut self, ui: &Ui) {
@@ -1184,7 +1174,7 @@ mod tests {
                         });
                     });
             }
-            let appearance = ui.with_bound_context(|| unsafe {
+            let bedtime = ui.with_bound_context(|| unsafe {
                 let native = &*sys::igGetCurrentContext();
                 (0..native.Windows.Size as usize)
                     .find_map(|index| {
@@ -1205,11 +1195,11 @@ mod tests {
                     .expect("first view has a category sidebar")
             });
             drop(context.render_legacy());
-            appearance
+            bedtime
         };
         frame(&mut context, &mut states);
-        let appearance = frame(&mut context, &mut states);
-        context.io_mut().add_mouse_pos_event(appearance);
+        let bedtime = frame(&mut context, &mut states);
+        context.io_mut().add_mouse_pos_event(bedtime);
         frame(&mut context, &mut states);
         context
             .io_mut()
@@ -1220,7 +1210,7 @@ mod tests {
             .add_mouse_button_event(MouseButton::Left, false);
         frame(&mut context, &mut states);
         frame(&mut context, &mut states);
-        assert_eq!(states[0].category, SettingsCategory::Appearance);
+        assert_eq!(states[0].category, SettingsCategory::Bedtime);
         assert_eq!(states[1].category, SettingsCategory::Extensions);
         assert_eq!(extension_calls[0], 0);
         assert_eq!(extension_calls[1], 6);

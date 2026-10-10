@@ -32,6 +32,11 @@ fn native_scenes_render_geometry_and_react_to_mascot_input() {
         SceneKind::Duck,
         SceneKind::Bedtime,
     ] {
+        let size = if capture.is_some() && kind == SceneKind::Bedtime {
+            [1280, 960]
+        } else {
+            size
+        };
         let mut scene = renderer::SceneRenderer::new(&gpu, kind).unwrap();
         let target = RenderTarget::new(
             &device,
@@ -354,13 +359,138 @@ fn native_scenes_render_geometry_and_react_to_mascot_input() {
             );
         } else {
             for _ in 0..3 {
-                scene.render(&mut gpu, &target, frame, 1.0, 0.0).unwrap();
+                scene.render(&mut gpu, &target, frame, 25.0, 0.0).unwrap();
             }
-            assert_ne!(
-                before,
+            let moved = pixels(&device, &queue, &target);
+            assert_ne!(before, moved, "Bedtime scene did not animate");
+            if let Some(directory) = &capture {
+                image::save_buffer(
+                    directory.join("bedtime-camera-25s.png"),
+                    &moved,
+                    size[0],
+                    size[1],
+                    image::ColorType::Rgba8,
+                )
+                .unwrap();
+            }
+            let still = SceneFrame {
+                animations: false,
+                ..frame
+            };
+            for _ in 0..3 {
+                scene.render(&mut gpu, &target, still, 0.0, 0.0).unwrap();
+            }
+            let frozen = pixels(&device, &queue, &target);
+            for _ in 0..3 {
+                scene.render(&mut gpu, &target, still, 25.0, 0.0).unwrap();
+            }
+            assert_eq!(
+                frozen,
                 pixels(&device, &queue, &target),
-                "Bedtime scene did not animate"
+                "Bedtime moved with animations disabled"
             );
+            let themed = SceneFrame {
+                accent: [0.85, 0.22, 0.50, 1.0],
+                ..still
+            };
+            for _ in 0..3 {
+                scene.render(&mut gpu, &target, themed, 0.0, 0.0).unwrap();
+            }
+            let tinted = pixels(&device, &queue, &target);
+            let changed = frozen
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(tinted.as_chunks::<4>().0)
+                .filter(|(a, b)| a[..3].iter().zip(&b[..3]).any(|(a, b)| a.abs_diff(*b) > 12))
+                .count();
+            assert!(
+                changed > geometry / 8,
+                "Bedtime furnishings and lighting did not follow the theme accent"
+            );
+            if let Some(directory) = &capture {
+                image::save_buffer(
+                    directory.join("bedtime-rose-theme.png"),
+                    &tinted,
+                    size[0],
+                    size[1],
+                    image::ColorType::Rgba8,
+                )
+                .unwrap();
+                let target = RenderTarget::new(
+                    &device,
+                    RenderOutput {
+                        handle: TextureHandle::next(),
+                        size: [512, 384],
+                        depth: false,
+                        revision: 1,
+                    },
+                )
+                .unwrap();
+                let mut animation = image::codecs::gif::GifEncoder::new(
+                    std::fs::File::create(directory.join("bedtime-motion.gif")).unwrap(),
+                );
+                animation
+                    .set_repeat(image::codecs::gif::Repeat::Infinite)
+                    .unwrap();
+                for step in 0..32 {
+                    for _ in 0..2 {
+                        scene
+                            .render(&mut gpu, &target, frame, step as f32 * 0.5, 0.0)
+                            .unwrap();
+                    }
+                    let rgba =
+                        image::RgbaImage::from_raw(512, 384, pixels(&device, &queue, &target))
+                            .unwrap();
+                    animation
+                        .encode_frame(image::Frame::from_parts(
+                            rgba,
+                            0,
+                            0,
+                            image::Delay::from_numer_denom_ms(500, 1),
+                        ))
+                        .unwrap();
+                }
+            }
+            for size in [[256, 512], [512, 256]] {
+                let target = RenderTarget::new(
+                    &device,
+                    RenderOutput {
+                        handle: TextureHandle::next(),
+                        size,
+                        depth: false,
+                        revision: 1,
+                    },
+                )
+                .unwrap();
+                for _ in 0..3 {
+                    scene.render(&mut gpu, &target, frame, 25.0, 0.0).unwrap();
+                }
+                let image = pixels(&device, &queue, &target);
+                let background = &image[..4];
+                let visible = image
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .filter(|pixel| {
+                        pixel[..3]
+                            .iter()
+                            .zip(background)
+                            .any(|(a, b)| a.abs_diff(*b) > 12)
+                    })
+                    .count();
+                assert!(visible > 100, "Bedtime room disappeared at {size:?}");
+                if let Some(directory) = &capture {
+                    image::save_buffer(
+                        directory.join(format!("bedtime-{}x{}.png", size[0], size[1])),
+                        &image,
+                        size[0],
+                        size[1],
+                        image::ColorType::Rgba8,
+                    )
+                    .unwrap();
+                }
+            }
         }
     }
 }

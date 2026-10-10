@@ -8,6 +8,25 @@ use winit::{
     keyboard::PhysicalKey,
 };
 
+pub(crate) fn scene_pixels(
+    size: [f32; 2],
+    viewport_scale: [f32; 2],
+    display_scale: [f32; 2],
+) -> [u32; 2] {
+    // The main viewport can leave FramebufferScale unset. Its native scale
+    // is maintained in IO by the platform backend.
+    let pixels: [f32; 2] = std::array::from_fn(|axis| {
+        let scale = if viewport_scale[axis].is_finite() && viewport_scale[axis] > 0.0 {
+            viewport_scale[axis]
+        } else {
+            display_scale[axis]
+        };
+        size[axis] * scale
+    });
+    let factor = (1920.0 / pixels[0].max(pixels[1]).max(1.0)).min(1.0);
+    pixels.map(|dimension| (dimension * factor).max(1.0) as u32)
+}
+
 pub(crate) struct IdleController {
     last_activity: Instant,
     viewport: Option<u32>,
@@ -150,7 +169,19 @@ mod tests {
     use super::*;
     use winit::keyboard::KeyCode;
     #[test]
-    fn idle_only_activates_for_an_eligible_focused_editor() {
+    fn unset_main_viewport_scale_preserves_scene_resolution_and_aspect() {
+        assert_eq!(
+            scene_pixels([1200.0, 800.0], [0.0; 2], [2.0; 2]),
+            [1920, 1280]
+        );
+        assert_eq!(scene_pixels([400.0, 600.0], [1.5; 2], [2.0; 2]), [600, 900]);
+        assert_eq!(
+            scene_pixels([1200.0, 800.0], [f32::NAN; 2], [2.0; 2]),
+            [1920, 1280]
+        );
+    }
+    #[test]
+    fn idle_activates_for_the_focused_window_and_resets_when_it_changes() {
         let now = Instant::now();
         let mut idle = IdleController::new(now);
         let delay = Duration::from_secs(60);

@@ -6,6 +6,7 @@ use bevy::{
     camera::{Exposure, ManualTextureViewHandle, RenderTarget as BevyTarget},
     core_pipeline::tonemapping::Tonemapping,
     image::{CompressedImageFormats, ImageSampler, ImageType},
+    light::NotShadowCaster,
     log::LogPlugin,
     mesh::{Indices, PrimitiveTopology},
     prelude::*,
@@ -36,7 +37,8 @@ enum Motion {
     Bed,
     DuckBody,
     DuckNeck,
-    Blanket,
+    Star,
+    Leaf,
 }
 
 pub(crate) struct SceneRenderer {
@@ -45,8 +47,11 @@ pub(crate) struct SceneRenderer {
     kind: SceneKind,
     camera: Entity,
     accent_light: Entity,
+    directional_light: Entity,
     accents: Vec<(Handle<StandardMaterial>, [f32; 3])>,
     bed_cover_material: Option<Handle<StandardMaterial>>,
+    room_plaster: Option<Handle<StandardMaterial>>,
+    night_sky: Option<Handle<StandardMaterial>>,
     motions: Vec<(Entity, Transform, Motion)>,
     bed_bounds: Option<(Vec3, Vec3)>,
 }
@@ -102,7 +107,7 @@ impl SceneRenderer {
             brightness: if kind != SceneKind::Bedtime {
                 1800.0
             } else {
-                350.0
+                550.0
             },
             color: if kind != SceneKind::Bedtime {
                 Color::WHITE
@@ -123,17 +128,25 @@ impl SceneRenderer {
                 Transform::IDENTITY,
             ))
             .id();
-        app.world_mut().spawn((
-            DirectionalLight {
-                illuminance: match kind {
-                    SceneKind::Bed | SceneKind::WelcomeBed | SceneKind::Duck => 2500.0,
-                    SceneKind::Bedtime => 1200.0,
+        let directional_light = app
+            .world_mut()
+            .spawn((
+                DirectionalLight {
+                    illuminance: match kind {
+                        SceneKind::Bed | SceneKind::WelcomeBed | SceneKind::Duck => 2500.0,
+                        SceneKind::Bedtime => 1800.0,
+                    },
+                    color: if kind == SceneKind::Bedtime {
+                        Color::srgb(0.52, 0.66, 1.0)
+                    } else {
+                        Color::WHITE
+                    },
+                    shadow_maps_enabled: kind == SceneKind::Bedtime,
+                    ..default()
                 },
-                shadow_maps_enabled: kind == SceneKind::Bedtime,
-                ..default()
-            },
-            Transform::from_xyz(3.0, 5.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
-        ));
+                Transform::from_xyz(3.0, 5.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
+            ))
+            .id();
         let accent_light = app
             .world_mut()
             .spawn((
@@ -156,15 +169,18 @@ impl SceneRenderer {
             kind,
             camera,
             accent_light,
+            directional_light,
             accents: Vec::new(),
             bed_cover_material: None,
+            room_plaster: None,
+            night_sky: None,
             motions: Vec::new(),
             bed_bounds: None,
         };
         match kind {
             SceneKind::Bed | SceneKind::WelcomeBed => renderer.bed()?,
             SceneKind::Duck => renderer.duck(),
-            SceneKind::Bedtime => renderer.bedtime(),
+            SceneKind::Bedtime => renderer.bedtime()?,
         }
         check_scopes(scopes)?;
         Ok(renderer)
@@ -338,9 +354,20 @@ impl SceneRenderer {
         }
         let center = (min + max) * 0.5;
         let scale = 2.4 / (max - min).max_element();
-        self.bed_bounds = Some(((min - center) * scale, (max - center) * scale));
-        let root = self.app.world_mut().spawn(Transform::IDENTITY).id();
-        self.motions.push((root, Transform::IDENTITY, Motion::Bed));
+        let bounds = ((min - center) * scale, (max - center) * scale);
+        let pose = if self.kind == SceneKind::Bedtime {
+            // The asset's long axis is X. Rest it on the floor with its head
+            // toward the back wall; the room camera owns all bedtime movement.
+            Transform::from_xyz(-0.35, -bounds.0.y + 0.035, -0.25)
+                .with_rotation(Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2))
+        } else {
+            self.bed_bounds = Some(bounds);
+            Transform::IDENTITY
+        };
+        let root = self.app.world_mut().spawn(pose).id();
+        if self.kind != SceneKind::Bedtime {
+            self.motions.push((root, pose, Motion::Bed));
+        }
         for (positions, normals, tangents, uvs, indices, material) in meshes {
             let positions: Vec<_> = positions
                 .into_iter()
@@ -501,51 +528,223 @@ impl SceneRenderer {
         self.app.world_mut().entity_mut(tail).insert(ChildOf(body));
     }
 
-    fn bedtime(&mut self) {
-        let wood = self.material([0.28, 0.14, 0.08], false, 0.0);
-        let mattress = self.material([0.9, 0.88, 0.8], false, 0.0);
-        let blanket = self.material([0.25, 0.45, 0.8], true, 0.0);
-        let pillow = self.material([0.95, 0.94, 0.86], false, 0.0);
-        let skin = self.material([0.89, 0.62, 0.42], false, 0.0);
-        let hair = self.material([0.16, 0.09, 0.055], false, 0.0);
-        let eyes = self.material([0.08, 0.045, 0.03], false, 0.0);
-        self.cube([1.6, 0.28, 2.5], [0.0, -0.6, 0.0], wood.clone(), None);
-        self.cube([1.7, 1.15, 0.15], [0.0, -0.13, -1.2], wood.clone(), None);
-        for x in [-0.65, 0.65] {
-            for z in [-1.0, 1.0] {
-                self.cube([0.12, 0.5, 0.12], [x, -0.83, z], wood.clone(), None);
+    fn bedtime(&mut self) -> Result<(), String> {
+        self.bed()?;
+        let oak = self.material([0.31, 0.19, 0.12], false, 0.0);
+        let edge = self.material([0.16, 0.10, 0.08], false, 0.0);
+        let plaster = self.material([0.30, 0.38, 0.43], false, 0.0);
+        self.room_plaster = Some(plaster.clone());
+        let trim = self.material([0.62, 0.57, 0.45], false, 0.0);
+        let brass = self.material([0.48, 0.31, 0.12], false, 0.0);
+        let rug = self.material([0.24, 0.36, 0.35], true, 0.0);
+        let thread = self.material([0.52, 0.56, 0.45], false, 0.0);
+
+        // An open-front diorama: plank seams, a woven rug and two plaster walls.
+        self.cube([5.4, 0.18, 4.8], [0.0, -0.12, 0.0], edge.clone(), None);
+        for i in 0..18 {
+            let shade = 0.86 + (i % 4) as f32 * 0.055;
+            let plank = self.material([0.30 * shade, 0.20 * shade, 0.14 * shade], false, 0.0);
+            self.cube(
+                [0.294, 0.06, 4.78],
+                [-2.55 + i as f32 * 0.3, 0.0, 0.0],
+                plank,
+                None,
+            );
+        }
+        self.cube([2.6, 0.025, 3.3], [-0.35, 0.042, 0.15], rug, None);
+        for z in [-1.42, -1.33, 1.63, 1.72] {
+            self.cube([2.5, 0.006, 0.028], [-0.35, 0.059, z], thread.clone(), None);
+        }
+        for i in 0..34 {
+            for z in [-1.55, 1.85] {
+                self.cube(
+                    [0.014, 0.009, 0.13],
+                    [-1.57 + i as f32 * 0.074, 0.045, z],
+                    thread.clone(),
+                    None,
+                );
             }
         }
-        self.cube([1.53, 0.2, 2.3], [0.0, -0.35, 0.0], mattress, None);
-        self.ball([0.61, 0.13, 0.32], [0.0, -0.19, -0.75], pillow, None);
-        self.ball(
-            [0.63, 0.23, 0.87],
-            [0.0, -0.09, 0.3],
-            blanket,
-            Some(Motion::Blanket),
+        self.cube([0.12, 3.1, 4.8], [-2.7, 1.5, 0.0], plaster.clone(), None);
+        // The back wall surrounds a real opening rather than covering the sky.
+        self.cube(
+            [3.25, 3.1, 0.12],
+            [-1.075, 1.5, -2.4],
+            plaster.clone(),
+            None,
         );
-        self.ball([0.255, 0.19, 0.25], [0.0, 0.0, -0.65], skin, None);
-        self.ball([0.26, 0.11, 0.22], [0.0, 0.1, -0.72], hair, None);
-        for x in [-0.09, 0.09] {
-            self.cube([0.095, 0.012, 0.017], [x, 0.14, -0.51], eyes.clone(), None);
+        self.cube([0.35, 3.1, 0.12], [2.525, 1.5, -2.4], plaster.clone(), None);
+        self.cube([1.8, 1.1, 0.12], [1.45, 0.5, -2.4], plaster.clone(), None);
+        self.cube([1.8, 0.45, 0.12], [1.45, 2.825, -2.4], plaster, None);
+        self.cube([5.25, 0.14, 0.08], [0.0, 0.12, -2.31], trim.clone(), None);
+        self.cube([0.08, 0.14, 4.7], [-2.61, 0.12, 0.0], trim.clone(), None);
+        for x in [0.53, 1.45, 2.37] {
+            self.cube([0.065, 1.65, 0.16], [x, 1.825, -2.36], trim.clone(), None);
         }
-        let floor = self.material([0.085, 0.09, 0.15], false, 0.0);
-        self.cube([4.4, 0.1, 4.0], [0.0, -1.09, 0.0], floor, None);
-        self.cube([0.6, 0.45, 0.6], [1.3, -0.84, -0.75], wood, None);
-        let moon = self.material([0.8, 0.85, 1.0], false, 3.0);
-        self.ball([0.22; 3], [-1.2, 1.1, -1.3], moon.clone(), None);
-        for i in 0..12 {
+        for y in [1.0, 1.825, 2.65] {
+            self.cube([1.9, 0.065, 0.16], [1.45, y, -2.36], trim.clone(), None);
+        }
+        self.cube([2.05, 0.08, 0.36], [1.45, 0.96, -2.24], oak.clone(), None);
+
+        let sky = self
+            .app
+            .world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial {
+                base_color: Color::srgb(0.018, 0.035, 0.085),
+                unlit: true,
+                ..default()
+            });
+        self.cube([1.83, 1.7, 0.04], [1.45, 1.825, -2.53], sky.clone(), None);
+        self.night_sky = Some(sky.clone());
+        let moon = self.material([0.74, 0.85, 1.0], false, 4.0);
+        self.ball([0.19, 0.19, 0.025], [1.95, 2.30, -2.48], moon.clone(), None);
+        self.ball([0.17, 0.17, 0.03], [2.02, 2.35, -2.44], sky, None);
+        for i in 0..22 {
+            let x = 0.66 + (i as f32 * 2.399).sin().abs() * 1.55;
+            let y = 1.13 + (i as f32 * 1.713).sin().abs() * 1.36;
             self.ball(
-                [0.012; 3],
-                [
-                    (i as f32 * 1.8).sin() * 1.7,
-                    0.9 + (i as f32 * 2.4).cos() * 0.65,
-                    -1.7,
-                ],
+                [0.006 + (i % 3) as f32 * 0.002; 3],
+                [x, y, -2.48],
                 moon.clone(),
+                Some(Motion::Star),
+            );
+        }
+
+        // Bedside reading light, drawers, stacked books and a ceramic cup.
+        self.cube([0.72, 0.64, 0.64], [1.03, 0.37, -0.96], oak.clone(), None);
+        self.cube([0.79, 0.055, 0.71], [1.03, 0.72, -0.96], edge.clone(), None);
+        for y in [0.27, 0.52] {
+            self.cube([0.65, 0.21, 0.025], [1.03, y, -0.625], oak.clone(), None);
+            self.cube([0.14, 0.022, 0.035], [1.03, y, -0.594], brass.clone(), None);
+        }
+        self.mesh(
+            Cylinder::new(0.13, 0.035).into(),
+            brass.clone(),
+            Transform::from_xyz(1.03, 0.77, -1.05),
+            None,
+        );
+        self.mesh(
+            Cylinder::new(0.025, 0.44).into(),
+            brass,
+            Transform::from_xyz(1.03, 1.0, -1.05),
+            None,
+        );
+        let linen = self.material([1.0, 0.73, 0.40], false, 1.6);
+        let shade = self.mesh(
+            ConicalFrustum {
+                radius_top: 0.13,
+                radius_bottom: 0.25,
+                height: 0.29,
+            }
+            .into(),
+            linen,
+            Transform::from_xyz(1.03, 1.26, -1.05),
+            None,
+        );
+        // Linen glows and transmits the bulb's light instead of enclosing it
+        // in an opaque shadow volume.
+        self.app
+            .world_mut()
+            .entity_mut(shade)
+            .insert(NotShadowCaster);
+        for (i, color) in [[0.20, 0.33, 0.36], [0.55, 0.26, 0.16], [0.58, 0.51, 0.35]]
+            .into_iter()
+            .enumerate()
+        {
+            let cover = self.material(color, true, 0.0);
+            self.cube(
+                [0.27, 0.045, 0.19],
+                [1.2, 0.79 + i as f32 * 0.05, -0.77],
+                cover,
+                None,
+            );
+        }
+        let ceramic = self.material([0.65, 0.58, 0.42], false, 0.0);
+        self.mesh(
+            Cylinder::new(0.065, 0.09).into(),
+            ceramic.clone(),
+            Transform::from_xyz(0.81, 0.80, -0.78),
+            None,
+        );
+
+        // A sleepy corner plant and slippers at the foot of the rug.
+        self.mesh(
+            ConicalFrustum {
+                radius_top: 0.20,
+                radius_bottom: 0.14,
+                height: 0.30,
+            }
+            .into(),
+            ceramic,
+            Transform::from_xyz(-1.85, 0.20, -1.65),
+            None,
+        );
+        let stem = self.material([0.14, 0.23, 0.12], false, 0.0);
+        self.mesh(
+            Cylinder::new(0.016, 0.67).into(),
+            stem,
+            Transform::from_xyz(-1.85, 0.67, -1.65),
+            None,
+        );
+        let leaf = self.material([0.19, 0.37, 0.24], false, 0.0);
+        for i in 0..7 {
+            let angle = i as f32 * 2.4;
+            self.mesh(
+                Sphere::new(1.0).mesh().uv(16, 8),
+                leaf.clone(),
+                Transform::from_xyz(
+                    -1.85 + angle.cos() * 0.15,
+                    0.50 + i as f32 * 0.075,
+                    -1.65 + angle.sin() * 0.15,
+                )
+                .with_rotation(Quat::from_rotation_y(-angle) * Quat::from_rotation_z(0.5))
+                .with_scale(Vec3::new(0.26, 0.035, 0.09)),
+                Some(Motion::Leaf),
+            );
+        }
+        let slippers = self.material([0.62, 0.40, 0.26], false, 0.0);
+        for x in [0.93, 1.20] {
+            self.ball(
+                [0.10, 0.065, 0.21],
+                [x, 0.095, 1.25],
+                slippers.clone(),
+                None,
+            );
+        }
+
+        // Small framed print above the bed: a quiet mountain silhouette.
+        self.cube([1.06, 0.76, 0.07], [-1.15, 1.99, -2.30], oak, None);
+        let paper = self.material([0.64, 0.65, 0.55], false, 0.0);
+        self.cube([0.92, 0.62, 0.025], [-1.15, 1.99, -2.25], paper, None);
+        let mountains = self.material([0.20, 0.33, 0.34], false, 0.0);
+        for (x, y, radius) in [
+            (-1.37, 1.90, 0.22),
+            (-1.08, 1.93, 0.27),
+            (-0.87, 1.88, 0.18),
+        ] {
+            self.mesh(
+                Cone::new(radius, 0.35).into(),
+                mountains.clone(),
+                Transform::from_xyz(x, y, -2.22).with_scale(Vec3::new(1.0, 1.0, 0.08)),
+                None,
+            );
+        }
+        let dust = self.material([0.72, 0.57, 0.33], false, 0.8);
+        for i in 0..16 {
+            let angle = i as f32 * 2.399;
+            self.ball(
+                [0.006; 3],
+                [
+                    angle.sin() * 1.6,
+                    0.7 + (angle * 0.7).cos() * 0.45,
+                    angle.cos() * 1.5,
+                ],
+                dust.clone(),
                 Some(Motion::Dust),
             );
         }
+        Ok(())
     }
 
     pub fn render(
@@ -556,6 +755,7 @@ impl SceneRenderer {
         time: f32,
         impulse: f32,
     ) -> Result<(), String> {
+        let time = if frame.animations { time } else { 0.0 };
         let scopes = error_scopes(gpu.device);
         let view = target.texture.create_view(&TextureViewDescriptor {
             format: Some(TextureFormat::Rgba8UnormSrgb),
@@ -583,9 +783,41 @@ impl SceneRenderer {
                 Vec3::new(pointer[0] * 0.18, 0.9, 3.8),
                 Vec3::new(0.0, 0.2, 0.0),
             ),
-            SceneKind::Bedtime => (Vec3::new(2.5, 2.0, 3.7), Vec3::new(0.0, -0.25, 0.0)),
+            SceneKind::Bedtime => {
+                // A slow, bounded dolly arc never crosses the diorama walls.
+                let focus = Vec3::new(-0.15, 1.0, -0.35);
+                let angle = 0.62 + (time * std::f32::consts::TAU / 40.0).sin() * 0.28;
+                let radius = 7.8 + (time * std::f32::consts::TAU / 32.0).sin() * 0.25;
+                let eye = focus
+                    + Vec3::new(
+                        angle.sin() * radius,
+                        2.4 + (time * std::f32::consts::TAU / 28.0).sin() * 0.25,
+                        angle.cos() * radius,
+                    );
+                (eye, focus)
+            }
         };
         let mut camera_transform = Transform::from_translation(eye).looking_at(focus, Vec3::Y);
+        if self.kind == SceneKind::Bedtime {
+            // Fit the entire room at every point on the camera arc, including
+            // portrait windows. Keep some empty space around its silhouette.
+            let aspect = target.size[0] as f32 / target.size[1] as f32;
+            let tan_fov = (PerspectiveProjection::default().fov * 0.5).tan();
+            let inverse = camera_transform.rotation.inverse();
+            let mut distance = (eye - focus).length();
+            for x in [-2.8, 2.8] {
+                for y in [-0.22, 3.1] {
+                    for z in [-2.6, 2.4] {
+                        let corner = inverse * (Vec3::new(x, y, z) - focus);
+                        distance = distance.max(
+                            corner.z
+                                + (corner.x.abs() / aspect).max(corner.y.abs()) / (tan_fov * 0.94),
+                        );
+                    }
+                }
+            }
+            camera_transform.translation = focus + (eye - focus).normalize() * distance;
+        }
         if self.kind == SceneKind::Duck {
             // Fit the duck to the limiting canvas dimension, including room for
             // its turned head and click squash. A portrait sidebar needs more
@@ -650,6 +882,20 @@ impl SceneRenderer {
                 materials.get_mut(handle).unwrap().base_color =
                     Color::srgb(frame.accent[0], frame.accent[1], frame.accent[2]);
             }
+            if let Some(handle) = &self.room_plaster {
+                let neutral = [0.30, 0.38, 0.43];
+                let tint: [f32; 3] = std::array::from_fn(|i| {
+                    neutral[i] * 0.35 + frame.background[i] * 0.40 + frame.accent[i] * 0.25
+                });
+                materials.get_mut(handle).unwrap().base_color =
+                    Color::srgb(tint[0], tint[1], tint[2]);
+            }
+            if let Some(handle) = &self.night_sky {
+                let tint: [f32; 3] =
+                    std::array::from_fn(|i| frame.background[i] * 0.25 + frame.accent[i] * 0.035);
+                materials.get_mut(handle).unwrap().base_color =
+                    Color::srgb(tint[0], tint[1], tint[2]);
+            }
             for (handle, original) in &self.accents {
                 if let Some(mut material) = materials.get_mut(handle) {
                     let tint: [f32; 3] =
@@ -657,6 +903,16 @@ impl SceneRenderer {
                     material.base_color = Color::srgb(tint[0], tint[1], tint[2]);
                 }
             }
+        }
+        if self.kind == SceneKind::Bedtime {
+            let tint: [f32; 3] =
+                std::array::from_fn(|i| [0.52, 0.66, 1.0][i] * 0.55 + frame.accent[i] * 0.45);
+            self.app
+                .world_mut()
+                .entity_mut(self.directional_light)
+                .get_mut::<DirectionalLight>()
+                .unwrap()
+                .color = Color::srgb(tint[0], tint[1], tint[2]);
         }
         {
             let mut light = self.app.world_mut().entity_mut(self.accent_light);
@@ -670,14 +926,15 @@ impl SceneRenderer {
                     point.intensity = 40_000.0;
                 }
                 SceneKind::Bedtime => {
-                    *light.get_mut::<Transform>().unwrap() = Transform::from_xyz(
-                        time.cos() * 1.2,
-                        1.2 + (time * 0.7).sin() * 0.25,
-                        (time * 0.65).sin() * 1.2,
-                    );
+                    *light.get_mut::<Transform>().unwrap() = Transform::from_xyz(1.03, 1.20, -1.05);
                     let mut point = light.get_mut::<PointLight>().unwrap();
-                    point.color = Color::srgb(frame.accent[0], frame.accent[1], frame.accent[2]);
-                    point.intensity = 40_000.0;
+                    let tint: [f32; 3] = std::array::from_fn(|i| {
+                        [1.0, 0.66, 0.32][i] * 0.80 + frame.accent[i] * 0.20
+                    });
+                    point.color = Color::srgb(tint[0], tint[1], tint[2]);
+                    point.intensity = 65_000.0 * (1.0 + (time * 0.65).sin() * 0.07);
+                    point.radius = 0.22;
+                    point.shadow_maps_enabled = true;
                 }
             }
         }
@@ -692,7 +949,19 @@ impl SceneRenderer {
                     };
                 }
                 Motion::Dust => {
-                    transform.translation.y += (time * 0.3 + i as f32).sin() * 0.08;
+                    transform.translation += Vec3::new(
+                        (time * 0.23 + i as f32).sin() * 0.18,
+                        (time * 0.37 + i as f32).sin() * 0.18,
+                        (time * 0.19 + i as f32).cos() * 0.10,
+                    );
+                }
+                Motion::Star => {
+                    transform.scale *=
+                        0.7 + (time * (0.8 + (i % 4) as f32 * 0.17) + i as f32).sin() * 0.3;
+                }
+                Motion::Leaf => {
+                    transform.rotation = base.rotation
+                        * Quat::from_rotation_z((time * 0.8 + i as f32 * 0.3).sin() * 0.065);
                 }
                 Motion::DuckBody => {
                     let squash = Vec3::new(
@@ -709,9 +978,6 @@ impl SceneRenderer {
                 Motion::DuckNeck => {
                     transform.rotation = Quat::from_rotation_y(pointer[0] * 0.65)
                         * Quat::from_rotation_x(pointer[1] * 0.32);
-                }
-                Motion::Blanket => {
-                    transform.scale.y *= 1.0 + (time * 1.7).sin() * 0.045;
                 }
             }
             let mut object = self.app.world_mut().entity_mut(*entity);

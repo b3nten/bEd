@@ -2149,6 +2149,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "bed-editing",
+ "bed-ui",
  "bed-workbench-api",
  "dear-imgui-rs",
  "reqwest",

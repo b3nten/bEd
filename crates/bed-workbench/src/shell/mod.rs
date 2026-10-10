@@ -622,22 +622,6 @@ impl Workbench {
     pub fn active_panel_id(&self) -> Option<u64> {
         self.focused
     }
-    /// Native idle overlay eligibility: the focused text editor and no modal flow.
-    pub fn bedtime_viewport(&self) -> Option<u32> {
-        if self.file_dialog.is_some()
-            || self.reload_confirmation.is_some()
-            || self.file_operations.modal_visible()
-            || self.remote_ui.path_dialog_pending()
-            || self.modules.explorer.finder_visible()
-            || self.active_overlay() != Overlay::None
-        {
-            return None;
-        }
-        self.tabs
-            .iter()
-            .find(|tab| Some(tab.id) == self.focused && tab.panel.editor().is_some())
-            .map(|tab| tab.viewport)
-    }
     pub fn panel_viewport_id(&self, id: u64) -> Option<u32> {
         self.tabs
             .iter()
