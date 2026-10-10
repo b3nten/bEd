@@ -73,8 +73,11 @@ impl TextView {
         if layout.line_height <= 0.0 || state.path.is_empty() {
             return;
         }
-        let first_visual = ((ui.scroll_y() / layout.line_height) as i32 - 2).max(0);
-        let last_visual = ((ui.scroll_y() + ui.window_height()) / layout.line_height) as i32 + 2;
+        let first_y = ui.scroll_y() / layout.line_height;
+        let last_y = (ui.scroll_y() + ui.window_height()) / layout.line_height;
+        let first_visual =
+            (projection.map_or(first_y as i32, |p| p.visual_at_y(first_y) as i32) - 2).max(0);
+        let last_visual = projection.map_or(last_y as i32, |p| p.visual_at_y(last_y) as i32) + 2;
         let first = projection.map_or(first_visual, |p| {
             p.nearest_document_row(first_visual as usize)
         });
@@ -97,6 +100,9 @@ impl TextView {
             }
             let color = severity_colors[(item.severity.clamp(1, 4) - 1) as usize];
             for row in item.start_line.max(first)..=item.end_line.min(last) {
+                if projection.is_some_and(|p| !p.is_document_visible(row)) {
+                    continue;
+                }
                 let line = state.line(row);
                 let mut start = if row == item.start_line {
                     utf16_to_utf8_byte_offset(&line, item.start_character)
@@ -117,6 +123,11 @@ impl TextView {
                 for visual in
                     first_row.max(first_visual as usize)..=last_row.min(last_visual as usize)
                 {
+                    let height =
+                        projection.map_or(1.0, |p| p.row_height(visual)) * layout.line_height;
+                    if height <= 0.0 {
+                        continue;
+                    }
                     let segment = projection
                         .and_then(|p| p.segment(visual))
                         .unwrap_or(0..line.len());
@@ -144,7 +155,17 @@ impl TextView {
                     if x1 <= x0 {
                         continue;
                     }
-                    let y = layout.text_pos[1] + (visual as f32 + 1.0) * layout.line_height - 3.0;
+                    let top = layout.text_pos[1]
+                        + projection.map_or(visual as f32, |p| p.row_top(visual))
+                            * layout.line_height;
+                    let _clip = (height < layout.line_height).then(|| {
+                        draw.push_clip_rect(
+                            [window[0], top],
+                            [window[0] + ui.window_width(), top + height],
+                            true,
+                        )
+                    });
+                    let y = top + layout.line_height - 3.0;
                     let mut previous = [x0, y];
                     let mut x = x0 + 2.0;
                     while x <= x1 + 0.01 {
@@ -156,7 +177,10 @@ impl TextView {
                 }
             }
         }
-        if hover.active && hover.zone == Zone::Text {
+        if hover.active
+            && hover.zone == Zone::Text
+            && projection.is_none_or(|p| p.is_document_visible(hover.row))
+        {
             let utf16 = utf8_byte_offset_to_utf16(&state.line(hover.row), hover.column);
             if diagnostics
                 .iter()
@@ -207,18 +231,28 @@ impl TextView {
             return;
         }
         let draw = ui.get_window_draw_list();
-        let first = ((ui.scroll_y() / layout.line_height) as i32 - 2).max(0);
-        let last = (((ui.scroll_y() + ui.window_height()) / layout.line_height) as i32 + 2)
+        let first_y = ui.scroll_y() / layout.line_height;
+        let last_y = (ui.scroll_y() + ui.window_height()) / layout.line_height;
+        let first =
+            (projection.map_or(first_y as i32, |p| p.visual_at_y(first_y) as i32) - 2).max(0);
+        let last = (projection.map_or(last_y as i32, |p| p.visual_at_y(last_y) as i32) + 2)
             .min(projection.map_or(state.line_count(), |p| p.len() as i32) - 1);
         let window_pos = ui.window_pos();
         let caret_visual = projection.map_or(view.row, |p| {
             p.visual_position(view.row, view.column) as i32
         });
-        if caret_visual >= first && caret_visual <= last {
-            let y = layout.text_pos[1] + caret_visual as f32 * layout.line_height;
+        if caret_visual >= first
+            && caret_visual <= last
+            && projection.is_none_or(|p| p.is_document_visible(view.row))
+        {
+            let y = layout.text_pos[1]
+                + projection.map_or(caret_visual as f32, |p| p.row_top(caret_visual as usize))
+                    * layout.line_height;
+            let height = projection.map_or(1.0, |p| p.row_height(caret_visual as usize))
+                * layout.line_height;
             draw.add_rect(
                 [window_pos[0] + 6.0, y],
-                [window_pos[0] + ui.window_width(), y + layout.line_height],
+                [window_pos[0] + ui.window_width(), y + height],
                 native_color(ui, {
                     let mut color = ui.style_color(dear_imgui_rs::StyleColor::Text);
                     color[3] = 0.055;
@@ -228,16 +262,23 @@ impl TextView {
             .filled(true)
             .build();
         }
-        if let Some(row) = execution_row.filter(|row| (0..state.line_count()).contains(row)) {
+        if let Some(row) = execution_row.filter(|row| {
+            (0..state.line_count()).contains(row)
+                && projection.is_none_or(|p| p.is_document_visible(*row))
+        }) {
             let start = projection.map_or(row, |p| p.visual_row(row) as i32);
             let end = projection.map_or(row, |p| {
                 p.visual_position(row, state.line_length(row)) as i32
             });
             for visual in start.max(first)..=end.min(last) {
-                let y = layout.text_pos[1] + visual as f32 * layout.line_height;
+                let y = layout.text_pos[1]
+                    + projection.map_or(visual as f32, |p| p.row_top(visual as usize))
+                        * layout.line_height;
+                let height =
+                    projection.map_or(1.0, |p| p.row_height(visual as usize)) * layout.line_height;
                 draw.add_rect(
                     [window_pos[0] + 6.0, y],
-                    [window_pos[0] + ui.window_width(), y + layout.line_height],
+                    [window_pos[0] + ui.window_width(), y + height],
                     native_color(ui, [0.95, 0.68, 0.12, 0.19]),
                 )
                 .filled(true)
@@ -259,6 +300,11 @@ impl TextView {
         let mut line = Vec::new();
         let mut loaded_line = None;
         for visual in first..=last {
+            let height =
+                projection.map_or(1.0, |p| p.row_height(visual as usize)) * layout.line_height;
+            if height <= 0.0 {
+                continue;
+            }
             let (row, historical, added) =
                 match projection.and_then(|p| p.rows.get(visual as usize)) {
                     Some(ProjectedRow::Document { row, kind, .. }) => {
@@ -288,7 +334,11 @@ impl TextView {
                 .unwrap_or(0..line.len());
             let indent = projection.map_or(0.0, |p| p.segment_indent(visual as usize));
             let origin_x = base_origin_x + indent;
-            let y = layout.text_pos[1] + visual as f32 * layout.line_height;
+            let y = layout.text_pos[1]
+                + projection.map_or(visual as f32, |p| p.row_top(visual as usize))
+                    * layout.line_height;
+            let _clip = (height < layout.line_height)
+                .then(|| draw.push_clip_rect([window_pos[0], y], [clip_right, y + height], true));
             if historical || added {
                 draw.add_rect(
                     [window_pos[0], y],
@@ -401,6 +451,29 @@ impl TextView {
                 }
             }
             flush_run(ui, &line, &mut run);
+            let folded_lines = projection.map_or(0, |p| p.folded_lines(row));
+            if folded_lines > 0 && segment.end == line.len() {
+                let marker = format!(" … {folded_lines} lines");
+                let marker_x = x + space_width;
+                let marker_width = glyph_advance(ui, &marker);
+                let hidden_start = (row + 1, 0);
+                let hidden_end = (row + folded_lines as i32 + 1, 0);
+                if view.selections.iter().any(|selection| {
+                    let (sr, sc, er, ec) = selection.ordered();
+                    !selection.empty() && (sr, sc) < hidden_end && (er, ec) > hidden_start
+                }) {
+                    draw.add_rect(
+                        [marker_x, y],
+                        [marker_x + marker_width, y + layout.line_height],
+                        selection_color,
+                    )
+                    .filled(true)
+                    .build();
+                }
+                let mut marker_color = default_color;
+                marker_color[3] *= 0.65;
+                draw.add_text([marker_x, y], marker_color, marker);
+            }
         }
     }
 }
@@ -458,6 +531,122 @@ mod tests {
                 );
             });
         drop(context.render_legacy());
+    }
+
+    #[test]
+    fn hidden_diagnostics_and_carets_do_not_paint_over_fold_headers() {
+        use crate::views::caret_view::CaretView;
+        use bed_editing::{diagnostic::DiagnosticItem, folding::FoldRange};
+
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut editor = Editor::new();
+        editor.set_content(b"header\nhidden long line\nafter");
+        editor.state.path = "/virtual/folded.rs".into();
+        editor
+            .commands()
+            .set_selection(1, 0, 1, 0, CursorReveal::Ensure);
+        let arbiter = super::super::hover_tooltip::TooltipArbiter::default();
+        render(&mut context, |ui, layout| {
+            let mut projection = RowProjection::build(&editor.state, None, None);
+            projection.fold(&[FoldRange {
+                start_line: 0,
+                end_line: 1,
+            }]);
+            projection.wrap(ui, &editor.state, glyph_advance(ui, "h") * 3.0);
+            let before = vertices(ui).len();
+            TextView::draw_projected_diagnostics(
+                ui,
+                &editor.state,
+                layout,
+                &[DiagnosticItem {
+                    start_line: 1,
+                    end_line: 1,
+                    end_character: 16,
+                    severity: 1,
+                    ..Default::default()
+                }],
+                Default::default(),
+                &arbiter,
+                Some(&projection),
+            );
+            CaretView::draw_projected(ui, &editor.state, &editor.view, layout, Some(&projection));
+            assert_eq!(
+                vertices(ui).len(),
+                before,
+                "hidden coordinates add no marks"
+            );
+            editor
+                .commands()
+                .set_selection(0, 0, 0, 0, CursorReveal::Ensure);
+            CaretView::draw_projected(ui, &editor.state, &editor.view, layout, Some(&projection));
+            assert_eq!(
+                vertices(ui).len(),
+                before + 4,
+                "visible header retains its caret"
+            );
+        });
+    }
+
+    #[test]
+    fn animated_fold_clips_partial_text_rows_and_positions_the_following_caret() {
+        use crate::{fold_animation::FoldVisual, views::caret_view::CaretView};
+        use bed_editing::folding::FoldRange;
+
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut editor = Editor::new();
+        editor.set_content(b"header\nfirst body\npartial body\nlast body\nafter");
+        editor
+            .commands()
+            .set_cursor(4, 0, false, CursorReveal::Ensure);
+        let range = FoldRange {
+            start_line: 0,
+            end_line: 3,
+        };
+        let visual = [FoldVisual {
+            range,
+            openness: 0.5,
+        }];
+        render(&mut context, |ui, layout| {
+            let mut projection = RowProjection::build(&editor.state, None, None);
+            projection.fold_animated(&[range], &visual);
+            projection.crop_folds(&visual);
+            assert_eq!(projection.row_height(projection.visual_row(2)), 0.5);
+            assert_eq!(projection.row_top(projection.visual_row(4)), 2.5);
+            TextView::draw_projected(
+                ui,
+                &editor.state,
+                &editor.view,
+                layout,
+                None,
+                None,
+                Some(&projection),
+            );
+            let partial_top = layout.text_pos[1] + 2.0 * layout.line_height;
+            let partial_bottom = partial_top + 0.5 * layout.line_height;
+            let clipped_text = ui.with_bound_context(|| unsafe {
+                let commands = &(*sys::igGetWindowDrawList()).CmdBuffer;
+                std::slice::from_raw_parts(commands.Data, commands.Size as usize)
+                    .iter()
+                    .any(|command| {
+                        command.ElemCount > 0
+                            && (command.ClipRect.y - partial_top).abs() < 0.01
+                            && (command.ClipRect.w - partial_bottom).abs() < 0.01
+                    })
+            });
+            assert!(
+                clipped_text,
+                "the partial row clips full-size text at its exposed height"
+            );
+            let before = vertices(ui).len();
+            CaretView::draw_projected(ui, &editor.state, &editor.view, layout, Some(&projection));
+            let caret = &vertices(ui)[before..];
+            let top = (layout.text_pos[1] + 2.5 * layout.line_height).floor();
+            assert_eq!(caret.len(), 4);
+            assert_eq!(caret[0].pos.y, top);
+            assert_eq!(caret[2].pos.y, top + layout.line_height - 1.0);
+        });
     }
 
     #[test]

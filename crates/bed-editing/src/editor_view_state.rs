@@ -2,6 +2,7 @@
 // Upstream copyright and license are preserved in LICENSE and NOTICE.
 use crate::{
     editor_state::EditorState,
+    folding::FoldState,
     util::utf8::{next_utf8_char, prev_utf8_char, snap_to_utf8_char_boundary},
 };
 
@@ -55,6 +56,7 @@ impl Selection {
 /// Carets and viewport intent. Rendering and scroll application belong to the GUI layer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditorViewState {
+    pub folds: FoldState,
     pub block_input: bool,
     pub request_focus: bool,
     pub selections: Vec<Selection>,
@@ -72,6 +74,7 @@ pub struct EditorViewState {
 impl Default for EditorViewState {
     fn default() -> Self {
         Self {
+            folds: FoldState::default(),
             block_input: false,
             request_focus: false,
             selections: vec![Selection::default()],
@@ -411,6 +414,7 @@ impl EditorViewState {
         self.requested_scroll = Some([x, y]);
     }
     pub fn request_cursor_center(&mut self, line: i32, character: i32) {
+        self.folds.reveal(line);
         self.pending_cursor_center = Some((line, character));
     }
 }

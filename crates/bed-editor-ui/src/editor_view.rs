@@ -355,6 +355,9 @@ impl EditorView {
     pub fn read_only(&self) -> bool {
         self.frame.read_only
     }
+    pub fn folding_enabled(&self) -> bool {
+        self.frame.folding_enabled()
+    }
     pub fn projected(&self) -> bool {
         self.frame.projection.is_projected()
     }
@@ -391,22 +394,23 @@ impl EditorView {
         {
             return Ok(TextHit::None);
         }
-        let visual = ((position[1] - layout.text_pos[1]) / layout.line_height).floor();
-        if visual < 0.0 {
+        let y = (position[1] - layout.text_pos[1]) / layout.line_height;
+        if y < 0.0 || y >= self.frame.projection.total_rows() {
             return Ok(TextHit::None);
         }
-        if let Some(row) = self.frame.projection.document_row(visual as usize) {
+        let visual = self.frame.projection.visual_at_y(y);
+        if let Some(row) = self.frame.projection.interactive_document_row(visual) {
             let column = session.with_document(self.document, |document| {
                 self.frame.projection.hit_column(
                     ui,
                     document,
-                    visual as usize,
+                    visual,
                     position[0] - layout.text_pos[0],
                 )
             })?;
             return Ok(TextHit::Document { row, column });
         }
-        Ok(match self.frame.projection.rows.get(visual as usize) {
+        Ok(match self.frame.projection.rows.get(visual) {
             Some(crate::diff::ProjectedRow::Historical { old_row, bytes }) => TextHit::Historical {
                 old_row: *old_row,
                 bytes: bytes.to_vec(),

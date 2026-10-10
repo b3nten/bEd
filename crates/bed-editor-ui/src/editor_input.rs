@@ -29,6 +29,7 @@ pub struct DefinitionRequest {
 #[derive(Default)]
 pub struct EditorInput {
     pub suppress_next_enter: bool,
+    pub(crate) folding_enabled: bool,
     dragging: bool,
     anchor: Option<(i32, i32)>,
     definition_request: Option<DefinitionRequest>,
@@ -123,6 +124,23 @@ impl EditorInput {
         let alt = ui.io().key_alt();
         let mut actions = Vec::new();
         let projection = projection.map(|rows| (rows, editor.ops.generation()));
+        if self.folding_enabled && primary && alt {
+            if ui.is_key_pressed_with_repeat(Key::LeftBracket, false) {
+                self.visual_navigation = None;
+                if shift {
+                    editor.commands().fold_all();
+                } else {
+                    let row = editor.view.row;
+                    editor.commands().toggle_fold(row);
+                }
+                return actions;
+            }
+            if ui.is_key_pressed_with_repeat(Key::RightBracket, false) {
+                self.visual_navigation = None;
+                editor.commands().unfold_all();
+                return actions;
+            }
+        }
         if alt && !primary {
             if ui.is_key_pressed(Key::LeftArrow) {
                 self.visual_navigation = None;
@@ -283,7 +301,7 @@ impl EditorInput {
         add_cursor: bool,
     ) {
         let Some((projection, generation)) =
-            projection.filter(|(projection, _)| projection.is_wrapped())
+            projection.filter(|(projection, _)| projection.is_wrapped() || projection.has_folds())
         else {
             self.visual_navigation = None;
             if add_cursor {
@@ -301,7 +319,12 @@ impl EditorInput {
         // subsequent movement needs the updated text in this same frame.
         let refreshed_projection = (editor.ops.generation() != generation).then(|| {
             let mut refreshed = RowProjection::build(&editor.state, None, None);
-            refreshed.wrap(ui, &editor.state, projection.wrap_width().unwrap());
+            if self.folding_enabled {
+                refreshed.fold(editor.view.folds.collapsed_ranges());
+            }
+            if let Some(width) = projection.wrap_width() {
+                refreshed.wrap(ui, &editor.state, width);
+            }
             refreshed
         });
         let projection = refreshed_projection.as_ref().unwrap_or(projection);
@@ -311,7 +334,7 @@ impl EditorInput {
             .iter()
             .map(|selection| (selection.head_row, selection.head_column))
             .collect();
-        let width = projection.wrap_width().unwrap().to_bits();
+        let width = projection.wrap_width().map_or(0, f32::to_bits);
         let line_height = layout.line_height.to_bits();
         let font_metrics = (
             ui.with_bound_context(|| unsafe { sys::igGetFont() as usize }),
@@ -340,7 +363,7 @@ impl EditorInput {
                 if target == start {
                     return (row, column);
                 }
-                let target_row = projection.document_row(target).unwrap();
+                let target_row = projection.interactive_document_row(target).unwrap();
                 let column = projected_column(ui, &editor.state, projection, target, x);
                 (target_row, column)
             })
@@ -405,15 +428,14 @@ impl EditorInput {
             return;
         }
         let mouse = ui.mouse_pos();
-        let mut visual = ((mouse[1] - layout.text_pos[1]) / layout.line_height)
-            .floor()
-            .max(0.0) as usize;
+        let y = (mouse[1] - layout.text_pos[1]) / layout.line_height;
+        let mut visual = projection.map_or(y.floor().max(0.0) as usize, |p| p.visual_at_y(y));
         let row = if let Some(projection) = projection {
-            if let Some(row) = projection.document_row(visual) {
+            if let Some(row) = projection.interactive_document_row(visual) {
                 row
-            } else if self.dragging || visual >= projection.len() {
+            } else if self.dragging || y >= projection.total_rows() {
                 visual = nearest_editable_visual(projection, visual);
-                projection.document_row(visual).unwrap()
+                projection.interactive_document_row(visual).unwrap()
             } else {
                 return;
             }
@@ -500,7 +522,7 @@ impl EditorInput {
 fn vertical_target(projection: &RowProjection, start: usize, delta: i32) -> usize {
     let last = projection.len().saturating_sub(1);
     let mut target = (start as i64 + delta as i64).clamp(0, last as i64) as usize;
-    while projection.document_row(target).is_none() {
+    while projection.interactive_document_row(target).is_none() {
         if delta < 0 && target > 0 {
             target -= 1;
         } else if delta > 0 && target < last {
@@ -515,10 +537,17 @@ fn vertical_target(projection: &RowProjection, start: usize, delta: i32) -> usiz
 fn nearest_editable_visual(projection: &RowProjection, visual: usize) -> usize {
     let visual = visual.min(projection.len().saturating_sub(1));
     for distance in 0..projection.len() {
-        if projection.document_row(visual + distance).is_some() {
+        if projection
+            .interactive_document_row(visual + distance)
+            .is_some()
+        {
             return visual + distance;
         }
-        if distance <= visual && projection.document_row(visual - distance).is_some() {
+        if distance <= visual
+            && projection
+                .interactive_document_row(visual - distance)
+                .is_some()
+        {
             return visual - distance;
         }
     }
@@ -598,6 +627,40 @@ pub fn take_input_characters() -> String {
 mod tests {
     use super::*;
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
+
+    #[test]
+    fn vertical_navigation_skips_the_closing_body_until_it_has_finished_animating() {
+        use crate::fold_animation::FoldVisual;
+        use bed_editing::folding::FoldRange;
+
+        let mut state = bed_editing::editor_state::EditorState::new();
+        state.set_from_bytes(b"header\nfirst\nsecond\nthird\nafter");
+        let range = FoldRange {
+            start_line: 0,
+            end_line: 3,
+        };
+        let visual = [FoldVisual {
+            range,
+            openness: 0.5,
+        }];
+        let mut projection = RowProjection::build(&state, None, None);
+        projection.fold_animated(&[range], &visual);
+        projection.crop_folds(&visual);
+        let after = projection.visual_row(4);
+        assert_eq!(projection.document_row(1), Some(1));
+        assert_eq!(projection.interactive_document_row(1), None);
+        assert_eq!(vertical_target(&projection, 0, 1), after);
+        assert_eq!(vertical_target(&projection, after, -1), 0);
+        assert_eq!(projection.visual_at_y(2.6), after);
+
+        // Once opening, fully exposed body rows accept navigation; the bottom
+        // partial row stays clipped and cannot acquire a caret yet.
+        let mut opening = RowProjection::build(&state, None, None);
+        opening.fold_animated(&[], &visual);
+        opening.crop_folds(&visual);
+        assert_eq!(vertical_target(&opening, 0, 1), 1);
+        assert_eq!(vertical_target(&opening, 1, 1), opening.visual_row(4));
+    }
 
     fn context() -> Context {
         let mut context = Context::create();

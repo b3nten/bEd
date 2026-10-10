@@ -19,7 +19,7 @@ use bed_editing::{
     editor_view_state::EditorViewState,
     project_undo::ProjectUndo,
 };
-use bed_highlight::highlight_service::EditorHighlight;
+use bed_highlight::{folding::FoldingService, highlight_service::EditorHighlight};
 use bed_lsp::{diagnostics::diagnostics_store::LspDiagnostics, lsp_client::LspClient};
 
 pub type SharedLspClient = Rc<RefCell<LspClient>>;
@@ -36,6 +36,7 @@ pub struct Editor {
     pub events: EditorEvents,
     pub save_service: EditorSave,
     pub highlight: EditorHighlight,
+    pub folding: FoldingService,
     pub git: Rc<RefCell<EditorGit>>,
     pub diagnostics: Option<LspDiagnostics>,
     git_changed_lines: Rc<Cell<bool>>,
@@ -110,6 +111,7 @@ impl Default for Editor {
             events,
             save_service,
             highlight: EditorHighlight::new(),
+            folding: FoldingService::default(),
             git,
             diagnostics: None,
             git_changed_lines,
@@ -202,6 +204,7 @@ impl Editor {
 
     pub fn set_content_with_kind(&mut self, raw: &[u8], kind: DocumentKind) {
         self.document_generation = self.document_generation.wrapping_add(1);
+        self.view.folds.set_ranges(Vec::new());
         self.disk_conflict = None;
         self.save_service.cancel_pending();
         self.state.set_from_bytes_with_kind(raw, kind);

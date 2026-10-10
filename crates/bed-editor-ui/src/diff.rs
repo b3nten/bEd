@@ -1,7 +1,8 @@
 //! Visual rows over a real document. Historical text never enters its buffer.
+use crate::fold_animation::FoldVisual;
 use crate::source_git::{SourceConflict, SourceGitPresentation};
 use crate::views::view_layout::{column_at_x, glyph_advance_bytes, glyph_spans, line_column_x};
-use bed_editing::{editor_events::DocumentChange, editor_state::EditorState};
+use bed_editing::{editor_events::DocumentChange, editor_state::EditorState, folding::FoldRange};
 use dear_imgui_rs::Ui;
 use std::{collections::HashMap, ops::Range, sync::Arc};
 
@@ -83,6 +84,13 @@ pub(crate) struct RowProjection {
     segments: Vec<Option<WrapSegment>>,
     wrap_width: Option<f32>,
     projected: bool,
+    /// Hidden document rows resolve to their visible fold header for scrolling.
+    fold_headers: Vec<Option<i32>>,
+    folded_lines: Vec<usize>,
+    fold_visuals: Vec<FoldVisual>,
+    target_fold_headers: Vec<Option<i32>>,
+    row_tops: Vec<f32>,
+    row_heights: Vec<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -390,6 +398,273 @@ impl RowProjection {
             ..Default::default()
         }
     }
+    /// Omit collapsed interiors from a fresh logical projection. Fold headers
+    /// remain real document rows; document positions and selections do not move.
+    pub fn fold(&mut self, collapsed: &[FoldRange]) {
+        assert!(
+            !self.is_wrapped(),
+            "fold before wrapping a fresh projection"
+        );
+        assert!(!self.has_folds(), "fold a fresh logical projection");
+        if collapsed.is_empty() {
+            return;
+        }
+        let document_lines = if self.rows.is_empty() {
+            self.identity_lines
+        } else {
+            self.document_rows.len()
+        };
+        self.fold_headers = vec![None; document_lines];
+        self.folded_lines = vec![0; document_lines];
+        let mut collapsed = collapsed.to_vec();
+        // The outer range owns every hidden row, including nested headers.
+        collapsed.sort_by_key(|range| (range.start_line, std::cmp::Reverse(range.end_line)));
+        for range in collapsed {
+            assert!(
+                range.start_line >= 0
+                    && range.end_line > range.start_line
+                    && (range.end_line as usize) < document_lines,
+                "fold range must be valid document coordinates"
+            );
+            let start = range.start_line as usize;
+            let end = range.end_line as usize;
+            if self.fold_headers[start].is_some() {
+                continue;
+            }
+            self.folded_lines[start] = end - start;
+            self.fold_headers[start + 1..=end].fill(Some(range.start_line));
+        }
+        if self.rows.is_empty() {
+            self.rows
+                .extend((0..document_lines).map(|row| ProjectedRow::Document {
+                    row: row as i32,
+                    old_row: None,
+                    kind: DiffLineKind::Context,
+                }));
+        }
+        self.rows.retain(|entry| match entry {
+            ProjectedRow::Document { row, .. } => self.fold_headers[*row as usize].is_none(),
+            _ => true,
+        });
+        self.document_rows = vec![0; document_lines];
+        for (visual, entry) in self.rows.iter().enumerate() {
+            if let ProjectedRow::Document { row, .. } = entry {
+                self.document_rows[*row as usize] = visual;
+            }
+        }
+        for (row, header) in self.fold_headers.iter().enumerate() {
+            if let Some(header) = header {
+                self.document_rows[row] = self.document_rows[*header as usize];
+            }
+        }
+        self.identity_lines = 0;
+        self.projected = true;
+    }
+    pub fn has_folds(&self) -> bool {
+        !self.fold_headers.is_empty() || !self.fold_visuals.is_empty()
+    }
+    pub fn is_document_visible(&self, row: i32) -> bool {
+        row >= 0
+            && self
+                .fold_headers
+                .get(row as usize)
+                .is_none_or(|header| header.is_none())
+    }
+    pub fn folded_lines(&self, row: i32) -> usize {
+        if row < 0 {
+            return 0;
+        }
+        self.folded_lines.get(row as usize).copied().unwrap_or(0)
+    }
+    pub fn fold_openness(&self, row: i32) -> f32 {
+        self.fold_visuals
+            .iter()
+            .find(|fold| fold.range.start_line == row)
+            .map_or(if self.folded_lines(row) > 0 { 0.0 } else { 1.0 }, |fold| {
+                fold.openness
+            })
+    }
+    /// Keep transitioning bodies available for wrapping. Target-collapsed
+    /// bodies may still paint during closing, but cannot accept pointer input.
+    pub fn fold_animated(&mut self, collapsed: &[FoldRange], visuals: &[FoldVisual]) {
+        let closed: Vec<_> = visuals
+            .iter()
+            .filter(|fold| fold.openness == 0.0)
+            .map(|fold| fold.range)
+            .collect();
+        self.fold(&closed);
+        self.fold_visuals = visuals.to_vec();
+        if visuals.is_empty() {
+            return;
+        }
+        self.projected = true;
+        let document_lines = if self.rows.is_empty() {
+            self.identity_lines
+        } else {
+            self.document_rows.len()
+        };
+        self.target_fold_headers = vec![None; document_lines];
+        self.folded_lines.resize(document_lines, 0);
+        let mut collapsed = collapsed.to_vec();
+        collapsed.sort_by_key(|range| (range.start_line, std::cmp::Reverse(range.end_line)));
+        for range in collapsed {
+            let start = range.start_line as usize;
+            let end = range.end_line as usize;
+            assert!(
+                range.start_line >= 0 && end > start && end < document_lines,
+                "fold target must be valid document coordinates"
+            );
+            if self.target_fold_headers[start].is_some() {
+                continue;
+            }
+            self.target_fold_headers[start + 1..=end].fill(Some(range.start_line));
+            if self.is_document_visible(range.start_line) {
+                self.folded_lines[start] = end - start;
+            }
+        }
+    }
+    /// Crop each animated body from its bottom, after wrapping established its
+    /// full visual height. Text keeps its normal size; only the final exposed
+    /// row can have a fractional height, which renderers use as a clip boundary.
+    pub fn crop_folds(&mut self, visuals: &[FoldVisual]) {
+        assert!(self.row_tops.is_empty(), "crop a fresh projection once");
+        let mut transitioning: Vec<_> = visuals
+            .iter()
+            .filter(|fold| fold.openness > 0.0 && fold.openness < 1.0)
+            .copied()
+            .collect();
+        if transitioning.is_empty() {
+            return;
+        }
+        let document_lines = if self.rows.is_empty() {
+            self.identity_lines
+        } else {
+            self.document_rows.len()
+        };
+        if self.rows.is_empty() {
+            self.rows
+                .extend((0..document_lines).map(|row| ProjectedRow::Document {
+                    row: row as i32,
+                    old_row: None,
+                    kind: DiffLineKind::Context,
+                }));
+        }
+        if self.document_rows.is_empty() {
+            self.document_rows = (0..document_lines).collect();
+        }
+        self.fold_headers.resize(document_lines, None);
+        let mut heights = vec![1.0_f32; self.rows.len()];
+        let mut crop_headers = vec![None; self.rows.len()];
+        // Resolve nested geometry first so an outer reveal contains the child's
+        // current height, including children that remain completely folded.
+        transitioning.sort_by_key(|fold| fold.range.end_line - fold.range.start_line);
+        for fold in transitioning {
+            if !self.is_document_visible(fold.range.start_line) {
+                continue;
+            }
+            let mut first = self.visual_row(fold.range.start_line);
+            while self.document_row(first) == Some(fold.range.start_line) {
+                first += 1;
+            }
+            let mut end = self.visual_row(fold.range.end_line);
+            let last_document = self.document_row(end);
+            while end < self.rows.len() && self.document_row(end) == last_document {
+                end += 1;
+            }
+            let expanded: f32 = heights[first..end].iter().sum();
+            let mut remaining = expanded * fold.openness;
+            for visual in first..end {
+                heights[visual] = heights[visual].min(remaining.max(0.0));
+                remaining -= heights[visual];
+                if heights[visual] == 0.0 {
+                    crop_headers[visual] = Some(fold.range.start_line);
+                }
+            }
+        }
+        let logical = std::mem::take(&mut self.rows);
+        let segments = std::mem::take(&mut self.segments);
+        let mut visible = vec![false; document_lines];
+        self.document_rows = vec![0; document_lines];
+        let mut top = 0.0;
+        for (visual, entry) in logical.into_iter().enumerate() {
+            if heights[visual] == 0.0 {
+                if let ProjectedRow::Document { row, .. } = entry {
+                    self.fold_headers[row as usize] = crop_headers[visual];
+                }
+                continue;
+            }
+            if let ProjectedRow::Document { row, .. } = &entry {
+                if !visible[*row as usize] {
+                    self.document_rows[*row as usize] = self.rows.len();
+                    visible[*row as usize] = true;
+                }
+            }
+            self.rows.push(entry);
+            if !segments.is_empty() {
+                self.segments.push(segments[visual].clone());
+            }
+            self.row_tops.push(top);
+            self.row_heights.push(heights[visual]);
+            top += heights[visual];
+        }
+        // Some segments of a wrapped line can be cropped while its first
+        // segment remains visible. Only entirely absent document lines hide.
+        for (row, is_visible) in visible.into_iter().enumerate() {
+            if is_visible {
+                self.fold_headers[row] = None;
+            } else if let Some(mut header) = self.fold_headers[row] {
+                if let Some(outer) = self.fold_headers[header as usize] {
+                    header = outer;
+                }
+                self.fold_headers[row] = Some(header);
+                self.document_rows[row] = self.document_rows[header as usize];
+            }
+        }
+        self.identity_lines = 0;
+        self.projected = true;
+    }
+    pub fn row_top(&self, visual: usize) -> f32 {
+        if visual >= self.len() {
+            self.total_rows()
+        } else {
+            self.row_tops.get(visual).copied().unwrap_or(visual as f32)
+        }
+    }
+    pub fn is_cropped(&self) -> bool {
+        !self.row_tops.is_empty()
+    }
+    pub fn row_height(&self, visual: usize) -> f32 {
+        if visual >= self.len() {
+            0.0
+        } else {
+            self.row_heights.get(visual).copied().unwrap_or(1.0)
+        }
+    }
+    pub fn total_rows(&self) -> f32 {
+        self.row_tops
+            .last()
+            .zip(self.row_heights.last())
+            .map_or(self.len() as f32, |(top, height)| top + height)
+    }
+    pub fn visual_at_y(&self, y: f32) -> usize {
+        if self.row_tops.is_empty() {
+            (y.max(0.0) as usize).min(self.len().saturating_sub(1))
+        } else {
+            self.row_tops
+                .partition_point(|top| *top <= y.max(0.0))
+                .saturating_sub(1)
+                .min(self.len().saturating_sub(1))
+        }
+    }
+    pub fn interactive_document_row(&self, visual: usize) -> Option<i32> {
+        let row = self.document_row(visual)?;
+        (self.row_height(visual) >= 1.0
+            && self
+                .target_fold_headers
+                .get(row as usize)
+                .is_none_or(|header| header.is_none()))
+        .then_some(row)
+    }
     /// Reflow a fresh logical projection. All consumers share these byte ranges;
     /// document storage and syntax-highlight coordinates remain unchanged.
     pub fn wrap(&mut self, ui: &Ui, state: &EditorState, width: f32) {
@@ -437,6 +712,13 @@ impl RowProjection {
                 self.segments.push(Some(range.clone()));
             }
         }
+        // Wrapping moved visible headers. Hidden rows continue to point to the
+        // header's first segment rather than an unrelated visual row.
+        for (row, header) in self.fold_headers.iter().enumerate() {
+            if let Some(header) = header {
+                self.document_rows[row] = self.document_rows[*header as usize];
+            }
+        }
         self.wrap_width = Some(width);
         self.identity_lines = 0;
     }
@@ -481,6 +763,15 @@ impl RowProjection {
         column: i32,
         origin: f32,
     ) -> f32 {
+        let (row, column) = match self
+            .fold_headers
+            .get(row.max(0) as usize)
+            .copied()
+            .flatten()
+        {
+            Some(header) => (header, state.line_length(header)),
+            None => (row, column),
+        };
         let line = state.line(row);
         let visual = self.visual_position(row, column);
         let range = self.segment(visual).unwrap_or(0..line.len());
@@ -629,6 +920,254 @@ fn wrap_ranges(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn animated_body_reveals_normal_rows_and_crops_only_the_last_visible_row() {
+        let mut state = EditorState::new();
+        state.set_from_bytes(b"before\nheader\na\nb\nc\nd\nafter");
+        let range = FoldRange {
+            start_line: 1,
+            end_line: 5,
+        };
+        let visual = [FoldVisual {
+            range,
+            openness: 0.375,
+        }];
+        for collapsed in [vec![range], vec![]] {
+            let mut projection = RowProjection::build(&state, None, None);
+            projection.fold_animated(&collapsed, &visual);
+            projection.crop_folds(&visual);
+            assert_eq!(projection.len(), 5);
+            assert_eq!(projection.total_rows(), 4.5);
+            assert_eq!(projection.document_row(2), Some(2));
+            assert_eq!(projection.document_row(3), Some(3));
+            assert_eq!(projection.document_row(4), Some(6));
+            assert_eq!(projection.row_top(2), 2.0);
+            assert_eq!(projection.row_height(2), 1.0);
+            assert_eq!(projection.row_top(3), 3.0);
+            assert_eq!(projection.row_height(3), 0.5);
+            assert_eq!(projection.row_top(4), 3.5);
+            assert_eq!(projection.visual_at_y(3.49), 3);
+            assert_eq!(projection.visual_at_y(3.5), 4);
+            assert!(projection.is_document_visible(3));
+            assert!(!projection.is_document_visible(4));
+            assert_eq!(projection.visual_row(4), 1);
+            assert_eq!(projection.interactive_document_row(1), Some(1));
+            assert_eq!(
+                projection.interactive_document_row(2),
+                collapsed.is_empty().then_some(2)
+            );
+            assert_eq!(
+                projection.interactive_document_row(3),
+                None,
+                "partially cropped text is not clickable"
+            );
+            assert_eq!(projection.fold_openness(1), 0.375);
+            assert!(projection.has_folds());
+        }
+    }
+
+    #[test]
+    fn cropping_parent_keeps_nested_fold_geometry_and_resolves_hidden_header() {
+        let mut state = EditorState::new();
+        state.set_from_bytes(b"before\nouter\na\ninner\nb\nc\nd\ne\nafter");
+        let outer = FoldRange {
+            start_line: 1,
+            end_line: 7,
+        };
+        let inner = FoldRange {
+            start_line: 3,
+            end_line: 5,
+        };
+        let visual = [
+            FoldVisual {
+                range: outer,
+                openness: 0.125,
+            },
+            FoldVisual {
+                range: inner,
+                openness: 0.0,
+            },
+        ];
+        let mut projection = RowProjection::build(&state, None, None);
+        projection.fold_animated(&[inner], &visual);
+        projection.crop_folds(&visual);
+        assert_eq!(projection.len(), 4);
+        assert_eq!(projection.total_rows(), 3.5);
+        assert_eq!(projection.document_row(2), Some(2));
+        assert_eq!(projection.row_height(2), 0.5);
+        assert_eq!(projection.document_row(3), Some(8));
+        for row in 3..=7 {
+            assert!(!projection.is_document_visible(row));
+            assert_eq!(
+                projection.visual_row(row),
+                1,
+                "nested hidden header resolves to visible outer header"
+            );
+        }
+        assert_eq!(projection.interactive_document_row(3), Some(8));
+    }
+
+    #[test]
+    fn animated_crop_measures_wrapped_body_height_without_cropping_header_segments() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = dear_imgui_rs::Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
+            [640.0, 480.0],
+            1.0 / 60.0,
+        ));
+        let ui = context.frame();
+        ui.window("Animated wrapped document").build(|| {
+            let mut state = EditorState::new();
+            state.set_from_bytes(b"AAAAAA\nBBBBBB\nCCCCCC\nD");
+            let range = FoldRange {
+                start_line: 0,
+                end_line: 2,
+            };
+            let visual = [FoldVisual {
+                range,
+                openness: 0.375,
+            }];
+            let mut projection = RowProjection::build(&state, None, None);
+            projection.fold_animated(&[], &visual);
+            projection.wrap(ui, &state, glyph_advance_bytes(ui, b"A") * 3.0 + 0.01);
+            projection.crop_folds(&visual);
+            assert_eq!(projection.len(), 5);
+            assert_eq!(projection.total_rows(), 4.5);
+            assert_eq!(projection.row_height(0), 1.0);
+            assert_eq!(projection.row_height(1), 1.0);
+            assert_eq!(projection.document_row(2), Some(1));
+            assert_eq!(projection.segment(3), Some(3..6));
+            assert_eq!(projection.row_height(3), 0.5);
+            assert_eq!(projection.row_top(4), 3.5);
+            assert_eq!(projection.document_row(4), Some(3));
+            assert_eq!(projection.visual_position(1, 6), 3);
+            assert_eq!(projection.visual_row(2), 0);
+        });
+        drop(context.render_legacy());
+    }
+
+    #[test]
+    fn nested_folds_hide_interiors_without_changing_document_positions() {
+        let mut state = EditorState::new();
+        let source = b"before\nouter {\ninner {\nx\n}\n}\nafter";
+        state.set_from_bytes(source);
+        let mut projection = RowProjection::build(&state, None, None);
+        projection.fold(&[
+            FoldRange {
+                start_line: 2,
+                end_line: 4,
+            },
+            FoldRange {
+                start_line: 1,
+                end_line: 5,
+            },
+        ]);
+        assert_eq!(projection.len(), 3);
+        assert_eq!(projection.document_row(0), Some(0));
+        assert_eq!(projection.document_row(1), Some(1));
+        assert_eq!(projection.document_row(2), Some(6));
+        assert_eq!(projection.nearest_document_row(2), 6);
+        assert_eq!(projection.folded_lines(1), 4);
+        assert_eq!(projection.folded_lines(2), 0, "nested header is hidden");
+        for row in 2..=5 {
+            assert!(!projection.is_document_visible(row));
+            assert_eq!(projection.visual_row(row), 1);
+            assert_eq!(projection.visual_position(row, 100), 1);
+        }
+        assert!(projection.is_document_visible(1));
+        assert!(projection.is_document_visible(6));
+        assert!(projection.has_folds() && projection.is_projected());
+        assert_eq!(state.join(), source);
+
+        // Unfolding the outer range leaves the nested range collapsed.
+        let mut projection = RowProjection::build(&state, None, None);
+        projection.fold(&[FoldRange {
+            start_line: 2,
+            end_line: 4,
+        }]);
+        assert_eq!(projection.len(), 5);
+        assert_eq!(projection.document_row(2), Some(2));
+        assert_eq!(projection.document_row(3), Some(5));
+        assert_eq!(projection.folded_lines(2), 2);
+    }
+
+    #[test]
+    fn no_collapsed_folds_preserves_identity_projection() {
+        let mut state = EditorState::new();
+        state.set_from_bytes(b"a\nb\nc");
+        let mut projection = RowProjection::build(&state, None, None);
+        projection.fold(&[]);
+        assert_eq!(projection.len(), 3);
+        assert!(!projection.has_folds() && !projection.is_projected());
+        for row in 0..3 {
+            assert!(projection.is_document_visible(row));
+            assert_eq!(projection.visual_row(row), row as usize);
+            assert_eq!(projection.document_row(row as usize), Some(row));
+        }
+    }
+
+    #[test]
+    fn folding_then_wrapping_maps_hidden_rows_to_visible_header() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = dear_imgui_rs::Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
+            [640.0, 480.0],
+            1.0 / 60.0,
+        ));
+        let ui = context.frame();
+        ui.window("Folded wrapped document").build(|| {
+            let mut state = EditorState::new();
+            state.set_from_bytes(b"AAAAAA\nBBBBBB\nC\nD\nEE");
+            let mut projection = RowProjection::build(&state, None, None);
+            projection.fold(&[FoldRange {
+                start_line: 1,
+                end_line: 3,
+            }]);
+            let mut cache = WrapCache::default();
+            projection.wrap_cached(
+                ui,
+                &state,
+                glyph_advance_bytes(ui, b"A") * 3.0 + 0.01,
+                &mut cache,
+            );
+            assert_eq!(projection.len(), 5);
+            assert_eq!(projection.visual_row(1), 2);
+            assert_eq!(projection.visual_position(1, 6), 3);
+            assert_eq!(projection.visual_row(2), 2);
+            assert_eq!(projection.visual_position(3, 100), 2);
+            assert_eq!(projection.visual_row(4), 4);
+            assert_eq!(projection.document_row(3), Some(1));
+            assert_eq!(projection.document_row(4), Some(4));
+            assert_eq!(projection.folded_lines(1), 2);
+            assert_eq!(
+                cache.measured_lines, 3,
+                "hidden lines require no glyph layout"
+            );
+            assert_eq!(
+                projection.position_x(ui, &state, 2, 100, 0.0),
+                projection.position_x(ui, &state, 1, 6, 0.0),
+                "hidden position uses the header rather than slicing hidden text"
+            );
+        });
+        drop(context.render_legacy());
+    }
+
     #[test]
     fn large_wrapped_document_reuses_unchanged_line_layouts_after_an_edit() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();

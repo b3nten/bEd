@@ -11,6 +11,60 @@ const TRAILING_PADDING: f32 = 4.0;
 pub struct GutterView;
 
 impl GutterView {
+    pub(crate) fn fold_column_width(ui: &Ui, enabled: bool) -> f32 {
+        if enabled {
+            ui.current_font_size().max(14.0)
+        } else {
+            0.0
+        }
+    }
+
+    pub(crate) fn draw_folds(
+        ui: &Ui,
+        draw: &DrawListMut<'_>,
+        editor: &Editor,
+        layout: &ViewLayout,
+        pos: [f32; 2],
+        width: f32,
+        column_width: f32,
+        projection: &crate::diff::RowProjection,
+    ) {
+        let color = bed_ui::presentation::muted_text_color(ui);
+        let first = projection.visual_at_y(editor.view.scroll_position[1] / layout.line_height);
+        let last = projection
+            .visual_at_y((editor.view.scroll_position[1] + layout.size[1]) / layout.line_height);
+        for range in editor.view.folds.ranges() {
+            if !projection.is_document_visible(range.start_line) {
+                continue;
+            }
+            let visual = projection.visual_row(range.start_line);
+            if visual < first || visual > last {
+                continue;
+            }
+            let top =
+                pos[1] + layout.editor_top_margin + projection.row_top(visual) * layout.line_height
+                    - editor.view.scroll_position[1];
+            let height = projection.row_height(visual) * layout.line_height;
+            if height <= 0.0 {
+                continue;
+            }
+            let _clip = (height < layout.line_height)
+                .then(|| draw.push_clip_rect([pos[0], top], [pos[0] + width, top + height], true));
+            let center = [
+                pos[0] + width - column_width * 0.5,
+                top + layout.line_height * 0.5,
+            ];
+            let half = column_width * 0.22;
+            let angle = projection.fold_openness(range.start_line) * std::f32::consts::FRAC_PI_2;
+            let (sin, cos) = angle.sin_cos();
+            let points = [[-half * 0.5, -half], [half, 0.0], [-half * 0.5, half]]
+                .map(|[x, y]| [center[0] + x * cos - y * sin, center[1] + x * sin + y * cos]);
+            draw.add_triangle(points[0], points[1], points[2], color)
+                .filled(true)
+                .build();
+        }
+    }
+
     pub fn width(ui: &Ui, state: &EditorState) -> f32 {
         // Reserve only this document's digits and a little space on each side.
         ui.calc_text_size(state.line_count().max(1).to_string())[0]
@@ -54,12 +108,18 @@ impl GutterView {
         projection: Option<&crate::diff::RowProjection>,
     ) {
         let visual = projection.map_or(row as usize, |p| p.visual_row(row));
+        let height = projection.map_or(1.0, |p| p.row_height(visual)) * layout.line_height;
+        if height <= 0.0 {
+            return;
+        }
+        let top = pos[1]
+            + layout.editor_top_margin
+            + projection.map_or(visual as f32, |p| p.row_top(visual)) * layout.line_height
+            - editor.view.scroll_position[1];
         let width = Self::debug_column_width(ui, true);
-        let center = [
-            pos[0] + width * 0.32,
-            pos[1] + layout.editor_top_margin + (visual as f32 + 0.5) * layout.line_height
-                - editor.view.scroll_position[1],
-        ];
+        let _clip = (height < layout.line_height)
+            .then(|| draw.push_clip_rect([pos[0], top], [pos[0] + width, top + height], true));
+        let center = [pos[0] + width * 0.32, top + layout.line_height * 0.5];
         let radius = (layout.line_height * 0.24).min(width * 0.25);
         let mut color = bed_ui::presentation::readable_color(ui, [0.93, 0.25, 0.28, 1.0]);
         color[3] = 0.45;
@@ -110,14 +170,13 @@ impl GutterView {
             .filter(|_| !state.path.is_empty())
             .map(|diagnostics| diagnostics.max_severity_by_line(&state.path, state.line_count()))
             .unwrap_or_default();
-        let first = (view.scroll_position[1] / layout.line_height) as i32;
+        let first_y = view.scroll_position[1] / layout.line_height;
+        let last_y = (view.scroll_position[1] + layout.size[1] - layout.editor_top_margin)
+            / layout.line_height;
+        let first = projection.map_or(first_y as i32, |p| p.visual_at_y(first_y) as i32);
         let last = projection
             .map_or(state.line_count(), |p| p.len() as i32)
-            .min(
-                ((view.scroll_position[1] + layout.size[1] - layout.editor_top_margin)
-                    / layout.line_height) as i32
-                    + 1,
-            );
+            .min(projection.map_or(last_y as i32, |p| p.visual_at_y(last_y) as i32) + 1);
         let (selection_start, selection_end) = view.selection_line_span();
         let pack = |color: [f32; 4]| {
             ui.with_bound_context(|| unsafe { sys::igColorConvertFloat4ToU32(color.into()) })
@@ -148,18 +207,28 @@ impl GutterView {
             ))
         });
         for visual in first..last {
+            let height =
+                projection.map_or(1.0, |p| p.row_height(visual as usize)) * layout.line_height;
+            if height <= 0.0 {
+                continue;
+            }
             if projection
                 .and_then(|p| p.segment(visual as usize))
                 .is_some_and(|segment| segment.start != 0)
             {
                 continue;
             }
+            let y = pos[1]
+                + layout.editor_top_margin
+                + projection.map_or(visual as f32, |p| p.row_top(visual as usize))
+                    * layout.line_height
+                - view.scroll_position[1];
+            let _clip = (height < layout.line_height)
+                .then(|| draw.push_clip_rect([pos[0], y], [pos[0] + width, y + height], true));
             let (row, old_row) = match projection.and_then(|p| p.rows.get(visual as usize)) {
                 Some(crate::diff::ProjectedRow::Document { row, old_row, .. }) => (*row, *old_row),
                 Some(crate::diff::ProjectedRow::Historical { old_row, .. }) => {
                     let label = format!("{}  −", old_row + 1);
-                    let y = pos[1] + layout.editor_top_margin + visual as f32 * layout.line_height
-                        - view.scroll_position[1];
                     draw.add_text([pos[0] + width * 0.12, y], muted_color, label);
                     continue;
                 }
@@ -186,8 +255,6 @@ impl GutterView {
                 (row + 1).to_string()
             };
             let x = pos[0] + width - ui.calc_text_size(&label)[0] - TRAILING_PADDING;
-            let y = pos[1] + layout.editor_top_margin + visual as f32 * layout.line_height
-                - view.scroll_position[1];
             if let Some(debug) = debug {
                 let center = [pos[0] + debug_width * 0.32, y + layout.line_height * 0.5];
                 let radius = (layout.line_height * 0.24).min(debug_width * 0.25);

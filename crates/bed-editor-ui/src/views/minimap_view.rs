@@ -36,19 +36,28 @@ impl Density {
 struct Strip {
     start: i32,
     end: i32,
+    start_rows: f32,
     view_h: f32,
     max_scroll: f32,
     slider_top: f32,
     slider_h: f32,
     ratio: f32,
 }
-fn make_strip(n: i32, layout: &ViewLayout, scroll_y: f32, height: f32, d: Density) -> Strip {
+fn make_strip(
+    n: i32,
+    layout: &ViewLayout,
+    scroll_y: f32,
+    height: f32,
+    d: Density,
+    projection: Option<&RowProjection>,
+) -> Strip {
     let mut s = Strip {
         end: -1,
         ..Default::default()
     };
     let elh = layout.line_height;
-    if n <= 0 || height <= 1.0 || elh <= 0.0 {
+    let rows = projection.map_or(n as f32, RowProjection::total_rows);
+    if rows <= 0.0 || height <= 1.0 || elh <= 0.0 {
         return s;
     }
     let scroll_y = scroll_y.max(0.0);
@@ -58,7 +67,7 @@ fn make_strip(n: i32, layout: &ViewLayout, scroll_y: f32, height: f32, d: Densit
     s.slider_h = ((s.view_h / elh) * d.line_h)
         .floor()
         .clamp(d.slider_min.min(height), height);
-    let max_top = (height - s.slider_h).min((n as f32 * d.line_h - s.slider_h).max(0.0));
+    let max_top = (height - s.slider_h).min((rows * d.line_h - s.slider_h).max(0.0));
     s.ratio = if s.max_scroll > 1.0 {
         max_top / s.max_scroll
     } else {
@@ -66,12 +75,16 @@ fn make_strip(n: i32, layout: &ViewLayout, scroll_y: f32, height: f32, d: Densit
     };
     s.slider_top = (scroll_y * s.ratio).clamp(0.0, max_top);
     let fit = ((height / d.line_h) as i32).max(1);
-    if n <= fit {
-        s.end = n - 1;
+    if rows <= fit as f32 {
+        s.end = projection.map_or(n - 1, |p| p.len() as i32 - 1);
     } else {
-        s.start = (scroll_y / elh - s.slider_top / d.line_h).floor() as i32;
-        s.start = s.start.clamp(0, n - fit);
-        s.end = (n - 1).min(s.start + fit - 1);
+        s.start_rows = (scroll_y / elh - s.slider_top / d.line_h)
+            .floor()
+            .clamp(0.0, rows - fit as f32);
+        s.start = projection.map_or(s.start_rows as i32, |p| p.visual_at_y(s.start_rows) as i32);
+        s.end = projection.map_or((n - 1).min(s.start + fit - 1), |p| {
+            p.visual_at_y(s.start_rows + fit as f32 - 0.001) as i32
+        });
     }
     s
 }
@@ -81,6 +94,7 @@ struct CacheKey {
     highlight_gen: u64,
     start: i32,
     end: i32,
+    start_rows: f32,
     max_cols: i32,
     default_ink: [f32; 4],
     font_size: f32,
@@ -195,6 +209,11 @@ impl MinimapView {
         let mut line = Vec::new();
         let mut loaded_line = None;
         for visual in key.start..=key.end {
+            let height = projection.map_or(1.0, |p| p.row_height(visual as usize)) * d.line_h;
+            if height <= 0.0 {
+                continue;
+            }
+            let top = projection.map_or(visual as f32, |p| p.row_top(visual as usize));
             let (row, historical) = match projection.and_then(|p| p.rows.get(visual as usize)) {
                 Some(ProjectedRow::Document { row, .. }) => {
                     if loaded_line != Some((false, *row as usize)) {
@@ -248,9 +267,9 @@ impl MinimapView {
                 {
                     runs.push(Run {
                         x: d.pad_x + (indent_columns + start as f32) * d.char_w,
-                        y: (visual - key.start) as f32 * d.line_h,
+                        y: (top - key.start_rows) * d.line_h,
                         w: ((col as f32).min(max_cols) - start as f32) * d.char_w,
-                        h: d.dot_h,
+                        h: d.dot_h.min(height),
                         color: ink,
                     });
                 }
@@ -342,18 +361,22 @@ impl MinimapView {
             view.scroll_position[1],
             height,
             d,
+            projection,
         );
         if let Some([x, y]) = minimap_wheel_scroll(ui) {
             view.request_scroll(x, y);
         }
         if ui.is_mouse_clicked(MouseButton::Left) {
             let local = (mouse[1] - a[1]).clamp(0.0, height);
-            let line = if s.end < s.start {
-                0
+            let top = if s.end < s.start {
+                0.0
             } else {
-                (s.start + (local / d.line_h) as i32).clamp(s.start, s.end)
+                let rows = s.start_rows + local / d.line_h;
+                projection.map_or(rows.floor().clamp(s.start as f32, s.end as f32), |p| {
+                    p.row_top(p.visual_at_y(rows))
+                })
             };
-            let y = line as f32 * layout.line_height - s.view_h * 0.5;
+            let y = top * layout.line_height - s.view_h * 0.5;
             view.request_scroll(view.scroll_position[0], y);
             self.dragging = true;
             self.drag_y0 = mouse[1];
@@ -399,6 +422,7 @@ impl MinimapView {
             view.scroll_position[1],
             h,
             d,
+            projection,
         );
         if s.end < s.start {
             return;
@@ -408,6 +432,14 @@ impl MinimapView {
         let projection_hash = projection.map_or(0, |projection| {
             let mut hash = std::collections::hash_map::DefaultHasher::new();
             for visual in s.start..=s.end {
+                projection
+                    .row_top(visual as usize)
+                    .to_bits()
+                    .hash(&mut hash);
+                projection
+                    .row_height(visual as usize)
+                    .to_bits()
+                    .hash(&mut hash);
                 projection.segment(visual as usize).hash(&mut hash);
                 projection
                     .segment_indent(visual as usize)
@@ -429,6 +461,7 @@ impl MinimapView {
             highlight_gen: highlight.visual_generation(),
             start: s.start,
             end: s.end,
+            start_rows: s.start_rows,
             max_cols: (((w - d.pad_x * 2.0) / d.char_w) as i32).max(1),
             default_ink: dim(highlight.default_text_color()),
             font_size: ui.current_font_size(),
@@ -438,6 +471,9 @@ impl MinimapView {
             self.rebuild_density_cache(ui, key, state, highlight, projection);
         }
         let draw = ui.get_window_draw_list();
+        let _clip = projection
+            .filter(|p| p.is_cropped())
+            .map(|_| draw.push_clip_rect(a, [a[0] + w, a[1] + h], true));
         for run in &self.cache_runs {
             let p = [a[0] + run.x, a[1] + run.y];
             draw.add_rect(p, [p[0] + run.w, p[1] + run.h], run.color)
@@ -655,6 +691,91 @@ mod tests {
     }
 
     #[test]
+    fn folded_density_keeps_only_visible_header_and_following_lines() {
+        use bed_editing::folding::FoldRange;
+
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = wheel_context([200.0, 180.0]);
+        let mut state = EditorState::new();
+        state.set_from_bytes(b"HEADER\nHIDDEN\nHIDDEN\nAFTER");
+        let highlight = EditorHighlight::new();
+        let view = EditorViewState::default();
+        let mut minimap = MinimapView::default();
+        wheel_frame(&mut context, [200.0, 180.0], |ui| {
+            let mut projection = RowProjection::build(&state, None, None);
+            projection.fold(&[FoldRange {
+                start_line: 0,
+                end_line: 2,
+            }]);
+            let layout = ViewLayout {
+                size: [200.0, 180.0],
+                line_height: ui.text_line_height(),
+                total_height: ui.text_line_height() * 2.0,
+                minimap_width: 40.0,
+                minimap_min: [30.0, 40.0],
+                minimap_max: [70.0, 200.0],
+                ..Default::default()
+            };
+            minimap.draw_projected(ui, &state, &view, &highlight, &layout, Some(&projection));
+            assert_eq!(
+                minimap.cache_runs.len(),
+                2,
+                "hidden rows add no density runs"
+            );
+            let d = Density::new(ui.current_font_size());
+            assert_eq!(minimap.cache_runs[0].w, 6.0 * d.char_w);
+            assert_eq!(minimap.cache_runs[1].w, 5.0 * d.char_w);
+            assert_eq!(minimap.cache_runs[1].y, d.line_h);
+        });
+    }
+
+    #[test]
+    fn animated_density_tracks_partial_rows_even_when_the_visible_row_count_stays_the_same() {
+        use crate::fold_animation::FoldVisual;
+        use bed_editing::folding::FoldRange;
+
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = wheel_context([200.0, 180.0]);
+        let mut state = EditorState::new();
+        state.set_from_bytes(b"HEADER\nFIRST\nSECOND\nTHIRD\nAFTER");
+        let highlight = EditorHighlight::new();
+        let view = EditorViewState::default();
+        let mut minimap = MinimapView::default();
+        let range = FoldRange {
+            start_line: 0,
+            end_line: 3,
+        };
+        for openness in [0.5, 0.6] {
+            wheel_frame(&mut context, [200.0, 180.0], |ui| {
+                let visual = [FoldVisual { range, openness }];
+                let mut projection = RowProjection::build(&state, None, None);
+                projection.fold_animated(&[range], &visual);
+                projection.crop_folds(&visual);
+                let layout = ViewLayout {
+                    size: [200.0, 180.0],
+                    line_height: ui.text_line_height(),
+                    total_height: ui.text_line_height() * projection.total_rows(),
+                    minimap_width: 40.0,
+                    minimap_min: [30.0, 40.0],
+                    minimap_max: [70.0, 200.0],
+                    ..Default::default()
+                };
+                minimap.draw_projected(ui, &state, &view, &highlight, &layout, Some(&projection));
+                let d = Density::new(ui.current_font_size());
+                assert_eq!(minimap.cache_runs.len(), 4);
+                assert!(
+                    (minimap.cache_runs[3].y - (1.0 + 3.0 * openness) * d.line_h).abs() < 0.001
+                );
+                assert!(
+                    (minimap.cache_runs[2].h - d.dot_h.min((3.0 * openness - 1.0) * d.line_h))
+                        .abs()
+                        < 0.001
+                );
+            });
+        }
+    }
+
+    #[test]
     fn wrapped_density_reflows_when_resize_keeps_the_same_visual_row_count() {
         use crate::views::view_layout::glyph_advance;
 
@@ -828,13 +949,13 @@ mod tests {
             ..Default::default()
         };
         let d = Density::new(20.0);
-        let start = make_strip(state.line_count(), &layout, 0.0, 400.0, d);
-        let end = make_strip(state.line_count(), &layout, 19620.0, 400.0, d);
+        let start = make_strip(state.line_count(), &layout, 0.0, 400.0, d, None);
+        let end = make_strip(state.line_count(), &layout, 19620.0, 400.0, d, None);
         assert_eq!((start.start, start.end), (0, 199));
         assert_eq!((end.start, end.end), (801, 1000));
         assert!((end.slider_top - 360.0).abs() < 0.001);
         assert_eq!(end.slider_h, 40.0);
-        let middle = make_strip(state.line_count(), &layout, 9800.0, 400.0, d);
+        let middle = make_strip(state.line_count(), &layout, 9800.0, 400.0, d, None);
         assert!(middle.start > 0 && middle.end < 1000);
     }
     #[test]
@@ -847,7 +968,14 @@ mod tests {
             total_height: 40.0,
             ..Default::default()
         };
-        let strip = make_strip(state.line_count(), &layout, 0.0, 400.0, Density::new(20.0));
+        let strip = make_strip(
+            state.line_count(),
+            &layout,
+            0.0,
+            400.0,
+            Density::new(20.0),
+            None,
+        );
         assert_eq!((strip.start, strip.end), (0, 1));
         assert_eq!(strip.ratio, 0.0);
     }

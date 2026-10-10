@@ -6,6 +6,7 @@ pub mod editor_events;
 pub mod editor_operations;
 pub mod editor_state;
 pub mod editor_view_state;
+pub mod folding;
 pub mod identity;
 pub mod project_undo;
 pub mod text_search;

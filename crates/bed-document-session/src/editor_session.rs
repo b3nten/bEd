@@ -480,6 +480,7 @@ impl EditorSession {
         entry.editor.state.mark_saved();
         entry.highlight_edits.clear();
         for view in entry.views.values_mut() {
+            view.state.folds.set_ranges(Vec::new());
             view.state.clamp_all(&entry.editor.state);
         }
         let generation = entry.editor.document_generation();
@@ -714,9 +715,11 @@ impl EditorSession {
         let edits = entry.editor.ops.take_pending();
         if generation != entry.editor.document_generation() {
             for info in entry.views.values_mut() {
+                info.state.folds.set_ranges(Vec::new());
                 info.state.clamp_all(&entry.editor.state);
             }
         } else if !edits.is_empty() {
+            let changes: Vec<_> = edits.iter().map(PendingEdit::to_document_change).collect();
             for selections in positions.values_mut() {
                 for (head, anchor) in selections {
                     for edit in &edits {
@@ -727,6 +730,7 @@ impl EditorSession {
             }
             for (sibling, selections) in positions {
                 let info = entry.views.get_mut(&sibling).unwrap();
+                info.state.folds.apply_changes(&changes);
                 for (selection, (head, anchor)) in info.state.selections.iter_mut().zip(selections)
                 {
                     (selection.head_row, selection.head_column) =
@@ -1452,6 +1456,7 @@ impl EditorSession {
         let key = entry.editor.history_key().to_owned();
         entry.editor.project_undo().forget_file(&key);
         for view in entry.views.values_mut() {
+            view.state.folds.set_ranges(Vec::new());
             view.state.clamp_all(&entry.editor.state);
         }
         entry
@@ -1494,6 +1499,7 @@ impl EditorSession {
         let key = entry.editor.history_key().to_owned();
         entry.editor.project_undo().forget_file(&key);
         for view in entry.views.values_mut() {
+            view.state.folds.set_ranges(Vec::new());
             view.state.clamp_all(&entry.editor.state);
         }
         let generation = entry.editor.document_generation();

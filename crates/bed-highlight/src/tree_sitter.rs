@@ -140,7 +140,7 @@ fn warmed_languages() -> &'static Mutex<HashSet<&'static str>> {
 
 /// Arborium accepts UTF-8 strings. Keep document byte offsets stable when files
 /// contain invalid UTF-8, and make bare CR line endings visible to its parsers.
-fn parser_text(mut bytes: Vec<u8>) -> String {
+pub(crate) fn parser_text(mut bytes: Vec<u8>) -> String {
     for i in 0..bytes.len() {
         if bytes[i] == b'\r' && bytes.get(i + 1) != Some(&b'\n') {
             bytes[i] = b'\n';

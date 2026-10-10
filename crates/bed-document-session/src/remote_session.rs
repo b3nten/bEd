@@ -848,6 +848,7 @@ impl EditorSession {
                             let key = entry.editor.history_key().to_owned();
                             entry.editor.project_undo().forget_file(&key);
                             for view in entry.views.values_mut() {
+                                view.state.folds.set_ranges(Vec::new());
                                 view.state.clamp_all(&entry.editor.state);
                             }
                             let generation = entry.editor.document_generation();

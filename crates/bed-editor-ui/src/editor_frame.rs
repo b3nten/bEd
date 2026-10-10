@@ -1,6 +1,7 @@
 //! Presentation frame translated from ned editor/editor_frame.cpp. The basic
 //! Draws the custom document views and coordinates exclusive service overlays.
 use crate::diff::{DiffAction, DiffPresentation, ProjectedRow, RowProjection, WrapCache};
+use crate::fold_animation::{FoldAnimation, FoldVisual};
 use crate::source_debug::{SourceDebugAction, SourceDebugPresentation};
 use crate::source_git::{ConflictChoice, SourceGitAction, SourceGitPresentation};
 use crate::{
@@ -151,7 +152,11 @@ pub struct EditorFrame {
     pub(crate) projection: RowProjection,
     /// Cheap rope snapshot of the document for which this layout was built.
     projected_document: Option<EditorState>,
-    projection_key: Option<(u64, u64, Option<u64>)>,
+    projection_key: Option<(u64, u64, Option<u64>, u64, u64)>,
+    fold_animation: FoldAnimation,
+    fold_visuals: Vec<FoldVisual>,
+    fold_visual_generation: u64,
+    fold_animation_source: Option<(u64, u64, String, String)>,
     projection_git: Option<SourceGitPresentation>,
     wrap_key: Option<(bool, u32, usize, u32)>,
     wrap_cache: WrapCache,
@@ -230,6 +235,10 @@ impl EditorFrame {
             projection: RowProjection::default(),
             projected_document: None,
             projection_key: None,
+            fold_animation: FoldAnimation::default(),
+            fold_visuals: Vec::new(),
+            fold_visual_generation: 0,
+            fold_animation_source: None,
             projection_git: None,
             wrap_key: None,
             wrap_cache: WrapCache::default(),
@@ -353,6 +362,9 @@ impl EditorFrame {
         self.source_actions.clear();
         self.diff_actions.clear();
         self.git_actions.clear();
+        editor.refresh_folding();
+        self.reveal_fold_targets(editor);
+        self.sync_fold_animation(ui, editor);
         self.refresh_projection(editor);
         let primary = ui.io().key_ctrl() || ui.io().key_super();
         if let Some(keep) = self.exclusive_overlay.get() {
@@ -393,12 +405,14 @@ impl EditorFrame {
         let find = self
             .finder
             .draw_with_policy(ui, editor, &overlay_style, self.read_only);
+        self.reveal_fold_targets(editor);
+        self.sync_fold_animation(ui, editor);
         if self.projection_revision()
             != Some((editor.document_generation(), editor.ops.generation()))
         {
             self.source_git = None;
-            self.refresh_projection(editor);
         }
+        self.refresh_projection(editor);
         input.suppress_next_enter |= jump.suppress_next_enter || find.suppress_next_enter;
         if jump.clear_input_keys || find.clear_input_keys {
             ui.with_bound_context(|| unsafe {
@@ -423,12 +437,12 @@ impl EditorFrame {
         self.layout.size = ui.content_region_avail();
         let previous_line_height = self.layout.line_height;
         self.layout.line_height = ui.text_line_height();
-        self.layout.total_height = self.projection.len() as f32 * self.layout.line_height;
+        self.layout.total_height = self.projection.total_rows() * self.layout.line_height;
         self.layout.editor_top_margin = fs * 0.1;
         self.layout.text_left_margin = fs * 0.35;
         self.layout.rainbow_mode = self.rainbow_mode;
         self.layout.minimap_width = if self.minimap_enabled
-            && !self.projection.is_projected()
+            && (!self.projection.is_projected() || self.projection.has_folds())
             && self.layout.size[0] >= fs * MIN_PANE_FONT_MUL
         {
             fs * WIDTH_FONT_MUL
@@ -446,10 +460,15 @@ impl EditorFrame {
         ];
         editor.view_mut().cursor_blink_time += ui.io().delta_time();
         let debug_column_width = GutterView::debug_column_width(ui, self.source_debug.is_some());
+        let folding_enabled = self.folding_enabled();
+        input.folding_enabled = folding_enabled;
+        let fold_column_width =
+            GutterView::fold_column_width(ui, folding_enabled && editor.folding.supported());
         let gutter_width = GutterView::width(ui, &editor.state)
             * if self.diff.is_some() { 2.0 } else { 1.0 }
             + GutterView::diagnostic_column_width(ui, editor)
-            + debug_column_width;
+            + debug_column_width
+            + fold_column_width;
         let mut gutter_pos = ui.cursor_screen_pos();
         let mut gutter_draw = std::ptr::null_mut();
         let mut gutter_hovered = false;
@@ -466,6 +485,32 @@ impl EditorFrame {
             });
         drop(_gutter_padding);
         drop(_gutter_border);
+        if fold_column_width > 0.0 && gutter_hovered && !overlay_active {
+            let mouse = ui.io().mouse_pos();
+            let top = gutter_pos[1] + self.layout.editor_top_margin;
+            if mouse[0] >= gutter_pos[0] + gutter_width - fold_column_width && mouse[1] >= top {
+                let y = (mouse[1] - top + editor.view.scroll_position[1]) / self.layout.line_height;
+                let visual = self.projection.visual_at_y(y);
+                if y < self.projection.total_rows()
+                    && let Some(row) = self.projection.interactive_document_row(visual)
+                    && visual == self.projection.visual_row(row)
+                    && editor
+                        .view
+                        .folds
+                        .ranges()
+                        .iter()
+                        .any(|range| range.start_line == row)
+                {
+                    ui.set_mouse_cursor(Some(dear_imgui_rs::MouseCursor::Hand));
+                    if ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left) {
+                        editor.commands().toggle_fold(row);
+                        editor.view_mut().request_focus = true;
+                        self.sync_fold_animation(ui, editor);
+                        self.refresh_projection(editor);
+                    }
+                }
+            }
+        }
         ui.same_line_with_spacing(0.0, 0.0);
         // Always reserve the vertical scrollbar width, so adding it cannot
         // change the wrap width and make layout oscillate between frames.
@@ -477,7 +522,7 @@ impl EditorFrame {
             - 2.0)
             .max(1.0);
         let reflow_scroll = self.refresh_wrap(ui, editor, wrap_width, previous_line_height);
-        self.layout.total_height = self.projection.len() as f32 * self.layout.line_height;
+        self.layout.total_height = self.projection.total_rows() * self.layout.line_height;
         let mut content_width = if self.soft_wrap {
             self.dirty_rows.borrow_mut().clear();
             self.width_full = true;
@@ -576,14 +621,19 @@ impl EditorFrame {
                 if editor.ops.generation() != before {
                     // Conflict controls were captured for the old document.
                     self.source_git = None;
-                    self.refresh_projection(editor);
+                }
+                self.reveal_fold_targets(editor);
+                self.sync_fold_animation(ui, editor);
+                let previous_projection = self.projection_key;
+                self.refresh_projection(editor);
+                if previous_projection != self.projection_key {
                     if let Some(y) =
                         self.refresh_wrap(ui, editor, wrap_width, self.layout.line_height)
                     {
                         ui.set_scroll_y(y);
                     }
                 }
-                self.layout.total_height = self.projection.len() as f32 * self.layout.line_height;
+                self.layout.total_height = self.projection.total_rows() * self.layout.line_height;
                 let (state, view) = editor.state_and_view();
                 self.minimap.interact_projected(
                     ui,
@@ -604,11 +654,10 @@ impl EditorFrame {
                         )
                         .floor(),
                     (self.layout.text_pos[1]
-                        + self
-                            .projection
-                            .visual_position(editor.view.row, editor.view.column)
-                            as f32
-                            * self.layout.line_height)
+                        + self.projection.row_top(
+                            self.projection
+                                .visual_position(editor.view.row, editor.view.column),
+                        ) * self.layout.line_height)
                         .floor(),
                 ];
                 self.update_hover_trigger(ui, editor, gutter_pos, gutter_width);
@@ -669,11 +718,12 @@ impl EditorFrame {
                 && mouse[0] < gutter_pos[0] + debug_column_width
                 && mouse[1] >= top
                 && mouse[1] < gutter_pos[1] + self.layout.size[1];
-            let visual = ((mouse[1] - top + editor.view.scroll_position[1])
-                / self.layout.line_height.max(1.0))
-            .floor() as i32;
-            inside
-                .then(|| self.projection.document_row(visual.max(0) as usize))
+            let visual = self.projection.visual_at_y(
+                (mouse[1] - top + editor.view.scroll_position[1])
+                    / self.layout.line_height.max(1.0),
+            );
+            (inside && mouse[1] - top + editor.view.scroll_position[1] < self.layout.total_height)
+                .then(|| self.projection.interactive_document_row(visual))
                 .flatten()
         } else {
             None
@@ -698,11 +748,23 @@ impl EditorFrame {
                         editor,
                         &self.layout,
                         gutter_pos,
-                        gutter_width,
+                        gutter_width - fold_column_width,
                         self.source_debug.as_ref(),
                         Some(&self.projection),
                         self.diff.is_some(),
                     );
+                    if fold_column_width > 0.0 {
+                        GutterView::draw_folds(
+                            ui,
+                            &draw,
+                            editor,
+                            &self.layout,
+                            gutter_pos,
+                            gutter_width,
+                            fold_column_width,
+                            &self.projection,
+                        );
+                    }
                     if let Some(row) = breakpoint_row
                         && self.source_debug.as_ref().is_some_and(|debug| {
                             !debug
@@ -761,15 +823,98 @@ impl EditorFrame {
     pub(crate) fn projection_revision(&self) -> Option<(u64, u64)> {
         self.projection_key.map(|key| (key.0, key.1))
     }
+    pub(crate) fn folding_enabled(&self) -> bool {
+        self.diff.is_none()
+            && self
+                .source_git
+                .as_ref()
+                .is_none_or(|git| git.conflicts.is_empty())
+    }
+    fn reveal_fold_targets(&self, editor: &mut ViewContext<'_>) {
+        if !self.folding_enabled() {
+            return;
+        }
+        let view = editor.view_mut();
+        let targets: Vec<_> = view
+            .selections
+            .iter()
+            .map(|selection| selection.head_row)
+            .chain(view.pending_cursor_center.map(|position| position.0))
+            .chain(
+                self.source_debug
+                    .as_ref()
+                    .and_then(|debug| debug.execution_row),
+            )
+            .collect();
+        for row in targets {
+            view.folds.reveal(row);
+        }
+    }
+    fn sync_fold_animation(&mut self, ui: &Ui, editor: &Editor) {
+        let source_changed = self.fold_animation_source.as_ref().is_none_or(|source| {
+            source.0 != editor.document_generation()
+                || source.1 != editor.ops.generation()
+                || source.2 != editor.state.path
+                || source.3 != editor.state.language_id
+        });
+        let caret_in_transition = self.fold_visuals.iter().any(|visual| {
+            visual.openness < 1.0
+                && editor.view.selections.iter().any(|selection| {
+                    visual.range.start_line < selection.head_row
+                        && selection.head_row <= visual.range.end_line
+                })
+        });
+        let collapsed = if self.folding_enabled() {
+            editor.view.folds.collapsed_ranges()
+        } else {
+            &[]
+        };
+        if source_changed
+            || !self.navigation_animations
+            || !self.folding_enabled()
+            || caret_in_transition
+        {
+            self.fold_animation.snap(collapsed);
+        } else {
+            self.fold_animation.retarget(collapsed, ui.time(), true);
+        }
+        if source_changed {
+            self.fold_animation_source = Some((
+                editor.document_generation(),
+                editor.ops.generation(),
+                editor.state.path.clone(),
+                editor.state.language_id.clone(),
+            ));
+        }
+        let visuals = self.fold_animation.sample(ui.time());
+        if self.fold_visuals != visuals {
+            self.fold_visuals = visuals;
+            self.fold_visual_generation += 1;
+        }
+    }
     fn refresh_projection(&mut self, editor: &Editor) {
         let key = (
             editor.document_generation(),
             editor.ops.generation(),
             self.diff.as_ref().map(|diff| diff.comparison),
+            if self.folding_enabled() {
+                editor.view.folds.generation()
+            } else {
+                0
+            },
+            self.fold_visual_generation,
         );
         if self.projection_key != Some(key) || self.projection_git != self.source_git {
             let same_document = self.projection_key.is_some_and(|old| old.0 == key.0);
-            if same_document && self.projection.is_wrapped() && self.reflow_anchor.is_none() {
+            let fold_layout_changed = self
+                .projection_key
+                .is_some_and(|old| old.3 != key.3 || old.4 != key.4);
+            if same_document
+                && (self.projection.is_wrapped()
+                    || self.projection.has_folds()
+                    || fold_layout_changed)
+                && self.reflow_anchor.is_none()
+            {
                 self.reflow_anchor = self.viewport_anchor(editor, self.layout.line_height);
             }
             if !same_document {
@@ -792,6 +937,10 @@ impl EditorFrame {
             }
             self.projection =
                 RowProjection::build(&editor.state, self.diff.as_ref(), self.source_git.as_ref());
+            if self.folding_enabled() {
+                self.projection
+                    .fold_animated(editor.view.folds.collapsed_ranges(), &self.fold_visuals);
+            }
             self.projected_document = Some(editor.state.clone());
             self.projection_key = Some(key);
             self.projection_git = self.source_git.clone();
@@ -804,7 +953,7 @@ impl EditorFrame {
             return None;
         }
         let top = editor.view.scroll_position[1].max(0.0) / height;
-        let visual = (top.floor() as usize).min(self.projection.len().saturating_sub(1));
+        let visual = self.projection.visual_at_y(top);
         let column = self
             .projection
             .segment(visual)
@@ -828,7 +977,7 @@ impl EditorFrame {
         };
         Some(ViewportAnchor {
             location,
-            fraction: top.fract(),
+            fraction: top - self.projection.row_top(visual),
         })
     }
     fn refresh_wrap(
@@ -856,14 +1005,19 @@ impl EditorFrame {
             self.wrap_key
                 .and_then(|_| self.viewport_anchor(editor, previous_height))
         });
-        if self.projection.is_wrapped() {
+        if self.projection.is_wrapped() || self.projection.is_cropped() {
             self.projection =
                 RowProjection::build(&editor.state, self.diff.as_ref(), self.source_git.as_ref());
+            if self.folding_enabled() {
+                self.projection
+                    .fold_animated(editor.view.folds.collapsed_ranges(), &self.fold_visuals);
+            }
         }
         if self.soft_wrap {
             self.projection
                 .wrap_cached(ui, &editor.state, width, &mut self.wrap_cache);
         }
+        self.projection.crop_folds(&self.fold_visuals);
         self.wrap_key = Some(key);
         self.smooth_scroll = None;
         anchor.map(|anchor| {
@@ -878,14 +1032,18 @@ impl EditorFrame {
                     .take_while(|(visual, _)| self.projection.segment(*visual).is_none_or(|range| range.start <= column.max(0) as usize))
                     .last().map_or(0, |(visual, _)| visual),
             };
-            (visual as f32 + anchor.fraction) * self.layout.line_height
+            (self.projection.row_top(visual) + anchor.fraction.min(self.projection.row_height(visual))) * self.layout.line_height
         })
     }
     fn draw_controls(&mut self, ui: &Ui, enabled: bool) {
         let cursor = ui.cursor_screen_pos();
-        let first = (ui.scroll_y() / self.layout.line_height).floor().max(0.0) as usize;
-        let end =
-            ((ui.scroll_y() + ui.window_height()) / self.layout.line_height).ceil() as usize + 1;
+        let first = self
+            .projection
+            .visual_at_y(ui.scroll_y() / self.layout.line_height);
+        let end = self
+            .projection
+            .visual_at_y((ui.scroll_y() + ui.window_height()) / self.layout.line_height)
+            + 1;
         for (visual, row) in self
             .projection
             .rows
@@ -894,7 +1052,8 @@ impl EditorFrame {
             .take(end)
             .skip(first)
         {
-            let y = self.layout.text_pos[1] + visual as f32 * self.layout.line_height;
+            let y =
+                self.layout.text_pos[1] + self.projection.row_top(visual) * self.layout.line_height;
             match row {
                 ProjectedRow::Hunk {
                     old_range,
@@ -973,6 +1132,7 @@ impl EditorFrame {
         gutter_width: f32,
     ) {
         self.frame_dismissed = editor.view.block_input
+            || self.fold_animation.is_active(ui.time())
             || ui.is_mouse_down(dear_imgui_rs::MouseButton::Left)
             || ui.with_bound_context(|| unsafe {
                 (*dear_imgui_rs::sys::igGetIO_Nil())
@@ -1021,9 +1181,13 @@ impl EditorFrame {
             && mouse[1] >= gutter_y
             && mouse[1] < bottom
         {
-            let visual = ((mouse[1] - gutter_y + editor.view.scroll_position[1])
-                / layout.line_height) as i32;
-            return if let Some(row) = self.projection.document_row(visual.max(0) as usize) {
+            let visual = self.projection.visual_at_y(
+                (mouse[1] - gutter_y + editor.view.scroll_position[1]) / layout.line_height,
+            );
+            if mouse[1] - gutter_y + editor.view.scroll_position[1] >= layout.total_height {
+                return Target::default();
+            }
+            return if let Some(row) = self.projection.interactive_document_row(visual) {
                 Target {
                     zone: Zone::Gutter,
                     row,
@@ -1054,16 +1218,18 @@ impl EditorFrame {
         {
             return Target::default();
         }
-        let visual = ((mouse[1] - layout.text_pos[1]) / layout.line_height) as i32;
-        let Some(row) = self.projection.document_row(visual.max(0) as usize) else {
+        let visual = self
+            .projection
+            .visual_at_y((mouse[1] - layout.text_pos[1]) / layout.line_height);
+        if mouse[1] - layout.text_pos[1] >= layout.total_height {
+            return Target::default();
+        }
+        let Some(row) = self.projection.interactive_document_row(visual) else {
             return Target::default();
         };
-        let column = self.projection.hit_column(
-            ui,
-            &editor.state,
-            visual.max(0) as usize,
-            mouse[0] - layout.text_pos[0],
-        );
+        let column =
+            self.projection
+                .hit_column(ui, &editor.state, visual, mouse[0] - layout.text_pos[0]);
         Target {
             zone: Zone::Text,
             row,
@@ -1162,7 +1328,9 @@ impl EditorFrame {
             view.ensure_cursor_visible.vertical = false;
         } else if view.center_cursor_vertical {
             let mut target = reveal_horizontal(next);
-            target[1] = self.projection.visual_position(view.row, view.column) as f32
+            target[1] = self
+                .projection
+                .row_top(self.projection.visual_position(view.row, view.column))
                 * self.layout.line_height
                 - (ui.window_height() - self.layout.line_height) * 0.5;
             target = clamp(target);
@@ -1191,7 +1359,9 @@ impl EditorFrame {
                 target = reveal_horizontal(target);
             }
             if view.ensure_cursor_visible.vertical {
-                let y = self.projection.visual_position(view.row, view.column) as f32
+                let y = self
+                    .projection
+                    .row_top(self.projection.visual_position(view.row, view.column))
                     * self.layout.line_height;
                 if y < target[1] + self.layout.line_height {
                     target[1] = y - self.layout.line_height;

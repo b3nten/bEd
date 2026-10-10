@@ -41,6 +41,9 @@ impl CaretView {
             )
         };
         for (index, sel) in view.selections.iter().enumerate() {
+            if projection.is_some_and(|p| !p.is_document_visible(sel.head_row)) {
+                continue;
+            }
             let x = projection
                 .map_or_else(
                     || {
@@ -57,15 +60,24 @@ impl CaretView {
             let visual = projection.map_or(sel.head_row as usize, |p| {
                 p.visual_position(sel.head_row, sel.head_column)
             });
-            let y = (layout.text_pos[1] + visual as f32 * layout.line_height).floor();
+            let top = projection.map_or(visual as f32, |p| p.row_top(visual));
+            let height = projection.map_or(1.0, |p| p.row_height(visual)) * layout.line_height;
+            if height <= 0.0 {
+                continue;
+            }
+            let y = (layout.text_pos[1] + top * layout.line_height).floor();
             let color = if index == view.primary_index {
                 primary_color
             } else {
                 secondary_color
             };
-            draw.add_rect([x - 1.0, y], [x + 1.0, y + layout.line_height - 1.0], color)
-                .filled(true)
-                .build();
+            draw.add_rect(
+                [x - 1.0, y],
+                [x + 1.0, y + height.min(layout.line_height - 1.0)],
+                color,
+            )
+            .filled(true)
+            .build();
         }
     }
 }

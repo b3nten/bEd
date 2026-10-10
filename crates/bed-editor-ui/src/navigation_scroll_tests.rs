@@ -649,6 +649,221 @@ fn ordinary_caret_movement_cancels_active_navigation_and_reveals_immediately() {
     fixture.assert_stays_at(applied.position);
 }
 
+fn folding_fixture(soft_wrap: bool) -> ScrollFixture {
+    let mut fixture = ScrollFixture::new(12, 8);
+    fixture.editor.set_content(b"fn first() {\n    let value = 1;\n    if value > 0 {\n        println!(\"value\");\n    }\n}\nfn second() {\n    println!(\"second\");\n}\n");
+    fixture.editor.state.language_id = "rust".into();
+    fixture.frame.soft_wrap = soft_wrap;
+    fixture.frame.navigation_animations = false;
+    fixture
+        .editor
+        .commands()
+        .set_cursor(0, 0, false, CursorReveal::Ensure);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while fixture.editor.view.folds.ranges().is_empty() {
+        fixture.render(1.0 / 60.0);
+        assert!(std::time::Instant::now() < deadline, "syntax folds arrive");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    fixture
+}
+
+#[test]
+fn folded_navigation_skips_hidden_rows_and_location_jumps_reveal_them() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    for soft_wrap in [false, true] {
+        let mut fixture = folding_fixture(soft_wrap);
+        let original = fixture.editor.state.join();
+        let first_fold = fixture.editor.view.folds.ranges()[0];
+        assert_eq!(first_fold.start_line, 0);
+        fixture.editor.commands().toggle_fold(0);
+        fixture.render(1.0 / 60.0);
+        assert!(fixture.frame.projection.has_folds());
+        assert!(!fixture.frame.projection.is_document_visible(1));
+        fixture.context.io_mut().add_key_event(Key::DownArrow, true);
+        fixture.render(1.0 / 60.0);
+        fixture
+            .context
+            .io_mut()
+            .add_key_event(Key::DownArrow, false);
+        fixture.render(1.0 / 60.0);
+        assert_eq!(fixture.editor.view.row, first_fold.end_line + 1);
+        fixture
+            .editor
+            .commands()
+            .set_cursor(3, 4, false, CursorReveal::Center);
+        fixture.render(1.0 / 60.0);
+        assert!(!fixture.frame.projection.has_folds());
+        assert_eq!(fixture.editor.view.row, 3);
+        assert_eq!(fixture.editor.state.join(), original);
+    }
+}
+
+#[test]
+fn gutter_and_keyboard_controls_toggle_folds_without_editing_text() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = folding_fixture(false);
+    let original = fixture.editor.state.join();
+    let layout = fixture.frame.layout;
+    let column_width = layout.line_height.max(14.0);
+    let point = [
+        layout.text_pos[0] - layout.text_left_margin - column_width * 0.5,
+        layout.text_pos[1] + layout.line_height * 0.5,
+    ];
+    fixture.context.io_mut().add_mouse_pos_event(point);
+    fixture
+        .context
+        .io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
+    fixture.render(1.0 / 60.0);
+    fixture
+        .context
+        .io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
+    fixture.render(1.0 / 60.0);
+    assert!(fixture.editor.view.folds.is_hidden(1));
+    fixture.context.io_mut().add_key_event(Key::ModCtrl, true);
+    fixture.context.io_mut().add_key_event(Key::ModAlt, true);
+    fixture
+        .context
+        .io_mut()
+        .add_key_event(Key::RightBracket, true);
+    fixture.render(1.0 / 60.0);
+    fixture
+        .context
+        .io_mut()
+        .add_key_event(Key::RightBracket, false);
+    fixture.context.io_mut().add_key_event(Key::ModCtrl, false);
+    fixture.context.io_mut().add_key_event(Key::ModAlt, false);
+    fixture.render(1.0 / 60.0);
+    assert!(fixture.editor.view.folds.collapsed_ranges().is_empty());
+    assert_eq!(fixture.editor.state.join(), original);
+}
+
+#[test]
+fn inline_diff_temporarily_suspends_folding_without_losing_collapsed_choices() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = folding_fixture(true);
+    fixture.editor.commands().toggle_fold(0);
+    fixture.render(1.0 / 60.0);
+    assert!(fixture.frame.projection.has_folds());
+    fixture.frame.diff = Some(DiffPresentation {
+        baseline: fixture.editor.state.join().into(),
+        comparison: 1,
+        actions: Vec::new(),
+        actions_enabled: false,
+        saved: None,
+    });
+    fixture.render(1.0 / 60.0);
+    assert!(!fixture.frame.projection.has_folds());
+    assert!(!fixture.input.folding_enabled);
+    assert!(fixture.editor.view.folds.is_hidden(1));
+    fixture.frame.diff = None;
+    fixture.render(1.0 / 60.0);
+    assert!(fixture.frame.projection.has_folds());
+    assert!(fixture.input.folding_enabled);
+}
+
+#[test]
+fn fold_gutter_keeps_text_position_stable_while_syntax_is_reparsing() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = folding_fixture(false);
+    let text_x = fixture.frame.layout.text_pos[0];
+    fixture.editor.commands().select_all();
+    fixture
+        .editor
+        .commands()
+        .type_text(b"fn updated() {\n    work();\n}\n\n\n\n\n\n\n");
+    assert!(fixture.editor.view.folds.ranges().is_empty());
+    fixture.render(1.0 / 60.0);
+    assert_eq!(fixture.frame.layout.text_pos[0], text_x);
+}
+
+#[test]
+fn folding_animates_height_in_both_directions_and_reverses_without_a_jump() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = folding_fixture(false);
+    fixture.frame.navigation_animations = true;
+    fixture.render(1.0 / 60.0);
+    let expanded = fixture.frame.projection.total_rows();
+    fixture.editor.commands().toggle_fold(0);
+    fixture.render(0.01);
+    assert_eq!(fixture.frame.projection.total_rows(), expanded);
+    fixture.render(0.06);
+    let closing = fixture.frame.projection.total_rows();
+    assert!(closing < expanded);
+    let body = fixture.frame.projection.visual_row(1);
+    assert_eq!(
+        fixture.frame.projection.interactive_document_row(body),
+        None
+    );
+    fixture.editor.commands().toggle_fold(0);
+    fixture.render(0.001);
+    let reversed = fixture.frame.projection.total_rows();
+    assert!(
+        (reversed - closing).abs() < 0.1,
+        "reversal starts at the current height"
+    );
+    fixture.render(0.03);
+    assert!(fixture.frame.projection.total_rows() > reversed);
+    fixture.render(0.2);
+    assert_eq!(fixture.frame.projection.total_rows(), expanded);
+    fixture.editor.commands().toggle_fold(0);
+    fixture.render(0.01);
+    fixture.render(0.2);
+    let closed = fixture.frame.projection.total_rows();
+    fixture.editor.commands().toggle_fold(0);
+    fixture.render(0.01);
+    assert_eq!(fixture.frame.projection.total_rows(), closed);
+    fixture.render(0.08);
+    assert!(fixture.frame.projection.total_rows() > closed);
+    assert!(fixture.frame.projection.total_rows() < expanded);
+    fixture.render(0.2);
+    assert_eq!(fixture.frame.projection.total_rows(), expanded);
+}
+
+#[test]
+fn folding_animation_survives_wrap_changes_and_navigation_reveals_hidden_targets() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = folding_fixture(false);
+    fixture.frame.navigation_animations = true;
+    fixture.editor.commands().toggle_fold(0);
+    fixture.render(0.01);
+    fixture.render(0.04);
+    assert!(fixture.frame.projection.is_cropped());
+    fixture.frame.soft_wrap = true;
+    fixture.render(0.02);
+    assert!(fixture.frame.projection.is_wrapped());
+    assert!(fixture.frame.projection.is_cropped());
+    fixture
+        .editor
+        .commands()
+        .set_cursor(3, 4, false, CursorReveal::Center);
+    fixture.render(0.01);
+    assert!(!fixture.frame.projection.is_cropped());
+    assert!(fixture.frame.projection.is_document_visible(3));
+    assert_eq!(fixture.editor.view.row, 3);
+}
+
+#[test]
+fn changing_language_cancels_fold_motion_and_removes_stale_geometry() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = folding_fixture(false);
+    fixture.frame.navigation_animations = true;
+    let expanded = fixture.frame.projection.total_rows();
+    fixture.editor.commands().toggle_fold(0);
+    fixture.render(0.01);
+    fixture.render(0.04);
+    assert!(fixture.frame.projection.is_cropped());
+    fixture.editor.state.language_id = "plaintext".into();
+    fixture.render(0.01);
+    assert!(fixture.editor.view.folds.ranges().is_empty());
+    assert!(!fixture.frame.projection.has_folds());
+    assert_eq!(fixture.frame.projection.total_rows(), expanded);
+    fixture.render(0.2);
+    assert_eq!(fixture.frame.projection.total_rows(), expanded);
+}
+
 #[test]
 fn centered_navigation_clamps_at_document_end_and_short_documents_stay_put() {
     let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();

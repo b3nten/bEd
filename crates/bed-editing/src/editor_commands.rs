@@ -253,6 +253,7 @@ impl<'a> EditorCommands<'a> {
     }
     fn emit_did_edit(&mut self, first_row: i32, last_row: i32) {
         let changes = self.ops.take_document_changes();
+        self.view.folds.apply_changes(&changes);
         self.events.emit_did_edit_document(
             &DidEdit {
                 version: self.state.version,
@@ -399,10 +400,16 @@ impl<'a> EditorCommands<'a> {
         self.request_ensure_visible();
     }
     pub fn request_ensure_visible(&mut self) {
+        for selection in &self.view.selections {
+            self.view.folds.reveal(selection.head_row);
+        }
         self.view.ensure_cursor_visible.vertical = true;
         self.view.ensure_cursor_visible.horizontal = true;
     }
     fn apply_reveal(&mut self, reveal: CursorReveal) {
+        for selection in &self.view.selections {
+            self.view.folds.reveal(selection.head_row);
+        }
         if reveal == CursorReveal::Center {
             self.view.center_cursor_vertical = true;
             self.view.ensure_cursor_visible.horizontal = true;
@@ -574,6 +581,50 @@ impl<'a> EditorCommands<'a> {
     }
     pub fn go_to_line(&mut self, line: i32) {
         self.set_cursor(line, 0, false, CursorReveal::Center);
+    }
+    pub fn toggle_fold(&mut self, row: i32) -> bool {
+        if !self.view.folds.toggle(row) {
+            return false;
+        }
+        if self.move_hidden_endpoints_to_fold_headers() {
+            self.request_ensure_visible();
+        }
+        true
+    }
+    pub fn fold_all(&mut self) {
+        self.view.folds.fold_all();
+        if self.move_hidden_endpoints_to_fold_headers() {
+            self.request_ensure_visible();
+        }
+    }
+    pub fn unfold_all(&mut self) {
+        self.view.folds.unfold_all();
+    }
+    /// Only moved carets require scrolling; an adjusted anchor may be offscreen.
+    fn move_hidden_endpoints_to_fold_headers(&mut self) -> bool {
+        let mut moved_head = false;
+        for selection in &mut self.view.selections {
+            let previous_head_row = selection.head_row;
+            for (row, column) in [
+                (&mut selection.head_row, &mut selection.head_column),
+                (&mut selection.anchor_row, &mut selection.anchor_column),
+            ] {
+                if let Some(range) = self
+                    .view
+                    .folds
+                    .collapsed_ranges()
+                    .iter()
+                    .find(|range| range.start_line < *row && *row <= range.end_line)
+                {
+                    *row = range.start_line;
+                    *column = self.state.line_length(*row);
+                }
+            }
+            moved_head |= selection.head_row != previous_head_row;
+            EditorViewState::calculate_visual_column(self.state, selection);
+        }
+        self.view.clamp_all(self.state);
+        moved_head
     }
     pub fn select_all(&mut self) {
         self.view.select_all(self.state);
@@ -1223,6 +1274,7 @@ fn shift_pos_after_delete(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::folding::FoldRange;
     use std::{cell::RefCell, rc::Rc};
 
     struct Fixture {
@@ -1281,6 +1333,58 @@ mod tests {
         fn content(&self) -> Vec<u8> {
             self.state.join()
         }
+    }
+
+    #[test]
+    fn folding_moves_hidden_selection_endpoints_and_navigation_reveals_targets() {
+        let mut f = Fixture::new(b"fn outer() {\n  a\n  b\n}\nafter");
+        f.selection(1, 1, 2, 2);
+        f.view.folds.set_ranges(vec![FoldRange {
+            start_line: 0,
+            end_line: 3,
+        }]);
+        assert!(f.commands().toggle_fold(2));
+        assert!(f.view.folds.is_hidden(2));
+        assert_eq!(f.view.get_ordered(), (0, 12, 0, 12));
+        f.commands().set_cursor(2, 1, false, CursorReveal::Center);
+        assert!(!f.view.folds.is_hidden(2));
+        assert_eq!((f.view.row, f.view.column), (2, 1));
+        f.commands().fold_all();
+        assert_eq!((f.view.row, f.view.column), (0, 12));
+        f.commands().set_selection(0, 0, 4, 5, CursorReveal::Ensure);
+        assert!(f.view.folds.is_hidden(2));
+        assert_eq!(f.commands().copy(), b"fn outer() {\n  a\n  b\n}\nafter");
+        f.commands().unfold_all();
+        assert!(!f.view.folds.is_hidden(2));
+    }
+
+    #[test]
+    fn folding_offscreen_blocks_does_not_request_scrolling_to_an_unaffected_caret() {
+        let mut f = Fixture::new(b"before\nmore\nfn outer() {\n  a\n}\nafter");
+        f.view.folds.set_ranges(vec![FoldRange {
+            start_line: 2,
+            end_line: 4,
+        }]);
+        f.view.scroll_position = [0.0, 100.0];
+        assert!(f.commands().toggle_fold(2));
+        assert!(f.view.folds.is_hidden(3));
+        assert_eq!(f.view.ensure_cursor_visible, Default::default());
+        f.commands().unfold_all();
+        assert!(!f.view.folds.is_hidden(3));
+        assert_eq!(f.view.ensure_cursor_visible, Default::default());
+        f.commands().fold_all();
+        assert!(f.view.folds.is_hidden(3));
+        assert_eq!(f.view.ensure_cursor_visible, Default::default());
+        assert_eq!(f.view.scroll_position, [0.0, 100.0]);
+
+        // Folding may adjust an anchor while the active caret stays above it.
+        f.commands().unfold_all();
+        f.selection(3, 1, 0, 0);
+        f.view.ensure_cursor_visible = Default::default();
+        f.commands().toggle_fold(2);
+        assert_eq!(f.view.primary().anchor_row, 2);
+        assert_eq!(f.view.primary().head_row, 0);
+        assert_eq!(f.view.ensure_cursor_visible, Default::default());
     }
 
     // Cases translated from tests/editor/editor_commands_test.cpp.

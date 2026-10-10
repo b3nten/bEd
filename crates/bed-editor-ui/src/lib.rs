@@ -6,6 +6,7 @@ pub mod editor_frame;
 pub mod editor_input;
 pub mod editor_view;
 pub mod extensions;
+mod fold_animation;
 pub mod hex_editor;
 pub mod source_debug;
 pub mod source_git;

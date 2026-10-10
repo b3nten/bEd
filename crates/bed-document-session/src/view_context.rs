@@ -32,6 +32,24 @@ impl<'a> ViewContext<'a> {
     pub fn state_and_view(&mut self) -> (&EditorState, &mut EditorViewState) {
         (&self.editor.state, &mut self.editor.view)
     }
+    /// Poll syntax folds for this exact document snapshot; stale results never
+    /// replace ranges already transformed by edit handling.
+    pub fn refresh_folding(&mut self) {
+        let generation = self.editor.document_generation();
+        let revision = self.editor.ops.generation();
+        self.editor.view.folds.set_source(
+            generation,
+            &self.editor.state.path,
+            &self.editor.state.language_id,
+        );
+        if let Some(ranges) = self
+            .editor
+            .folding
+            .update(&self.editor.state, generation, revision)
+        {
+            self.editor.view.folds.set_ranges(ranges.to_vec());
+        }
+    }
     pub fn events(&mut self) -> &mut EditorEvents {
         &mut self.editor.events
     }

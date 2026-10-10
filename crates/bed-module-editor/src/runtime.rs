@@ -462,6 +462,25 @@ impl EditorRuntime {
             if ui.menu_item_enabled_selected_no_shortcut("Word Wrap", soft_wrap, true) {
                 view.set_soft_wrap(!soft_wrap);
             }
+            if view.folding_enabled() {
+                let folds = session.view_snapshot(view.id())?;
+                let available = !folds.folds.ranges().is_empty();
+                if ui.menu_item_enabled_selected_no_shortcut("Toggle Fold", false, available) {
+                    session.with_commands(view.id(), |commands| {
+                        commands.toggle_fold(folds.row);
+                    })?;
+                }
+                if ui.menu_item_enabled_selected_no_shortcut("Fold All", false, available) {
+                    session.with_commands(view.id(), |commands| commands.fold_all())?;
+                }
+                if ui.menu_item_enabled_selected_no_shortcut(
+                    "Unfold All",
+                    false,
+                    !folds.folds.collapsed_ranges().is_empty(),
+                ) {
+                    session.with_commands(view.id(), |commands| commands.unfold_all())?;
+                }
+            }
             if ui.menu_item_enabled_selected_no_shortcut("Reset Zoom", false, view.zoom() != 1.0) {
                 view.reset_zoom();
             }
