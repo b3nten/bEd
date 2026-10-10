@@ -1,0 +1,217 @@
+[package]
+name = "bed"
+default-run = "bed"
+version = "0.1.0"
+edition = "2024"
+description = "A desktop text editor with dockable tools, SSH projects and embeddable document views"
+publish = false
+license.workspace = true
+
+[workspace]
+members = [
+    "crates/bed-editing",
+    "crates/bed-files",
+    "crates/bed-highlight",
+    "crates/bed-lsp",
+    "crates/bed-debug",
+    "crates/bed-document-session",
+    "crates/bed-remote",
+    "crates/bed-headless",
+    "crates/bed-ui",
+    "crates/bed-editor-ui",
+    "crates/bed-terminal",
+    "crates/bed-settings",
+    "crates/bed-effects-config",
+    "crates/bed-effects",
+    "crates/bed-workbench-api",
+    "crates/bed-module-editor",
+    "crates/bed-module-debug",
+    "crates/bed-module-git",
+    "crates/bed-git",
+    "crates/bed-module-explorer",
+    "crates/bed-module-search",
+    "crates/bed-module-terminal",
+    "crates/bed-module-projects",
+    "crates/bed-module-color",
+    "crates/bed-scenes",
+    "crates/bed-module-settings",
+    "crates/bed-plugin",
+    "crates/bed-plugin-structure",
+    "crates/bed-plugin-image",
+    "crates/bed-plugin-gltf",
+    "crates/bed-plugin-font",
+    "crates/bed-plugin-audio",
+    "crates/bed-plugin-csv",
+    "crates/bed-plugin-markdown",
+    "crates/bed-plugin-json",
+    "crates/bed-plugin-sqlite",
+    "crates/bed-plugin-http",
+    "crates/bed-workbench",
+    "crates/bedterm",
+]
+default-members = [".", "crates/bedterm"]
+exclude = ["vendor/arboard", "vendor/dear-imgui-sys", "vendor/dear-imgui-winit", "vendor/dear-imgui-wgpu", "vendor/freetype-sys", "vendor/bevy_stl", "vendor/rio-vt"]
+resolver = "3"
+
+[workspace.package]
+license = "GPL-3.0-only"
+
+[workspace.dependencies]
+bed-module-color = { path = "crates/bed-module-color" }
+bed-scenes = { path = "crates/bed-scenes" }
+bed-git = { path = "crates/bed-git" }
+bed-module-git = { path = "crates/bed-module-git" }
+bed-effects-config = { path = "crates/bed-effects-config" }
+bed-workbench = { path = "crates/bed-workbench" }
+bed-editor-ui = { path = "crates/bed-editor-ui" }
+bed-settings = { path = "crates/bed-settings" }
+bed-module-explorer = { path = "crates/bed-module-explorer" }
+bed-module-search = { path = "crates/bed-module-search" }
+bed-module-terminal = { path = "crates/bed-module-terminal" }
+bed-module-projects = { path = "crates/bed-module-projects" }
+bed-module-settings = { path = "crates/bed-module-settings" }
+dear-imgui-rs = { version = "=0.18.0", features = ["build-from-source", "freetype"] }
+dear-imgui-sys = { version = "=0.18.0", features = ["bundled-freetype"] }
+dear-imgui-winit = { version = "=0.18.0", features = ["multi-viewport"] }
+dear-imgui-wgpu = { version = "=0.18.0", default-features = false, features = ["wgpu-29", "multi-viewport-winit"] }
+winit = "=0.30.13"
+wgpu = "=29.0.4"
+bevy_stl = { version = "=0.18.0", default-features = false }
+arboard = { version = "=3.6.1", default-features = false, features = ["wayland-data-control"] }
+rfd = "=0.17.2"
+serde_json = "1"
+pulldown-cmark = "=0.13.4"
+jsonc-parser = "=0.33.2"
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "http2", "system-proxy", "gzip", "brotli", "deflate"] }
+tokio = { version = "=1.53.2", features = ["rt", "sync", "time", "net", "macros"] }
+fontdb = { version = "=0.24.0", default-features = false, features = ["std", "fs", "fontconfig"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+harfrust = "=0.14.0"
+wuff = { version = "=0.2.9", default-features = false, features = ["brotli"] }
+flate2 = "=1.1.10"
+gltf = { version = "=1.4.1", default-features = false, features = ["utils", "names", "extensions", "KHR_materials_unlit", "KHR_texture_transform", "KHR_materials_emissive_strength"] }
+draco-core = { version = "=2.2.1", default-features = false, features = ["decoder", "edgebreaker_valence_decode", "legacy_bitstream_decode"] }
+glam = "=0.33.12"
+bytemuck = { version = "=1.25.2", features = ["derive"] }
+base64 = "=0.22.1"
+serde = "=1.0.229"
+tree-sitter = "=0.26.13"
+regex = "=1.12.3"
+glob = "=0.3.4"
+resvg = { version = "=0.48.1", default-features = false }
+git2 = { version = "=0.21.0", default-features = false, features = ["vendored-libgit2"] }
+rio-vt = { version = "=0.5.28", default-features = false, features = ["graphics"] }
+rio-graphics = "=0.5.28"
+swash = "=0.2.10"
+ttf-parser = "=0.25.1"
+polling = "=3.11.0"
+unicode-width = "=0.2.2"
+trash = "=5.2.9"
+rodio = { version = "=0.21.1", default-features = false, features = ["playback", "symphonia-all"] }
+object = { version = "=0.37.3", default-features = false, features = ["read", "std"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
+
+libc = "=0.2.190"
+muda = { version = "=0.21.0", default-features = false }
+objc2 = "=0.6.5"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSGeometry", "NSObject", "NSThread", "NSObjCRuntime"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "AppKitDefines", "NSButton", "NSButtonCell", "NSCell", "NSColor", "NSControl", "NSEvent", "NSFont", "NSFontDescriptor", "NSGraphics", "NSGraphicsContext", "NSImage", "NSLayoutAnchor", "NSLayoutConstraint", "NSResponder", "NSStackView", "NSText", "NSTextField", "NSTitlebarAccessoryViewController", "NSUserInterfaceLayout", "NSView", "NSViewController", "NSVisualEffectView", "NSWindow", "objc2-quartz-core", "objc2-core-graphics", "objc2-core-foundation"] }
+objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer"] }
+bed-workbench-api = { path = "crates/bed-workbench-api" }
+bed-module-editor = { path = "crates/bed-module-editor" }
+bed-module-debug = { path = "crates/bed-module-debug" }
+bed-editing = { path = "crates/bed-editing" }
+bed-files = { path = "crates/bed-files" }
+bed-highlight = { path = "crates/bed-highlight" }
+bed-lsp = { path = "crates/bed-lsp" }
+bed-document-session = { path = "crates/bed-document-session" }
+bed-ui = { path = "crates/bed-ui" }
+bed-terminal = { path = "crates/bed-terminal" }
+bed-debug = { path = "crates/bed-debug" }
+bed-effects = { path = "crates/bed-effects" }
+bed-remote = { path = "crates/bed-remote" }
+bed-plugin = { path = "crates/bed-plugin" }
+bed-plugin-structure = { path = "crates/bed-plugin-structure" }
+bed-plugin-image = { path = "crates/bed-plugin-image" }
+bed-plugin-gltf = { path = "crates/bed-plugin-gltf" }
+bed-plugin-font = { path = "crates/bed-plugin-font" }
+bed-plugin-audio = { path = "crates/bed-plugin-audio" }
+bed-plugin-csv = { path = "crates/bed-plugin-csv" }
+bed-plugin-markdown = { path = "crates/bed-plugin-markdown" }
+bed-plugin-json = { path = "crates/bed-plugin-json" }
+bed-plugin-sqlite = { path = "crates/bed-plugin-sqlite" }
+bed-plugin-http = { path = "crates/bed-plugin-http" }
+
+[dependencies]
+bed-module-color = { workspace = true }
+bed-scenes = { workspace = true }
+bedterm = { path = "crates/bedterm" }
+bed-module-git = { workspace = true }
+bed-workbench = { workspace = true }
+bed-editor-ui = { workspace = true }
+bed-terminal = { workspace = true }
+bed-settings = { workspace = true }
+bed-module-explorer = { workspace = true }
+bed-module-search = { workspace = true }
+bed-module-terminal = { workspace = true }
+bed-module-projects = { workspace = true }
+bed-module-settings = { workspace = true }
+bed-workbench-api = { workspace = true, features = ["gpu"] }
+bed-module-editor = { workspace = true }
+bed-module-debug = { workspace = true }
+bed-plugin-structure = { workspace = true }
+bed-plugin-image = { workspace = true }
+bed-plugin-gltf = { workspace = true }
+bed-plugin-font = { workspace = true }
+bed-plugin-audio = { workspace = true }
+bed-plugin-csv = { workspace = true }
+bed-plugin-markdown = { workspace = true }
+bed-plugin-json = { workspace = true }
+bed-plugin-sqlite = { workspace = true }
+bed-plugin-http = { workspace = true }
+bed-editing = { workspace = true }
+bed-ui = { workspace = true }
+bed-debug = { workspace = true }
+bed-effects = { workspace = true }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+dear-imgui-winit = { workspace = true }
+dear-imgui-wgpu = { workspace = true }
+winit = { workspace = true }
+wgpu = { workspace = true }
+arboard = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11-dl = "=2.21.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+image = { workspace = true }
+muda = { workspace = true }
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true, features = ["NSData"] }
+objc2-app-kit = { workspace = true }
+objc2-quartz-core = { workspace = true }
+
+[[test]]
+name = "lsp_transport"
+path = "tests/lsp_transport.rs"
+harness = false
+
+[patch.crates-io]
+rio-vt = { path = "vendor/rio-vt" }
+arboard = { path = "vendor/arboard" }
+dear-imgui-sys = { path = "vendor/dear-imgui-sys" }
+dear-imgui-winit = { path = "vendor/dear-imgui-winit" }
+dear-imgui-wgpu = { path = "vendor/dear-imgui-wgpu" }
+bevy_stl = { path = "vendor/bevy_stl" }
+
+[dev-dependencies]
+bed-remote = { workspace = true }
+bed-files = { workspace = true }
+bed-lsp = { workspace = true }
+bed-document-session = { workspace = true }
+bed-module-debug = { workspace = true, features = ["test-support"] }

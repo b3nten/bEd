@@ -1,0 +1,20 @@
+[package]
+name = "bed-document-session"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-files = { workspace = true }
+bed-highlight = { workspace = true }
+bed-lsp = { workspace = true }
+bed-remote = { path = "../bed-remote" }
+git2 = { workspace = true }
+serde_json = { workspace = true }
+
+[[test]]
+name = "remote_io"
+path = "tests/remote_io.rs"
+harness = false

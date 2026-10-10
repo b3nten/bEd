@@ -1,0 +1,46 @@
+{
+    "name": "Catppuccin Frapp\u00e9",
+    "appearance": "dark",
+    "ui": {
+        "background": "#303446",
+        "window_background": "#292c3c",
+        "surface": "#292c3c",
+        "foreground": "#c6d0f5",
+        "accent": "#8caaee",
+        "selection": "#51576d"
+    },
+    "syntax": {
+        "text": "#c6d0f5",
+        "comment": "#838ba7",
+        "keyword": "#ca9ee6",
+        "string": "#a6d189",
+        "number": "#ef9f76",
+        "function": "#8caaee",
+        "type": "#e5c890",
+        "variable": "#c6d0f5",
+        "parameter": "#ea999c",
+        "property": "#babbf1",
+        "constant": "#ef9f76",
+        "operator": "#99d1db",
+        "punctuation": "#949cbb",
+        "special": "#f4b8e4"
+    },
+    "terminal": [
+        "#51576d",
+        "#e78284",
+        "#a6d189",
+        "#e5c890",
+        "#8caaee",
+        "#f4b8e4",
+        "#81c8be",
+        "#b5bfe2",
+        "#626880",
+        "#e78284",
+        "#a6d189",
+        "#e5c890",
+        "#8caaee",
+        "#f4b8e4",
+        "#81c8be",
+        "#c6d0f5"
+    ]
+}

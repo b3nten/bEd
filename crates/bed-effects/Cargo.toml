@@ -1,0 +1,12 @@
+[package]
+name = "bed-effects"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-effects-config = { workspace = true }
+wgpu = { workspace = true }
+dear-imgui-wgpu = { workspace = true }
+serde_json = { workspace = true }

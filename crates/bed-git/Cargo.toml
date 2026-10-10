@@ -1,0 +1,12 @@
+[package]
+name = "bed-git"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

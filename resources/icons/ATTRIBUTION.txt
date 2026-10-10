@@ -1,0 +1,39 @@
+File and interface SVGs are copied unchanged from these pinned projects:
+
+Lucide Icons and Contributors
+https://github.com/lucide-icons/lucide
+Revision: a04f228cd01185e09c188b7227b9600c08c565ec
+License: lucide-LICENSE.txt (ISC and the retained Feather MIT notice).
+
+Simple Icons Contributors and the original language/tool projects
+https://github.com/simple-icons/simple-icons
+Revision: 98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d
+Project dedication: simple-icons-LICENSE.md (CC0).
+Individual artwork retains its listed license, source, and brand guidelines;
+see simple-icons-DISCLAIMER.md and each brand record in sources.json.
+Git's original logo is by Jason Long. Other original artwork is credited to
+the respective projects and authors identified at the recorded source URLs.
+License texts and original MIT copyright notices are retained in licenses/;
+licenses/sources.json records their download URLs and SHA-256 checksums.
+
+catalog.tsv maps Bed's canonical keys to upstream SVG names. sources.json
+records the exact upstream URL, revision, SVG checksum and available brand
+metadata for every asset. These records are included in release packages.
+The SVG files are unmodified. Bed renders their alpha silhouettes with the
+current foreground color. The individual artwork licenses also apply to any
+adapted rendering; they do not change the license of the surrounding program.
+Sass, Vue and Webpack use Lucide categories because their catalog metadata
+specifies noncommercial or custom terms. Vala uses a Lucide category because
+the original MIT copyright notice was not available in the imported source.
+
+To reproduce the SVG import, cache the two pinned archives in
+target/icon-sources as documented in scripts/import-icons.py, then run:
+    python3 scripts/import-icons.py
+All downloads occur during maintenance; the application works offline.
+
+Bed's application icons are generated during packaging from the Icon Composer
+export assets/bEd-iOS-Default-1024@1x.png in the source repository. The editable
+project is assets/bEd.icon, including Assets/bed-svgrepo-com.svg, whose embedded
+notice credits SVG Repo. These source assets are not installed. Packages retain
+the exported PNG as resources/icons/bed.png and generate macOS standard/Retina
+ICNS or Linux hicolor PNG sizes for the application launcher.

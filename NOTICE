@@ -1,0 +1,1069 @@
+Bed is distributed under GNU GPL version 3 only; see LICENSE.
+Third-party portions and assets retain the licenses and notices listed below.
+
+Bed includes code and assets translated or copied from ned by nealmick and contributors.
+Upstream: https://github.com/nealmick/ned
+Revision: 2d3e9b53b0ebc44c6da6901ff242a95edaa4a1ff
+The upstream MIT/X Consortium license is preserved in the ned section below.
+
+The Bed mascot embeds Bed Low Poly by mezuna under CC BY 4.0.
+Source: https://sketchfab.com/3d-models/bed-low-poly-d58eea1a6ee746d29fd18f2d9e1a559d
+Author: https://sketchfab.com/mezuna
+License: https://creativecommons.org/licenses/by/4.0/
+Runtime presentation centers, scales, rotates and briefly deforms the model.
+The model attribution and asset changes are recorded in the Bed Low Poly section
+below.
+
+tests/fixtures/fonts/SourceCodePro-Regular.ttf is copied unchanged from the pinned
+ned resources for development tests only. Source Code Pro is by Adobe; its SIL
+Open Font License is preserved in tests/fixtures/fonts/SourceCodePro-LICENSE.md.
+
+Additional copied fonts and artwork retain their original notices and licenses
+in resources/fonts/ATTRIBUTION.txt and resources/icons/ATTRIBUTION.txt.
+The interface/file icon catalog uses pinned Lucide and Simple Icons SVGs.
+Their upstream notices, individual artwork license metadata, source links and
+checksums are packaged under resources/icons, including resources/icons/licenses.
+Tree-sitter runtime and grammar providers use published Cargo packages. Release
+packages append their dependency notices to this file; original
+highlight query attribution remains in resources/queries and the source history.
+Grammar notices omitted from published archives are retained unchanged in
+the supplemental Tree-sitter sections below. Their exact release revisions,
+source URLs and original-notice checksums are recorded in
+scripts/lib/tree-sitter-sources.json.
+
+Dear ImGui, cimgui, and dear-imgui-sys 0.18.0 retain the original notices under
+vendor/dear-imgui-sys. Bed's native binding changes are recorded in BED_PATCHES.md.
+The original Rust binding MIT/Apache-2.0 notices are retained at the roots of
+vendor/dear-imgui-sys, vendor/dear-imgui-winit and vendor/dear-imgui-wgpu,
+copied unchanged from revision 95f279150e95c728952db3e79226c687167ccf73.
+
+Portions of this software are copyright © 2023 The FreeType Project
+(www.freetype.org). All rights reserved. FreeType 2.13.2 is used under the
+FreeType License, preserved in vendor/freetype-sys/freetype2/docs/FTL.TXT.
+The accompanying libpng sources retain their original license and attribution.
+Native FreeType binding/build changes are recorded in vendor/freetype-sys/BED_PATCHES.md.
+
+PlutoSVG 0.0.8 and PlutoVG 1.3.3, by Samuel Ugochukwu and contributors, provide
+the original ImGui FreeType SVG hooks. Their MIT notices and embedded rasterizer
+licenses are preserved under vendor/dear-imgui-sys/third-party/plutosvg.
+Their exact revisions are recorded in vendor/dear-imgui-sys/BED_PATCHES.md.
+
+The URI, JSON-RPC and stdio adapters translate portions of the pinned
+lsp-framework by Leon Buckel, copyright (c) 2025, under the MIT license.
+The full original notice is preserved in the lsp-framework section below.
+
+Bed's terminal transport, font loading, color parsing and mouse encoding are
+implemented from Unix/OpenType APIs and terminal protocol requirements.
+The imported terminal adapter code and regression fixtures have been removed.
+The X11 color-name database is copied directly from X.Org rgb 1.1.0:
+https://www.x.org/releases/individual/app/rgb-1.1.0.tar.xz
+Its original Open Group/Oracle notices are retained in resources/terminal/LICENSE;
+source and checksum records are in resources/terminal/ATTRIBUTION.txt.
+The Rio VT engine 0.5.28 is used under its MIT and Apache-2.0 licenses, retained
+in vendor/rio-vt. Local image resource limits and terminal reset fixes are
+recorded in vendor/rio-vt/BED_PATCHES.md. Rio's graphics, Unicode and grapheme
+width packages retain their original Cargo dependency notices. Swash 0.2.10
+provides terminal shaping and rasterization under Apache-2.0/MIT.
+
+The native macOS menu uses muda by the Tauri Programme within The Commons
+Conservancy and contributors. Release packages include its original notices
+and other dependency notices collected from the locked Cargo packages and
+vendored native sources.
+
+Bundled Linux remote helpers statically link musl libc by Rich Felker and
+contributors. Its MIT license and additional copyright notices are retained in
+the musl section below, copied from the native build environment's complete
+musl copyright file.
+
+The Model Viewer embeds Studio Small 08 by Sergej Majboroda and Kiara 1 Dawn
+by Greg Zaal, downloaded from Poly Haven (formerly HDRI Haven). Both HDRIs are
+CC0 1.0 Universal; artist/source/checksum records and the full dedication are
+retained in the Poly Haven sections below.
+
+Desktop themes and fonts:
+- Paper Mono v1.000 Regular and Bold: https://github.com/paper-design/paper-mono
+  Copyright 2025 The Paper-Mono.Git Project Authors; SIL OFL 1.1.
+  License: resources/fonts/PaperMono-OFL.txt.
+- Color themes are adapted from Tokyo Night, Solarized, taotao7/carbon-theme,
+  Catppuccin, Rosé Pine, Synthwave ’84, Everforest, and Oxocarbon.
+  Source links and individual MIT licenses are
+  retained under resources/themes. Non-Paper font assets retained solely for
+  development tests are under tests/fixtures/fonts and are not distributed.
+
+The development model assets include the supplied assets/house.glb.
+The source reference is retained in assets/house.licence:
+https://www.cgtrader.com/free-3d-models/architectural/other/bedroom-04e35825-4a7a-4a50-b368-f383b160c2eb
+The supplied source record does not specify licence terms or an author.
+
+Consolidated third-party notices
+===============================
+
+Each section identifies the code or asset covered by its original notice.
+Release packages append resolved Cargo and vendored dependency notices to this
+file; license-index.json identifies their sections and source archives.
+
+=== ned ===
+--- Original notice ---
+MIT/X Consortium License
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+--- End of original notice ---
+
+=== lsp-framework ===
+--- Original notice ---
+MIT License
+
+Copyright (c) 2025 Leon Buckel
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== Bed Low Poly ===
+--- Original notice ---
+Bed Low Poly by mezuna
+Author: https://sketchfab.com/mezuna
+Source: https://sketchfab.com/3d-models/bed-low-poly-d58eea1a6ee746d29fd18f2d9e1a559d
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+
+The derived assets/bed.glb joins the model into one mesh with Tinted and Untinted
+material assignments. It is embedded in bEd's Bed mascot panel and welcome
+screens. Original texture maps are retained; at runtime, a neutral copy of the
+Tinted color texture lets the patterned bedding follow the active theme while
+Untinted retains its original appearance. Runtime presentation centers and
+scales the model, rotates it, and briefly deforms it on clicks in the Bed panel.
+
+--- End of original notice ---
+
+=== musl ===
+--- Original notice ---
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: musl
+Source: https://musl.libc.org/releases/
+
+Files: *
+Copyright: 2005-2020 Rich Felker <dalias@aerifal.cx>
+           2005-2020 Many other contributors
+License: MIT
+
+Files: debian/*
+Copyright: 2013-2015 Kevin Bortis <pkgs@bortis.ch>
+           2016-2025 Reiner Herrmann <reiner@reiner-h.de>
+License: MIT
+
+Files: arch/mips64/*
+       src/*/mips64/*
+Copyright: 2016 Mahesh Bodapati
+           2016 Jaydeep Patil
+           2016 Imagination Technologies
+License: MIT
+
+Files: arch/riscv64/*
+       src/*/riscv64/*
+Copyright: Alex Suykov <alex.suykov@gmail.com>
+           Aric Belsito <lluixhi@gmail.com>
+           Drew DeVault <sir@cmpwn.com>
+           Michael Clark <mjc@sifive.com>
+           Michael Forney <mforney@mforney.org>
+           Stefan O'Rear <sorear2@gmail.com>
+           Rich Felker <dalias@aerifal.cx>
+License: MIT
+
+Files: include/*
+       arch/*/bits/*
+       arch/*/crt_arch.h
+       crt/*
+       ldso/dlstart.c
+Copyright: 2005-2014 Rich Felker <dalias@aerifal.cx>
+License: public-domain
+ In addition, permission is hereby granted for all public header files
+ (include/* and arch/*/bits/*) and crt files intended to be linked into
+ applications (crt/*, ldso/dlstart.c, and arch/*/crt_arch.h) to omit
+ the copyright notice and permission notice otherwise required by the
+ license, and to use these files without any requirement of
+ attribution. These files include substantial contributions from:
+ .
+ Bobby Bingham
+ John Spencer
+ Nicholas J. Kain
+ Rich Felker
+ Richard Pennington
+ Stefan Kristiansson
+ Szabolcs Nagy
+ .
+ all of whom have explicitly granted such permission.
+
+Files: src/regex/reg*
+       src/regex/tre*
+Copyright: 2001-2008 Ville Laurikari <vl@iki.fi>
+           2012 Rich Felker <dalias@aerifal.cx>
+License: BSD-2-clause
+
+Files: src/math/tgammal.c
+       src/math/lgammal.c
+       src/math/powl.c
+       src/math/logl.c
+       src/math/log2l.c
+       src/math/log1pl.c
+       src/math/log10l.c
+       src/math/erfl.c
+       src/math/expm1l.c
+       src/math/expl.c
+       src/math/__polevll.c
+Copyright: 2008 Stephen L. Moshier <steve@moshier.net>
+           1993 Sun Microsystems, Inc.
+License: ISC
+
+Files: src/math/fmal.c
+       src/math/fmaf.c
+       src/math/fma.c
+       src/math/exp2l.c
+Copyright: 2005-2011 David Schultz <das@freebsd.org>
+           1993 Sun Microsystems, Inc.
+License: BSD-2-clause
+
+Files: src/math/tanf.c
+       src/math/tan.c
+       src/math/sinf.c
+       src/math/sincosf.c
+       src/math/sincos.c
+       src/math/sin.c
+       src/math/scalbf.c
+       src/math/scalb.c
+       src/math/log1pf.c
+       src/math/log1p.c
+       src/math/log10f.c
+       src/math/log10.c
+       src/math/lgammaf_r.c
+       src/math/lgamma_r.c
+       src/math/j*.c
+       src/math/expm1f.c
+       src/math/expm1.c
+       src/math/erf.c
+       src/math/erff.c
+       src/math/cosf.c
+       src/math/cos.c
+       src/math/cbrt*.c
+       src/math/atanl.c
+       src/math/atanf.c
+       src/math/atan2*.c
+       src/math/atan.c
+       src/math/asinl.c
+       src/math/asinf.c
+       src/math/asin.c
+       src/math/acosl.c
+       src/math/acosf.c
+       src/math/acos.c
+       src/math/__tan*.c
+       src/math/__sin*.c
+       src/math/__rem*.c
+       src/math/__cos*.c
+Copyright: 1993, 2004 Sun Microsystems, Inc.
+           2008, 2009-2011 Bruce D. Evans
+           2008, 2009-2011 Steven G. Kargl
+           2008, 2009-2011 David Schultz
+License: permissive
+ Developed at SunPro, a Sun Microsystems, Inc. business.
+ Permission to use, copy, modify, and distribute this
+ software is freely granted, provided that this notice
+ is preserved.
+
+Files: src/math/logf.c
+       src/math/logf_data.*
+       src/math/log2.c
+       src/math/log2_data.*
+       src/math/log2f.c
+       src/math/log2f_data.*
+       src/math/log.c
+       src/math/log_data.*
+       src/math/exp.c
+       src/math/exp_data.*
+       src/math/exp2.c
+       src/math/expf.c
+       src/math/exp2f.c
+       src/math/exp2f_data.*
+       src/math/pow.c
+       src/math/pow_data.c
+       src/math/powf.c
+       src/math/powf_data.*
+       src/string/aarch64/*
+Copyright: 2012-2018 Arm Limited.
+License: MIT
+
+Files: src/crypt/crypt_blowfish.c
+Copyright: 1998-2014 Solar Designer <solar@openwall.com>
+           2012 Rich Felker <dalias@aerifal.cx>
+License: public-domain
+ Written by Solar Designer <solar at openwall.com> in 1998-2012.
+ No copyright is claimed, and the software is hereby placed in the public
+ domain.  In case this attempt to disclaim copyright and place the software
+ in the public domain is deemed null and void, then the software is
+ Copyright (c) 1998-2012 Solar Designer and it is hereby released to the
+ general public under the following terms:
+ .
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted.
+ .
+ There's ABSOLUTELY NO WARRANTY, express or implied.
+ .
+ It is my intent that you should be able to use this on your system,
+ as part of a software package, or anywhere else to improve security,
+ ensure compatibility, or for any other purpose.  I would appreciate
+ it if you give credit where it is due and keep your modifications in
+ the public domain as well, but I don't require that in order to let
+ you place this code and any modifications you make under a license
+ of your choice.
+
+Files: src/crypt/crypt_des.c
+Copyright: 1994 David Burren
+           2000,2002,2010,2012 Solar Designer <solar@openwall.com>
+           2012 Rich Felker <dalias@aerifal.cx>
+License: BSD-3-clause
+
+Files: src/stdlib/qsort.c
+Copyright: 2011 Valentin Ochs
+License: MIT
+
+Files: src/setjmp/x32/longjmp.s
+       src/setjmp/x32/setjmp.s
+       src/setjmp/x86_64/longjmp.s
+       src/setjmp/x86_64/setjmp.s
+       src/thread/x32/__set_thread_area.s
+       src/thread/x32/__unmapself.s
+       src/thread/x86_64/__set_thread_area.s
+       src/thread/x86_64/__unmapself.s
+Copyright: 2011-2012 Nicholas J. Kain
+License: MIT
+
+Files: src/string/arm/memcpy.S
+Copyright: 2008 The Android Open Source Project
+License: BSD-2-clause
+
+Files: debian/musl-fts/fts.*
+Copyright: 1989, 1990, 1993, 1994 The Regents of the University of California
+License: BSD-3-clause
+Comment: imported from https://github.com/void-linux/musl-fts tag v1.2.7
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining a
+ copy of this software and associated documentation files (the "Software"),
+ to deal in the Software without restriction, including without limitation
+ the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ and/or sell copies of the Software, and to permit persons to whom the
+ Software is furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included
+ in all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+License: ISC
+ Permission to use, copy, modify, and distribute this software for any
+ purpose with or without fee is hereby granted, provided that the above
+ copyright notice and this permission notice appear in all copies.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+License: BSD-2-clause
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions
+ are met:
+ .
+ 1. Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+ .
+ 2. Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDER AND CONTRIBUTORS
+ ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT
+ HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+License: BSD-3-clause
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions
+ are met:
+ 1. Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+ 2. Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+ 3. Neither the name of the author nor the names of other contributors
+    may be used to endorse or promote products derived from this software
+    without specific prior written permission.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ SUCH DAMAGE.
+
+--- End of original notice ---
+
+=== Poly Haven attribution ===
+--- Original notice ---
+# Embedded HDRI environments
+
+Bed's Model Viewer embeds these unmodified 1K Radiance HDR downloads from
+[Poly Haven](https://polyhaven.com/) (formerly HDRI Haven). They are available
+offline and serve as both the skybox and the source for diffuse/specular lighting.
+
+Both assets use **CC0 1.0 Universal**. Poly Haven permits redistribution and
+commercial use: <https://polyhaven.com/license>. The full dedication is retained
+in the Poly Haven CC0 1.0 section below.
+
+| Asset | Artist | Source | Bytes | SHA-256 |
+| --- | --- | --- | ---: | --- |
+| Studio Small 08 | Sergej Majboroda | <https://polyhaven.com/a/studio_small_08> | 1,508,872 | `f6a989f89432eb4eee3191364a9c1ceed195c4ec3544173a3c04fd96cb91d0ba` |
+| Kiara 1 Dawn | Greg Zaal | <https://polyhaven.com/a/kiara_1_dawn> | 1,475,077 | `ee70fb8c8fb3e34566802191d83b299e179ecc392b97639e6c750f66e161c8e2` |
+
+Downloaded on 2026-10-08 from the official API's `hdri.1k.hdr` records:
+
+- <https://api.polyhaven.com/files/studio_small_08>
+- <https://api.polyhaven.com/files/kiara_1_dawn>
+
+Direct asset URLs:
+
+- <https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_08_1k.hdr>
+- <https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/kiara_1_dawn_1k.hdr>
+
+The API-provided MD5 checksums are respectively
+`de3ba64222895aca876b1d1c2e0cf81a` and `fcefd321c51b468ead9d5e1a369a3735`.
+Original files are at `crates/bed-plugin-gltf/resources/environments/`. At runtime,
+Bed bilinearly resamples them to 256-pixel cube faces in linear RGBA16Float;
+this retains HDR values for Bevy's image-based lighting filter.
+
+--- End of original notice ---
+
+=== Poly Haven CC0 1.0 ===
+--- Original notice ---
+Creative Commons Legal Code
+
+CC0 1.0 Universal
+
+    CREATIVE COMMONS CORPORATION IS NOT A LAW FIRM AND DOES NOT PROVIDE
+    LEGAL SERVICES. DISTRIBUTION OF THIS DOCUMENT DOES NOT CREATE AN
+    ATTORNEY-CLIENT RELATIONSHIP. CREATIVE COMMONS PROVIDES THIS
+    INFORMATION ON AN "AS-IS" BASIS. CREATIVE COMMONS MAKES NO WARRANTIES
+    REGARDING THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS
+    PROVIDED HEREUNDER, AND DISCLAIMS LIABILITY FOR DAMAGES RESULTING FROM
+    THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS PROVIDED
+    HEREUNDER.
+
+Statement of Purpose
+
+The laws of most jurisdictions throughout the world automatically confer
+exclusive Copyright and Related Rights (defined below) upon the creator
+and subsequent owner(s) (each and all, an "owner") of an original work of
+authorship and/or a database (each, a "Work").
+
+Certain owners wish to permanently relinquish those rights to a Work for
+the purpose of contributing to a commons of creative, cultural and
+scientific works ("Commons") that the public can reliably and without fear
+of later claims of infringement build upon, modify, incorporate in other
+works, reuse and redistribute as freely as possible in any form whatsoever
+and for any purposes, including without limitation commercial purposes.
+These owners may contribute to the Commons to promote the ideal of a free
+culture and the further production of creative, cultural and scientific
+works, or to gain reputation or greater distribution for their Work in
+part through the use and efforts of others.
+
+For these and/or other purposes and motivations, and without any
+expectation of additional consideration or compensation, the person
+associating CC0 with a Work (the "Affirmer"), to the extent that he or she
+is an owner of Copyright and Related Rights in the Work, voluntarily
+elects to apply CC0 to the Work and publicly distribute the Work under its
+terms, with knowledge of his or her Copyright and Related Rights in the
+Work and the meaning and intended legal effect of CC0 on those rights.
+
+1. Copyright and Related Rights. A Work made available under CC0 may be
+protected by copyright and related or neighboring rights ("Copyright and
+Related Rights"). Copyright and Related Rights include, but are not
+limited to, the following:
+
+  i. the right to reproduce, adapt, distribute, perform, display,
+     communicate, and translate a Work;
+ ii. moral rights retained by the original author(s) and/or performer(s);
+iii. publicity and privacy rights pertaining to a person's image or
+     likeness depicted in a Work;
+ iv. rights protecting against unfair competition in regards to a Work,
+     subject to the limitations in paragraph 4(a), below;
+  v. rights protecting the extraction, dissemination, use and reuse of data
+     in a Work;
+ vi. database rights (such as those arising under Directive 96/9/EC of the
+     European Parliament and of the Council of 11 March 1996 on the legal
+     protection of databases, and under any national implementation
+     thereof, including any amended or successor version of such
+     directive); and
+vii. other similar, equivalent or corresponding rights throughout the
+     world based on applicable law or treaty, and any national
+     implementations thereof.
+
+2. Waiver. To the greatest extent permitted by, but not in contravention
+of, applicable law, Affirmer hereby overtly, fully, permanently,
+irrevocably and unconditionally waives, abandons, and surrenders all of
+Affirmer's Copyright and Related Rights and associated claims and causes
+of action, whether now known or unknown (including existing as well as
+future claims and causes of action), in the Work (i) in all territories
+worldwide, (ii) for the maximum duration provided by applicable law or
+treaty (including future time extensions), (iii) in any current or future
+medium and for any number of copies, and (iv) for any purpose whatsoever,
+including without limitation commercial, advertising or promotional
+purposes (the "Waiver"). Affirmer makes the Waiver for the benefit of each
+member of the public at large and to the detriment of Affirmer's heirs and
+successors, fully intending that such Waiver shall not be subject to
+revocation, rescission, cancellation, termination, or any other legal or
+equitable action to disrupt the quiet enjoyment of the Work by the public
+as contemplated by Affirmer's express Statement of Purpose.
+
+3. Public License Fallback. Should any part of the Waiver for any reason
+be judged legally invalid or ineffective under applicable law, then the
+Waiver shall be preserved to the maximum extent permitted taking into
+account Affirmer's express Statement of Purpose. In addition, to the
+extent the Waiver is so judged Affirmer hereby grants to each affected
+person a royalty-free, non transferable, non sublicensable, non exclusive,
+irrevocable and unconditional license to exercise Affirmer's Copyright and
+Related Rights in the Work (i) in all territories worldwide, (ii) for the
+maximum duration provided by applicable law or treaty (including future
+time extensions), (iii) in any current or future medium and for any number
+of copies, and (iv) for any purpose whatsoever, including without
+limitation commercial, advertising or promotional purposes (the
+"License"). The License shall be deemed effective as of the date CC0 was
+applied by Affirmer to the Work. Should any part of the License for any
+reason be judged legally invalid or ineffective under applicable law, such
+partial invalidity or ineffectiveness shall not invalidate the remainder
+of the License, and in such case Affirmer hereby affirms that he or she
+will not (i) exercise any of his or her remaining Copyright and Related
+Rights in the Work or (ii) assert any associated claims and causes of
+action with respect to the Work, in either case contrary to Affirmer's
+express Statement of Purpose.
+
+4. Limitations and Disclaimers.
+
+ a. No trademark or patent rights held by Affirmer are waived, abandoned,
+    surrendered, licensed or otherwise affected by this document.
+ b. Affirmer offers the Work as-is and makes no representations or
+    warranties of any kind concerning the Work, express, implied,
+    statutory or otherwise, including without limitation warranties of
+    title, merchantability, fitness for a particular purpose, non
+    infringement, or the absence of latent or other defects, accuracy, or
+    the present or absence of errors, whether or not discoverable, all to
+    the greatest extent permissible under applicable law.
+ c. Affirmer disclaims responsibility for clearing rights of other persons
+    that may apply to the Work or any use thereof, including without
+    limitation any person's Copyright and Related Rights in the Work.
+    Further, Affirmer disclaims responsibility for obtaining any necessary
+    consents, permissions or other rights required for any use of the
+    Work.
+ d. Affirmer understands and acknowledges that Creative Commons is not a
+    party to this document and has no duty or obligation with respect to
+    this CC0 or use of the Work.
+
+--- End of original notice ---
+
+Supplemental Tree-sitter grammar notices
+=======================================
+
+The published Cargo archives for the packages below omit their license
+notices. This bundle retains each original copyright and license text
+unchanged from its exact released source revision. Package versions,
+revisions, original URLs and checksums are recorded in
+scripts/lib/tree-sitter-sources.json. Section labels are added for identification;
+the original notice between each pair of markers is preserved verbatim.
+
+=== tree-sitter-bash 0.23.3 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-bash/487734f87fd87118028a65a4599352fa99c9cde8/LICENSE
+Original notice SHA-256: 49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2017 Max Brunsfeld
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-c 0.23.4 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-c/3efee11f784605d44623d7dadd6cd12a0f73ea92/LICENSE
+Original notice SHA-256: 2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2014 Max Brunsfeld
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-c-sharp 0.23.1 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-c-sharp/362a8a41b265056592a0c3771664a21d23a71392/LICENSE
+Original notice SHA-256: 778fb7d63b8c1844da315648c02f325c4713a6f4a5d19644fd413421422776d3
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2014-2023 Max Brunsfeld, Damien Guard, Amaan Qureshi, and contributors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-cpp 0.23.4 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-cpp/f41e1a044c8a84ea9fa8577fdd2eab92ec96de02/LICENSE
+Original notice SHA-256: 2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2014 Max Brunsfeld
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-css 0.23.2 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-css/c0d581e32d183a536731ed6c3a72758b27e20411/LICENSE
+Original notice SHA-256: c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2018 Max Brunsfeld
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-go 0.23.4 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-go/3c3775faa968158a8b4ac190a7fda867fd5fb748/LICENSE
+Original notice SHA-256: 2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2014 Max Brunsfeld
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-html 0.23.2 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-html/5a5ca8551a179998360b4a4ca2c0f366a35acc03/LICENSE
+Original notice SHA-256: 2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2014 Max Brunsfeld
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-java 0.23.5 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-java/94703d5a6bed02b98e438d7cad1136c01a60ba2c/LICENSE
+Original notice SHA-256: 52ed137b039cd9c46409bc22e89938af911c95b157feae2d040b51e6084369a7
+--- Original notice ---
+MIT License
+
+Copyright (c) 2017 Ayman Nadeem
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-javascript 0.23.1 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-javascript/3a837b6f3658ca3618f2022f8707e29739c91364/LICENSE
+Original notice SHA-256: 2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2014 Max Brunsfeld
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-json 0.24.8 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-json/ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24/LICENSE
+Original notice SHA-256: 2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2014 Max Brunsfeld
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-kotlin-codanna 0.3.9 ===
+Source: https://raw.githubusercontent.com/bartolli/tree-sitter-kotlin/7f675c3e2c60cab4c63eb623b9e669fa27df0419/LICENSE
+Original notice SHA-256: 948495f61768f7de26bcc61113d8cd95f50bbc15adb678c28c941c6c8fcd5903
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2019 fwcd
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-python 0.23.6 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-python/bffb65a8cfe4e46290331dfef0dbf0ef3679de11/LICENSE
+Original notice SHA-256: d724405ce238a22c0d35769c5a36b386ad5958192efe8bbb304fb2896254575f
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2016 Max Brunsfeld
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-ruby 0.23.1 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-ruby/71bd32fb7607035768799732addba884a37a6210/LICENSE
+Original notice SHA-256: ee006f02a3d856df282e409be2a86e24a65bb573a98b9c28343771141351bb6b
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2016 Rob Rix
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+--- End of original notice ---
+
+=== tree-sitter-rust 0.24.0 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-rust/18b0515fca567f5a10aee9978c6d2640e878671a/LICENSE
+Original notice SHA-256: 31d5b6f4243d5c7c6e1c4ebbbb9f6407bd1457a08bcc4f706521710341acba36
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2017 Maxim Sokolov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-toml-ng 0.7.0 ===
+Source: https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-toml/64b56832c2cffe41758f28e05c756a3a98d16f41/LICENSE
+Original notice SHA-256: b727eee929bee836e8102cecf749a795b199f291b58c885bcd81cae727ac5a46
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) Ika <ikatyang@gmail.com> (https://github.com/ikatyang)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---
+
+=== tree-sitter-typescript 0.23.2 ===
+Source: https://raw.githubusercontent.com/tree-sitter/tree-sitter-typescript/f975a621f4e7f532fe322e13c4f79495e0a7b2e7/LICENSE
+Original notice SHA-256: 49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559
+--- Original notice ---
+The MIT License (MIT)
+
+Copyright (c) 2017 Max Brunsfeld
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- End of original notice ---

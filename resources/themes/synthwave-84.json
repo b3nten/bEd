@@ -1,0 +1,46 @@
+{
+    "name": "Synthwave ’84",
+    "appearance": "dark",
+    "ui": {
+        "background": "#262335",
+        "window_background": "#211e2e",
+        "surface": "#2a2139",
+        "foreground": "#ffffff",
+        "accent": "#ff7edb",
+        "selection": "#413f4e"
+    },
+    "syntax": {
+        "text": "#ffffff",
+        "comment": "#848bbd",
+        "keyword": "#fede5d",
+        "string": "#ff8b39",
+        "number": "#f97e72",
+        "function": "#36f9f6",
+        "type": "#fe4450",
+        "variable": "#ff7edb",
+        "parameter": "#ff7edb",
+        "property": "#2ee2fa",
+        "constant": "#f97e72",
+        "operator": "#fede5d",
+        "punctuation": "#b6b1b1",
+        "special": "#36f9f6"
+    },
+    "terminal": [
+        "#171520",
+        "#fe4450",
+        "#72f1b8",
+        "#f3e70f",
+        "#03edf9",
+        "#ff7edb",
+        "#03edf9",
+        "#ffffff",
+        "#848bbd",
+        "#fe4450",
+        "#72f1b8",
+        "#fede5d",
+        "#03edf9",
+        "#ff7edb",
+        "#03edf9",
+        "#ffffff"
+    ]
+}

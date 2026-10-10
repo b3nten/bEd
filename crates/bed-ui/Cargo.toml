@@ -1,0 +1,12 @@
+[package]
+name = "bed-ui"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-editing = { workspace = true }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+resvg = { workspace = true }

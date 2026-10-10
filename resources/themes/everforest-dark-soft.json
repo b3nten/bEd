@@ -1,0 +1,46 @@
+{
+    "name": "Everforest Dark Soft",
+    "appearance": "dark",
+    "ui": {
+        "background": "#333c43",
+        "window_background": "#2d363d",
+        "surface": "#3a464c",
+        "foreground": "#d3c6aa",
+        "accent": "#a7c080",
+        "selection": "#5c3f4f"
+    },
+    "syntax": {
+        "text": "#d3c6aa",
+        "comment": "#859289",
+        "keyword": "#e67e80",
+        "string": "#83c092",
+        "number": "#d699b6",
+        "function": "#a7c080",
+        "type": "#dbbc7f",
+        "variable": "#d3c6aa",
+        "parameter": "#d3c6aa",
+        "property": "#7fbbb3",
+        "constant": "#83c092",
+        "operator": "#e69875",
+        "punctuation": "#d3c6aa",
+        "special": "#dbbc7f"
+    },
+    "terminal": [
+        "#4d5960",
+        "#e67e80",
+        "#a7c080",
+        "#dbbc7f",
+        "#7fbbb3",
+        "#d699b6",
+        "#83c092",
+        "#d3c6aa",
+        "#4d5960",
+        "#e67e80",
+        "#a7c080",
+        "#dbbc7f",
+        "#7fbbb3",
+        "#d699b6",
+        "#83c092",
+        "#d3c6aa"
+    ]
+}

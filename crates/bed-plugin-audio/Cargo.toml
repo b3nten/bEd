@@ -1,0 +1,15 @@
+[package]
+name = "bed-plugin-audio"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-ui = { workspace = true }
+bed-editing = { workspace = true }
+bed-plugin = { workspace = true, features = ["gpu"] }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+rodio = { workspace = true }
+rustfft = "=6.4.1"

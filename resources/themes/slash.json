@@ -1,0 +1,46 @@
+{
+    "name": "Slash",
+    "appearance": "dark",
+    "ui": {
+        "background": "#000000",
+        "window_background": "#080808",
+        "surface": "#1a1a1a",
+        "foreground": "#e6e6e6",
+        "accent": "#ae865d",
+        "selection": "#262626"
+    },
+    "syntax": {
+        "text": "#e6e6e6",
+        "comment": "#909090",
+        "keyword": "#3892ff",
+        "string": "#ae865d",
+        "number": "#ae865d",
+        "function": "#3892ff",
+        "type": "#3892ff",
+        "variable": "#e6e6e6",
+        "parameter": "#e6e6e6",
+        "property": "#e6e6e6",
+        "constant": "#ae865d",
+        "operator": "#e6e6e6",
+        "punctuation": "#e6e6e6",
+        "special": "#ae865d"
+    },
+    "terminal": [
+        "#1a1a1a",
+        "#c94f6d",
+        "#81b29a",
+        "#dbc074",
+        "#3892ff",
+        "#ae865d",
+        "#63cdcf",
+        "#e6e6e6",
+        "#767676",
+        "#eb6f92",
+        "#8ebaa4",
+        "#e0c989",
+        "#86abdc",
+        "#c9a27b",
+        "#7ad5d6",
+        "#ffffff"
+    ]
+}

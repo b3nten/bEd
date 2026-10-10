@@ -1,0 +1,1746 @@
+use crate::*;
+use std::{
+    fs::{self, File, OpenOptions},
+    io::{self, Read, Write},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
+    time::UNIX_EPOCH,
+};
+
+type ServiceResult<T> = Result<T, RemoteError>;
+
+/// Shared local service implementation, also used by the headless process.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LocalBackend;
+
+impl LocalBackend {
+    pub fn call(&self, request: Request) -> ServiceResult<Response> {
+        match request {
+            Request::Hello { version } => {
+                if version != PROTOCOL_VERSION {
+                    return Err(RemoteError::new(
+                        ErrorKind::UnsupportedVersion,
+                        format!(
+                            "protocol version {version} unsupported; expected {PROTOCOL_VERSION}"
+                        ),
+                    ));
+                }
+                Ok(Response::Hello { version })
+            }
+            request @ (Request::WatchWorkspace { .. }
+            | Request::PollWorkspace { .. }
+            | Request::RefreshWorkspace { .. }
+            | Request::WatchDirectory { .. }
+            | Request::RefreshWorkspaceDirectory { .. }
+            | Request::UnwatchWorkspace { .. }) => crate::workspace_filesystem::call(request),
+            request @ (Request::TransferStat { .. }
+            | Request::ReadFileChunk { .. }
+            | Request::WriteFileChunk { .. }
+            | Request::CommitFileTransfer { .. }
+            | Request::CreateSymlink { .. }
+            | Request::RemoveEmptyDirectory { .. }) => crate::transfers::call(request),
+            Request::Canonicalize {
+                root,
+                path,
+                allow_missing,
+            } => {
+                let root = canonical_root(&root)?;
+                Ok(Response::Path {
+                    path: path_string(&resolve(&root, &path, allow_missing)?)?,
+                })
+            }
+            Request::ReadFile { root, path } => {
+                let root = canonical_root(&root)?;
+                let path = resolve(&root, &path, false)?;
+                let (bytes, baseline) = read_file(&path)?;
+                Ok(Response::File {
+                    path: path_string(&path)?,
+                    bytes,
+                    baseline,
+                })
+            }
+            Request::ReadFilePrefix { root, path } => {
+                let root = canonical_root(&root)?;
+                let path = resolve(&root, &path, false)?;
+                Ok(Response::FilePrefix {
+                    path: path_string(&path)?,
+                    bytes: read_file_prefix(&path)?,
+                })
+            }
+            Request::FileInfo { root, path } => {
+                let root = canonical_root(&root)?;
+                let entry = resolve_entry(&root, &path)?;
+                // Inspect the link itself; never follow an external target to read its bytes.
+                let target = resolve(&root, &path, false).ok();
+                crate::file_info::inspect(&root, &entry, target.as_deref())
+                    .map(|info| Response::FileInfo { info })
+                    .map_err(Into::into)
+            }
+            Request::ReadDirectory {
+                root,
+                path,
+                classify_gitignored,
+            } => {
+                let root = canonical_root(&root)?;
+                let path = resolve(&root, &path, false)?;
+                let mut entries = Vec::new();
+                for entry in fs::read_dir(&path)? {
+                    let entry = entry?;
+                    let kind = entry.file_type()?;
+                    entries.push(DirectoryEntry {
+                        path: path_string(&entry.path())?,
+                        name: entry.file_name().into_string().map_err(|_| {
+                            RemoteError::new(
+                                ErrorKind::InvalidInput,
+                                "remote filename is not valid UTF-8",
+                            )
+                        })?,
+                        is_directory: entry.path().is_dir(),
+                        is_symlink: kind.is_symlink(),
+                        is_gitignored: false,
+                    });
+                }
+                entries.sort_by(|a, b| {
+                    b.is_directory
+                        .cmp(&a.is_directory)
+                        .then_with(|| a.name.cmp(&b.name))
+                });
+                let warning = if classify_gitignored {
+                    classify_tree_entries(&path, &mut entries)
+                        .err()
+                        .map(|error| error.to_string())
+                } else {
+                    None
+                };
+                Ok(Response::Directory { entries, warning })
+            }
+            Request::ListFiles { root } => {
+                let root = canonical_root(&root)?;
+                let paths = walk_files(&root, true)?
+                    .iter()
+                    .map(|path| path_string(path))
+                    .collect::<ServiceResult<_>>()?;
+                Ok(Response::Files { paths })
+            }
+            Request::WriteFile {
+                root,
+                path,
+                bytes,
+                baseline,
+            } => {
+                let root = canonical_root(&root)?;
+                let path = resolve(&root, &path, true)?;
+                let baseline = write_file(&path, &bytes, baseline.as_ref())?;
+                Ok(Response::Written { baseline })
+            }
+            Request::CreateFile { root, path } => {
+                let root = canonical_root(&root)?;
+                let path = resolve(&root, &path, true)?;
+                OpenOptions::new().write(true).create_new(true).open(path)?;
+                Ok(Response::Unit)
+            }
+            Request::CreateDirectory { root, path } => {
+                let root = canonical_root(&root)?;
+                fs::create_dir(resolve(&root, &path, true)?)?;
+                Ok(Response::Unit)
+            }
+            Request::Rename { root, from, to } => {
+                let root = canonical_root(&root)?;
+                let from = resolve_entry(&root, &from)?;
+                let to = resolve_entry(&root, &to)?;
+                protect_root(&root, &from)?;
+                protect_root(&root, &to)?;
+                if fs::symlink_metadata(&to).is_ok() {
+                    return Err(RemoteError::new(
+                        ErrorKind::AlreadyExists,
+                        "rename destination already exists",
+                    ));
+                }
+                rename_no_replace(&from, &to)?;
+                Ok(Response::Unit)
+            }
+            Request::Remove {
+                root,
+                path,
+                is_directory,
+            } => {
+                let root = canonical_root(&root)?;
+                let path = resolve_entry(&root, &path)?;
+                protect_root(&root, &path)?;
+                let metadata = fs::symlink_metadata(&path)?;
+                if metadata.file_type().is_symlink() || !is_directory {
+                    fs::remove_file(path)?;
+                } else {
+                    fs::remove_dir_all(path)?;
+                }
+                Ok(Response::Unit)
+            }
+            Request::Search {
+                root,
+                query,
+                options,
+                buffer_paths,
+                max_results,
+            } => search(
+                &canonical_root(&root)?,
+                &query,
+                &options,
+                &buffer_paths,
+                max_results,
+            ),
+            Request::GitStatus { root } => git_status(&canonical_root(&root)?),
+            Request::GitBaseline { root, path } => git_baseline(&canonical_root(&root)?, &path),
+            Request::CheckStart { .. }
+            | Request::CheckPoll { .. }
+            | Request::CheckCancel { .. }
+            | Request::CheckRelease { .. }
+            | Request::GitStart { .. }
+            | Request::GitPoll { .. }
+            | Request::GitCancel { .. }
+            | Request::GitRelease { .. } => Err(RemoteError::new(
+                ErrorKind::InvalidInput,
+                "Git jobs require a connection-owned service",
+            )),
+        }
+    }
+}
+
+pub fn serve(input: impl Read, output: impl Write) -> io::Result<()> {
+    serve_with(input, output, |request| LocalBackend.call(request))
+}
+
+pub fn serve_with(
+    mut input: impl Read,
+    mut output: impl Write,
+    mut dispatch: impl FnMut(Request) -> Result<Response, RemoteError>,
+) -> io::Result<()> {
+    let mut negotiated = false;
+    let mut git_jobs = crate::git_jobs::GitJobs::default();
+    let mut check_jobs = crate::check_jobs::CheckJobs::default();
+    while let Some(frame) = read_frame::<_, RequestFrame>(&mut input)? {
+        let response = if !negotiated && !matches!(&frame.request, Request::Hello { .. }) {
+            Err(RemoteError::new(
+                ErrorKind::UnsupportedVersion,
+                "protocol handshake required",
+            ))
+        } else {
+            let response = if crate::check_jobs::CheckJobs::handles(&frame.request) {
+                check_jobs.call(frame.request)
+            } else if crate::git_jobs::GitJobs::handles(&frame.request) {
+                git_jobs.call(frame.request)
+            } else {
+                dispatch(frame.request)
+            };
+            if matches!(
+                &response,
+                Ok(Response::Hello {
+                    version: PROTOCOL_VERSION
+                })
+            ) {
+                negotiated = true;
+            }
+            response
+        };
+        write_frame(
+            &mut output,
+            &ResponseFrame {
+                id: frame.id,
+                response,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn canonical_root(root: &str) -> ServiceResult<PathBuf> {
+    let root = fs::canonicalize(if root.is_empty() { "." } else { root })?;
+    if !root.is_dir() {
+        return Err(RemoteError::new(
+            ErrorKind::InvalidInput,
+            "workspace root is not a directory",
+        ));
+    }
+    Ok(root)
+}
+
+fn within(root: &Path, path: PathBuf) -> ServiceResult<PathBuf> {
+    if !path.starts_with(root) {
+        return Err(RemoteError::new(
+            ErrorKind::PermissionDenied,
+            "path escapes workspace root",
+        ));
+    }
+    Ok(path)
+}
+
+fn resolve(root: &Path, path: &str, allow_missing: bool) -> ServiceResult<PathBuf> {
+    let path = root.join(path);
+    match fs::canonicalize(&path) {
+        Ok(path) => within(root, path),
+        Err(error) if error.kind() == io::ErrorKind::NotFound && allow_missing => resolve_entry(
+            root,
+            path.to_str().ok_or_else(|| {
+                RemoteError::new(ErrorKind::InvalidInput, "remote path is not valid UTF-8")
+            })?,
+        ),
+        Err(error) => Err(error.into()),
+    }
+}
+
+// File actions operate on the entry, preserving symlinks rather than renaming
+// or removing their targets. The parent must resolve within the capability root.
+fn resolve_entry(root: &Path, path: &str) -> ServiceResult<PathBuf> {
+    let path = root.join(path);
+    if path == root {
+        return Ok(root.to_path_buf());
+    }
+    let name = path
+        .file_name()
+        .ok_or_else(|| RemoteError::new(ErrorKind::InvalidInput, "path requires a filename"))?;
+    let parent = path.parent().ok_or_else(|| {
+        RemoteError::new(ErrorKind::InvalidInput, "path requires a parent directory")
+    })?;
+    Ok(within(root, fs::canonicalize(parent)?)?.join(name))
+}
+
+fn protect_root(root: &Path, path: &Path) -> ServiceResult<()> {
+    if path == root {
+        return Err(RemoteError::new(
+            ErrorKind::PermissionDenied,
+            "cannot remove or rename workspace root",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let source = CString::new(source.as_os_str().as_bytes())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let destination = CString::new(destination.as_os_str().as_bytes())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    unsafe extern "C" {
+        fn syscall(number: std::ffi::c_long, ...) -> std::ffi::c_long;
+    }
+    #[cfg(all(
+        target_os = "linux",
+        not(any(target_arch = "x86_64", target_arch = "aarch64"))
+    ))]
+    unsafe extern "C" {
+        fn renameat2(
+            old_directory: std::ffi::c_int,
+            old_path: *const std::ffi::c_char,
+            new_directory: std::ffi::c_int,
+            new_path: *const std::ffi::c_char,
+            flags: std::ffi::c_uint,
+        ) -> std::ffi::c_int;
+    }
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" {
+        fn renamex_np(
+            old_path: *const std::ffi::c_char,
+            new_path: *const std::ffi::c_char,
+            flags: std::ffi::c_uint,
+        ) -> std::ffi::c_int;
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    const SYS_RENAMEAT2: std::ffi::c_long = 316;
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    const SYS_RENAMEAT2: std::ffi::c_long = 276;
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    // SAFETY: Both CString pointers remain live. These Linux ABI syscall
+    // numbers are architecture-specific; using syscall also supports musl
+    // versions which do not export the renameat2 libc convenience function.
+    let result = unsafe {
+        syscall(
+            SYS_RENAMEAT2,
+            -100_i32,
+            source.as_ptr(),
+            -100_i32,
+            destination.as_ptr(),
+            1_u32,
+        )
+    };
+    #[cfg(all(
+        target_os = "linux",
+        not(any(target_arch = "x86_64", target_arch = "aarch64"))
+    ))]
+    // SAFETY: CString pointers remain live for the call. AT_FDCWD=-100 and
+    // RENAME_NOREPLACE=1 request an atomic operation without replacing an entry.
+    let result = unsafe { renameat2(-100, source.as_ptr(), -100, destination.as_ptr(), 1) };
+    #[cfg(target_os = "macos")]
+    // SAFETY: CString pointers remain live; RENAME_EXCL=4 forbids replacement.
+    let result = unsafe { renamex_np(source.as_ptr(), destination.as_ptr(), 4) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn rename_no_replace(_source: &Path, _destination: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "atomic no-replace rename is unsupported on this host",
+    ))
+}
+
+fn path_string(path: &Path) -> ServiceResult<String> {
+    path.to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| RemoteError::new(ErrorKind::InvalidInput, "remote path is not valid UTF-8"))
+}
+
+fn modified_ns(metadata: &fs::Metadata) -> Option<u64> {
+    metadata
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_nanos()
+        .try_into()
+        .ok()
+}
+
+fn baseline(bytes: &[u8], metadata: &fs::Metadata) -> FileBaseline {
+    // Fixed FNV-1a; unlike DefaultHasher this is stable across processes/versions.
+    let fingerprint = bytes.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    });
+    FileBaseline {
+        fingerprint,
+        len: bytes.len() as u64,
+        modified_ns: modified_ns(metadata),
+    }
+}
+
+fn file_too_large(path: &Path, actual: u64) -> RemoteError {
+    RemoteError::new(
+        ErrorKind::TooLarge,
+        format!(
+            "Cannot edit '{}': file is {actual} bytes; Bed's limit is {} MiB ({MAX_FILE_BYTES} bytes). Open it in another editor or split it into smaller files.",
+            path.display(),
+            MAX_FILE_BYTES / (1024 * 1024),
+        ),
+    )
+}
+
+fn read_file(path: &Path) -> ServiceResult<(Vec<u8>, FileBaseline)> {
+    let mut file = File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(RemoteError::new(
+            ErrorKind::InvalidInput,
+            "path is not a regular file",
+        ));
+    }
+    if metadata.len() > MAX_FILE_BYTES as u64 {
+        return Err(file_too_large(path, metadata.len()));
+    }
+    let mut bytes = Vec::with_capacity((metadata.len() as usize).min(1024));
+    Read::by_ref(&mut file).take(1024).read_to_end(&mut bytes)?;
+    Read::by_ref(&mut file)
+        .take((MAX_FILE_BYTES + 1) as u64 - bytes.len() as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_FILE_BYTES {
+        return Err(file_too_large(
+            path,
+            file.metadata()?.len().max(bytes.len() as u64),
+        ));
+    }
+    let after = file.metadata()?;
+    if metadata.len() != after.len()
+        || modified_ns(&metadata) != modified_ns(&after)
+        || after.len() != bytes.len() as u64
+    {
+        return Err(RemoteError::new(
+            ErrorKind::Conflict,
+            "file changed while being read; retry",
+        ));
+    }
+    let baseline = baseline(&bytes, &after);
+    Ok((bytes, baseline))
+}
+
+fn read_file_prefix(path: &Path) -> ServiceResult<Vec<u8>> {
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(RemoteError::new(
+            ErrorKind::InvalidInput,
+            "path is not a regular file",
+        ));
+    }
+    let mut bytes = Vec::with_capacity(metadata.len().min(MAX_FILE_PREFIX_BYTES as u64) as usize);
+    file.take(MAX_FILE_PREFIX_BYTES as u64)
+        .read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn check_baseline(path: &Path, expected: Option<&FileBaseline>) -> ServiceResult<()> {
+    match (fs::symlink_metadata(path), expected) {
+        (Err(error), None) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        (Ok(_), Some(expected)) => {
+            if &read_file(path)?.1 == expected {
+                Ok(())
+            } else {
+                Err(conflict())
+            }
+        }
+        (Ok(_), None) => Err(conflict()),
+        (Err(error), Some(_)) if error.kind() == io::ErrorKind::NotFound => Err(conflict()),
+        (Err(error), _) => Err(error.into()),
+    }
+}
+
+fn conflict() -> RemoteError {
+    RemoteError::new(
+        ErrorKind::Conflict,
+        "file changed on disk; reload before saving",
+    )
+}
+
+fn write_file(
+    path: &Path,
+    bytes: &[u8],
+    expected: Option<&FileBaseline>,
+) -> ServiceResult<FileBaseline> {
+    if bytes.len() > MAX_FILE_BYTES {
+        return Err(file_too_large(path, bytes.len() as u64));
+    }
+    check_baseline(path, expected)?;
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+    let parent = path.parent().ok_or_else(|| {
+        RemoteError::new(
+            ErrorKind::InvalidInput,
+            "save path requires a parent directory",
+        )
+    })?;
+    let (temp, mut file) = loop {
+        let temp = parent.join(format!(
+            ".bed-save-{}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&temp) {
+            Ok(file) => break (temp, file),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    };
+    let result = (|| {
+        if let Ok(metadata) = fs::metadata(path) {
+            file.set_permissions(metadata.permissions())?;
+        }
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        check_baseline(path, expected)?;
+        if expected.is_none() {
+            // Atomically reserve a new filename: a file appearing after the
+            // baseline check must never be silently overwritten.
+            fs::hard_link(&temp, path).map_err(|error| {
+                if error.kind() == io::ErrorKind::AlreadyExists {
+                    conflict()
+                } else {
+                    error.into()
+                }
+            })?;
+            fs::remove_file(&temp)?;
+        } else {
+            fs::rename(&temp, path)?;
+        }
+        Ok(baseline(bytes, &fs::metadata(path)?))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    result
+}
+
+fn git(root: &Path, arguments: &[&str]) -> io::Result<std::process::Output> {
+    Command::new("git")
+        .env("LC_ALL", "C")
+        .arg("-C")
+        .arg(root)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .output()
+}
+
+// One batch per directory, never one subprocess per entry. Git owns ignore semantics.
+fn classify_tree_entries(directory: &Path, entries: &mut [DirectoryEntry]) -> io::Result<()> {
+    let repository = git(directory, &["rev-parse", "--is-inside-work-tree"])?;
+    if !repository.status.success() {
+        // A plain folder is expected; other Git failures should be visible to the caller.
+        if String::from_utf8_lossy(&repository.stderr).contains("not a git repository") {
+            return Ok(());
+        }
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&repository.stderr).into_owned(),
+        ));
+    }
+    if repository.stdout != b"true\n" || entries.is_empty() {
+        return Ok(());
+    }
+    let tracked = git(directory, &["ls-files", "-z", "--cached", "--", "."])?;
+    if !tracked.status.success() {
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&tracked.stderr).into_owned(),
+        ));
+    }
+    let paths: Vec<_> = entries.iter().map(|entry| entry.name.clone()).collect();
+    let ignored = git_ignored_paths(directory, &paths)?;
+    let tracked: std::collections::HashSet<_> = tracked
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .filter_map(|path| path.split(|byte| *byte == b'/').next())
+        .collect();
+    for entry in entries {
+        entry.is_gitignored =
+            ignored.contains(&entry.name) && !tracked.contains(entry.name.as_bytes());
+    }
+    Ok(())
+}
+
+/// Batch Git's ignore rules for paths relative to `directory`; tracked files are excluded.
+/// Input/output use NUL delimiters so spaces, newlines and literal glob characters are safe.
+pub fn git_ignored_paths(
+    directory: &Path,
+    paths: &[String],
+) -> io::Result<std::collections::HashSet<String>> {
+    if paths.is_empty() {
+        return Ok(Default::default());
+    }
+    let mut input = Vec::new();
+    for path in paths {
+        input.extend_from_slice(path.as_bytes());
+        input.push(0);
+    }
+    let mut child = Command::new("git")
+        .env("LC_ALL", "C")
+        .arg("-C")
+        .arg(directory)
+        .args(["check-ignore", "-z", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child.stdin.take().unwrap();
+    // Drain output concurrently with feeding input to avoid pipe-capacity deadlocks.
+    let output = std::thread::scope(|scope| {
+        let writer = scope.spawn(move || stdin.write_all(&input));
+        let output = child.wait_with_output();
+        writer
+            .join()
+            .map_err(|_| io::Error::other("Git-ignore input writer failed"))??;
+        output
+    })?;
+    if !matches!(output.status.code(), Some(0 | 1)) {
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
+    }
+    output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8(path.to_vec()).map_err(io::Error::other))
+        .collect()
+}
+
+fn discover_files(root: &Path) -> ServiceResult<Vec<PathBuf>> {
+    // Git performs ignore handling, including parent worktrees and nested rules.
+    if let Ok(repository) = git(root, &["rev-parse", "--is-inside-work-tree"])
+        && repository.status.success()
+    {
+        let output = git(
+            root,
+            &[
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "--",
+                ".",
+            ],
+        )?;
+        if !output.status.success() {
+            return Err(RemoteError::new(
+                ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr),
+            ));
+        }
+        let mut files = Vec::new();
+        for name in output
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|name| !name.is_empty())
+        {
+            let name = std::str::from_utf8(name).map_err(|_| {
+                RemoteError::new(
+                    ErrorKind::InvalidInput,
+                    "remote filename is not valid UTF-8",
+                )
+            })?;
+            let path = root.join(name);
+            if path.is_file()
+                && let Ok(path) = resolve(root, name, false)
+            {
+                files.push(path);
+            }
+        }
+        files.sort_by_key(|path| path.as_os_str().len());
+        files.dedup();
+        return Ok(files);
+    }
+    walk_files(root, false)
+}
+
+fn walk_files(root: &Path, include_git: bool) -> ServiceResult<Vec<PathBuf>> {
+    let mut stack = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(directory) = stack.pop() {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            if !include_git && entry.file_name() == ".git" {
+                continue;
+            }
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                stack.push(entry.path());
+            } else if (kind.is_file() || kind.is_symlink())
+                && entry.path().is_file()
+                && let Ok(path) = resolve(root, &path_string(&entry.path())?, false)
+            {
+                files.push(path);
+            }
+        }
+    }
+    files.sort_by_key(|path| path.as_os_str().len());
+    files.dedup();
+    Ok(files)
+}
+
+fn search(
+    root: &Path,
+    query: &str,
+    options: &SearchOptions,
+    buffer_paths: &[String],
+    max_results: usize,
+) -> ServiceResult<Response> {
+    use bed_editing::{editor_state::EditorState, text_search::CompiledSearch};
+    let matcher = CompiledSearch::new(query.as_bytes(), options)
+        .map_err(|error| RemoteError::new(ErrorKind::InvalidInput, error))?;
+    let paths = if options.include_ignored {
+        walk_files(root, false)?
+    } else {
+        discover_files(root)?
+    };
+    let paths: Vec<_> = paths
+        .into_iter()
+        .filter(|path| {
+            path.strip_prefix(root)
+                .ok()
+                .and_then(|relative| relative.to_str())
+                .is_some_and(|relative| matcher.includes_path(relative))
+        })
+        .collect();
+    let eligible_buffer_paths: Vec<_> = paths
+        .iter()
+        .filter_map(|path| path.to_str())
+        .filter(|path| buffer_paths.iter().any(|buffer| buffer == path))
+        .map(str::to_owned)
+        .collect();
+    let discovered_files = paths.len();
+    let mut scanned_files = 0;
+    let mut skipped_files = 0;
+    let mut matches = Vec::new();
+    let mut budget = 0;
+    let mut truncated = false;
+    let maximum = max_results.min(100_000);
+    if !query.is_empty() && maximum != 0 {
+        'files: for path in paths {
+            scanned_files += 1;
+            if eligible_buffer_paths
+                .iter()
+                .any(|buffer| path.to_str() == Some(buffer))
+            {
+                continue;
+            }
+            let Ok((bytes, _)) = read_file(&path) else {
+                skipped_files += 1;
+                continue;
+            };
+            if bed_editing::text_search::binary_text_probe(&bytes) {
+                skipped_files += 1;
+                continue;
+            }
+            let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+            let (lines, _) = EditorState::split_lines(bytes);
+            for (row, line) in lines.iter().enumerate() {
+                for range in matcher.matches(line) {
+                    budget += line.len().saturating_mul(12)
+                        + path.as_os_str().len().saturating_mul(6)
+                        + 512;
+                    if matches.len() == maximum || budget > MAX_FRAME_BYTES / 2 {
+                        truncated = true;
+                        break 'files;
+                    }
+                    matches.push(SearchMatch {
+                        path: path_string(&path)?,
+                        line: row + 1,
+                        editor_row: row + 1,
+                        column: range.start + 1,
+                        range,
+                        line_bytes: line.clone(),
+                        text: String::from_utf8_lossy(line).into_owned(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(Response::Search {
+        matches,
+        truncated,
+        scanned_files,
+        discovered_files,
+        ignored_paths: 0,
+        skipped_files,
+        eligible_buffer_paths,
+    })
+}
+
+fn git_status(root: &Path) -> ServiceResult<Response> {
+    let repository = git(root, &["rev-parse", "--show-toplevel"])?;
+    if !repository.status.success() {
+        return Ok(Response::GitStatus {
+            entries: Vec::new(),
+        });
+    }
+    let worktree = PathBuf::from(
+        String::from_utf8(repository.stdout)
+            .map_err(|_| RemoteError::new(ErrorKind::InvalidInput, "Git root is not valid UTF-8"))?
+            .trim_end_matches(['\r', '\n']),
+    );
+    let output = git(
+        root,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            ".",
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(RemoteError::new(
+            ErrorKind::Other,
+            String::from_utf8_lossy(&output.stderr),
+        ));
+    }
+    let mut records = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty());
+    let mut entries = Vec::new();
+    while let Some(record) = records.next() {
+        if record.len() < 4 {
+            return Err(RemoteError::new(
+                ErrorKind::Other,
+                "malformed Git status record",
+            ));
+        }
+        let path = std::str::from_utf8(&record[3..]).map_err(|_| {
+            RemoteError::new(ErrorKind::InvalidInput, "Git filename is not valid UTF-8")
+        })?;
+        entries.push(GitStatusEntry {
+            path: path_string(&worktree.join(path))?,
+            index_status: record[0] as char,
+            worktree_status: record[1] as char,
+        });
+        if record[0] == b'R' || record[0] == b'C' || record[1] == b'R' || record[1] == b'C' {
+            records.next();
+        }
+    }
+    Ok(Response::GitStatus { entries })
+}
+
+fn git_baseline(root: &Path, path: &str) -> ServiceResult<Response> {
+    let path = resolve(root, path, true)?;
+    let repository = git(root, &["rev-parse", "--show-toplevel"])?;
+    if !repository.status.success() {
+        return Ok(Response::GitBaseline { bytes: None });
+    }
+    let worktree = PathBuf::from(
+        String::from_utf8(repository.stdout)
+            .map_err(|_| RemoteError::new(ErrorKind::InvalidInput, "Git root is not valid UTF-8"))?
+            .trim_end_matches(['\r', '\n']),
+    );
+    let relative = path
+        .strip_prefix(&worktree)
+        .map_err(|_| RemoteError::new(ErrorKind::PermissionDenied, "Git path outside worktree"))?;
+    let object = format!("HEAD:{}", path_string(relative)?);
+    let size = git(root, &["cat-file", "-s", &object])?;
+    if !size.status.success() {
+        return Ok(Response::GitBaseline { bytes: None });
+    }
+    let size = String::from_utf8_lossy(&size.stdout)
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| RemoteError::new(ErrorKind::Other, "invalid Git object size"))?;
+    if size > MAX_FILE_BYTES as u64 {
+        return Err(file_too_large(&path, size));
+    }
+    let output = git(root, &["show", &object])?;
+    if !output.status.success() {
+        return Ok(Response::GitBaseline { bytes: None });
+    }
+    if output.stdout.len() > MAX_FILE_BYTES {
+        return Err(file_too_large(&path, output.stdout.len() as u64));
+    }
+    Ok(Response::GitBaseline {
+        bytes: Some(output.stdout),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Temp(PathBuf);
+    impl Temp {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "bed-remote-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(fs::canonicalize(path).unwrap())
+        }
+        fn root(&self) -> String {
+            self.0.to_str().unwrap().into()
+        }
+    }
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn directory(temp: &Temp, path: &str) -> (Vec<DirectoryEntry>, Option<String>) {
+        let Response::Directory { entries, warning } = LocalBackend
+            .call(Request::ReadDirectory {
+                root: temp.root(),
+                path: path.into(),
+                classify_gitignored: true,
+            })
+            .unwrap()
+        else {
+            panic!("expected directory listing")
+        };
+        (entries, warning)
+    }
+
+    #[test]
+    fn tree_listings_classify_git_rules_but_preserve_tracked_descendants() {
+        let temp = Temp::new();
+        assert!(git(&temp.0, &["init", "-q"]).unwrap().status.success());
+        fs::create_dir(temp.0.join("src")).unwrap();
+        fs::write(temp.0.join("src/tracked.log"), b"keep").unwrap();
+        assert!(
+            git(&temp.0, &["add", "--", "src/tracked.log"])
+                .unwrap()
+                .status
+                .success()
+        );
+        fs::write(temp.0.join(".gitignore"), b"*.log\nignored/\n").unwrap();
+        fs::write(temp.0.join("src/.gitignore"), b"!keep.log\n").unwrap();
+        fs::write(temp.0.join(".git/info/exclude"), b"excluded\n").unwrap();
+        fs::write(temp.0.join("excluded"), b"").unwrap();
+        fs::create_dir(temp.0.join("ignored")).unwrap();
+        for name in ["drop.log", "keep.log", "line break.log"] {
+            fs::write(temp.0.join("src").join(name), b"").unwrap();
+        }
+        let (root, warning) = directory(&temp, ".");
+        assert_eq!(warning, None);
+        assert_eq!(directory(&temp, ".git").1, None);
+        assert!(
+            root.iter()
+                .find(|entry| entry.name == "ignored")
+                .unwrap()
+                .is_gitignored
+        );
+        assert!(
+            root.iter()
+                .find(|entry| entry.name == "excluded")
+                .unwrap()
+                .is_gitignored
+        );
+        let (entries, warning) = directory(&temp, "src");
+        assert_eq!(warning, None);
+        for entry in entries {
+            assert_eq!(
+                entry.is_gitignored,
+                matches!(entry.name.as_str(), "drop.log" | "line break.log"),
+                "{}",
+                entry.name
+            );
+        }
+        fs::write(temp.0.join(".gitignore"), b"src/\n").unwrap();
+        let (root, _) = directory(&temp, ".");
+        assert!(
+            !root
+                .iter()
+                .find(|entry| entry.name == "src")
+                .unwrap()
+                .is_gitignored
+        );
+        let (entries, _) = directory(&temp, "src");
+        assert!(
+            !entries
+                .iter()
+                .find(|entry| entry.name == "tracked.log")
+                .unwrap()
+                .is_gitignored
+        );
+    }
+
+    #[test]
+    fn tree_plain_folders_and_git_failures_keep_the_listing_visible() {
+        let temp = Temp::new();
+        fs::write(temp.0.join("file"), b"").unwrap();
+        fs::write(temp.0.join(".DS_Store"), b"").unwrap();
+        let (entries, warning) = directory(&temp, ".");
+        assert_eq!(warning, None);
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|entry| !entry.is_gitignored));
+        assert!(git(&temp.0, &["init", "-q"]).unwrap().status.success());
+        fs::write(temp.0.join(".git/config"), b"invalid git config\n").unwrap();
+        let (entries, warning) = directory(&temp, ".");
+        assert!(warning.is_some());
+        assert!(entries.iter().any(|entry| entry.name == "file"));
+        assert!(entries.iter().all(|entry| !entry.is_gitignored));
+        let Response::Directory { warning, .. } = LocalBackend
+            .call(Request::ReadDirectory {
+                root: temp.root(),
+                path: ".".into(),
+                classify_gitignored: false,
+            })
+            .unwrap()
+        else {
+            panic!("expected directory listing")
+        };
+        assert_eq!(warning, None, "disabled filters must not probe Git");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_ignore_batch_preserves_literal_newlines_spaces_and_glob_characters() {
+        let temp = Temp::new();
+        assert!(git(&temp.0, &["init", "-q"]).unwrap().status.success());
+        fs::write(temp.0.join(".gitignore"), b"*.log\n").unwrap();
+        let paths = [
+            "line\nbreak.log",
+            "space name.log",
+            "[literal].log",
+            "é.log",
+        ]
+        .map(str::to_owned);
+        let ignored = git_ignored_paths(&temp.0, &paths).unwrap();
+        assert_eq!(ignored, paths.into_iter().collect());
+    }
+
+    #[test]
+    fn large_git_ignore_batches_drain_output_while_writing_input() {
+        let temp = Temp::new();
+        assert!(git(&temp.0, &["init", "-q"]).unwrap().status.success());
+        fs::write(temp.0.join(".gitignore"), b"*.log\n").unwrap();
+        let mut entries: Vec<_> = (0..2000)
+            .map(|index| {
+                let name = format!("{index}-{}.log", "long".repeat(30));
+                DirectoryEntry {
+                    path: temp.0.join(&name).to_str().unwrap().into(),
+                    name,
+                    is_directory: false,
+                    is_symlink: false,
+                    is_gitignored: false,
+                }
+            })
+            .collect();
+        classify_tree_entries(&temp.0, &mut entries).unwrap();
+        assert!(entries.iter().all(|entry| entry.is_gitignored));
+    }
+
+    #[test]
+    fn file_prefix_reads_are_bounded_and_preserve_short_empty_and_binary_files() {
+        let temp = Temp::new();
+        for size in [0, 4, MAX_FILE_PREFIX_BYTES, MAX_FILE_PREFIX_BYTES + 1] {
+            let bytes: Vec<_> = (0..size).map(|index| index as u8).collect();
+            fs::write(temp.0.join("sample"), &bytes).unwrap();
+            assert_eq!(
+                LocalBackend
+                    .call(Request::ReadFilePrefix {
+                        root: temp.root(),
+                        path: "sample".into(),
+                    })
+                    .unwrap(),
+                Response::FilePrefix {
+                    path: path_string(&temp.0.join("sample")).unwrap(),
+                    bytes: bytes[..size.min(MAX_FILE_PREFIX_BYTES)].to_vec(),
+                }
+            );
+        }
+        // Classification must also work for files larger than the editable limit.
+        File::create(temp.0.join("large"))
+            .unwrap()
+            .set_len(MAX_FILE_BYTES as u64 + 1)
+            .unwrap();
+        assert_eq!(
+            LocalBackend
+                .call(Request::ReadFilePrefix {
+                    root: temp.root(),
+                    path: "large".into(),
+                })
+                .unwrap(),
+            Response::FilePrefix {
+                path: path_string(&temp.0.join("large")).unwrap(),
+                bytes: vec![0; MAX_FILE_PREFIX_BYTES],
+            }
+        );
+    }
+
+    #[test]
+    fn file_prefix_reads_reject_directories_missing_files_and_root_escape() {
+        let temp = Temp::new();
+        for (path, expected) in [
+            (".", ErrorKind::InvalidInput),
+            ("missing", ErrorKind::NotFound),
+            ("..", ErrorKind::PermissionDenied),
+        ] {
+            assert_eq!(
+                LocalBackend
+                    .call(Request::ReadFilePrefix {
+                        root: temp.root(),
+                        path: path.into(),
+                    })
+                    .unwrap_err()
+                    .kind,
+                expected,
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_prefix_reads_follow_internal_symlinks_and_reject_external_targets() {
+        use std::os::unix::fs::symlink;
+        let temp = Temp::new();
+        let outside = Temp::new();
+        fs::write(temp.0.join("real"), b"text").unwrap();
+        fs::write(outside.0.join("file"), b"outside").unwrap();
+        symlink("real", temp.0.join("alias")).unwrap();
+        symlink(outside.0.join("file"), temp.0.join("external-file")).unwrap();
+        symlink(&outside.0, temp.0.join("external-directory")).unwrap();
+        assert_eq!(
+            LocalBackend
+                .call(Request::ReadFilePrefix {
+                    root: temp.root(),
+                    path: "alias".into(),
+                })
+                .unwrap(),
+            Response::FilePrefix {
+                path: path_string(&temp.0.join("real")).unwrap(),
+                bytes: b"text".to_vec(),
+            }
+        );
+        for path in ["external-file", "external-directory/file"] {
+            assert_eq!(
+                LocalBackend
+                    .call(Request::ReadFilePrefix {
+                        root: temp.root(),
+                        path: path.into(),
+                    })
+                    .unwrap_err()
+                    .kind,
+                ErrorKind::PermissionDenied,
+            );
+        }
+    }
+
+    #[test]
+    fn file_prefix_request_roundtrips_through_the_remote_service() {
+        let temp = Temp::new();
+        fs::write(temp.0.join("sample"), [0, 255, 13, 10]).unwrap();
+        let mut input = Vec::new();
+        for (id, request) in [
+            (
+                1,
+                Request::Hello {
+                    version: PROTOCOL_VERSION,
+                },
+            ),
+            (
+                2,
+                Request::ReadFilePrefix {
+                    root: temp.root(),
+                    path: "sample".into(),
+                },
+            ),
+        ] {
+            write_frame(&mut input, &RequestFrame { id, request }).unwrap();
+        }
+        let mut output = Vec::new();
+        serve(&input[..], &mut output).unwrap();
+        let mut output = &output[..];
+        let hello: ResponseFrame = read_frame(&mut output).unwrap().unwrap();
+        assert_eq!(hello.id, 1);
+        assert_eq!(
+            hello.response.unwrap(),
+            Response::Hello {
+                version: PROTOCOL_VERSION
+            }
+        );
+        let prefix: ResponseFrame = read_frame(&mut output).unwrap().unwrap();
+        assert_eq!(prefix.id, 2);
+        assert_eq!(
+            prefix.response.unwrap(),
+            Response::FilePrefix {
+                path: path_string(&temp.0.join("sample")).unwrap(),
+                bytes: vec![0, 255, 13, 10]
+            }
+        );
+        assert!(
+            read_frame::<_, ResponseFrame>(&mut output)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn reads_preserve_bom_crlf_and_conflicting_saves_leave_disk_untouched() {
+        let temp = Temp::new();
+        let path = temp.0.join("text");
+        let original = b"\xef\xbb\xbfhello\r\n";
+        fs::write(&path, original).unwrap();
+        let Response::File {
+            bytes, baseline, ..
+        } = LocalBackend
+            .call(Request::ReadFile {
+                root: temp.root(),
+                path: "text".into(),
+            })
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(bytes, original);
+        fs::write(&path, b"external").unwrap();
+        let error = LocalBackend
+            .call(Request::WriteFile {
+                root: temp.root(),
+                path: "text".into(),
+                bytes: b"local".to_vec(),
+                baseline: Some(baseline),
+            })
+            .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Conflict);
+        assert_eq!(fs::read(path).unwrap(), b"external");
+    }
+
+    #[test]
+    fn writes_require_missing_baseline_and_roundtrip_new_baseline() {
+        let temp = Temp::new();
+        let Response::Written { baseline } = LocalBackend
+            .call(Request::WriteFile {
+                root: temp.root(),
+                path: "text".into(),
+                bytes: b"first".to_vec(),
+                baseline: None,
+            })
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(
+            LocalBackend
+                .call(Request::WriteFile {
+                    root: temp.root(),
+                    path: "text".into(),
+                    bytes: b"clobber".to_vec(),
+                    baseline: None
+                })
+                .unwrap_err()
+                .kind,
+            ErrorKind::Conflict
+        );
+        LocalBackend
+            .call(Request::WriteFile {
+                root: temp.root(),
+                path: "text".into(),
+                bytes: b"second".to_vec(),
+                baseline: Some(baseline),
+            })
+            .unwrap();
+        assert_eq!(fs::read(temp.0.join("text")).unwrap(), b"second");
+        assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn editable_limit_accepts_full_files_and_rejects_oversized_writes_without_clobbering() {
+        let temp = Temp::new();
+        let path = temp.0.join("maximum.txt");
+        let mut original = vec![b'a'; MAX_FILE_BYTES];
+        original[..3].copy_from_slice(&[0xef, 0xbb, 0xbf]);
+        original[MAX_FILE_BYTES - 2..].copy_from_slice(b"\r\n");
+        fs::write(&path, &original).unwrap();
+        let (mut bytes, baseline) = read_file(&path).unwrap();
+        assert_eq!(bytes, original);
+        bytes[3] = b'z';
+        write_file(&path, &bytes, Some(&baseline)).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        bytes.push(b'x');
+        let error = write_file(&path, &bytes, None).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::TooLarge);
+        assert!(error.message.contains("maximum.txt"));
+        assert!(error.message.contains(&(MAX_FILE_BYTES + 1).to_string()));
+        assert!(error.message.contains("128 MiB"));
+        assert!(error.message.contains("another editor"));
+        assert_eq!(fs::metadata(&path).unwrap().len(), MAX_FILE_BYTES as u64);
+        assert_eq!(fs::read(&path).unwrap(), &bytes[..MAX_FILE_BYTES]);
+        assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn raw_binary_reads_succeed_while_oversized_and_root_escape_are_rejected() {
+        let temp = Temp::new();
+        File::create(temp.0.join("large"))
+            .unwrap()
+            .set_len(MAX_FILE_BYTES as u64 + 1)
+            .unwrap();
+        fs::write(temp.0.join("binary"), vec![0; 1024]).unwrap();
+        let error = LocalBackend
+            .call(Request::ReadFile {
+                root: temp.root(),
+                path: "large".into(),
+            })
+            .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::TooLarge);
+        assert!(error.message.contains("large"));
+        assert!(error.message.contains(&(MAX_FILE_BYTES + 1).to_string()));
+        assert!(error.message.contains("128 MiB"));
+        assert!(matches!(
+            LocalBackend.call(Request::ReadFile { root: temp.root(), path: "binary".into() }).unwrap(),
+            Response::File { bytes, .. } if bytes == vec![0; 1024]
+        ));
+        assert_eq!(
+            LocalBackend
+                .call(Request::Canonicalize {
+                    root: temp.root(),
+                    path: "..".into(),
+                    allow_missing: false
+                })
+                .unwrap_err()
+                .kind,
+            ErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            LocalBackend
+                .call(Request::Remove {
+                    root: temp.root(),
+                    path: ".".into(),
+                    is_directory: true
+                })
+                .unwrap_err()
+                .kind,
+            ErrorKind::PermissionDenied
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn internal_file_symlinks_work_and_external_traversal_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let temp = Temp::new();
+        let outside = Temp::new();
+        fs::write(temp.0.join("real"), b"text").unwrap();
+        symlink(temp.0.join("real"), temp.0.join("alias")).unwrap();
+        symlink(&outside.0, temp.0.join("external")).unwrap();
+        assert!(
+            LocalBackend
+                .call(Request::ReadFile {
+                    root: temp.root(),
+                    path: "alias".into()
+                })
+                .is_ok()
+        );
+        assert_eq!(
+            LocalBackend
+                .call(Request::CreateFile {
+                    root: temp.root(),
+                    path: "external/escape".into()
+                })
+                .unwrap_err()
+                .kind,
+            ErrorKind::PermissionDenied
+        );
+        LocalBackend
+            .call(Request::Remove {
+                root: temp.root(),
+                path: "alias".into(),
+                is_directory: false,
+            })
+            .unwrap();
+        assert_eq!(fs::read(temp.0.join("real")).unwrap(), b"text");
+    }
+
+    #[test]
+    fn search_beyond_one_mib_keeps_editor_positions_and_reports_oversized_skips() {
+        let temp = Temp::new();
+        let mut bytes = b"\xef\xbb\xbfneedle\r\nneedle\rneedle\n".to_vec();
+        bytes.resize(2 * 1024 * 1024, b'x');
+        fs::write(temp.0.join("large.txt"), &bytes).unwrap();
+        File::create(temp.0.join("oversized.txt"))
+            .unwrap()
+            .set_len(MAX_FILE_BYTES as u64 + 1)
+            .unwrap();
+        let Response::Search {
+            matches,
+            skipped_files,
+            ..
+        } = search(
+            &temp.0,
+            "NEEDLE",
+            &SearchOptions {
+                include_ignored: true,
+                ..Default::default()
+            },
+            &[],
+            100,
+        )
+        .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(skipped_files, 1);
+        assert_eq!(
+            matches
+                .iter()
+                .map(|found| (found.line, found.editor_row, found.column))
+                .collect::<Vec<_>>(),
+            vec![(1, 1, 1), (2, 2, 1), (3, 3, 1)],
+        );
+        assert!(matches.iter().all(|found| found.line_bytes == b"needle"));
+    }
+
+    #[test]
+    fn search_returns_original_byte_columns_for_unicode() {
+        let temp = Temp::new();
+        fs::write(temp.0.join("text"), "é MATCH\r\nmatch\n").unwrap();
+        let Response::Search {
+            matches, truncated, ..
+        } = LocalBackend
+            .call(Request::Search {
+                root: temp.root(),
+                query: "match".into(),
+                options: crate::SearchOptions {
+                    case_sensitive: false,
+                    include_ignored: false,
+                    ..Default::default()
+                },
+                buffer_paths: Vec::new(),
+                max_results: 10,
+            })
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert!(!truncated);
+        assert_eq!((matches[0].line, matches[0].column), (1, 4));
+        assert_eq!((matches[1].line, matches[1].column), (2, 1));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn atomic_rename_preserves_a_destination_created_after_validation() {
+        let temp = Temp::new();
+        let source = temp.0.join("source");
+        let target = temp.0.join("target");
+        fs::write(&source, b"source").unwrap();
+        assert!(!target.exists());
+        // Simulate another process creating the destination after validation.
+        fs::write(&target, b"preserve").unwrap();
+        assert_eq!(
+            rename_no_replace(&source, &target).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"preserve");
+        assert_eq!(fs::read(&source).unwrap(), b"source");
+    }
+
+    #[test]
+    fn non_git_workspaces_have_empty_status_without_errors() {
+        let temp = Temp::new();
+        assert_eq!(
+            LocalBackend
+                .call(Request::GitStatus { root: temp.root() })
+                .unwrap(),
+            Response::GitStatus {
+                entries: Vec::new()
+            }
+        );
+    }
+
+    fn info(temp: &Temp, path: &str) -> FileInfo {
+        let Response::FileInfo { info } = LocalBackend
+            .call(Request::FileInfo {
+                root: temp.root(),
+                path: path.into(),
+            })
+            .unwrap()
+        else {
+            panic!("expected file information")
+        };
+        info
+    }
+
+    #[test]
+    fn file_information_sniffs_content_and_reports_stat_without_reading_directories() {
+        let temp = Temp::new();
+        fs::write(temp.0.join("picture.dat"), b"\x89PNG\r\n\x1a\nimage").unwrap();
+        let details = info(&temp, "picture.dat");
+        assert_eq!(details.file_type, "PNG image");
+        assert_eq!(details.mime_type.as_deref(), Some("image/png"));
+        assert_eq!(details.size, 13);
+        assert!(details.modified_unix_seconds.is_some());
+        assert!(!details.is_directory);
+        assert!(details.binary.is_none());
+        assert!(details.git.is_none());
+        let folder = info(&temp, ".");
+        assert!(folder.is_directory);
+        assert_eq!(folder.file_type, "Folder");
+        assert!(folder.mime_type.is_none());
+        assert_eq!(
+            LocalBackend
+                .call(Request::FileInfo {
+                    root: temp.root(),
+                    path: "../escape".into()
+                })
+                .unwrap_err()
+                .kind,
+            ErrorKind::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn file_information_detects_formats_despite_missing_or_misleading_extensions() {
+        let temp = Temp::new();
+        let cases: &[(&str, &[u8], &str, &str)] = &[
+            (
+                "picture.txt",
+                b"BM\0\0\0\0\0\0\0\0",
+                "BMP image",
+                "image/bmp",
+            ),
+            (
+                "scan",
+                b"II\x2a\0\x08\0\0\0\0\0",
+                "TIFF image",
+                "image/tiff",
+            ),
+            (
+                "database.jpg",
+                b"SQLite format 3\0",
+                "SQLite database",
+                "application/vnd.sqlite3",
+            ),
+            (
+                "document.bin",
+                b"%PDF-1.7\n",
+                "PDF document",
+                "application/pdf",
+            ),
+            ("archive", b"PK\x05\x06", "ZIP archive", "application/zip"),
+            (
+                "font.data",
+                b"wOFF\0\x01\0\0",
+                "WOFF font",
+                "application/font-woff",
+            ),
+        ];
+        for &(path, bytes, label, mime) in cases {
+            fs::write(temp.0.join(path), bytes).unwrap();
+            let details = info(&temp, path);
+            assert_eq!(details.file_type, label, "{path}");
+            assert_eq!(details.mime_type.as_deref(), Some(mime), "{path}");
+            assert!(details.binary.is_none(), "{path}");
+        }
+    }
+
+    #[test]
+    fn file_information_keeps_filename_fallbacks_when_content_is_unrecognized() {
+        let temp = Temp::new();
+        let cases: &[(&str, &[u8], &str)] = &[
+            ("source.rs", b"fn main() {}\n", "Rust source"),
+            ("empty.json", b"", "JSON document"),
+            ("truncated.dat", b"\x89PN", "DAT file"),
+            ("unknown", b"\0\xff\x01\x02", "File (no extension)"),
+        ];
+        for &(path, bytes, label) in cases {
+            fs::write(temp.0.join(path), bytes).unwrap();
+            let details = info(&temp, path);
+            assert_eq!(details.file_type, label, "{path}");
+            assert!(details.mime_type.is_none(), "{path}");
+        }
+        // A recognizable signature beyond the sample must not trigger a full-file read.
+        let mut bytes = vec![b' '; 8192];
+        bytes.extend_from_slice(b"<?xml version=\"1.0\"?><root/>");
+        fs::write(temp.0.join("large.dat"), bytes).unwrap();
+        let details = info(&temp, "large.dat");
+        assert_eq!(details.file_type, "DAT file");
+        assert!(details.mime_type.is_none());
+    }
+
+    #[test]
+    fn file_information_distinguishes_clean_staged_modified_ignored_and_untracked_git_files() {
+        let temp = Temp::new();
+        assert!(git(&temp.0, &["init", "-q"]).unwrap().status.success());
+        fs::write(temp.0.join("tracked.rs"), b"original").unwrap();
+        assert!(
+            git(&temp.0, &["add", "--", "tracked.rs"])
+                .unwrap()
+                .status
+                .success()
+        );
+        assert_eq!(
+            info(&temp, "tracked.rs").git.as_deref(),
+            Some("Staged: added")
+        );
+        assert!(
+            git(
+                &temp.0,
+                &[
+                    "-c",
+                    "user.name=Bed",
+                    "-c",
+                    "user.email=bed@example.test",
+                    "commit",
+                    "-qm",
+                    "fixture"
+                ]
+            )
+            .unwrap()
+            .status
+            .success()
+        );
+        assert_eq!(
+            info(&temp, "tracked.rs").git.as_deref(),
+            Some("Tracked · clean")
+        );
+        fs::write(temp.0.join("tracked.rs"), b"modified").unwrap();
+        assert_eq!(
+            info(&temp, "tracked.rs").git.as_deref(),
+            Some("Working tree: modified")
+        );
+        fs::write(temp.0.join("literal[1].rs"), b"untracked").unwrap();
+        assert_eq!(
+            info(&temp, "literal[1].rs").git.as_deref(),
+            Some("Untracked")
+        );
+        fs::write(temp.0.join(".gitignore"), b"*.log\n").unwrap();
+        fs::write(temp.0.join("build.log"), b"ignored").unwrap();
+        assert_eq!(info(&temp, "build.log").git.as_deref(), Some("Ignored"));
+    }
+
+    fn elf_fixture(debug: bool) -> Vec<u8> {
+        let names = b"\0.shstrtab\0.debug_info\0";
+        let mut bytes = vec![0_u8; 256 + names.len() + 1];
+        bytes[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+        bytes[16..18].copy_from_slice(&1_u16.to_le_bytes());
+        bytes[18..20].copy_from_slice(&62_u16.to_le_bytes());
+        bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[40..48].copy_from_slice(&64_u64.to_le_bytes());
+        bytes[52..54].copy_from_slice(&64_u16.to_le_bytes());
+        bytes[58..60].copy_from_slice(&64_u16.to_le_bytes());
+        bytes[60..62].copy_from_slice(&(if debug { 3_u16 } else { 2 }).to_le_bytes());
+        bytes[62..64].copy_from_slice(&1_u16.to_le_bytes());
+        bytes[128..132].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[132..136].copy_from_slice(&3_u32.to_le_bytes());
+        bytes[152..160].copy_from_slice(&256_u64.to_le_bytes());
+        bytes[160..168].copy_from_slice(&(names.len() as u64).to_le_bytes());
+        bytes[192..196].copy_from_slice(&11_u32.to_le_bytes());
+        bytes[196..200].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[216..224].copy_from_slice(&(256_u64 + names.len() as u64).to_le_bytes());
+        bytes[224..232].copy_from_slice(&1_u64.to_le_bytes());
+        bytes[256..256 + names.len()].copy_from_slice(names);
+        bytes
+    }
+    #[test]
+    fn binary_information_checks_debug_sections_and_reports_architecture() {
+        let temp = Temp::new();
+        for debug in [true, false] {
+            fs::write(temp.0.join("binary"), elf_fixture(debug)).unwrap();
+            let details = info(&temp, "binary");
+            assert_eq!(details.file_type, "Elf binary");
+            assert_eq!(
+                details.mime_type.as_deref(),
+                Some("application/x-executable")
+            );
+            let binary = details.binary.unwrap();
+            assert_eq!(binary.format, "Elf");
+            assert_eq!(binary.architecture, "X86_64");
+            assert_eq!(
+                binary.debug_symbols,
+                if debug {
+                    "Embedded debug information"
+                } else {
+                    "No embedded debug information"
+                }
+            );
+        }
+        let mut malformed = elf_fixture(true);
+        malformed[40..48].copy_from_slice(&u64::MAX.to_le_bytes());
+        fs::write(temp.0.join("bad"), malformed).unwrap();
+        assert!(info(&temp, "bad").binary.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_information_reports_symlinks_without_reading_external_targets() {
+        use std::os::unix::fs::symlink;
+        let temp = Temp::new();
+        let outside = Temp::new();
+        fs::write(outside.0.join("secret"), b"\x89PNG\r\n\x1a\n").unwrap();
+        symlink(outside.0.join("secret"), temp.0.join("external")).unwrap();
+        let details = info(&temp, "external");
+        assert!(details.symlink_target.is_some());
+        assert_eq!(details.file_type, "Symbolic link (target unavailable)");
+        assert!(details.mime_type.is_none());
+        fs::write(temp.0.join("inside.rs"), b"text").unwrap();
+        symlink("inside.rs", temp.0.join("link")).unwrap();
+        assert_eq!(info(&temp, "link").size, 4);
+        assert_eq!(
+            info(&temp, "link").symlink_target.as_deref(),
+            Some("inside.rs")
+        );
+        fs::write(temp.0.join("inside.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+        symlink("inside.png", temp.0.join("image-link")).unwrap();
+        let details = info(&temp, "image-link");
+        assert_eq!(details.file_type, "PNG image");
+        assert_eq!(details.mime_type.as_deref(), Some("image/png"));
+    }
+}

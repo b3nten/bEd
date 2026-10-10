@@ -1,0 +1,16 @@
+[package]
+name = "bed-plugin-http"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-workbench-api = { workspace = true }
+dear-imgui-rs = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+base64 = { workspace = true }

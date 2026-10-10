@@ -1,0 +1,12 @@
+[package]
+name = "bed-plugin"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+gpu = ["bed-workbench-api/gpu"]
+
+[dependencies]
+bed-workbench-api = { workspace = true }

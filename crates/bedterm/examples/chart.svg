@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400">
+  <rect width="640" height="400" rx="16" fill="#1a1b26"/>
+  <g font-family="sans-serif" fill="#c0caf5">
+    <text x="40" y="55" font-size="24">Build timings</text>
+    <text x="40" y="85" font-size="14" fill="#a9b1d6">Open generated artifacts beside your shell</text>
+    <text x="40" y="148" font-size="16">Load assets</text>
+    <text x="40" y="218" font-size="16">Render preview</text>
+    <text x="40" y="288" font-size="16">Export result</text>
+    <rect x="205" y="125" width="125" height="32" rx="4" fill="#7aa2f7"/>
+    <rect x="205" y="195" width="342" height="32" rx="4" fill="#bb9af7"/>
+    <rect x="205" y="265" width="88" height="32" rx="4" fill="#9ece6a"/>
+    <text x="340" y="148" font-size="16">125 ms</text>
+    <text x="557" y="218" font-size="16">342 ms</text>
+    <text x="303" y="288" font-size="16">88 ms</text>
+    <text x="40" y="360" font-size="14" fill="#a9b1d6">bedterm · rich companion panels</text>
+  </g>
+</svg>

@@ -1,0 +1,23 @@
+[package]
+name = "bed-plugin-gltf"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-plugin = { workspace = true, features = ["gpu"] }
+bed-ui = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+gltf = { workspace = true }
+draco-core = { workspace = true }
+meshopt = "=0.6.2"
+glam = { workspace = true }
+image = { workspace = true, features = ["hdr", "webp"] }
+half = { version = "2.7", default-features = false }
+bytemuck = { workspace = true }
+base64 = { workspace = true }
+bevy = { version = "=0.19.1", default-features = false, features = ["std", "async_executor", "multi_threaded", "reflect_auto_register", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_anti_alias", "bevy_log", "bevy_mikktspace", "bevy_gltf", "png", "jpeg", "webp"] }
+bevy_stl = { workspace = true }

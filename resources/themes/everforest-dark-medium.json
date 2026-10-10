@@ -1,0 +1,46 @@
+{
+    "name": "Everforest Dark Medium",
+    "appearance": "dark",
+    "ui": {
+        "background": "#2d353b",
+        "window_background": "#272f35",
+        "surface": "#343f44",
+        "foreground": "#d3c6aa",
+        "accent": "#a7c080",
+        "selection": "#543a48"
+    },
+    "syntax": {
+        "text": "#d3c6aa",
+        "comment": "#859289",
+        "keyword": "#e67e80",
+        "string": "#83c092",
+        "number": "#d699b6",
+        "function": "#a7c080",
+        "type": "#dbbc7f",
+        "variable": "#d3c6aa",
+        "parameter": "#d3c6aa",
+        "property": "#7fbbb3",
+        "constant": "#83c092",
+        "operator": "#e69875",
+        "punctuation": "#d3c6aa",
+        "special": "#dbbc7f"
+    },
+    "terminal": [
+        "#475258",
+        "#e67e80",
+        "#a7c080",
+        "#dbbc7f",
+        "#7fbbb3",
+        "#d699b6",
+        "#83c092",
+        "#d3c6aa",
+        "#475258",
+        "#e67e80",
+        "#a7c080",
+        "#dbbc7f",
+        "#7fbbb3",
+        "#d699b6",
+        "#83c092",
+        "#d3c6aa"
+    ]
+}

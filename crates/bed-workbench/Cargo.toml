@@ -1,0 +1,52 @@
+[package]
+name = "bed-workbench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-workbench-api = { workspace = true, features = ["gpu"] }
+bed-module-editor = { workspace = true }
+bed-module-debug = { workspace = true }
+bed-module-git = { workspace = true }
+bed-module-explorer = { workspace = true }
+bed-module-search = { workspace = true }
+bed-module-terminal = { workspace = true }
+bed-module-projects = { workspace = true }
+bed-settings = { workspace = true }
+bed-editor-ui = { workspace = true }
+bed-ui = { workspace = true }
+bed-editing = { workspace = true }
+bed-files = { workspace = true }
+bed-highlight = { workspace = true }
+bed-document-session = { workspace = true }
+bed-remote = { workspace = true }
+bed-terminal = { workspace = true }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+serde_json = { workspace = true }
+rfd = { workspace = true }
+trash = { workspace = true }
+
+[dev-dependencies]
+bed-module-color = { workspace = true }
+bed-scenes = { workspace = true }
+bed-module-settings = { workspace = true }
+bed-lsp = { workspace = true }
+bed-debug = { workspace = true }
+bed-module-debug = { workspace = true, features = ["test-support"] }
+bed-plugin-structure = { workspace = true }
+bed-plugin-image = { workspace = true }
+bed-plugin-gltf = { workspace = true }
+bed-plugin-font = { workspace = true }
+bed-plugin-audio = { workspace = true }
+bed-plugin-csv = { workspace = true }
+bed-plugin-markdown = { workspace = true }
+bed-plugin-json = { workspace = true }
+bed-plugin-sqlite = { workspace = true }
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+bed-plugin-http = { workspace = true }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = { workspace = true }

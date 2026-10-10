@@ -1,0 +1,17 @@
+[package]
+name = "bed-remote"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-git = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+object = { workspace = true }
+infer = "=0.22.0"
+git2 = { workspace = true }
+notify-debouncer-full = "=0.7.0"
+libc = { workspace = true }

@@ -1,0 +1,46 @@
+{
+    "name": "Everforest Light Soft",
+    "appearance": "light",
+    "ui": {
+        "background": "#f3ead3",
+        "window_background": "#ede4cd",
+        "surface": "#eae4ca",
+        "foreground": "#5c6a72",
+        "accent": "#8da101",
+        "selection": "#e1e4bd"
+    },
+    "syntax": {
+        "text": "#5c6a72",
+        "comment": "#939f91",
+        "keyword": "#f85552",
+        "string": "#35a77c",
+        "number": "#df69ba",
+        "function": "#8da101",
+        "type": "#dfa000",
+        "variable": "#5c6a72",
+        "parameter": "#5c6a72",
+        "property": "#3a94c5",
+        "constant": "#35a77c",
+        "operator": "#f57d26",
+        "punctuation": "#5c6a72",
+        "special": "#dfa000"
+    },
+    "terminal": [
+        "#5c6a72",
+        "#f85552",
+        "#8da101",
+        "#dfa000",
+        "#3a94c5",
+        "#df69ba",
+        "#35a77c",
+        "#ddd8be",
+        "#5c6a72",
+        "#f85552",
+        "#8da101",
+        "#dfa000",
+        "#3a94c5",
+        "#df69ba",
+        "#35a77c",
+        "#ddd8be"
+    ]
+}

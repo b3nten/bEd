@@ -1,0 +1,18 @@
+[package]
+name = "bed-module-git"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-ui = { workspace = true }
+bed-git = { workspace = true }
+bed-editing = { workspace = true }
+bed-document-session = { workspace = true }
+bed-editor-ui = { workspace = true }
+bed-module-editor = { workspace = true }
+bed-remote = { workspace = true }
+bed-workbench-api = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }

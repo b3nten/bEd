@@ -1,0 +1,12 @@
+[package]
+name = "bed-editing"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+regex = { workspace = true }
+glob = { workspace = true }

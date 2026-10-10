@@ -1,0 +1,17 @@
+[package]
+name = "bed-workbench-api"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+gpu = ["dep:wgpu", "dear-imgui-rs/multi-viewport"]
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-document-session = { workspace = true }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+serde_json = { workspace = true }
+wgpu = { workspace = true, optional = true }

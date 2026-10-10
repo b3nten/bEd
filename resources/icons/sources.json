@@ -1,0 +1,1357 @@
+[
+  {
+    "key": "rust",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/rust.svg",
+    "sha256": "95a291d8887610d103704adcc5c5f2cbfa4c80a96f8e72b00531d5691beb67a8",
+    "brand": {
+      "title": "Rust",
+      "hex": "000000",
+      "source": "https://www.rust-lang.org",
+      "guidelines": "https://www.rust-lang.org/policies/media-guide",
+      "license": {
+        "type": "CC-BY-SA-4.0"
+      }
+    }
+  },
+  {
+    "key": "python",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/python.svg",
+    "sha256": "ad9468e1c4903f73ae7eebfbe980f0f727a10db695be3d914e7d8bd25356a862",
+    "brand": {
+      "title": "Python",
+      "hex": "3776AB",
+      "source": "https://www.python.org/community/logos/",
+      "guidelines": "https://www.python.org/community/logos/"
+    }
+  },
+  {
+    "key": "javascript",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/javascript.svg",
+    "sha256": "c9be35a7a861ebe80ae4ee706d05004b99ee59fc63db69da6dcc10776718434b",
+    "brand": {
+      "title": "JavaScript",
+      "hex": "F7DF1E",
+      "source": "https://github.com/voodootikigod/logo.js/blob/1544bdeed6d618a6cfe4f0650d04ab8d9cfa76d9/js.svg",
+      "license": {
+        "type": "MIT"
+      }
+    }
+  },
+  {
+    "key": "typescript",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/typescript.svg",
+    "sha256": "7f023e8d1e767370306ec9437d2de5d5af97491d6208dd7799a3808a7c10a36a",
+    "brand": {
+      "title": "TypeScript",
+      "hex": "3178C6",
+      "source": "https://www.typescriptlang.org/branding",
+      "guidelines": "https://www.typescriptlang.org/branding"
+    }
+  },
+  {
+    "key": "react",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/react.svg",
+    "sha256": "ab9136a1a4a8be72ac6743e1bdd1912d878bd68d57787ea7a6c6838e3b23c01c",
+    "brand": {
+      "title": "React",
+      "hex": "61DAFB",
+      "source": "https://github.com/facebook/create-react-app/blob/282c03f9525fdf8061ffa1ec50dce89296d916bd/test/fixtures/relative-paths/src/logo.svg",
+      "aliases": {
+        "dup": [
+          {
+            "title": "React Native",
+            "source": "https://reactnative.dev"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "key": "ruby",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/ruby.svg",
+    "sha256": "956992a81b988b916efdd6f7a78b9f19fe352b5c04f2019af2ce1a89e390ac9d",
+    "brand": {
+      "title": "Ruby",
+      "hex": "CC342D",
+      "source": "https://www.ruby-lang.org/en/about/logo/",
+      "license": {
+        "type": "CC-BY-SA-2.5"
+      }
+    }
+  },
+  {
+    "key": "cmake",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/cmake.svg",
+    "sha256": "06757bccadf0459aca0a4c6a3898bd58e2dd71ea552bf7058cd406adc32fefa9",
+    "brand": {
+      "title": "CMake",
+      "hex": "064F8C",
+      "source": "https://www.kitware.com/platforms/"
+    }
+  },
+  {
+    "key": "llvm",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/llvm.svg",
+    "sha256": "46d9effbbe0e1a9206d271b638446e56f5912c82249de6b106849ce868c24bd7",
+    "brand": {
+      "title": "LLVM",
+      "hex": "262D3A",
+      "source": "https://llvm.org/Logo.html"
+    }
+  },
+  {
+    "key": "docker",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/docker.svg",
+    "sha256": "65571291c261ef869c31540a38f3ca0f0ee3bb73f179c172211c8860f19a6359",
+    "brand": {
+      "title": "Docker",
+      "hex": "2496ED",
+      "source": "https://www.docker.com/company/newsroom/media-resources"
+    }
+  },
+  {
+    "key": "bash",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/gnubash.svg",
+    "sha256": "edee96774ff71b672c429c28eb092ab13373677157c86abe7edb0dd699e07986",
+    "brand": {
+      "title": "GNU Bash",
+      "hex": "4EAA25",
+      "source": "https://github.com/odb/official-bash-logo/tree/61eff022f2dad3c7468f5deb4f06652d15f2c143",
+      "guidelines": "https://github.com/odb/official-bash-logo",
+      "license": {
+        "type": "MIT"
+      }
+    }
+  },
+  {
+    "key": "c",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/c.svg",
+    "sha256": "fde4284070eedf24f3acc2f78368b8c25a204f9a1b8831caaae4652c3e716c88",
+    "brand": {
+      "title": "C",
+      "hex": "A8B9CC",
+      "source": "https://commons.wikimedia.org/wiki/File:The_C_Programming_Language_logo.svg"
+    }
+  },
+  {
+    "key": "cpp",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/cplusplus.svg",
+    "sha256": "adf33f5026f3f70d54f1068cb5d1a790c37b2105cbe728edd170251759d13f18",
+    "brand": {
+      "title": "C++",
+      "hex": "00599C",
+      "source": "https://github.com/isocpp/logos/tree/64ef037049f87ac74875dbe72695e59118b52186"
+    }
+  },
+  {
+    "key": "dotnet",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/dotnet.svg",
+    "sha256": "3b7e1243fb2389116b0a5237c9f07e82f6d2eb18ee40bd232f28abccd7956993",
+    "brand": {
+      "title": ".NET",
+      "hex": "512BD4",
+      "source": "https://github.com/dotnet/brand/blob/c7d0f51b8ec59531332d05fb27a5b758a7a3d689/logo/dotnet-logo.svg",
+      "guidelines": "https://github.com/dotnet/brand/blob/c7d0f51b8ec59531332d05fb27a5b758a7a3d689/dotnet-styleGuide-2024.pdf",
+      "license": {
+        "type": "CC0-1.0"
+      }
+    }
+  },
+  {
+    "key": "r-language",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/r.svg",
+    "sha256": "3f2e47349d136c4a75cf081318b72c08ecf816c70c99d08a694a43ed5e10bf81",
+    "brand": {
+      "title": "R",
+      "hex": "276DC3",
+      "source": "https://www.r-project.org/logo/",
+      "license": {
+        "type": "CC-BY-SA-4.0"
+      }
+    }
+  },
+  {
+    "key": "html",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/html5.svg",
+    "sha256": "dfd65fdd7e4f997c6b163e48793de5ad18c4c99e191807a61752ea702f123d1d",
+    "brand": {
+      "title": "HTML5",
+      "hex": "E34F26",
+      "source": "https://www.w3.org/html/logo/"
+    }
+  },
+  {
+    "key": "css",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/css.svg",
+    "sha256": "9a97b95e3207aa4a6545dbb862e22450a01f37201c00e6b7d9c2958b59ca9ff9",
+    "brand": {
+      "title": "CSS",
+      "hex": "663399",
+      "source": "https://github.com/CSS-Next/logo.css/blob/bacc20878227204b283c68a6b935f8279e06b0cd/css.svg",
+      "guidelines": "https://github.com/CSS-Next/logo.css"
+    }
+  },
+  {
+    "key": "markdown",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/markdown.svg",
+    "sha256": "fac4fe3491647608362095b4b44d8bb8c45a37231a31309d435bf2e7592ac1e1",
+    "brand": {
+      "title": "Markdown",
+      "hex": "000000",
+      "source": "https://github.com/dcurtis/markdown-mark/tree/360a3657fef7f6ad0b303296a95ad52985caa0d3",
+      "guidelines": "https://github.com/dcurtis/markdown-mark",
+      "license": {
+        "type": "CC0-1.0"
+      }
+    }
+  },
+  {
+    "key": "json",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/json.svg",
+    "sha256": "8cbb06b00889977af13c20b92c4ff8b1c3913f340db49070abc1d582c1e06d5b",
+    "brand": {
+      "title": "JSON",
+      "hex": "000000",
+      "source": "https://commons.wikimedia.org/wiki/File:JSON_vector_logo.svg"
+    }
+  },
+  {
+    "key": "yaml",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/yaml.svg",
+    "sha256": "1b76155a5dce1e412ba98b5ef4081bcce729efe1e7fa68bf783f6559d7d56e64",
+    "brand": {
+      "title": "YAML",
+      "hex": "CB171E",
+      "source": "https://commons.wikimedia.org/wiki/File:Official_YAML_Logo.svg"
+    }
+  },
+  {
+    "key": "git",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/git.svg",
+    "sha256": "95724d436215d483de82288610c3c144854138f49945424697fcdf8be66e17d6",
+    "brand": {
+      "title": "Git",
+      "hex": "F03C2E",
+      "source": "https://git-scm.com/community/logos",
+      "license": {
+        "type": "CC-BY-3.0"
+      }
+    }
+  },
+  {
+    "key": "github",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/github.svg",
+    "sha256": "3bf8cceead820aec50d4ee825a3fd02c5a1cd6665cc9cf4cbf3d9c8861a204bb",
+    "brand": {
+      "title": "GitHub",
+      "hex": "181717",
+      "source": "https://github.com/logos",
+      "guidelines": "https://github.com/logos"
+    }
+  },
+  {
+    "key": "gitlab",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/gitlab.svg",
+    "sha256": "c7c39058bd1b6f9f40334383bd5136bb8c5ba5e6a24200f2d1f18365e2526e28",
+    "brand": {
+      "title": "GitLab",
+      "hex": "FC6D26",
+      "source": "https://about.gitlab.com/press/press-kit/",
+      "guidelines": "https://about.gitlab.com/handbook/marketing/corporate-marketing/brand-activation/trademark-guidelines/"
+    }
+  },
+  {
+    "key": "go",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/go.svg",
+    "sha256": "36a745fe15584bf138d02ae6abcbdd155bc1cd4f4976634ad34861b2059db559",
+    "brand": {
+      "title": "Go",
+      "hex": "00ADD8",
+      "source": "https://blog.golang.org/go-brand",
+      "guidelines": "https://blog.golang.org/go-brand"
+    }
+  },
+  {
+    "key": "godot",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/godotengine.svg",
+    "sha256": "95757647fedf1440fd24cc32a00f592ead4b050f8a63fdfcc46fbcd3a2952ffb",
+    "brand": {
+      "title": "Godot Engine",
+      "hex": "478CBF",
+      "source": "https://godotengine.org/press",
+      "guidelines": "https://godotengine.org/press",
+      "license": {
+        "type": "CC-BY-4.0"
+      }
+    }
+  },
+  {
+    "key": "dart",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/dart.svg",
+    "sha256": "e02868488ff4ac8e8b22440c6b021e6539f9df21271e0ffb8a7bf92ada0126bb",
+    "brand": {
+      "title": "Dart",
+      "hex": "0175C2",
+      "source": "https://github.com/dart-lang/site-shared/tree/18458ff440afd3d06f04e5cb871c4c5eda29c9d5/src/_assets/image/dart/logo"
+    }
+  },
+  {
+    "key": "elixir",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/elixir.svg",
+    "sha256": "d660279eaad792683d6e8cee70b225935e856f6b7aae4327d30f4a7f69e71c34",
+    "brand": {
+      "title": "Elixir",
+      "hex": "4B275F",
+      "source": "https://github.com/elixir-lang/elixir-lang.github.com/tree/031746384ee23b9be19298c92a9699c56cc05845/images/logo"
+    }
+  },
+  {
+    "key": "elm",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/elm.svg",
+    "sha256": "dda175eb4b747b1d18f740b13812f15679ac9179d55e4ae061f93fb3b4dfa06c",
+    "brand": {
+      "title": "Elm",
+      "hex": "1293D8",
+      "source": "https://github.com/elm/foundation.elm-lang.org/blob/2d097b317d8af2aaeab49284830260a32d817305/assets/elm_logo.svg"
+    }
+  },
+  {
+    "key": "eslint",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/eslint.svg",
+    "sha256": "6da8751e228367945e707607d0818db23848fa52e2992d22aecffd66f7124bbe",
+    "brand": {
+      "title": "ESLint",
+      "hex": "4B32C3",
+      "source": "https://eslint.org"
+    }
+  },
+  {
+    "key": "ethereum",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/ethereum.svg",
+    "sha256": "0ba6a9ca2c62e9a0c7f61b3053a9065cd8b48f1f35cd782edd1f7e49b1d729c2",
+    "brand": {
+      "title": "Ethereum",
+      "hex": "3C3C3D",
+      "source": "https://ethereum.org/en/assets/"
+    }
+  },
+  {
+    "key": "fsharp",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/fsharp.svg",
+    "sha256": "4d80db70f031efafad08be2690af3ffbe867f3b1d8ccab44daf0e081efab2198",
+    "brand": {
+      "title": "F#",
+      "slug": "fsharp",
+      "hex": "378BBA",
+      "source": "https://foundation.fsharp.org/logo",
+      "guidelines": "https://foundation.fsharp.org/logo",
+      "aliases": {
+        "aka": [
+          "F sharp"
+        ]
+      }
+    }
+  },
+  {
+    "key": "firebase",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/firebase.svg",
+    "sha256": "3f46d84a41479d7789cc36b82c2b6852e6bbbfd30ebee5b7a3aef7d49758295a",
+    "brand": {
+      "title": "Firebase",
+      "hex": "DD2C00",
+      "source": "https://firebase.google.com/brand-guidelines",
+      "guidelines": "https://firebase.google.com/brand-guidelines"
+    }
+  },
+  {
+    "key": "firefox",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/firefox.svg",
+    "sha256": "819fc94c6ce1dfa1874f069c88ff9d666fb4ce669e23781ec8dbf163a5a012e2",
+    "brand": {
+      "title": "Firefox",
+      "hex": "FF7139",
+      "source": "https://mozilla.design/firefox/logos-usage/",
+      "guidelines": "https://mozilla.design/firefox/logos-usage/"
+    }
+  },
+  {
+    "key": "gradle",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/gradle.svg",
+    "sha256": "1ae785093daee910b4bc6ee351742976e441dfcd9bdb13e82a88c0c0ef37022e",
+    "brand": {
+      "title": "Gradle",
+      "hex": "02303A",
+      "source": "https://gradle.com/brand",
+      "guidelines": "https://gradle.com/brand"
+    }
+  },
+  {
+    "key": "graphql",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/graphql.svg",
+    "sha256": "fc8ca4d195a8a79470540edf33677e24f6113b8b8d9b442acc5f62b57a2951cb",
+    "brand": {
+      "title": "GraphQL",
+      "hex": "E10098",
+      "source": "https://graphql.org/brand",
+      "guidelines": "https://graphql.org/brand"
+    }
+  },
+  {
+    "key": "grunt",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/grunt.svg",
+    "sha256": "e1f3eac4ff47e4e0a58800063ce66bcfad76914f75ec6c408931b2951354a4b8",
+    "brand": {
+      "title": "Grunt",
+      "hex": "FAA918",
+      "source": "https://github.com/gruntjs/gruntjs.com/blob/70f43898d9ce8e6cc862ad72bf8a7aee5ca199a9/src/media/grunt-logo-no-wordmark.svg",
+      "guidelines": "https://github.com/gruntjs/grunt-docs/blob/main/Grunt-Brand-Guide.md"
+    }
+  },
+  {
+    "key": "gulp",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/gulp.svg",
+    "sha256": "f0ee8a825a819fae0dcc47981db986d97e0d0c6394b2a094ba728aa66f3863e7",
+    "brand": {
+      "title": "gulp",
+      "hex": "CF4647",
+      "source": "https://github.com/gulpjs/artwork/blob/4e14158817ac88e9a5c02b3b307e6f630fe222fb/gulp-white-text.svg",
+      "guidelines": "https://github.com/gulpjs/artwork",
+      "license": {
+        "type": "CC0-1.0"
+      }
+    }
+  },
+  {
+    "key": "haskell",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/haskell.svg",
+    "sha256": "46f753c4116bdbfd1e478c5c3101b969e5a8b9f472969b74346d67c6f2975847",
+    "brand": {
+      "title": "Haskell",
+      "hex": "5D4F85",
+      "source": "https://wiki.haskell.org/Thompson-Wheeler_logo"
+    }
+  },
+  {
+    "key": "haxe",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/haxe.svg",
+    "sha256": "2f6d86fdcbb9ed989dcea19a73a1e35b121e5ed724afc01e19688d6ce5bf522b",
+    "brand": {
+      "title": "Haxe",
+      "hex": "EA8220",
+      "source": "https://haxe.org/foundation/branding.html",
+      "guidelines": "https://haxe.org/foundation/branding.html"
+    }
+  },
+  {
+    "key": "ionic",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/ionic.svg",
+    "sha256": "a934879327e8f70d615dfba976de872fc09414d0a1fbddba9e8dc85b6abfff56",
+    "brand": {
+      "title": "Ionic",
+      "hex": "3880FF",
+      "source": "https://ionicframework.com/press"
+    }
+  },
+  {
+    "key": "jenkins",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/jenkins.svg",
+    "sha256": "95ab5d541710c116d939f44e4e72c8b1503e78d04a1c298ad257c4e26d3a1873",
+    "brand": {
+      "title": "Jenkins",
+      "hex": "D24939",
+      "source": "https://get.jenkins.io/art/",
+      "guidelines": "https://www.jenkins.io/press/",
+      "license": {
+        "type": "CC-BY-SA-3.0"
+      }
+    }
+  },
+  {
+    "key": "jinja",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/jinja.svg",
+    "sha256": "6df63e7d99c872b8396c234be267fa32f30372b64ba5e54dc56adafa45d071c0",
+    "brand": {
+      "title": "Jinja",
+      "hex": "7E0C1B",
+      "source": "https://jinja.palletsprojects.com"
+    }
+  },
+  {
+    "key": "julia",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/julia.svg",
+    "sha256": "d7471ddca5a25f72c43f433726b00c324175f0fe1b80011ff3e77e750f273f9d",
+    "brand": {
+      "title": "Julia",
+      "hex": "9558B2",
+      "source": "https://github.com/JuliaLang/julia-logo-graphics/blob/b5551ca7946b4a25746c045c15fbb8806610f8d0/images/julia-dots.svg"
+    }
+  },
+  {
+    "key": "kotlin",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/kotlin.svg",
+    "sha256": "909d1ba63b4bea5843be4579fa68a398c310c3d4748e8e6ba9ea295403984b3b",
+    "brand": {
+      "title": "Kotlin",
+      "hex": "7F52FF",
+      "source": "https://www.jetbrains.com/company/brand/logos/",
+      "guidelines": "https://www.jetbrains.com/company/brand/",
+      "aliases": {
+        "loc": {
+          "ko-KR": "코틀린"
+        }
+      }
+    }
+  },
+  {
+    "key": "less",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/less.svg",
+    "sha256": "a25e84c7935564e4c142a3923a66ca52bc2f9e3287245ed84a59bd96c55ea001",
+    "brand": {
+      "title": "Less",
+      "hex": "1D365D",
+      "source": "https://github.com/less/logo/blob/c9c10c328cfc00071e92443934b35e389310abf8/less_logo.ai"
+    }
+  },
+  {
+    "key": "lua",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/lua.svg",
+    "sha256": "ea6e362187dd07d589930f3bb12e5c624253c60767a554d9ecbea4585cc29a60",
+    "brand": {
+      "title": "Lua",
+      "hex": "000080",
+      "source": "https://www.lua.org/images/",
+      "guidelines": "https://www.lua.org/images/"
+    }
+  },
+  {
+    "key": "maven",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/apachemaven.svg",
+    "sha256": "3f2a621ee513d6ec090aa65708e45f1bf80bb2a087aa73b8677fbfb97c6fddae",
+    "brand": {
+      "title": "Apache Maven",
+      "hex": "C71A36",
+      "source": "https://apache.org/logos",
+      "guidelines": "https://www.apache.org/foundation/marks",
+      "license": {
+        "type": "Apache-2.0"
+      }
+    }
+  },
+  {
+    "key": "nim",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/nim.svg",
+    "sha256": "b79128dc7d3916898f3c441f596b35e248830905446137636a09d1c6c6736681",
+    "brand": {
+      "title": "Nim",
+      "hex": "FFE953",
+      "source": "https://nim-lang.org"
+    }
+  },
+  {
+    "key": "npm",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/npm.svg",
+    "sha256": "00b410dc2c839cfa62910a065eaf28a48cbdb4babe503cf34d475cc94ba03be1",
+    "brand": {
+      "title": "npm",
+      "hex": "CB3837",
+      "source": "https://www.npmjs.com",
+      "guidelines": "https://docs.npmjs.com/policies/logos-and-usage"
+    }
+  },
+  {
+    "key": "nunjucks",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/nunjucks.svg",
+    "sha256": "e32f607e3351861390d7235854e9957ff671d587f56debe5bf5e36204a58a50a",
+    "brand": {
+      "title": "Nunjucks",
+      "hex": "1C4913",
+      "source": "https://github.com/mozilla/nunjucks/blob/fd500902d7c88672470c87170796de52fc0f791a/docs/img/favicon.png"
+    }
+  },
+  {
+    "key": "ocaml",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/ocaml.svg",
+    "sha256": "e973034bce8a78e914959696254bc9f55ab28fd3eba72f856bce87a1bd21e0d4",
+    "brand": {
+      "title": "OCaml",
+      "hex": "EC6813",
+      "source": "https://ocaml.org/logo",
+      "guidelines": "https://ocaml.org/logo",
+      "license": {
+        "type": "Unlicense"
+      }
+    }
+  },
+  {
+    "key": "perl",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/perl.svg",
+    "sha256": "6f1d3f3ac779079b0306437550cf1bc7532e1aa161ddf5934e8f109d006a7fca",
+    "brand": {
+      "title": "Perl",
+      "hex": "0073A1",
+      "source": "https://github.com/metacpan/perl-assets/blob/56b555711934dde8fd0b20ec29ecc3bf81a3d493/blessed/src/010.svg"
+    }
+  },
+  {
+    "key": "php",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/php.svg",
+    "sha256": "cd1beaa0dde7e765b5d2cbae786c1f6db967f72073eb7b9f9bbc63da55b9d0f6",
+    "brand": {
+      "title": "PHP",
+      "hex": "777BB4",
+      "source": "https://php.net/download-logos.php",
+      "license": {
+        "type": "CC-BY-SA-4.0"
+      }
+    }
+  },
+  {
+    "key": "platformio",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/platformio.svg",
+    "sha256": "793505bad61acb61eb2d66891abf48ab74a6d4d5b78cd99da41eca3a87fcbed1",
+    "brand": {
+      "title": "PlatformIO",
+      "hex": "F5822A",
+      "source": "https://piolabs.com",
+      "guidelines": "https://piolabs.com/legal/trademarks.html#use-of-logos"
+    }
+  },
+  {
+    "key": "prisma",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/prisma.svg",
+    "sha256": "5715775538af3789425a7d0a9231473429f065ec9f1bf8bec589e906af65d7be",
+    "brand": {
+      "title": "Prisma",
+      "hex": "2D3748",
+      "source": "https://github.com/prisma/presskit/tree/4bcb64181f266723439d955d60afa1c55fefa715"
+    }
+  },
+  {
+    "key": "pug",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/pug.svg",
+    "sha256": "b5da17b1a3488bdd258ebe55cd912526ee7156d7849409d4f88553327a13522b",
+    "brand": {
+      "title": "Pug",
+      "hex": "A86454",
+      "source": "https://github.com/pugjs/pug-logo/blob/61429fc45b5a411b83bdb5c99a61084d3054d1e6/SVG/pug-final-logo_-mono-64.svg"
+    }
+  },
+  {
+    "key": "puppet",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/puppet.svg",
+    "sha256": "ca720ac1b1286841308bf9f445b8f379aa54c7be1507d65210fa28cfd491686c",
+    "brand": {
+      "title": "Puppet",
+      "hex": "FFAE1A",
+      "source": "https://puppet.com/company/press-room/"
+    }
+  },
+  {
+    "key": "purescript",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/purescript.svg",
+    "sha256": "4610e70f4f04cabbadc13d9e710a3516140920be87949a128baddec49bfc00c7",
+    "brand": {
+      "title": "PureScript",
+      "hex": "14161A",
+      "source": "https://github.com/purescript/logo/tree/1e7a57affdaeaf88ff594c08bd2b5a78fe2ed13c",
+      "license": {
+        "type": "CC-BY-4.0"
+      }
+    }
+  },
+  {
+    "key": "reason",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/reason.svg",
+    "sha256": "5b0d0569b6a7e6fb2dbfd997df6012698a4c69d8f6dc60e5881d8d72b219fbe1",
+    "brand": {
+      "title": "Reason",
+      "hex": "DD4B39",
+      "source": "https://github.com/reasonml/reasonml.github.io/blob/18dc62ad841f0def6551a65e41083c9d5784da93/website/static/img/reason.svg"
+    }
+  },
+  {
+    "key": "rescript",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/rescript.svg",
+    "sha256": "7776749502569e250236dca4bdcb7aef7d69d30da9800162393a4de673752a68",
+    "brand": {
+      "title": "ReScript",
+      "hex": "E6484F",
+      "source": "https://rescript-lang.org/brand"
+    }
+  },
+  {
+    "key": "rollup",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/rollupdotjs.svg",
+    "sha256": "ace73a7270b37ce2f9eaa481c0893870104413657f162bcc03e12d7a8d26bf65",
+    "brand": {
+      "title": "rollup.js",
+      "hex": "EC4A3F",
+      "source": "https://rollupjs.org"
+    }
+  },
+  {
+    "key": "rails",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/rubyonrails.svg",
+    "sha256": "8070695727273ed648663d6b008a5547631890aa89824e588d637edf3d1afe42",
+    "brand": {
+      "title": "Ruby on Rails",
+      "hex": "D30001",
+      "source": "https://github.com/simple-icons/simple-icons/issues/9619#issuecomment-1735150580",
+      "guidelines": "https://rubyonrails.org/trademarks/"
+    }
+  },
+  {
+    "key": "scala",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/scala.svg",
+    "sha256": "5202637eaff2e7362af3743313c21f6c074d4ff80ab6335ca5e87608b7a12a21",
+    "brand": {
+      "title": "Scala",
+      "hex": "DC322F",
+      "source": "https://www.scala-lang.org"
+    }
+  },
+  {
+    "key": "spring",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/spring.svg",
+    "sha256": "44f55b1c7e9db0fab5bbb9b91247844986a39995b6eadf0aa3ca6edf47c1097e",
+    "brand": {
+      "title": "Spring",
+      "slug": "spring_creators",
+      "hex": "000000",
+      "source": "https://www.spri.ng"
+    }
+  },
+  {
+    "key": "stylelint",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/stylelint.svg",
+    "sha256": "1925874a5e5eb0876b9b43791c6879b495939098b3780a70bee5966fbd50ec25",
+    "brand": {
+      "title": "stylelint",
+      "hex": "263238",
+      "source": "https://github.com/stylelint/stylelint/blob/1f7bbb2d189b3e27b42de25f2948e3e5eec1b759/identity/stylelint-icon-black.svg"
+    }
+  },
+  {
+    "key": "stylus",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/stylus.svg",
+    "sha256": "d86dde160d366ff84d086a887e8b3d8386af41b3ccacc83475798adcdbc3d9fa",
+    "brand": {
+      "title": "Stylus",
+      "hex": "333333",
+      "source": "https://github.com/stylus/stylus-lang.com/blob/c833bf697e39e1174c7c6e679e0e5a23d0baeb90/img/stylus-logo.svg"
+    }
+  },
+  {
+    "key": "sublime",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/sublimetext.svg",
+    "sha256": "f0aceff6d59cf0bae168ddd28b7e00682361d928767a8ef9a331054f92af4197",
+    "brand": {
+      "title": "Sublime Text",
+      "hex": "FF9800",
+      "source": "https://www.sublimetext.com"
+    }
+  },
+  {
+    "key": "svelte",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/svelte.svg",
+    "sha256": "a38cef0f4fc36bc63519ce34d24a91022f19ec6998ea402c5e155c7479a46f4c",
+    "brand": {
+      "title": "Svelte",
+      "hex": "FF3E00",
+      "source": "https://github.com/sveltejs/branding/blob/c4dfca6743572087a6aef0e109ffe3d95596e86a/svelte-logo.svg",
+      "aliases": {
+        "dup": [
+          {
+            "title": "Sapper",
+            "hex": "159497",
+            "source": "https://sapper.svelte.dev"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "key": "swift",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/swift.svg",
+    "sha256": "b3d5f49cc459b7a3417db134ec70052c30305c3799d0f854796544c52c18a4bc",
+    "brand": {
+      "title": "Swift",
+      "hex": "F05138",
+      "source": "https://developer.apple.com/swift/resources/",
+      "guidelines": "https://developer.apple.com/swift/resources/"
+    }
+  },
+  {
+    "key": "terraform",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/terraform.svg",
+    "sha256": "9c3737d360a174afec8fa0208332a3991f087ea0b7bacb1eea16598883e1a730",
+    "brand": {
+      "title": "Terraform",
+      "hex": "844FBA",
+      "source": "https://www.hashicorp.com/brand",
+      "guidelines": "https://www.hashicorp.com/brand"
+    }
+  },
+  {
+    "key": "tex",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/latex.svg",
+    "sha256": "d2d9d35c11f907be5b9273dfc3a5ee57f0cf31839020d3e18792f33f6ae2aeb5",
+    "brand": {
+      "title": "LaTeX",
+      "hex": "008080",
+      "source": "https://github.com/latex3/branding/tree/9def6b5f6075567d62b67424e11dbe6d4d5245b4"
+    }
+  },
+  {
+    "key": "wasm",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/webassembly.svg",
+    "sha256": "3084581108ad2077aff486edbe7c7f12a4c0495ff57717d233a37f5b7a9ce0da",
+    "brand": {
+      "title": "WebAssembly",
+      "hex": "654FF0",
+      "source": "https://webassembly.org",
+      "aliases": {
+        "aka": [
+          "Wasm"
+        ]
+      }
+    }
+  },
+  {
+    "key": "yarn",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/yarn.svg",
+    "sha256": "c2addf3dc035d6d2ddeb4b8b828a0bdc2ed358b48e7e50725aa7bbdc08466904",
+    "brand": {
+      "title": "Yarn",
+      "hex": "2C8EBB",
+      "source": "https://github.com/yarnpkg/assets/blob/76d30ca2aebed5b73ea8131d972218fb860bd32d/yarn-kitten-circle.svg",
+      "guidelines": "https://github.com/yarnpkg/assets/tree/76d30ca2aebed5b73ea8131d972218fb860bd32d",
+      "license": {
+        "type": "CC-BY-4.0"
+      }
+    }
+  },
+  {
+    "key": "zig",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/zig.svg",
+    "sha256": "1cd8fe569c641c0229c3717f2f883b88cf9beaa3b2adc255799ea3e014ee1955",
+    "brand": {
+      "title": "Zig",
+      "hex": "F7A41D",
+      "source": "https://github.com/ziglang/logo/blob/6446ba8e37a0651da720d8869e1ce9264fa0c0b9/zig-mark.svg",
+      "license": {
+        "type": "CC-BY-SA-4.0"
+      }
+    }
+  },
+  {
+    "key": "babel",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/babel.svg",
+    "sha256": "14272cc15d2c2b4df0767dd95b6017efc674ee32d3a37c65379350682d0cbf96",
+    "brand": {
+      "title": "Babel",
+      "hex": "F9DC3E",
+      "source": "https://github.com/babel/website/blob/93330158b6ecca1ab88d3be8dbf661f5c2da6c76/website/static/img/babel-black.svg"
+    }
+  },
+  {
+    "key": "bazel",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/bazel.svg",
+    "sha256": "8b3c1aa9a3a4f8281229d1b1b842c1b0dd115414ddbc4b66f45082de2697a956",
+    "brand": {
+      "title": "Bazel",
+      "hex": "43A047",
+      "source": "https://bazel.build"
+    }
+  },
+  {
+    "key": "bower",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/bower.svg",
+    "sha256": "d96f20e5be2707d871027f5df9834211601f512c496fdfdf138833e9ebf02e53",
+    "brand": {
+      "title": "Bower",
+      "hex": "EF5734",
+      "source": "https://bower.io/docs/about/#brand"
+    }
+  },
+  {
+    "key": "coffee",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/coffeescript.svg",
+    "sha256": "a40ae1ad1e88dba179b650e5af4b454e1b8df1633f3570a4562a970d22edc124",
+    "brand": {
+      "title": "CoffeeScript",
+      "hex": "2F2625",
+      "source": "https://coffeescript.org"
+    }
+  },
+  {
+    "key": "crystal",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/crystal.svg",
+    "sha256": "14ff3ec59e19c391ac6ad0dc71a322e576ce75ce0965533dd2c70147a9af5cdb",
+    "brand": {
+      "title": "Crystal",
+      "hex": "000000",
+      "source": "https://crystal-lang.org/media/"
+    }
+  },
+  {
+    "key": "editorconfig",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/editorconfig.svg",
+    "sha256": "f5ff6dcf6149e6c9b1c75f364f19ddfd8295496d41dee279b9f37a9b08bbac0c",
+    "brand": {
+      "title": "EditorConfig",
+      "hex": "FEFEFE",
+      "source": "https://editorconfig.org"
+    }
+  },
+  {
+    "key": "groovy",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/apachegroovy.svg",
+    "sha256": "8eac1edb38c69d20989edf2db28aeed1d4029613c5e68e7bf9a6d1e88f8f565d",
+    "brand": {
+      "title": "Apache Groovy",
+      "hex": "4298B8",
+      "source": "https://apache.org/logos",
+      "guidelines": "https://www.apache.org/foundation/marks",
+      "license": {
+        "type": "Apache-2.0"
+      }
+    }
+  },
+  {
+    "key": "clojure",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/clojure.svg",
+    "sha256": "f23b610b539189e4dd680473a1fe73f20a1e5e3ad1d93400b987abde9ba571d7",
+    "brand": {
+      "title": "Clojure",
+      "hex": "5881D8",
+      "source": "https://commons.wikimedia.org/wiki/File:Clojure_logo.svg"
+    }
+  },
+  {
+    "key": "ejs",
+    "upstream": "simple-icons",
+    "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+    "url": "https://github.com/simple-icons/simple-icons/blob/98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d/icons/ejs.svg",
+    "sha256": "f4b05bfc314d846b802871b2bd63782397b1e09187188183ef3e252178fd6669",
+    "brand": {
+      "title": "EJS",
+      "hex": "B4CA65",
+      "source": "https://github.com/mde/ejs-site/blob/dd845093a46b373df42108b888a0ad80085a5c94/ejs.svg"
+    }
+  },
+  {
+    "key": "default",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/file.svg",
+    "sha256": "499039795d7412d67664ff79d2eb6b7412e746b24c18c8fd8aba383c24ddada0"
+  },
+  {
+    "key": "code",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/file-code.svg",
+    "sha256": "8ac619671f53653a483c2d5e2e6afe6d009c3198918cf76632e2cb4abf0d6721"
+  },
+  {
+    "key": "config",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/file-cog.svg",
+    "sha256": "f5213e08b45b4cb44cd9424001289c292509c53dd3cbee698ad5a25e4dc5a9c5"
+  },
+  {
+    "key": "text",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/file-text.svg",
+    "sha256": "52ca55846c202335fb870c8aa23e9345630ec10489303756d62e750f7109605c"
+  },
+  {
+    "key": "image",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/file-image.svg",
+    "sha256": "82a9140926814aa4287fb6f4b479da6f99e752ebde557e19ffb066a239eab2f9"
+  },
+  {
+    "key": "audio",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/file-music.svg",
+    "sha256": "3590a42fac78e9d87e28062cf5572ddb963ba501b197c983033745cad0793954"
+  },
+  {
+    "key": "video",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/file-video-camera.svg",
+    "sha256": "a1496d106b1d0d62da11f85fc36707924ff8c340b26083161959724c4c8acc3c"
+  },
+  {
+    "key": "archive",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/file-archive.svg",
+    "sha256": "203682f219d2f51c1a9e43c9b74c045ceae1b4f72c016a11e3670edee6725999"
+  },
+  {
+    "key": "spreadsheet",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/file-spreadsheet.svg",
+    "sha256": "69960bb43dec3b66f0d1c2dd26c2f637a10540b8bea4ffb90f8764a8404016a0"
+  },
+  {
+    "key": "font",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/file-type.svg",
+    "sha256": "207578c8e5a323cd84020b0c071ded28253494ce0da43a6592dabd89743e932d"
+  },
+  {
+    "key": "database",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/database.svg",
+    "sha256": "471eb14bc8d144896a82dfc4aa9daf350f769f0896f4bef33e50aabdbb51130d"
+  },
+  {
+    "key": "lock",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/file-lock.svg",
+    "sha256": "268177a51e8fac557a664655ed6361e1dedcd73f7249a46a5ecaa7dbbf962056"
+  },
+  {
+    "key": "license",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/shield-check.svg",
+    "sha256": "8d4fcdbde5bba4abb1a2f6fe53e37ceb6343a1d5449a9d88f6f97c1971d26c4e"
+  },
+  {
+    "key": "notebook",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/notebook-pen.svg",
+    "sha256": "56705c35e839977bd6f133d7ca4e9c93a6eea563c89e4be125efd0a32e1fa041"
+  },
+  {
+    "key": "folder",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/folder.svg",
+    "sha256": "f0d92b94b797a8ab7d4c4ae33c3236c47f64068351b4e14bdb5014ee42898a39"
+  },
+  {
+    "key": "folder-open",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/folder-open.svg",
+    "sha256": "ee57452b40e71df310214091dd9da1941a397c83197b8ff8d7ae66dd4242578b"
+  },
+  {
+    "key": "chevron-right",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/chevron-right.svg",
+    "sha256": "2758143d7b2434e4aa7307dfd34405c87909ff4052f21b5f3f40d45224b4f19b"
+  },
+  {
+    "key": "chevron-down",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/chevron-down.svg",
+    "sha256": "66ea878e72ed3488bb3b464c39dfdccee8d1f78e560dccea40e5e12da0e87e87"
+  },
+  {
+    "key": "chevron-left",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/chevron-left.svg",
+    "sha256": "83b0681aa38bf55e9d52a1e4b4cced624abe1fe7678ecafda133a574f1161d93"
+  },
+  {
+    "key": "close",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/x.svg",
+    "sha256": "4a9cdab38fbb96162e7dace28e33f4ca0e49d8963a6162abc3d4691b7d675117"
+  },
+  {
+    "key": "settings",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/settings.svg",
+    "sha256": "0ae27fd0f81999229e3127ac96c5b32edfea448e291d509e76212b917551d66b"
+  },
+  {
+    "key": "terminal",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/terminal.svg",
+    "sha256": "4f9b6488b237757d5cb615ccd07502fa99774826839e2a99017784bdb2596f1a"
+  },
+  {
+    "key": "files",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/panel-left.svg",
+    "sha256": "029f67b9e3eeb7ddf7c7c499b174c50388725e8ea50d4ea59ed7dbaf8d61cb82"
+  },
+  {
+    "key": "structure",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/list-tree.svg",
+    "sha256": "e4c994b829b8b4d0ddc66c1ce14f9f56d0347e37b1b1fb124111831a61ec3890"
+  },
+  {
+    "key": "diagnostics",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/triangle-alert.svg",
+    "sha256": "4866f38b8560d410f21e3226413e0b77997b6dfbb6931fadfe0a0d5aef9ffeb4"
+  },
+  {
+    "key": "debug",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/bug.svg",
+    "sha256": "c4fddf0d43b4c4f0b8fc52eb8810173c8d8bd25618034a70f162d85e8189d69d"
+  },
+  {
+    "key": "git-branch",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/git-branch.svg",
+    "sha256": "041f04acc8f92657b849540f0440e2e85d0df0b8da2365611e81b9bebfafc4eb"
+  },
+  {
+    "key": "split_right",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/columns-2.svg",
+    "sha256": "bddf3348a9c82d111a060d118299c90755b1ae8411bd16ea1d5ddb83c5f98a27"
+  },
+  {
+    "key": "split_down",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/rows-2.svg",
+    "sha256": "92f8d9962230c2d2a93ff1d9f40cde8d969b3e4f9890fabf741593a8c83835f4"
+  },
+  {
+    "key": "viewer-image",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/image.svg",
+    "sha256": "619c9db58c879dce6250376ba67d9c9102ca6dbb3b1efb9294c9f180e22273a5"
+  },
+  {
+    "key": "hex",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/binary.svg",
+    "sha256": "ddcdd24c5c588ef8f0330622f3dc32b06830452bdaad67ef0e4754fdaa82bec4"
+  },
+  {
+    "key": "extension",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/puzzle.svg",
+    "sha256": "6d80d0c3b214c96945ed0f1c6ee0e4c4ea3911c6cc91c75751fdba08c31eab02"
+  },
+  {
+    "key": "plus",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/plus.svg",
+    "sha256": "7f6af73bf1ff6c4bca3f18351c8d1bdec6749c0c2530c4de5da85d520c21df17"
+  },
+  {
+    "key": "minus",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/minus.svg",
+    "sha256": "a0c743ab6dbf545d8a6e19ef3874f48ede686ce68d25e231bd81f540d97b1f19"
+  },
+  {
+    "key": "search",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/search.svg",
+    "sha256": "283d371c2e433817bb9c0c8310caa6c77fa4177c0f4f1168d9c83b97af7389dc"
+  },
+  {
+    "key": "new-file",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/file-plus.svg",
+    "sha256": "bbcf862a2a4425baa8a5bda39c7f16ec1d283816a3db77baf84f2e8766dd223e"
+  }
+]

@@ -1,0 +1,13 @@
+[package]
+name = "bed-module-color"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-ui = { workspace = true }
+bed-workbench-api = { workspace = true }
+bed-editing = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }

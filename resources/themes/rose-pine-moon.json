@@ -1,0 +1,46 @@
+{
+    "name": "Ros\u00e9 Pine Moon",
+    "appearance": "dark",
+    "ui": {
+        "background": "#232136",
+        "window_background": "#1e1c30",
+        "surface": "#2a273f",
+        "foreground": "#e0def4",
+        "accent": "#c4a7e7",
+        "selection": "#44415a"
+    },
+    "syntax": {
+        "text": "#e0def4",
+        "comment": "#6e6a86",
+        "keyword": "#3e8fb0",
+        "string": "#f6c177",
+        "number": "#ea9a97",
+        "function": "#ea9a97",
+        "type": "#9ccfd8",
+        "variable": "#e0def4",
+        "parameter": "#c4a7e7",
+        "property": "#9ccfd8",
+        "constant": "#ea9a97",
+        "operator": "#908caa",
+        "punctuation": "#908caa",
+        "special": "#eb6f92"
+    },
+    "terminal": [
+        "#393552",
+        "#eb6f92",
+        "#3e8fb0",
+        "#f6c177",
+        "#9ccfd8",
+        "#c4a7e7",
+        "#ea9a97",
+        "#e0def4",
+        "#6e6a86",
+        "#eb6f92",
+        "#95b1ac",
+        "#f6c177",
+        "#9ccfd8",
+        "#c4a7e7",
+        "#ea9a97",
+        "#e0def4"
+    ]
+}

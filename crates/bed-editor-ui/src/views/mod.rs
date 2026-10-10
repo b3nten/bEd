@@ -1,0 +1,9 @@
+pub mod caret_view;
+pub mod diagnostic_style;
+pub mod gutter_view;
+pub mod hover_markdown;
+pub mod hover_tooltip;
+pub mod hover_trigger;
+pub mod minimap_view;
+pub mod text_view;
+pub mod view_layout;

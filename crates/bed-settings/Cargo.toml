@@ -1,0 +1,16 @@
+[package]
+name = "bed-settings"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-effects-config = { workspace = true }
+bed-highlight = { workspace = true }
+bed-document-session = { workspace = true }
+bed-ui = { workspace = true }
+dear-imgui-rs = { workspace = true }
+fontdb = { workspace = true }
+serde_json = { workspace = true }

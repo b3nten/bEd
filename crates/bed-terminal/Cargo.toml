@@ -1,0 +1,46 @@
+[package]
+name = "bed-terminal"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = ["ui"]
+ui = ["dep:dear-imgui-rs", "dear-imgui-rs/multi-viewport", "dep:dear-imgui-sys", "dep:swash", "dep:ttf-parser"]
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-remote = { workspace = true }
+dear-imgui-rs = { workspace = true, optional = true }
+dear-imgui-sys = { workspace = true, optional = true }
+rio-vt = { workspace = true }
+rio-graphics = { workspace = true }
+swash = { workspace = true, optional = true }
+ttf-parser = { workspace = true, optional = true }
+polling = { workspace = true }
+unicode-width = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[[test]]
+name = "terminal_pty"
+path = "tests/terminal_pty.rs"
+harness = false
+
+[[test]]
+name = "terminal_input"
+path = "tests/terminal_input.rs"
+harness = false
+
+[[test]]
+name = "terminal_view"
+path = "tests/terminal_view.rs"
+required-features = ["ui"]
+
+[[example]]
+name = "terminal_render_baseline"
+required-features = ["ui"]

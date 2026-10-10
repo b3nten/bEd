@@ -1,0 +1,20 @@
+[package]
+name = "bed-module-explorer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-files = { workspace = true }
+bed-remote = { workspace = true }
+bed-document-session = { workspace = true }
+bed-ui = { workspace = true }
+bed-workbench-api = { workspace = true }
+chrono = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+bed-plugin-csv = { workspace = true }

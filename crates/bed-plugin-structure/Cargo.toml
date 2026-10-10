@@ -1,0 +1,14 @@
+[package]
+name = "bed-plugin-structure"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-highlight = { workspace = true }
+bed-plugin = { workspace = true }
+bed-ui = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name = "bed-plugin-sqlite"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-workbench-api = { workspace = true }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+rusqlite = { version = "=0.40.2", features = ["bundled", "hooks", "limits"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

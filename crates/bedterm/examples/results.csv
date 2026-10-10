@@ -1,0 +1,4 @@
+task,duration_ms,status
+Load assets,125,complete
+Render preview,342,complete
+Export result,88,complete

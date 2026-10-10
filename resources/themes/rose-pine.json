@@ -1,0 +1,46 @@
+{
+    "name": "Ros\u00e9 Pine",
+    "appearance": "dark",
+    "ui": {
+        "background": "#191724",
+        "window_background": "#14121e",
+        "surface": "#1f1d2e",
+        "foreground": "#e0def4",
+        "accent": "#c4a7e7",
+        "selection": "#403d52"
+    },
+    "syntax": {
+        "text": "#e0def4",
+        "comment": "#6e6a86",
+        "keyword": "#31748f",
+        "string": "#f6c177",
+        "number": "#ebbcba",
+        "function": "#ebbcba",
+        "type": "#9ccfd8",
+        "variable": "#e0def4",
+        "parameter": "#c4a7e7",
+        "property": "#9ccfd8",
+        "constant": "#ebbcba",
+        "operator": "#908caa",
+        "punctuation": "#908caa",
+        "special": "#eb6f92"
+    },
+    "terminal": [
+        "#26233a",
+        "#eb6f92",
+        "#31748f",
+        "#f6c177",
+        "#9ccfd8",
+        "#c4a7e7",
+        "#ebbcba",
+        "#e0def4",
+        "#6e6a86",
+        "#eb6f92",
+        "#95b1ac",
+        "#f6c177",
+        "#9ccfd8",
+        "#c4a7e7",
+        "#ebbcba",
+        "#e0def4"
+    ]
+}

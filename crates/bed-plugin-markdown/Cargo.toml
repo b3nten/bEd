@@ -1,0 +1,18 @@
+[package]
+name = "bed-plugin-markdown"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-plugin = { workspace = true, features = ["gpu"] }
+bed-workbench-api = { workspace = true, features = ["gpu"] }
+bed-plugin-image = { workspace = true }
+bed-remote = { workspace = true }
+bed-ui = { workspace = true }
+dear-imgui-rs = { workspace = true }
+pulldown-cmark = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
