@@ -25,7 +25,7 @@ pub struct LspView<'a> {
     pub hover_info: Info,
     pub hover_dismissed: bool,
     pub tooltip_arbiter: &'a TooltipArbiter,
-    pub caret_visual_row: Option<usize>,
+    pub caret_position: Option<[f32; 2]>,
 }
 pub struct LspPane<'a> {
     pub editor: &'a Editor,

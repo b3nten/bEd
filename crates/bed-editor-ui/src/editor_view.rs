@@ -22,6 +22,8 @@ pub struct EditorViewOptions {
     pub background_color: Option<[f32; 4]>,
     pub rainbow_mode: bool,
     pub minimap_enabled: bool,
+    /// Wrap long lines to the view width without changing document contents.
+    pub soft_wrap: bool,
     pub line_jump_key: Option<Key>,
     pub block_input: bool,
     pub source_debug: Option<SourceDebugPresentation>,
@@ -39,6 +41,7 @@ impl Default for EditorViewOptions {
             background_color: None,
             rainbow_mode: true,
             minimap_enabled: false,
+            soft_wrap: true,
             line_jump_key: Some(Key::Semicolon),
             block_input: false,
             source_debug: None,
@@ -62,6 +65,8 @@ pub struct ViewResponse {
 /// Geometry and hover data for host menus and LSP presentation. Frame internals stay private.
 pub struct ViewPresentation<'a> {
     pub layout: crate::views::view_layout::ViewLayout,
+    /// Primary caret's screen position in the current rendered layout.
+    pub caret_position: [f32; 2],
     pub hover_info: crate::views::hover_trigger::Info,
     pub hover_dismissed: bool,
     pub tooltip_arbiter: &'a crate::views::hover_tooltip::TooltipArbiter,
@@ -76,6 +81,7 @@ pub struct EditorView {
     frame: Box<EditorFrame>,
     input: EditorInput,
     minimap_override: Option<bool>,
+    soft_wrap_override: Option<bool>,
     zoom: f32,
     zoom_reset: Option<ZoomReset>,
     rendered_font: Option<(FontId, f32)>,
@@ -104,6 +110,7 @@ impl EditorView {
             frame,
             input: EditorInput::default(),
             minimap_override: None,
+            soft_wrap_override: None,
             zoom: 1.0,
             zoom_reset: None,
             rendered_font: None,
@@ -131,6 +138,13 @@ impl EditorView {
     }
     pub fn minimap_enabled(&self, default: bool) -> bool {
         self.minimap_override.unwrap_or(default)
+    }
+    /// Override wrapping for this view's lifetime without changing host settings.
+    pub fn set_soft_wrap(&mut self, enabled: bool) {
+        self.soft_wrap_override = Some(enabled);
+    }
+    pub fn soft_wrap(&self, default: bool) -> bool {
+        self.soft_wrap_override.unwrap_or(default)
     }
     /// View-local magnification, limited to 60%–140%.
     /// Neither document state nor host settings change.
@@ -215,6 +229,7 @@ impl EditorView {
                 .unwrap_or_else(|| ui.style_color(StyleColor::WindowBg));
             self.frame.rainbow_mode = options.rainbow_mode;
             self.frame.minimap_enabled = self.minimap_enabled(options.minimap_enabled);
+            self.frame.soft_wrap = self.soft_wrap(options.soft_wrap);
             self.frame.line_jump_key = options.line_jump_key;
             self.frame.external_overlay = options.block_input;
             self.frame.read_only =
@@ -331,6 +346,7 @@ impl EditorView {
     pub fn presentation(&self) -> ViewPresentation<'_> {
         ViewPresentation {
             layout: self.frame.layout,
+            caret_position: self.frame.caret_position,
             hover_info: self.frame.hover_info(),
             hover_dismissed: self.frame.hover_dismissed(),
             tooltip_arbiter: &self.frame.tooltip_arbiter,
@@ -381,14 +397,11 @@ impl EditorView {
         }
         if let Some(row) = self.frame.projection.document_row(visual as usize) {
             let column = session.with_document(self.document, |document| {
-                let line = document.line(row);
-                bed_editing::util::utf8::snap_to_utf8_char_boundary(
-                    &line,
-                    crate::views::view_layout::column_at_x(
-                        ui,
-                        &line,
-                        position[0] - layout.text_pos[0],
-                    ),
+                self.frame.projection.hit_column(
+                    ui,
+                    document,
+                    visual as usize,
+                    position[0] - layout.text_pos[0],
                 )
             })?;
             return Ok(TextHit::Document { row, column });
@@ -396,7 +409,7 @@ impl EditorView {
         Ok(match self.frame.projection.rows.get(visual as usize) {
             Some(crate::diff::ProjectedRow::Historical { old_row, bytes }) => TextHit::Historical {
                 old_row: *old_row,
-                bytes: bytes.clone(),
+                bytes: bytes.to_vec(),
             },
             Some(_) => TextHit::Control,
             None => TextHit::None,
@@ -1060,6 +1073,48 @@ mod tests {
             });
         drop(context.render_legacy());
         result.unwrap()
+    }
+
+    #[test]
+    fn views_wrap_by_default_and_respect_host_and_view_overrides() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = extension_context();
+        let mut session = EditorSession::new();
+        let bytes = format!("{}\ntail", "word ".repeat(300));
+        let document = session.create_document(bytes.as_bytes()).unwrap();
+        let mut view = EditorView::new(&mut session, document).unwrap();
+        let mut options = EditorViewOptions::default();
+        diff_frame(&mut context, &mut session, &mut view, &options);
+        diff_frame(&mut context, &mut session, &mut view, &options);
+        assert!(
+            view.visual_row(1) > 1,
+            "default embedding options wrap long lines"
+        );
+
+        options.soft_wrap = false;
+        diff_frame(&mut context, &mut session, &mut view, &options);
+        assert_eq!(
+            view.visual_row(1),
+            1,
+            "hosts can explicitly disable wrapping"
+        );
+
+        view.set_soft_wrap(true);
+        diff_frame(&mut context, &mut session, &mut view, &options);
+        assert!(
+            view.visual_row(1) > 1,
+            "a view override takes precedence over its host"
+        );
+
+        options.soft_wrap = true;
+        view.set_soft_wrap(false);
+        diff_frame(&mut context, &mut session, &mut view, &options);
+        assert_eq!(
+            view.visual_row(1),
+            1,
+            "views can explicitly disable default wrapping"
+        );
+        assert_eq!(session.snapshot(document).unwrap().bytes, bytes.as_bytes());
     }
 
     #[test]

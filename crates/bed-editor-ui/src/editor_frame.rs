@@ -1,6 +1,6 @@
 //! Presentation frame translated from ned editor/editor_frame.cpp. The basic
 //! Draws the custom document views and coordinates exclusive service overlays.
-use crate::diff::{DiffAction, DiffPresentation, ProjectedRow, RowProjection};
+use crate::diff::{DiffAction, DiffPresentation, ProjectedRow, RowProjection, WrapCache};
 use crate::source_debug::{SourceDebugAction, SourceDebugPresentation};
 use crate::source_git::{ConflictChoice, SourceGitAction, SourceGitPresentation};
 use crate::{
@@ -13,11 +13,16 @@ use crate::{
         hover_trigger::{HoverTrigger, Info, Target, Zone},
         minimap_view::{MIN_PANE_FONT_MUL, MinimapView, WIDTH_FONT_MUL},
         text_view::TextView,
-        view_layout::{ViewLayout, column_at_x, glyph_advance_bytes, line_column_x},
+        view_layout::{ViewLayout, glyph_advance_bytes},
     },
 };
 use bed_document_session::{ViewContext, editor::Editor};
+use bed_editing::editor_events::DocumentChange;
 use bed_editing::editor_events::Overlay;
+use bed_editing::{
+    editor_state::EditorState,
+    util::utf8::{utf8_byte_offset_to_utf16, utf16_to_utf8_byte_offset},
+};
 #[cfg(test)]
 use dear_imgui_rs::{Condition, StyleColor};
 use dear_imgui_rs::{FocusedFlags, Key, StyleVar, Ui, WindowFlags, sys};
@@ -68,12 +73,57 @@ impl SmoothScroll {
     }
 }
 
+struct DirtyEdit {
+    first: i32,
+    last: i32,
+    line_count: i32,
+    changes: Vec<DocumentChange>,
+    layout_applied: bool,
+}
+
+enum AnchorLocation {
+    // Document-change ranges use UTF-16; projection segments use byte columns.
+    Document(i32, i32),
+    Historical(usize, i32),
+}
+struct ViewportAnchor {
+    location: AnchorLocation,
+    fraction: f32,
+}
+impl ViewportAnchor {
+    fn apply(&mut self, change: &DocumentChange) {
+        let AnchorLocation::Document(row, column) = &mut self.location else {
+            return;
+        };
+        let point = (*row, *column);
+        let start = (change.start_line, change.start_character);
+        let end = (change.end_line, change.end_character);
+        if point < start {
+            return;
+        }
+        let (lines, _) = bed_editing::editor_state::EditorState::split_lines(&change.text);
+        let new_end = (
+            start.0 + lines.len() as i32 - 1,
+            utf8_byte_offset_to_utf16(lines.last().unwrap(), lines.last().unwrap().len() as i32)
+                + if lines.len() == 1 { start.1 } else { 0 },
+        );
+        (*row, *column) = if point < end {
+            start
+        } else if point.0 == end.0 {
+            (new_end.0, new_end.1 + point.1 - end.1)
+        } else {
+            (point.0 + new_end.0 - end.0, point.1)
+        };
+    }
+}
+
 pub struct EditorFrame {
     pub layout: ViewLayout,
+    pub caret_position: [f32; 2],
     pub finder: EditorFinder,
     pub line_jump: EditorLineJump,
     pub error: Option<String>,
-    dirty_rows: Rc<RefCell<Vec<(i32, i32, i32)>>>,
+    dirty_rows: Rc<RefCell<Vec<DirtyEdit>>>,
     width_full: bool,
     width_max: f32,
     width_longest: i32,
@@ -88,6 +138,7 @@ pub struct EditorFrame {
     pub external_overlay: bool,
     pub background_color: [f32; 4],
     pub minimap_enabled: bool,
+    pub soft_wrap: bool,
     pub minimap: MinimapView,
     exclusive_overlay: Rc<Cell<Option<Overlay>>>,
     hover_trigger: HoverTrigger,
@@ -98,8 +149,13 @@ pub struct EditorFrame {
     pub source_debug: Option<SourceDebugPresentation>,
     source_actions: Vec<SourceDebugAction>,
     pub(crate) projection: RowProjection,
+    /// Cheap rope snapshot of the document for which this layout was built.
+    projected_document: Option<EditorState>,
     projection_key: Option<(u64, u64, Option<u64>)>,
     projection_git: Option<SourceGitPresentation>,
+    wrap_key: Option<(bool, u32, usize, u32)>,
+    wrap_cache: WrapCache,
+    reflow_anchor: Option<ViewportAnchor>,
     pub diff: Option<DiffPresentation>,
     pub source_git: Option<SourceGitPresentation>,
     pub read_only: bool,
@@ -120,9 +176,13 @@ impl EditorFrame {
                 let Some(changes) = changes.upgrade() else {
                     return false;
                 };
-                changes
-                    .borrow_mut()
-                    .push((event.first_row, event.last_row, state.line_count()));
+                changes.borrow_mut().push(DirtyEdit {
+                    first: event.first_row,
+                    last: event.last_row,
+                    line_count: state.line_count(),
+                    changes: event.changes.clone(),
+                    layout_applied: false,
+                });
                 true
             });
         let exclusive_overlay = Rc::new(Cell::new(None));
@@ -138,6 +198,7 @@ impl EditorFrame {
         });
         Self {
             layout: ViewLayout::default(),
+            caret_position: [0.0; 2],
             finder: EditorFinder::default(),
             line_jump: EditorLineJump::default(),
             error: None,
@@ -156,6 +217,7 @@ impl EditorFrame {
             external_overlay: false,
             background_color: [0.0, 0.0, 0.0, 1.0],
             minimap_enabled: false,
+            soft_wrap: true,
             minimap: MinimapView::default(),
             exclusive_overlay,
             hover_trigger: HoverTrigger::new(),
@@ -166,8 +228,12 @@ impl EditorFrame {
             source_debug: None,
             source_actions: Vec::new(),
             projection: RowProjection::default(),
+            projected_document: None,
             projection_key: None,
             projection_git: None,
+            wrap_key: None,
+            wrap_cache: WrapCache::default(),
+            reflow_anchor: None,
             diff: None,
             source_git: None,
             read_only: false,
@@ -210,7 +276,8 @@ impl EditorFrame {
             self.finder.invalidate_matches();
         }
         if !self.width_full {
-            for &(row, _, post_edit_lines) in &dirty {
+            for edit in &dirty {
+                let (row, post_edit_lines) = (edit.first, edit.line_count);
                 let delta = post_edit_lines - self.width_lines;
                 if delta > 0 {
                     if self.width_longest > row {
@@ -246,7 +313,7 @@ impl EditorFrame {
         } else {
             if let Some((lo, hi)) = dirty
                 .iter()
-                .map(|&(lo, hi, _)| (lo.min(hi), lo.max(hi)))
+                .map(|edit| (edit.first.min(edit.last), edit.first.max(edit.last)))
                 .reduce(|(a, b), (c, d)| (a.min(c), b.max(d)))
             {
                 let lo = lo.clamp(0, line_count - 1);
@@ -400,8 +467,25 @@ impl EditorFrame {
         drop(_gutter_padding);
         drop(_gutter_border);
         ui.same_line_with_spacing(0.0, 0.0);
-        let mut content_width = self.content_width(ui, editor);
-        if self.historical_width_dirty || self.historical_width_font != fs {
+        // Always reserve the vertical scrollbar width, so adding it cannot
+        // change the wrap width and make layout oscillate between frames.
+        let wrap_width = (self.layout.size[0]
+            - gutter_width
+            - self.layout.minimap_width
+            - fs * 0.6
+            - self.layout.text_left_margin
+            - 2.0)
+            .max(1.0);
+        let reflow_scroll = self.refresh_wrap(ui, editor, wrap_width, previous_line_height);
+        self.layout.total_height = self.projection.len() as f32 * self.layout.line_height;
+        let mut content_width = if self.soft_wrap {
+            self.dirty_rows.borrow_mut().clear();
+            self.width_full = true;
+            0.0
+        } else {
+            self.content_width(ui, editor)
+        };
+        if !self.soft_wrap && (self.historical_width_dirty || self.historical_width_font != fs) {
             self.historical_width = 0.0;
             for row in &self.projection.rows {
                 if let ProjectedRow::Historical { bytes, .. } = row {
@@ -413,7 +497,9 @@ impl EditorFrame {
             self.historical_width_font = fs;
             self.historical_width_dirty = false;
         }
-        content_width = content_width.max(self.historical_width);
+        if !self.soft_wrap {
+            content_width = content_width.max(self.historical_width);
+        }
         let mut actions = Vec::new();
         let _padding = ui.push_style_var(StyleVar::WindowPadding([0.0, 0.0]));
         let _rounding = ui.push_style_var(StyleVar::ChildRounding(0.0));
@@ -423,7 +509,12 @@ impl EditorFrame {
             dear_imgui_rs::sys::igSetNextWindowContentSize(
                 [content_width, self.layout.total_height].into(),
             );
-            if previous_line_height > 0.0 && previous_line_height != self.layout.line_height {
+            if let Some(scroll_y) = reflow_scroll {
+                dear_imgui_rs::sys::igSetNextWindowScroll(
+                    [if self.soft_wrap { 0.0 } else { -1.0 }, scroll_y].into(),
+                );
+            } else if previous_line_height > 0.0 && previous_line_height != self.layout.line_height
+            {
                 // Preserve the top visible row and its fractional offset when
                 // font metrics change. Do this before input and painting.
                 let scroll_y =
@@ -437,7 +528,14 @@ impl EditorFrame {
                 (self.layout.size[0] - gutter_width - self.layout.minimap_width).max(1.0),
                 self.layout.size[1],
             ])
-            .flags(WindowFlags::HORIZONTAL_SCROLLBAR | WindowFlags::NO_NAV_INPUTS)
+            .flags(
+                WindowFlags::NO_NAV_INPUTS
+                    | if self.soft_wrap {
+                        WindowFlags::empty()
+                    } else {
+                        WindowFlags::HORIZONTAL_SCROLLBAR
+                    },
+            )
             .build(ui, || {
                 if editor.view.request_focus && !overlay_active {
                     ui.set_window_focus(None);
@@ -479,11 +577,40 @@ impl EditorFrame {
                     // Conflict controls were captured for the old document.
                     self.source_git = None;
                     self.refresh_projection(editor);
+                    if let Some(y) =
+                        self.refresh_wrap(ui, editor, wrap_width, self.layout.line_height)
+                    {
+                        ui.set_scroll_y(y);
+                    }
                 }
                 self.layout.total_height = self.projection.len() as f32 * self.layout.line_height;
                 let (state, view) = editor.state_and_view();
-                self.minimap.interact(ui, state, view, &self.layout);
+                self.minimap.interact_projected(
+                    ui,
+                    state,
+                    view,
+                    &self.layout,
+                    Some(&self.projection),
+                );
                 self.update_scroll(ui, editor);
+                self.caret_position = [
+                    self.projection
+                        .position_x(
+                            ui,
+                            &editor.state,
+                            editor.view.row,
+                            editor.view.column,
+                            self.layout.text_pos[0],
+                        )
+                        .floor(),
+                    (self.layout.text_pos[1]
+                        + self
+                            .projection
+                            .visual_position(editor.view.row, editor.view.column)
+                            as f32
+                            * self.layout.line_height)
+                        .floor(),
+                ];
                 self.update_hover_trigger(ui, editor, gutter_pos, gutter_width);
                 TextView::draw_projected(
                     ui,
@@ -526,12 +653,13 @@ impl EditorFrame {
         drop(_rounding);
         drop(_padding);
         if self.layout.minimap_width > 0.5 {
-            self.minimap.draw(
+            self.minimap.draw_projected(
                 ui,
                 &editor.state,
                 &editor.view,
                 &editor.highlight,
                 &self.layout,
+                Some(&self.projection),
             );
         }
         let breakpoint_row = if debug_column_width > 0.0 && gutter_hovered && !overlay_active {
@@ -640,12 +768,118 @@ impl EditorFrame {
             self.diff.as_ref().map(|diff| diff.comparison),
         );
         if self.projection_key != Some(key) || self.projection_git != self.source_git {
+            let same_document = self.projection_key.is_some_and(|old| old.0 == key.0);
+            if same_document && self.projection.is_wrapped() && self.reflow_anchor.is_none() {
+                self.reflow_anchor = self.viewport_anchor(editor, self.layout.line_height);
+            }
+            if !same_document {
+                self.wrap_cache.clear();
+                self.reflow_anchor = None;
+            }
+            for edit in self
+                .dirty_rows
+                .borrow_mut()
+                .iter_mut()
+                .filter(|edit| !edit.layout_applied)
+            {
+                self.wrap_cache.invalidate(&edit.changes);
+                if let Some(anchor) = &mut self.reflow_anchor {
+                    for change in &edit.changes {
+                        anchor.apply(change);
+                    }
+                }
+                edit.layout_applied = true;
+            }
             self.projection =
                 RowProjection::build(&editor.state, self.diff.as_ref(), self.source_git.as_ref());
+            self.projected_document = Some(editor.state.clone());
             self.projection_key = Some(key);
             self.projection_git = self.source_git.clone();
+            self.wrap_key = None;
             self.historical_width_dirty = true;
         }
+    }
+    fn viewport_anchor(&self, editor: &Editor, height: f32) -> Option<ViewportAnchor> {
+        if height <= 0.0 {
+            return None;
+        }
+        let top = editor.view.scroll_position[1].max(0.0) / height;
+        let visual = (top.floor() as usize).min(self.projection.len().saturating_sub(1));
+        let column = self
+            .projection
+            .segment(visual)
+            .map_or(0, |range| range.start as i32);
+        let location = match self.projection.rows.get(visual) {
+            Some(ProjectedRow::Historical { old_row, .. }) => {
+                AnchorLocation::Historical(*old_row, column)
+            }
+            _ => {
+                let row = self
+                    .projection
+                    .document_row(visual)
+                    .unwrap_or_else(|| self.projection.nearest_document_row(visual));
+                let line = self
+                    .projected_document
+                    .as_ref()
+                    .expect("projection has its document snapshot")
+                    .line(row);
+                AnchorLocation::Document(row, utf8_byte_offset_to_utf16(&line, column))
+            }
+        };
+        Some(ViewportAnchor {
+            location,
+            fraction: top.fract(),
+        })
+    }
+    fn refresh_wrap(
+        &mut self,
+        ui: &Ui,
+        editor: &Editor,
+        width: f32,
+        previous_height: f32,
+    ) -> Option<f32> {
+        let font = ui.with_bound_context(|| unsafe { sys::igGetFont() as usize });
+        let key = if self.soft_wrap {
+            (
+                true,
+                width.to_bits(),
+                font,
+                ui.current_font_size().to_bits(),
+            )
+        } else {
+            (false, 0, 0, 0)
+        };
+        if self.wrap_key == Some(key) {
+            return None;
+        }
+        let anchor = self.reflow_anchor.take().or_else(|| {
+            self.wrap_key
+                .and_then(|_| self.viewport_anchor(editor, previous_height))
+        });
+        if self.projection.is_wrapped() {
+            self.projection =
+                RowProjection::build(&editor.state, self.diff.as_ref(), self.source_git.as_ref());
+        }
+        if self.soft_wrap {
+            self.projection
+                .wrap_cached(ui, &editor.state, width, &mut self.wrap_cache);
+        }
+        self.wrap_key = Some(key);
+        self.smooth_scroll = None;
+        anchor.map(|anchor| {
+            let visual = match anchor.location {
+                AnchorLocation::Document(row, column) => {
+                    let row = row.clamp(0, editor.state.line_count() - 1);
+                    let column = utf16_to_utf8_byte_offset(&editor.state.line(row), column);
+                    self.projection.visual_position(row, column)
+                },
+                AnchorLocation::Historical(old_row, column) => self.projection.rows.iter().enumerate()
+                    .filter(|(_, entry)| matches!(entry, ProjectedRow::Historical { old_row: old, .. } if *old == old_row))
+                    .take_while(|(visual, _)| self.projection.segment(*visual).is_none_or(|range| range.start <= column.max(0) as usize))
+                    .last().map_or(0, |(visual, _)| visual),
+            };
+            (visual as f32 + anchor.fraction) * self.layout.line_height
+        })
     }
     fn draw_controls(&mut self, ui: &Ui, enabled: bool) {
         let cursor = ui.cursor_screen_pos();
@@ -824,10 +1058,11 @@ impl EditorFrame {
         let Some(row) = self.projection.document_row(visual.max(0) as usize) else {
             return Target::default();
         };
-        let line = editor.state.line(row);
-        let column = bed_editing::util::utf8::snap_to_utf8_char_boundary(
-            &line,
-            column_at_x(ui, &line, mouse[0] - layout.text_pos[0]),
+        let column = self.projection.hit_column(
+            ui,
+            &editor.state,
+            visual.max(0) as usize,
+            mouse[0] - layout.text_pos[0],
         );
         Target {
             zone: Zone::Text,
@@ -850,8 +1085,21 @@ impl EditorFrame {
         }
         let baseline = [ui.scroll_x(), ui.scroll_y()];
         let mut next = baseline;
-        let max_x = ui.scroll_max_x();
-        let max_y = if ui.scroll_max_y() < 1.0 && self.layout.total_height > ui.window_height() {
+        let max_x = if self.soft_wrap {
+            0.0
+        } else {
+            ui.scroll_max_x()
+        };
+        let max_y = if self.soft_wrap {
+            // BeginChild's extent precedes this frame's edits. Use the current
+            // reflowed content so revealing a newly wrapped EOF row can scroll.
+            ui.with_bound_context(|| unsafe {
+                let window = &*sys::igGetCurrentWindowRead();
+                self.layout.total_height - (window.InnerRect.Max.y - window.InnerRect.Min.y)
+                    + window.WindowPadding.y * 2.0
+            })
+            .max(0.0)
+        } else if ui.scroll_max_y() < 1.0 && self.layout.total_height > ui.window_height() {
             self.layout.total_height + self.layout.editor_top_margin - ui.window_height()
         } else {
             ui.scroll_max_y()
@@ -889,7 +1137,13 @@ impl EditorFrame {
             view.ensure_cursor_visible.vertical = false;
         }
         let reveal_horizontal = |mut target: [f32; 2]| {
-            let x = line_column_x(ui, &state.line(view.row), view.column, 0.0);
+            if self.soft_wrap {
+                target[0] = 0.0;
+                return target;
+            }
+            let x = self
+                .projection
+                .position_x(ui, state, view.row, view.column, 0.0);
             let margin = ui.current_font_size() * 2.0;
             let viewport = ui.window_width() - ui.current_font_size() * 0.6;
             if x < target[0] + margin {
@@ -908,7 +1162,8 @@ impl EditorFrame {
             view.ensure_cursor_visible.vertical = false;
         } else if view.center_cursor_vertical {
             let mut target = reveal_horizontal(next);
-            target[1] = self.projection.visual_row(view.row) as f32 * self.layout.line_height
+            target[1] = self.projection.visual_position(view.row, view.column) as f32
+                * self.layout.line_height
                 - (ui.window_height() - self.layout.line_height) * 0.5;
             target = clamp(target);
             view.center_cursor_vertical = false;
@@ -936,7 +1191,8 @@ impl EditorFrame {
                 target = reveal_horizontal(target);
             }
             if view.ensure_cursor_visible.vertical {
-                let y = self.projection.visual_row(view.row) as f32 * self.layout.line_height;
+                let y = self.projection.visual_position(view.row, view.column) as f32
+                    * self.layout.line_height;
                 if y < target[1] + self.layout.line_height {
                     target[1] = y - self.layout.line_height;
                 } else if y + self.layout.line_height

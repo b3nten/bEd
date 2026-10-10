@@ -41,14 +41,22 @@ impl CaretView {
             )
         };
         for (index, sel) in view.selections.iter().enumerate() {
-            let x = line_column_x(
-                ui,
-                &state.line(sel.head_row),
-                sel.head_column,
-                layout.text_pos[0],
-            )
-            .floor();
-            let visual = projection.map_or(sel.head_row as usize, |p| p.visual_row(sel.head_row));
+            let x = projection
+                .map_or_else(
+                    || {
+                        line_column_x(
+                            ui,
+                            &state.line(sel.head_row),
+                            sel.head_column,
+                            layout.text_pos[0],
+                        )
+                    },
+                    |p| p.position_x(ui, state, sel.head_row, sel.head_column, layout.text_pos[0]),
+                )
+                .floor();
+            let visual = projection.map_or(sel.head_row as usize, |p| {
+                p.visual_position(sel.head_row, sel.head_column)
+            });
             let y = (layout.text_pos[1] + visual as f32 * layout.line_height).floor();
             let color = if index == view.primary_index {
                 primary_color

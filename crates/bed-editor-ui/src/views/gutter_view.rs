@@ -148,6 +148,12 @@ impl GutterView {
             ))
         });
         for visual in first..last {
+            if projection
+                .and_then(|p| p.segment(visual as usize))
+                .is_some_and(|segment| segment.start != 0)
+            {
+                continue;
+            }
             let (row, old_row) = match projection.and_then(|p| p.rows.get(visual as usize)) {
                 Some(crate::diff::ProjectedRow::Document { row, old_row, .. }) => (*row, *old_row),
                 Some(crate::diff::ProjectedRow::Historical { old_row, .. }) => {
@@ -250,8 +256,79 @@ impl GutterView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diff::RowProjection;
     use crate::source_debug::SourceBreakpoint;
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
+
+    #[test]
+    fn wrapped_gutter_draws_line_number_and_source_markers_once() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut editor = Editor::new();
+        editor.set_content(b"AAAAAAAA");
+        let debug = SourceDebugPresentation {
+            breakpoints: vec![SourceBreakpoint {
+                row: 0,
+                enabled: true,
+                status: BreakpointStatus::Verified,
+            }],
+            execution_row: Some(0),
+        };
+        context.prepare_frame(FramePrepareOptions::new([500.0, 300.0], 1.0 / 60.0));
+        let ui = context.frame();
+        ui.window("wrapped gutter")
+            .position([0.0; 2], Condition::Always)
+            .size([480.0, 280.0], Condition::Always)
+            .build(|| {
+                let layout = ViewLayout {
+                    size: [400.0, 200.0],
+                    line_height: ui.text_line_height(),
+                    ..Default::default()
+                };
+                let mut projection = RowProjection::build(&editor.state, None, None);
+                projection.wrap(
+                    ui,
+                    &editor.state,
+                    crate::views::view_layout::glyph_advance(ui, "A") * 2.0 + 0.01,
+                );
+                assert_eq!(projection.len(), 4);
+                let pos = [30.0, 30.0];
+                let width =
+                    GutterView::width(ui, &editor.state) + GutterView::debug_column_width(ui, true);
+                let vertices = || {
+                    ui.with_bound_context(|| unsafe {
+                        let v = &(*sys::igGetWindowDrawList()).VtxBuffer;
+                        std::slice::from_raw_parts(v.Data, v.Size as usize).to_vec()
+                    })
+                };
+                let before = vertices().len();
+                let draw = ui.get_window_draw_list();
+                GutterView::draw_projected(
+                    ui,
+                    &draw,
+                    &editor,
+                    &layout,
+                    pos,
+                    width,
+                    Some(&debug),
+                    Some(&projection),
+                    false,
+                );
+                let wrapped = vertices()[before..].to_vec();
+                let reference_start = vertices().len();
+                GutterView::draw_with_debug(ui, &draw, &editor, &layout, pos, width, Some(&debug));
+                assert_eq!(wrapped, vertices()[reference_start..]);
+            });
+        drop(context.render_legacy());
+    }
 
     #[test]
     fn breakpoint_states_and_execution_arrow_coexist_in_their_own_column() {

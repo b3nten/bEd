@@ -335,7 +335,6 @@ impl EditorRuntime {
                     && (popup_here || (hover_here && !over_symbol_popup)))
             {
                 self.lsp_ui.set_mouse_origin(origin);
-                let caret_visual_row = Some(view.visual_row(session.view_snapshot(view_id)?.row));
                 session.with_view(view_id, |editor| {
                     self.lsp_ui.render_hover(
                         ui,
@@ -347,7 +346,7 @@ impl EditorRuntime {
                             hover_info: hover,
                             hover_dismissed: dismissed,
                             tooltip_arbiter: frame.tooltip_arbiter,
-                            caret_visual_row,
+                            caret_position: Some(frame.caret_position),
                         },
                     )
                 })?;
@@ -458,6 +457,10 @@ impl EditorRuntime {
             let minimap = view.minimap_enabled(config.options.minimap_enabled);
             if ui.menu_item_enabled_selected_no_shortcut("Show Minimap", minimap, true) {
                 view.set_minimap_enabled(!minimap);
+            }
+            let soft_wrap = view.soft_wrap(config.options.soft_wrap);
+            if ui.menu_item_enabled_selected_no_shortcut("Word Wrap", soft_wrap, true) {
+                view.set_soft_wrap(!soft_wrap);
             }
             if ui.menu_item_enabled_selected_no_shortcut("Reset Zoom", false, view.zoom() != 1.0) {
                 view.reset_zoom();

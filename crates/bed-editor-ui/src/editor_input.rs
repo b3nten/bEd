@@ -1,10 +1,14 @@
 //! Keyboard/mouse to commands, translated from ned editor/editor_input.{h,cpp}.
 //! See LICENSE and NOTICE for upstream attribution.
+use crate::diff::RowProjection;
 use crate::views::view_layout::{ViewLayout, column_at_x};
 use bed_document_session::ViewContext;
 #[cfg(test)]
 use bed_document_session::editor::Editor;
-use bed_editing::{editor_commands::CursorReveal, util::utf8::snap_to_utf8_char_boundary};
+use bed_editing::{
+    editor_commands::CursorReveal,
+    util::utf8::{prev_utf8_char, snap_to_utf8_char_boundary},
+};
 use dear_imgui_rs::{Key, MouseButton, Ui, WindowHoveredFlags, sys};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,6 +32,18 @@ pub struct EditorInput {
     dragging: bool,
     anchor: Option<(i32, i32)>,
     definition_request: Option<DefinitionRequest>,
+    visual_navigation: Option<VisualNavigation>,
+}
+
+/// Pixel preference belongs to the view. Document selections continue to use
+/// byte columns, including while a caret crosses a soft wrap.
+struct VisualNavigation {
+    generation: u64,
+    width: u32,
+    line_height: u32,
+    font_metrics: (usize, u32),
+    heads: Vec<(i32, i32)>,
+    xs: Vec<f32>,
 }
 
 impl EditorInput {
@@ -87,7 +103,7 @@ impl EditorInput {
         if editor.view.block_input {
             return Vec::new();
         }
-        self.process_keyboard(ui, editor, read_only)
+        self.process_keyboard(ui, editor, layout, projection, read_only)
     }
 
     pub fn take_definition_request(&mut self) -> Option<DefinitionRequest> {
@@ -98,55 +114,63 @@ impl EditorInput {
         &mut self,
         ui: &Ui,
         editor: &mut ViewContext<'_>,
+        layout: &ViewLayout,
+        projection: Option<&RowProjection>,
         read_only: bool,
     ) -> Vec<HostAction> {
         let primary = ui.io().key_ctrl() || ui.io().key_super();
         let shift = ui.io().key_shift();
         let alt = ui.io().key_alt();
         let mut actions = Vec::new();
-        let mut commands = editor.commands();
+        let projection = projection.map(|rows| (rows, editor.ops.generation()));
         if alt && !primary {
             if ui.is_key_pressed(Key::LeftArrow) {
-                commands.move_word_left(shift);
+                self.visual_navigation = None;
+                editor.commands().move_word_left(shift);
             }
             if ui.is_key_pressed(Key::RightArrow) {
-                commands.move_word_right(shift);
+                self.visual_navigation = None;
+                editor.commands().move_word_right(shift);
             }
             if ui.is_key_pressed(Key::UpArrow) {
-                commands.add_cursor_above();
+                self.move_vertical(ui, editor, layout, projection, -1, shift, true);
             }
             if ui.is_key_pressed(Key::DownArrow) {
-                commands.add_cursor_below();
+                self.move_vertical(ui, editor, layout, projection, 1, shift, true);
             }
         }
         if ui.is_key_pressed(Key::Escape) {
-            commands.collapse_selection();
+            self.visual_navigation = None;
+            editor.commands().collapse_selection();
         }
         if ui.is_window_focused() {
             if !read_only && ui.is_key_pressed(Key::Tab) {
                 if shift {
-                    commands.outdent();
+                    editor.commands().outdent();
                 } else {
-                    commands.indent();
+                    editor.commands().indent();
                 }
                 ui.set_keyboard_focus_here_with_offset(-1);
             }
             if primary {
                 if ui.is_key_pressed(Key::A) {
-                    commands.select_all();
+                    self.visual_navigation = None;
+                    editor.commands().select_all();
                 }
                 if !alt {
                     if ui.is_key_pressed(Key::LeftArrow) {
-                        commands.move_line_start(shift);
+                        self.visual_navigation = None;
+                        editor.commands().move_line_start(shift);
                     }
                     if ui.is_key_pressed(Key::RightArrow) {
-                        commands.move_line_end(shift);
+                        self.visual_navigation = None;
+                        editor.commands().move_line_end(shift);
                     }
                     if ui.is_key_pressed(Key::UpArrow) {
-                        commands.move_lines(-5, shift);
+                        self.move_vertical(ui, editor, layout, projection, -5, shift, false);
                     }
                     if ui.is_key_pressed(Key::DownArrow) {
-                        commands.move_lines(5, shift);
+                        self.move_vertical(ui, editor, layout, projection, 5, shift, false);
                     }
                 }
             }
@@ -156,78 +180,82 @@ impl EditorInput {
         // then primary shortcuts. The queue is consumed even with a modifier.
         let text = ui.with_bound_context(take_input_characters);
         if !read_only && !text.is_empty() {
-            commands.type_text(text.as_bytes());
+            editor.commands().type_text(text.as_bytes());
         }
         if ui.is_key_pressed(Key::Enter) {
             if self.suppress_next_enter {
                 self.suppress_next_enter = false;
             } else if !read_only {
-                commands.insert_newline();
+                editor.commands().insert_newline();
             }
         }
         if !read_only && ui.is_key_pressed(Key::Backspace) {
-            commands.delete_left(alt);
+            editor.commands().delete_left(alt);
         }
         if !read_only && ui.is_key_pressed(Key::Delete) {
-            commands.delete_right(alt);
+            editor.commands().delete_right(alt);
         }
         if !alt && !primary {
             if ui.is_key_pressed(Key::UpArrow) {
-                commands.move_up(shift);
+                self.move_vertical(ui, editor, layout, projection, -1, shift, false);
             }
             if ui.is_key_pressed(Key::DownArrow) {
-                commands.move_down(shift);
+                self.move_vertical(ui, editor, layout, projection, 1, shift, false);
             }
             if ui.is_key_pressed(Key::LeftArrow) {
-                commands.move_left(shift);
+                self.visual_navigation = None;
+                editor.commands().move_left(shift);
             }
             if ui.is_key_pressed(Key::RightArrow) {
-                commands.move_right(shift);
+                self.visual_navigation = None;
+                editor.commands().move_right(shift);
             }
         }
         // Additional portable navigation bindings retained by Bed.
         if ui.is_key_pressed(Key::Home) {
+            self.visual_navigation = None;
             if primary {
-                commands.move_doc_start(shift);
+                editor.commands().move_doc_start(shift);
             } else {
-                commands.move_line_start(shift);
+                editor.commands().move_line_start(shift);
             }
         }
         if ui.is_key_pressed(Key::End) {
+            self.visual_navigation = None;
             if primary {
-                commands.move_doc_end(shift);
+                editor.commands().move_doc_end(shift);
             } else {
-                commands.move_line_end(shift);
+                editor.commands().move_line_end(shift);
             }
         }
         if ui.is_key_pressed(Key::PageUp) {
-            commands.move_lines(-20, shift);
+            self.move_vertical(ui, editor, layout, projection, -20, shift, false);
         }
         if ui.is_key_pressed(Key::PageDown) {
-            commands.move_lines(20, shift);
+            self.move_vertical(ui, editor, layout, projection, 20, shift, false);
         }
         if primary {
             if ui.is_key_pressed_with_repeat(Key::C, false) {
-                let text = commands.copy();
+                let text = editor.commands().copy();
                 if !text.is_empty() {
                     set_clipboard(ui, &text);
                 }
             }
             if !read_only && ui.is_key_pressed_with_repeat(Key::X, false) {
-                let text = commands.cut();
+                let text = editor.commands().cut();
                 set_clipboard(ui, &text);
             }
             if !read_only
                 && ui.is_key_pressed_with_repeat(Key::V, false)
                 && let Some(text) = get_clipboard(ui)
             {
-                commands.paste(text.as_bytes());
+                editor.commands().paste(text.as_bytes());
             }
             if !read_only && ui.is_key_pressed(Key::Z) {
                 if shift {
-                    commands.redo();
+                    editor.commands().redo();
                 } else {
-                    commands.undo();
+                    editor.commands().undo();
                 }
             }
             if !read_only && ui.is_key_pressed_with_repeat(Key::S, false) {
@@ -242,6 +270,117 @@ impl EditorInput {
             }
         }
         actions
+    }
+
+    fn move_vertical(
+        &mut self,
+        ui: &Ui,
+        editor: &mut ViewContext<'_>,
+        layout: &ViewLayout,
+        projection: Option<(&RowProjection, u64)>,
+        delta: i32,
+        select: bool,
+        add_cursor: bool,
+    ) {
+        let Some((projection, generation)) =
+            projection.filter(|(projection, _)| projection.is_wrapped())
+        else {
+            self.visual_navigation = None;
+            if add_cursor {
+                if delta < 0 {
+                    editor.commands().add_cursor_above();
+                } else {
+                    editor.commands().add_cursor_below();
+                }
+            } else {
+                editor.commands().move_lines(delta, select);
+            }
+            return;
+        };
+        // Editing precedes some navigation bindings. Reflow only when a
+        // subsequent movement needs the updated text in this same frame.
+        let refreshed_projection = (editor.ops.generation() != generation).then(|| {
+            let mut refreshed = RowProjection::build(&editor.state, None, None);
+            refreshed.wrap(ui, &editor.state, projection.wrap_width().unwrap());
+            refreshed
+        });
+        let projection = refreshed_projection.as_ref().unwrap_or(projection);
+        let heads: Vec<_> = editor
+            .view
+            .selections
+            .iter()
+            .map(|selection| (selection.head_row, selection.head_column))
+            .collect();
+        let width = projection.wrap_width().unwrap().to_bits();
+        let line_height = layout.line_height.to_bits();
+        let font_metrics = (
+            ui.with_bound_context(|| unsafe { sys::igGetFont() as usize }),
+            ui.current_font_size().to_bits(),
+        );
+        let xs = if let Some(previous) = &self.visual_navigation
+            && previous.generation == editor.ops.generation()
+            && previous.width == width
+            && previous.line_height == line_height
+            && previous.font_metrics == font_metrics
+            && previous.heads == heads
+        {
+            previous.xs.clone()
+        } else {
+            heads
+                .iter()
+                .map(|&(row, column)| projection.position_x(ui, &editor.state, row, column, 0.0))
+                .collect()
+        };
+        let positions: Vec<_> = heads
+            .iter()
+            .zip(&xs)
+            .map(|(&(row, column), &x)| {
+                let start = projection.visual_position(row, column);
+                let target = vertical_target(projection, start, delta);
+                if target == start {
+                    return (row, column);
+                }
+                let target_row = projection.document_row(target).unwrap();
+                let column = projected_column(ui, &editor.state, projection, target, x);
+                (target_row, column)
+            })
+            .collect();
+        let mut preferences: Vec<_> = positions.iter().copied().zip(xs.iter().copied()).collect();
+        if add_cursor {
+            let primary = editor.view.primary_index;
+            let (row, column) = positions[primary];
+            editor.commands().add_cursor_at(row, column);
+            preferences = heads.iter().copied().zip(xs.iter().copied()).collect();
+            preferences.push(((row, column), xs[primary]));
+        } else {
+            editor.commands().move_carets_to(&positions, select);
+        }
+        // Selection merging can reorder or remove carets. Match the resulting
+        // heads back to their desired X instead of retaining stale indices.
+        let heads: Vec<_> = editor
+            .view
+            .selections
+            .iter()
+            .map(|selection| (selection.head_row, selection.head_column))
+            .collect();
+        let xs = heads
+            .iter()
+            .map(|&(row, column)| {
+                preferences
+                    .iter()
+                    .find(|(position, _)| *position == (row, column))
+                    .map(|(_, x)| *x)
+                    .unwrap_or_else(|| projection.position_x(ui, &editor.state, row, column, 0.0))
+            })
+            .collect();
+        self.visual_navigation = Some(VisualNavigation {
+            generation: editor.ops.generation(),
+            width,
+            line_height,
+            font_metrics,
+            heads,
+            xs,
+        });
     }
 
     fn process_mouse(
@@ -266,14 +405,15 @@ impl EditorInput {
             return;
         }
         let mouse = ui.mouse_pos();
-        let visual = ((mouse[1] - layout.text_pos[1]) / layout.line_height)
+        let mut visual = ((mouse[1] - layout.text_pos[1]) / layout.line_height)
             .floor()
             .max(0.0) as usize;
         let row = if let Some(projection) = projection {
             if let Some(row) = projection.document_row(visual) {
                 row
             } else if self.dragging || visual >= projection.len() {
-                projection.nearest_document_row(visual)
+                visual = nearest_editable_visual(projection, visual);
+                projection.document_row(visual).unwrap()
             } else {
                 return;
             }
@@ -281,10 +421,17 @@ impl EditorInput {
             (visual as i32).clamp(0, editor.state.line_count() - 1)
         };
         let line = editor.state.line(row);
-        let col = snap_to_utf8_char_boundary(
-            &line,
-            column_at_x(ui, &line, mouse[0] - layout.text_pos[0]),
-        );
+        let col = if let Some(projection) = projection {
+            projected_column(
+                ui,
+                &editor.state,
+                projection,
+                visual,
+                mouse[0] - layout.text_pos[0],
+            )
+        } else {
+            snap_to_utf8_char_boundary(&line, column_at_x(ui, &line, mouse[0] - layout.text_pos[0]))
+        };
         // ImGui 1.92 swaps incoming physical Cmd/Ctrl when MacOSXBehaviors is
         // enabled. Hosts may configure it, so use the physical platform key.
         let navigation_modifier = if cfg!(target_os = "macos") == ui.io().config_macosx_behaviors()
@@ -294,6 +441,7 @@ impl EditorInput {
             ui.io().key_super()
         };
         if navigation_modifier && ui.is_mouse_clicked(MouseButton::Left) {
+            self.visual_navigation = None;
             self.release_mouse();
             if allow_navigation {
                 self.definition_request = Some(DefinitionRequest { row, column: col });
@@ -301,10 +449,12 @@ impl EditorInput {
             return;
         }
         if ui.is_mouse_double_clicked(MouseButton::Left) {
+            self.visual_navigation = None;
             editor.commands().select_word_at(row, col);
             return;
         }
         if ui.is_mouse_clicked(MouseButton::Left) {
+            self.visual_navigation = None;
             if ui.io().key_shift() {
                 let (anchor_row, anchor_column) = if editor.view.selection_empty() {
                     (editor.view.row, editor.view.column)
@@ -329,6 +479,7 @@ impl EditorInput {
             self.dragging = true;
             editor.update_pending_cursor();
         } else if self.dragging && ui.is_mouse_dragging(MouseButton::Left) {
+            self.visual_navigation = None;
             let (ar, ac) = *self
                 .anchor
                 .get_or_insert((editor.view.row, editor.view.column));
@@ -343,6 +494,56 @@ impl EditorInput {
     fn release_mouse(&mut self) {
         self.dragging = false;
         self.anchor = None;
+    }
+}
+
+fn vertical_target(projection: &RowProjection, start: usize, delta: i32) -> usize {
+    let last = projection.len().saturating_sub(1);
+    let mut target = (start as i64 + delta as i64).clamp(0, last as i64) as usize;
+    while projection.document_row(target).is_none() {
+        if delta < 0 && target > 0 {
+            target -= 1;
+        } else if delta > 0 && target < last {
+            target += 1;
+        } else {
+            return nearest_editable_visual(projection, target);
+        }
+    }
+    target
+}
+
+fn nearest_editable_visual(projection: &RowProjection, visual: usize) -> usize {
+    let visual = visual.min(projection.len().saturating_sub(1));
+    for distance in 0..projection.len() {
+        if projection.document_row(visual + distance).is_some() {
+            return visual + distance;
+        }
+        if distance <= visual && projection.document_row(visual - distance).is_some() {
+            return visual - distance;
+        }
+    }
+    unreachable!("every projection contains a document row");
+}
+
+fn projected_column(
+    ui: &Ui,
+    state: &bed_editing::editor_state::EditorState,
+    projection: &RowProjection,
+    visual: usize,
+    x: f32,
+) -> i32 {
+    let row = projection.document_row(visual).unwrap();
+    let line = state.line(row);
+    let column = snap_to_utf8_char_boundary(&line, projection.hit_column(ui, state, visual, x));
+    // A seam canonically belongs to the following screen row. Keep vertical
+    // movement and clicks on their target row when X passes its last glyph.
+    if projection
+        .segment(visual)
+        .is_some_and(|segment| column as usize == segment.end && segment.end < line.len())
+    {
+        prev_utf8_char(&line, column)
+    } else {
+        column
     }
 }
 
@@ -411,12 +612,44 @@ mod tests {
         context
     }
 
+    fn monospace_context() -> Context {
+        use dear_imgui_rs::{FontConfig, FontSource};
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .add_font(&[FontSource::default_bitmap_with_size(13.0).with_config(
+                FontConfig::new()
+                    .glyph_min_advance_x(8.0)
+                    .glyph_max_advance_x(8.0),
+            )]);
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        context
+    }
+
     fn render(
         context: &mut Context,
         editor: &mut Editor,
         input: &mut EditorInput,
         focus_editor: bool,
         active_item: bool,
+    ) -> ([f32; 2], [f32; 2], ViewLayout) {
+        render_input(context, editor, input, focus_editor, active_item, None)
+    }
+
+    fn render_input(
+        context: &mut Context,
+        editor: &mut Editor,
+        input: &mut EditorInput,
+        focus_editor: bool,
+        active_item: bool,
+        wrap_columns: Option<usize>,
     ) -> ([f32; 2], [f32; 2], ViewLayout) {
         // One second separates clicks so independent scenarios do not become
         // native double clicks. Key presses still have their usual first frame.
@@ -448,11 +681,23 @@ mod tests {
                         sys::igSetActiveID(1234, sys::igGetCurrentWindow());
                     });
                 }
-                assert!(
-                    input
-                        .process(ui, &mut editor.view_context(), &layout)
-                        .is_empty()
-                );
+                let actions = if let Some(columns) = wrap_columns {
+                    let mut projection = RowProjection::build(&editor.state, None, None);
+                    let width =
+                        crate::views::view_layout::glyph_advance(ui, "W") * columns as f32 + 0.1;
+                    projection.wrap(ui, &editor.state, width);
+                    input.process_projected(
+                        ui,
+                        &mut editor.view_context(),
+                        &layout,
+                        true,
+                        &projection,
+                        false,
+                    )
+                } else {
+                    input.process(ui, &mut editor.view_context(), &layout)
+                };
+                assert!(actions.is_empty());
                 if active_item {
                     ui.with_bound_context(|| unsafe { sys::igClearActiveID() });
                 }
@@ -460,6 +705,372 @@ mod tests {
             });
         drop(context.render_legacy());
         rect
+    }
+
+    fn press_wrapped(
+        context: &mut Context,
+        editor: &mut Editor,
+        input: &mut EditorInput,
+        key: Key,
+    ) {
+        context.io_mut().add_key_event(key, true);
+        render_input(context, editor, input, true, false, Some(4));
+        context.io_mut().add_key_event(key, false);
+        render_input(context, editor, input, true, false, Some(4));
+    }
+
+    #[test]
+    fn wrapped_vertical_navigation_preserves_x_across_short_lines() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut editor = Editor::new();
+        let mut input = EditorInput::default();
+        editor.set_content(b"WWWWWWWW\nW\nWWWWWWWW");
+        editor
+            .commands()
+            .set_cursor(0, 3, false, CursorReveal::Ensure);
+        render_input(&mut context, &mut editor, &mut input, true, false, Some(4));
+        press_wrapped(&mut context, &mut editor, &mut input, Key::DownArrow);
+        assert_eq!((editor.view.row, editor.view.column), (0, 7));
+        press_wrapped(&mut context, &mut editor, &mut input, Key::DownArrow);
+        assert_eq!((editor.view.row, editor.view.column), (1, 1));
+        press_wrapped(&mut context, &mut editor, &mut input, Key::DownArrow);
+        assert_eq!((editor.view.row, editor.view.column), (2, 3));
+        press_wrapped(&mut context, &mut editor, &mut input, Key::UpArrow);
+        assert_eq!((editor.view.row, editor.view.column), (1, 1));
+        press_wrapped(&mut context, &mut editor, &mut input, Key::UpArrow);
+        assert_eq!((editor.view.row, editor.view.column), (0, 7));
+        assert!(editor.view.selection_empty());
+    }
+
+    #[test]
+    fn wrapped_navigation_moves_multiple_carets_and_extends_selection() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut editor = Editor::new();
+        let mut input = EditorInput::default();
+        editor.set_content(b"WWWWWWWW\nWWWWWWWW");
+        let selections = [0, 1]
+            .into_iter()
+            .map(|row| {
+                let mut selection = bed_editing::editor_view_state::Selection::default();
+                selection.set_both(row, 1);
+                selection
+            })
+            .collect();
+        editor
+            .commands()
+            .set_selections(selections, 0, CursorReveal::Ensure);
+        render_input(&mut context, &mut editor, &mut input, true, false, Some(4));
+        press_wrapped(&mut context, &mut editor, &mut input, Key::DownArrow);
+        assert_eq!(
+            editor
+                .view
+                .selections
+                .iter()
+                .map(|s| (s.head_row, s.head_column))
+                .collect::<Vec<_>>(),
+            vec![(0, 5), (1, 5)]
+        );
+        assert!(editor.view.selections.iter().all(|s| s.empty()));
+        context.io_mut().add_key_event(Key::ModShift, true);
+        press_wrapped(&mut context, &mut editor, &mut input, Key::UpArrow);
+        assert_eq!(
+            editor
+                .view
+                .selections
+                .iter()
+                .map(|s| s.ordered())
+                .collect::<Vec<_>>(),
+            vec![(0, 1, 0, 5), (1, 1, 1, 5)]
+        );
+    }
+
+    #[test]
+    fn wrapped_navigation_reflows_text_inserted_in_the_same_frame() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut editor = Editor::new();
+        let mut input = EditorInput::default();
+        editor.set_content(b"WWWWWWWW");
+        editor
+            .commands()
+            .set_cursor(0, 3, false, CursorReveal::Ensure);
+        render_input(&mut context, &mut editor, &mut input, true, false, Some(4));
+        context.io_mut().add_input_characters_utf8("W");
+        press_wrapped(&mut context, &mut editor, &mut input, Key::DownArrow);
+        assert_eq!(editor.state.join(), b"WWWWWWWWW");
+        assert_eq!((editor.view.row, editor.view.column), (0, 8));
+    }
+
+    #[test]
+    fn wrapped_mouse_click_maps_a_continuation_to_document_columns() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut editor = Editor::new();
+        let mut input = EditorInput::default();
+        editor.set_content(b"WWWWWWWW");
+        let (_, _, layout) =
+            render_input(&mut context, &mut editor, &mut input, true, false, Some(4));
+        context.io_mut().add_mouse_pos_event([
+            layout.text_pos[0] + 1.0,
+            layout.text_pos[1] + 1.5 * layout.line_height,
+        ]);
+        render_input(&mut context, &mut editor, &mut input, true, false, Some(4));
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        render_input(&mut context, &mut editor, &mut input, true, false, Some(4));
+        assert_eq!((editor.view.row, editor.view.column), (0, 4));
+    }
+
+    #[test]
+    fn wrapped_mouse_clicks_preserve_indentation_and_utf8_columns() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        for (text, indent_columns) in [("  éééééééééé", 2.0), (" \téééééééééé", 4.0)]
+        {
+            let mut context = monospace_context();
+            let mut editor = Editor::new();
+            let mut input = EditorInput::default();
+            editor.set_content(text.as_bytes());
+            context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], 1.0));
+            let ui = context.frame();
+            let advance = crate::views::view_layout::glyph_advance(ui, "W");
+            assert_eq!(crate::views::view_layout::glyph_advance(ui, " "), advance);
+            assert_eq!(crate::views::view_layout::glyph_advance(ui, "é"), advance);
+            let mut projection = RowProjection::build(&editor.state, None, None);
+            projection.wrap(ui, &editor.state, advance * 8.0 + 0.1);
+            let continuation = projection.visual_row(0) + 1;
+            let range = projection.segment(continuation).unwrap();
+            assert_eq!(
+                &text.as_bytes()[range.start..range.start + 2],
+                "é".as_bytes()
+            );
+            drop(context.render_legacy());
+
+            let (_, _, layout) =
+                render_input(&mut context, &mut editor, &mut input, true, false, Some(8));
+            let indent = indent_columns * advance;
+            // Clicking the visual padding stays at the real segment start.
+            // Clicking through the first glyph advances by its UTF-8 byte length.
+            for (x, expected_column) in [
+                (indent / 2.0, range.start),
+                (indent + advance, range.start + 2),
+            ] {
+                context.io_mut().add_mouse_pos_event([
+                    layout.text_pos[0] + x,
+                    layout.text_pos[1] + (continuation as f32 + 0.5) * layout.line_height,
+                ]);
+                render_input(&mut context, &mut editor, &mut input, true, false, Some(8));
+                context
+                    .io_mut()
+                    .add_mouse_button_event(MouseButton::Left, true);
+                render_input(&mut context, &mut editor, &mut input, true, false, Some(8));
+                assert_eq!(
+                    (editor.view.row, editor.view.column),
+                    (0, expected_column as i32)
+                );
+                assert!(editor.view.selection_empty());
+                context
+                    .io_mut()
+                    .add_mouse_button_event(MouseButton::Left, false);
+                render_input(&mut context, &mut editor, &mut input, true, false, Some(8));
+            }
+            assert_eq!(editor.state.join(), text.as_bytes());
+        }
+    }
+
+    #[test]
+    fn wrapped_vertical_navigation_preserves_x_through_different_indents() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = monospace_context();
+        let mut editor = Editor::new();
+        let mut input = EditorInput::default();
+        editor.set_content("  éééééééééé\n W\n    WWWWWWWWW\nWWWW".as_bytes());
+        context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], 1.0));
+        let ui = context.frame();
+        let width = crate::views::view_layout::glyph_advance(ui, "W") * 8.0 + 0.1;
+        let mut projection = RowProjection::build(&editor.state, None, None);
+        projection.wrap(ui, &editor.state, width);
+        let start = projection.visual_row(1) - 1;
+        let start_column = projection.segment(start).unwrap().start + "é".len();
+        let first_deeper_line = projection.visual_row(2);
+        let last_deeper_line = projection.visual_row(3) - 1;
+        assert!(last_deeper_line > first_deeper_line);
+        drop(context.render_legacy());
+        editor
+            .commands()
+            .set_cursor(0, start_column as i32, false, CursorReveal::Ensure);
+        render_input(&mut context, &mut editor, &mut input, true, false, Some(8));
+
+        let mut positions = vec![(0, start_column as i32), (1, 2), (2, 3)];
+        // The desired X is three cells: beyond the short second line, but
+        // before the four-cell padding on the third line's continuations.
+        positions.extend(
+            (first_deeper_line + 1..=last_deeper_line)
+                .map(|visual| (2, projection.segment(visual).unwrap().start as i32)),
+        );
+        positions.push((3, 3));
+        for &(row, column) in &positions[1..] {
+            context.io_mut().add_key_event(Key::DownArrow, true);
+            render_input(&mut context, &mut editor, &mut input, true, false, Some(8));
+            context.io_mut().add_key_event(Key::DownArrow, false);
+            render_input(&mut context, &mut editor, &mut input, true, false, Some(8));
+            assert_eq!((editor.view.row, editor.view.column), (row, column));
+        }
+        for &(row, column) in positions[..positions.len() - 1].iter().rev() {
+            context.io_mut().add_key_event(Key::UpArrow, true);
+            render_input(&mut context, &mut editor, &mut input, true, false, Some(8));
+            context.io_mut().add_key_event(Key::UpArrow, false);
+            render_input(&mut context, &mut editor, &mut input, true, false, Some(8));
+            assert_eq!((editor.view.row, editor.view.column), (row, column));
+        }
+        assert!(editor.view.selection_empty());
+    }
+
+    #[test]
+    fn wrapped_page_navigation_counts_screen_rows() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut editor = Editor::new();
+        let mut input = EditorInput::default();
+        editor.set_content(&vec![b'W'; 120]);
+        editor
+            .commands()
+            .set_cursor(0, 1, false, CursorReveal::Ensure);
+        render_input(&mut context, &mut editor, &mut input, true, false, Some(4));
+        press_wrapped(&mut context, &mut editor, &mut input, Key::PageDown);
+        assert_eq!((editor.view.row, editor.view.column), (0, 81));
+        press_wrapped(&mut context, &mut editor, &mut input, Key::PageUp);
+        assert_eq!((editor.view.row, editor.view.column), (0, 1));
+    }
+
+    #[test]
+    fn wrapped_alt_down_adds_a_caret_on_the_next_screen_row() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut editor = Editor::new();
+        let mut input = EditorInput::default();
+        editor.set_content(b"WWWWWWWW");
+        editor
+            .commands()
+            .set_cursor(0, 1, false, CursorReveal::Ensure);
+        render_input(&mut context, &mut editor, &mut input, true, false, Some(4));
+        context.io_mut().add_key_event(Key::ModAlt, true);
+        press_wrapped(&mut context, &mut editor, &mut input, Key::DownArrow);
+        assert_eq!(editor.view.selection_count(), 2);
+        assert_eq!((editor.view.row, editor.view.column), (0, 5));
+        assert!(editor.view.selections.iter().all(|s| s.empty()));
+    }
+
+    #[test]
+    fn projected_navigation_skips_history_and_hunk_controls() {
+        let mut editor = Editor::new();
+        editor.set_content(b"a\nb");
+        let diff = crate::diff::DiffPresentation {
+            baseline: std::sync::Arc::from(&b"a\nremoved\nb"[..]),
+            comparison: 1,
+            actions: Vec::new(),
+            actions_enabled: true,
+            saved: None,
+        };
+        let projection = RowProjection::build(&editor.state, Some(&diff), None);
+        let first = projection.visual_row(0);
+        let last = projection.visual_row(1);
+        assert!(last > first + 1);
+        assert_eq!(vertical_target(&projection, first, 1), last);
+        assert_eq!(vertical_target(&projection, last, -1), first);
+        assert_eq!(nearest_editable_visual(&projection, last - 1), last);
+    }
+
+    #[test]
+    fn projected_paging_reaches_first_and_last_editable_rows() {
+        let mut editor = Editor::new();
+        editor.set_content(b"a\nb");
+        for baseline in [&b"a\nb\nremoved"[..], &b"removed\na\nb"[..]] {
+            let diff = crate::diff::DiffPresentation {
+                baseline: std::sync::Arc::from(baseline),
+                comparison: 1,
+                actions: Vec::new(),
+                actions_enabled: true,
+                saved: None,
+            };
+            let projection = RowProjection::build(&editor.state, Some(&diff), None);
+            let first = projection.visual_row(0);
+            let last = projection.visual_row(1);
+            assert_eq!(vertical_target(&projection, first, 20), last);
+            assert_eq!(vertical_target(&projection, last, -20), first);
+        }
+    }
+
+    #[test]
+    fn wrapped_navigation_recomputes_x_when_same_size_font_changes() {
+        use dear_imgui_rs::{FontConfig, FontSource};
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        let narrow = context
+            .font_atlas()
+            .add_font(&[FontSource::default_bitmap_with_size(13.0)]);
+        let wide = context
+            .font_atlas()
+            .add_font(&[FontSource::default_bitmap_with_size(13.0).with_config(
+                FontConfig::new()
+                    .glyph_min_advance_x(12.0)
+                    .glyph_max_advance_x(12.0),
+            )]);
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut editor = Editor::new();
+        let mut input = EditorInput::default();
+        editor.set_content(b"WWWWWWWWWWWWWWWW");
+        editor
+            .commands()
+            .set_cursor(0, 2, false, CursorReveal::Ensure);
+        context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], 1.0));
+        let ui = context.frame();
+        ui.window("Font navigation").build(|| {
+            let font = ui.push_font_with_size(Some(narrow), 13.0);
+            let width = crate::views::view_layout::glyph_advance(ui, "W") * 4.0 + 0.1;
+            let layout = ViewLayout {
+                line_height: ui.text_line_height(),
+                ..Default::default()
+            };
+            let mut projection = RowProjection::build(&editor.state, None, None);
+            projection.wrap(ui, &editor.state, width);
+            let generation = editor.ops.generation();
+            input.move_vertical(
+                ui,
+                &mut editor.view_context(),
+                &layout,
+                Some((&projection, generation)),
+                1,
+                false,
+                false,
+            );
+            assert_eq!(editor.view.column, 6);
+            drop(font);
+            let _font = ui.push_font_with_size(Some(wide), 13.0);
+            assert_eq!(layout.line_height, ui.text_line_height());
+            let mut projection = RowProjection::build(&editor.state, None, None);
+            projection.wrap(ui, &editor.state, width);
+            input.move_vertical(
+                ui,
+                &mut editor.view_context(),
+                &layout,
+                Some((&projection, generation)),
+                1,
+                false,
+                false,
+            );
+            assert_eq!(editor.view.column, 8);
+        });
+        drop(context.render_legacy());
     }
 
     #[test]

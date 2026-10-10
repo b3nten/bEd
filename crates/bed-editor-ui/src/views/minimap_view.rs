@@ -1,9 +1,13 @@
 //! Density strip, cached runs and viewport slider translated from ned
 //! editor/views/minimap_view.{h,cpp}; see LICENSE and NOTICE.
-use crate::views::view_layout::ViewLayout;
+use crate::{
+    diff::{ProjectedRow, RowProjection},
+    views::view_layout::{ViewLayout, glyph_advance},
+};
 use bed_editing::{editor_state::EditorState, editor_view_state::EditorViewState};
 use bed_highlight::highlight_service::EditorHighlight;
 use dear_imgui_rs::{MouseButton, Ui, WindowHoveredFlags, sys};
+use std::hash::{Hash, Hasher};
 
 pub const WIDTH_FONT_MUL: f32 = 4.0;
 pub const MIN_PANE_FONT_MUL: f32 = 16.0;
@@ -38,18 +42,11 @@ struct Strip {
     slider_h: f32,
     ratio: f32,
 }
-fn make_strip(
-    state: &EditorState,
-    layout: &ViewLayout,
-    scroll_y: f32,
-    height: f32,
-    d: Density,
-) -> Strip {
+fn make_strip(n: i32, layout: &ViewLayout, scroll_y: f32, height: f32, d: Density) -> Strip {
     let mut s = Strip {
         end: -1,
         ..Default::default()
     };
-    let n = state.line_count();
     let elh = layout.line_height;
     if n <= 0 || height <= 1.0 || elh <= 0.0 {
         return s;
@@ -87,6 +84,7 @@ struct CacheKey {
     max_cols: i32,
     default_ink: [f32; 4],
     font_size: f32,
+    projection_hash: u64,
 }
 #[derive(Clone, Copy)]
 struct Run {
@@ -178,9 +176,11 @@ fn minimap_wheel_scroll(ui: &Ui) -> Option<[f32; 2]> {
 impl MinimapView {
     fn rebuild_density_cache(
         &mut self,
+        ui: &Ui,
         key: CacheKey,
         state: &EditorState,
         highlight: &EditorHighlight,
+        projection: Option<&RowProjection>,
     ) {
         self.cache_runs.clear();
         self.cache_key = Some(key);
@@ -190,30 +190,72 @@ impl MinimapView {
         self.cache_runs
             .reserve(((key.end - key.start + 1) * 8) as usize);
         let d = Density::new(key.font_size);
+        let space_width = glyph_advance(ui, " ");
         let cap = key.max_cols as usize * 4 + 8;
         let mut line = Vec::new();
-        for row in key.start..=key.end {
-            state.line_into(row, &mut line, cap);
-            let spans = highlight.spans_for_line(row);
+        let mut loaded_line = None;
+        for visual in key.start..=key.end {
+            let (row, historical) = match projection.and_then(|p| p.rows.get(visual as usize)) {
+                Some(ProjectedRow::Document { row, .. }) => {
+                    if loaded_line != Some((false, *row as usize)) {
+                        state.line_into(
+                            *row,
+                            &mut line,
+                            if projection.is_some_and(RowProjection::is_wrapped) {
+                                usize::MAX
+                            } else {
+                                cap
+                            },
+                        );
+                        loaded_line = Some((false, *row as usize));
+                    }
+                    (*row, false)
+                }
+                Some(ProjectedRow::Historical { old_row, bytes }) => {
+                    if loaded_line != Some((true, *old_row)) {
+                        line.clear();
+                        line.extend_from_slice(bytes);
+                        loaded_line = Some((true, *old_row));
+                    }
+                    (-1, true)
+                }
+                Some(_) => continue,
+                None => {
+                    state.line_into(visual, &mut line, cap);
+                    loaded_line = Some((false, visual as usize));
+                    (visual, false)
+                }
+            };
+            let segment = projection
+                .and_then(|p| p.segment(visual as usize))
+                .unwrap_or(0..line.len());
+            let indent_columns =
+                projection.map_or(0.0, |p| p.segment_indent(visual as usize)) / space_width;
+            let max_cols = (key.max_cols as f32 - indent_columns).max(0.0);
+            let spans = if historical {
+                &[][..]
+            } else {
+                highlight.spans_for_line(row)
+            };
             let mut sp = 0;
             let mut run_start: Option<i32> = None;
             let mut run_ink = key.default_ink;
             let mut col = 0;
-            let mut i = 0;
+            let mut i = segment.start;
             let flush = |col: i32, start: &mut Option<i32>, ink: [f32; 4], runs: &mut Vec<Run>| {
                 if let Some(start) = start.take()
-                    && col > start
+                    && (col as f32).min(max_cols) > start as f32
                 {
                     runs.push(Run {
-                        x: d.pad_x + start as f32 * d.char_w,
-                        y: (row - key.start) as f32 * d.line_h,
-                        w: (col - start) as f32 * d.char_w,
+                        x: d.pad_x + (indent_columns + start as f32) * d.char_w,
+                        y: (visual - key.start) as f32 * d.line_h,
+                        w: ((col as f32).min(max_cols) - start as f32) * d.char_w,
                         h: d.dot_h,
                         color: ink,
                     });
                 }
             };
-            while i < line.len() && col < key.max_cols {
+            while i < segment.end && (col as f32) < max_cols {
                 let byte = i as i32;
                 let c = line[i];
                 i += 1;
@@ -243,7 +285,7 @@ impl MinimapView {
                     run_ink = ink;
                 }
                 col += 1;
-                while i < line.len() && line[i] & 0xc0 == 0x80 {
+                while i < segment.end && line[i] & 0xc0 == 0x80 {
                     i += 1;
                 }
             }
@@ -256,6 +298,16 @@ impl MinimapView {
         state: &EditorState,
         view: &mut EditorViewState,
         layout: &ViewLayout,
+    ) {
+        self.interact_projected(ui, state, view, layout, None);
+    }
+    pub(crate) fn interact_projected(
+        &mut self,
+        ui: &Ui,
+        state: &EditorState,
+        view: &mut EditorViewState,
+        layout: &ViewLayout,
+        projection: Option<&RowProjection>,
     ) {
         if layout.minimap_width <= 0.5 {
             return;
@@ -284,7 +336,13 @@ impl MinimapView {
             return;
         }
         let d = Density::new(ui.current_font_size());
-        let s = make_strip(state, layout, view.scroll_position[1], height, d);
+        let s = make_strip(
+            projection.map_or(state.line_count(), |p| p.len() as i32),
+            layout,
+            view.scroll_position[1],
+            height,
+            d,
+        );
         if let Some([x, y]) = minimap_wheel_scroll(ui) {
             view.request_scroll(x, y);
         }
@@ -317,6 +375,17 @@ impl MinimapView {
         highlight: &EditorHighlight,
         layout: &ViewLayout,
     ) {
+        self.draw_projected(ui, state, view, highlight, layout, None);
+    }
+    pub(crate) fn draw_projected(
+        &mut self,
+        ui: &Ui,
+        state: &EditorState,
+        view: &EditorViewState,
+        highlight: &EditorHighlight,
+        layout: &ViewLayout,
+        projection: Option<&RowProjection>,
+    ) {
         let w = layout.minimap_width;
         let h = layout.minimap_max[1] - layout.minimap_min[1];
         if w <= 1.0 || h <= 1.0 {
@@ -324,12 +393,37 @@ impl MinimapView {
         }
         let a = layout.minimap_min;
         let d = Density::new(ui.current_font_size());
-        let s = make_strip(state, layout, view.scroll_position[1], h, d);
+        let s = make_strip(
+            projection.map_or(state.line_count(), |p| p.len() as i32),
+            layout,
+            view.scroll_position[1],
+            h,
+            d,
+        );
         if s.end < s.start {
             return;
         }
         ui.set_cursor_screen_pos(a);
         ui.invisible_button("##mm", [w, h]);
+        let projection_hash = projection.map_or(0, |projection| {
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            for visual in s.start..=s.end {
+                projection.segment(visual as usize).hash(&mut hash);
+                projection
+                    .segment_indent(visual as usize)
+                    .to_bits()
+                    .hash(&mut hash);
+                match projection.rows.get(visual as usize) {
+                    Some(ProjectedRow::Document { row, .. }) => row.hash(&mut hash),
+                    Some(ProjectedRow::Historical { old_row, bytes }) => {
+                        old_row.hash(&mut hash);
+                        bytes.hash(&mut hash);
+                    }
+                    _ => {}
+                }
+            }
+            hash.finish()
+        });
         let key = CacheKey {
             version: state.version,
             highlight_gen: highlight.visual_generation(),
@@ -338,9 +432,10 @@ impl MinimapView {
             max_cols: (((w - d.pad_x * 2.0) / d.char_w) as i32).max(1),
             default_ink: dim(highlight.default_text_color()),
             font_size: ui.current_font_size(),
+            projection_hash,
         };
         if self.cache_key != Some(key) {
-            self.rebuild_density_cache(key, state, highlight);
+            self.rebuild_density_cache(ui, key, state, highlight, projection);
         }
         let draw = ui.get_window_draw_list();
         for run in &self.cache_runs {
@@ -560,6 +655,169 @@ mod tests {
     }
 
     #[test]
+    fn wrapped_density_reflows_when_resize_keeps_the_same_visual_row_count() {
+        use crate::views::view_layout::glyph_advance;
+
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = wheel_context([200.0, 180.0]);
+        let mut state = EditorState::new();
+        state.set_from_bytes(b"AAAAA");
+        let highlight = EditorHighlight::new();
+        let view = EditorViewState::default();
+        let mut minimap = MinimapView::default();
+        for first_line_chars in [3, 4] {
+            wheel_frame(&mut context, [200.0, 180.0], |ui| {
+                let mut projection = RowProjection::build(&state, None, None);
+                projection.wrap(
+                    ui,
+                    &state,
+                    glyph_advance(ui, "A") * first_line_chars as f32 + 0.01,
+                );
+                assert_eq!(projection.len(), 2);
+                let layout = ViewLayout {
+                    size: [200.0, 180.0],
+                    line_height: ui.text_line_height(),
+                    total_height: ui.text_line_height() * 2.0,
+                    minimap_width: 40.0,
+                    minimap_min: [30.0, 40.0],
+                    minimap_max: [70.0, 200.0],
+                    ..Default::default()
+                };
+                let start = ui
+                    .with_bound_context(|| unsafe { (*sys::igGetWindowDrawList()).VtxBuffer.Size });
+                minimap.draw_projected(ui, &state, &view, &highlight, &layout, Some(&projection));
+                ui.with_bound_context(|| unsafe {
+                    let vertices = &(*sys::igGetWindowDrawList()).VtxBuffer;
+                    let ink =
+                        sys::igColorConvertFloat4ToU32(dim(highlight.default_text_color()).into());
+                    let density: Vec<_> = (start..vertices.Size)
+                        .map(|index| *vertices.Data.add(index as usize))
+                        .filter(|v| v.col == ink)
+                        .collect();
+                    assert_eq!(density.len(), 8, "two visual rows appear in the minimap");
+                    let d = Density::new(ui.current_font_size());
+                    assert!(
+                        (density[1].pos.x - density[0].pos.x - first_line_chars as f32 * d.char_w)
+                            .abs()
+                            < 0.01
+                    );
+                    assert!(
+                        (density[5].pos.x
+                            - density[4].pos.x
+                            - (5 - first_line_chars) as f32 * d.char_w)
+                            .abs()
+                            < 0.01
+                    );
+                    assert!((density[4].pos.y - density[0].pos.y - d.line_h).abs() < 0.01);
+                });
+            });
+        }
+    }
+
+    #[test]
+    fn wrapped_density_preserves_indentation_and_local_tab_stops() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = wheel_context([200.0, 180.0]);
+        let highlight = EditorHighlight::new();
+        let view = EditorViewState::default();
+        for (source, width_columns, expected_columns) in [
+            (b"        AAAA BBBB CCCC".as_slice(), 20.0, vec![8.0]),
+            (b"\t\tAAAA BBBB CCCC", 20.0, vec![8.0]),
+            (b"  AAAA BBBB C\tD", 12.0, vec![2.0, 6.0]),
+        ] {
+            let mut state = EditorState::new();
+            state.set_from_bytes(source);
+            let mut minimap = MinimapView::default();
+            wheel_frame(&mut context, [200.0, 180.0], |ui| {
+                let mut projection = RowProjection::build(&state, None, None);
+                projection.wrap(ui, &state, glyph_advance(ui, " ") * width_columns + 0.01);
+                assert_eq!(projection.len(), 2);
+                let layout = ViewLayout {
+                    size: [200.0, 180.0],
+                    line_height: ui.text_line_height(),
+                    total_height: ui.text_line_height() * 2.0,
+                    minimap_width: 40.0,
+                    minimap_min: [30.0, 40.0],
+                    minimap_max: [70.0, 200.0],
+                    ..Default::default()
+                };
+                let start = ui
+                    .with_bound_context(|| unsafe { (*sys::igGetWindowDrawList()).VtxBuffer.Size });
+                minimap.draw_projected(ui, &state, &view, &highlight, &layout, Some(&projection));
+                ui.with_bound_context(|| unsafe {
+                    let vertices = &(*sys::igGetWindowDrawList()).VtxBuffer;
+                    let ink =
+                        sys::igColorConvertFloat4ToU32(dim(highlight.default_text_color()).into());
+                    let density: Vec<_> = (start..vertices.Size)
+                        .map(|index| *vertices.Data.add(index as usize))
+                        .filter(|v| v.col == ink)
+                        .collect();
+                    let d = Density::new(ui.current_font_size());
+                    let continuation: Vec<_> = density
+                        .chunks_exact(4)
+                        .filter(|rectangle| {
+                            (rectangle[0].pos.y - layout.minimap_min[1] - d.line_h).abs() < 0.01
+                        })
+                        .collect();
+                    assert_eq!(continuation.len(), expected_columns.len());
+                    for (rectangle, column) in continuation.iter().zip(&expected_columns) {
+                        let expected_x = layout.minimap_min[0] + d.pad_x + column * d.char_w;
+                        assert!((rectangle[0].pos.x - expected_x).abs() < 0.01);
+                    }
+                });
+                assert_eq!(state.join(), source);
+            });
+        }
+    }
+
+    #[test]
+    fn wrapped_density_cache_updates_when_only_capped_indent_changes() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = wheel_context([200.0, 180.0]);
+        let mut state = EditorState::new();
+        state.set_from_bytes(b"        AB");
+        let highlight = EditorHighlight::new();
+        let view = EditorViewState::default();
+        let mut minimap = MinimapView::default();
+        for width_columns in [9.0, 9.5] {
+            wheel_frame(&mut context, [200.0, 180.0], |ui| {
+                let space = glyph_advance(ui, " ");
+                let mut projection = RowProjection::build(&state, None, None);
+                projection.wrap(ui, &state, space * width_columns);
+                assert_eq!(projection.len(), 2);
+                assert_eq!(projection.segment(0), Some(0..9));
+                assert_eq!(projection.segment(1), Some(9..10));
+                let layout = ViewLayout {
+                    size: [200.0, 180.0],
+                    line_height: ui.text_line_height(),
+                    total_height: ui.text_line_height() * 2.0,
+                    minimap_width: 40.0,
+                    minimap_min: [30.0, 40.0],
+                    minimap_max: [70.0, 200.0],
+                    ..Default::default()
+                };
+                let start = ui
+                    .with_bound_context(|| unsafe { (*sys::igGetWindowDrawList()).VtxBuffer.Size });
+                minimap.draw_projected(ui, &state, &view, &highlight, &layout, Some(&projection));
+                ui.with_bound_context(|| unsafe {
+                    let vertices = &(*sys::igGetWindowDrawList()).VtxBuffer;
+                    let ink =
+                        sys::igColorConvertFloat4ToU32(dim(highlight.default_text_color()).into());
+                    let density: Vec<_> = (start..vertices.Size)
+                        .map(|index| *vertices.Data.add(index as usize))
+                        .filter(|v| v.col == ink)
+                        .collect();
+                    assert_eq!(density.len(), 8);
+                    let d = Density::new(ui.current_font_size());
+                    let expected_x =
+                        layout.minimap_min[0] + d.pad_x + width_columns * 0.5 * d.char_w;
+                    assert!((density[4].pos.x - expected_x).abs() < 0.01);
+                });
+            });
+        }
+    }
+
+    #[test]
     fn sliding_strip_tracks_viewport_at_start_middle_and_end() {
         let mut state = EditorState::new();
         state.set_from_bytes(&b"x\n".repeat(1000));
@@ -570,13 +828,13 @@ mod tests {
             ..Default::default()
         };
         let d = Density::new(20.0);
-        let start = make_strip(&state, &layout, 0.0, 400.0, d);
-        let end = make_strip(&state, &layout, 19620.0, 400.0, d);
+        let start = make_strip(state.line_count(), &layout, 0.0, 400.0, d);
+        let end = make_strip(state.line_count(), &layout, 19620.0, 400.0, d);
         assert_eq!((start.start, start.end), (0, 199));
         assert_eq!((end.start, end.end), (801, 1000));
         assert!((end.slider_top - 360.0).abs() < 0.001);
         assert_eq!(end.slider_h, 40.0);
-        let middle = make_strip(&state, &layout, 9800.0, 400.0, d);
+        let middle = make_strip(state.line_count(), &layout, 9800.0, 400.0, d);
         assert!(middle.start > 0 && middle.end < 1000);
     }
     #[test]
@@ -589,7 +847,7 @@ mod tests {
             total_height: 40.0,
             ..Default::default()
         };
-        let strip = make_strip(&state, &layout, 0.0, 400.0, Density::new(20.0));
+        let strip = make_strip(state.line_count(), &layout, 0.0, 400.0, Density::new(20.0));
         assert_eq!((strip.start, strip.end), (0, 1));
         assert_eq!(strip.ratio, 0.0);
     }

@@ -262,19 +262,21 @@ impl LspSymbolInfo {
         }
         let fs = ui.current_font_size();
         let anchor = if self.at_caret {
-            let x = line_column_x(
-                ui,
-                &editor.state.line(editor.view.row),
-                editor.view.column,
-                view.layout.text_pos[0],
-            )
-            .floor();
+            let caret = view.caret_position.unwrap_or_else(|| {
+                [
+                    line_column_x(
+                        ui,
+                        &editor.state.line(editor.view.row),
+                        editor.view.column,
+                        view.layout.text_pos[0],
+                    )
+                    .floor(),
+                    view.layout.text_pos[1] + editor.view.row as f32 * view.layout.line_height,
+                ]
+            });
             [
-                x + fs * 0.25,
-                view.layout.text_pos[1]
-                    + (view.caret_visual_row.unwrap_or(editor.view.row as usize) + 1) as f32
-                        * view.layout.line_height
-                    + fs * 0.25,
+                caret[0] + fs * 0.25,
+                caret[1] + view.layout.line_height + fs * 0.25,
             ]
         } else {
             *self.popup_anchor.get_or_insert_with(|| {
@@ -318,7 +320,7 @@ mod tests {
                         hover_info: Info::default(),
                         hover_dismissed: dismissed,
                         tooltip_arbiter: &TooltipArbiter::default(),
-                        caret_visual_row: None,
+                        caret_position: None,
                     },
                 );
             });
@@ -445,7 +447,7 @@ mod tests {
                             hover_info: Info::default(),
                             hover_dismissed: false,
                             tooltip_arbiter: &arbiter,
-                            caret_visual_row: None,
+                            caret_position: None,
                         },
                     )
                 });

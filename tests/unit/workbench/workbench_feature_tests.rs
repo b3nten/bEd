@@ -669,12 +669,12 @@ fn editor_context_menu_toggles_only_its_tabs_minimap_without_persisting() {
         assert_eq!(native.OpenPopupStack.Size, 1, "editor context menu is open");
         let popup = &*(*native.OpenPopupStack.Data).Window;
         let height = popup.DC.PrevLineSize.y;
-        // Seven row intervals and two separators separate Show Minimap from Select All.
+        // Eight row intervals and two separators separate Show Minimap from Select All.
         // Context menus use four pixels of vertical item spacing.
         let separators = 2.0 * (native.Style.SeparatorSize.max(1.0) + 4.0);
         [
             popup.DC.CursorStartPos.x + height,
-            popup.DC.CursorPosPrevLine.y - 7.0 * (height + 4.0) - separators + height * 0.5,
+            popup.DC.CursorPosPrevLine.y - 8.0 * (height + 4.0) - separators + height * 0.5,
         ]
     });
     context.io_mut().add_mouse_pos_event(point);
@@ -722,6 +722,147 @@ fn editor_context_menu_toggles_only_its_tabs_minimap_without_persisting() {
             );
         }
     }
+}
+
+#[test]
+fn word_wrap_defaults_on_and_respects_missing_and_explicit_settings() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let dir = TempDir::new();
+    let bytes = format!("{}\nsecond\n", "long words ".repeat(100));
+    let path = dir.write("project/note.txt", bytes.as_bytes());
+    let mut workbench = workspace(&dir);
+    assert_eq!(workbench.settings.settings["word_wrap"], json!(true));
+    workbench.open_or_focus(&path).unwrap();
+    let mut context = initialize(&mut workbench);
+    let wraps = |workbench: &Workbench| {
+        let active = workbench.active_view().unwrap();
+        workbench
+            .tabs
+            .iter()
+            .find_map(|tab| tab.panel.editor().filter(|view| view.id() == active))
+            .unwrap()
+            .visual_row(1)
+            > 1
+    };
+    for _ in 0..3 {
+        frame(&mut context, &mut workbench);
+    }
+    assert!(wraps(&workbench), "fresh settings wrap long lines");
+
+    workbench
+        .settings
+        .settings
+        .as_object_mut()
+        .unwrap()
+        .remove("word_wrap");
+    frame(&mut context, &mut workbench);
+    assert!(
+        wraps(&workbench),
+        "older settings without the key wrap by default"
+    );
+
+    workbench.settings.settings["word_wrap"] = json!(false);
+    frame(&mut context, &mut workbench);
+    assert!(
+        !wraps(&workbench),
+        "an explicit global false disables wrapping"
+    );
+
+    workbench.settings.settings["word_wrap"] = json!(true);
+    frame(&mut context, &mut workbench);
+    assert!(
+        wraps(&workbench),
+        "existing views follow changes to the global setting"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes.as_bytes());
+}
+
+#[test]
+fn editor_context_menu_toggles_only_its_tabs_word_wrap_without_persisting() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let dir = TempDir::new();
+    let bytes = format!("{}\nsecond\n", "long words ".repeat(100));
+    let path = dir.write("project/note.txt", bytes.as_bytes());
+    let mut workbench = workspace(&dir);
+    workbench.set_project(&dir.path("project")).unwrap();
+    workbench.settings.settings["word_wrap"] = json!(true);
+    workbench.open_or_focus(&path).unwrap();
+    let mut context = initialize(&mut workbench);
+    for _ in 0..3 {
+        frame(&mut context, &mut workbench);
+    }
+    let first = workbench.active_view().unwrap();
+    let view = workbench
+        .tabs
+        .iter()
+        .find_map(|tab| tab.panel.editor().filter(|view| view.id() == first))
+        .unwrap();
+    assert!(view.soft_wrap(true));
+    assert!(
+        view.visual_row(1) > 1,
+        "the persisted setting wraps long lines"
+    );
+    let layout = view.presentation().layout;
+    context.io_mut().add_mouse_pos_event([
+        layout.text_pos[0] + 60.0,
+        layout.text_pos[1] + layout.line_height * 0.5,
+    ]);
+    frame(&mut context, &mut workbench);
+    context
+        .io_mut()
+        .add_mouse_button_event(MouseButton::Right, true);
+    frame(&mut context, &mut workbench);
+    context
+        .io_mut()
+        .add_mouse_button_event(MouseButton::Right, false);
+    frame(&mut context, &mut workbench);
+    frame(&mut context, &mut workbench);
+    let point = context.binding().with_bound_context(|| unsafe {
+        let native = &*sys::igGetCurrentContext();
+        assert_eq!(native.OpenPopupStack.Size, 1, "editor context menu is open");
+        let popup = &*(*native.OpenPopupStack.Data).Window;
+        let height = popup.DC.PrevLineSize.y;
+        // Seven row intervals and two separators separate Word Wrap from Select All.
+        let separators = 2.0 * (native.Style.SeparatorSize.max(1.0) + 4.0);
+        [
+            popup.DC.CursorStartPos.x + height,
+            popup.DC.CursorPosPrevLine.y - 7.0 * (height + 4.0) - separators + height * 0.5,
+        ]
+    });
+    context.io_mut().add_mouse_pos_event(point);
+    context
+        .io_mut()
+        .add_mouse_button_event(MouseButton::Left, true);
+    frame(&mut context, &mut workbench);
+    context
+        .io_mut()
+        .add_mouse_button_event(MouseButton::Left, false);
+    frame(&mut context, &mut workbench);
+    frame(&mut context, &mut workbench);
+    let view = workbench
+        .tabs
+        .iter()
+        .find_map(|tab| tab.panel.editor().filter(|view| view.id() == first))
+        .unwrap();
+    assert!(!view.soft_wrap(true));
+    assert_eq!(view.visual_row(1), 1);
+    assert_eq!(workbench.settings.settings["word_wrap"], json!(true));
+    workbench.dispatch(WindowCommand::DuplicateView).unwrap();
+    for _ in 0..3 {
+        frame(&mut context, &mut workbench);
+    }
+    let second = workbench.active_view().unwrap();
+    let view = workbench
+        .tabs
+        .iter()
+        .find_map(|tab| tab.panel.editor().filter(|view| view.id() == second))
+        .unwrap();
+    assert!(view.soft_wrap(true));
+    assert!(
+        view.visual_row(1) > 1,
+        "new views use the persisted setting"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes.as_bytes());
 }
 
 #[test]

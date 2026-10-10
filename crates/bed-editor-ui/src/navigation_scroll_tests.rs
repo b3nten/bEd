@@ -69,6 +69,7 @@ struct ScrollFixture {
     input: EditorInput,
     focus_other_window: bool,
     native_scroll_override: Option<f32>,
+    pane_size: [f32; 2],
 }
 
 impl ScrollFixture {
@@ -78,7 +79,8 @@ impl ScrollFixture {
         let mut editor = Editor::new();
         editor.set_content(vec!["x".repeat(columns); lines].join("\n").as_bytes());
         editor.view.request_focus = true;
-        let frame = EditorFrame::new(&mut editor.view_context());
+        let mut frame = EditorFrame::new(&mut editor.view_context());
+        frame.soft_wrap = false;
         let mut fixture = Self {
             context,
             editor,
@@ -86,6 +88,7 @@ impl ScrollFixture {
             input: EditorInput::default(),
             focus_other_window: false,
             native_scroll_override: None,
+            pane_size: [640.0, 480.0],
         };
         for _ in 0..3 {
             fixture.render(1.0 / 60.0);
@@ -99,7 +102,7 @@ impl ScrollFixture {
         let ui = self.context.frame();
         ui.window("Navigation scroll fixture")
             .position([0.0; 2], Condition::Always)
-            .size([640.0, 480.0], Condition::Always)
+            .size(self.pane_size, Condition::Always)
             .flags(WindowFlags::NO_TITLE_BAR | WindowFlags::NO_SAVED_SETTINGS)
             .build(|| {
                 if let Some(y) = self.native_scroll_override.take() {
@@ -704,6 +707,374 @@ fn ordinary_caret_reveal_scrolls_long_lines_without_residual_motion() {
     assert!(applied.position[0] > 0.0);
     assert_eq!(applied.position[1], 0.0);
     assert!(!fixture.editor.view.ensure_cursor_visible.horizontal);
+    fixture.assert_stays_at(applied.position);
+}
+
+#[test]
+fn wrapped_navigation_centers_and_reveals_positions_within_one_document_line() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = ScrollFixture::new(1, 7000);
+    fixture.frame.soft_wrap = true;
+    for _ in 0..3 {
+        fixture.render(1.0 / 60.0);
+    }
+    fixture
+        .editor
+        .commands()
+        .set_cursor(0, 5000, false, CursorReveal::Center);
+    fixture.render(1.0 / 60.0);
+    let centered = fixture.settle_navigation();
+    let visual = fixture.frame.projection.visual_position(0, 5000) as i32;
+    assert!(visual > 30, "the cursor targets an offscreen continuation");
+    assert!((centered.position[1] - centered.centered_y(visual)).abs() <= 1.0);
+    assert_eq!(
+        (fixture.editor.view.row, fixture.editor.view.column),
+        (0, 5000)
+    );
+    assert_eq!(centered.position[0], 0.0);
+    assert_eq!(centered.maximum[0], 0.0);
+    fixture.assert_stays_at(centered.position);
+
+    fixture
+        .editor
+        .commands()
+        .set_cursor(0, 6500, false, CursorReveal::Ensure);
+    fixture.render(1.0 / 60.0);
+    let revealed = fixture.render(1.0 / 60.0);
+    let visual = fixture.frame.projection.visual_position(0, 6500);
+    let cursor_y = visual as f32 * revealed.line_height - revealed.position[1];
+    assert!(revealed.position[1] > centered.position[1]);
+    assert!(cursor_y >= 0.0 && cursor_y + revealed.line_height <= revealed.viewport[1] + 1.0);
+    assert_eq!(revealed.position[0], 0.0);
+    fixture.assert_stays_at(revealed.position);
+}
+
+#[test]
+fn wrapping_reflow_preserves_the_document_position_at_the_viewport_top() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = ScrollFixture::new(200, 300);
+    fixture.pane_size = [360.0, 260.0];
+    fixture.frame.soft_wrap = true;
+    for _ in 0..3 {
+        fixture.render(1.0 / 60.0);
+    }
+    let visual = fixture.frame.projection.visual_position(40, 150);
+    let line_height = fixture.frame.layout.line_height;
+    fixture
+        .editor
+        .view
+        .request_scroll(0.0, (visual as f32 + 0.25) * line_height);
+    fixture.render(1.0 / 60.0);
+    let before = fixture.render(1.0 / 60.0);
+    let top = before.position[1] / before.line_height;
+    let old_visual = top.floor() as usize;
+    let row = fixture.frame.projection.document_row(old_visual).unwrap();
+    let column = fixture.frame.projection.segment(old_visual).unwrap().start as i32;
+    assert_eq!(row, 40);
+    assert!(column > 0, "the anchor starts inside the document line");
+
+    fixture.pane_size = [520.0, 260.0];
+    let resized = fixture.render(1.0 / 60.0);
+    let expected_visual = fixture.frame.projection.visual_position(row, column);
+    let expected_y = (expected_visual as f32 + top.fract()) * resized.line_height;
+    assert!((resized.position[1] - expected_y).abs() <= 1.0);
+    let resized_visual = (resized.position[1] / resized.line_height).floor() as usize;
+    assert_eq!(
+        fixture.frame.projection.document_row(resized_visual),
+        Some(row)
+    );
+    assert!(
+        fixture
+            .frame
+            .projection
+            .segment(resized_visual)
+            .unwrap()
+            .contains(&(column as usize))
+    );
+    fixture.assert_stays_at(resized.position);
+
+    fixture.frame.soft_wrap = false;
+    let unwrapped = fixture.render(1.0 / 60.0);
+    assert_eq!(
+        (unwrapped.position[1] / unwrapped.line_height).floor() as i32,
+        row
+    );
+    assert!(
+        (unwrapped.position[1] - (row as f32 + top.fract()) * unwrapped.line_height).abs() <= 1.0
+    );
+    fixture.assert_stays_at(unwrapped.position);
+
+    fixture.frame.soft_wrap = true;
+    let wrapped = fixture.render(1.0 / 60.0);
+    let top_visual = (wrapped.position[1] / wrapped.line_height).floor() as usize;
+    assert_eq!(fixture.frame.projection.document_row(top_visual), Some(row));
+    assert_eq!(
+        fixture.frame.projection.segment(top_visual).unwrap().start,
+        0
+    );
+    assert_eq!(wrapped.position[0], 0.0);
+    fixture.assert_stays_at(wrapped.position);
+}
+
+#[test]
+fn edits_above_a_wrapped_viewport_preserve_the_same_top_document_content() {
+    use bed_editing::editor_operations::TextOp;
+
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = ScrollFixture::new(200, 300);
+    fixture.pane_size = [360.0, 260.0];
+    fixture.frame.soft_wrap = true;
+    for _ in 0..3 {
+        fixture.render(1.0 / 60.0);
+    }
+    let visual = fixture.frame.projection.visual_position(40, 150);
+    let height = fixture.frame.layout.line_height;
+    fixture
+        .editor
+        .view
+        .request_scroll(0.0, (visual as f32 + 0.25) * height);
+    fixture.render(1.0 / 60.0);
+    let before = fixture.render(1.0 / 60.0);
+    let top = before.position[1] / before.line_height;
+    let top_visual = top.floor() as usize;
+    let row = fixture.frame.projection.document_row(top_visual).unwrap();
+    let column = fixture.frame.projection.segment(top_visual).unwrap().start as i32;
+    assert_eq!(row, 40);
+    assert!(column > 0);
+
+    let mut inserted = b"prefix\n".to_vec();
+    inserted.extend_from_slice(&vec![b'z'; 700]);
+    inserted.push(b'\n');
+    fixture.editor.commands().apply_transaction(&[TextOp {
+        text: inserted,
+        ..Default::default()
+    }]);
+    // An edit initiated elsewhere should retain this view's manually chosen
+    // viewport rather than following its offscreen caret.
+    fixture.editor.view.ensure_cursor_visible.horizontal = false;
+    fixture.editor.view.ensure_cursor_visible.vertical = false;
+    let edited = fixture.render(1.0 / 60.0);
+    let expected_visual = fixture.frame.projection.visual_position(row + 2, column);
+    let expected_y = (expected_visual as f32 + top.fract()) * edited.line_height;
+    assert!((edited.position[1] - expected_y).abs() <= 1.0);
+    assert!(
+        edited.position[1] > before.position[1] + 2.0 * height,
+        "the inserted lines include extra wrapped rows"
+    );
+    let edited_visual = (edited.position[1] / edited.line_height).floor() as usize;
+    assert_eq!(
+        fixture.frame.projection.document_row(edited_visual),
+        Some(row + 2)
+    );
+    assert_eq!(
+        fixture
+            .frame
+            .projection
+            .segment(edited_visual)
+            .unwrap()
+            .start,
+        column as usize
+    );
+    fixture.assert_stays_at(edited.position);
+}
+
+#[test]
+fn unicode_edits_before_a_wrapped_segment_keep_its_original_content_in_view() {
+    use bed_editing::editor_operations::{OpKind, TextOp};
+
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = ScrollFixture::new(1, 1);
+    let original = "🙂A".repeat(2000).into_bytes();
+    fixture.editor.set_content(&original);
+    fixture.pane_size = [360.0, 260.0];
+    fixture.frame.soft_wrap = true;
+    for _ in 0..3 {
+        fixture.render(1.0 / 60.0);
+    }
+    let visual = fixture.frame.projection.visual_position(0, 6000);
+    let height = fixture.frame.layout.line_height;
+    fixture
+        .editor
+        .view
+        .request_scroll(0.0, (visual as f32 + 0.25) * height);
+    fixture.render(1.0 / 60.0);
+    fixture.render(1.0 / 60.0);
+
+    // Emoji use four UTF-8 bytes and two UTF-16 units. The difference spans
+    // several visual rows, so interpreting a diagnostic/edit character offset
+    // as a document byte column would lose the viewport's original content.
+    let prefix = "🙂".repeat(80).into_bytes();
+    let prefix_len = prefix.len() as i32;
+    let operations = [
+        (
+            TextOp {
+                text: prefix,
+                ..Default::default()
+            },
+            prefix_len,
+        ),
+        (
+            TextOp {
+                kind: OpKind::Delete,
+                length: prefix_len,
+                ..Default::default()
+            },
+            -prefix_len,
+        ),
+    ];
+    for (operation, byte_delta) in operations {
+        let before = fixture.render(1.0 / 60.0);
+        let top = before.position[1] / before.line_height;
+        let top_visual = top.floor() as usize;
+        let column = fixture.frame.projection.segment(top_visual).unwrap().start as i32;
+        let original_suffix = fixture.editor.state.line(0)[column as usize..].to_vec();
+        fixture.editor.commands().apply_transaction(&[operation]);
+        fixture.editor.view.ensure_cursor_visible.horizontal = false;
+        fixture.editor.view.ensure_cursor_visible.vertical = false;
+
+        let edited = fixture.render(1.0 / 60.0);
+        let new_column = column + byte_delta;
+        assert_eq!(
+            &fixture.editor.state.line(0)[new_column as usize..],
+            &original_suffix
+        );
+        let expected_visual = fixture.frame.projection.visual_position(0, new_column);
+        let expected_y = (expected_visual as f32 + top.fract()) * edited.line_height;
+        assert!((edited.position[1] - expected_y).abs() <= 1.0);
+        let actual_visual = (edited.position[1] / edited.line_height).floor() as usize;
+        assert!(
+            fixture
+                .frame
+                .projection
+                .segment(actual_visual)
+                .unwrap()
+                .contains(&(new_column as usize))
+        );
+        fixture.assert_stays_at(edited.position);
+    }
+    assert_eq!(fixture.editor.state.join(), original);
+}
+
+#[test]
+fn resizing_a_wrapped_diff_preserves_the_historical_line_at_the_viewport_top() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = ScrollFixture::new(120, 30);
+    let mut baseline = vec!["x".repeat(30); 120];
+    baseline.insert(40, "D".repeat(500));
+    fixture.frame.diff = Some(DiffPresentation {
+        baseline: std::sync::Arc::from(baseline.join("\n").into_bytes()),
+        comparison: 1,
+        actions: Vec::new(),
+        actions_enabled: true,
+        saved: None,
+    });
+    fixture.pane_size = [360.0, 260.0];
+    fixture.frame.soft_wrap = true;
+    for _ in 0..3 {
+        fixture.render(1.0 / 60.0);
+    }
+    let visual = fixture
+        .frame
+        .projection
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| matches!(row, ProjectedRow::Historical { old_row: 40, .. }))
+        .nth(2)
+        .unwrap()
+        .0;
+    let height = fixture.frame.layout.line_height;
+    fixture
+        .editor
+        .view
+        .request_scroll(0.0, (visual as f32 + 0.25) * height);
+    fixture.render(1.0 / 60.0);
+    let before = fixture.render(1.0 / 60.0);
+    let top = before.position[1] / before.line_height;
+    let top_visual = top.floor() as usize;
+    assert!(matches!(
+        fixture.frame.projection.rows[top_visual],
+        ProjectedRow::Historical { old_row: 40, .. }
+    ));
+    let column = fixture.frame.projection.segment(top_visual).unwrap().start;
+    assert!(column > 0);
+
+    fixture.pane_size = [520.0, 260.0];
+    let resized = fixture.render(1.0 / 60.0);
+    let expected_visual = fixture
+        .frame
+        .projection
+        .rows
+        .iter()
+        .enumerate()
+        .find(|(visual, row)| {
+            matches!(row, ProjectedRow::Historical { old_row: 40, .. })
+                && fixture
+                    .frame
+                    .projection
+                    .segment(*visual)
+                    .unwrap()
+                    .contains(&column)
+        })
+        .unwrap()
+        .0;
+    let expected_y = (expected_visual as f32 + top.fract()) * resized.line_height;
+    assert!((resized.position[1] - expected_y).abs() <= 1.0);
+    let top_visual = (resized.position[1] / resized.line_height).floor() as usize;
+    assert!(matches!(
+        fixture.frame.projection.rows[top_visual],
+        ProjectedRow::Historical { old_row: 40, .. }
+    ));
+    assert!(
+        fixture
+            .frame
+            .projection
+            .segment(top_visual)
+            .unwrap()
+            .contains(&column)
+    );
+    fixture.assert_stays_at(resized.position);
+}
+
+#[test]
+fn typing_at_eof_adds_a_wrapped_row_and_reveals_it_on_the_next_native_frame() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = ScrollFixture::new(1, 6000);
+    fixture.frame.soft_wrap = true;
+    for _ in 0..3 {
+        fixture.render(1.0 / 60.0);
+    }
+    let columns_per_row = fixture.frame.projection.segment(0).unwrap().end;
+    let length = columns_per_row * 40;
+    fixture.editor.set_content(&vec![b'x'; length]);
+    fixture
+        .editor
+        .commands()
+        .set_cursor(0, length as i32, false, CursorReveal::Ensure);
+    fixture.editor.view.request_focus = true;
+    for _ in 0..3 {
+        fixture.render(1.0 / 60.0);
+    }
+    let old_rows = fixture.frame.projection.len();
+    assert_eq!(old_rows, 40);
+    let before = fixture.render(1.0 / 60.0);
+    fixture.context.io_mut().add_input_characters_utf8("x");
+    fixture.render(1.0 / 60.0);
+    assert_eq!(fixture.editor.state.line_length(0), length as i32 + 1);
+    assert_eq!(
+        fixture.frame.projection.len(),
+        old_rows + 1,
+        "typing reflows in the same frame"
+    );
+    let applied = fixture.render(1.0 / 60.0);
+    let visual = fixture
+        .frame
+        .projection
+        .visual_position(0, length as i32 + 1);
+    let cursor_y = visual as f32 * applied.line_height - applied.position[1];
+    assert!(applied.position[1] > before.position[1]);
+    assert!(cursor_y >= 0.0 && cursor_y + applied.line_height <= applied.viewport[1] + 1.0);
+    assert_eq!(applied.position[0], 0.0);
     fixture.assert_stays_at(applied.position);
 }
 

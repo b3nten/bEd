@@ -491,6 +491,19 @@ impl<'a> EditorCommands<'a> {
         }
         self.end_select_gesture(select);
     }
+    /// Apply view-computed navigation destinations in selection order. The view
+    /// can navigate screen rows while this command owns anchors and merging.
+    pub fn move_carets_to(&mut self, positions: &[(i32, i32)], select: bool) {
+        assert_eq!(positions.len(), self.view.selections.len());
+        self.begin_select_gesture(select);
+        for (selection, &(row, column)) in self.view.selections.iter_mut().zip(positions) {
+            selection.head_row = row;
+            selection.head_column = column;
+            EditorViewState::clamp_selection(self.state, selection);
+            EditorViewState::calculate_visual_column(self.state, selection);
+        }
+        self.end_select_gesture(select);
+    }
     pub fn set_cursor(&mut self, row: i32, column: i32, select: bool, reveal: CursorReveal) {
         if self.state.line_count() <= 0 {
             return;
@@ -592,12 +605,30 @@ impl<'a> EditorCommands<'a> {
             EditorViewState::cursor_down(self.state, &mut new);
         }
         new.collapse_to_head();
-        if new.head_row == seed.head_row
-            || self
-                .view
-                .selections
-                .iter()
-                .any(|s| (s.head_row, s.head_column) == (new.head_row, new.head_column))
+        if new.head_row == seed.head_row {
+            return;
+        }
+        self.insert_cursor(new);
+    }
+    /// Add a caret at a view-computed position, including another screen row of
+    /// the same document line. Existing caret positions remain unique.
+    pub fn add_cursor_at(&mut self, row: i32, column: i32) {
+        let mut new = Selection {
+            head_row: row,
+            head_column: column,
+            ..Selection::default()
+        };
+        EditorViewState::clamp_selection(self.state, &mut new);
+        EditorViewState::calculate_visual_column(self.state, &mut new);
+        new.collapse_to_head();
+        self.insert_cursor(new);
+    }
+    fn insert_cursor(&mut self, new: Selection) {
+        if self
+            .view
+            .selections
+            .iter()
+            .any(|s| (s.head_row, s.head_column) == (new.head_row, new.head_column))
         {
             return;
         }

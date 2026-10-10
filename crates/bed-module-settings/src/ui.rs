@@ -447,6 +447,7 @@ impl SettingsView<'_> {
                     ui.separator();
                     self.draw_autosave_settings(ui);
                     self.draw_boolean(ui, "Minimap", "minimap", true);
+                    self.draw_boolean(ui, "Word Wrap", "word_wrap", true);
                     self.draw_boolean(ui, "Syntax highlighting", "treesitter", true);
                     self.draw_boolean(ui, "Git changed lines", "git_changed_lines", true);
                     if editor.lsp_client().is_some() && ui.button("LSP Dashboard") {

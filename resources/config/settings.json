@@ -21,6 +21,7 @@
     "lsp_autocomplete": false,
     "mac_blur_enabled": true,
     "minimap": true,
+    "word_wrap": true,
     "pixel_width": 5000.0,
     "pixelation_intensity": -0.31200000643730164,
     "rainbow": true,

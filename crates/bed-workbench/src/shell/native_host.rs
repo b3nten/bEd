@@ -60,6 +60,7 @@ impl Workbench {
         config.navigation_animations = self.settings.bool("ui_animations", true);
         config.options.rainbow_mode = self.settings.rainbow();
         config.options.minimap_enabled = self.settings.bool("minimap", true);
+        config.options.soft_wrap = self.settings.bool("word_wrap", true);
         config.options.background_color = Some(self.settings.background_color());
         config.options.line_jump_key = self.settings.keybinds.get_action_key("line_jump_key");
         config.options.block_input = self
