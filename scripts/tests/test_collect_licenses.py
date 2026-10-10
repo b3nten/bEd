@@ -22,45 +22,46 @@ class SupplementalNoticeTests(unittest.TestCase):
         self.source = self.repository / "registry"
         self.source.mkdir()
         self.output = self.repository / "package"
-        self.package = {"name": "tree-sitter-example", "version": "1.0.0"}
-        self.record = {"revision": "012345",
-                       "url": "https://example.invalid/012345/LICENSE"}
+        self.package = {"name": "arborium-example", "version": "1.0.0"}
         self.notice = self.repository / "NOTICE"
         self.contents = b"Original copyright and permission notice\n"
-        self.section = "tree-sitter-example 1.0.0"
+        self.section = "Example upstream grammar"
         self.notice.write_bytes(LICENSES.notice_section(self.section, self.contents))
-        self.record["original_notice_sha256"] = hashlib.sha256(self.contents).hexdigest()
-        self.vcs = self.source / ".cargo_vcs_info.json"
-        self.vcs.write_text(json.dumps({"git": {"sha1": self.record["revision"]}}))
+        self.provenance = {"section": self.section, "revision": "012345",
+                           "url": "https://example.invalid/012345/LICENSE",
+                           "original_notice_sha256": hashlib.sha256(self.contents).hexdigest()}
+        self.record = {"archive_sha256": "abcdef", "notices": [self.provenance],
+                       "upstream_repository": "https://example.invalid/grammar",
+                       "upstream_revision": "012345", "source_note": "Original pinned upstream notice."}
+        self.lock = self.repository / "Cargo.lock"
+        self.lock.write_text('[[package]]\nname = "arborium-example"\nversion = "1.0.0"\n'
+                             'checksum = "abcdef"\n')
 
     def retain(self, records=None):
         if records is None:
             records = {(self.package["name"], self.package["version"]): self.record}
-        return LICENSES.supplemental_notice(
-            self.package, self.source, self.notice.read_bytes(), records)
+        return LICENSES.supplemental_notices(
+            self.package, self.notice.read_bytes(), records, LICENSES.locked_checksums(self.lock))
 
     def test_retains_original_notice_and_source_provenance_without_cache_changes(self):
-        before = self.vcs.read_bytes()
-        section, provenance = self.retain()
-        self.assertEqual(LICENSES.original_notice(self.notice.read_bytes(), section), self.contents)
-        self.assertEqual(provenance["revision"], self.record["revision"])
-        self.assertEqual(provenance["url"], self.record["url"])
-        self.assertEqual(provenance["original_notice_sha256"], self.record["original_notice_sha256"])
+        provenance, = self.retain()
+        self.assertEqual(LICENSES.original_notice(self.notice.read_bytes(), provenance["section"]),
+                         self.contents)
+        for key in ("revision", "url", "original_notice_sha256", "section"):
+            self.assertEqual(provenance[key], self.provenance[key])
         self.assertEqual(provenance["notice"], "NOTICE")
-        self.assertEqual(provenance["section"], self.section)
-        self.assertEqual(section, self.section)
-        self.assertEqual(self.vcs.read_bytes(), before)
-        self.assertEqual(list(self.source.iterdir()), [self.vcs])
+        self.assertEqual(list(self.source.iterdir()), [])
 
-    def test_refuses_missing_release_record_revision_mismatch_or_changed_copyright(self):
+    def test_refuses_missing_release_record_archive_mismatch_or_changed_copyright(self):
         with self.assertRaisesRegex(ValueError, "no packaged license"):
             self.retain({})
-        self.vcs.write_text(json.dumps({"git": {"sha1": "different-release"}}))
-        with self.assertRaisesRegex(ValueError, "revision mismatch"):
+        original = self.lock.read_text()
+        self.lock.write_text(original.replace('checksum = "abcdef"', 'checksum = "different-release"'))
+        with self.assertRaisesRegex(ValueError, "archive checksum mismatch"):
             self.retain()
-        self.vcs.write_text(json.dumps({"git": {"sha1": self.record["revision"]}}))
+        self.lock.write_text(original)
         self.notice.write_bytes(LICENSES.notice_section(self.section, b"changed notice"))
-        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+        with self.assertRaisesRegex(ValueError, "notice checksum mismatch"):
             self.retain()
         self.assertFalse(self.output.exists())
 
@@ -70,15 +71,15 @@ class SupplementalNoticeTests(unittest.TestCase):
             self.retain()
         self.assertFalse(self.output.exists())
 
-    def test_collector_retains_each_supplement_once_and_references_its_section(self):
+    def test_collector_retains_shared_notices_once_and_references_each_package(self):
         second_source = self.repository / "second-registry-package"
         second_source.mkdir()
-        (second_source / ".cargo_vcs_info.json").write_bytes(self.vcs.read_bytes())
-        second_package = {"name": "tree-sitter-second", "version": "2.0.0"}
-        with self.notice.open("ab") as bundle:
-            bundle.write(LICENSES.notice_section("tree-sitter-second 2.0.0", self.contents))
+        second_package = {"name": "arborium-second", "version": "2.0.0"}
+        with self.lock.open("a") as lock:
+            lock.write('\n[[package]]\nname = "arborium-second"\nversion = "2.0.0"\n'
+                       'checksum = "abcdef"\n')
         records = [dict(self.record, **package) for package in (self.package, second_package)]
-        supplements = self.repository / "scripts/lib/tree-sitter-sources.json"
+        supplements = self.repository / "scripts/lib/grammar-sources.json"
         supplements.parent.mkdir(parents=True)
         supplements.write_text(json.dumps(records))
         packages = [dict(package, id=package["name"], license="MIT", manifest_path=str(source / "Cargo.toml"))
@@ -95,13 +96,38 @@ class SupplementalNoticeTests(unittest.TestCase):
         index = json.loads((self.output / "license-index.json").read_text())
         self.assertEqual(len(index), 2)
         for entry in index:
-            section = f"{entry['name']} {entry['version']}"
             self.assertEqual(entry["notice_file"], "NOTICE")
-            self.assertEqual(entry["notices"], [section])
+            self.assertEqual(entry["notices"], [self.section])
             self.assertEqual(entry["notice_provenance"][0]["original_notice_sha256"],
-                             self.record["original_notice_sha256"])
-            self.assertEqual(first_bundle.count(f"=== {section} ===\n".encode()), 1)
-            self.assertEqual(LICENSES.original_notice(first_bundle, section), self.contents)
+                             self.provenance["original_notice_sha256"])
+            self.assertEqual(entry["archive_sha256"], self.record["archive_sha256"])
+            self.assertEqual(entry["upstream_repository"], self.record["upstream_repository"])
+            self.assertEqual(entry["upstream_revision"], self.record["upstream_revision"])
+            self.assertEqual(entry["source_note"], self.record["source_note"])
+        self.assertEqual(first_bundle.count(f"=== {self.section} ===\n".encode()), 1)
+        self.assertEqual(LICENSES.original_notice(first_bundle, self.section), self.contents)
+
+    def test_collector_retains_bundled_nested_grammar_and_runtime_notices(self):
+        for relative in ("LICENSE-MIT", "grammar/LICENSE", "src/unicode/LICENSE"):
+            path = self.source / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(self.contents)
+        supplements = self.repository / "scripts/lib/grammar-sources.json"
+        supplements.parent.mkdir(parents=True)
+        supplements.write_text("[]")
+        package = dict(self.package, id="example", license="MIT",
+                       manifest_path=str(self.source / "Cargo.toml"))
+        metadata = {"packages": [package], "workspace_members": []}
+        script = self.repository / "scripts/lib/collect-licenses.py"
+        with patch.object(LICENSES, "__file__", str(script)), patch.object(
+                LICENSES.subprocess, "check_output", return_value=json.dumps(metadata)):
+            LICENSES.collect(self.output)
+        bundle = (self.output / "NOTICE").read_bytes()
+        entry, = json.loads((self.output / "license-index.json").read_text())
+        self.assertEqual(len(entry["notices"]), 3)
+        for section in entry["notices"]:
+            self.assertEqual(LICENSES.original_notice(bundle, section), self.contents)
+        self.assertNotIn("notice_provenance", entry)
 
     def test_unrelated_notice_edits_do_not_invalidate_the_original_checksum(self):
         self.notice.write_bytes(b"Updated attribution overview\n" + self.notice.read_bytes())
@@ -129,14 +155,15 @@ class SupplementalNoticeTests(unittest.TestCase):
 class CommittedNoticeBundleTests(unittest.TestCase):
     def test_each_original_notice_checksum_is_preserved_in_its_package_section(self):
         repository = Path(__file__).resolve().parents[2]
-        records = json.loads((repository / "scripts/lib/tree-sitter-sources.json").read_text())
+        records = json.loads((repository / "scripts/lib/grammar-sources.json").read_text())
         bundle = (repository / "NOTICE").read_bytes()
         self.assertTrue(records)
         for record in records:
             with self.subTest(package=record["name"], version=record["version"]):
-                contents = LICENSES.original_notice(bundle, f"{record['name']} {record['version']}")
-                self.assertEqual(hashlib.sha256(contents).hexdigest(),
-                                 record["original_notice_sha256"])
+                for notice in record["notices"]:
+                    contents = LICENSES.original_notice(bundle, notice["section"])
+                    self.assertEqual(hashlib.sha256(contents).hexdigest(),
+                                     notice["original_notice_sha256"])
 
 
 class SourceArchiveTests(unittest.TestCase):
@@ -145,9 +172,10 @@ class SourceArchiveTests(unittest.TestCase):
             repository = Path(temporary)
             script = repository / "scripts/lib/collect-licenses.py"
             script.parent.mkdir(parents=True)
-            supplements = repository / "scripts/lib/tree-sitter-sources.json"
+            supplements = repository / "scripts/lib/grammar-sources.json"
             supplements.write_text("[]", encoding="utf-8")
             (repository / "NOTICE").write_text("Project attribution\n", encoding="utf-8")
+            (repository / "Cargo.lock").write_text("fixture lockfile\n", encoding="utf-8")
             packages = []
             sources = {
                 "symphonia-core": "registry+https://github.com/rust-lang/crates.io-index",

@@ -88,9 +88,10 @@ impl EditorState {
     }
 
     pub fn language_id_from_path(file_path: &str) -> String {
-        Path::new(file_path)
-            .extension()
-            .and_then(|ext| ext.to_str())
+        let path = Path::new(file_path);
+        path.extension()
+            .or_else(|| path.file_name())
+            .and_then(|name| name.to_str())
             .unwrap_or("")
             .to_owned()
     }

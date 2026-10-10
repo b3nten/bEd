@@ -18,7 +18,7 @@ use std::{
     thread::JoinHandle,
 };
 
-pub const SYNC_INCREMENTAL_BYTES: usize = 16 * 1024;
+pub const SYNC_HIGHLIGHT_BYTES: usize = 16 * 1024;
 pub const SKIP_TREE_SITTER_BYTES: usize = 100 * 1024 * 1024;
 pub const PRIME_QUERY_LINES: i32 = 128;
 pub const QUERY_CHUNK_LINES: i32 = 384;
@@ -35,8 +35,6 @@ pub struct EditorHighlight {
     sender: mpsc::Sender<(u64, String, ParseResult)>,
     receiver: mpsc::Receiver<(u64, String, ParseResult)>,
     pending_result: Option<(u64, String, ParseResult)>,
-    held_tree_edits: Vec<PendingEdit>,
-    bundled_queries: bool,
 }
 impl Default for EditorHighlight {
     fn default() -> Self {
@@ -53,8 +51,6 @@ impl Default for EditorHighlight {
             sender,
             receiver,
             pending_result: None,
-            held_tree_edits: Vec::new(),
-            bundled_queries: false,
         }
     }
 }
@@ -69,10 +65,6 @@ impl Drop for EditorHighlight {
 impl EditorHighlight {
     pub fn new() -> Self {
         Self::default()
-    }
-    pub fn use_bundled_queries(&mut self) {
-        self.bundled_queries = true;
-        self.tree_sitter.lock().unwrap().use_bundled_queries();
     }
     pub fn set_enabled(&mut self, enabled: bool) {
         if self.enabled != enabled {
@@ -140,7 +132,6 @@ impl EditorHighlight {
         self.cancel_highlighting();
         self.job_gen += 1;
         self.visual_gen += 1;
-        self.held_tree_edits.clear();
         self.spans.clear();
         self.pending_result = None;
         while self.receiver.try_recv().is_ok() {}
@@ -149,7 +140,6 @@ impl EditorHighlight {
         self.cancel_highlighting();
         self.job_gen += 1;
         self.visual_gen += 1;
-        self.held_tree_edits.clear();
         self.spans.assign_empty(line_count);
         self.sync_lens_from_content(state);
         if self.spans.lens.len() != line_count {
@@ -168,7 +158,7 @@ impl EditorHighlight {
         self.visual_gen += 1;
     }
     fn post_result(&mut self, generation: u64, path: String, result: ParseResult) {
-        if matches!(result.kind, ParseKind::Failed | ParseKind::TreeOnly) {
+        if result.kind == ParseKind::Failed {
             return;
         }
         if let Some((pending_gen, _, pending)) = &mut self.pending_result {
@@ -230,7 +220,7 @@ impl EditorHighlight {
     }
     fn run_sync(
         &mut self,
-        mut snap: ParseSnapshot,
+        snap: ParseSnapshot,
         generation: u64,
         state: &EditorState,
         operations: &EditorOperations,
@@ -239,8 +229,7 @@ impl EditorHighlight {
         let path = snap.path.clone();
         let mut results = Vec::new();
         self.tree_sitter.lock().unwrap().color_document(
-            &mut snap,
-            generation,
+            &snap,
             QUERY_CHUNK_LINES,
             || false,
             |result| {
@@ -254,7 +243,7 @@ impl EditorHighlight {
         }
         self.publish_pending(state, operations);
     }
-    fn launch_job(&mut self, mut snap: ParseSnapshot, generation: u64) {
+    fn launch_job(&mut self, snap: ParseSnapshot, generation: u64) {
         let canceled = Arc::new(AtomicBool::new(false));
         self.cancel_flag = Some(Arc::clone(&canceled));
         let tree_sitter = Arc::clone(&self.tree_sitter);
@@ -266,8 +255,7 @@ impl EditorHighlight {
             let line_count = snap.text.line_count().max(1) as usize;
             let path = snap.path.clone();
             tree_sitter.lock().unwrap().color_document(
-                &mut snap,
-                generation,
+                &snap,
                 QUERY_CHUNK_LINES,
                 || canceled.load(Ordering::Relaxed),
                 |result| {
@@ -278,30 +266,23 @@ impl EditorHighlight {
             );
         }));
     }
-    fn recolor(&mut self, state: &EditorState, operations: &EditorOperations) {
+    fn recolor(&mut self, state: &EditorState, operations: &EditorOperations, edited: bool) {
         let bytes = state.byte_size();
         if !self.enabled || bytes > SKIP_TREE_SITTER_BYTES {
-            self.held_tree_edits.clear();
             return;
         }
         self.cancel_highlighting();
         let generation = operations.generation();
         self.job_gen = generation;
-        let pending = std::mem::take(&mut self.held_tree_edits);
-        let snap = ParseSnapshot::from_document(state, pending);
-        let incremental = !snap.pending_edits.is_empty();
-        let tiny = bytes <= SYNC_INCREMENTAL_BYTES;
-        let ready = TreeSitter::is_query_ready_with_source(&snap.language_id, self.bundled_queries);
-        if tiny && ready {
+        let snap = ParseSnapshot::from_document(state);
+        let tiny = bytes <= SYNC_HIGHLIGHT_BYTES;
+        let ready = TreeSitter::snapshot_query_ready(&snap);
+        if tiny && ready && self.tasks.is_empty() {
             self.run_sync(snap, generation, state, operations);
             return;
         }
-        if !incremental && ready {
-            let result = TreeSitter::query_prefix_with_source(
-                &snap,
-                PRIME_QUERY_LINES,
-                self.bundled_queries,
-            );
+        if !edited && ready {
+            let result = TreeSitter::query_prefix(&snap, PRIME_QUERY_LINES);
             self.apply_parse_result(state, result);
         }
         self.launch_job(snap, generation);
@@ -312,14 +293,13 @@ impl EditorHighlight {
     }
     pub fn highlight_content(&mut self, state: &EditorState, operations: &mut EditorOperations) {
         let pending = operations.take_pending();
-        if !pending.is_empty() {
+        let edited = !pending.is_empty();
+        if edited {
             self.morph_spans(state, &pending);
-            self.held_tree_edits.extend(pending);
         } else if self.spans.lines.len() != state.line_count() as usize {
             self.spans.lines = vec![Vec::new(); state.line_count() as usize];
             self.sync_lens_from_content(state);
-            self.held_tree_edits.clear();
         }
-        self.recolor(state, operations);
+        self.recolor(state, operations, edited);
     }
 }

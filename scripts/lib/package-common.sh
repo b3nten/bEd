@@ -57,7 +57,6 @@ assert actual == {"PaperMono-Regular.ttf", "PaperMono-Bold.ttf"}, actual
 PYFONT
     test -f "$destination/resources/icons/bed.png"
     python3 "$BED_PACKAGE_ROOT/scripts/lib/verify-icons.py" "$destination/resources/icons"
-    test -f "$destination/resources/queries/rs.scm"
     test -f "$destination/resources/terminal/LICENSE"
     test -f "$destination/resources/terminal/ATTRIBUTION.txt"
     test -f "$destination/license-index.json"

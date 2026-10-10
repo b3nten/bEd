@@ -27,7 +27,7 @@ fn outline(language: &str, source: &str) -> OutlineResult {
 }
 
 #[test]
-fn every_grammar_has_a_working_nested_definition_outline() {
+fn every_supported_outline_grammar_has_working_nested_definitions() {
     let fixtures = [
         (
             "rs",
@@ -81,6 +81,13 @@ fn every_grammar_has_a_working_nested_definition_outline() {
         (
             "tsx",
             "interface Item { value: number; run(): void; } const make = () => <div/>;",
+            "Item",
+            "value",
+            "make",
+        ),
+        (
+            "ts",
+            "interface Item { value: number; run(): void; } const make = () => {};",
             "Item",
             "value",
             "make",
@@ -268,6 +275,14 @@ fn name_ranges_preserve_utf8_bytes_and_all_line_endings() {
 #[test]
 fn empty_unsupported_and_canceled_buffers_have_distinct_results() {
     assert_eq!(outline("txt", "hello").status, OutlineStatus::Unsupported);
+    assert_eq!(
+        outline("yaml", "key: value").status,
+        OutlineStatus::Unsupported
+    );
+    assert_eq!(
+        outline("lua", "local value = 1").status,
+        OutlineStatus::Unsupported
+    );
     let result = outline("rs", "");
     assert_eq!(result.status, OutlineStatus::Ready);
     assert!(result.nodes.is_empty());
@@ -281,6 +296,55 @@ fn empty_unsupported_and_canceled_buffers_have_distinct_results() {
         )
         .is_none()
     );
+}
+
+#[test]
+fn markdown_sections_nest_headings_and_ignore_headings_in_fenced_code() {
+    let source = "# Overview\n\nIntro.\n\n## First\n\nText.\n\n### Child\n\n```markdown\n# Example\n```\n\n## Second\n\nNext\n====\n\nSubsection\n----------\n";
+    for language in ["md", "markdown"] {
+        let result = outline(language, source);
+        assert_eq!(result.status, OutlineStatus::Ready);
+        let labels = result
+            .nodes
+            .iter()
+            .map(|node| node.label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            ["Overview", "First", "Child", "Second", "Next", "Subsection"]
+        );
+        let parents = result
+            .nodes
+            .iter()
+            .map(|node| node.parent)
+            .collect::<Vec<_>>();
+        assert_eq!(parents, [None, Some(0), Some(1), Some(0), None, Some(4)]);
+        let next_root = source.find("Next\n").unwrap();
+        let second = source.find("## Second").unwrap();
+        let ends = result
+            .nodes
+            .iter()
+            .map(|node| node.range.end)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ends,
+            [
+                next_root,
+                second,
+                second,
+                next_root,
+                source.len(),
+                source.len()
+            ]
+        );
+        for node in &result.nodes {
+            assert_eq!(node.kind, "section");
+            assert!(
+                node.range.start <= node.name_range.start && node.name_range.end <= node.range.end
+            );
+            assert!(node.range.end <= source.len());
+        }
+    }
 }
 
 fn wait(service: &mut OutlineService) {

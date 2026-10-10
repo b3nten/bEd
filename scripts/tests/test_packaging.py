@@ -66,13 +66,12 @@ class DesktopPackageTests(unittest.TestCase):
             "NOTICE": ("Required attribution\n"
                        + LICENSES.notice_section("musl", b"Retained musl license\n").decode()
                        + LICENSES.notice_section("ned", b"Retained upstream MIT license\n").decode()),
-            "scripts/lib/tree-sitter-sources.json": "[]\n",
+            "scripts/lib/grammar-sources.json": "[]\n",
             "vendor/freetype-sys/freetype2/docs/FTL.TXT": "Retained font license\n",
             "resources/config/settings.json": "{}\n",
             "resources/fonts/PaperMono-Regular.ttf": "source font\n",
             "resources/fonts/PaperMono-Bold.ttf": "emoji font\n",
             "assets/bEd.icon/icon.json": "{}\n",
-            "resources/queries/rs.scm": "highlight query\n",
             "resources/terminal/LICENSE": "Retained X.Org license\n",
             "resources/terminal/ATTRIBUTION.txt": "X.Org source/checksum record\n",
             "target/release/bed": "#!/bin/sh\nexit 0\n",
@@ -170,7 +169,6 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
             self.assertIn(prefix + "license-index.json", package.getnames())
             self.assertFalse(any("/LICENSES/" in name for name in package.getnames()))
             self.assertIn("usr/share/applications/bed.desktop", package.getnames())
-            self.assertIn(prefix + "resources/queries/rs.scm", package.getnames())
             for path in (self.root / "resources/icons").rglob("*"):
                 if path.is_file():
                     name = path.relative_to(self.root).as_posix()
@@ -208,7 +206,6 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
             resources = "bEd.app/Contents/Resources/"
             self.assertEqual(package.read(resources + "resources/icons/bed.png"),
                              (self.root / "assets/bEd-iOS-Default-1024@1x.png").read_bytes())
-            self.assertIn(resources + "resources/queries/rs.scm", package.namelist())
             for path in (self.root / "resources/icons").rglob("*"):
                 if path.is_file():
                     name = path.relative_to(self.root).as_posix()

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -43,22 +44,30 @@ def original_notice(bundle, section):
     return bytes(contents[start:end])
 
 
-def supplemental_notice(package, source, bundle, supplements):
+def locked_checksums(lockfile):
+    checksums = {}
+    for block in lockfile.read_text(encoding="utf-8").split("[[package]]")[1:]:
+        fields = dict(re.findall(r'^(name|version|checksum) = "([^"]+)"$', block, re.MULTILINE))
+        if "checksum" in fields:
+            checksums[(fields["name"], fields["version"])] = fields["checksum"]
+    return checksums
+
+
+def supplemental_notices(package, bundle, supplements, checksums):
     record = supplements.get((package["name"], package["version"]))
     if record is None:
         raise ValueError(f"{package['name']} {package['version']} has no packaged license notice; "
-                         "retain the exact published revision's notice in NOTICE and record its source "
-                         "in scripts/lib/tree-sitter-sources.json first")
-    vcs = json.loads((source / ".cargo_vcs_info.json").read_text(encoding="utf-8"))
-    if vcs["git"]["sha1"] != record["revision"]:
-        raise ValueError(f"Supplemental notice revision mismatch for {package['name']}")
-    section = f"{package['name']} {package['version']}"
-    contents = original_notice(bundle, section)
-    if hashlib.sha256(contents).hexdigest() != record["original_notice_sha256"]:
-        raise ValueError(f"Supplemental notice checksum mismatch for {package['name']}")
-    return section, {"notice": "NOTICE", "section": section, "url": record["url"],
-                     "revision": record["revision"],
-                     "original_notice_sha256": record["original_notice_sha256"]}
+                         "retain its original notices in NOTICE and record their sources "
+                         "in scripts/lib/grammar-sources.json first")
+    if checksums.get((package["name"], package["version"])) != record["archive_sha256"]:
+        raise ValueError(f"Supplemental notice archive checksum mismatch for {package['name']}")
+    provenance = []
+    for notice in record["notices"]:
+        contents = original_notice(bundle, notice["section"])
+        if hashlib.sha256(contents).hexdigest() != notice["original_notice_sha256"]:
+            raise ValueError(f"Supplemental notice checksum mismatch for {package['name']}")
+        provenance.append(dict(notice, notice="NOTICE"))
+    return provenance
 
 
 def collect(destination):
@@ -69,8 +78,9 @@ def collect(destination):
     ))
     # Always start from the committed notices so recollection does not duplicate sections.
     bundle = bytearray((repository / "NOTICE").read_bytes())
-    records = json.loads((repository / "scripts/lib/tree-sitter-sources.json").read_text(encoding="utf-8"))
+    records = json.loads((repository / "scripts/lib/grammar-sources.json").read_text(encoding="utf-8"))
     supplements = {(record["name"], record["version"]): record for record in records}
+    checksums = locked_checksums(repository / "Cargo.lock")
     index = []
     for package in metadata["packages"]:
         if package["id"] in metadata["workspace_members"]:
@@ -97,10 +107,14 @@ def collect(destination):
             entry["source_archive_url"] = (
                 f"https://crates.io/api/v1/crates/{package['name']}/{package['version']}/download"
             )
-        if not sections and package["name"].startswith("tree-sitter"):
-            section, provenance = supplemental_notice(package, source, bundle, supplements)
-            sections.append(section)
-            entry["notice_provenance"] = [provenance]
+        if not sections and package["name"].startswith(("tree-sitter", "arborium")):
+            provenance = supplemental_notices(package, bundle, supplements, checksums)
+            sections.extend(notice["section"] for notice in provenance)
+            entry["notice_provenance"] = provenance
+            record = supplements[(package["name"], package["version"])]
+            for field in ("archive_sha256", "upstream_repository", "upstream_revision", "source_note"):
+                if field in record:
+                    entry[field] = record[field]
         index.append(entry)
     # Retain original paths in section headings to distinguish native notices.
     for path in sorted(source_files(repository / "vendor")):

@@ -563,9 +563,6 @@ impl EditorSession {
     fn install_entry(&mut self, id: DocumentId, mut editor: Editor, monitor: FileMonitor) {
         let text = editor.state.kind == DocumentKind::Text;
         editor.highlight.enabled = self.options.highlighting && text;
-        if text {
-            editor.highlight.use_bundled_queries();
-        }
         editor.set_git_changed_lines(self.options.git && text);
         editor.highlight.set_theme_colors(self.theme.clone());
         if let Some(idle) = self.options.autosave {

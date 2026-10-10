@@ -1,0 +1,2440 @@
+[
+  {
+    "name": "arborium",
+    "version": "2.18.2",
+    "archive_sha256": "230e826fe3204178030e420751396c99431e4611fc67af63baf7767b4317bd75",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      }
+    ]
+  },
+  {
+    "name": "arborium-ada",
+    "version": "2.18.2",
+    "archive_sha256": "4968e9c12b703037e571e87aed9dd6e50d00fe7d79c0a57baa6138524973ed66",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-ada 2.18.2 upstream LICENSE.txt",
+        "url": "https://raw.githubusercontent.com/briot/tree-sitter-ada/dd5fa4cdb3aba91abc687aa68fb1431396fce6a6/LICENSE.txt",
+        "revision": "dd5fa4cdb3aba91abc687aa68fb1431396fce6a6",
+        "original_notice_sha256": "ad8425038de519f8c4e3e9339feebf99dfad8a6002dcf79227d91402780a32cc"
+      }
+    ],
+    "upstream_repository": "https://github.com/briot/tree-sitter-ada",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-agda",
+    "version": "2.18.2",
+    "archive_sha256": "94c0a772f198747f791b6858caf2ebf5a5f1d0cde96c82c2dab7cd5d368878d8",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-agda 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-agda/e8d47a6987effe34d5595baf321d82d3519a8527/LICENSE",
+        "revision": "e8d47a6987effe34d5595baf321d82d3519a8527",
+        "original_notice_sha256": "ef120ea13e3e543234f3d9a193c99ea512872979802dc0cebaea404c1a47047c"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-agda",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-asciidoc",
+    "version": "2.18.2",
+    "archive_sha256": "a4afc48fe9d8a721d63ad9aa091120f7a6dad157c6822f513fff46378b63c8e1",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-asciidoc 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/cathaysia/tree-sitter-asciidoc/0ecc13042b7352ddc3f7b8b31432e262711d44e4/LICENSE",
+        "revision": "0ecc13042b7352ddc3f7b8b31432e262711d44e4",
+        "original_notice_sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      }
+    ],
+    "upstream_repository": "https://github.com/cathaysia/tree-sitter-asciidoc",
+    "upstream_revision": "0ecc13042b7352ddc3f7b8b31432e262711d44e4"
+  },
+  {
+    "name": "arborium-asm",
+    "version": "2.18.2",
+    "archive_sha256": "c4bf1bbe5b0c6bb55a429f48b17ed336b0ce27f17010b22d9d47e3ab848c4226",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-asm 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/RubixDev/tree-sitter-asm/839741fef4dab5128952334624905c82b40c7133/LICENSE",
+        "revision": "839741fef4dab5128952334624905c82b40c7133",
+        "original_notice_sha256": "0e9f43573925c2e4b49f328a45c4df22c882191d77d876b0d18ecd60bd21e17c"
+      }
+    ],
+    "upstream_repository": "https://github.com/RubixDev/tree-sitter-asm",
+    "upstream_revision": "839741fef4dab5128952334624905c82b40c7133"
+  },
+  {
+    "name": "arborium-awk",
+    "version": "2.18.2",
+    "archive_sha256": "968632acf457b0367049f4cacb0a53016eac979ccce2218b2056b911dfd84ecc",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-awk 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/Beaglefoot/tree-sitter-awk/34bbdc7cce8e803096f47b625979e34c1be38127/LICENSE",
+        "revision": "34bbdc7cce8e803096f47b625979e34c1be38127",
+        "original_notice_sha256": "512d5f9072b6227e356c765b40a4194fda964f75095b0816f24ce75aa8df03fa"
+      }
+    ],
+    "upstream_repository": "https://github.com/Beaglefoot/tree-sitter-awk",
+    "upstream_revision": "34bbdc7cce8e803096f47b625979e34c1be38127"
+  },
+  {
+    "name": "arborium-bash",
+    "version": "2.18.2",
+    "archive_sha256": "ab2a2c191c27ee915e5ae65b619f9f7c1345565d511ce7761d30b4b243b2e333",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-bash 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-bash/20f55fb9663568f16ebceaac7673d2aa530add46/LICENSE",
+        "revision": "20f55fb9663568f16ebceaac7673d2aa530add46",
+        "original_notice_sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-bash",
+    "upstream_revision": "20f55fb9663568f16ebceaac7673d2aa530add46"
+  },
+  {
+    "name": "arborium-batch",
+    "version": "2.18.2",
+    "archive_sha256": "ff3235674b0e0e4aa992a1598874e33b6bc4e351931c15af37ff8347a79c1869",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-batch 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/davidevofficial/tree-sitter-batch/737a031b42240bf61bf7ea5e4356d4e0580dd6d9/LICENSE",
+        "revision": "737a031b42240bf61bf7ea5e4356d4e0580dd6d9",
+        "original_notice_sha256": "8f7339ea143af23c4075f6f000d5f8123011c7803b7ab120dd54ce2579b0a0bd"
+      }
+    ],
+    "upstream_repository": "https://github.com/davidevofficial/tree-sitter-batch",
+    "upstream_revision": "737a031b42240bf61bf7ea5e4356d4e0580dd6d9"
+  },
+  {
+    "name": "arborium-c",
+    "version": "2.18.2",
+    "archive_sha256": "37615879a3956f8918d43be52c9c4d11d60af5b7bedabca87ab8b47f769fa8c7",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-c 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-c/ae19b676b13bdcc13b7665397e6d9b14975473dd/LICENSE",
+        "revision": "ae19b676b13bdcc13b7665397e6d9b14975473dd",
+        "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-c",
+    "upstream_revision": "ae19b676b13bdcc13b7665397e6d9b14975473dd"
+  },
+  {
+    "name": "arborium-c-sharp",
+    "version": "2.18.2",
+    "archive_sha256": "1da8f9108bf98f334190243c27080476b126c54981fe2cb9b04d4f25d092960e",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-c-sharp 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-c-sharp/485f0bae0274ac9114797fc10db6f7034e4086e3/LICENSE",
+        "revision": "485f0bae0274ac9114797fc10db6f7034e4086e3",
+        "original_notice_sha256": "778fb7d63b8c1844da315648c02f325c4713a6f4a5d19644fd413421422776d3"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-c-sharp",
+    "upstream_revision": "485f0bae0274ac9114797fc10db6f7034e4086e3"
+  },
+  {
+    "name": "arborium-caddy",
+    "version": "2.18.2",
+    "archive_sha256": "2344b315a6cdc6f3e612ed98ec2aa47126170ac96f5e2f9337b88d1a045b2c91",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-caddy 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/Samonitari/tree-sitter-caddy/65b60437983933d00809c8927e7d8a29ca26dfa3/LICENSE",
+        "revision": "65b60437983933d00809c8927e7d8a29ca26dfa3",
+        "original_notice_sha256": "af93f0bf17f760eff4416866e7926f42670246f885c85b5b52a17b025c887d32"
+      }
+    ],
+    "upstream_repository": "https://github.com/Samonitari/tree-sitter-caddy",
+    "upstream_revision": "65b60437983933d00809c8927e7d8a29ca26dfa3"
+  },
+  {
+    "name": "arborium-capnp",
+    "version": "2.18.2",
+    "archive_sha256": "761e7a4ec1cd970d84692dfaf83c4997e242b8cdf689895204adb0e8bc34699f",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-capnp 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-capnp/7b0883c03e5edd34ef7bcf703194204299d7099f/LICENSE",
+        "revision": "7b0883c03e5edd34ef7bcf703194204299d7099f",
+        "original_notice_sha256": "099c44248f8cf353123211318680e93465587c005a4b3730ce8cb5334de043d6"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-capnp",
+    "upstream_revision": "7b0883c03e5edd34ef7bcf703194204299d7099f"
+  },
+  {
+    "name": "arborium-cedar",
+    "version": "2.18.2",
+    "archive_sha256": "87caa314130a845fbbc463146195b0d38fd787c17d702613e56e583b31725a4f",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-cedar 2.18.2 upstream LICENSE-MIT",
+        "url": "https://raw.githubusercontent.com/DuskSystems/tree-sitter-cedar/f4be518f20f71ee62eaff4f3f1de07254c240704/LICENSE-MIT",
+        "revision": "f4be518f20f71ee62eaff4f3f1de07254c240704",
+        "original_notice_sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+      },
+      {
+        "section": "arborium-cedar 2.18.2 upstream LICENSE-APACHE",
+        "url": "https://raw.githubusercontent.com/DuskSystems/tree-sitter-cedar/f4be518f20f71ee62eaff4f3f1de07254c240704/LICENSE-APACHE",
+        "revision": "f4be518f20f71ee62eaff4f3f1de07254c240704",
+        "original_notice_sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+      }
+    ],
+    "upstream_repository": "https://github.com/DuskSystems/tree-sitter-cedar",
+    "upstream_revision": "f4be518f20f71ee62eaff4f3f1de07254c240704"
+  },
+  {
+    "name": "arborium-cedarschema",
+    "version": "2.18.2",
+    "archive_sha256": "d598191c89cc826b22c9a1d5ff598c5dee32315b72f54e8d91be123504a7263c",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-cedarschema 2.18.2 upstream LICENSE-MIT",
+        "url": "https://raw.githubusercontent.com/DuskSystems/tree-sitter-cedar/f4be518f20f71ee62eaff4f3f1de07254c240704/LICENSE-MIT",
+        "revision": "f4be518f20f71ee62eaff4f3f1de07254c240704",
+        "original_notice_sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+      },
+      {
+        "section": "arborium-cedarschema 2.18.2 upstream LICENSE-APACHE",
+        "url": "https://raw.githubusercontent.com/DuskSystems/tree-sitter-cedar/f4be518f20f71ee62eaff4f3f1de07254c240704/LICENSE-APACHE",
+        "revision": "f4be518f20f71ee62eaff4f3f1de07254c240704",
+        "original_notice_sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+      }
+    ],
+    "upstream_repository": "https://github.com/DuskSystems/tree-sitter-cedar",
+    "upstream_revision": "f4be518f20f71ee62eaff4f3f1de07254c240704"
+  },
+  {
+    "name": "arborium-clojure",
+    "version": "2.18.2",
+    "archive_sha256": "bc9d188f152dae834e9ae69694089028373cd9099a339666cd36385e6beda19f",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-clojure 2.18.2 upstream notice",
+        "url": "https://raw.githubusercontent.com/sogaiu/tree-sitter-clojure/e43eff80d17cf34852dcd92ca5e6986d23a7040f/COPYING.txt",
+        "revision": "e43eff80d17cf34852dcd92ca5e6986d23a7040f",
+        "original_notice_sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+      }
+    ],
+    "upstream_repository": "https://github.com/sogaiu/tree-sitter-clojure",
+    "upstream_revision": "e43eff80d17cf34852dcd92ca5e6986d23a7040f"
+  },
+  {
+    "name": "arborium-cmake",
+    "version": "2.18.2",
+    "archive_sha256": "428a67eb72ef4bae3d59a588832ef34a6c22d0dc315ded3cbc5a74d01f855021",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-cmake 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/uyha/tree-sitter-cmake/58993af75218bc99a1f5a04c832a5937e7c422cb/LICENSE",
+        "revision": "58993af75218bc99a1f5a04c832a5937e7c422cb",
+        "original_notice_sha256": "97334c0f9c0962b33cbe03223f584b8ed64c2d14419ce80cc2e945eb8d367d28"
+      }
+    ],
+    "upstream_repository": "https://github.com/uyha/tree-sitter-cmake",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-cobol",
+    "version": "2.18.2",
+    "archive_sha256": "f5f4f892443d18dfe484cb58e4365fc6e544e5372a1d48c8d6582f52dfabfc57",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-cobol 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/zharinov/tree-sitter-cobol/befb226951b65585617f42ecbe526d00c124100c/LICENSE",
+        "revision": "befb226951b65585617f42ecbe526d00c124100c",
+        "original_notice_sha256": "d724405ce238a22c0d35769c5a36b386ad5958192efe8bbb304fb2896254575f"
+      }
+    ],
+    "upstream_repository": "https://github.com/zharinov/tree-sitter-cobol",
+    "upstream_revision": "befb226951b65585617f42ecbe526d00c124100c"
+  },
+  {
+    "name": "arborium-commonlisp",
+    "version": "2.18.2",
+    "archive_sha256": "68fd8337ca9dc1393b058200198cb8f47d0edd7af2580a7f81444860eb27270f",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-commonlisp 2.18.2 upstream LICENSE.md",
+        "url": "https://raw.githubusercontent.com/theHamsta/tree-sitter-commonlisp/32323509b3d9fe96607d151c2da2c9009eb13a2f/LICENSE.md",
+        "revision": "32323509b3d9fe96607d151c2da2c9009eb13a2f",
+        "original_notice_sha256": "00bb7f417416e8233ae465209e72eaa6162d53b061add7d9bed0238552a6fa0c"
+      }
+    ],
+    "upstream_repository": "https://github.com/theHamsta/tree-sitter-commonlisp",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-cpp",
+    "version": "2.18.2",
+    "archive_sha256": "736c482444d8d58e7f3cd8df7bc88bf6c4b450e9039a55c43b3aec39d6a805ce",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-cpp 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-cpp/12bd6f7e96080d2e70ec51d4068f2f66120dde35/LICENSE",
+        "revision": "12bd6f7e96080d2e70ec51d4068f2f66120dde35",
+        "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-cpp",
+    "upstream_revision": "12bd6f7e96080d2e70ec51d4068f2f66120dde35"
+  },
+  {
+    "name": "arborium-css",
+    "version": "2.18.2",
+    "archive_sha256": "d3bf02fc773bafaac2cdc27862d6eb52e86927e740c69e0d87b4123f2589b9af",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-css 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-css/dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f/LICENSE",
+        "revision": "dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f",
+        "original_notice_sha256": "c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-css",
+    "upstream_revision": "dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f"
+  },
+  {
+    "name": "arborium-d",
+    "version": "2.18.2",
+    "archive_sha256": "cc5f76f6c8f0fc569543f53253837a2f275a30c74aed8e566540372fc7686f85",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-d 2.18.2 upstream LICENSE.txt",
+        "url": "https://raw.githubusercontent.com/gdamore/tree-sitter-d/64f27931b4e6fdd75af1102c79bacbca68a8dacc/LICENSE.txt",
+        "revision": "64f27931b4e6fdd75af1102c79bacbca68a8dacc",
+        "original_notice_sha256": "ecf206b1a27e8e4ea07f1e1529cb111b4be5ce8420bd27b8269981d9c0c389f8"
+      }
+    ],
+    "upstream_repository": "https://github.com/gdamore/tree-sitter-d",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-dart",
+    "version": "2.18.2",
+    "archive_sha256": "3a8479324e58c3fa5953006e79a79bf74547bb12b618f3856c270e9808a7a34b",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-dart 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/UserNobody14/tree-sitter-dart/d4d8f3e337d8be23be27ffc35a0aef972343cd54/LICENSE",
+        "revision": "d4d8f3e337d8be23be27ffc35a0aef972343cd54",
+        "original_notice_sha256": "d270cb3a4985d75033bd77d875ccebff1d66e32788a3f727891e28d76132dd46"
+      }
+    ],
+    "upstream_repository": "https://github.com/UserNobody14/tree-sitter-dart",
+    "upstream_revision": "d4d8f3e337d8be23be27ffc35a0aef972343cd54"
+  },
+  {
+    "name": "arborium-devicetree",
+    "version": "2.18.2",
+    "archive_sha256": "d14afed75278ffc4f3e97c94766d9e1bf5c2fc3467bb695c78fc1f86109fcdce",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-devicetree 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/joelspadin/tree-sitter-devicetree/e685f1f6ac1702b046415efb476444167d63e41/LICENSE",
+        "revision": "e685f1f6ac1702b046415efb476444167d63e41",
+        "original_notice_sha256": "b539c1b4ccd868c8d4fc89651c8133a1678823f5057e2e1a81455a3df4f4c0b8"
+      }
+    ],
+    "upstream_repository": "https://github.com/joelspadin/tree-sitter-devicetree",
+    "upstream_revision": "e685f1f6ac1702b046415efb476444167d63e41"
+  },
+  {
+    "name": "arborium-diff",
+    "version": "2.18.2",
+    "archive_sha256": "20f8e67cdf000ca1e099f71a28b32e17e9749fa27f2366c36eeb47c31ebee237",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-diff 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/the-mikedavis/tree-sitter-diff/2520c3f934b3179bb540d23e0ef45f75304b5fed/LICENSE",
+        "revision": "2520c3f934b3179bb540d23e0ef45f75304b5fed",
+        "original_notice_sha256": "bb98faf5a86e9458536a6c745e02b53775d01066f1e51dda4ae220a3c0b050f4"
+      }
+    ],
+    "upstream_repository": "https://github.com/the-mikedavis/tree-sitter-diff",
+    "upstream_revision": "2520c3f934b3179bb540d23e0ef45f75304b5fed"
+  },
+  {
+    "name": "arborium-dockerfile",
+    "version": "2.18.2",
+    "archive_sha256": "54f567b2f106cea694126516b8ad20d44cddc40df8c16c77acf61ada303bfd9e",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-dockerfile 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/camdencheek/tree-sitter-dockerfile/971acdd908568b4531b0ba28a445bf0bb720aba5/LICENSE",
+        "revision": "971acdd908568b4531b0ba28a445bf0bb720aba5",
+        "original_notice_sha256": "806b8fcd19c1cdf23e178eb25942acc844a38669e36b2c896c7baf5f8bcecbb4"
+      }
+    ],
+    "upstream_repository": "https://github.com/camdencheek/tree-sitter-dockerfile",
+    "upstream_revision": "971acdd908568b4531b0ba28a445bf0bb720aba5"
+  },
+  {
+    "name": "arborium-dot",
+    "version": "2.18.2",
+    "archive_sha256": "dcbd513fa97380b4b82f6add33e580ed9d8cb96f0839390c29c169669115c83d",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-dot 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/rydesun/tree-sitter-dot/80327abbba6f47530edeb0df9f11bd5d5c93c14d/LICENSE",
+        "revision": "80327abbba6f47530edeb0df9f11bd5d5c93c14d",
+        "original_notice_sha256": "f411fdd59d5961ae5fd73e5f83483af3f09e791940263c7a46d1abcdf8816c6f"
+      }
+    ],
+    "upstream_repository": "https://github.com/rydesun/tree-sitter-dot",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-elisp",
+    "version": "2.18.2",
+    "archive_sha256": "db8eaf4b0673fdcc8905d7d361bfcc07e687c64fab01ae2f4d37afb2b505476d",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-elisp 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/Wilfred/tree-sitter-elisp/0cbf0906d9ee707c8c109422fba9cdd17ae13dcf/LICENSE",
+        "revision": "0cbf0906d9ee707c8c109422fba9cdd17ae13dcf",
+        "original_notice_sha256": "f7d440114acea14bf9f510bb2e4b93f2aac6a51baf271acc112009b9b2ebe55e"
+      }
+    ],
+    "upstream_repository": "https://github.com/Wilfred/tree-sitter-elisp",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-elixir",
+    "version": "2.18.2",
+    "archive_sha256": "ad30809acaa5d56cc1a660cf9684884d37f86f994d35d6238ba2e1eaf9b409c1",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-elixir 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/elixir-lang/tree-sitter-elixir/d24cecee673c4c770f797bac6f87ae4b6d7ddec5/LICENSE",
+        "revision": "d24cecee673c4c770f797bac6f87ae4b6d7ddec5",
+        "original_notice_sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+      }
+    ],
+    "upstream_repository": "https://github.com/elixir-lang/tree-sitter-elixir",
+    "upstream_revision": "d24cecee673c4c770f797bac6f87ae4b6d7ddec5"
+  },
+  {
+    "name": "arborium-elm",
+    "version": "2.18.2",
+    "archive_sha256": "3a5be48b61b088274b924aab89d4869610c394f231ec9442bfdbcb741467a899",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-elm 2.18.2 upstream LICENSE.md",
+        "url": "https://raw.githubusercontent.com/elm-tooling/tree-sitter-elm/d0bec479c0422ed5eb01467790bd3912142fe987/LICENSE.md",
+        "revision": "d0bec479c0422ed5eb01467790bd3912142fe987",
+        "original_notice_sha256": "26f7bf09693dd895ea64777316bad0133b131a8478a660b4785d4b9d1322f9a1"
+      }
+    ],
+    "upstream_repository": "https://github.com/elm-tooling/tree-sitter-elm",
+    "upstream_revision": "d0bec479c0422ed5eb01467790bd3912142fe987"
+  },
+  {
+    "name": "arborium-erlang",
+    "version": "2.18.2",
+    "archive_sha256": "4aa77f055957475a25051d32f291b9522e2466f22f976f7d94604788787e3fa6",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-erlang 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/WhatsApp/tree-sitter-erlang/0386a11c835950f5e1ebfbcbf49863d8495de4e0/LICENSE",
+        "revision": "0386a11c835950f5e1ebfbcbf49863d8495de4e0",
+        "original_notice_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      }
+    ],
+    "upstream_repository": "https://github.com/WhatsApp/tree-sitter-erlang",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-fish",
+    "version": "2.18.2",
+    "archive_sha256": "3b657a121d90b62c3d278f2ba7c67790e62131931194236e11096e674196d203",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-fish 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/ram02z/tree-sitter-fish/b7f1d682941e0c62dfcd6bf9ef481638351bab16/LICENSE",
+        "revision": "b7f1d682941e0c62dfcd6bf9ef481638351bab16",
+        "original_notice_sha256": "6b0382b16279f26ff69014300541967a356a666eb0b91b422f6862f6b7dad17e"
+      }
+    ],
+    "upstream_repository": "https://github.com/ram02z/tree-sitter-fish",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-fsharp",
+    "version": "2.18.2",
+    "archive_sha256": "a99c43c646333704fe7f0af48269046fb8593c48244749aa2ad11c7a1a2c0e1e",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-fsharp 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/ionide/tree-sitter-fsharp/5141851c278a99958469eb1736c7afc4ec738e47/LICENSE",
+        "revision": "5141851c278a99958469eb1736c7afc4ec738e47",
+        "original_notice_sha256": "f9352b63e87252b282b252bf27530027c8ca69829e0023f8b8b682a736f271fd"
+      }
+    ],
+    "upstream_repository": "https://github.com/ionide/tree-sitter-fsharp",
+    "upstream_revision": "5141851c278a99958469eb1736c7afc4ec738e47"
+  },
+  {
+    "name": "arborium-gitattributes",
+    "version": "2.18.2",
+    "archive_sha256": "5622994187af02690c585ef1e481bce918861579847c06ec6ef074ff43b159b4",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-gitattributes 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-gitattributes/1b7af09d45b579f9f288453b95ad555f1f431645/LICENSE",
+        "revision": "1b7af09d45b579f9f288453b95ad555f1f431645",
+        "original_notice_sha256": "413ec4c3842f95bcaf662aba7d646b22baf044aa6ac5efa6531b94d4ee00248b"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-gitattributes",
+    "upstream_revision": "1b7af09d45b579f9f288453b95ad555f1f431645"
+  },
+  {
+    "name": "arborium-gleam",
+    "version": "2.18.2",
+    "archive_sha256": "f56bdfb4669245eaf62355baf64d88d3f974f5116a445598cb1e5a43297544c9",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-gleam 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/gleam-lang/tree-sitter-gleam/f4d55f3c5b690d4afe8853da892bc290d96deb34/LICENSE",
+        "revision": "f4d55f3c5b690d4afe8853da892bc290d96deb34",
+        "original_notice_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      }
+    ],
+    "upstream_repository": "https://github.com/gleam-lang/tree-sitter-gleam",
+    "upstream_revision": "f4d55f3c5b690d4afe8853da892bc290d96deb34"
+  },
+  {
+    "name": "arborium-glsl",
+    "version": "2.18.2",
+    "archive_sha256": "71ddb4b9b05ec5f72984b3004fe008d78895405e103f2d8655e78dccef0a6794",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-glsl 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-glsl/24a6c8ef698e4480fecf8340d771fbcb5de8fbb4/LICENSE",
+        "revision": "24a6c8ef698e4480fecf8340d771fbcb5de8fbb4",
+        "original_notice_sha256": "f44d7107a33801260dc82624c91a71ebf5918b4038a0fb0e3ef60e2dd9ba1999"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-glsl",
+    "upstream_revision": "24a6c8ef698e4480fecf8340d771fbcb5de8fbb4"
+  },
+  {
+    "name": "arborium-go",
+    "version": "2.18.2",
+    "archive_sha256": "f297634bca52a796de2725149dc684c18286c78f0a096fa27d532f9627bb1e02",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-go 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-go/2346a3ab1bb3857b48b29d779a1ef9799a248cd7/LICENSE",
+        "revision": "2346a3ab1bb3857b48b29d779a1ef9799a248cd7",
+        "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-go",
+    "upstream_revision": "2346a3ab1bb3857b48b29d779a1ef9799a248cd7"
+  },
+  {
+    "name": "arborium-graphql",
+    "version": "2.18.2",
+    "archive_sha256": "ef1a1df39113685dfc32cf16089c3cf7f0f0e78596e46815503a11681f940987",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-graphql 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/bkegley/tree-sitter-graphql/5e66e961eee421786bdda8495ed1db045e06b5fe/LICENSE",
+        "revision": "5e66e961eee421786bdda8495ed1db045e06b5fe",
+        "original_notice_sha256": "7bd2788c7154b102cf03eeb335faba32d897fb82f252b28663c16c76738aaba5"
+      }
+    ],
+    "upstream_repository": "https://github.com/bkegley/tree-sitter-graphql",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-groovy",
+    "version": "2.18.2",
+    "archive_sha256": "e06dd1c205f32687e45733c516a52e9864183724b8fe3b5ea79b5605ff2448f8",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-groovy 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/murtaza64/tree-sitter-groovy/86911590a8e46d71301c66468e5620d9faa5b6af/LICENSE",
+        "revision": "86911590a8e46d71301c66468e5620d9faa5b6af",
+        "original_notice_sha256": "5f10fff4ea3c4892af1e2f1af0b9ba7fa79843598808a1dbbbbc8231ca81d1ad"
+      }
+    ],
+    "upstream_repository": "https://github.com/murtaza64/tree-sitter-groovy",
+    "upstream_revision": "86911590a8e46d71301c66468e5620d9faa5b6af"
+  },
+  {
+    "name": "arborium-haskell",
+    "version": "2.18.2",
+    "archive_sha256": "67e7f4f0976568a87bedddeebd30724577674751fd275dab7c98c63616d9961c",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-haskell 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-haskell/98aedbd2d6947a168ba3ba3755d70b0cb6b78395/LICENSE",
+        "revision": "98aedbd2d6947a168ba3ba3755d70b0cb6b78395",
+        "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-haskell",
+    "upstream_revision": "98aedbd2d6947a168ba3ba3755d70b0cb6b78395"
+  },
+  {
+    "name": "arborium-hcl",
+    "version": "2.18.2",
+    "archive_sha256": "30dc0e04b767c8345c41cc96b350e0e991826ff340d973bd52b1f27fc7963a12",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-hcl 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-hcl/fad991865fee927dd1de5e172fb3f08ac674d914/LICENSE",
+        "revision": "fad991865fee927dd1de5e172fb3f08ac674d914",
+        "original_notice_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-hcl",
+    "upstream_revision": "fad991865fee927dd1de5e172fb3f08ac674d914"
+  },
+  {
+    "name": "arborium-highlight",
+    "version": "2.18.2",
+    "archive_sha256": "cee400d694bd935c513c50f9b1fda469b6d9cd192d80fede7bfa9e5851a54cb8",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      }
+    ]
+  },
+  {
+    "name": "arborium-hlsl",
+    "version": "2.18.2",
+    "archive_sha256": "e192b64da3f412b93027b7a9772b62d25872896e3d457e008c6983fd6b44af4b",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-hlsl 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-hlsl/bab9111922d53d43668fabb61869bec51bbcb915/LICENSE",
+        "revision": "bab9111922d53d43668fabb61869bec51bbcb915",
+        "original_notice_sha256": "dec735ccc031754dd05e6556dd9e959915eb367cf01cf009c77a1a38786932b1"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-hlsl",
+    "upstream_revision": "bab9111922d53d43668fabb61869bec51bbcb915"
+  },
+  {
+    "name": "arborium-html",
+    "version": "2.18.2",
+    "archive_sha256": "6ed785a76d53a63ff144b26a68b789fe4d10169a5f683d573ee72f3234d8a9a4",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-html 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-html/73a3947324f6efddf9e17c0ea58d454843590cc0/LICENSE",
+        "revision": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+        "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-html",
+    "upstream_revision": "73a3947324f6efddf9e17c0ea58d454843590cc0"
+  },
+  {
+    "name": "arborium-idris",
+    "version": "2.18.2",
+    "archive_sha256": "25ab1c5cf59c81bfecdd6cedefc47be854aff990ca05ad4d79058b6d195e7782",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-idris 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/kayhide/tree-sitter-idris/c56a25cf57c68ff929356db25505c1cc4c7820f6/LICENSE",
+        "revision": "c56a25cf57c68ff929356db25505c1cc4c7820f6",
+        "original_notice_sha256": "bcca340aee284af8b3279a7dc6236b5c62be6c3272bef78ec4dbbbe14c2e1ae6"
+      }
+    ],
+    "upstream_repository": "https://github.com/kayhide/tree-sitter-idris",
+    "upstream_revision": "c56a25cf57c68ff929356db25505c1cc4c7820f6"
+  },
+  {
+    "name": "arborium-ini",
+    "version": "2.18.2",
+    "archive_sha256": "e7023ba09a01b681ebac2d78c5d1747d58b548ec3cb010e16f852fe8e62ed869",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-ini 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/justinmk/tree-sitter-ini/bea223734aa9cea2c8793bf9098bd7fdef912f57/LICENSE",
+        "revision": "bea223734aa9cea2c8793bf9098bd7fdef912f57",
+        "original_notice_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      }
+    ],
+    "upstream_repository": "https://github.com/justinmk/tree-sitter-ini",
+    "upstream_revision": "bea223734aa9cea2c8793bf9098bd7fdef912f57"
+  },
+  {
+    "name": "arborium-java",
+    "version": "2.18.2",
+    "archive_sha256": "ad9a5d6a278548b7a18bbaf79600402c167cec39d3b63be86daa1f3756b52a82",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-java 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-java/e10607b45ff745f5f876bfa3e94fbcc6b44bdc11/LICENSE",
+        "revision": "e10607b45ff745f5f876bfa3e94fbcc6b44bdc11",
+        "original_notice_sha256": "52ed137b039cd9c46409bc22e89938af911c95b157feae2d040b51e6084369a7"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-java",
+    "upstream_revision": "e10607b45ff745f5f876bfa3e94fbcc6b44bdc11"
+  },
+  {
+    "name": "arborium-javascript",
+    "version": "2.18.2",
+    "archive_sha256": "47b63db8c449ac227061f2bb4ed62673d85c3f567be8f01483b34f266298d061",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-javascript 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-javascript/58404d8cf191d69f2674a8fd507bd5776f46cb11/LICENSE",
+        "revision": "58404d8cf191d69f2674a8fd507bd5776f46cb11",
+        "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-javascript",
+    "upstream_revision": "58404d8cf191d69f2674a8fd507bd5776f46cb11"
+  },
+  {
+    "name": "arborium-jinja2",
+    "version": "2.18.2",
+    "archive_sha256": "f9992fdeae4c5e1f7c401a4e471529397a7a528506cd5b2e5f1901fb9eb8fb6f",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-jinja2 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/dbt-labs/tree-sitter-jinja2/922b28e1352c4966418b2e7e3772e0583d4532a2/LICENSE",
+        "revision": "922b28e1352c4966418b2e7e3772e0583d4532a2",
+        "original_notice_sha256": "9a204f0ddf288ec72bc40d593faee33c8ac1f4aed518dc80f9b77e03b0f6cbf3"
+      }
+    ],
+    "upstream_repository": "https://github.com/dbt-labs/tree-sitter-jinja2",
+    "upstream_revision": "922b28e1352c4966418b2e7e3772e0583d4532a2"
+  },
+  {
+    "name": "arborium-jq",
+    "version": "2.18.2",
+    "archive_sha256": "befae6cef2501d589f31ca08ab96fa640f57299eb05bfddf2ebcc772c1632a20",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-jq 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/flurie/tree-sitter-jq/c204e36d2c3c6fce1f57950b12cabcc24e5cc4d9/LICENSE",
+        "revision": "c204e36d2c3c6fce1f57950b12cabcc24e5cc4d9",
+        "original_notice_sha256": "657936faf6b18facb53bd2ae9d6f4cf9326462d75b69b899767ff443955c23a5"
+      }
+    ],
+    "upstream_repository": "https://github.com/flurie/tree-sitter-jq",
+    "upstream_revision": "c204e36d2c3c6fce1f57950b12cabcc24e5cc4d9"
+  },
+  {
+    "name": "arborium-jsdoc",
+    "version": "2.18.2",
+    "archive_sha256": "73945c45bdbbed8c137556d3a833999463e707078ca877597756dc394689e8b5",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-jsdoc 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-jsdoc/658d18dcdddb75c760363faa4963427a7c6b52db/LICENSE",
+        "revision": "658d18dcdddb75c760363faa4963427a7c6b52db",
+        "original_notice_sha256": "ffaefecad68467134f8c701120a2410a2384ffff7a605b63638cf0b51e7d16cc"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-jsdoc",
+    "upstream_revision": "658d18dcdddb75c760363faa4963427a7c6b52db"
+  },
+  {
+    "name": "arborium-json",
+    "version": "2.18.2",
+    "archive_sha256": "dd1167c5abde6c8d953cc20d88713006c94a009926d39e2217c68cbffbdbf7f0",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-json 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-json/001c28d7a29832b06b0e831ec77845553c89b56d/LICENSE",
+        "revision": "001c28d7a29832b06b0e831ec77845553c89b56d",
+        "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-json",
+    "upstream_revision": "001c28d7a29832b06b0e831ec77845553c89b56d"
+  },
+  {
+    "name": "arborium-julia",
+    "version": "2.18.2",
+    "archive_sha256": "f96e64b392495c5958528a62d5ccb32829727cab0f678c5a0efbb9dd6afb5a84",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-julia 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-julia/e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3/LICENSE",
+        "revision": "e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3",
+        "original_notice_sha256": "74f800107f200f4e28da33e9c3f86230d37d8f4c0a4916f7111e800c395ee3a2"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-julia",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-just",
+    "version": "2.18.2",
+    "archive_sha256": "b9a22e90530661891ef9d7185c81c21b5f17a89629780317ced810210fe873e1",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-just 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/casey/tree-sitter-just/5685543a6e64f66335e25518c9ae8ffa1dae3d01/LICENSE",
+        "revision": "5685543a6e64f66335e25518c9ae8ffa1dae3d01",
+        "original_notice_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      }
+    ],
+    "upstream_repository": "https://github.com/casey/tree-sitter-just",
+    "upstream_revision": "5685543a6e64f66335e25518c9ae8ffa1dae3d01"
+  },
+  {
+    "name": "arborium-kconfig",
+    "version": "2.18.2",
+    "archive_sha256": "92270d1fb1af402a482a9c94d24b125c46a3935fa458a3d8fe523c24fc31cc99",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-kconfig 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-kconfig/9ac99fe4c0c27a35dc6f757cef534c646e944881/LICENSE",
+        "revision": "9ac99fe4c0c27a35dc6f757cef534c646e944881",
+        "original_notice_sha256": "099c44248f8cf353123211318680e93465587c005a4b3730ce8cb5334de043d6"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-kconfig",
+    "upstream_revision": "9ac99fe4c0c27a35dc6f757cef534c646e944881"
+  },
+  {
+    "name": "arborium-kdl",
+    "version": "2.18.2",
+    "archive_sha256": "da54bc16b6e91555922a0c77b45e3b5dc27b248ed89256fe39c610c76160bc77",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-kdl 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-kdl/b37e3d58e5c5cf8d739b315d6114e02d42e66664/LICENSE",
+        "revision": "b37e3d58e5c5cf8d739b315d6114e02d42e66664",
+        "original_notice_sha256": "b193808d3a13d34ec589a2c0bc2959f52a57f8fb1fc234d04ff8d87ac075864a"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-kdl",
+    "upstream_revision": "b37e3d58e5c5cf8d739b315d6114e02d42e66664"
+  },
+  {
+    "name": "arborium-kotlin",
+    "version": "2.18.2",
+    "archive_sha256": "d2be9de4405957a7e6f9684d4774a8e743bb501ce5956d3e91da77e8e18a6fe6",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-kotlin 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/fwcd/tree-sitter-kotlin/57fb4560ba8641865bc0baa6b3f413b236112c4c/LICENSE",
+        "revision": "57fb4560ba8641865bc0baa6b3f413b236112c4c",
+        "original_notice_sha256": "948495f61768f7de26bcc61113d8cd95f50bbc15adb678c28c941c6c8fcd5903"
+      }
+    ],
+    "upstream_repository": "https://github.com/fwcd/tree-sitter-kotlin",
+    "upstream_revision": "57fb4560ba8641865bc0baa6b3f413b236112c4c"
+  },
+  {
+    "name": "arborium-lean",
+    "version": "2.18.2",
+    "archive_sha256": "02e3e3af99597613fc97e63696fdec5020506ffd9849bc4172b8e01056afa936",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-lean 2.18.2 upstream COPYING",
+        "url": "https://raw.githubusercontent.com/Julian/tree-sitter-lean/efe6b87145608d12f5996bd7f0cf6095a0e82261/COPYING",
+        "revision": "efe6b87145608d12f5996bd7f0cf6095a0e82261",
+        "original_notice_sha256": "0b78b7f6dee72534d695b0b75ba3185fd5b04da284607daf124740969257fe1f"
+      }
+    ],
+    "upstream_repository": "https://github.com/Julian/tree-sitter-lean",
+    "upstream_revision": "efe6b87145608d12f5996bd7f0cf6095a0e82261"
+  },
+  {
+    "name": "arborium-lua",
+    "version": "2.18.2",
+    "archive_sha256": "d5ffae9459733aa8457f88e43672ccae485a77f09b15da83f8655d954c75365f",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-lua 2.18.2 upstream LICENSE.md",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-lua/d76023017f7485eae629cb60d406c7a1ca0f40c9/LICENSE.md",
+        "revision": "d76023017f7485eae629cb60d406c7a1ca0f40c9",
+        "original_notice_sha256": "9a32b02e4c917b1ce6b5e79d8ea81e25cefd7f27d89c7235f2afb262c06cf32e"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-lua",
+    "upstream_revision": "d76023017f7485eae629cb60d406c7a1ca0f40c9"
+  },
+  {
+    "name": "arborium-make",
+    "version": "2.18.2",
+    "archive_sha256": "1bed9575f27d799d26b522d101f50abdb7f4f06d6a7065dbed41a6834b5dfe21",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-make 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-make/70613f3d812cbabbd7f38d104d60a409c4008b43/LICENSE",
+        "revision": "70613f3d812cbabbd7f38d104d60a409c4008b43",
+        "original_notice_sha256": "28eecdb75b6de2d9020603531461444bf54db827ee2fb345a8fcf4dbee7c2ad1"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-make",
+    "upstream_revision": "70613f3d812cbabbd7f38d104d60a409c4008b43"
+  },
+  {
+    "name": "arborium-markdown",
+    "version": "2.18.2",
+    "archive_sha256": "f672968e3cddfa59a2b2b7777489078d9d20b220696891eeb35a9f20e51b9312",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-markdown 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-markdown/2dfd57f547f06ca5631a80f601e129d73fc8e9f0/LICENSE",
+        "revision": "2dfd57f547f06ca5631a80f601e129d73fc8e9f0",
+        "original_notice_sha256": "52ec8a1bf8256511e2a92613e0bb41ffefba3897f16fa958d7bb28c466dd4804"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
+    "upstream_revision": "2dfd57f547f06ca5631a80f601e129d73fc8e9f0"
+  },
+  {
+    "name": "arborium-matlab",
+    "version": "2.18.2",
+    "archive_sha256": "810e898c7240a3aee12a18d3a49607a900a18024ca4b7d913aa5f9d51015b5c5",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-matlab 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/acristoffers/tree-sitter-matlab/f03d0347acd8bb05d4edd8c845ac1718729e1fad/LICENSE",
+        "revision": "f03d0347acd8bb05d4edd8c845ac1718729e1fad",
+        "original_notice_sha256": "8673f5acd59bfb3bd129760a57f72092d5e3c01e05837532eac9497cf8006a46"
+      }
+    ],
+    "upstream_repository": "https://github.com/acristoffers/tree-sitter-matlab",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-meson",
+    "version": "2.18.2",
+    "archive_sha256": "1b9e4d2d827d5806553e23980f78485f0acd51bcf6ea34acdfa2c232a0988db1",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-meson 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-meson/280b6e59186f18528bab1567f5cc43b78b9cd881/LICENSE",
+        "revision": "280b6e59186f18528bab1567f5cc43b78b9cd881",
+        "original_notice_sha256": "62bca3ac5aaf95fdebc7f3d22f061dfa2fabd069c21b89cf18f704ef428f92b9"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-meson",
+    "upstream_revision": "280b6e59186f18528bab1567f5cc43b78b9cd881"
+  },
+  {
+    "name": "arborium-nginx",
+    "version": "2.18.2",
+    "archive_sha256": "c976de7ecd45a27e20c572423a4604edc4fbede7b3a48a8b3fb28d42d8011701",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-nginx 2.18.2 upstream LICENSE.md",
+        "url": "https://gitlab.com/joncoole/tree-sitter-nginx/-/raw/f6d13cf6281b25f2ce342a49a41a10a0381e00f0/LICENSE.md",
+        "revision": "f6d13cf6281b25f2ce342a49a41a10a0381e00f0",
+        "original_notice_sha256": "a65b3c339be173d9d971ee2de7e8a28f7e0553261d031585193b8015a09d60c7"
+      }
+    ],
+    "upstream_repository": "https://gitlab.com/joncoole/tree-sitter-nginx",
+    "upstream_revision": "f6d13cf6281b25f2ce342a49a41a10a0381e00f0"
+  },
+  {
+    "name": "arborium-ninja",
+    "version": "2.18.2",
+    "archive_sha256": "907909eb49ab3233d32adc99417b48168766a4be9b01a836415cdc7a912ce301",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-ninja 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/alemuller/tree-sitter-ninja/0a95cfdc0745b6ae82f60d3a339b37f19b7b9267/LICENSE",
+        "revision": "0a95cfdc0745b6ae82f60d3a339b37f19b7b9267",
+        "original_notice_sha256": "fc1393351f0cdf7b888e3841fe2897992b14d5e8526c79ce10674ef8df5a902e"
+      }
+    ],
+    "upstream_repository": "https://github.com/alemuller/tree-sitter-ninja",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-nix",
+    "version": "2.18.2",
+    "archive_sha256": "8c89b161cf29773dff8abc46e0bed263ecd3195f7a4f17c9b1bc0903ec72602f",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-nix 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/nix-community/tree-sitter-nix/bfcb03e6ddccc5a1eb84cea0176096f85a7af333/LICENSE",
+        "revision": "bfcb03e6ddccc5a1eb84cea0176096f85a7af333",
+        "original_notice_sha256": "c1b72e50266464ec5118d26200e17bf1f472d142e62ab637e1ffc23986657a78"
+      }
+    ],
+    "upstream_repository": "https://github.com/nix-community/tree-sitter-nix",
+    "upstream_revision": "bfcb03e6ddccc5a1eb84cea0176096f85a7af333"
+  },
+  {
+    "name": "arborium-objc",
+    "version": "2.18.2",
+    "archive_sha256": "b1988635123d7a6947c4596610c52dab1a8319e791517a8c61e0c0e5e0463f45",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-objc 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-objc/181a81b8f23a2d593e7ab4259981f50122909fda/LICENSE",
+        "revision": "181a81b8f23a2d593e7ab4259981f50122909fda",
+        "original_notice_sha256": "099c44248f8cf353123211318680e93465587c005a4b3730ce8cb5334de043d6"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-objc",
+    "upstream_revision": "181a81b8f23a2d593e7ab4259981f50122909fda"
+  },
+  {
+    "name": "arborium-ocaml",
+    "version": "2.18.2",
+    "archive_sha256": "761307ca8598a125b78523bd3d802426f69ddfb549b616bfad55b31100545e1a",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-ocaml 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-ocaml/3ef7c00b29e41e3a0c1d18e82ea37c64d72b93fc/LICENSE",
+        "revision": "3ef7c00b29e41e3a0c1d18e82ea37c64d72b93fc",
+        "original_notice_sha256": "f977a20805dd6e275f14bc090a5f8e638401dad4df366841c1060f12c75b74ae"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-ocaml",
+    "upstream_revision": "3ef7c00b29e41e3a0c1d18e82ea37c64d72b93fc"
+  },
+  {
+    "name": "arborium-odin",
+    "version": "2.18.2",
+    "archive_sha256": "6274fafd5cc98688bb9ca9839c24bf5c18da17e4b1dd7cf76953495693e022af",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-odin 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-odin/d2ca8efb4487e156a60d5bd6db2598b872629403/LICENSE",
+        "revision": "d2ca8efb4487e156a60d5bd6db2598b872629403",
+        "original_notice_sha256": "099c44248f8cf353123211318680e93465587c005a4b3730ce8cb5334de043d6"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-odin",
+    "upstream_revision": "d2ca8efb4487e156a60d5bd6db2598b872629403"
+  },
+  {
+    "name": "arborium-perl",
+    "version": "2.18.2",
+    "archive_sha256": "2e858599e4fb53d710b4123fd2bba5e3625d5eaf9495fcddabb1154cffd39faf",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-perl 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-perl/tree-sitter-perl/ad74e6db234c35d537de9358799a8e0cc4f5dee0/LICENSE",
+        "revision": "ad74e6db234c35d537de9358799a8e0cc4f5dee0",
+        "original_notice_sha256": "68a9a526ae357ed5a2f8ca5dabb14131b283554b69639bb04816088d4b1f2fa0"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-perl/tree-sitter-perl",
+    "upstream_revision": "ad74e6db234c35d537de9358799a8e0cc4f5dee0"
+  },
+  {
+    "name": "arborium-php",
+    "version": "2.18.2",
+    "archive_sha256": "1772da0cd2f525332a958f5ebda27eda35be22dfa82b052774b6162b2c20b359",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-php 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-php/7d07b41ce2d442ca9a90ed85d0075eccc17ae315/LICENSE",
+        "revision": "7d07b41ce2d442ca9a90ed85d0075eccc17ae315",
+        "original_notice_sha256": "664764fabf40c0b318e06324a5a12379092a2df25b8cbf2415f71bc0bb352346"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-php",
+    "upstream_revision": "7d07b41ce2d442ca9a90ed85d0075eccc17ae315"
+  },
+  {
+    "name": "arborium-postscript",
+    "version": "2.18.2",
+    "archive_sha256": "d23b18fd35f7fabf8c05483d3439ee6f431632c828dcaf406766dc956125c415",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-postscript 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/smoeding/tree-sitter-postscript/33718235e7ce32e355a8dc591b435637a329bc5b/LICENSE",
+        "revision": "33718235e7ce32e355a8dc591b435637a329bc5b",
+        "original_notice_sha256": "d065ade2c8453d4a9e602d39c70f65cdbe17ee698cc7a77631111383b81250cf"
+      }
+    ],
+    "upstream_repository": "https://github.com/smoeding/tree-sitter-postscript",
+    "upstream_revision": "33718235e7ce32e355a8dc591b435637a329bc5b"
+  },
+  {
+    "name": "arborium-powershell",
+    "version": "2.18.2",
+    "archive_sha256": "33e087e691371a5b63c514c7a5c85c213932be5c52ada6107c5fb2314106be07",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-powershell 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/airbus-cert/tree-sitter-powershell/9379c77984af1f3d3d7e3cc5e897de3496725280/LICENSE",
+        "revision": "9379c77984af1f3d3d7e3cc5e897de3496725280",
+        "original_notice_sha256": "1fca8454c0d77a73f9922a52d39e1f7c339f5da5d03f2766eff66b859fa19477"
+      }
+    ],
+    "upstream_repository": "https://github.com/airbus-cert/tree-sitter-powershell",
+    "upstream_revision": "9379c77984af1f3d3d7e3cc5e897de3496725280"
+  },
+  {
+    "name": "arborium-prolog",
+    "version": "2.18.2",
+    "archive_sha256": "945174b0c4b0d859d040bdfc8416acc95a777674ce0017a97a874980667a2701",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-prolog 2.18.2 upstream LICENSE",
+        "url": "https://codeberg.org/foxy/tree-sitter-prolog/raw/commit/d8d415f6a1cf80ca138524bcc395810b176d40fa/LICENSE",
+        "revision": "d8d415f6a1cf80ca138524bcc395810b176d40fa",
+        "original_notice_sha256": "c8806213f2ff281eb47a9c674dc1bca8067063ebdc217e43280af99e6a978f8a"
+      }
+    ],
+    "upstream_repository": "https://codeberg.org/foxy/tree-sitter-prolog",
+    "upstream_revision": "d8d415f6a1cf80ca138524bcc395810b176d40fa"
+  },
+  {
+    "name": "arborium-proto",
+    "version": "2.18.2",
+    "archive_sha256": "b19631b348e2b41507bbd00e272c9e4962cac2f78ab371d55ec72d5a5bbe48c1",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-proto 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/coder3101/tree-sitter-proto/d65a18ce7c2242801f702770114ad08056c7f8c9/LICENSE",
+        "revision": "d65a18ce7c2242801f702770114ad08056c7f8c9",
+        "original_notice_sha256": "1cc17f880ff4fa68079a72b98b89d42e8ce16b1bdbb1ec7b6f33465241e41003"
+      }
+    ],
+    "upstream_repository": "https://github.com/coder3101/tree-sitter-proto",
+    "upstream_revision": "d65a18ce7c2242801f702770114ad08056c7f8c9"
+  },
+  {
+    "name": "arborium-python",
+    "version": "2.18.2",
+    "archive_sha256": "4da0da209e87d12f5922c5a7c005883d48d06baf0bf9b5d05bbe607b532e599f",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-python 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-python/26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64/LICENSE",
+        "revision": "26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64",
+        "original_notice_sha256": "d724405ce238a22c0d35769c5a36b386ad5958192efe8bbb304fb2896254575f"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-python",
+    "upstream_revision": "26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64"
+  },
+  {
+    "name": "arborium-query",
+    "version": "2.18.2",
+    "archive_sha256": "9b289270089669fe95d46c8894488991ccb4d1bf52ddd1cc27b3d7fd18b71677",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-query 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-query/8e9e223812ff30854fbc912adbec696ba5f0e023/LICENSE",
+        "revision": "8e9e223812ff30854fbc912adbec696ba5f0e023",
+        "original_notice_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-query",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-r",
+    "version": "2.18.2",
+    "archive_sha256": "69ce5bd2f1c773d131393a7caa9cc9a3cf6d8e4432ee8452f53047245496fdb8",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-r 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/r-lib/tree-sitter-r/0e6ef7741712c09dc3ee6e81c42e919820cc65ef/LICENSE",
+        "revision": "0e6ef7741712c09dc3ee6e81c42e919820cc65ef",
+        "original_notice_sha256": "de2e49529f03d573bc3fa229dc83acfe22c63a5ad1766b289563edfd45b72dea"
+      }
+    ],
+    "upstream_repository": "https://github.com/r-lib/tree-sitter-r",
+    "upstream_revision": "0e6ef7741712c09dc3ee6e81c42e919820cc65ef"
+  },
+  {
+    "name": "arborium-regex",
+    "version": "2.18.2",
+    "archive_sha256": "942c46c18b2571f430030301c20b485fe8d842ec378418171e6e3bfbb78426c5",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-regex 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-regex/b2ac15e27fce703d2f37a79ccd94a5c0cbe9720b/LICENSE",
+        "revision": "b2ac15e27fce703d2f37a79ccd94a5c0cbe9720b",
+        "original_notice_sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-regex",
+    "upstream_revision": "b2ac15e27fce703d2f37a79ccd94a5c0cbe9720b"
+  },
+  {
+    "name": "arborium-rego",
+    "version": "2.18.2",
+    "archive_sha256": "36636475c45cb54cc710cec51d0eabf62d0acdd535d3c3b69cf6268c2fba78bf",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-rego 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/FallenAngel97/tree-sitter-rego/ddd39af81fe8b0288102a7cb97959dfce723e0f3/LICENSE",
+        "revision": "ddd39af81fe8b0288102a7cb97959dfce723e0f3",
+        "original_notice_sha256": "7eeb3c3b1789d235ea1866fe1e0790233a9679b7ef8415ce93ab454775ebcb4f"
+      }
+    ],
+    "upstream_repository": "https://github.com/FallenAngel97/tree-sitter-rego",
+    "upstream_revision": "ddd39af81fe8b0288102a7cb97959dfce723e0f3"
+  },
+  {
+    "name": "arborium-rescript",
+    "version": "2.18.2",
+    "archive_sha256": "344fe3c77fbf2d8dfd6e4047b000d9d0d316f0218d818bee353226e011606431",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-rescript 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/rescript-lang/tree-sitter-rescript/d2df8a285fff95de56a91d2f8152aeceb66f40ef/LICENSE",
+        "revision": "d2df8a285fff95de56a91d2f8152aeceb66f40ef",
+        "original_notice_sha256": "21da9b4e463af4b4501cbd4e0c5886a1f321a740b584002a9c9a5fe7b2d46a8a"
+      }
+    ],
+    "upstream_repository": "https://github.com/rescript-lang/tree-sitter-rescript",
+    "upstream_revision": "d2df8a285fff95de56a91d2f8152aeceb66f40ef"
+  },
+  {
+    "name": "arborium-ron",
+    "version": "2.18.2",
+    "archive_sha256": "dc9650d2a9f1da6464d8cf801dd682ea795d06b0259e0b12a06d1f93f13525f5",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-ron 2.18.2 upstream LICENSE-MIT",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-ron/78938553b93075e638035f624973083451b29055/LICENSE-MIT",
+        "revision": "78938553b93075e638035f624973083451b29055",
+        "original_notice_sha256": "c6137844f3f63aa4522dfc1cde8dff4f3314ed594ea954a73e3073dcc9d33b11"
+      },
+      {
+        "section": "arborium-ron 2.18.2 upstream LICENSE-APACHE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-ron/78938553b93075e638035f624973083451b29055/LICENSE-APACHE",
+        "revision": "78938553b93075e638035f624973083451b29055",
+        "original_notice_sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-ron",
+    "upstream_revision": "78938553b93075e638035f624973083451b29055"
+  },
+  {
+    "name": "arborium-ruby",
+    "version": "2.18.2",
+    "archive_sha256": "9f791dc0377b8df659b98aed534dddfd4dcb591735cafd05b12e1e1ce3a859a9",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-ruby 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-ruby/ad907a69da0c8a4f7a943a7fe012712208da6dee/LICENSE",
+        "revision": "ad907a69da0c8a4f7a943a7fe012712208da6dee",
+        "original_notice_sha256": "ee006f02a3d856df282e409be2a86e24a65bb573a98b9c28343771141351bb6b"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-ruby",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-rust",
+    "version": "2.18.2",
+    "archive_sha256": "8471397c67c4164b93d6a23ae80fb5b7af5dcc00fa9b143015efb1ea927ca8da",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "tree-sitter-rust original MIT notice",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-rust/18b0515fca567f5a10aee9978c6d2640e878671a/LICENSE",
+        "revision": "18b0515fca567f5a10aee9978c6d2640e878671a",
+        "original_notice_sha256": "31d5b6f4243d5c7c6e1c4ebbbb9f6407bd1457a08bcc4f706521710341acba36"
+      },
+      {
+        "section": "arborium-rust 2.18.2 source and license declaration",
+        "url": "https://crates.io/api/v1/crates/arborium-rust/2.18.2/download",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "4563d593183be19cab943691a629e6f2adb57d75d391f876b624b7b935c02506"
+      }
+    ],
+    "upstream_repository": "https://codeberg.org/grammar-orchard/tree-sitter-rust-orchard",
+    "upstream_revision": "261b20226c04ef601adbdf185a800512a5f66291",
+    "source_note": "The published orchard repository is unavailable. Retain the original tree-sitter-rust MIT notice and the published Arborium source/license declaration."
+  },
+  {
+    "name": "arborium-scala",
+    "version": "2.18.2",
+    "archive_sha256": "c02e14b416b76db7ede4935d5306e9ba5d42cd931396fb7ffc791de44ab46005",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-scala 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-scala/97aead18d97708190a51d4f551ea9b05b60641c9/LICENSE",
+        "revision": "97aead18d97708190a51d4f551ea9b05b60641c9",
+        "original_notice_sha256": "1f95ed26e1f4074074c9c7083e61c0a9e4c3b9f435745044995f3beb4ed28575"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-scala",
+    "upstream_revision": "97aead18d97708190a51d4f551ea9b05b60641c9"
+  },
+  {
+    "name": "arborium-scheme",
+    "version": "2.18.2",
+    "archive_sha256": "30fa0d8e10248c131e2040200114adadba049375b8e75f1090cc3f32642afc48",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-scheme 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/6cdh/tree-sitter-scheme/591893b9a8b9ec85f5cef86e0cc1028012ad9f0e/LICENSE",
+        "revision": "591893b9a8b9ec85f5cef86e0cc1028012ad9f0e",
+        "original_notice_sha256": "cc35bd4a973bf6067558e88b56d9a369e02c36e240b2b537aef8f751b7808fd7"
+      }
+    ],
+    "upstream_repository": "https://github.com/6cdh/tree-sitter-scheme",
+    "upstream_revision": "591893b9a8b9ec85f5cef86e0cc1028012ad9f0e"
+  },
+  {
+    "name": "arborium-scss",
+    "version": "2.18.2",
+    "archive_sha256": "c5baa8a1fe94fdf3a32859d34fb5b0283bcc521cc08a62ca006c42d3dfad5780",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-scss 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/serenadeai/tree-sitter-scss/c478c6868648eff49eb04a4df90d703dc45b312a/LICENSE",
+        "revision": "c478c6868648eff49eb04a4df90d703dc45b312a",
+        "original_notice_sha256": "ad64f38da1571e9042cef6bea8f4232c2761c2f52ae93cbada9ae7aeaeeafa74"
+      }
+    ],
+    "upstream_repository": "https://github.com/serenadeai/tree-sitter-scss",
+    "upstream_revision": "c478c6868648eff49eb04a4df90d703dc45b312a"
+  },
+  {
+    "name": "arborium-solidity",
+    "version": "2.18.2",
+    "archive_sha256": "f08b59a3250b10f247284d5735d473fb31e0c3d933003f5ffc469da9c24456e1",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-solidity 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/JoranHonig/tree-sitter-solidity/4e938a46c7030dd001bc99e1ac0f0c750ac98254/LICENSE",
+        "revision": "4e938a46c7030dd001bc99e1ac0f0c750ac98254",
+        "original_notice_sha256": "8844f0cc9b76b9c8a9d0251904eb7536b6bb9976e0ec577e8f27ab96d42523ef"
+      }
+    ],
+    "upstream_repository": "https://github.com/JoranHonig/tree-sitter-solidity",
+    "upstream_revision": "4e938a46c7030dd001bc99e1ac0f0c750ac98254"
+  },
+  {
+    "name": "arborium-sparql",
+    "version": "2.18.2",
+    "archive_sha256": "418ebf03122b9c0c83d016ffadcd44758183eedd3d29227afe97700d66615daa",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-sparql 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/GordianDziwis/tree-sitter-sparql/1ef52d35a73a2a5f2e433ecfd1c751c1360a923b/LICENSE",
+        "revision": "1ef52d35a73a2a5f2e433ecfd1c751c1360a923b",
+        "original_notice_sha256": "23e808e6ebe2c9dfcb6f5eff041c175951df99c647d3414022a5e398991342c7"
+      }
+    ],
+    "upstream_repository": "https://github.com/GordianDziwis/tree-sitter-sparql",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-sql",
+    "version": "2.18.2",
+    "archive_sha256": "67ca021dab5e61d6eb07bad9cf40f5f5e0fb4c6f89f32aa14a1db07431d657f9",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-sql 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/DerekStride/tree-sitter-sql/fe77f6868d6cdea593052a6af390116495093dc1/LICENSE",
+        "revision": "fe77f6868d6cdea593052a6af390116495093dc1",
+        "original_notice_sha256": "3b3e4e4252d5d7d1c18e1257005f23242bf0580ad619204fd093c99b8c56748d"
+      }
+    ],
+    "upstream_repository": "https://github.com/DerekStride/tree-sitter-sql",
+    "upstream_revision": "fe77f6868d6cdea593052a6af390116495093dc1"
+  },
+  {
+    "name": "arborium-ssh-config",
+    "version": "2.18.2",
+    "archive_sha256": "a08191587303dc8c7bf0ff761b6cb7ea15dccf2c0da3688988ac11aff3211e8e",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-ssh-config 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/ObserverOfTime/tree-sitter-ssh-config/0c35b243392268f48fd096607da192d76c843398/LICENSE",
+        "revision": "0c35b243392268f48fd096607da192d76c843398",
+        "original_notice_sha256": "3297073719030b7261afd78b7267931ccc03a27f7a65ca6fc644316180f71bf6"
+      }
+    ],
+    "upstream_repository": "https://github.com/ObserverOfTime/tree-sitter-ssh-config",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-starlark",
+    "version": "2.18.2",
+    "archive_sha256": "0101c83d354421235ff3de1a5c593d56314cc41d47e93755404a2ac721ecb0fd",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-starlark 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-starlark/a453dbf3ba433db0e5ec621a38a7e59d72e4dc69/LICENSE",
+        "revision": "a453dbf3ba433db0e5ec621a38a7e59d72e4dc69",
+        "original_notice_sha256": "099c44248f8cf353123211318680e93465587c005a4b3730ce8cb5334de043d6"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-starlark",
+    "upstream_revision": "a453dbf3ba433db0e5ec621a38a7e59d72e4dc69"
+  },
+  {
+    "name": "arborium-styx",
+    "version": "2.18.2",
+    "archive_sha256": "39c2b0f9fbba20d2c95bc4e334abe30fe312d7110d561f5a0af88210fca37443",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-styx 2.18.2 upstream notice",
+        "url": "https://raw.githubusercontent.com/bearcove/styx/5a8e4669562e560937c27308e2ece70de63e0ba8/LICENSE-MIT",
+        "revision": "5a8e4669562e560937c27308e2ece70de63e0ba8",
+        "original_notice_sha256": "21a2121221d2a35df2d8d333d00a61ed240446b6107092741ff996941acdc919"
+      }
+    ],
+    "upstream_repository": "https://github.com/bearcove/styx",
+    "upstream_revision": "643357e9cd940dbc06e7b96e5f1e67fb2f25e8d4",
+    "source_note": "The published grammar revision is unavailable. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-svelte",
+    "version": "2.18.2",
+    "archive_sha256": "4565e657b69d1120b4f808f2d0d4d9fd4cc0f52eb2d40e12fb13fce54670c1ee",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-svelte 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-svelte/ae5199db47757f785e43a14b332118a5474de1a2/LICENSE",
+        "revision": "ae5199db47757f785e43a14b332118a5474de1a2",
+        "original_notice_sha256": "0eea8dc45e89deeb03c7799bbbc7b4688f365fb274562f4540ecfebdea82e727"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-svelte",
+    "upstream_revision": "ae5199db47757f785e43a14b332118a5474de1a2"
+  },
+  {
+    "name": "arborium-swift",
+    "version": "2.18.2",
+    "archive_sha256": "db83273e075d168a853cb480805b0614803d43c20c7d5fc3f655dac836dd88e1",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-swift 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/alex-pinkus/tree-sitter-swift/78d84ef82c387fceeb6094038da28717ea052e39/LICENSE",
+        "revision": "78d84ef82c387fceeb6094038da28717ea052e39",
+        "original_notice_sha256": "3533cec129bb4bba015c0d61d86dd7c3b7e82110e4d2ff7837a01eff5bad5ccc"
+      }
+    ],
+    "upstream_repository": "https://github.com/alex-pinkus/tree-sitter-swift",
+    "upstream_revision": "78d84ef82c387fceeb6094038da28717ea052e39"
+  },
+  {
+    "name": "arborium-sysroot",
+    "version": "2.18.2",
+    "archive_sha256": "ddd9d120dd5df8b918cd96676a88f1233a66f10687d415b69f70b3396acddddf",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      }
+    ]
+  },
+  {
+    "name": "arborium-textproto",
+    "version": "2.18.2",
+    "archive_sha256": "8f7b98a535209bd3cf24d9ac54162390269ae52dcbd05ef8beef954aa30bf40d",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-textproto 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/PorterAtGoogle/tree-sitter-textproto/568471b80fd8793d37ed01865d8c2208a9fefd1b/LICENSE",
+        "revision": "568471b80fd8793d37ed01865d8c2208a9fefd1b",
+        "original_notice_sha256": "75935ca1dfaa8a43a0db1608c07d8470e534d74473f249761cfa7e440ccf1a92"
+      }
+    ],
+    "upstream_repository": "https://github.com/PorterAtGoogle/tree-sitter-textproto",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-theme",
+    "version": "2.18.2",
+    "archive_sha256": "042f9d025c80b2e625b4f0f10eda56a652444ef916025e855a292937bb8a949a",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      }
+    ]
+  },
+  {
+    "name": "arborium-thrift",
+    "version": "2.18.2",
+    "archive_sha256": "aa9ac55fcc22f0d864cf168d933032fec93d632f7b8b4d44b88d44fce9d18416",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-thrift 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-thrift/68fd0d80943a828d9e6f49c58a74be1e9ca142cf/LICENSE",
+        "revision": "68fd0d80943a828d9e6f49c58a74be1e9ca142cf",
+        "original_notice_sha256": "f0a0f84bedde3f160f9db0337715a534ca8f1fb5f19726d743dadfde44bb08c8"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-thrift",
+    "upstream_revision": "68fd0d80943a828d9e6f49c58a74be1e9ca142cf"
+  },
+  {
+    "name": "arborium-tlaplus",
+    "version": "2.18.2",
+    "archive_sha256": "a2fa349f8e5760d56ae6c92f9d90bfdb76d761bbbc5f2039f53b2639669d7a64",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-tlaplus 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tlaplus-community/tree-sitter-tlaplus/2d831940c782850f64dabf5b7b17e9e51f7f0ebb/LICENSE",
+        "revision": "2d831940c782850f64dabf5b7b17e9e51f7f0ebb",
+        "original_notice_sha256": "bb9ed59c3ddf6631a6138e4656fbcf7fb225b1a3260760e729d6e58a52c6b15a"
+      }
+    ],
+    "upstream_repository": "https://github.com/tlaplus-community/tree-sitter-tlaplus",
+    "upstream_revision": "2d831940c782850f64dabf5b7b17e9e51f7f0ebb"
+  },
+  {
+    "name": "arborium-toml",
+    "version": "2.18.2",
+    "archive_sha256": "a9f6144d675fbfe2e510c5886955581b6838eb613a3d1af4250ddf10de5bfa5d",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-toml 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-toml/64b56832c2cffe41758f28e05c756a3a98d16f41/LICENSE",
+        "revision": "64b56832c2cffe41758f28e05c756a3a98d16f41",
+        "original_notice_sha256": "b727eee929bee836e8102cecf749a795b199f291b58c885bcd81cae727ac5a46"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-toml",
+    "upstream_revision": "64b56832c2cffe41758f28e05c756a3a98d16f41"
+  },
+  {
+    "name": "arborium-tsx",
+    "version": "2.18.2",
+    "archive_sha256": "d3533e40fe9f843290d4ff481c67ed1494595395fb60318dbc1da7e58bba42bb",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-tsx 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-typescript/75b3874edb2dc714fb1fd77a32013d0f8699989f/LICENSE",
+        "revision": "75b3874edb2dc714fb1fd77a32013d0f8699989f",
+        "original_notice_sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-typescript",
+    "upstream_revision": "75b3874edb2dc714fb1fd77a32013d0f8699989f"
+  },
+  {
+    "name": "arborium-typescript",
+    "version": "2.18.2",
+    "archive_sha256": "0024689641490077765b291be46197f48d23e75cbade86768b1abed64d406ed1",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-typescript 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-typescript/75b3874edb2dc714fb1fd77a32013d0f8699989f/LICENSE",
+        "revision": "75b3874edb2dc714fb1fd77a32013d0f8699989f",
+        "original_notice_sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-typescript",
+    "upstream_revision": "75b3874edb2dc714fb1fd77a32013d0f8699989f"
+  },
+  {
+    "name": "arborium-typst",
+    "version": "2.18.2",
+    "archive_sha256": "eaadc6968bd31560dbd303a00b8644502a9e35835a6daf6bfb34f8f4992ee06f",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-typst 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/uben0/tree-sitter-typst/46cf4ded12ee974a70bf8457263b67ad7ee0379d/LICENSE",
+        "revision": "46cf4ded12ee974a70bf8457263b67ad7ee0379d",
+        "original_notice_sha256": "0d129fe54977b282fa928da9bcf1f609d3388b54862361c9292d83605f71bd4b"
+      }
+    ],
+    "upstream_repository": "https://github.com/uben0/tree-sitter-typst",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-uiua",
+    "version": "2.18.2",
+    "archive_sha256": "f6cd457e7dddf0695c3f0beff7da5cfdd6ea70414ceed7960ad8fe6445914362",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-uiua 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/shnarazk/tree-sitter-uiua/0da15357bc1179b187018131dc20c2395e77ce71/LICENSE",
+        "revision": "0da15357bc1179b187018131dc20c2395e77ce71",
+        "original_notice_sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+      }
+    ],
+    "upstream_repository": "https://github.com/shnarazk/tree-sitter-uiua",
+    "source_note": "Arborium does not publish an upstream grammar revision. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-vb",
+    "version": "2.18.2",
+    "archive_sha256": "1971bfea5e635d7980509bffa439a4f331d740125982d7101dc6c2aebdac6f76",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-vb 2.18.2 upstream notice",
+        "url": "https://raw.githubusercontent.com/CodeAnt-AI/tree-sitter-vb-dotnet/cfca210ce8fdcb5245bd9cd5c47ce0a21a8488d5/package.json",
+        "revision": "cfca210ce8fdcb5245bd9cd5c47ce0a21a8488d5",
+        "original_notice_sha256": "d7f7ef118a40c3435b464785ad2f0d5b0676fe1924a0440e03eca14383d7f257"
+      }
+    ],
+    "upstream_repository": "https://github.com/CodeAnt-AI/tree-sitter-vb-dotnet",
+    "upstream_revision": "cfca210ce8fdcb5245bd9cd5c47ce0a21a8488d5",
+    "source_note": "Upstream contains no license text; retain its exact author and MIT license metadata from package.json."
+  },
+  {
+    "name": "arborium-verilog",
+    "version": "2.18.2",
+    "archive_sha256": "ee5743742336f9b22e24c5bba1f43841462447f6743c6db97cf00fe49e14d643",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-verilog 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-verilog/227d277b6a1a5e2bf818d6206935722a7503de08/LICENSE",
+        "revision": "227d277b6a1a5e2bf818d6206935722a7503de08",
+        "original_notice_sha256": "8d2ff8d1e308828099436c43dc8bfbb8b6f368ad2a012ab9802a80ca22b03b53"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter/tree-sitter-verilog",
+    "upstream_revision": "227d277b6a1a5e2bf818d6206935722a7503de08"
+  },
+  {
+    "name": "arborium-vhdl",
+    "version": "2.18.2",
+    "archive_sha256": "1086bc0a068cfb18f466c66c4282095ed67318a006d949fa5caaec9df5da9151",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-vhdl 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/alemuller/tree-sitter-vhdl/a3b2d84990527c7f8f4ae219c332c00c33d2d8e5/LICENSE",
+        "revision": "a3b2d84990527c7f8f4ae219c332c00c33d2d8e5",
+        "original_notice_sha256": "fd83c681386623c1ac66d8c451e0a00dd01b937269e47cda500149c0ac7cbfd7"
+      }
+    ],
+    "upstream_repository": "https://github.com/alemuller/tree-sitter-vhdl",
+    "upstream_revision": "a3b2d84990527c7f8f4ae219c332c00c33d2d8e5"
+  },
+  {
+    "name": "arborium-vim",
+    "version": "2.18.2",
+    "archive_sha256": "7f6db7ec81e7365eed3467a90f2a803f055f687f954a40478b3f73c7be44cbf2",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-vim 2.18.2 upstream notice",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-vim/039c8d0aa1deae00ddeb0374dd70bcc0ec56938d/LICENSE",
+        "revision": "039c8d0aa1deae00ddeb0374dd70bcc0ec56938d",
+        "original_notice_sha256": "14eaaaa5c0cdb0eb86e85c55643c4cfa04593dbfbaef6a20f35337667b7278d7"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-vim",
+    "upstream_revision": "e8e3d62b2dda6e3a56bc7580628e6e1071a7887a",
+    "source_note": "The published grammar revision is unavailable. The pinned notice revision is recorded separately."
+  },
+  {
+    "name": "arborium-vue",
+    "version": "2.18.2",
+    "archive_sha256": "91feaa2706ff071f7e9c516d09436e68a25ef8871772b009098c6182a2ea7afb",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-vue 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-vue/22bdfa6c9fc0f5ffa44c6e938ec46869ac8a99ff/LICENSE",
+        "revision": "22bdfa6c9fc0f5ffa44c6e938ec46869ac8a99ff",
+        "original_notice_sha256": "91ebb180e4e2e34628c45e405584d0faac6863660b69e8139da96290e58c14dd"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-vue",
+    "upstream_revision": "22bdfa6c9fc0f5ffa44c6e938ec46869ac8a99ff"
+  },
+  {
+    "name": "arborium-wit",
+    "version": "2.18.2",
+    "archive_sha256": "d7672b63b93006d51256621675f88a287afbb1bef0320935ed0778e9f802ad18",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-wit 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/bytecodealliance/tree-sitter-wit/a80c1f47baa5bfb13e2b5f49aa5304e3dab94948/LICENSE",
+        "revision": "a80c1f47baa5bfb13e2b5f49aa5304e3dab94948",
+        "original_notice_sha256": "3b26cd02b9d9bf324bce59edd88c02cb93fa9a908528b805264db8cde53295e6"
+      }
+    ],
+    "upstream_repository": "https://github.com/bytecodealliance/tree-sitter-wit",
+    "upstream_revision": "a80c1f47baa5bfb13e2b5f49aa5304e3dab94948"
+  },
+  {
+    "name": "arborium-x86asm",
+    "version": "2.18.2",
+    "archive_sha256": "709db6d9704b006f77f46ce318f88e77790a6ec0fce1c5ddc38b315334f41a4e",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      }
+    ],
+    "upstream_revision": "n/a"
+  },
+  {
+    "name": "arborium-xml",
+    "version": "2.18.2",
+    "archive_sha256": "d01fb3f68edd5d901632cfbc9aa02ba537e16aafc3eda4603573acb2aeef7ae3",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-xml 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-xml/5000ae8f22d11fbe93939b05c1e37cf21117162d/LICENSE",
+        "revision": "5000ae8f22d11fbe93939b05c1e37cf21117162d",
+        "original_notice_sha256": "3297073719030b7261afd78b7267931ccc03a27f7a65ca6fc644316180f71bf6"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-xml",
+    "upstream_revision": "5000ae8f22d11fbe93939b05c1e37cf21117162d"
+  },
+  {
+    "name": "arborium-yaml",
+    "version": "2.18.2",
+    "archive_sha256": "528f9c28a2703384a66079b18f29e990f1ed749014a6556242e7c14ed5b29ea9",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-yaml 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-yaml/7708026449bed86239b1cd5bce6e3c34dbca6415/LICENSE",
+        "revision": "7708026449bed86239b1cd5bce6e3c34dbca6415",
+        "original_notice_sha256": "2d181298822a124f6d106118dcc69c8d4d26ac668559be29682c452e712b0947"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-yaml",
+    "upstream_revision": "7708026449bed86239b1cd5bce6e3c34dbca6415"
+  },
+  {
+    "name": "arborium-yuri",
+    "version": "2.18.2",
+    "archive_sha256": "3d7a0bdc663f4fea172365bc64521035d228fa36a444bf8e9ece92d3d0a578ab",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-yuri 2.18.2 upstream notice",
+        "url": "https://git.gay/api/v1/repos/yuri/tree-sitter-yuri/contents/LICENSE?ref=c6cd96f42bfea62fdb034f50e7805b43e58b0b85",
+        "revision": "c6cd96f42bfea62fdb034f50e7805b43e58b0b85",
+        "original_notice_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      }
+    ],
+    "upstream_repository": "https://git.gay/yuri/tree-sitter-yuri",
+    "upstream_revision": "c6cd96f42bfea62fdb034f50e7805b43e58b0b85"
+  },
+  {
+    "name": "arborium-zig",
+    "version": "2.18.2",
+    "archive_sha256": "2303afe531f320075135ee152c04dfd6703b2e20d071662539dd4df587aff995",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-zig 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-zig/6479aa13f32f701c383083d8b28360ebd682fb7d/LICENSE",
+        "revision": "6479aa13f32f701c383083d8b28360ebd682fb7d",
+        "original_notice_sha256": "0eea8dc45e89deeb03c7799bbbc7b4688f365fb274562f4540ecfebdea82e727"
+      }
+    ],
+    "upstream_repository": "https://github.com/tree-sitter-grammars/tree-sitter-zig",
+    "upstream_revision": "6479aa13f32f701c383083d8b28360ebd682fb7d"
+  },
+  {
+    "name": "arborium-zsh",
+    "version": "2.18.2",
+    "archive_sha256": "3e7f2e02c18813b556a0c3d0b64a10f40bf835b856ddb8058cf4840666c279d3",
+    "notices": [
+      {
+        "section": "Arborium 2.18.2 MIT",
+        "url": "https://raw.githubusercontent.com/bearcove/arborium/45fae8adc0d4e62a42d68eda0454f606b3fff6aa/LICENSE-MIT",
+        "revision": "45fae8adc0d4e62a42d68eda0454f606b3fff6aa",
+        "original_notice_sha256": "b11bd86bfb5de2e6e2fc1ff69951ad1d693a3390f7e49704263a508540681bfb"
+      },
+      {
+        "section": "arborium-zsh 2.18.2 upstream LICENSE",
+        "url": "https://raw.githubusercontent.com/georgeharker/tree-sitter-zsh/c50ded6979eb7aae8b8da5da9ac2e9e984804881/LICENSE",
+        "revision": "c50ded6979eb7aae8b8da5da9ac2e9e984804881",
+        "original_notice_sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
+      }
+    ],
+    "upstream_repository": "https://github.com/georgeharker/tree-sitter-zsh",
+    "upstream_revision": "c50ded6979eb7aae8b8da5da9ac2e9e984804881"
+  },
+  {
+    "name": "tree-sitter-md",
+    "version": "0.5.3",
+    "archive_sha256": "2efd398be546456c814598ee56c0f51769a77241511b4a58077815d120afa882",
+    "notices": [
+      {
+        "section": "tree-sitter-md 0.5.3 upstream MIT notice",
+        "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-markdown/f969cd3ae3f9fbd4e43205431d0ae286014c05b5/LICENSE",
+        "revision": "f969cd3ae3f9fbd4e43205431d0ae286014c05b5",
+        "original_notice_sha256": "52ec8a1bf8256511e2a92613e0bb41ffefba3897f16fa958d7bb28c466dd4804"
+      }
+    ]
+  }
+]

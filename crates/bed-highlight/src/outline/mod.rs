@@ -1,6 +1,9 @@
 //! Definition outlines from bundled grammars, independent of syntax highlighting.
 //! One cancellable worker consumes only the latest immutable buffer snapshot.
-use crate::{highlight_service::SKIP_TREE_SITTER_BYTES, tree_sitter::detect_language};
+use crate::{grammars::language_name, highlight_service::SKIP_TREE_SITTER_BYTES};
+use arborium::tree_sitter::{
+    self, Node, ParseOptions, Parser, Query, QueryCursor, QueryCursorOptions, StreamingIterator,
+};
 use bed_editing::{buffer::text_buffer::Snapshot, identity::DocumentId};
 use std::{
     collections::HashMap,
@@ -14,10 +17,6 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
-use tree_sitter::{
-    Node, ParseOptions, Parser, Query, QueryCursor, QueryCursorOptions, StreamingIterator,
-};
-
 const EDIT_DEBOUNCE: Duration = Duration::from_millis(150);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -204,14 +203,17 @@ impl OutlineService {
     }
 }
 
-fn query_source(name: &str) -> &'static str {
-    macro_rules! sources { ($($name:literal),* $(,)?) => { match name {
-        $(concat!($name, ".scm") => include_str!(concat!("queries/", $name, ".scm")),)*
-        _ => unreachable!("every bundled grammar has an outline query"),
+fn query_source(language: &str) -> Option<&'static str> {
+    macro_rules! sources { ($($language:literal => $name:literal),* $(,)?) => { match language {
+        $($language => Some(include_str!(concat!("queries/", $name, ".scm"))),)*
+        _ => None,
     } }; }
     sources!(
-        "c", "cpp", "csharp", "go", "java", "jsx", "tsx", "python", "rs", "rb", "kotlin", "sh",
-        "json", "toml", "hcl", "html", "css"
+        "c" => "c", "cpp" => "cpp", "c-sharp" => "csharp", "go" => "go", "java" => "java",
+        "javascript" => "jsx", "typescript" => "tsx", "tsx" => "tsx", "python" => "python",
+        "rust" => "rs", "ruby" => "rb", "kotlin" => "kotlin", "bash" => "sh", "json" => "json",
+        "toml" => "toml", "hcl" => "hcl", "html" => "html", "css" => "css",
+        "markdown" => "markdown"
     )
 }
 fn compact(text: &[u8]) -> String {
@@ -294,20 +296,26 @@ fn extract(
         result.status = OutlineStatus::TooLarge;
         return Some(result);
     }
-    let Some((language, query_name)) = detect_language(&result.key.language_id) else {
+    let Some(language_name) = language_name(&result.key.language_id) else {
         result.status = OutlineStatus::Unsupported;
         return Some(result);
     };
-    // The shared registry returns static, non-null bundled grammar pointers.
-    let language = unsafe { tree_sitter::Language::from_raw(language) };
+    let Some(query_source) = query_source(language_name) else {
+        result.status = OutlineStatus::Unsupported;
+        return Some(result);
+    };
+    let Some(language) = arborium::get_language(language_name) else {
+        result.status = OutlineStatus::Unsupported;
+        return Some(result);
+    };
     if let Err(error) = parser.set_language(&language) {
         result.status = OutlineStatus::Failed(error.to_string());
         return Some(result);
     }
-    if !queries.contains_key(query_name) {
-        match Query::new(&language, query_source(query_name)) {
+    if !queries.contains_key(language_name) {
+        match Query::new(&language, query_source) {
             Ok(query) => {
-                queries.insert(query_name, query);
+                queries.insert(language_name, query);
             }
             Err(error) => {
                 result.status = OutlineStatus::Failed(error.to_string());
@@ -350,7 +358,7 @@ fn extract(
         result.status = OutlineStatus::Failed("Could not parse this buffer".into());
         return Some(result);
     };
-    let query = &queries[query_name];
+    let query = &queries[language_name];
     let mut cursor = QueryCursor::new();
     let mut progress = |_: &tree_sitter::QueryCursorState| {
         if canceled() {
@@ -366,6 +374,7 @@ fn extract(
         QueryCursorOptions::new().progress_callback(&mut progress),
     );
     let mut entry_indices = HashMap::new();
+    let mut markdown_levels = HashMap::new();
     while let Some(found) = matches.next() {
         if canceled() {
             return None;
@@ -381,7 +390,7 @@ fn extract(
                 continue;
             };
             let node = capture.node;
-            if (kind == "constant" || (query_name == "kotlin.scm" && kind == "field"))
+            if (kind == "constant" || (language_name == "kotlin" && kind == "field"))
                 && local_value(node)
             {
                 continue;
@@ -403,10 +412,10 @@ fn extract(
                 continue;
             }
             let label = if matches!(kind, "impl" | "block")
-                || (query_name == "css.scm" && node.kind() != "rule_set")
+                || (language_name == "css" && node.kind() != "rule_set")
             {
                 compact(&source[header_range(node, &source)])
-            } else if query_name == "json.scm" && kind == "key" {
+            } else if language_name == "json" && kind == "key" {
                 match serde_json::from_slice::<String>(&source[name_range.clone()]) {
                     Ok(name) => {
                         let label = compact(name.as_bytes());
@@ -432,7 +441,7 @@ fn extract(
                 }
                 let index = entry_indices.get(&node.id()).copied().unwrap_or(0);
                 format!("[{index}]")
-            } else if query_name == "html.scm" {
+            } else if language_name == "html" {
                 format!("<{}>", compact(&source[name_range.clone()]))
             } else {
                 compact(&source[name_range.clone()])
@@ -441,6 +450,23 @@ fn extract(
                 continue;
             }
             let mut range = node.byte_range();
+            if language_name == "markdown" {
+                let marker = found
+                    .captures
+                    .iter()
+                    .find(|capture| query.capture_names()[capture.index as usize] == "level")
+                    .expect("Markdown outline queries capture a heading level");
+                let level = match marker.node.kind() {
+                    "atx_h1_marker" | "setext_h1_underline" => 1,
+                    "atx_h2_marker" | "setext_h2_underline" => 2,
+                    "atx_h3_marker" => 3,
+                    "atx_h4_marker" => 4,
+                    "atx_h5_marker" => 5,
+                    "atx_h6_marker" => 6,
+                    _ => unreachable!("Markdown outline queries capture only heading markers"),
+                };
+                markdown_levels.insert(range.start, level);
+            }
             if node.kind() == "file_scoped_namespace_declaration" {
                 range.end = tree.root_node().end_byte();
             }
@@ -471,6 +497,27 @@ fn extract(
     result
         .nodes
         .dedup_by(|a, b| a.range == b.range && a.name_range == b.name_range);
+    if language_name == "markdown" {
+        // The grammar nests ATX sections but treats Setext headings as ordinary
+        // blocks. Both heading forms end at the next heading of equal or lower level.
+        let mut open_sections: Vec<usize> = Vec::new();
+        for index in 0..result.nodes.len() {
+            if canceled() {
+                return None;
+            }
+            let start = result.nodes[index].range.start;
+            let level = markdown_levels[&start];
+            while let Some(&previous) = open_sections.last() {
+                if markdown_levels[&result.nodes[previous].range.start] < level {
+                    break;
+                }
+                result.nodes[previous].range.end = start;
+                open_sections.pop();
+            }
+            result.nodes[index].range.end = source.len();
+            open_sections.push(index);
+        }
+    }
     let mut stack: Vec<usize> = Vec::new();
     let mut occurrences = HashMap::new();
     for index in 0..result.nodes.len() {

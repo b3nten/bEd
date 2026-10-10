@@ -60,6 +60,102 @@ struct CaptureRule {
 }
 const RULES: &[CaptureRule] = &[
     CaptureRule {
+        pattern: "text.title",
+        prefix: false,
+        slot: ThemeSlot::Function,
+        priority: 60,
+    },
+    CaptureRule {
+        pattern: "markup.heading",
+        prefix: true,
+        slot: ThemeSlot::Function,
+        priority: 60,
+    },
+    CaptureRule {
+        pattern: "text.literal",
+        prefix: false,
+        slot: ThemeSlot::String,
+        priority: 20,
+    },
+    CaptureRule {
+        pattern: "markup.raw",
+        prefix: true,
+        slot: ThemeSlot::String,
+        priority: 20,
+    },
+    CaptureRule {
+        pattern: "text.uri",
+        prefix: false,
+        slot: ThemeSlot::String,
+        priority: 70,
+    },
+    CaptureRule {
+        pattern: "markup.link.url",
+        prefix: false,
+        slot: ThemeSlot::String,
+        priority: 70,
+    },
+    CaptureRule {
+        pattern: "text.reference",
+        prefix: false,
+        slot: ThemeSlot::Type,
+        priority: 70,
+    },
+    CaptureRule {
+        pattern: "markup.link.label",
+        prefix: false,
+        slot: ThemeSlot::Type,
+        priority: 70,
+    },
+    CaptureRule {
+        pattern: "text.strong",
+        prefix: false,
+        slot: ThemeSlot::Keyword,
+        priority: 60,
+    },
+    CaptureRule {
+        pattern: "markup.strong",
+        prefix: false,
+        slot: ThemeSlot::Keyword,
+        priority: 60,
+    },
+    CaptureRule {
+        pattern: "text.emphasis",
+        prefix: false,
+        slot: ThemeSlot::Special,
+        priority: 60,
+    },
+    CaptureRule {
+        pattern: "markup.italic",
+        prefix: false,
+        slot: ThemeSlot::Special,
+        priority: 60,
+    },
+    CaptureRule {
+        pattern: "text.strike",
+        prefix: false,
+        slot: ThemeSlot::Comment,
+        priority: 60,
+    },
+    CaptureRule {
+        pattern: "markup.strikethrough",
+        prefix: false,
+        slot: ThemeSlot::Comment,
+        priority: 60,
+    },
+    CaptureRule {
+        pattern: "diff.plus",
+        prefix: false,
+        slot: ThemeSlot::String,
+        priority: 100,
+    },
+    CaptureRule {
+        pattern: "diff.minus",
+        prefix: false,
+        slot: ThemeSlot::Comment,
+        priority: 100,
+    },
+    CaptureRule {
         pattern: "none",
         prefix: false,
         slot: ThemeSlot::Text,
@@ -501,12 +597,6 @@ fn match_rule(name: &str) -> Option<&CaptureRule> {
         }
     })
 }
-pub fn is_none_capture(name: &str) -> bool {
-    name == "none"
-}
-pub fn is_string_capture(name: &str) -> bool {
-    name == "string" || (name.len() > 7 && name.starts_with("string."))
-}
 pub fn capture_priority(name: &str) -> i32 {
     match_rule(name).map_or(30, |r| r.priority)
 }
@@ -521,30 +611,4 @@ pub fn theme_slot_for_key(key: &str) -> ThemeSlot {
         .iter()
         .position(|&k| k == key)
         .map_or(ThemeSlot::Text, |i| THEME_SLOTS[i])
-}
-pub fn subtract_ranges(start: u32, end: u32, holes: &[(u32, u32)]) -> Vec<(u32, u32)> {
-    let mut out = Vec::new();
-    if start >= end {
-        return out;
-    }
-    let mut cur = start;
-    for &(hs, he) in holes {
-        if he <= cur {
-            continue;
-        }
-        if hs >= end {
-            break;
-        }
-        if hs > cur {
-            out.push((cur, hs.min(end)));
-        }
-        cur = cur.max(he);
-        if cur >= end {
-            return out;
-        }
-    }
-    if cur < end {
-        out.push((cur, end));
-    }
-    out
 }

@@ -95,7 +95,6 @@ glam = "=0.33.12"
 bytemuck = { version = "=1.25.2", features = ["derive"] }
 base64 = "=0.22.1"
 serde = "=1.0.229"
-tree-sitter = "=0.26.13"
 regex = "=1.12.3"
 glob = "=0.3.4"
 resvg = { version = "=0.48.1", default-features = false }

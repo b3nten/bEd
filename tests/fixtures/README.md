@@ -7,12 +7,12 @@ checkout or upstream regeneration tools. Source attribution remains in
 
 ## Highlighting
 
-`highlight.json` records per-line byte spans and theme slots produced by ned
-commit `2d3e9b53b0ebc44c6da6901ff242a95edaa4a1ff`, using its original
-Tree-sitter runtime, grammar/query files and `TreeSitter::highlightSnippet`.
-It covers 17 languages, Unicode text, interpolation, comments, functions,
-builtins and syntax roles. Bed now uses released Cargo grammar providers;
-the test keeps their observed results compatible with these baselines.
+`highlight.json` retains source samples from ned commit
+`2d3e9b53b0ebc44c6da6901ff242a95edaa4a1ff` for the original 17 languages.
+Bed now uses Arborium's grammars and queries, so exact upstream colors and
+capture ranges are no longer a baseline. Behavioral tests cover Markdown,
+embedded languages, byte offsets, editing, cancellation and theme changes;
+all 112 bundled grammars must compile their highlight and injection queries.
 
 ```sh
 cargo test --locked -p bed-highlight --test highlight
