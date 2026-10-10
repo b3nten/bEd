@@ -7,9 +7,12 @@ use bed_document_session::{DocumentId, EditorSession, ViewId};
 use bed_editing::{editor_commands::CursorReveal, editor_events::Overlay};
 use bed_editor_ui::{EditorView, HostAction, TextHit};
 use bed_lsp::{lsp_locations::LspLocation, workspace_lsp::LspRequestOrigin};
-use bed_ui::util::popup_style::context_menu_style;
+use bed_ui::{
+    presentation::{fit_text, readable_color, same_line_if_fits},
+    util::popup_style::{context_menu_style, controls_style, tooltip_text},
+};
 use bed_workbench_api::{CommandContext, HostRequest, PanelTarget, SelectionContext};
-use dear_imgui_rs::{MouseButton, Ui, sys};
+use dear_imgui_rs::{MouseButton, StyleColor, StyleVar, TreeNodeFlags, Ui, sys};
 use serde_json::Value;
 use std::{
     cell::RefCell,
@@ -580,122 +583,288 @@ impl EditorRuntime {
     }
     fn draw_diagnostics(&mut self, session: &mut EditorSession, ui: &Ui) -> Option<LspAction> {
         let snapshot = session.project_diagnostics();
-        if ui.button("Run Check") {
-            session.request_project_check();
+        let _controls = controls_style(ui);
+        let fs = ui.current_font_size();
+        let _spacing = ui.push_style_var(StyleVar::ItemSpacing([fs * 0.5, fs * 0.3]));
+        let _padding = ui.push_style_var(StyleVar::FramePadding([fs * 0.45, fs * 0.2]));
+        let button_width = |label: &str| ui.calc_text_size(label)[0] + fs * 0.9;
+        {
+            let _disabled = ui.begin_disabled_with_cond(snapshot.checking);
+            let _primary =
+                ui.push_style_color(StyleColor::Button, ui.style_color(StyleColor::Header));
+            if ui.button("Run Check") {
+                session.request_project_check();
+            }
         }
-        ui.same_line();
-        if ui.button("Cancel") && snapshot.checking {
-            session.cancel_project_check();
+        same_line_if_fits(ui, button_width("Cancel"));
+        {
+            let _disabled = ui.begin_disabled_with_cond(!snapshot.checking);
+            if ui.button("Cancel") {
+                session.cancel_project_check();
+            }
         }
-        ui.same_line();
+        same_line_if_fits(
+            ui,
+            ui.frame_height() + ui.calc_text_size("Auto")[0] + fs * 0.5,
+        );
         let mut config = session.project_check_config().clone();
-        if ui.checkbox("Automatic checks", &mut config.automatic) {
+        if ui.checkbox("Auto", &mut config.automatic) {
             session.configure_project_check(config.clone());
             self.project_check = Some(config);
         }
-        ui.text_wrapped(&snapshot.status);
-        ui.text_disabled(format!(
-            "{} errors · {} warnings · {}",
-            snapshot.errors,
-            snapshot.warnings,
-            if snapshot.checking {
-                "checking"
-            } else if snapshot.stale {
-                "stale / unsaved changes"
-            } else if snapshot.complete {
-                "project check complete"
-            } else {
-                "partial coverage"
-            }
-        ));
-        if ui.collapsing_header(
-            "Project Check Configuration",
-            dear_imgui_rs::TreeNodeFlags::empty(),
-        ) {
-            if self.check_json.is_empty() {
-                self.check_json =
-                    serde_json::to_string_pretty(&session.project_check_config().to_json())
-                        .unwrap();
-            }
-            ui.text_wrapped("Executable and arguments run in the project. Formats: cargo-json or lsp-jsonl (publishDiagnostics objects, one per line).");
-            ui.input_text_multiline(
-                "##check-config",
-                &mut self.check_json,
-                [
-                    ui.content_region_avail()[0].max(1.0),
-                    ui.text_line_height() * 8.0,
-                ],
-            )
-            .build();
-            if ui.button("Apply Check Configuration") {
-                match serde_json::from_str::<Value>(&self.check_json).ok().and_then(|value| bed_document_session::ProjectCheckConfig::from_json(&value)) {
-                    Some(config) if !config.program.trim().is_empty() => { session.configure_project_check(config.clone()); self.project_check = Some(config); self.check_error = None; },
-                    _ => self.check_error = Some("Enter a program, arguments array, directory, supported format, and automatic flag.".into()),
+        if ui.is_item_hovered() {
+            tooltip_text(ui, "Automatically check the project after changes");
+        }
+        same_line_if_fits(ui, button_width("Setup"));
+        if ui.button("Setup") {
+            ui.open_popup("diagnostics_check_setup");
+        }
+        {
+            let _popup_style = context_menu_style(ui);
+            ui.with_bound_context(|| unsafe {
+                sys::igSetNextWindowSize(
+                    [(fs * 34.0).min(ui.io().display_size()[0] - fs * 2.0), 0.0].into(),
+                    sys::ImGuiCond_Appearing,
+                );
+            });
+            if let Some(_popup) = ui.begin_popup("diagnostics_check_setup") {
+                ui.text("Project check");
+                if self.check_json.is_empty() {
+                    self.check_json =
+                        serde_json::to_string_pretty(&session.project_check_config().to_json())
+                            .unwrap();
+                }
+                ui.text_wrapped("Executable and arguments run in the project. Formats: cargo-json or lsp-jsonl (publishDiagnostics objects, one per line).");
+                ui.input_text_multiline(
+                    "##check-config",
+                    &mut self.check_json,
+                    [
+                        ui.content_region_avail()[0].max(1.0),
+                        ui.text_line_height() * 8.0,
+                    ],
+                )
+                .build();
+                if ui.button("Apply Check Configuration") {
+                    match serde_json::from_str::<Value>(&self.check_json)
+                        .ok()
+                        .and_then(|value| bed_document_session::ProjectCheckConfig::from_json(&value))
+                    {
+                        Some(config) if !config.program.trim().is_empty() => {
+                            session.configure_project_check(config.clone());
+                            self.project_check = Some(config);
+                            self.check_error = None;
+                        }
+                        _ => self.check_error = Some(
+                            "Enter a program, arguments array, directory, supported format, and automatic flag.".into(),
+                        ),
+                    }
+                }
+                if let Some(error) = &self.check_error {
+                    let _color = ui.push_style_color(
+                        StyleColor::Text,
+                        readable_color(ui, [0.95, 0.35, 0.3, 1.0]),
+                    );
+                    ui.text_wrapped(error);
                 }
             }
-            if let Some(error) = &self.check_error {
-                ui.text_wrapped(error);
-            }
+        }
+        let status = if snapshot.checking {
+            "Checking…"
+        } else if snapshot.stale {
+            "Unsaved changes"
+        } else if snapshot.complete {
+            "Check complete"
+        } else {
+            "Partial coverage"
+        };
+        ui.text_disabled(fit_text(
+            ui,
+            if snapshot.checking || snapshot.stale || snapshot.status.is_empty() {
+                status
+            } else {
+                &snapshot.status
+            },
+            ui.content_region_avail()[0],
+        ));
+        if ui.is_item_hovered() {
+            tooltip_text(ui, format!("{status}\n{}", snapshot.status));
         }
         ui.separator();
-        ui.input_text("Search", &mut self.diagnostic_search).build();
-        ui.checkbox("Errors", &mut self.diagnostic_errors);
-        ui.same_line();
-        ui.checkbox("Warnings", &mut self.diagnostic_warnings);
-        ui.same_line();
-        ui.checkbox("Other", &mut self.diagnostic_other);
+        let other = snapshot
+            .by_path
+            .values()
+            .flatten()
+            .filter(|item| item.severity != 1 && item.severity != 2)
+            .count();
+        let filters = [
+            (
+                format!("Errors {}", snapshot.errors),
+                &mut self.diagnostic_errors,
+                1,
+            ),
+            (
+                format!("Warnings {}", snapshot.warnings),
+                &mut self.diagnostic_warnings,
+                2,
+            ),
+            (format!("Other {other}"), &mut self.diagnostic_other, 3),
+        ];
+        for (index, (label, enabled, severity)) in filters.into_iter().enumerate() {
+            if index > 0 {
+                same_line_if_fits(ui, button_width(&label));
+            }
+            let color = readable_color(
+                ui,
+                bed_editor_ui::views::diagnostic_style::severity_color(severity),
+            );
+            let _text = ui.push_style_color(StyleColor::Text, color);
+            let _selected = ui.push_style_color(
+                StyleColor::Button,
+                if *enabled {
+                    ui.style_color(StyleColor::Header)
+                } else {
+                    [0.0; 4]
+                },
+            );
+            if ui.button(&label) {
+                *enabled = !*enabled;
+            }
+            if ui.is_item_hovered() {
+                tooltip_text(
+                    ui,
+                    if *enabled {
+                        "Click to hide this severity"
+                    } else {
+                        "Click to show this severity"
+                    },
+                );
+            }
+        }
+        ui.set_next_item_width(ui.content_region_avail()[0].max(1.0));
+        ui.input_text("##diagnostic_search", &mut self.diagnostic_search)
+            .hint("Filter by message or file…")
+            .build();
         let query = self.diagnostic_search.to_lowercase();
         let mut action = None;
         let mut displayed = 0;
-        for (path, items) in snapshot.by_path {
-            let visible: Vec<_> = items
-                .into_iter()
-                .filter(|item| {
-                    let severity = match item.severity {
-                        1 => self.diagnostic_errors,
-                        2 => self.diagnostic_warnings,
-                        _ => self.diagnostic_other,
-                    };
-                    severity
-                        && (query.is_empty()
-                            || path.to_lowercase().contains(&query)
-                            || item.message.to_lowercase().contains(&query))
-                })
-                .collect();
-            if visible.is_empty() {
-                continue;
-            }
-            let _id = ui.push_id(&path);
-            ui.text(&path);
-            for item in visible {
-                displayed += 1;
-                let label = match item.severity {
-                    1 => "Error",
-                    2 => "Warning",
-                    _ => "Info",
-                };
-                if ui.selectable(format!(
-                    "{}:{}  {}: {}",
-                    item.start_line + 1,
-                    item.start_character + 1,
-                    label,
-                    item.message
-                )) {
-                    action = Some(LspAction::OpenLocation(LspLocation {
-                        file: path.clone(),
-                        line: item.start_line,
-                        character: item.start_character,
-                    }));
+        let has_diagnostics = snapshot.by_path.values().any(|items| !items.is_empty());
+        let root = session.options().project_root.as_deref();
+        ui.child_window("diagnostic_results")
+            .size([0.0, 0.0])
+            .build(ui, || {
+                for (path, items) in snapshot.by_path {
+                    let visible: Vec<_> = items
+                        .into_iter()
+                        .filter(|item| {
+                            let severity = match item.severity {
+                                1 => self.diagnostic_errors,
+                                2 => self.diagnostic_warnings,
+                                _ => self.diagnostic_other,
+                            };
+                            severity
+                                && (query.is_empty()
+                                    || path.to_lowercase().contains(&query)
+                                    || item.message.to_lowercase().contains(&query))
+                        })
+                        .collect();
+                    if visible.is_empty() {
+                        continue;
+                    }
+                    let _id = ui.push_id(&path);
+                    displayed += visible.len();
+                    let file = std::path::Path::new(&path);
+                    let relative = root
+                        .and_then(|root| file.strip_prefix(root).ok())
+                        .unwrap_or(file);
+                    let heading = format!("{} · {}", relative.display(), visible.len());
+                    let heading = fit_text(
+                        ui,
+                        &heading,
+                        (ui.content_region_avail()[0] - fs * 2.0).max(1.0),
+                    );
+                    let open = ui.collapsing_header(
+                        format!("{heading}###file"),
+                        TreeNodeFlags::DEFAULT_OPEN,
+                    );
+                    if ui.is_item_hovered() {
+                        tooltip_text(ui, &path);
+                    }
+                    if !open {
+                        continue;
+                    }
+                    for (index, item) in visible.into_iter().enumerate() {
+                        let _id = ui.push_id(index as i32);
+                        let severity =
+                            bed_editor_ui::views::diagnostic_style::severity_label(item.severity);
+                        let color = readable_color(
+                            ui,
+                            bed_editor_ui::views::diagnostic_style::severity_color(item.severity),
+                        );
+                        let width = ui.content_region_avail()[0].max(1.0);
+                        let inset = fs * 0.7;
+                        let wrap_width = (width - inset * 2.0).max(1.0);
+                        let message_height =
+                            ui.calc_text_size_with_opts(&item.message, false, wrap_width)[1];
+                        let height = fs + message_height + fs * 0.6;
+                        if ui
+                            .selectable_config("##diagnostic")
+                            .size([width, height])
+                            .build()
+                        {
+                            action = Some(LspAction::OpenLocation(LspLocation {
+                                file: path.clone(),
+                                line: item.start_line,
+                                character: item.start_character,
+                            }));
+                        }
+                        let min = ui.item_rect_min();
+                        let max = ui.item_rect_max();
+                        let _clip = ui.push_clip_rect(min, max, true);
+                        let draw = ui.get_window_draw_list();
+                        draw.add_line(
+                            [min[0] + fs * 0.15, min[1] + fs * 0.2],
+                            [min[0] + fs * 0.15, max[1] - fs * 0.2],
+                            color,
+                        )
+                        .thickness(2.0)
+                        .build();
+                        draw.add_text([min[0] + inset, min[1]], color, severity);
+                        let location =
+                            format!("{}:{}", item.start_line + 1, item.start_character + 1);
+                        draw.add_text(
+                            [max[0] - inset - ui.calc_text_size(&location)[0], min[1]],
+                            ui.style_color(StyleColor::TextDisabled),
+                            location,
+                        );
+                        draw.add_text_with_font(
+                            ui.current_font(),
+                            fs,
+                            [min[0] + inset, min[1] + fs * 1.25],
+                            ui.style_color(StyleColor::Text),
+                            &item.message,
+                            wrap_width,
+                            None,
+                        );
+                    }
                 }
-            }
-        }
-        if displayed == 0 {
-            ui.text_disabled(if snapshot.errors + snapshot.warnings > 0 {
-                "No diagnostics match the filters"
-            } else {
-                "No reported diagnostics"
+                if displayed == 0 {
+                    ui.dummy([0.0, fs * 0.6]);
+                    ui.text_wrapped(if has_diagnostics {
+                        "No diagnostics match the filters"
+                    } else {
+                        "No reported diagnostics"
+                    });
+                    let _muted = ui.push_style_color(
+                        StyleColor::Text,
+                        ui.style_color(StyleColor::TextDisabled),
+                    );
+                    ui.text_wrapped(if has_diagnostics {
+                        "Try a different search or enable a severity above."
+                    } else {
+                        "Run a project check to refresh the results."
+                    });
+                }
             });
-        }
         action
     }
     pub fn open_lsp_action(
@@ -834,6 +1003,134 @@ mod tests {
     use super::*;
     use bed_document_session::ByteEdit;
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
+
+    #[cfg(unix)]
+    #[test]
+    fn diagnostics_wrap_without_horizontal_overflow_and_keep_source_navigation() {
+        use bed_document_session::{CheckFormat, ProjectCheckConfig, SessionOptions};
+        use std::{
+            fs,
+            time::{Duration, Instant},
+        };
+
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!("bed-diagnostic-ui-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let path = root.join("a_long_source_filename_é.rs");
+        let uri = bed_lsp::lsp_uri::LspUri::file_uri_from_path(path.to_str().unwrap()).unwrap();
+        let report = serde_json::json!({"uri":uri.to_string(), "diagnostics":[{
+            "range":{"start":{"line":12,"character":7},"end":{"line":12,"character":9}},
+            "severity":1,
+            "message":"A long diagnostic with ##literal text and Unicode é that wraps across several lines in a narrow panel. The complete message should remain readable and clickable."
+        }]});
+        fs::write(root.join("report.jsonl"), format!("{report}\n")).unwrap();
+        let mut session = EditorSession::with_options(SessionOptions {
+            project_root: Some(root.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+        session.tick();
+        session.configure_project_check(ProjectCheckConfig {
+            program: "/bin/cat".into(),
+            arguments: vec!["report.jsonl".into()],
+            directory: ".".into(),
+            format: CheckFormat::LspJsonLines,
+            automatic: false,
+        });
+        session.request_project_check();
+        let start = Instant::now();
+        while session.project_diagnostics().errors == 0 {
+            session.tick();
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "Fixture check did not finish: {}",
+                session.project_diagnostics().status
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut runtime = EditorRuntime::default();
+        let mut previous_size = [0.0; 2];
+        let mut frame = |context: &mut Context, runtime: &mut EditorRuntime, size: [f32; 2]| {
+            let settled = previous_size == size;
+            previous_size = size;
+            context.prepare_frame(FramePrepareOptions::new([1000.0, 700.0], 1.0 / 60.0));
+            let ui = context.frame();
+            let mut action = None;
+            let mut point = [0.0; 2];
+            let mut content_height = 0.0;
+            ui.window("diagnostic_layout")
+                .position([0.0; 2], Condition::Always)
+                .size(size, Condition::Always)
+                .flags(dear_imgui_rs::WindowFlags::NO_TITLE_BAR)
+                .build(|| {
+                    action = runtime.draw_diagnostics(&mut session, ui);
+                    ui.with_bound_context(|| unsafe {
+                        let parent = sys::igGetCurrentWindow();
+                        if settled {
+                            assert!((*parent).ScrollMax.x <= 4.0, "Toolbar overflow at {size:?}");
+                        }
+                        let child = *(*parent).DC.ChildWindows.Data;
+                        if settled {
+                            assert!((*child).ScrollMax.x <= 4.0, "Result overflow at {size:?}");
+                        }
+                        assert!(
+                            (*child).Pos.y + (*child).Size.y <= (*parent).InnerRect.Max.y + 1.0
+                        );
+                        assert!(
+                            (*child).Size.y >= 40.0,
+                            "Results need usable space at {size:?}"
+                        );
+                        content_height = (*child).ContentSize.y;
+                        point = [
+                            (*child).DC.CursorStartPos.x + 30.0,
+                            (*child).DC.CursorStartPos.y
+                                + ui.frame_height_with_spacing()
+                                + ui.current_font_size() * 1.5,
+                        ];
+                    });
+                });
+            assert!(context.render_legacy().draw_data().total_vtx_count() > 0);
+            (action, point, content_height)
+        };
+        for size in [[240.0, 360.0], [320.0, 260.0], [800.0, 220.0]] {
+            for _ in 0..3 {
+                frame(&mut context, &mut runtime, size);
+            }
+        }
+        let size = [300.0, 340.0];
+        let (_, point, _) = frame(&mut context, &mut runtime, size);
+        context.io_mut().add_mouse_pos_event(point);
+        frame(&mut context, &mut runtime, size);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        frame(&mut context, &mut runtime, size);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, false);
+        let (action, _, full_height) = frame(&mut context, &mut runtime, size);
+        assert!(
+            matches!(action, Some(LspAction::OpenLocation(location)) if location.file == path.to_string_lossy() && location.line == 12 && location.character == 7)
+        );
+        runtime.diagnostic_errors = false;
+        frame(&mut context, &mut runtime, size);
+        assert!(frame(&mut context, &mut runtime, size).2 < full_height);
+        runtime.diagnostic_errors = true;
+        runtime.diagnostic_search = "no matching message".into();
+        frame(&mut context, &mut runtime, size);
+        assert!(frame(&mut context, &mut runtime, size).2 < full_height);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     struct ObservingMenu(Rc<RefCell<Vec<CommandContext>>>);
     impl EditorMenuExtension for ObservingMenu {

@@ -108,9 +108,11 @@ fn theme_slot_for_key_matches_theme_json_keys() {
 fn highlight_queries_compile_for_all_languages() {
     // The enabled, pinned Arborium release. This list is verification data, not
     // a grammar registry; discovery and grammar ownership remain upstream.
-    for language in include_str!("arborium_languages.txt").split_whitespace() {
-        TreeSitter::prewarm(language).unwrap_or_else(|error| panic!("{language}: {error}"));
-    }
+    let failures: Vec<_> = include_str!("arborium_languages.txt")
+        .split_whitespace()
+        .filter_map(|language| TreeSitter::prewarm(language).err())
+        .collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 #[test]
 fn highlight_snippet_colors_a_cpp_signature() {

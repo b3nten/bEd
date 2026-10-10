@@ -71,6 +71,17 @@ fn broad_grammar_set_highlights_real_syntax() {
 }
 
 #[test]
+fn fsharp_highlights_builtin_types_and_literal_constants() {
+    let source = "let answer: int = 42\n[<Literal>]\nlet ConstantValue = 7\n";
+    assert_eq!(slot(source, "let", "fsharp"), Some(ThemeSlot::Keyword));
+    assert_eq!(slot(source, "int", "fsharp"), Some(ThemeSlot::Special));
+    assert_eq!(
+        slot(source, "ConstantValue", "fsharp"),
+        Some(ThemeSlot::Constant)
+    );
+}
+
+#[test]
 fn html_injects_javascript_and_css() {
     let source = "<script>function greet() { return \"hello\"; }</script>\n<style>body { color: red; }</style>";
     assert_eq!(slot(source, "function", "html"), Some(ThemeSlot::Keyword));

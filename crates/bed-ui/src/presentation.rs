@@ -1,6 +1,35 @@
 use bed_editing::util::color::{blend, ensure_contrast};
 use dear_imgui_rs::{StyleColor, TextureId, Ui};
 
+/// Continue a control row only when the next item fits the available width.
+pub fn same_line_if_fits(ui: &Ui, width: f32) {
+    let right = ui.cursor_screen_pos()[0] + ui.content_region_avail()[0];
+    if ui.item_rect_max()[0] + ui.clone_style().item_spacing()[0] + width <= right {
+        ui.same_line();
+    }
+}
+
+/// Fit a single-line label without splitting a Unicode character.
+pub fn fit_text(ui: &Ui, text: &str, width: f32) -> String {
+    let line = text.replace(['\r', '\n'], " ");
+    if ui.calc_text_size(&line)[0] <= width {
+        return line;
+    }
+    let ellipsis = ui.calc_text_size("…")[0];
+    if width < ellipsis {
+        return String::new();
+    }
+    let mut end = 0;
+    for (offset, character) in line.char_indices() {
+        let next = offset + character.len_utf8();
+        if ui.calc_text_size(&line[..next])[0] > width - ellipsis {
+            break;
+        }
+        end = next;
+    }
+    format!("{}…", &line[..end])
+}
+
 /// Readable secondary text for both light and dark host palettes.
 pub fn muted_text_color(ui: &Ui) -> [f32; 4] {
     let background = ui.style_color(StyleColor::WindowBg);

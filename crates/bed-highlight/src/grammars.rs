@@ -43,6 +43,64 @@ pub(crate) fn grammar_store() -> &'static Arc<arborium::GrammarStore> {
         })
         .expect("bundled Kotlin highlight queries must compile");
         store.insert("kotlin", Arc::new(kotlin));
+
+        // Arborium 2.18.2 has an invalid regex escape and two patterns whose
+        // nested type names require the concrete simple_type node. Top-level
+        // Literal constants use declaration_expression in its bundled parser.
+        let highlights = arborium::lang_fsharp::HIGHLIGHTS_QUERY
+            .replace(r"^\_.*", "^_.*")
+            .replace(
+                "((_type\n  (long_identifier (identifier) @type.builtin))",
+                "((simple_type\n  (long_identifier (identifier) @type.builtin))",
+            )
+            .replace(
+                "(_type\n         (long_identifier\n           (identifier) @attribute))",
+                "(simple_type\n         (long_identifier\n           (identifier) @attribute))",
+            );
+        let highlights = highlights.replace(
+            "((value_declaration\n   (attributes",
+            "((declaration_expression\n   (attributes",
+        );
+        let fsharp = CompiledGrammar::new(GrammarConfig {
+            language: arborium::lang_fsharp::language().into(),
+            highlights_query: &highlights,
+            injections_query: arborium::lang_fsharp::INJECTIONS_QUERY,
+            locals_query: arborium::lang_fsharp::LOCALS_QUERY,
+        })
+        .expect("bundled F# highlight queries must compile");
+        store.insert("fsharp", Arc::new(fsharp));
+
+        // These Perl patterns need concrete nodes because anonymous token
+        // alternatives cannot be matched as children of a supertype.
+        let highlights = arborium::lang_perl::HIGHLIGHTS_QUERY
+            .replace("#lua-match?", "#match?")
+            .replace(
+                "(postfix_deref [\"@\" \"$#\" ] @variable.array \"*\" @variable.array)",
+                "(array_deref_expression \"@\" @variable.array \"*\" @variable.array)\n\
+                 (arraylen_deref_expression \"$#\" @variable.array \"*\" @variable.array)",
+            )
+            .replace(
+                "(postfix_deref \"%\" @variable.hash \"*\" @variable.hash)",
+                "(hash_deref_expression \"%\" @variable.hash \"*\" @variable.hash)",
+            )
+            .replace(
+                "(slices\n  hashref:_ [ \"@\" \"%\" ] @variable.hash )",
+                "(slice_expression hashref: _ \"@\" @variable.hash)\n\
+                 (keyval_expression hashref: _ \"%\" @variable.hash)",
+            )
+            .replace(
+                "(slices\n  arrayref:_  [ \"@\" \"%\" ] @variable.array )",
+                "(slice_expression arrayref: _ \"@\" @variable.array)\n\
+                 (keyval_expression arrayref: _ \"%\" @variable.array)",
+            );
+        let perl = CompiledGrammar::new(GrammarConfig {
+            language: arborium::lang_perl::language().into(),
+            highlights_query: &highlights,
+            injections_query: arborium::lang_perl::INJECTIONS_QUERY,
+            locals_query: arborium::lang_perl::LOCALS_QUERY,
+        })
+        .expect("bundled Perl highlight queries must compile");
+        store.insert("perl", Arc::new(perl));
         store
     })
 }
@@ -155,5 +213,43 @@ mod tests {
                 "missing {capture} capture for {text}: {spans:?}"
             );
         }
+    }
+
+    #[test]
+    fn perl_highlights_postfix_dereferences_and_slices() {
+        let source = "#!/usr/bin/perl\n$arrayref->@*; $arrayref->$#*; $hashref->%*; $hashref->@{\"one\"}; $hashref->%{\"two\"}; $arrayref->@[0]; $arrayref->%[1];\n";
+        let mut highlighter = arborium::Highlighter::with_store(Arc::clone(grammar_store()));
+        let spans = highlighter.highlight_spans("perl", source).unwrap();
+        for (syntax, token, capture) in [
+            ("->@*", "@", "variable.array"),
+            ("->$#*", "$#", "variable.array"),
+            ("->%*", "%", "variable.hash"),
+            ("->@{", "@", "variable.hash"),
+            ("->%{", "%", "variable.hash"),
+            ("->@[", "@", "variable.array"),
+            ("->%[", "%", "variable.array"),
+        ] {
+            let start = source.find(syntax).unwrap() + 2;
+            assert!(
+                spans.iter().any(|span| {
+                    span.capture == capture
+                        && span.start as usize == start
+                        && span.end as usize == start + token.len()
+                }),
+                "missing {capture} capture for {syntax}: {spans:?}"
+            );
+        }
+        assert!(spans.iter().any(|span| {
+            span.capture == "preproc"
+                && &source[span.start as usize..span.end as usize] == "#!/usr/bin/perl"
+        }));
+        let ordinary_comment = highlighter
+            .highlight_spans("perl", "# ordinary comment\n")
+            .unwrap();
+        assert!(
+            ordinary_comment
+                .iter()
+                .all(|span| span.capture != "preproc")
+        );
     }
 }

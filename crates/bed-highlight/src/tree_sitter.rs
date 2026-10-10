@@ -195,7 +195,7 @@ fn line_colors(
     let mut active = BTreeSet::new();
     let mut event = 0;
     while event < events.len() {
-        if event % 4096 == 0 && canceled() {
+        if canceled() {
             return None;
         }
         let position = events[event].0;
