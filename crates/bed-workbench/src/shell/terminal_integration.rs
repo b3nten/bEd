@@ -384,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn shell_workspace_attaches_the_requested_directory_and_preserves_live_panels() {
+    fn shell_workspace_promotes_only_the_calling_terminal_and_saves_closed_documents() {
         let dir = TempDir::new();
         let file = dir.write("project/file.txt", b"original");
         let root = dir.path("project").canonicalize().unwrap();
@@ -401,7 +401,8 @@ mod tests {
             .session
             .with_commands(view, |commands| commands.paste(b"dirty "))
             .unwrap();
-        let sessions = workbench.terminal.session_ids();
+        let requested = workbench.terminal.active_session_id().unwrap();
+        let requested_panel = workbench.terminal_panel_id(requested).unwrap();
         let panels = workbench
             .tabs
             .iter()
@@ -418,13 +419,15 @@ mod tests {
             workbench.session.options().project_root.as_deref(),
             Some(root.as_path())
         );
-        assert_eq!(workbench.terminal.session_ids(), sessions);
-        assert_eq!(workbench.active_view(), Some(view));
-        assert!(workbench.session.snapshot(document).unwrap().dirty);
+        assert_eq!(workbench.terminal.session_ids(), vec![requested]);
+        assert_eq!(workbench.active_panel_id(), Some(requested_panel));
+        assert!(!workbench.session.document_ids().contains(&document));
+        assert_eq!(std::fs::read(&file).unwrap(), b"dirty original");
         assert!(
             panels
                 .iter()
-                .all(|id| workbench.tabs.iter().any(|tab| tab.id == *id))
+                .filter(|id| **id != requested_panel)
+                .all(|id| workbench.tabs.iter().all(|tab| tab.id != *id))
         );
         assert_eq!(workbench.tiling.layout.areas.len(), 4);
         assert_eq!(workbench.panel_count(bed_module_explorer::PANEL_ID), 1);
@@ -483,6 +486,12 @@ mod tests {
         super::super::tests::frame(&mut context, &mut workbench);
         let first = workbench.terminal.active_session_id().unwrap();
         let first_pid = workbench.terminal.process_id(first).unwrap();
+        let first_panel = workbench.terminal_panel_id(first).unwrap();
+        let mut layout = crate::workspace::tiling::Layout::default();
+        let right = layout.split(1, 0, 3000, 1).unwrap();
+        let mut tiling = TilingState::new(layout);
+        tiling.assign(1, right);
+        tiling.assign(2, 1);
         let spec = WorkspaceSpec::local(root.to_str().unwrap());
         workbench
             .store
@@ -490,7 +499,10 @@ mod tests {
             .unwrap()
             .set_layout(
                 &spec,
-                json!({"version":1,"panels":[{"id":1,"kind":"terminal"}]}),
+                json!({"version":2,"tiling":tiling.to_value([1,2]),"panels":[
+                    {"id":1,"kind":"terminal"},
+                    {"id":2,"kind":"plugin","panel_type":bed_module_terminal::PANEL_ID}
+                ]}),
             )
             .unwrap();
         let socket = workbench
@@ -509,6 +521,8 @@ mod tests {
         );
         assert_eq!(workbench.terminal.session_count(), 2);
         assert_eq!(workbench.terminal.process_id(first), Some(first_pid));
+        assert_eq!(workbench.area_for_panel(first_panel), Some(right));
+        assert_eq!(workbench.active_panel_id(), Some(first_panel));
         assert_eq!(
             workbench
                 .shell_integration
@@ -520,6 +534,7 @@ mod tests {
         );
         let restored = *workbench.terminal.session_ids().last().unwrap();
         let tab = workbench.terminal_panel_id(restored).unwrap();
+        assert_eq!(workbench.area_for_panel(tab), Some(1));
         let index = workbench
             .tabs
             .iter()

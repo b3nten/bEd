@@ -8,3 +8,6 @@ license.workspace = true
 [dependencies]
 bed-remote = { workspace = true }
 bed-files = { workspace = true }
+
+[dev-dependencies]
+bed-lsp = { workspace = true }

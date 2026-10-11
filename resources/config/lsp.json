@@ -1,9 +1,1007 @@
 {
   "languages": [
     {
-      "language_name": "cpp",
-      "language_file_extensions": [".cpp", ".cxx", ".cc", ".c", ".h", ".hpp", ".hxx", ".c++", ".h++"],
-      "language_server_paths": [
+      "name": "rust",
+      "language_id": "rust",
+      "file_types": [
+        "rs"
+      ],
+      "roots": [
+        "Cargo.toml",
+        "Cargo.lock"
+      ],
+      "language_server": "rust-analyzer",
+      "shebangs": [
+        "rust-script",
+        "cargo"
+      ]
+    },
+    {
+      "name": "c",
+      "language_id": "c",
+      "file_types": [
+        "c"
+      ],
+      "roots": [
+        "compile_commands.json",
+        "compile_flags.txt",
+        ".clangd"
+      ],
+      "language_server": "clangd"
+    },
+    {
+      "name": "cpp",
+      "language_id": "cpp",
+      "file_types": [
+        "cc",
+        "hh",
+        "c++",
+        "cpp",
+        "hpp",
+        "h",
+        "ipp",
+        "tpp",
+        "cxx",
+        "hxx",
+        "ixx",
+        "txx",
+        "ino",
+        "C",
+        "H",
+        "cu",
+        "cuh",
+        "cppm",
+        "h++",
+        "ii",
+        "inl",
+        {
+          "glob": "*.hpp.in"
+        },
+        {
+          "glob": "*.h.in"
+        }
+      ],
+      "roots": [
+        "compile_commands.json",
+        "compile_flags.txt",
+        ".clangd"
+      ],
+      "language_server": "clangd"
+    },
+    {
+      "name": "javascript",
+      "language_id": "javascript",
+      "file_types": [
+        "js",
+        "mjs",
+        "cjs",
+        "rules",
+        "es6",
+        "pac",
+        "gs",
+        {
+          "glob": ".node_repl_history"
+        },
+        {
+          "glob": "jakefile"
+        }
+      ],
+      "roots": [
+        "package.json",
+        "jsconfig.json"
+      ],
+      "language_server": "typescript-language-server",
+      "shebangs": [
+        "node"
+      ]
+    },
+    {
+      "name": "jsx",
+      "language_id": "javascriptreact",
+      "file_types": [
+        "jsx"
+      ],
+      "roots": [
+        "package.json",
+        "jsconfig.json"
+      ],
+      "language_server": "typescript-language-server"
+    },
+    {
+      "name": "typescript",
+      "language_id": "typescript",
+      "file_types": [
+        "ts",
+        "mts",
+        "cts"
+      ],
+      "roots": [
+        "package.json",
+        "tsconfig.json"
+      ],
+      "language_server": "typescript-language-server",
+      "shebangs": [
+        "deno",
+        "bun",
+        "ts-node"
+      ]
+    },
+    {
+      "name": "tsx",
+      "language_id": "typescriptreact",
+      "file_types": [
+        "tsx"
+      ],
+      "roots": [
+        "package.json",
+        "tsconfig.json"
+      ],
+      "language_server": "typescript-language-server"
+    },
+    {
+      "name": "python",
+      "language_id": "python",
+      "file_types": [
+        "py",
+        "pyi",
+        "py3",
+        "pyw",
+        "ptl",
+        "rpy",
+        "cpy",
+        "ipy",
+        "pyt",
+        {
+          "glob": ".python_history"
+        },
+        {
+          "glob": ".pythonstartup"
+        },
+        {
+          "glob": ".pythonrc"
+        },
+        {
+          "glob": "*SConstruct"
+        },
+        {
+          "glob": "*SConscript"
+        },
+        {
+          "glob": "*sconstruct"
+        },
+        "pyx"
+      ],
+      "roots": [
+        "pyproject.toml",
+        "setup.py",
+        "poetry.lock",
+        "pyrightconfig.json"
+      ],
+      "language_server": "pyright",
+      "shebangs": [
+        "python",
+        "uv"
+      ]
+    },
+    {
+      "name": "go",
+      "language_id": "go",
+      "file_types": [
+        "go"
+      ],
+      "roots": [
+        "go.work",
+        "go.mod"
+      ],
+      "language_server": "gopls"
+    },
+    {
+      "name": "gomod",
+      "language_id": "gomod",
+      "file_types": [
+        {
+          "glob": "go.mod"
+        }
+      ],
+      "roots": [
+        "go.work",
+        "go.mod"
+      ],
+      "language_server": "gopls"
+    },
+    {
+      "name": "java",
+      "language_id": "java",
+      "file_types": [
+        "java",
+        "jav",
+        "pde"
+      ],
+      "roots": [
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts"
+      ],
+      "language_server": "jdtls"
+    },
+    {
+      "name": "csharp",
+      "language_id": "csharp",
+      "file_types": [
+        "cs",
+        "csx",
+        "cake"
+      ],
+      "roots": [
+        "*.slnx",
+        "*.sln",
+        "*.csproj"
+      ],
+      "language_server": "omnisharp"
+    },
+    {
+      "name": "lua",
+      "language_id": "lua",
+      "file_types": [
+        "lua",
+        "rockspec"
+      ],
+      "roots": [
+        ".luarc.json",
+        ".luacheckrc",
+        ".stylua.toml",
+        "selene.toml",
+        ".git"
+      ],
+      "language_server": "lua-language-server",
+      "shebangs": [
+        "lua",
+        "luajit"
+      ]
+    },
+    {
+      "name": "bash",
+      "language_id": "bash",
+      "file_types": [
+        "sh",
+        "bash",
+        "ash",
+        "dash",
+        "ksh",
+        "mksh",
+        "zsh",
+        "zshenv",
+        "zlogin",
+        "zlogout",
+        "zprofile",
+        "zshrc",
+        "eclass",
+        "ebuild",
+        "bazelrc",
+        "Renviron",
+        "zsh-theme",
+        "cshrc",
+        "tcshrc",
+        "bashrc_Apple_Terminal",
+        "zshrc_Apple_Terminal",
+        {
+          "glob": "i3/config"
+        },
+        {
+          "glob": "sway/config"
+        },
+        {
+          "glob": ".tmux.conf"
+        },
+        {
+          "glob": "tmux.conf"
+        },
+        {
+          "glob": ".sh_history"
+        },
+        {
+          "glob": ".bash_history"
+        },
+        {
+          "glob": ".bash_login"
+        },
+        {
+          "glob": ".bash_logout"
+        },
+        {
+          "glob": ".bash_profile"
+        },
+        {
+          "glob": ".bashrc"
+        },
+        {
+          "glob": ".profile"
+        },
+        {
+          "glob": ".zshenv"
+        },
+        {
+          "glob": ".zlogin"
+        },
+        {
+          "glob": ".zlogout"
+        },
+        {
+          "glob": ".zprofile"
+        },
+        {
+          "glob": ".zshrc"
+        },
+        {
+          "glob": ".zimrc"
+        },
+        {
+          "glob": "APKBUILD"
+        },
+        {
+          "glob": ".bash_aliases"
+        },
+        {
+          "glob": "bash_completion"
+        },
+        {
+          "glob": "bash-completion/completions/*"
+        },
+        {
+          "glob": "bash_completion.d/*"
+        },
+        {
+          "glob": "bin/activate"
+        },
+        {
+          "glob": ".Renviron"
+        },
+        {
+          "glob": ".xprofile"
+        },
+        {
+          "glob": ".xsession"
+        },
+        {
+          "glob": ".xsessionrc"
+        },
+        {
+          "glob": ".yashrc"
+        },
+        {
+          "glob": ".yash_profile"
+        },
+        {
+          "glob": ".hushlogin"
+        },
+        {
+          "glob": ".xinitrc"
+        },
+        {
+          "glob": "xinitrc"
+        },
+        {
+          "glob": ".xserverrc"
+        },
+        {
+          "glob": "xserverrc"
+        },
+        {
+          "glob": "direnvrc"
+        }
+      ],
+      "roots": [],
+      "language_server": "bash-language-server",
+      "shebangs": [
+        "sh",
+        "bash",
+        "dash",
+        "zsh"
+      ]
+    },
+    {
+      "name": "markdown",
+      "language_id": "markdown",
+      "file_types": [
+        "md",
+        "livemd",
+        "markdown",
+        "mdx",
+        "mkd",
+        "mkdn",
+        "mdwn",
+        "mdown",
+        "markdn",
+        "mdtxt",
+        "mdtext",
+        "workbook",
+        {
+          "glob": "PULLREQ_EDITMSG"
+        }
+      ],
+      "roots": [
+        ".marksman.toml"
+      ],
+      "language_server": "marksman"
+    },
+    {
+      "name": "toml",
+      "language_id": "toml",
+      "file_types": [
+        "toml",
+        {
+          "glob": "pdm.lock"
+        },
+        {
+          "glob": "poetry.lock"
+        },
+        {
+          "glob": "Cargo.lock"
+        },
+        {
+          "glob": "uv.lock"
+        },
+        {
+          "glob": "containers.conf"
+        },
+        {
+          "glob": "containers.conf.d/*.conf"
+        },
+        {
+          "glob": "containers.conf.modules/*.conf"
+        },
+        {
+          "glob": "mounts.conf"
+        },
+        {
+          "glob": "policy.conf"
+        },
+        {
+          "glob": "registries.conf"
+        },
+        {
+          "glob": "storage.conf"
+        },
+        {
+          "glob": "staticcheck.conf"
+        }
+      ],
+      "roots": [],
+      "language_server": "taplo"
+    },
+    {
+      "name": "json",
+      "language_id": "json",
+      "file_types": [
+        "json",
+        "arb",
+        "ipynb",
+        "geojson",
+        "gltf",
+        "webmanifest",
+        {
+          "glob": "flake.lock"
+        },
+        {
+          "glob": ".babelrc"
+        },
+        {
+          "glob": ".bowerrc"
+        },
+        {
+          "glob": ".jscrc"
+        },
+        {
+          "glob": "*.js.map"
+        },
+        {
+          "glob": "*.ts.map"
+        },
+        {
+          "glob": "*.css.map"
+        },
+        {
+          "glob": ".jslintrc"
+        },
+        "jsonl",
+        {
+          "glob": ".vuerc"
+        },
+        {
+          "glob": "composer.lock"
+        },
+        {
+          "glob": ".watchmanconfig"
+        },
+        "avsc",
+        "ldtk",
+        "ldtkl",
+        {
+          "glob": ".swift-format"
+        },
+        "sublime-build",
+        "sublime-color-scheme",
+        "sublime-commands",
+        "sublime-completions",
+        "sublime-keymap",
+        "sublime-macro",
+        "sublime-menu",
+        "sublime-mousemap",
+        "sublime-project",
+        "sublime-settings",
+        "sublime-theme",
+        "sublime-workspace",
+        "code-workspace",
+        {
+          "glob": ".pytest_cache/v/cache/*"
+        },
+        {
+          "glob": "devenv.lock"
+        },
+        {
+          "glob": "devbox.lock"
+        },
+        {
+          "glob": "manifest.lock"
+        },
+        {
+          "glob": "deno.lock"
+        },
+        "tfstate",
+        {
+          "glob": "*.tfstate.backup"
+        },
+        "jsonld"
+      ],
+      "roots": [],
+      "language_server": "vscode-json-language-server"
+    },
+    {
+      "name": "jsonc",
+      "language_id": "jsonc",
+      "file_types": [
+        "jsonc",
+        {
+          "glob": "{t,j}sconfig.json"
+        },
+        {
+          "glob": "bun.lock"
+        },
+        {
+          "glob": ".devcontainer.json"
+        },
+        {
+          "glob": "devcontainer.json"
+        },
+        {
+          "glob": ".vscode/*.json"
+        }
+      ],
+      "roots": [],
+      "language_server": "vscode-json-language-server"
+    },
+    {
+      "name": "yaml",
+      "language_id": "yaml",
+      "file_types": [
+        "yml",
+        "yaml",
+        {
+          "glob": ".prettierrc"
+        },
+        {
+          "glob": ".clangd"
+        },
+        {
+          "glob": ".clang-format"
+        },
+        {
+          "glob": ".clang-tidy"
+        },
+        {
+          "glob": ".gem/credentials"
+        },
+        {
+          "glob": ".kube/config"
+        },
+        {
+          "glob": ".kube/kuberc"
+        },
+        {
+          "glob": "yarn.lock"
+        },
+        "sublime-syntax",
+        "bu",
+        {
+          "glob": ".stylelintrc"
+        },
+        {
+          "glob": ".puppeteerrc"
+        },
+        {
+          "glob": ".bundle/config"
+        }
+      ],
+      "roots": [],
+      "language_server": "yaml-language-server"
+    },
+    {
+      "name": "html",
+      "language_id": "html",
+      "file_types": [
+        "html",
+        "htm",
+        "shtml",
+        "xhtml",
+        "xht",
+        "jsp",
+        "asp",
+        "aspx",
+        "jshtm",
+        "volt",
+        "rhtml",
+        "cshtml"
+      ],
+      "roots": [],
+      "language_server": "vscode-html-language-server"
+    },
+    {
+      "name": "css",
+      "language_id": "css",
+      "file_types": [
+        "css"
+      ],
+      "roots": [],
+      "language_server": "vscode-css-language-server"
+    },
+    {
+      "name": "scss",
+      "language_id": "scss",
+      "file_types": [
+        "scss"
+      ],
+      "roots": [],
+      "language_server": "vscode-css-language-server"
+    },
+    {
+      "name": "less",
+      "language_id": "less",
+      "file_types": [
+        "less"
+      ],
+      "roots": [],
+      "language_server": "vscode-css-language-server"
+    },
+    {
+      "name": "ruby",
+      "language_id": "ruby",
+      "file_types": [
+        "rb",
+        "rake",
+        "irb",
+        "gemspec",
+        "rabl",
+        "jbuilder",
+        "jb",
+        "podspec",
+        "rjs",
+        "rbi",
+        "rbs",
+        {
+          "glob": "rakefile"
+        },
+        {
+          "glob": "gemfile"
+        },
+        {
+          "glob": "Rakefile"
+        },
+        {
+          "glob": "Gemfile"
+        },
+        {
+          "glob": "Podfile"
+        },
+        {
+          "glob": "Vagrantfile"
+        },
+        {
+          "glob": "Brewfile"
+        },
+        {
+          "glob": "*.Brewfile"
+        },
+        {
+          "glob": "Guardfile"
+        },
+        {
+          "glob": "Capfile"
+        },
+        {
+          "glob": "Cheffile"
+        },
+        {
+          "glob": "Hobofile"
+        },
+        {
+          "glob": "Appraisals"
+        },
+        {
+          "glob": "Rantfile"
+        },
+        {
+          "glob": "Berksfile"
+        },
+        {
+          "glob": "Berksfile.lock"
+        },
+        {
+          "glob": "Thorfile"
+        },
+        {
+          "glob": "Puppetfile"
+        },
+        {
+          "glob": "Fastfile"
+        },
+        {
+          "glob": "Appfile"
+        },
+        {
+          "glob": "Deliverfile"
+        },
+        {
+          "glob": "Matchfile"
+        },
+        {
+          "glob": "Scanfile"
+        },
+        {
+          "glob": "Snapfile"
+        },
+        {
+          "glob": "Gymfile"
+        },
+        {
+          "glob": ".irbrc"
+        },
+        {
+          "glob": ".simplecov"
+        }
+      ],
+      "roots": [],
+      "language_server": "ruby-lsp",
+      "shebangs": [
+        "ruby"
+      ]
+    },
+    {
+      "name": "php",
+      "language_id": "php",
+      "file_types": [
+        "php",
+        "inc",
+        "php4",
+        "php5",
+        "phtml",
+        "ctp"
+      ],
+      "roots": [
+        "composer.json",
+        "index.php"
+      ],
+      "language_server": "intelephense",
+      "shebangs": [
+        "php"
+      ]
+    },
+    {
+      "name": "swift",
+      "language_id": "swift",
+      "file_types": [
+        "swift",
+        "swiftinterface"
+      ],
+      "roots": [
+        "Package.swift"
+      ],
+      "language_server": "sourcekit-lsp"
+    },
+    {
+      "name": "elixir",
+      "language_id": "elixir",
+      "file_types": [
+        "ex",
+        "exs",
+        {
+          "glob": "mix.lock"
+        }
+      ],
+      "roots": [
+        "mix.exs",
+        "mix.lock"
+      ],
+      "language_server": "elixir-ls",
+      "shebangs": [
+        "elixir"
+      ]
+    },
+    {
+      "name": "erlang",
+      "language_id": "erlang",
+      "file_types": [
+        "erl",
+        "hrl",
+        "app",
+        {
+          "glob": "rebar.config"
+        },
+        {
+          "glob": "rebar.lock"
+        },
+        {
+          "glob": "*.app.src"
+        }
+      ],
+      "roots": [
+        "rebar.config"
+      ],
+      "language_server": "erlang-ls",
+      "shebangs": [
+        "escript"
+      ]
+    },
+    {
+      "name": "ocaml",
+      "language_id": "ocaml",
+      "file_types": [
+        "ml",
+        "mli"
+      ],
+      "roots": [
+        "dune-project",
+        "dune-workspace",
+        "opam"
+      ],
+      "language_server": "ocamllsp",
+      "shebangs": [
+        "ocaml",
+        "ocamlrun",
+        "ocamlscript"
+      ]
+    },
+    {
+      "name": "clojure",
+      "language_id": "clojure",
+      "file_types": [
+        "clj",
+        "cljs",
+        "cljc",
+        "clje",
+        "cljr",
+        "cljx",
+        "edn",
+        "boot"
+      ],
+      "roots": [
+        "project.clj",
+        "build.boot",
+        "deps.edn",
+        "shadow-cljs.edn"
+      ],
+      "language_server": "clojure-lsp"
+    },
+    {
+      "name": "dart",
+      "language_id": "dart",
+      "file_types": [
+        "dart"
+      ],
+      "roots": [
+        "pubspec.yaml"
+      ],
+      "language_server": "dart"
+    },
+    {
+      "name": "cmake",
+      "language_id": "cmake",
+      "file_types": [
+        "cmake",
+        {
+          "glob": "CMakeLists.txt"
+        }
+      ],
+      "roots": [
+        "CMakeLists.txt"
+      ],
+      "language_server": "cmake-language-server"
+    },
+    {
+      "name": "dockerfile",
+      "language_id": "dockerfile",
+      "file_types": [
+        "Dockerfile",
+        {
+          "glob": "Dockerfile"
+        },
+        {
+          "glob": "Dockerfile.*"
+        },
+        "dockerfile",
+        {
+          "glob": "dockerfile"
+        },
+        {
+          "glob": "dockerfile.*"
+        },
+        "Containerfile",
+        {
+          "glob": "Containerfile"
+        },
+        {
+          "glob": "Containerfile.*"
+        },
+        "containerfile",
+        {
+          "glob": "containerfile"
+        },
+        {
+          "glob": "containerfile.*"
+        }
+      ],
+      "roots": [
+        "Dockerfile",
+        "Containerfile"
+      ],
+      "language_server": "docker-langserver"
+    },
+    {
+      "name": "terraform",
+      "language_id": "terraform",
+      "file_types": [
+        "hcl",
+        "tf",
+        "nomad"
+      ],
+      "roots": [
+        ".terraform",
+        "main.tf"
+      ],
+      "language_server": "terraform-ls"
+    },
+    {
+      "name": "nix",
+      "language_id": "nix",
+      "file_types": [
+        "nix"
+      ],
+      "roots": [
+        "flake.nix",
+        "shell.nix",
+        "default.nix"
+      ],
+      "language_server": "nil"
+    }
+  ],
+  "language_servers": {
+    "rust-analyzer": {
+      "command": [
+        "rust-analyzer",
+        "/usr/bin/rust-analyzer",
+        "/usr/local/bin/rust-analyzer",
+        "/opt/homebrew/bin/rust-analyzer",
+        "C:/Users/%USERNAME%/.cargo/bin/rust-analyzer.exe"
+      ],
+      "settings": {
+        "rust-analyzer": {
+          "files": {
+            "watcher": "server"
+          }
+        }
+      }
+    },
+    "clangd": {
+      "command": [
         "clangd",
         "/usr/bin/clangd",
         "/usr/local/bin/clangd",
@@ -12,33 +1010,43 @@
         "C:/Users/%USERNAME%/source/clang+llvm-18.1.8-x86_64-pc-windows-msvc/bin/clangd.exe"
       ]
     },
-    {
-      "language_name": "typescript",
-      "language_file_extensions": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
-      "language_server_paths": [
+    "typescript-language-server": {
+      "command": [
         "typescript-language-server",
         "/usr/bin/typescript-language-server",
         "/usr/local/bin/typescript-language-server",
         "/opt/homebrew/bin/typescript-language-server",
         "C:/Users/%USERNAME%/AppData/Roaming/npm/typescript-language-server.cmd"
-      ]
+      ],
+      "args": [
+        "--stdio"
+      ],
+      "initialization_options": {
+        "hostInfo": "bed"
+      }
     },
-    {
-      "language_name": "python",
-      "language_file_extensions": [".py", ".pyx", ".pyi", ".pyw"],
-      "language_server_paths": [
+    "pyright": {
+      "command": [
         "pyright-langserver",
         "/usr/bin/pyright-langserver",
         "/usr/local/bin/pyright-langserver",
         "/opt/homebrew/bin/pyright-langserver",
         "C:/Users/%USERNAME%/AppData/Roaming/npm/pyright-langserver.cmd",
         "C:/Users/%USERNAME%/AppData/Roaming/npm/pyright-langserver"
-      ]
+      ],
+      "args": [
+        "--stdio"
+      ],
+      "settings": {
+        "python": {
+          "analysis": {
+            "diagnosticMode": "workspace"
+          }
+        }
+      }
     },
-    {
-      "language_name": "go",
-      "language_file_extensions": [".go", ".mod"],
-      "language_server_paths": [
+    "gopls": {
+      "command": [
         "gopls",
         "/usr/bin/gopls",
         "/usr/local/bin/gopls",
@@ -46,37 +1054,148 @@
         "C:/Users/%USERNAME%/go/bin/gopls.exe"
       ]
     },
-    {
-      "language_name": "rust",
-      "language_file_extensions": [".rs"],
-      "language_server_paths": [
-        "rust-analyzer",
-        "/usr/bin/rust-analyzer",
-        "/usr/local/bin/rust-analyzer",
-        "/opt/homebrew/bin/rust-analyzer",
-        "C:/Users/%USERNAME%/.cargo/bin/rust-analyzer.exe"
-      ]
-    },
-    {
-      "language_name": "java",
-      "language_file_extensions": [".java"],
-      "language_server_paths": [
+    "jdtls": {
+      "command": [
         "jdtls",
         "/usr/bin/jdtls",
         "/usr/local/bin/jdtls",
         "/opt/homebrew/bin/jdtls"
-      ]
+      ],
+      "timeout_secs": 60
     },
-    {
-      "language_name": "csharp",
-      "language_file_extensions": [".cs"],
-      "language_server_paths": [
+    "omnisharp": {
+      "command": [
         "omnisharp",
+        "OmniSharp",
         "/usr/bin/omnisharp",
         "/usr/local/bin/omnisharp",
         "/opt/homebrew/bin/omnisharp",
         "C:/Users/%USERNAME%/.dotnet/tools/omnisharp.exe"
+      ],
+      "args": [
+        "--languageserver"
       ]
+    },
+    "lua-language-server": {
+      "command": "lua-language-server"
+    },
+    "bash-language-server": {
+      "command": "bash-language-server",
+      "args": [
+        "start"
+      ]
+    },
+    "marksman": {
+      "command": "marksman",
+      "args": [
+        "server"
+      ]
+    },
+    "taplo": {
+      "command": "taplo",
+      "args": [
+        "lsp",
+        "stdio"
+      ]
+    },
+    "vscode-json-language-server": {
+      "command": "vscode-json-language-server",
+      "args": [
+        "--stdio"
+      ],
+      "settings": {
+        "json": {
+          "validate": {
+            "enable": true
+          }
+        }
+      }
+    },
+    "yaml-language-server": {
+      "command": "yaml-language-server",
+      "args": [
+        "--stdio"
+      ]
+    },
+    "vscode-html-language-server": {
+      "command": "vscode-html-language-server",
+      "args": [
+        "--stdio"
+      ]
+    },
+    "vscode-css-language-server": {
+      "command": "vscode-css-language-server",
+      "args": [
+        "--stdio"
+      ],
+      "settings": {
+        "css": {
+          "validate": {
+            "enable": true
+          }
+        }
+      }
+    },
+    "ruby-lsp": {
+      "command": "ruby-lsp"
+    },
+    "intelephense": {
+      "command": "intelephense",
+      "args": [
+        "--stdio"
+      ]
+    },
+    "sourcekit-lsp": {
+      "command": "sourcekit-lsp"
+    },
+    "elixir-ls": {
+      "command": "elixir-ls",
+      "settings": {
+        "elixirLS": {
+          "dialyzerEnabled": false
+        }
+      }
+    },
+    "erlang-ls": {
+      "command": "erlang_ls"
+    },
+    "ocamllsp": {
+      "command": "ocamllsp"
+    },
+    "clojure-lsp": {
+      "command": "clojure-lsp"
+    },
+    "dart": {
+      "command": "dart",
+      "args": [
+        "language-server",
+        "--client-id=bed"
+      ]
+    },
+    "cmake-language-server": {
+      "command": "cmake-language-server"
+    },
+    "docker-langserver": {
+      "command": "docker-langserver",
+      "args": [
+        "--stdio"
+      ]
+    },
+    "terraform-ls": {
+      "command": "terraform-ls",
+      "args": [
+        "serve"
+      ]
+    },
+    "nil": {
+      "command": "nil"
     }
-  ]
+  },
+  "_provenance": {
+    "source": "https://github.com/helix-editor/helix/blob/ba40e547426b0f9896c8bdc699a4ab11f2b37dbc/languages.toml",
+    "revision": "ba40e547426b0f9896c8bdc699a4ab11f2b37dbc",
+    "license": "MPL-2.0",
+    "notice": "LICENSE.helix",
+    "adaptations": "Selected language/server recipes; bed editor identifiers; one server per language; omitted deferred feature settings; retained Python workspace diagnostics."
+  }
 }

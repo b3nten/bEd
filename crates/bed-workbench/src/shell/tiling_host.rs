@@ -782,39 +782,43 @@ impl Workbench {
                 )
                 .build();
                 dock_min[1] = bar_max[1] + 1.0;
-                let add_bounds = (bar_min, [bar_min[0] + tab_height, bar_max[1]]);
-                let (hovered, pressed) = hit_zone(ui, "add_panel", add_bounds);
-                if hovered {
-                    draw.add_rect(
-                        [bar_min[0] + 2.0, bar_min[1] + 2.0],
-                        [bar_min[0] + tab_height - 2.0, bar_max[1] - 2.0],
-                        ui.style_color(StyleColor::ButtonHovered),
+                let tab_center_y = bar_min[1] + tab_height * 0.5;
+                let mut tabs_min = bar_min;
+                if self.settings.bool("tab_bar_add_button", false) {
+                    let add_bounds = (bar_min, [bar_min[0] + tab_height, bar_max[1]]);
+                    let (hovered, pressed) = hit_zone(ui, "add_panel", add_bounds);
+                    if hovered {
+                        draw.add_rect(
+                            [bar_min[0] + 2.0, bar_min[1] + 2.0],
+                            [bar_min[0] + tab_height - 2.0, bar_max[1] - 2.0],
+                            ui.style_color(StyleColor::ButtonHovered),
+                        )
+                        .rounding(3.0)
+                        .filled(true)
+                        .build();
+                        ui.tooltip_text("Add a window");
+                    }
+                    let center = [bar_min[0] + tab_height * 0.5, tab_center_y];
+                    let icon_color = ui.style_color(if hovered {
+                        StyleColor::Text
+                    } else {
+                        StyleColor::TextDisabled
+                    });
+                    draw.add_line(
+                        [center[0] - 4.0, center[1]],
+                        [center[0] + 4.0, center[1]],
+                        icon_color,
                     )
-                    .rounding(3.0)
-                    .filled(true)
                     .build();
-                    ui.tooltip_text("Add a window");
+                    draw.add_line(
+                        [center[0], center[1] - 4.0],
+                        [center[0], center[1] + 4.0],
+                        icon_color,
+                    )
+                    .build();
+                    self.draw_window_picker(ui, *id, pressed);
+                    tabs_min[0] += tab_height;
                 }
-                let center = [bar_min[0] + tab_height * 0.5, bar_min[1] + tab_height * 0.5];
-                let icon_color = ui.style_color(if hovered {
-                    StyleColor::Text
-                } else {
-                    StyleColor::TextDisabled
-                });
-                draw.add_line(
-                    [center[0] - 4.0, center[1]],
-                    [center[0] + 4.0, center[1]],
-                    icon_color,
-                )
-                .build();
-                draw.add_line(
-                    [center[0], center[1] - 4.0],
-                    [center[0], center[1] + 4.0],
-                    icon_color,
-                )
-                .build();
-                self.draw_window_picker(ui, *id, pressed);
-                let tabs_min = [bar_min[0] + tab_height, bar_min[1]];
                 let available = (bar_max[0] - tabs_min[0]).max(1.0);
                 let labels = group
                     .tabs
@@ -928,7 +932,7 @@ impl Workbench {
                     drop(text_clip);
                     if dirty {
                         draw.add_circle(
-                            [close_min[0] - 5.0, center[1]],
+                            [close_min[0] - 5.0, tab_center_y],
                             2.0,
                             ui.style_color(StyleColor::Text),
                         )
@@ -936,7 +940,7 @@ impl Workbench {
                         .build();
                     }
                     if selected || hovered || close_hovered {
-                        let center = [(close_min[0] + close_max[0]) * 0.5, center[1]];
+                        let center = [(close_min[0] + close_max[0]) * 0.5, tab_center_y];
                         if close_hovered {
                             draw.add_circle(center, 8.0, ui.style_color(StyleColor::ButtonHovered))
                                 .filled(true)

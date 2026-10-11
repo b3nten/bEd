@@ -376,6 +376,51 @@ fn exec_forwards_cwd_stdio_and_falls_back_between_candidates() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn exec_environment_values_are_literal_and_confined_to_child() {
+    let temp = Temp::new();
+    let literal = "$(touch should-not-exist) `echo expanded` a'b $HOME";
+    let output = Command::new(env!("CARGO_BIN_EXE_bed-headless"))
+        .args([
+            "exec",
+            "--cwd",
+            &temp.root(),
+            "--env",
+            "BED_LITERAL",
+            literal,
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf '%s' \"$BED_LITERAL\"",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), literal);
+    assert!(!temp.0.join("should-not-exist").exists());
+    assert!(std::env::var_os("BED_LITERAL").is_none());
+    let output = Command::new(env!("CARGO_BIN_EXE_bed-headless"))
+        .args([
+            "exec",
+            "--cwd",
+            &temp.root(),
+            "--env",
+            "BAD=NAME",
+            "value",
+            "--",
+            "/bin/echo",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid exec environment"));
+}
+
 #[test]
 fn subprocess_regex_filters_and_buffer_eligibility_share_project_policy() {
     let temp = Temp::new();

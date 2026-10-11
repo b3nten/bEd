@@ -487,7 +487,9 @@ impl EditorSession {
         }
         options.persistent_history = false;
         let start_autosave = options.autosave.is_some() && self.options.autosave.is_none();
-        let lsp_changed = options.lsp_config != self.options.lsp_config;
+        let lsp_changed = options.lsp_config != self.options.lsp_config
+            || options.lsp_config_mode != self.options.lsp_config_mode
+            || options.lsp_file_observations != self.options.lsp_file_observations;
         if lsp_changed {
             for entry in self.documents.values_mut() {
                 entry.editor.bind_lsp_client(None);

@@ -1,9 +1,5 @@
 //! Opt-in acceptance against an installed headless agent and Rust language server.
-use bed_lsp::{
-    lsp_client::LspClient,
-    lsp_config::{LanguageServerInfo, LspConfig},
-    lsp_uri::LspUri,
-};
+use bed_lsp::{lsp_client::LspClient, lsp_config::LspConfig, lsp_uri::LspUri};
 use bed_remote::SshTarget;
 use serde_json::json;
 use std::{
@@ -21,14 +17,11 @@ fn remote_rust_server_initializes_and_reads_local_unsaved_document() {
     let path = format!("{}/src/lib.rs", root.trim_end_matches('/'));
     let mut client = LspClient::with_config(
         "/intentionally/no/local/lsp.json",
-        LspConfig {
-            language_servers: vec![LanguageServerInfo {
-                language: "rust".into(),
-                file_extensions: vec![".rs".into()],
-                server_paths: vec!["rust-analyzer".into()],
-                server_args: Vec::new(),
-            }],
-        },
+        LspConfig::from_json(&json!({
+            "languages":[{"name":"rust","language_id":"rust","file_types":["rs"],"language_server":"rust-analyzer"}],
+            "language_servers":{"rust-analyzer":{"command":"rust-analyzer"}}
+        }))
+        .unwrap(),
     );
     client.set_ssh_target(Some(SshTarget { host, agent }));
     client.set_workspace(&root);

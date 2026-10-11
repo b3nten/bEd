@@ -270,7 +270,7 @@ mod tests {
     use crate::{shell::tests::workspace, test_support::TempDir, workspace::tiling::Layout};
 
     #[test]
-    fn new_workspace_reuses_requested_terminal_slot_and_singletons_then_restores_its_own_layout() {
+    fn terminal_upgrade_reuses_default_terminal_slot_and_restores_its_own_layout() {
         let dir = TempDir::new();
         let file = dir.write("project/file.txt", b"live document");
         let mut template = workspace(&dir);
@@ -319,7 +319,6 @@ mod tests {
         let other_panel = live.terminal_panel_id(other).unwrap();
         live.open_or_focus(&file).unwrap();
         let document = live.active_panel_id().unwrap();
-        let view = live.active_view().unwrap();
         let other_index = live
             .tabs
             .iter()
@@ -329,15 +328,33 @@ mod tests {
         live.attach_workspace_with_terminal(&dir.path("project"), Some(requested))
             .unwrap();
         assert_eq!(live.terminal.process_id(requested), Some(pid));
-        assert_eq!(live.terminal.session_count(), 3);
+        assert_eq!(live.terminal.session_count(), 2);
+        assert!(live.terminal.process_id(other).is_none());
         assert_eq!(live.panel_count(bed_module_color::PANEL_ID), 1);
-        assert_eq!(live.area_for_panel(color), Some(1));
+        assert!(
+            live.tabs
+                .iter()
+                .all(|tab| ![color, other_panel, document].contains(&tab.id))
+        );
+        let restored_color = live
+            .tabs
+            .iter()
+            .find(|tab| tab.panel.kind == bed_module_color::PANEL_ID)
+            .unwrap()
+            .id;
+        assert_eq!(live.area_for_panel(restored_color), Some(1));
         assert_eq!(live.area_for_panel(requested_panel), Some(right));
-        assert_eq!(live.area_for_panel(other_panel), Some(right));
-        assert_eq!(live.area_for_panel(document), Some(right));
-        assert_eq!(live.active_panel_id(), Some(other_panel));
-        assert_eq!(live.active_view(), Some(view));
-        assert_eq!(live.active_snapshot().unwrap().bytes, b"live document");
+        assert_eq!(live.active_panel_id(), Some(requested_panel));
+        assert!(live.session.document_ids().is_empty());
+        let restored_terminal = live
+            .tabs
+            .iter()
+            .find(|tab| {
+                tab.panel.kind == bed_module_terminal::PANEL_ID && tab.id != requested_panel
+            })
+            .unwrap()
+            .id;
+        assert_eq!(live.area_for_panel(restored_terminal), Some(bottom));
         assert_eq!(live.tiling.layout, layout);
         assert_eq!(
             live.tabs
@@ -354,8 +371,8 @@ mod tests {
             .open_startup_workspace(&dir.path("project"))
             .unwrap();
         assert_eq!(reopened.tiling.layout, layout);
-        assert_eq!(reopened.terminal.session_count(), 3);
-        assert_eq!(reopened.active_snapshot().unwrap().bytes, b"live document");
+        assert_eq!(reopened.terminal.session_count(), 2);
+        assert!(reopened.session.document_ids().is_empty());
         reopened.cleanup().unwrap();
     }
 

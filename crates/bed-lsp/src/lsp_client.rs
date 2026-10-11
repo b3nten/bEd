@@ -3,12 +3,20 @@
 
 use crate::{
     diagnostics::{DiagnosticItem, LspDiagnostics},
+    document_diagnostics::{
+        DocumentDiagnosticPull, Input as DocumentPullInput, Inputs as DocumentPullInputs,
+        Provider as DiagnosticProvider,
+    },
     jsonrpc::{ResponseError, RpcId},
-    lsp_config::{LanguageServerInfo, LspConfig, server_child_path},
+    lsp_config::{LspConfig, ServerConfiguration, server_child_path},
     lsp_document_sync::LspDocumentSync,
     lsp_uri::LspUri,
     message_handler::{MAX_STDERR_BYTES, RpcEvent, RpcSession},
     process::ProcessOptions,
+    workspace_diagnostics::{
+        Input as WorkspacePullInput, Inputs as WorkspacePullInputs,
+        Provider as WorkspaceDiagnosticProvider, WorkspaceDiagnosticPull,
+    },
 };
 use bed_editing::editor_events::DocumentChange;
 use serde_json::{Value, json};
@@ -19,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::mpsc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 /// Standard LSP work-done progress, added above the pinned client's handlers.
@@ -169,21 +177,71 @@ fn progress_text(value: &str) -> String {
     result
 }
 
-#[derive(Default)]
-struct DiagnosticPull {
-    enabled: bool,
-    static_enabled: bool,
-    registrations: BTreeMap<String, bool>,
-    identifier: Option<String>,
-    pending_id: Option<RpcId>,
-    generation: u64,
-    refresh: bool,
-    pending: bool,
-    completed: bool,
-    failed: bool,
-    last: Option<Instant>,
-    result_ids: BTreeMap<String, String>,
-    replies: Vec<Result<Value, ResponseError>>,
+struct WatchedFile {
+    pattern: globset::GlobMatcher,
+    base: Option<PathBuf>,
+    kind: u8,
+}
+impl WatchedFile {
+    fn parse(value: &Value, remote: bool) -> Result<Self, ResponseError> {
+        let glob = &value["globPattern"];
+        let (pattern, base) = if let Some(pattern) = glob.as_str() {
+            (pattern, None)
+        } else {
+            let pattern = glob["pattern"]
+                .as_str()
+                .ok_or_else(|| ResponseError::invalid_params("Expected watched-file glob"))?;
+            let uri = glob["baseUri"]
+                .as_str()
+                .or_else(|| glob["baseUri"]["uri"].as_str())
+                .ok_or_else(|| ResponseError::invalid_params("Expected watched-file base URI"))?;
+            let uri = LspUri::parse(uri)
+                .map_err(|error| ResponseError::invalid_params(error.to_string()))?;
+            if uri.scheme() != "file" {
+                return Err(ResponseError::invalid_params("Expected file base URI"));
+            }
+            (
+                pattern,
+                Some(PathBuf::from(if remote {
+                    uri.path().to_owned()
+                } else {
+                    uri.fs_path()
+                })),
+            )
+        };
+        let kind = match value.get("kind") {
+            None => 7,
+            Some(kind) => kind
+                .as_u64()
+                .filter(|kind| *kind > 0 && *kind <= 7)
+                .ok_or_else(|| ResponseError::invalid_params("Invalid watched-file kind"))?
+                as u8,
+        };
+        let pattern = globset::GlobBuilder::new(pattern)
+            .literal_separator(true)
+            .build()
+            .map_err(|error| ResponseError::invalid_params(error.to_string()))?
+            .compile_matcher();
+        Ok(Self {
+            pattern,
+            base,
+            kind,
+        })
+    }
+    fn matches(&self, path: &Path, kind: u8) -> bool {
+        if self.kind & kind == 0 {
+            return false;
+        }
+        let path = match &self.base {
+            Some(base) => match path.strip_prefix(base) {
+                Ok(path) => path,
+                Err(_) => return false,
+            },
+            None => path,
+        };
+        self.pattern
+            .is_match(path.to_string_lossy().replace('\\', "/"))
+    }
 }
 
 pub struct LspClient {
@@ -191,8 +249,7 @@ pub struct LspClient {
     config_path: PathBuf,
     config: LspConfig,
     workspace: String,
-    current_language: String,
-    global_server_argument: String,
+    current_server: String,
     diagnostics: LspDiagnostics,
     sync: LspDocumentSync,
     session: Option<RpcSession>,
@@ -201,10 +258,14 @@ pub struct LspClient {
     stderr_tail: VecDeque<u8>,
     stderr_pending: RefCell<VecDeque<u8>>,
     progress: Rc<RefCell<ProgressState>>,
-    pull: Rc<RefCell<DiagnosticPull>>,
+    workspace_pull: WorkspaceDiagnosticPull,
+    document_pull: DocumentDiagnosticPull,
     server_configuration: Rc<RefCell<Value>>,
     project_check_owner: bool,
     configured_check_on_save: Option<Value>,
+    file_observations_available: bool,
+    watched_files: Rc<RefCell<BTreeMap<String, Vec<WatchedFile>>>>,
+    server_capabilities: Value,
 }
 
 impl LspClient {
@@ -217,8 +278,7 @@ impl LspClient {
             config_path: config_path.into(),
             config: LspConfig::default(),
             workspace: String::new(),
-            current_language: String::new(),
-            global_server_argument: String::new(),
+            current_server: String::new(),
             sync: LspDocumentSync::new(diagnostics.clone()),
             diagnostics,
             session: None,
@@ -227,10 +287,14 @@ impl LspClient {
             stderr_tail: VecDeque::new(),
             stderr_pending: RefCell::new(VecDeque::new()),
             progress: Rc::new(RefCell::new(ProgressState::default())),
-            pull: Rc::new(RefCell::new(DiagnosticPull::default())),
+            workspace_pull: WorkspaceDiagnosticPull::default(),
+            document_pull: DocumentDiagnosticPull::default(),
             server_configuration: Rc::new(RefCell::new(json!({}))),
             project_check_owner: false,
             configured_check_on_save: None,
+            file_observations_available: false,
+            watched_files: Rc::new(RefCell::new(BTreeMap::new())),
+            server_capabilities: json!({}),
         };
         let _ = client.reload_config();
         client
@@ -242,19 +306,16 @@ impl LspClient {
         client
     }
     pub fn set_configuration(&mut self, config: LspConfig) {
-        self.sync.set_languages(&config.language_servers);
+        self.sync.set_configuration(&config);
         self.config = config;
         self.last_error = None;
     }
 
     pub fn reload_config(&mut self) -> io::Result<()> {
-        // Upstream clears the existing list even when the new file cannot load.
-        self.config = LspConfig::default();
-        self.sync.set_languages(&[]);
         match LspConfig::load(&self.config_path) {
             Ok(config) => {
                 self.config = config;
-                self.sync.set_languages(&self.config.language_servers);
+                self.sync.set_configuration(&self.config);
                 self.last_error = None;
                 Ok(())
             }
@@ -291,10 +352,92 @@ impl LspClient {
     pub fn config_path(&self) -> &Path {
         &self.config_path
     }
-    pub fn current_language(&self) -> &str {
-        &self.current_language
+    pub fn set_file_observations_available(&mut self, available: bool) {
+        self.file_observations_available = available;
     }
-    pub fn language_servers(&self) -> &[LanguageServerInfo] {
+    pub fn server_capabilities(&self) -> &Value {
+        &self.server_capabilities
+    }
+    pub fn supports_method(&self, method: &str) -> bool {
+        let capability = match method {
+            "textDocument/hover" => "hoverProvider",
+            "textDocument/definition" => "definitionProvider",
+            "textDocument/references" => "referencesProvider",
+            _ => return true,
+        };
+        match self.server_capabilities.get(capability) {
+            Some(Value::Bool(enabled)) => *enabled,
+            Some(Value::Object(_)) => true,
+            _ => false,
+        }
+    }
+    /// Existing workspace observers supply facts; registered server filters
+    /// determine which changes are sent to this process.
+    pub fn observe_file_changes(&self, changes: &[bed_remote::FilesystemChange]) -> io::Result<()> {
+        let mut uris = Vec::new();
+        for change in changes {
+            use bed_remote::FilesystemChange::*;
+            let paths = match change {
+                Created { path } | Modified { path } | Removed { path } => vec![path],
+                Renamed { from, to } => vec![from, to],
+            };
+            for path in paths {
+                uris.push(self.sync.file_uri(&self.sync.key(path))?.to_string());
+            }
+        }
+        if !uris.is_empty() {
+            self.document_pull
+                .inputs
+                .borrow_mut()
+                .push_back(DocumentPullInput::FilesChanged(uris));
+        }
+        if !self.is_initialized() || !self.file_observations_available {
+            return Ok(());
+        }
+        let watched = self.watched_files.borrow();
+        if watched.is_empty() {
+            return Ok(());
+        }
+        let mut events = Vec::new();
+        let mut append = |path: &str, event_type: u8, kind: u8| -> io::Result<()> {
+            if watched
+                .values()
+                .flatten()
+                .any(|watcher| watcher.matches(Path::new(path), kind))
+            {
+                let uri = workspace_uri(path, self.ssh_target.is_some())?;
+                let event = json!({"uri":uri.to_string(),"type":event_type});
+                if !events.contains(&event) {
+                    events.push(event);
+                }
+            }
+            Ok(())
+        };
+        for change in changes {
+            use bed_remote::FilesystemChange::*;
+            match change {
+                Created { path } => append(path, 1, 1)?,
+                Modified { path } => append(path, 2, 2)?,
+                Removed { path } => append(path, 3, 4)?,
+                Renamed { from, to } => {
+                    append(from, 3, 4)?;
+                    append(to, 1, 1)?;
+                }
+            }
+        }
+        if events.is_empty() {
+            return Ok(());
+        }
+        self.send_notification(
+            "workspace/didChangeWatchedFiles",
+            Some(json!({"changes":events})),
+        )
+    }
+    /// Named server identity for the active process.
+    pub fn current_server(&self) -> &str {
+        &self.current_server
+    }
+    pub fn language_servers(&self) -> &BTreeMap<String, ServerConfiguration> {
         &self.config.language_servers
     }
     pub fn supported_languages(&self) -> Vec<String> {
@@ -306,10 +449,8 @@ impl LspClient {
     pub fn find_server_path(&self, language: &str) -> Option<PathBuf> {
         if self.ssh_target.is_some() {
             self.config
-                .language_servers
-                .iter()
-                .find(|server| server.language == language)?
-                .server_paths
+                .server(language)?
+                .command
                 .first()
                 .map(PathBuf::from)
         } else {
@@ -343,21 +484,16 @@ impl LspClient {
         self.session.as_ref().map(RpcSession::process_id)
     }
 
-    /// Host configuration can supply argv directly. The on-disk format remains
-    /// upstream's format, which only supplies the TypeScript/Python --stdio default.
+    /// Override launch arguments in this client's effective configuration.
     pub fn set_server_arguments(&mut self, language: &str, arguments: Vec<String>) {
-        if let Some(server) = self
+        let id = self
             .config
-            .language_servers
-            .iter_mut()
-            .find(|server| server.language == language)
-        {
-            server.server_args = arguments;
+            .server_id(language)
+            .unwrap_or(language)
+            .to_owned();
+        if let Some(server) = self.config.language_servers.get_mut(&id) {
+            server.args = arguments;
         }
-    }
-
-    pub fn set_global_server_argument(&mut self, argument: &str) {
-        self.global_server_argument = argument.into();
     }
 
     pub fn init(&mut self, path: &str) -> io::Result<bool> {
@@ -382,7 +518,13 @@ impl LspClient {
         }
         self.session.take();
         self.sync.disconnect();
-        self.current_language = language.into();
+        self.current_server = self.config.server_id(language).unwrap_or(language).into();
+        let server = self.config.server(language).cloned().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("No server configured for {language}"),
+            )
+        })?;
         let program = if path.is_empty() {
             let Some(program) = self.find_server_path(language) else {
                 self.last_error = Some(format!(
@@ -394,27 +536,13 @@ impl LspClient {
         } else {
             PathBuf::from(path)
         };
-        let mut arguments = self
-            .config
-            .language_servers
-            .iter()
-            .find(|server| server.language == language)
-            .map(|server| server.server_args.clone())
-            .unwrap_or_default();
-        if !self.global_server_argument.is_empty() {
-            arguments.push(self.global_server_argument.clone());
-        }
+        let arguments = server.args.clone();
         let candidates = if self.ssh_target.is_some() && path.is_empty() {
-            self.config
-                .language_servers
-                .iter()
-                .find(|server| server.language == language)
-                .map(|server| server.server_paths.clone())
-                .unwrap_or_default()
+            server.command.clone()
         } else {
             vec![program.to_string_lossy().into_owned()]
         };
-        let result = self.start_session(&program, &arguments, &candidates);
+        let result = self.start_session(&program, &arguments, &candidates, &server);
         if let Err(error) = &result {
             self.last_error = Some(error.to_string());
         }
@@ -426,47 +554,36 @@ impl LspClient {
         program: &Path,
         arguments: &[String],
         candidates: &[String],
+        server: &ServerConfiguration,
     ) -> io::Result<()> {
         let remote = self.ssh_target.is_some();
         let mut initialize = initialize_params(&self.workspace, remote)?;
-        // Per-language settings are optional extensions of the existing lsp.json.
-        let entry = std::fs::read(&self.config_path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .and_then(|value| {
-                value["languages"]
-                    .as_array()?
-                    .iter()
-                    .find(|entry| entry["language_name"].as_str() == Some(&self.current_language))
-                    .cloned()
-            });
-        let mut configuration = entry
-            .as_ref()
-            .and_then(|entry| entry.get("settings"))
-            .filter(|value| value.is_object())
-            .cloned()
-            .unwrap_or_else(|| {
-                if self.current_language == "python" {
-                    json!({"python":{"analysis":{"diagnosticMode":"workspace"}}})
-                } else {
-                    json!({})
-                }
-            });
+        if self.file_observations_available {
+            initialize["capabilities"]["workspace"]["didChangeWatchedFiles"] =
+                json!({"dynamicRegistration":true,"relativePatternSupport":true});
+        }
+        let mut configuration = server.settings.clone();
         self.configured_check_on_save = configuration
             .get("rust-analyzer")
             .and_then(|value| value.get("checkOnSave"))
             .cloned();
-        if self.current_language == "rust" && self.project_check_owner {
+        if self.current_server == "rust-analyzer" && self.project_check_owner {
             configuration["rust-analyzer"]["checkOnSave"] = json!(false);
         }
         self.server_configuration = Rc::new(RefCell::new(configuration));
-        if let Some(options) = entry.and_then(|entry| entry.get("initialization_options").cloned())
-        {
-            initialize["initializationOptions"] = options;
+        if let Some(options) = &server.initialization_options {
+            initialize["initializationOptions"] = options.clone();
         }
-        self.pull = Rc::new(RefCell::new(DiagnosticPull::default()));
+        self.workspace_pull = WorkspaceDiagnosticPull::default();
+        self.document_pull = DocumentDiagnosticPull::default();
         let (program, arguments, options) = if let Some(target) = &self.ssh_target {
-            ssh_server_launch(target, &self.workspace, candidates, arguments)?
+            ssh_server_launch(
+                target,
+                &self.workspace,
+                candidates,
+                arguments,
+                &server.environment,
+            )?
         } else {
             (
                 program.to_owned(),
@@ -474,7 +591,14 @@ impl LspClient {
                 ProcessOptions {
                     working_directory: (!self.workspace.is_empty())
                         .then(|| PathBuf::from(&self.workspace)),
-                    environment: vec![("PATH".into(), server_child_path(program)?)],
+                    environment: std::iter::once(("PATH".into(), server_child_path(program)?))
+                        .chain(
+                            server
+                                .environment
+                                .iter()
+                                .map(|(key, value)| (key.into(), value.into())),
+                        )
+                        .collect(),
                 },
             )
         };
@@ -482,20 +606,26 @@ impl LspClient {
         self.stderr_pending.borrow_mut().clear();
         *self.progress.borrow_mut() = ProgressState::default();
         let mut session = RpcSession::start_with_options(&program, &arguments, &options)?;
+        session.set_request_timeout(Duration::from_secs(server.timeout_secs));
+        self.watched_files = Rc::new(RefCell::new(BTreeMap::new()));
+        self.server_capabilities = json!({});
         register_server_handlers(
             &mut session,
             &self.workspace,
             remote,
             self.diagnostics.clone(),
             Rc::clone(&self.progress),
-            Rc::clone(&self.pull),
+            self.workspace_pull.inputs.clone(),
+            self.document_pull.inputs.clone(),
             self.server_configuration.clone(),
+            self.watched_files.clone(),
+            self.file_observations_available,
         )?;
         let (sender, receiver) = mpsc::channel();
         session.send_request("initialize", Some(initialize), move |result| {
             let _ = sender.send(result);
         })?;
-        self.sync.set_languages(&self.config.language_servers);
+        self.sync.set_configuration(&self.config);
         self.sync.connect();
         self.initialize_result = Some(receiver);
         self.session = Some(session);
@@ -512,9 +642,27 @@ impl LspClient {
         let initialize_result = &mut self.initialize_result;
         let last_error = &mut self.last_error;
         let events = session.poll_after_message(|session| {
-            consume_initialize_result(initialize_result, sync, session, last_error, &self.pull);
+            consume_initialize_result(
+                initialize_result,
+                sync,
+                session,
+                last_error,
+                &mut self.workspace_pull,
+                &mut self.document_pull,
+                &self.server_configuration,
+                &mut self.server_capabilities,
+            );
         });
-        consume_initialize_result(initialize_result, sync, session, last_error, &self.pull);
+        consume_initialize_result(
+            initialize_result,
+            sync,
+            session,
+            last_error,
+            &mut self.workspace_pull,
+            &mut self.document_pull,
+            &self.server_configuration,
+            &mut self.server_capabilities,
+        );
         let bytes = session.take_stderr();
         retain_stderr(&mut self.stderr_tail, &bytes);
         retain_stderr(&mut self.stderr_pending.borrow_mut(), &bytes);
@@ -526,8 +674,10 @@ impl LspClient {
                 RpcEvent::Disconnected(error) => {
                     *self.progress.borrow_mut() = ProgressState::default();
                     self.sync.disconnect();
-                    self.pull.borrow_mut().completed = false;
-                    self.pull.borrow_mut().enabled = false;
+                    self.document_pull = DocumentDiagnosticPull::default();
+                    self.server_capabilities = json!({});
+                    self.watched_files.borrow_mut().clear();
+                    self.workspace_pull = WorkspaceDiagnosticPull::default();
                     self.initialize_result = None;
                     let stderr = self.stderr_text();
                     self.last_error = Some(if stderr.trim().is_empty() {
@@ -539,19 +689,38 @@ impl LspClient {
                 _ => {}
             }
         }
-        self.poll_workspace_diagnostics();
+        if let Some(session) = self.session.as_mut() {
+            self.document_pull.poll(
+                session,
+                self.sync.is_ready(),
+                &self.diagnostics,
+                &mut self.last_error,
+            );
+        }
+        for uri in self.document_pull.take_released_uris() {
+            self.workspace_pull.close(&uri, &self.diagnostics);
+        }
+        if let Some(session) = self.session.as_mut() {
+            self.workspace_pull.poll(
+                session,
+                self.sync.is_ready(),
+                &self.diagnostics,
+                &self.document_pull,
+                &mut self.last_error,
+            );
+        }
         events
     }
     /// True only after a workspace pull has completed successfully.
     pub fn workspace_diagnostics_complete(&self) -> bool {
-        self.pull.borrow().completed
+        self.workspace_pull.complete()
     }
     pub fn set_project_check_owner(&mut self, enabled: bool) {
         if self.project_check_owner == enabled {
             return;
         }
         self.project_check_owner = enabled;
-        if self.current_language == "rust" {
+        if self.current_server == "rust-analyzer" {
             let mut configuration = self.server_configuration.borrow_mut();
             if enabled {
                 configuration["rust-analyzer"]["checkOnSave"] = json!(false);
@@ -571,94 +740,8 @@ impl LspClient {
         }
     }
     pub fn refresh_workspace_diagnostics(&mut self) {
-        let mut pull = self.pull.borrow_mut();
-        pull.refresh = true;
-        pull.completed = false;
-    }
-    fn poll_workspace_diagnostics(&mut self) {
-        let replies = std::mem::take(&mut self.pull.borrow_mut().replies);
-        for reply in replies {
-            {
-                let mut pull = self.pull.borrow_mut();
-                pull.pending = false;
-                pull.pending_id = None;
-                pull.completed = false;
-            }
-            match reply {
-                Ok(report) => {
-                    let mut pull = self.pull.borrow_mut();
-                    match apply_workspace_report(&self.diagnostics, &mut pull, &report) {
-                        Ok(()) => pull.completed = !pull.refresh && pull.enabled && !pull.failed,
-                        Err(error) => {
-                            pull.failed = true;
-                            self.last_error = Some(error.to_string());
-                        }
-                    }
-                }
-                Err(error) => self.last_error = Some(format!("Workspace diagnostics: {error}")),
-            }
-        }
-        let ready = self.is_initialized();
-        let mut pull = self.pull.borrow_mut();
-        if pull.pending
-            && (!pull.enabled
-                || pull.refresh
-                || pull
-                    .last
-                    .is_some_and(|last| last.elapsed() >= Duration::from_secs(30)))
-        {
-            let id = pull.pending_id.take();
-            pull.pending = false;
-            pull.completed = false;
-            pull.generation += 1;
-            drop(pull);
-            if let Some(id) = id
-                && let Some(session) = &mut self.session
-            {
-                let _ = session.cancel_request(&id);
-            }
-            pull = self.pull.borrow_mut();
-        }
-        if !ready
-            || !pull.enabled
-            || pull.pending
-            || (!pull.refresh
-                && pull
-                    .last
-                    .is_some_and(|last| last.elapsed() < Duration::from_secs(30)))
-        {
-            return;
-        }
-        let ids: Vec<_> = pull
-            .result_ids
-            .iter()
-            .map(|(uri, value)| json!({"uri":uri,"value":value}))
-            .collect();
-        pull.pending = true;
-        pull.completed = false;
-        pull.failed = false;
-        pull.refresh = false;
-        pull.last = Some(Instant::now());
-        pull.generation += 1;
-        let generation = pull.generation;
-        let mut params = json!({"previousResultIds":ids,"partialResultToken":format!("bed.workspace-diagnostics-{generation}")});
-        if let Some(identifier) = &pull.identifier {
-            params["identifier"] = json!(identifier);
-        }
-        drop(pull);
-        let state = self.pull.clone();
-        match self.send_request("workspace/diagnostic", params, move |reply| {
-            let mut pull = state.borrow_mut();
-            if pull.generation == generation {
-                pull.replies.push(reply);
-            }
-        }) {
-            Ok(id) => self.pull.borrow_mut().pending_id = Some(id),
-            Err(error) => {
-                self.pull.borrow_mut().pending = false;
-                self.last_error = Some(error.to_string());
-            }
-        }
+        self.document_pull.refresh();
+        self.workspace_pull.refresh();
     }
 
     pub fn send_request(
@@ -667,6 +750,12 @@ impl LspClient {
         params: Value,
         callback: impl FnOnce(Result<Value, ResponseError>) + 'static,
     ) -> io::Result<RpcId> {
+        if self.is_initialized() && !self.supports_method(method) {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("Server does not support {method}"),
+            ));
+        }
         self.session
             .as_mut()
             .ok_or_else(not_connected)?
@@ -692,8 +781,21 @@ impl LspClient {
         };
         let text = std::str::from_utf8(bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if path.is_empty() {
+            return Ok(());
+        }
+        let key = self.sync.key(path);
+        let language = self.sync.language_id(&key, text, language_id);
+        let synchronized = !self.sync.is_ready() || self.sync.syncs_changes();
         self.sync
-            .did_open(path, text, version, language_id, session)
+            .did_open(path, text, version, &language, session)?;
+        let uri = self.sync.file_uri(&key)?.to_string();
+        if self.document_pull.contains(&uri) {
+            self.document_pull.change(&uri, version, synchronized);
+        } else {
+            self.document_pull.open(uri, key, language, version);
+        }
+        Ok(())
     }
 
     pub fn did_change(
@@ -706,8 +808,23 @@ impl LspClient {
         let Some(session) = self.session.as_ref() else {
             return Ok(());
         };
+        if path.is_empty() {
+            return Ok(());
+        }
+        let key = self.sync.key(path);
+        let uri = self.sync.file_uri(&key)?.to_string();
+        if !self.document_pull.contains(&uri) {
+            let text = full_text()?;
+            return self.did_open(path, text.as_bytes(), version, "");
+        }
         self.sync
-            .did_change(path, version, changes, full_text, session)
+            .did_change(path, version, changes, full_text, session)?;
+        self.document_pull.change(
+            &uri,
+            version,
+            !self.sync.is_ready() || self.sync.syncs_changes(),
+        );
+        Ok(())
     }
 
     pub fn did_save(
@@ -718,7 +835,12 @@ impl LspClient {
         let Some(session) = self.session.as_ref() else {
             return Ok(());
         };
-        self.sync.did_save(path, full_text, session)
+        self.sync.did_save(path, full_text, session)?;
+        if !path.is_empty() {
+            self.document_pull
+                .save(&self.sync.file_uri(&self.sync.key(path))?.to_string());
+        }
+        Ok(())
     }
 
     pub fn did_close(&mut self, path: &str) -> io::Result<()> {
@@ -726,7 +848,13 @@ impl LspClient {
         let Some(session) = self.session.as_ref() else {
             return Ok(());
         };
-        self.sync.did_close(path, session)
+        self.sync.did_close(path, session)?;
+        if !path.is_empty() {
+            let uri = self.sync.file_uri(&self.sync.key(path))?.to_string();
+            self.document_pull.close(&uri, &self.diagnostics);
+            self.workspace_pull.close(&uri, &self.diagnostics);
+        }
+        Ok(())
     }
 
     pub fn take_stderr(&self) -> Vec<u8> {
@@ -746,8 +874,11 @@ impl LspClient {
         }
         self.initialize_result = None;
         self.sync.disconnect();
-        self.current_language.clear();
-        self.pull = Rc::new(RefCell::new(DiagnosticPull::default()));
+        self.current_server.clear();
+        self.workspace_pull = WorkspaceDiagnosticPull::default();
+        self.document_pull = DocumentDiagnosticPull::default();
+        self.watched_files.borrow_mut().clear();
+        self.server_capabilities = json!({});
         *self.progress.borrow_mut() = ProgressState::default();
     }
 
@@ -793,6 +924,7 @@ fn ssh_server_launch(
     workspace: &str,
     candidates: &[String],
     arguments: &[String],
+    environment: &BTreeMap<String, String>,
 ) -> io::Result<(PathBuf, Vec<String>, ProcessOptions)> {
     if target.host.is_empty()
         || target.host.starts_with('-')
@@ -814,6 +946,9 @@ fn ssh_server_launch(
     ];
     for candidate in candidates {
         remote.extend(["--candidate".into(), candidate.clone()]);
+    }
+    for (key, value) in environment {
+        remote.extend(["--env".into(), key.clone(), value.clone()]);
     }
     remote.push("--".into());
     remote.extend_from_slice(arguments);
@@ -846,7 +981,7 @@ fn initialize_params(workspace: &str, remote: bool) -> io::Result<Value> {
         json!({"processId":if remote { None } else { Some(std::process::id()) },"rootUri":workspace_uri(workspace, remote)?.to_string(),"rootPath":workspace,
         "clientInfo":{"name":"bed"},"workspaceFolders":workspace_folders(workspace, remote)?,
         "capabilities":{"window":{"workDoneProgress":true},"workspace":{"workspaceFolders":true,"configuration":true,"diagnostics":{"refreshSupport":true}},
-            "textDocument":{"diagnostic":{"dynamicRegistration":true,"relatedDocumentSupport":true},"synchronization":{"didSave":true},"hover":{},"definition":{"linkSupport":true},"references":{},"publishDiagnostics":{"relatedInformation":true}},
+            "textDocument":{"synchronization":{"didSave":true},"hover":{},"definition":{"linkSupport":true},"references":{},"publishDiagnostics":{"relatedInformation":true},"diagnostic":{"dynamicRegistration":true,"relatedDocumentSupport":true}},
             "general":{"positionEncodings":["utf-16"]}}}),
     )
 }
@@ -856,7 +991,10 @@ fn consume_initialize_result(
     sync: &mut LspDocumentSync,
     session: &RpcSession,
     last_error: &mut Option<String>,
-    pull: &Rc<RefCell<DiagnosticPull>>,
+    workspace_pull: &mut WorkspaceDiagnosticPull,
+    document_pull: &mut DocumentDiagnosticPull,
+    configuration: &Rc<RefCell<Value>>,
+    server_capabilities: &mut Value,
 ) {
     let Some(result) = receiver
         .as_ref()
@@ -868,17 +1006,34 @@ fn consume_initialize_result(
     match result {
         Ok(result) => {
             let provider = &result["capabilities"]["diagnosticProvider"];
-            let mut diagnostics = pull.borrow_mut();
-            diagnostics.static_enabled =
-                provider["workspaceDiagnostics"].as_bool().unwrap_or(false);
-            diagnostics.enabled = diagnostics.static_enabled
-                || diagnostics.registrations.values().any(|enabled| *enabled);
-            diagnostics.identifier = provider["identifier"].as_str().map(str::to_owned);
-            drop(diagnostics);
+            if !provider.is_null() && provider != &json!(false) {
+                match DiagnosticProvider::parse(provider) {
+                    Ok(provider) => document_pull.set_static(Some(provider)),
+                    Err(error) => {
+                        *last_error = Some(error.to_string());
+                        return;
+                    }
+                }
+            }
+            if !provider.is_null() && provider != &json!(false) {
+                match WorkspaceDiagnosticProvider::parse(provider) {
+                    Ok(parsed) => workspace_pull
+                        .set_static(Some(parsed), provider["id"].as_str().map(str::to_owned)),
+                    Err(error) => {
+                        *last_error = Some(error.to_string());
+                        return;
+                    }
+                }
+            }
             let ready =
                 super::lsp_document_sync::validate_initialize_result(&result).and_then(|()| {
+                    *server_capabilities = result["capabilities"].clone();
                     sync.apply_capabilities(&result);
                     session.send_notification("initialized", Some(json!({})))?;
+                    session.send_notification(
+                        "workspace/didChangeConfiguration",
+                        Some(json!({"settings": configuration.borrow().clone()})),
+                    )?;
                     sync.mark_handshake_ready(session)
                 });
             if let Err(error) = ready {
@@ -897,41 +1052,32 @@ fn register_server_handlers(
     remote: bool,
     diagnostics: LspDiagnostics,
     progress: Rc<RefCell<ProgressState>>,
-    pull: Rc<RefCell<DiagnosticPull>>,
+    workspace_inputs: WorkspacePullInputs,
+    document_inputs: DocumentPullInputs,
     configuration: Rc<RefCell<Value>>,
+    watched_files: Rc<RefCell<BTreeMap<String, Vec<WatchedFile>>>>,
+    file_observations_available: bool,
 ) -> io::Result<()> {
-    let partial = pull.clone();
-    let partial_store = diagnostics.clone();
+    let partial = workspace_inputs.clone();
     session.register_notification_handler("$/progress", move |params| {
         let token = params.as_ref().and_then(|params| params["token"].as_str());
         if token.is_some_and(|token| token.starts_with("bed.workspace-diagnostics-")) {
-            let mut pull = partial.borrow_mut();
-            if pull.pending
-                && token == Some(format!("bed.workspace-diagnostics-{}", pull.generation).as_str())
-                && !pull.refresh
-            {
-                let result = apply_workspace_report(
-                    &partial_store,
-                    &mut pull,
-                    &params.as_ref().unwrap()["value"],
-                );
-                if result.is_err() {
-                    pull.completed = false;
-                    pull.failed = true;
-                }
-                result
-            } else {
-                Ok(())
-            }
+            partial.borrow_mut().push_back(WorkspacePullInput::Progress(
+                token.unwrap().into(),
+                params.as_ref().unwrap()["value"].clone(),
+            ));
+            Ok(())
         } else {
             progress.borrow_mut().apply(params.as_ref())
         }
     });
-    let refresh = pull.clone();
+    let refresh = workspace_inputs.clone();
+    let refresh_documents = document_inputs.clone();
     session.register_request_handler("workspace/diagnostic/refresh", move |_| {
-        let mut pull = refresh.borrow_mut();
-        pull.refresh = true;
-        pull.completed = false;
+        refresh.borrow_mut().push_back(WorkspacePullInput::Refresh);
+        refresh_documents
+            .borrow_mut()
+            .push_back(DocumentPullInput::Refresh);
         Ok(Value::Null)
     });
     session.register_notification_handler("textDocument/publishDiagnostics", move |params| {
@@ -975,43 +1121,83 @@ fn register_server_handlers(
     });
     let folders = workspace_folders(workspace, remote)?;
     session.register_request_handler("workspace/workspaceFolders", move |_| Ok(folders.clone()));
-    let registration_state = pull.clone();
+    let registration_state = workspace_inputs.clone();
+    let watcher_registrations = watched_files.clone();
+    let registration_documents = document_inputs.clone();
     session.register_request_handler("client/registerCapability", move |params| {
         let registrations = params
             .as_ref()
             .and_then(|params| params.get("registrations"))
             .and_then(Value::as_array)
             .ok_or_else(|| ResponseError::invalid_params("Expected registrations"))?;
+        let mut new_watchers = Vec::new();
+        let mut new_providers = Vec::new();
+        let mut new_workspace_providers = Vec::new();
         for registration in registrations {
-            if registration["method"].as_str() == Some("workspace/diagnostic")
-                || registration["method"].as_str() == Some("textDocument/diagnostic")
-            {
-                let id = registration["id"]
-                    .as_str()
-                    .ok_or_else(|| ResponseError::invalid_params("Expected registration id"))?;
-                let mut pull = registration_state.borrow_mut();
-                pull.registrations.insert(
-                    id.into(),
-                    registration["registerOptions"]["workspaceDiagnostics"]
-                        .as_bool()
-                        .unwrap_or(false),
-                );
-                pull.enabled =
-                    pull.static_enabled || pull.registrations.values().any(|enabled| *enabled);
-                pull.identifier = registration["registerOptions"]["identifier"]
-                    .as_str()
-                    .map(str::to_owned);
-                pull.refresh = true;
-                pull.completed = false;
-            }
-            if registration.get("id").and_then(Value::as_str).is_none()
-                || registration.get("method").and_then(Value::as_str).is_none()
-            {
-                return Err(ResponseError::invalid_params(
-                    "Expected registration id and method",
+            let id = registration["id"]
+                .as_str()
+                .ok_or_else(|| ResponseError::invalid_params("Expected registration id"))?;
+            let method = registration["method"]
+                .as_str()
+                .ok_or_else(|| ResponseError::invalid_params("Expected registration method"))?;
+            if method == "textDocument/diagnostic" || method == "workspace/diagnostic" {
+                new_workspace_providers.push((
+                    id.to_owned(),
+                    WorkspaceDiagnosticProvider::parse(&registration["registerOptions"])?,
                 ));
             }
+            if method == "textDocument/diagnostic" {
+                new_providers.push((
+                    id.to_owned(),
+                    DiagnosticProvider::parse(&registration["registerOptions"])?,
+                ));
+            }
+            if method == "workspace/didChangeWatchedFiles" {
+                if !file_observations_available {
+                    return Err(ResponseError::invalid_params(
+                        "Filesystem observations are unavailable",
+                    ));
+                }
+                let values = registration["registerOptions"]["watchers"]
+                    .as_array()
+                    .ok_or_else(|| {
+                        ResponseError::invalid_params("Expected watched-file filters")
+                    })?;
+                let watchers = values
+                    .iter()
+                    .map(|value| WatchedFile::parse(value, remote))
+                    .collect::<Result<Vec<_>, _>>()?;
+                new_watchers.push((id.to_owned(), watchers));
+            }
         }
+        let retained = watcher_registrations
+            .borrow()
+            .iter()
+            .filter(|(id, _)| !new_watchers.iter().any(|(new_id, _)| new_id == *id))
+            .map(|(_, values)| values.len())
+            .sum::<usize>();
+        if retained
+            + new_watchers
+                .iter()
+                .map(|(_, values)| values.len())
+                .sum::<usize>()
+            > 1024
+        {
+            return Err(ResponseError::invalid_params(
+                "Too many watched-file filters",
+            ));
+        }
+        for (id, provider) in new_workspace_providers {
+            registration_state
+                .borrow_mut()
+                .push_back(WorkspacePullInput::Register(id, provider));
+        }
+        for (id, provider) in new_providers {
+            registration_documents
+                .borrow_mut()
+                .push_back(DocumentPullInput::Register(id, provider));
+        }
+        watcher_registrations.borrow_mut().extend(new_watchers);
         Ok(Value::Null)
     });
     session.register_request_handler("client/unregisterCapability", move |params| {
@@ -1024,15 +1210,23 @@ fn register_server_handlers(
             })
             .and_then(Value::as_array)
             .ok_or_else(|| ResponseError::invalid_params("Expected unregistrations"))?;
-        let mut pull = pull.borrow_mut();
-        for registration in values {
-            let id = registration["id"]
-                .as_str()
-                .ok_or_else(|| ResponseError::invalid_params("Expected unregistration id"))?;
-            pull.registrations.remove(id);
+        let ids = values
+            .iter()
+            .map(|registration| {
+                registration["id"]
+                    .as_str()
+                    .ok_or_else(|| ResponseError::invalid_params("Expected unregistration id"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for id in ids {
+            workspace_inputs
+                .borrow_mut()
+                .push_back(WorkspacePullInput::Unregister(id.into()));
+            document_inputs
+                .borrow_mut()
+                .push_back(DocumentPullInput::Unregister(id.into()));
+            watched_files.borrow_mut().remove(id);
         }
-        pull.enabled = pull.static_enabled || pull.registrations.values().any(|enabled| *enabled);
-        pull.completed = false;
         Ok(Value::Null)
     });
     session.register_request_handler("window/workDoneProgress/create", |params| {
@@ -1071,56 +1265,12 @@ fn register_server_handlers(
     Ok(())
 }
 
-fn apply_workspace_report(
-    store: &LspDiagnostics,
-    pull: &mut DiagnosticPull,
-    report: &Value,
-) -> Result<(), ResponseError> {
-    let items = report["items"]
-        .as_array()
-        .ok_or_else(|| ResponseError::invalid_params("Expected workspace diagnostic items"))?;
-    let mut validated = Vec::new();
-    for item in items {
-        let uri = item["uri"]
-            .as_str()
-            .ok_or_else(|| ResponseError::invalid_params("Expected workspace diagnostic URI"))?;
-        let report = match item["kind"].as_str() {
-            Some("full") => Some(decode_diagnostics(
-                store,
-                Some(&json!({"uri":uri,"version":item["version"],"diagnostics":item["items"]})),
-            )?),
-            Some("unchanged") => None,
-            _ => {
-                return Err(ResponseError::invalid_params(
-                    "Expected full or unchanged diagnostic report",
-                ));
-            }
-        };
-        validated.push((
-            uri.to_owned(),
-            item["resultId"].as_str().map(str::to_owned),
-            report,
-        ));
-    }
-    for (uri, id, report) in validated {
-        if let Some(id) = id {
-            pull.result_ids.insert(uri.clone(), id);
-        } else if report.is_some() {
-            pull.result_ids.remove(&uri);
-        }
-        if let Some((path, items, version)) = report {
-            store.replace(&path, items, version);
-        }
-    }
-    Ok(())
-}
-
 fn apply_diagnostics(store: &LspDiagnostics, params: Option<&Value>) -> Result<(), ResponseError> {
     let (path, items, version) = decode_diagnostics(store, params)?;
     store.replace(&path, items, version);
     Ok(())
 }
-fn decode_diagnostics(
+pub(crate) fn decode_diagnostics(
     store: &LspDiagnostics,
     params: Option<&Value>,
 ) -> Result<(String, Vec<DiagnosticItem>, i32), ResponseError> {
@@ -1204,26 +1354,38 @@ pub type SharedLspClient = std::rc::Rc<std::cell::RefCell<LspClient>>;
 mod tests {
     use super::*;
     #[test]
-    fn workspace_reports_cover_closed_files_reuse_ids_and_validate_atomically() {
-        let store = LspDiagnostics::new();
-        let mut pull = DiagnosticPull::default();
-        let item = json!({"range":{"start":{"line":3,"character":2},"end":{"line":3,"character":6}},"message":"closed-file error","severity":1});
-        let report = json!({"items":[{"uri":"file:///tmp/closed.rs","kind":"full","resultId":"first","items":[item]}]});
-        apply_workspace_report(&store, &mut pull, &report).unwrap();
-        assert_eq!(store.for_document("/tmp/closed.rs")[0].start_line, 3);
-        assert_eq!(pull.result_ids["file:///tmp/closed.rs"], "first");
-        apply_workspace_report(&store,&mut pull,&json!({"items":[{"uri":"file:///tmp/closed.rs","kind":"unchanged","resultId":"second"}]})).unwrap();
-        assert_eq!(store.for_document("/tmp/closed.rs").len(), 1);
-        assert_eq!(pull.result_ids["file:///tmp/closed.rs"], "second");
-        assert!(apply_workspace_report(&store,&mut pull,&json!({"items":[{"uri":"file:///tmp/closed.rs","kind":"full","items":[]},{"uri":"file:///tmp/bad.rs","kind":"full","items":[false]}]})).is_err());
-        assert_eq!(store.for_document("/tmp/closed.rs").len(), 1);
-        assert_eq!(pull.result_ids["file:///tmp/closed.rs"], "second");
+    fn watched_files_support_relative_patterns_kinds_and_literal_roots() {
+        let watch = WatchedFile::parse(&json!({"globPattern":{"baseUri":{"uri":"file:///project/a%27b"},"pattern":"**/*.{rs,toml}"},"kind":5}), false).unwrap();
+        assert!(watch.matches(Path::new("/project/a'b/src/main.rs"), 1));
+        assert!(watch.matches(Path::new("/project/a'b/Cargo.toml"), 4));
+        assert!(!watch.matches(Path::new("/project/a'b/Cargo.toml"), 2));
+        assert!(!watch.matches(Path::new("/project/other/main.rs"), 1));
+        assert!(!watch.matches(Path::new("/project/a'b/main.py"), 1));
+        assert!(
+            WatchedFile::parse(
+                &json!({"globPattern":{"baseUri":"https://example.test","pattern":"*"}}),
+                false
+            )
+            .is_err()
+        );
+        assert!(WatchedFile::parse(&json!({"globPattern":"**","kind":8}), false).is_err());
+    }
+    #[test]
+    fn method_support_tracks_negotiated_provider_capabilities() {
+        let mut client = LspClient::new("/missing/lsp.json");
+        assert!(!client.supports_method("textDocument/hover"));
+        client.server_capabilities =
+            json!({"hoverProvider":false,"definitionProvider":{},"referencesProvider":true});
+        assert!(!client.supports_method("textDocument/hover"));
+        assert!(client.supports_method("textDocument/definition"));
+        assert!(client.supports_method("textDocument/references"));
+        assert!(client.supports_method("workspace/diagnostic"));
     }
     #[test]
     fn bed_cargo_ownership_restores_user_check_on_save_configuration() {
         for original in [Some(json!(false)), Some(json!(true)), None] {
             let mut client = LspClient::new("/missing/lsp.json");
-            client.current_language = "rust".into();
+            client.current_server = "rust-analyzer".into();
             client.configured_check_on_save = original.clone();
             if let Some(value) = &original {
                 client.server_configuration.borrow_mut()["rust-analyzer"]["checkOnSave"] =
@@ -1247,16 +1409,7 @@ mod tests {
         }
     }
     #[test]
-    fn refresh_invalidates_workspace_coverage_immediately() {
-        let mut client = LspClient::new("/missing/lsp.json");
-        client.pull.borrow_mut().completed = true;
-        assert!(client.workspace_diagnostics_complete());
-        client.refresh_workspace_diagnostics();
-        assert!(!client.workspace_diagnostics_complete());
-        assert!(client.pull.borrow().refresh);
-    }
-    #[test]
-    fn remote_launch_quotes_all_candidates_without_local_cwd_or_path() {
+    fn remote_launch_quotes_candidates_and_environment_without_local_cwd_or_path() {
         let target = bed_remote::SshTarget {
             host: "user@host".into(),
             agent: "/remote/a'b/bed-headless".into(),
@@ -1266,13 +1419,14 @@ mod tests {
             "/target/$(project)",
             &["missing/server".into(), "rust-analyzer".into()],
             &["--arg=a'b".into()],
+            &BTreeMap::from([("BED_LITERAL".into(), "a'b $(touch nope) $HOME".into())]),
         )
         .unwrap();
         assert_eq!(program, PathBuf::from("ssh"));
         assert_eq!(&args[..3], &["-T", "--", "user@host"]);
         assert_eq!(
             args[3],
-            "'/remote/a'\\''b/bed-headless' 'exec' '--cwd' '/target/$(project)' '--candidate' 'missing/server' '--candidate' 'rust-analyzer' '--' '--arg=a'\\''b'"
+            "'/remote/a'\\''b/bed-headless' 'exec' '--cwd' '/target/$(project)' '--candidate' 'missing/server' '--candidate' 'rust-analyzer' '--env' 'BED_LITERAL' 'a'\\''b $(touch nope) $HOME' '--' '--arg=a'\\''b'"
         );
         assert!(options.working_directory.is_none());
         assert!(options.environment.is_empty());
@@ -1284,13 +1438,7 @@ mod tests {
     fn remote_discovery_preserves_target_paths_without_local_existence_checks() {
         let mut client = LspClient::with_config(
             "no-local-config",
-            LspConfig {
-                language_servers: vec![LanguageServerInfo {
-                    language: "rust".into(),
-                    server_paths: vec!["/remote/only/rust-analyzer".into()],
-                    ..Default::default()
-                }],
-            },
+            LspConfig::from_json(&json!({"languages":[{"name":"rust", "language_id":"rust", "file_types":["rs"], "language_server":"rust-analyzer"}],"language_servers":{"rust-analyzer":{"command":"/remote/only/rust-analyzer"}}})).unwrap(),
         );
         assert_eq!(client.find_server_path("rust"), None);
         client.set_ssh_target(Some(bed_remote::SshTarget::new("host")));
@@ -1304,6 +1452,10 @@ mod tests {
         let params = initialize_params(env!("CARGO_MANIFEST_DIR"), false).unwrap();
         assert_eq!(params["clientInfo"]["name"], "bed");
         assert_eq!(params["capabilities"]["window"]["workDoneProgress"], true);
+        assert_eq!(
+            params["capabilities"]["textDocument"]["diagnostic"],
+            json!({"dynamicRegistration":true,"relatedDocumentSupport":true})
+        );
         assert_eq!(
             params["capabilities"]["general"]["positionEncodings"],
             json!(["utf-16"])

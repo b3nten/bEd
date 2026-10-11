@@ -852,6 +852,8 @@ struct TerminalPromotionIdentity {
     process: u32,
     window: WindowId,
     root: PathBuf,
+    terminal: u64,
+    panel: u64,
     panels: Vec<u64>,
     terminals: Vec<(u64, u32)>,
 }
@@ -1742,6 +1744,11 @@ impl Runtime {
                 process: std::process::id(),
                 window: self.window.id(),
                 root: self.workbench.terminal.live_working_directory(terminal)?,
+                terminal,
+                panel: self
+                    .workbench
+                    .terminal_panel_id(terminal)
+                    .ok_or_else(|| io::Error::other("Calling terminal has no panel"))?,
                 panels: (0..self.workbench.tab_count())
                     .filter_map(|index| self.workbench.tab_window_id(index))
                     .collect(),
@@ -1821,25 +1828,11 @@ impl Runtime {
                 self.write_terminal_smoke_fixture()?;
             }
             10 | 20 => {
-                let (action, command) = if self.rendered_frames == 10 {
-                    (
-                        bed_workbench::commands::TitlebarAction::SplitRight,
-                        WindowCommand::SplitRight,
-                    )
+                let command = if self.rendered_frames == 10 {
+                    WindowCommand::SplitRight
                 } else {
-                    (
-                        bed_workbench::commands::TitlebarAction::SplitDown,
-                        WindowCommand::SplitDown,
-                    )
+                    WindowCommand::SplitDown
                 };
-                if !self
-                    .workbench
-                    .toolbar_commands()
-                    .iter()
-                    .any(|item| item.id == action.command_id() && item.enabled)
-                {
-                    return Err(io::Error::other("Terminal split control is disabled").into());
-                }
                 self.workbench.dispatch(command)?;
                 let expected = if self.rendered_frames == 10 { 2 } else { 3 };
                 let actual = self.workbench.terminal.session_ids().len();
@@ -1912,9 +1905,14 @@ impl Runtime {
             return Err(io::Error::other(error.clone()).into());
         }
         let sessions = self.workbench.terminal.session_ids();
-        if sessions.len() != 3 {
+        let expected_sessions = if self.terminal_promotion_identity.is_some() {
+            1
+        } else {
+            3
+        };
+        if sessions.len() != expected_sessions {
             return Err(io::Error::other(format!(
-                "Terminal smoke expected three independent shells, found {}",
+                "Terminal smoke expected {expected_sessions} independent shells, found {}",
                 sessions.len()
             ))
             .into());
@@ -1972,19 +1970,26 @@ impl Runtime {
                     .as_ref()
                     .map(|spec| Path::new(&spec.root))
                     != Some(identity.root.as_path())
-                || identity.panels.iter().any(|panel| !panels.contains(panel))
+                || !panels.contains(&identity.panel)
+                || identity
+                    .panels
+                    .iter()
+                    .any(|panel| *panel != identity.panel && panels.contains(panel))
                 || identity.terminals.iter().any(|(session, pid)| {
-                    self.workbench.terminal.process_id(*session) != Some(*pid)
+                    self.workbench.terminal.process_id(*session)
+                        != (*session == identity.terminal).then_some(*pid)
                 })
             {
-                return Err(io::Error::other("Workspace attachment replaced live work").into());
+                return Err(io::Error::other(
+                    "Workspace upgrade did not promote only the calling shell",
+                )
+                .into());
             }
-            for (session, _) in &identity.terminals {
-                self.workbench.terminal.live_working_directory(*session)?;
-            }
+            self.workbench
+                .terminal
+                .live_working_directory(identity.terminal)?;
             eprintln!(
-                "bEd: attachment preserved {} running shells at {}",
-                identity.terminals.len(),
+                "bEd: upgrade preserved the calling shell and closed other panels at {}",
                 identity.root.display()
             );
         }
@@ -1994,16 +1999,17 @@ impl Runtime {
         {
             return Err(io::Error::other("Initial terminal did not fill the window").into());
         }
-        if self.workbench.panel_count(bed_plugin_csv::PANEL_ID) != 1
-            || self.workbench.panel_count(bed_plugin_image::PANEL_ID) != 1
-            || self.workbench.plugin_render_outputs().is_empty()
+        let expected_companions = usize::from(self.terminal_promotion_identity.is_none());
+        if self.workbench.panel_count(bed_plugin_csv::PANEL_ID) != expected_companions
+            || self.workbench.panel_count(bed_plugin_image::PANEL_ID) != expected_companions
+            || (expected_companions != 0 && self.workbench.plugin_render_outputs().is_empty())
         {
             return Err(
                 io::Error::other("Terminal smoke expected CSV and image companions").into(),
             );
         }
         eprintln!(
-            "bEd: terminal smoke passed — full-size shell and three independently docked sessions"
+            "bEd: terminal smoke passed — full-size shell, terminal splits and {expected_sessions} surviving sessions"
         );
         Ok(())
     }
@@ -2191,7 +2197,8 @@ impl Runtime {
                 }
                 smoke.document_panels_before_split = self.workbench.panel_count("document");
                 smoke.split_source_panel = self.workbench.active_panel_id();
-                self.native_window.click_control(TitlebarAction::SplitRight);
+                self.native_menu
+                    .perform_for_smoke(crate::platform::macos_menu::MenuAction::SplitRight)?;
                 smoke.phase = 4;
             }
             (4, 10..) => {
@@ -2209,7 +2216,8 @@ impl Runtime {
                     .into());
                 }
                 smoke.split_source_panel = self.workbench.active_panel_id();
-                self.native_window.click_control(TitlebarAction::SplitDown);
+                self.native_menu
+                    .perform_for_smoke(crate::platform::macos_menu::MenuAction::SplitDown)?;
                 smoke.phase = 5;
             }
             (5, 12..) => {
@@ -2227,7 +2235,7 @@ impl Runtime {
                     .into());
                 }
                 eprintln!(
-                    "bEd: native menu/titlebar/material smoke passed; six tools created three panels each, both split controls created distinct document panes; toolbar frames {:?}",
+                    "bEd: native menu/titlebar/material smoke passed; six tools created three panels each, both split menu actions created distinct document panes; toolbar frames {:?}",
                     self.native_window.control_frames()
                 );
                 smoke.phase = 6;

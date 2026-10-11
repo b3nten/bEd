@@ -441,6 +441,7 @@ impl SettingsView<'_> {
                         self.draw_mac_settings(ui);
                     }
                     self.draw_boolean(ui, "UI Animations", "ui_animations", true);
+                    self.draw_boolean(ui, "Show tab bar add button", "tab_bar_add_button", false);
                     self.draw_boolean(ui, "Rainbow cursor and line numbers", "rainbow", true);
                     ui.dummy([0.0, ui.current_font_size()]);
                     ui.text("Editor");

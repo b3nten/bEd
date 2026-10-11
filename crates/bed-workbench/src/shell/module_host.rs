@@ -1099,9 +1099,6 @@ impl Workbench {
         }
         commands.retain(|command| command.id != TitlebarAction::Structure.command_id());
         for item in &mut commands {
-            if item.id.starts_with("bed.editor.split_") {
-                item.enabled = self.active_tab_index().is_some() || self.focused_terminal();
-            }
             if let Some(label) = self.modules.label(&item.id, &context) {
                 item.label = label;
             }

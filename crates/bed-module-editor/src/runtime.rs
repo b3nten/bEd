@@ -360,9 +360,9 @@ impl EditorRuntime {
         if !client.is_process_started() {
             return None;
         }
-        let language = client.current_language();
+        let server = client.current_server();
         if let Some(progress) = client.progress().into_iter().find(|job| !job.finished) {
-            let mut text = format!("{language}: {}", progress.title);
+            let mut text = format!("{server}: {}", progress.title);
             if let Some(message) = progress
                 .message
                 .filter(|message| !message.is_empty() && *message != progress.title)
@@ -375,7 +375,7 @@ impl EditorRuntime {
             }
             return Some(text);
         }
-        (!client.is_initialized()).then(|| format!("{language}: starting language server…"))
+        (!client.is_initialized()).then(|| format!("{server}: starting language server…"))
     }
     fn text_context_menu(
         &mut self,
@@ -914,6 +914,11 @@ impl EditorRuntime {
                     pool.retry_language(&language)?;
                 }
             }
+            LspAction::RestartInstance(instance) => {
+                if session.lsp().is_some() {
+                    session.retry_server(&instance)?;
+                }
+            }
             LspAction::OpenLocation(location) => {
                 let origin = self.lsp_ui.take_navigation_origin();
                 if let Some(origin) = origin
@@ -1025,6 +1030,54 @@ mod tests {
     use super::*;
     use bed_document_session::ByteEdit;
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
+
+    #[test]
+    fn dashboard_restart_only_replaces_the_selected_server_root() {
+        use bed_document_session::SessionOptions;
+        use bed_lsp::workspace_lsp::ServerInstanceId;
+        let directory = crate::test_support::TempDir::new();
+        let config = directory.write(
+            "lsp.json",
+            br#"{"languages":[],"language_servers":{"shared":{"command":"/bed-no-server"}}}"#,
+        );
+        let mut session = EditorSession::with_options(SessionOptions {
+            project_root: Some(directory.root().to_owned()),
+            lsp_config: Some(config),
+            ..Default::default()
+        })
+        .unwrap();
+        let first = ServerInstanceId {
+            server: "shared".into(),
+            root: directory.root().join("first"),
+        };
+        let second = ServerInstanceId {
+            server: "shared".into(),
+            root: directory.root().join("second"),
+        };
+        assert!(!session.retry_server(&first).unwrap());
+        assert!(!session.retry_server(&second).unwrap());
+        let generation = |session: &EditorSession, instance: &ServerInstanceId| {
+            session
+                .lsp()
+                .unwrap()
+                .server_statuses()
+                .into_iter()
+                .find(|status| &status.instance == instance)
+                .unwrap()
+                .generation
+        };
+        let first_before = generation(&session, &first);
+        let second_before = generation(&session, &second);
+        EditorRuntime::default()
+            .open_lsp_action(
+                &mut session,
+                LspAction::RestartInstance(second.clone()),
+                &mut Vec::new(),
+            )
+            .unwrap();
+        assert_eq!(generation(&session, &first), first_before);
+        assert_ne!(generation(&session, &second), second_before);
+    }
 
     #[cfg(unix)]
     #[test]

@@ -2,8 +2,7 @@
 mod color;
 use bed_editing::identity::DocumentId;
 use bed_workbench_api::{
-    CommandContext, HostContext, HostRequest, MenuSlot, Module, ModulePanel, PanelPlacement,
-    Registrar,
+    CommandContext, HostContext, HostRequest, Module, ModulePanel, PanelPlacement, Registrar,
 };
 use dear_imgui_rs::{
     ColorButtonFlags, ColorInputMode, ColorPickerFlags, ColorPickerMode, StyleVar,
@@ -24,8 +23,6 @@ impl Module for ColorModule {
     fn register(&self, registrar: &mut Registrar<'_>) {
         registrar.panel_options(PANEL_ID, "Color Picker", true, PanelPlacement::Center, None);
         registrar.command(OPEN_COMMAND, "Color Picker", Some("image"));
-        registrar.menu(MenuSlot::Application, OPEN_COMMAND);
-        registrar.toolbar(OPEN_COMMAND);
     }
     fn command(
         &mut self,

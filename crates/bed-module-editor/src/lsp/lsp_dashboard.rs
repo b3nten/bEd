@@ -3,7 +3,7 @@ use crate::presentation::LspPresentationOptions;
 use bed_lsp::{
     lsp_client::{LspClient, WorkDoneProgress},
     lsp_config::resolve_server_paths,
-    workspace_lsp::WorkspaceLsp,
+    workspace_lsp::{ServerInstanceId, WorkspaceLsp},
 };
 use bed_ui::util::popup_style::tooltip_text;
 use dear_imgui_rs::{
@@ -18,6 +18,8 @@ use std::{
 #[derive(Clone, Debug, Default)]
 pub struct LspServerInfo {
     pub language: String,
+    pub server: String,
+    pub instance: Option<ServerInstanceId>,
     pub server_path: String,
     pub is_found: bool,
     pub is_active: bool,
@@ -25,13 +27,18 @@ pub struct LspServerInfo {
     pub stderr: String,
     pub progress: Vec<WorkDoneProgress>,
 }
+#[derive(Clone, Debug)]
+enum RestartRequest {
+    Server(String),
+    Instance(ServerInstanceId),
+}
 pub struct LspDashboard {
     show: bool,
     window_pos: [f32; 2],
     window_size: [f32; 2],
     server_infos: Vec<LspServerInfo>,
     notification: Option<(String, f32)>,
-    restart_requested: Option<String>,
+    restart_requested: Option<RestartRequest>,
 }
 impl Default for LspDashboard {
     fn default() -> Self {
@@ -67,8 +74,25 @@ impl LspDashboard {
             self.server_infos = workspace.dashboard_servers();
         }
     }
-    pub fn take_restart_language(&mut self) -> Option<String> {
-        std::mem::take(&mut self.restart_requested)
+    pub fn take_restart_server(&mut self) -> Option<String> {
+        if matches!(self.restart_requested, Some(RestartRequest::Server(_))) {
+            match self.restart_requested.take().unwrap() {
+                RestartRequest::Server(server) => Some(server),
+                RestartRequest::Instance(_) => unreachable!(),
+            }
+        } else {
+            None
+        }
+    }
+    pub fn take_restart_instance(&mut self) -> Option<ServerInstanceId> {
+        if matches!(self.restart_requested, Some(RestartRequest::Instance(_))) {
+            match self.restart_requested.take().unwrap() {
+                RestartRequest::Instance(instance) => Some(instance),
+                RestartRequest::Server(_) => unreachable!(),
+            }
+        } else {
+            None
+        }
     }
     pub fn render(
         &mut self,
@@ -162,7 +186,7 @@ impl LspDashboard {
     }
     fn render_controls(&mut self, ui: &Ui, client: &mut impl DashboardBackend) -> Option<PathBuf> {
         for info in &mut self.server_infos {
-            info.progress = client.dashboard_progress(&info.language);
+            info.progress = client.dashboard_progress(info);
         }
         let mut action = None;
         ui.text("Language Server Protocol Dashboard");
@@ -172,11 +196,20 @@ impl LspDashboard {
         }
         ui.same_line();
         if ui.button("Reload LSP.json") {
-            if let Err(error) = client.reload_dashboard_config() {
-                eprintln!("LSP: configuration reload failed: {error}");
+            match client.reload_dashboard_config() {
+                Ok(()) => {
+                    let message = if client.dashboard_is_discovering() {
+                        "Reloading LSP configuration..."
+                    } else {
+                        "LSP configuration reloaded"
+                    };
+                    self.notification = Some((message.into(), 2.0));
+                }
+                Err(error) => {
+                    self.notification = Some((format!("LSP configuration: {error}"), 8.0));
+                }
             }
             self.server_infos = client.dashboard_servers();
-            self.notification = Some((format!("LSP Servers: {}", self.server_infos.len()), 2.0));
         }
         ui.same_line();
         if ui.button("Open LSP.json") {
@@ -191,11 +224,23 @@ impl LspDashboard {
                 );
             }
         }
-        ui.text(format!("{} servers configured", self.server_infos.len()));
-        if !client.dashboard_current_language().is_empty() {
+        ui.text(format!("{} server entries", self.server_infos.len()));
+        if client.dashboard_is_discovering() {
+            ui.text_disabled("Discovering language servers and project roots...");
+        }
+        let sources = client.dashboard_config_sources();
+        if !sources.is_empty() {
+            ui.text_disabled("Configuration layers (later files override earlier ones):");
+            for source in sources {
+                ui.text_wrapped(source.to_string_lossy());
+            }
+        }
+        if !client.dashboard_current_server().is_empty() {
             ui.same_line();
             if ui.button("Restart Server") {
-                self.restart_requested = Some(client.dashboard_current_language().to_owned());
+                self.restart_requested = Some(RestartRequest::Server(
+                    client.dashboard_current_server().to_owned(),
+                ));
             }
         }
         if let Some(error) = client.dashboard_error() {
@@ -204,9 +249,14 @@ impl LspDashboard {
                 error,
             );
         }
-        for info in &self.server_infos {
+        for (index, info) in self.server_infos.iter().enumerate() {
+            let label = if let Some(instance) = &info.instance {
+                format!("{} ({})", info.server, instance.root.display())
+            } else {
+                info.server.clone()
+            };
             for job in &info.progress {
-                let mut text = format!("{}: {}", info.language, job.title);
+                let mut text = format!("{label}: {}", job.title);
                 if let Some(message) = &job.message
                     && !message.is_empty()
                     && message != &job.title
@@ -229,12 +279,12 @@ impl LspDashboard {
             if let Some(error) = &info.error {
                 ui.text_colored(
                     bed_ui::presentation::readable_color(ui, [1.0, 0.4, 0.3, 1.0]),
-                    format!("{}: {error}", info.language),
+                    format!("{label}: {error}"),
                 );
             }
             if !info.stderr.is_empty()
                 && ui.collapsing_header(
-                    format!("{} stderr", info.language),
+                    format!("{label} stderr##{index}"),
                     dear_imgui_rs::TreeNodeFlags::empty(),
                 )
             {
@@ -254,13 +304,18 @@ impl LspDashboard {
                     ui.text_disabled("No LSP servers configured");
                 } else if let Some(_table) = ui.begin_table_with_flags(
                     "ServerTable",
-                    4,
+                    5,
                     TableFlags::ROW_BG | TableFlags::SCROLL_Y | TableFlags::RESIZABLE,
                 ) {
                     ui.table_setup_column(
-                        "Language",
+                        "Server / Languages",
                         TableColumnFlags::NONE,
                         Some(TableColumnWidth::Fixed(120.0)),
+                    );
+                    ui.table_setup_column(
+                        "Project Root",
+                        TableColumnFlags::NONE,
+                        Some(TableColumnWidth::Stretch(0.0)),
                     );
                     ui.table_setup_column(
                         "Server Path",
@@ -281,13 +336,26 @@ impl LspDashboard {
                     for (index, info) in self.server_infos.iter().enumerate() {
                         ui.table_next_row();
                         ui.table_set_column_index(0);
-                        ui.text(&info.language);
+                        ui.text(&info.server);
+                        if info.language != info.server {
+                            ui.text_disabled(&info.language);
+                        }
                         ui.table_set_column_index(1);
+                        if let Some(instance) = &info.instance {
+                            let root = instance.root.to_string_lossy();
+                            ui.text(display_path(&root));
+                            if ui.is_item_hovered() {
+                                tooltip_text(ui, &root);
+                            }
+                        } else {
+                            ui.text_disabled("Standalone client");
+                        }
+                        ui.table_set_column_index(2);
                         ui.text(display_path(&info.server_path));
                         if ui.is_item_hovered() {
                             tooltip_text(ui, &info.server_path);
                         }
-                        ui.table_set_column_index(2);
+                        ui.table_set_column_index(3);
                         ui.text_colored(
                             bed_ui::presentation::readable_color(
                                 ui,
@@ -303,7 +371,7 @@ impl LspDashboard {
                                 "● Missing"
                             },
                         );
-                        ui.table_set_column_index(3);
+                        ui.table_set_column_index(4);
                         let (color, text) = if !info.is_found {
                             ([0.5, 0.5, 0.5, 1.0], "N/A")
                         } else if info.is_active {
@@ -313,8 +381,12 @@ impl LspDashboard {
                         };
                         ui.text_colored(bed_ui::presentation::readable_color(ui, color), text);
                         ui.same_line();
-                        if ui.button(format!("Restart##{}-{index}", info.language)) {
-                            self.restart_requested = Some(info.language.clone());
+                        if ui.button(format!("Restart##{}-{index}", info.server)) {
+                            self.restart_requested = Some(if let Some(instance) = &info.instance {
+                                RestartRequest::Instance(instance.clone())
+                            } else {
+                                RestartRequest::Server(info.server.clone())
+                            });
                         }
                     }
                 }
@@ -365,17 +437,23 @@ impl LspDashboard {
 }
 trait DashboardBackend {
     fn dashboard_servers(&self) -> Vec<LspServerInfo>;
-    fn dashboard_progress(&self, language: &str) -> Vec<WorkDoneProgress>;
+    fn dashboard_progress(&self, server: &LspServerInfo) -> Vec<WorkDoneProgress>;
     fn dashboard_config_path(&self) -> &Path;
     fn reload_dashboard_config(&mut self) -> io::Result<()>;
-    fn dashboard_current_language(&self) -> &str {
+    fn dashboard_current_server(&self) -> &str {
         ""
     }
     fn dashboard_error(&self) -> Option<&str>;
+    fn dashboard_config_sources(&self) -> Vec<PathBuf> {
+        vec![self.dashboard_config_path().to_owned()]
+    }
+    fn dashboard_is_discovering(&self) -> bool {
+        false
+    }
 }
 impl DashboardBackend for LspClient {
-    fn dashboard_progress(&self, language: &str) -> Vec<WorkDoneProgress> {
-        if self.current_language() == language {
+    fn dashboard_progress(&self, server: &LspServerInfo) -> Vec<WorkDoneProgress> {
+        if self.current_server() == server.server {
             self.progress()
         } else {
             Vec::new()
@@ -384,15 +462,26 @@ impl DashboardBackend for LspClient {
     fn dashboard_servers(&self) -> Vec<LspServerInfo> {
         self.language_servers()
             .iter()
-            .map(|config| {
-                let path = resolve_server_paths(&config.server_paths);
-                let current = self.current_language() == config.language;
+            .map(|(name, config)| {
+                let path = resolve_server_paths(&config.command);
+                let current = self.current_server() == name.as_str();
                 LspServerInfo {
-                    language: config.language.clone(),
+                    language: self
+                        .config()
+                        .languages
+                        .iter()
+                        .filter(|language| {
+                            language.enabled && language.language_server.as_ref() == Some(name)
+                        })
+                        .map(|language| language.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    server: name.clone(),
+                    instance: None,
                     server_path: path
                         .as_ref()
                         .map(|path| path.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| "Not found".into()),
+                        .unwrap_or_else(|| config.command.join(", ")),
                     is_found: path.is_some(),
                     is_active: path.is_some() && self.is_initialized() && current,
                     error: current
@@ -414,16 +503,19 @@ impl DashboardBackend for LspClient {
     fn reload_dashboard_config(&mut self) -> io::Result<()> {
         self.reload_config()
     }
-    fn dashboard_current_language(&self) -> &str {
-        self.current_language()
+    fn dashboard_current_server(&self) -> &str {
+        self.current_server()
     }
     fn dashboard_error(&self) -> Option<&str> {
         self.last_error()
     }
 }
 impl DashboardBackend for WorkspaceLsp {
-    fn dashboard_progress(&self, language: &str) -> Vec<WorkDoneProgress> {
-        self.client_for_language(language)
+    fn dashboard_progress(&self, server: &LspServerInfo) -> Vec<WorkDoneProgress> {
+        server
+            .instance
+            .as_ref()
+            .and_then(|instance| self.client_for_instance(instance))
             .map(|client| client.borrow().progress())
             .unwrap_or_default()
     }
@@ -431,17 +523,35 @@ impl DashboardBackend for WorkspaceLsp {
         self.server_statuses()
             .into_iter()
             .map(|status| LspServerInfo {
-                language: status.language,
+                language: self
+                    .config()
+                    .languages
+                    .iter()
+                    .filter(|language| {
+                        language.enabled
+                            && language.language_server.as_ref() == Some(&status.instance.server)
+                    })
+                    .map(|language| language.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                server: status.instance.server.clone(),
                 server_path: status
                     .path
                     .as_ref()
                     .map(|path| path.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Not found".into()),
+                    .unwrap_or_else(|| {
+                        self.config()
+                            .language_servers
+                            .get(&status.instance.server)
+                            .map(|server| server.command.join(", "))
+                            .unwrap_or_else(|| "Not found".into())
+                    }),
                 is_found: status.path.is_some(),
                 is_active: status.initialized,
                 error: status.last_error,
                 stderr: status.stderr,
                 progress: status.progress,
+                instance: Some(status.instance),
             })
             .collect()
     }
@@ -453,6 +563,12 @@ impl DashboardBackend for WorkspaceLsp {
     }
     fn dashboard_error(&self) -> Option<&str> {
         self.config_error()
+    }
+    fn dashboard_config_sources(&self) -> Vec<PathBuf> {
+        self.configuration_sources()
+    }
+    fn dashboard_is_discovering(&self) -> bool {
+        self.is_discovering()
     }
 }
 
@@ -476,7 +592,23 @@ mod tests {
     #[test]
     fn dashboard_discovery_is_per_configuration_and_cached_until_refresh() {
         let directory = TempDir::new();
-        let path = directory.write("lsp.json",serde_json::to_vec(&json!({"languages":[{"language_name":"same","language_file_extensions":[".a"],"language_server_paths":[concat!(env!("CARGO_MANIFEST_DIR"), "/../.."),concat!(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."),"/Cargo.toml")]},{"language_name":"same","language_file_extensions":[".b"],"language_server_paths":["/bed-no-server"]}]})).unwrap().as_slice());
+        let path = directory.write(
+            "lsp.json",
+            &serde_json::to_vec(&json!({
+                "languages": [
+                    {"name":"a", "file_types":["a"], "language_server":"a-found"},
+                    {"name":"b", "file_types":["b"], "language_server":"b-missing"}
+                ],
+                "language_servers": {
+                    "a-found": {"command": [
+                        concat!(env!("CARGO_MANIFEST_DIR"), "/../.."),
+                        concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml")
+                    ]},
+                    "b-missing": {"command":"/bed-no-server"}
+                }
+            }))
+            .unwrap(),
+        );
         let mut client = LspClient::new(path.clone());
         let mut dashboard = LspDashboard::default();
         dashboard.set_show(true, &client);

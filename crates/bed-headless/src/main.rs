@@ -31,7 +31,7 @@ fn run() -> io::Result<u8> {
     }
     Err(io::Error::new(
         io::ErrorKind::InvalidInput,
-        "usage: bed-headless --protocol-version | --stdio | exec --cwd DIR [--candidate PROGRAM ...] -- PROGRAM ARGS",
+        "usage: bed-headless --protocol-version | --stdio | exec --cwd DIR [--candidate PROGRAM ...] [--env KEY VALUE ...] -- PROGRAM ARGS",
     ))
 }
 
@@ -103,9 +103,22 @@ fn dispatch(request: bed_remote::Request) -> Result<bed_remote::Response, bed_re
 fn exec(arguments: &[String]) -> io::Result<u8> {
     let mut cwd = None;
     let mut candidates = Vec::new();
+    let mut environment = Vec::new();
     let mut index = 0;
     while index < arguments.len() && arguments[index] != "--" {
         match arguments[index].as_str() {
+            "--env" if index + 2 < arguments.len() => {
+                let key = &arguments[index + 1];
+                let value = &arguments[index + 2];
+                if key.is_empty() || key.contains(['=', '\0']) || value.contains('\0') {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "invalid exec environment",
+                    ));
+                }
+                environment.push((key.clone(), value.clone()));
+                index += 3;
+            }
             "--cwd" | "--candidate" if index + 1 < arguments.len() => {
                 if arguments[index] == "--cwd" {
                     cwd = Some(arguments[index + 1].clone());
@@ -150,6 +163,7 @@ fn exec(arguments: &[String]) -> io::Result<u8> {
         if let Some(path) = child_path(&program) {
             command.env("PATH", path);
         }
+        command.envs(environment.iter().map(|(key, value)| (key, value)));
         match command.spawn() {
             Ok(mut child) => {
                 return Ok(child

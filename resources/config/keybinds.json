@@ -1,7 +1,6 @@
 {
     "toggle_file_finder" : "p",
     "toggle_settings_window" : ",",
-    "toggle_sidebar" : "s",
     "toggle_terminal" : "t",
     "lsp_symbol_info" : "i",
     "lsp_find_ref" : "r",

@@ -6818,3 +6818,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --- End of original notice ---
+
+=== Helix language catalog attribution ===
+The selected language server launch recipes and file associations in
+resources/config/lsp.json are adapted from Helix's languages.toml, revision
+ba40e547426b0f9896c8bdc699a4ab11f2b37dbc:
+https://github.com/helix-editor/helix/blob/ba40e547426b0f9896c8bdc699a4ab11f2b37dbc/languages.toml
+
+Helix contributors. Mozilla Public License Version 2.0.
+The original license is retained in resources/config/LICENSE.helix.
+Bed changes include editor identifiers, selected single-server associations,
+root markers, and omission of configuration for deferred editor features.

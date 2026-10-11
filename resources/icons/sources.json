@@ -1260,15 +1260,15 @@
     "key": "files",
     "upstream": "lucide",
     "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
-    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/panel-left.svg",
-    "sha256": "029f67b9e3eeb7ddf7c7c499b174c50388725e8ea50d4ea59ed7dbaf8d61cb82"
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/folder-tree.svg",
+    "sha256": "5ae312d0220f67ddfba08d34920574199ad6193e9aaabe277d7c4ba373d7a2ab"
   },
   {
     "key": "structure",
     "upstream": "lucide",
     "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
-    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/list-tree.svg",
-    "sha256": "e4c994b829b8b4d0ddc66c1ce14f9f56d0347e37b1b1fb124111831a61ec3890"
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/table-of-contents.svg",
+    "sha256": "b7a02d4ae47df5be478eb583936ba817686d0a43d25f66ac82ac8cebd0681875"
   },
   {
     "key": "diagnostics",

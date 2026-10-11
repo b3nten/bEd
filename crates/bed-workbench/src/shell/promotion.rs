@@ -34,9 +34,11 @@ impl Workbench {
     /// panel instances and terminal processes stay alive. A saved workspace's
     /// layout is restored, with live panels added to its largest main dock.
     pub fn attach_workspace(&mut self, root: &Path) -> io::Result<bool> {
-        self.attach_workspace_with_terminal(root, self.terminal.active_session_id())
+        self.attach_workspace_with_terminal(root, None)
     }
 
+    /// A terminal upgrade carries only that shell into the workspace and reuses
+    /// its first terminal slot. Ordinary attachment retains all live panels.
     pub(super) fn attach_workspace_with_terminal(
         &mut self,
         root: &Path,
@@ -77,7 +79,29 @@ impl Workbench {
             .as_ref()
             .and_then(|store| store.layout(&spec))
             .cloned();
+        let terminal_panel = terminal
+            .map(|id| {
+                self.terminal_panel_id(id).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "Upgrading terminal is no longer open",
+                    )
+                })
+            })
+            .transpose()?;
         self.persist_workspace()?;
+        if let Some(panel) = terminal_panel {
+            let indices = self
+                .tabs
+                .iter()
+                .enumerate()
+                .filter_map(|(index, tab)| (tab.id != panel).then_some(index))
+                .collect();
+            if !self.close_tabs(indices)? {
+                return Ok(false);
+            }
+            self.switch_to_tab(0);
+        }
         if let Some(store) = &mut self.store {
             spec = store.record_workspace(spec)?;
         }
@@ -115,7 +139,7 @@ impl Workbench {
         let mut carried = self.tabs.iter().map(|tab| tab.id).collect::<Vec<_>>();
         let mut focused = self.focused;
         if let Some(saved) = saved {
-            let saved = self.prepare_attached_layout(saved)?;
+            let saved = self.prepare_attached_layout(saved, terminal_panel)?;
             let restored = saved["panels"]
                 .as_array()
                 .into_iter()
@@ -137,7 +161,11 @@ impl Workbench {
             });
             self.finish_workspace_graft();
         } else {
-            self.compose_default_layout(terminal.and_then(|id| self.terminal_panel_id(id)))?;
+            self.compose_default_layout(terminal_panel.or_else(|| {
+                self.terminal
+                    .active_session_id()
+                    .and_then(|id| self.terminal_panel_id(id))
+            }))?;
         }
         self.finish_workspace_open()?;
         self.last_state = None;
@@ -194,7 +222,11 @@ impl Workbench {
             })
     }
 
-    fn prepare_attached_layout(&mut self, mut state: Value) -> io::Result<Value> {
+    fn prepare_attached_layout(
+        &mut self,
+        mut state: Value,
+        mut terminal: Option<u64>,
+    ) -> io::Result<Value> {
         let mut seen = HashSet::new();
         let valid = state["panels"].as_array().is_some_and(|panels| {
             panels.iter().all(|panel| {
@@ -279,7 +311,12 @@ impl Workbench {
                 .and_then(|kind| self.modules.registry.panel(kind))
                 .filter(|descriptor| descriptor.singleton)
                 .and_then(|descriptor| self.tabs.iter().find(|tab| tab.panel.kind == descriptor.id))
-                .map(|tab| tab.id);
+                .map(|tab| tab.id)
+                .or_else(|| {
+                    (self.saved_panel_type(panel) == Some(bed_module_terminal::PANEL_ID))
+                        .then(|| terminal.take())
+                        .flatten()
+                });
             let id = if let Some(id) = existing {
                 id
             } else if used.insert(old) {
@@ -404,7 +441,15 @@ mod tests {
             .map(|item| item.id)
             .collect::<Vec<_>>();
         assert!(ids.contains(&"bed.terminal.new".into()));
-        assert!(ids.contains(&"bed.editor.split_right".into()));
+        assert!(!ids.contains(&"bed.editor.split_right".into()));
+        assert!(!ids.contains(&"bed.editor.split_down".into()));
+        assert!(!ids.contains(&"bed.color.open".into()));
+        assert!(
+            workbench
+                .application_commands()
+                .iter()
+                .all(|item| item.id != "bed.color.open")
+        );
         assert!(ids.contains(&"bed.files.new".into()));
         assert!(ids.contains(&"bed.search.new".into()));
         assert!(ids.contains(&"bed.git.show".into()));
@@ -551,13 +596,6 @@ mod tests {
             crate::workspace::tiling::EXTENT / 2,
             minimum,
         );
-        let splits = workbench
-            .toolbar_commands()
-            .into_iter()
-            .filter(|item| item.id.starts_with("bed.editor.split_"))
-            .collect::<Vec<_>>();
-        assert_eq!(splits.len(), 2);
-        assert!(splits.iter().all(|item| item.enabled));
         workbench.dispatch(WindowCommand::SplitRight).unwrap();
         workbench.dispatch(WindowCommand::SplitDown).unwrap();
         assert_eq!(workbench.terminal.session_ids().len(), 3);
@@ -615,7 +653,72 @@ mod tests {
     }
 
     #[test]
-    fn attach_requested_during_a_frame_waits_until_tick_without_closing_documents() {
+    fn terminal_upgrade_without_a_saved_terminal_slot_uses_the_largest_area() {
+        let dir = TempDir::new();
+        let saved_file = dir.write("project/saved.txt", b"workspace document");
+        let other_file = dir.write("other.txt", b"rootless document");
+        let mut workbench = workspace(&dir);
+        workbench.dispatch(WindowCommand::NewTerminal).unwrap();
+        workbench.terminal.set_visible(true, false).unwrap();
+        let terminal = workbench.terminal.active_session_id().unwrap();
+        let panel = workbench.terminal_panel_id(terminal).unwrap();
+        let pid = workbench.terminal.process_id(terminal).unwrap();
+        workbench.open_or_focus(&other_file).unwrap();
+        let other_panel = workbench.active_panel_id().unwrap();
+        let spec = WorkspaceSpec::local(
+            dir.path("project")
+                .canonicalize()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+        );
+        let mut layout = crate::workspace::tiling::Layout::default();
+        let largest = layout.split(1, 0, 2500, 1).unwrap();
+        let mut tiling = TilingState::new(layout.clone());
+        tiling.assign(20, 1);
+        tiling.assign(21, largest);
+        workbench
+            .store
+            .as_mut()
+            .unwrap()
+            .set_layout(
+                &spec,
+                json!({
+                    "version":2,"tiling":tiling.to_value([20,21]),"panels":[
+                        {"id":20,"kind":"explorer"},
+                        {"id":21,"kind":"document","path":saved_file}
+                    ]
+                }),
+            )
+            .unwrap();
+        assert!(
+            workbench
+                .attach_workspace_with_terminal(&dir.path("project"), Some(terminal))
+                .unwrap()
+        );
+        assert_eq!(workbench.terminal.process_id(terminal), Some(pid));
+        assert_eq!(workbench.terminal.session_ids(), vec![terminal]);
+        assert_eq!(workbench.active_panel_id(), Some(panel));
+        assert_eq!(workbench.area_for_panel(panel), Some(largest));
+        assert_eq!(workbench.tiling.layout, layout);
+        assert!(workbench.tabs.iter().all(|tab| tab.id != other_panel));
+        assert!(workbench.session.document_for_path(&other_file).is_none());
+        assert!(workbench.session.document_for_path(&saved_file).is_some());
+        workbench.cleanup().unwrap();
+        let mut reopened = workspace(&dir);
+        reopened
+            .open_startup_workspace(&dir.path("project"))
+            .unwrap();
+        assert_eq!(reopened.tiling.layout, layout);
+        assert_eq!(reopened.terminal.session_count(), 1);
+        assert_eq!(reopened.panel_count(bed_module_projects::PANEL_ID), 0);
+        assert!(reopened.session.document_for_path(&other_file).is_none());
+        assert!(reopened.session.document_for_path(&saved_file).is_some());
+        reopened.cleanup().unwrap();
+    }
+
+    #[test]
+    fn terminal_upgrade_waits_until_tick_then_closes_other_panels() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let dir = TempDir::new();
         let file = dir.write("project/file.txt", b"keep");
@@ -652,18 +755,12 @@ mod tests {
         workbench.tick().unwrap();
         assert!(workbench.workspace_spec.is_some());
         assert_eq!(workbench.terminal.process_id(requested), Some(pid));
-        assert_eq!(workbench.terminal.session_count(), 2);
+        assert_eq!(workbench.terminal.session_ids(), vec![requested]);
         let area = workbench.area_for_panel(requested_panel).unwrap();
         assert_eq!(workbench.tiling.layout.area(area).rect.min, [1754, 7255]);
-        let document = workbench
-            .tabs
-            .iter()
-            .find(|tab| tab.id == document)
-            .unwrap()
-            .panel
-            .document()
-            .unwrap();
-        assert_eq!(workbench.session.snapshot(document).unwrap().bytes, b"keep");
+        assert!(workbench.tabs.iter().all(|tab| tab.id != document));
+        assert!(workbench.session.document_ids().is_empty());
+        assert_eq!(workbench.active_panel_id(), Some(requested_panel));
         workbench.cleanup().unwrap();
     }
 

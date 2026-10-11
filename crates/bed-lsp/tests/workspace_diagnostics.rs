@@ -1,10 +1,7 @@
 //! Exercise workspace pulls with no open documents, including partial reports,
 //! dynamic registration, identifiers, refresh and cancellation of old requests.
 #![cfg(unix)]
-use bed_lsp::{
-    lsp_client::LspClient,
-    lsp_config::{LanguageServerInfo, LspConfig},
-};
+use bed_lsp::{lsp_client::LspClient, lsp_config::LspConfig};
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
@@ -31,14 +28,14 @@ impl Fixture {
     fn client(&self) -> LspClient {
         let mut client = LspClient::with_config(
             self.0.join("missing.json"),
-            LspConfig {
-                language_servers: vec![LanguageServerInfo {
-                    language: "python".into(),
-                    file_extensions: vec![".py".into()],
-                    server_paths: vec![self.0.join("server.py").to_string_lossy().into_owned()],
-                    server_args: vec![],
-                }],
-            },
+            LspConfig::from_json(&serde_json::json!({
+                "languages":[{"name":"python","language_id":"python","file_types":["py"],"language_server":"python"}],
+                "language_servers":{"python":{
+                    "command":self.0.join("server.py"),"args":[],
+                    "settings":{"python":{"analysis":{"diagnosticMode":"workspace"}}}
+                }}
+            }))
+            .unwrap(),
         );
         client.set_workspace(self.0.to_str().unwrap());
         assert!(client.start_server("python", "").unwrap());

@@ -1,5 +1,7 @@
 //! Shared ownership regressions around the translated document/command layers.
-use bed_document_session::{ClosePolicy, EditorSession, SessionEvent, SessionOptions};
+use bed_document_session::{
+    ClosePolicy, EditorSession, LspConfigMode, SessionEvent, SessionOptions,
+};
 use bed_editing::{editor_commands::CursorReveal, editor_view_state::Selection};
 use std::{
     fs,
@@ -29,6 +31,99 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn layered_lsp_inherits_catalog_and_project_overrides_without_index_startup() {
+    use std::{os::unix::fs::PermissionsExt, time::Instant};
+    let fixture = Fixture::new();
+    let user = fixture.file(
+        "user-lsp.json",
+        br#"{"languages":[{"name":"rust","enabled":false}]}"#,
+    );
+    let source = fixture.file("unopened.py", b"pass\n");
+    let custom_source = fixture.file("opened.bedpy", b"pass\n");
+    let server = fixture.file("fixture-server", b"#!/bin/sh\nprintf started > \"$1\"\n");
+    fs::set_permissions(&server, fs::Permissions::from_mode(0o755)).unwrap();
+    let started = fixture.0.join("server-started");
+    fs::create_dir(fixture.0.join(".bed")).unwrap();
+    fs::write(
+        fixture.0.join(".bed/lsp.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "languages": [{"name":"python", "file_types":["py","bedpy"], "language_server":"fixture"}],
+            "language_servers": {"fixture": {"command":server, "args":[started]}}
+        })).unwrap(),
+    ).unwrap();
+    let mut session = EditorSession::with_options(SessionOptions {
+        project_root: Some(fixture.0.clone()),
+        lsp_config: Some(user),
+        lsp_config_mode: LspConfigMode::Layered,
+        monitoring: true,
+        lsp_file_observations: true,
+        ..Default::default()
+    })
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        session.tick();
+        if !session.lsp().unwrap().is_discovering()
+            && !session
+                .project_diagnostics()
+                .status
+                .starts_with("Discovering")
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Project configuration discovery timed out"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let config = session.lsp().unwrap().config();
+    assert!(
+        config
+            .languages
+            .iter()
+            .any(|language| language.name == "lua")
+    );
+    assert!(
+        !config
+            .languages
+            .iter()
+            .find(|language| language.name == "rust")
+            .unwrap()
+            .enabled
+    );
+    assert!(
+        !started.exists(),
+        "Project indexing must not launch servers"
+    );
+    session.observe_project_file_changes(&[bed_remote::FilesystemChange::Modified {
+        path: source.to_string_lossy().into_owned(),
+    }]);
+    session.tick();
+    assert!(
+        !started.exists(),
+        "Filesystem observations must not launch servers"
+    );
+    let document = session.open_file(&custom_source).unwrap();
+    while !started.exists() {
+        session.tick();
+        assert!(
+            Instant::now() < deadline,
+            "Opening the configured language did not launch its server"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        session
+            .lsp()
+            .unwrap()
+            .client_for_document(document)
+            .is_some()
+    );
 }
 
 #[test]

@@ -1,3 +1,4 @@
+
 {
     "agent_model": "anthropic/claude-3-5-haiku-20241022",
     "ai_autocomplete": false,
@@ -37,6 +38,7 @@
     "background_opacity": 1.0,
     "effect_preset": "off",
     "ui_animations": true,
+    "tab_bar_add_button": false,
     "plugins": {
         "bed.mascot": {
             "squeaks_enabled": true

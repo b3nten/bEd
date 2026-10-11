@@ -1837,6 +1837,20 @@ fn the_tab_bar_add_button_opens_a_picker_and_places_its_window_in_that_area() {
     let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
     let mut fixture = Fixture::t_layout();
 
+    let (bar_min, bar_max) = fixture.workbench.tiling_ui.bar_rects[&2];
+    let first_tab = fixture.group(2).tabs[0];
+    assert_eq!(
+        fixture.workbench.tiling_ui.tab_rects[&first_tab].0[0],
+        bar_min[0]
+    );
+    fixture.press_at([bar_min[0] + 8.0, (bar_min[1] + bar_max[1]) * 0.5]);
+    fixture.release();
+    fixture.context.binding().with_bound_context(|| unsafe {
+        assert_eq!((*sys::igGetCurrentContext()).OpenPopupStack.Size, 0);
+    });
+    fixture.workbench.settings.settings["tab_bar_add_button"] = json!(true);
+    fixture.frame();
+
     let before = fixture.workbench.tiling.layout.clone();
     let count = fixture.workbench.tabs.len();
     let (min, max) = fixture.workbench.tiling_ui.bar_rects[&2];
@@ -1878,6 +1892,8 @@ fn the_tab_bar_add_button_opens_a_picker_and_places_its_window_in_that_area() {
 fn right_clicking_a_blank_area_uses_the_same_window_picker_and_fills_that_area() {
     let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
     let mut fixture = Fixture::t_layout();
+    fixture.workbench.settings.settings["tab_bar_add_button"] = json!(true);
+    fixture.frame();
 
     let popup = |fixture: &Fixture| {
         fixture.context.binding().with_bound_context(|| unsafe {
@@ -1926,6 +1942,7 @@ fn right_clicking_a_blank_area_uses_the_same_window_picker_and_fills_that_area()
     assert!(fixture.group(1).tabs.is_empty());
     let before = fixture.workbench.tiling.layout.clone();
     let count = fixture.workbench.tabs.len();
+    fixture.workbench.settings.settings["tab_bar_add_button"] = json!(false);
     let point = fixture.screen([2500, 5000]);
     fixture.context.io_mut().add_mouse_pos_event(point);
     fixture.frame();

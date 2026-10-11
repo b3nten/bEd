@@ -85,6 +85,12 @@ impl TitlebarAction {
 pub fn core_toolbar_commands() -> Vec<CommandItem> {
     TitlebarAction::ALL
         .into_iter()
+        .filter(|action| {
+            !matches!(
+                action,
+                TitlebarAction::SplitRight | TitlebarAction::SplitDown
+            )
+        })
         .zip([
             ("New Project Search", "search"),
             ("Debug", "debug"),
@@ -92,8 +98,6 @@ pub fn core_toolbar_commands() -> Vec<CommandItem> {
             ("New Terminal", "terminal"),
             ("New File Explorer", "files"),
             ("New Structure", "structure"),
-            ("Split Right", "split_right"),
-            ("Split Down", "split_down"),
             ("New Settings", "gear"),
         ])
         .map(|(action, (label, icon))| CommandItem {

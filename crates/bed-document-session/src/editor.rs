@@ -324,12 +324,8 @@ impl Editor {
         if let Some(client) = self.lsp_client() {
             let mut client = client.borrow_mut();
             let result = client.init(&self.state.path).and_then(|_| {
-                client.did_open(
-                    &self.state.path,
-                    &self.state.join(),
-                    self.state.version,
-                    &self.state.language_id,
-                )
+                // Protocol IDs come from the LSP catalog, not the editor's syntax ID.
+                client.did_open(&self.state.path, &self.state.join(), self.state.version, "")
             });
             if let Err(error) = result {
                 eprintln!("Bed: LSP document open failed: {error}");

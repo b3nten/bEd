@@ -1,7 +1,7 @@
 //! Opt-in acceptance against the real installed rust-analyzer, without fake
 //! server responses or changes to the user's LSP configuration.
 use bed_document_session::{
-    ClosePolicy, EditorSession, SessionOptions,
+    ClosePolicy, EditorSession, LspConfigMode, SessionOptions,
     editor_session::{DocumentId, ViewId, WorkspaceId},
 };
 use bed_editing::editor_commands::CursorReveal;
@@ -25,11 +25,9 @@ impl Drop for Cleanup {
 }
 
 fn existing_user_config() -> PathBuf {
-    let config = PathBuf::from(
-        std::env::var_os("HOME")
-            .expect("a home directory is required for the user's existing LSP configuration"),
-    )
-    .join("bed/config/lsp.json");
+    let config = bed_settings::Settings::get_user_config_dir()
+        .expect("a user settings directory is required for the existing LSP configuration")
+        .join("lsp.json");
     assert!(config.is_file(), "existing user LSP configuration required");
     config
 }
@@ -69,6 +67,7 @@ fn real_session_user_config_reports_and_clears_rust_syntax_diagnostics() {
     let mut session = EditorSession::with_options(SessionOptions {
         project_root: Some(cleanup.0.clone()),
         lsp_config: Some(existing_user_config()),
+        lsp_config_mode: LspConfigMode::Layered,
         ..Default::default()
     })
     .unwrap();
@@ -76,35 +75,36 @@ fn real_session_user_config_reports_and_clears_rust_syntax_diagnostics() {
     let view = session.create_view(document).unwrap();
     let canonical = fs::canonicalize(&path).unwrap();
     let key = canonical.to_str().unwrap();
-    let client = session
-        .lsp()
-        .unwrap()
-        .client_for_document(document)
-        .expect("Rust document must be associated with a language client");
-    assert!(Rc::ptr_eq(
-        &client,
-        &session.lsp().unwrap().client_for_path(key).unwrap()
-    ));
     let deadline = Instant::now() + Duration::from_secs(120);
-    while !client.borrow().is_initialized() || !client.borrow().is_document_open(key) {
+    let client = loop {
         let report = session.tick();
         assert!(
             report.errors.is_empty(),
             "session errors: {:?}",
             report.errors
         );
+        if let Some(client) = session.lsp().unwrap().client_for_document(document) {
+            assert!(
+                client.borrow().is_process_started(),
+                "Rust process stopped: {:?}",
+                session.lsp().unwrap().server_statuses()
+            );
+            if client.borrow().is_initialized() && client.borrow().is_document_open(key) {
+                break client;
+            }
+        }
         assert!(
             Instant::now() < deadline,
-            "Rust initialize/open timed out: {:?}",
-            session.lsp().unwrap().server_statuses()
-        );
-        assert!(
-            client.borrow().is_process_started(),
-            "Rust process stopped: {:?}",
-            session.lsp().unwrap().server_statuses()
+            "Rust discovery/initialize/open timed out: {:?}; configuration error: {:?}",
+            session.lsp().unwrap().server_statuses(),
+            session.lsp().unwrap().config_error()
         );
         thread::sleep(Duration::from_millis(10));
-    }
+    };
+    assert!(Rc::ptr_eq(
+        &client,
+        &session.lsp().unwrap().client_for_path(key).unwrap()
+    ));
     session
         .with_commands(view, |commands| {
             commands.set_cursor(0, 12, false, CursorReveal::Ensure);
@@ -187,43 +187,45 @@ fn real_bed_repository_session_reports_unsaved_syntax_diagnostics() {
     let mut session = EditorSession::with_options(SessionOptions {
         project_root: Some(repo),
         lsp_config: Some(existing_user_config()),
+        lsp_config_mode: LspConfigMode::Layered,
         ..Default::default()
     })
     .unwrap();
     let document = session.open_file(&path).unwrap();
     let view = session.create_view(document).unwrap();
     let key = session.snapshot(document).unwrap().path;
-    let client = session
-        .lsp()
-        .unwrap()
-        .client_for_document(document)
-        .unwrap();
     let started = Instant::now();
     let deadline = started + Duration::from_secs(180);
     let mut progress_titles = BTreeSet::new();
     let mut active_progress_seen = false;
-    while !client.borrow().is_initialized() || !client.borrow().is_document_open(&key) {
+    loop {
         let report = session.tick();
-        observe_progress(
-            &session,
-            document,
-            &mut progress_titles,
-            &mut active_progress_seen,
-        );
         assert!(
             report.errors.is_empty(),
             "session errors: {:?}",
             report.errors
         );
+        if let Some(client) = session.lsp().unwrap().client_for_document(document) {
+            observe_progress(
+                &session,
+                document,
+                &mut progress_titles,
+                &mut active_progress_seen,
+            );
+            assert!(
+                client.borrow().is_process_started(),
+                "Bed Rust process stopped: {:?}",
+                session.lsp().unwrap().server_statuses()
+            );
+            if client.borrow().is_initialized() && client.borrow().is_document_open(&key) {
+                break;
+            }
+        }
         assert!(
             Instant::now() < deadline,
-            "Bed Rust initialize/open timed out: {:?}",
-            session.lsp().unwrap().server_statuses()
-        );
-        assert!(
-            client.borrow().is_process_started(),
-            "Bed Rust process stopped: {:?}",
-            session.lsp().unwrap().server_statuses()
+            "Bed Rust discovery/initialize/open timed out: {:?}; configuration error: {:?}",
+            session.lsp().unwrap().server_statuses(),
+            session.lsp().unwrap().config_error()
         );
         thread::sleep(Duration::from_millis(10));
     }
@@ -325,7 +327,10 @@ fn real_bed_repository_hover_and_definition() {
     fs::create_dir_all(&temporary).unwrap();
     let cleanup = Cleanup(temporary);
     let config = cleanup.0.join("lsp.json");
-    fs::write(&config, serde_json::to_vec(&json!({"languages":[{"language_name":"rust","language_file_extensions":[".rs"],"language_server_paths":["rust-analyzer"]}]})).unwrap()).unwrap();
+    fs::write(&config, serde_json::to_vec(&json!({
+        "languages":[{"name":"rust","language_id":"rust","file_types":["rs"],"language_server":"rust-analyzer"}],
+        "language_servers":{"rust-analyzer":{"command":"rust-analyzer"}}
+    })).unwrap()).unwrap();
     let path = repo.join("crates/bed-lsp/src/lsp_client.rs");
     let bytes = fs::read(&path).unwrap();
     let text = std::str::from_utf8(&bytes).unwrap();

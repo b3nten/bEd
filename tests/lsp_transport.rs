@@ -61,6 +61,10 @@ fn main() {
     }
     let tests: &[(&str, fn())] = &[
         (
+            "layered_shared_servers_roots_and_reload",
+            layered_shared_servers_roots_and_reload,
+        ),
+        (
             "initialize_and_latest_queued_open",
             initialize_and_latest_queued_open,
         ),
@@ -115,8 +119,8 @@ fn main() {
             inherited_descendant_pipe_does_not_hold_shutdown,
         ),
         (
-            "reload_failure_clears_configuration",
-            reload_failure_clears_configuration,
+            "reload_failure_preserves_configuration_and_server",
+            reload_failure_preserves_configuration_and_server,
         ),
         (
             "initialize_batch_preserves_handshake_order",
@@ -129,6 +133,10 @@ fn main() {
         (
             "shared_session_save_diagnostics_render_in_each_custom_view",
             shared_session_save_diagnostics_render_in_each_custom_view,
+        ),
+        (
+            "shared_session_pulls_unsaved_diagnostics_and_clears_them_on_undo",
+            shared_session_pulls_unsaved_diagnostics_and_clears_them_on_undo,
         ),
         (
             "work_done_progress_is_main_thread_owned_and_resets",
@@ -208,10 +216,12 @@ impl Fixture {
         ));
         fs::create_dir_all(&root).unwrap();
         let config = root.join("lsp.json");
-        fs::write(&config, serde_json::to_vec(&json!({"languages":[{"language_name":"mock","language_file_extensions":[".rs"],"language_server_paths":[std::env::current_exe().unwrap()]}]})).unwrap()).unwrap();
+        fs::write(&config, serde_json::to_vec(&json!({
+            "languages":[{"name":"mock","language_id":"mock","file_types":["rs"],"language_server":"mock"}],
+            "language_servers":{"mock":{"command":std::env::current_exe().unwrap(),"args":["--mock-server",scenario]}}
+        })).unwrap()).unwrap();
         let document = root.join("sp ace😀.rs").to_string_lossy().into_owned();
         let mut client = LspClient::new(config);
-        client.set_server_arguments("mock", vec!["--mock-server".into(), scenario.into()]);
         client.set_workspace(root.to_str().unwrap());
         assert!(client.init(&document).unwrap());
         Self {
@@ -304,10 +314,14 @@ fn initialize_and_latest_queued_open() {
         json!({"window":{"workDoneProgress":true},"workspace":{"workspaceFolders":true,"configuration":true,"diagnostics":{"refreshSupport":true}},"textDocument":{"diagnostic":{"dynamicRegistration":true,"relatedDocumentSupport":true},"synchronization":{"didSave":true},"hover":{},"definition":{"linkSupport":true},"references":{},"publishDiagnostics":{"relatedInformation":true}},"general":{"positionEncodings":["utf-16"]}})
     );
     assert_eq!(messages[1]["method"], "initialized");
-    assert_eq!(messages[2]["method"], "textDocument/didOpen");
-    assert_eq!(messages[2]["params"]["textDocument"]["text"], "latest😀");
-    assert_eq!(messages[2]["params"]["textDocument"]["languageId"], "mock");
-    assert_eq!(messages[2]["params"]["textDocument"]["version"], 2);
+    assert_eq!(messages[2]["method"], "workspace/didChangeConfiguration");
+    assert_eq!(messages[3]["method"], "textDocument/didOpen");
+    assert_eq!(messages[3]["params"]["textDocument"]["text"], "latest😀");
+    assert_eq!(
+        messages[3]["params"]["textDocument"]["languageId"],
+        "provided"
+    );
+    assert_eq!(messages[3]["params"]["textDocument"]["version"], 2);
     assert_eq!(
         messages
             .iter()
@@ -486,7 +500,7 @@ fn incremental_utf16_order_and_save() {
     fixture.ready();
     fixture
         .client
-        .did_open(&fixture.document, "a😀b".as_bytes(), 1, "ignored")
+        .did_open(&fixture.document, "a😀b".as_bytes(), 1, "mock")
         .unwrap();
     let changes = [
         DocumentChange {
@@ -864,12 +878,16 @@ fn inherited_descendant_pipe_does_not_hold_shutdown() {
     assert!(started.elapsed() < Duration::from_millis(650));
 }
 
-fn reload_failure_clears_configuration() {
+fn reload_failure_preserves_configuration_and_server() {
     let mut fixture = Fixture::new("basic");
     fixture.ready();
+    let pid = fixture.client.process_id();
+    let configuration = fixture.client.config().clone();
     fs::write(fixture.client.config_path(), b"invalid JSON").unwrap();
     assert!(fixture.client.reload_config().is_err());
-    assert!(fixture.client.language_servers().is_empty());
+    assert_eq!(fixture.client.config(), &configuration);
+    assert_eq!(fixture.client.process_id(), pid);
+    assert!(fixture.client.is_initialized());
 }
 
 fn initialize_batch_preserves_handshake_order() {
@@ -1000,6 +1018,82 @@ fn native_fixture_supports_navigation_hover_and_diagnostics() {
             .len(),
         2
     );
+}
+
+fn shared_session_pulls_unsaved_diagnostics_and_clears_them_on_undo() {
+    use bed_editing::editor_commands::CursorReveal;
+    let fixture = PoolFixture::new(9901, "basic");
+    let path = fixture.root.join("unsaved.rs");
+    fs::write(&path, b"valid\n").unwrap();
+    let mut session = EditorSession::with_options(SessionOptions {
+        project_root: Some(fixture.root.clone()),
+        lsp_config: Some(fixture.root.join("lsp.json")),
+        ..SessionOptions::default()
+    })
+    .unwrap();
+    session
+        .lsp_mut()
+        .unwrap()
+        .set_server_arguments("rust", vec!["--mock-server".into(), "document-pull".into()]);
+    let document = session.open_file(&path).unwrap();
+    let canonical = session.snapshot(document).unwrap().path;
+    let client = session
+        .lsp()
+        .unwrap()
+        .client_for_document(document)
+        .unwrap();
+    let diagnostics = client.borrow().diagnostics();
+    wait_until(|| {
+        session.tick();
+        client.borrow().is_initialized()
+    });
+    let left = session.create_view(document).unwrap();
+    let right = session.create_view(document).unwrap();
+    session
+        .with_commands(left, |commands| {
+            commands.set_cursor(0, 5, false, CursorReveal::Ensure);
+            commands.type_text(b"INVALID");
+        })
+        .unwrap();
+    wait_until(|| {
+        session.tick();
+        !diagnostics.for_document(&canonical).is_empty()
+    });
+    assert_eq!(
+        diagnostics.for_document(&canonical)[0].message,
+        "Unsaved pull diagnostic"
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"valid\n");
+    assert!(session.snapshot(document).unwrap().dirty);
+    assert!(!session.lsp().unwrap().diagnostic_coverage_complete());
+    session
+        .with_commands(right, |commands| commands.undo())
+        .unwrap();
+    wait_until(|| {
+        session.tick();
+        diagnostics.for_document(&canonical).is_empty()
+    });
+    assert_eq!(session.snapshot(document).unwrap().bytes, b"valid\n");
+    let transcript = shared_request(&client, "test/transcript");
+    let transcript = transcript.as_array().unwrap();
+    assert_eq!(
+        transcript
+            .iter()
+            .filter(|message| message["method"] == "textDocument/didOpen")
+            .count(),
+        1
+    );
+    assert!(
+        transcript
+            .iter()
+            .any(|message| message["method"] == "textDocument/diagnostic")
+    );
+    assert!(
+        !transcript
+            .iter()
+            .any(|message| message["method"] == "textDocument/didSave")
+    );
+    session.shutdown(ClosePolicy::Discard).unwrap();
 }
 
 fn shared_session_save_diagnostics_render_in_each_custom_view() {
@@ -1233,14 +1327,17 @@ impl PoolFixture {
         ));
         fs::create_dir_all(&root).unwrap();
         let config = root.join("lsp.json");
-        fs::write(&config, serde_json::to_vec(&json!({"languages":[
-            {"language_name":"cpp","language_file_extensions":[".cpp"],"language_server_paths":[std::env::current_exe().unwrap()]},
-            {"language_name":"rust","language_file_extensions":[".rs"],"language_server_paths":[std::env::current_exe().unwrap()]}
-        ]})).unwrap()).unwrap();
-        let mut pool = WorkspaceLsp::new(WorkspaceId(id), config, root.clone());
-        for language in ["cpp", "rust"] {
-            pool.set_server_arguments(language, vec!["--mock-server".into(), scenario.into()]);
-        }
+        fs::write(&config, serde_json::to_vec(&json!({
+            "languages":[
+                {"name":"cpp","language_id":"cpp","file_types":["cpp"],"language_server":"cpp"},
+                {"name":"rust","language_id":"rust","file_types":["rs"],"language_server":"rust"}
+            ],
+            "language_servers":{
+                "cpp":{"command":std::env::current_exe().unwrap(),"args":["--mock-server",scenario]},
+                "rust":{"command":std::env::current_exe().unwrap(),"args":["--mock-server",scenario]}
+            }
+        })).unwrap()).unwrap();
+        let pool = WorkspaceLsp::new(WorkspaceId(id), config, root.clone());
         Self { root, pool }
     }
     fn path(&self, name: &str) -> String {
@@ -1585,7 +1682,10 @@ fn workspace_failure_stderr_and_restart_are_actionable() {
         1
     );
     let missing = fixture.root.join("missing.json");
-    fs::write(&missing,serde_json::to_vec(&json!({"languages":[{"language_name":"rust","language_file_extensions":[".rs"],"language_server_paths":["/bed-guaranteed-no-rust-server"]}]})).unwrap()).unwrap();
+    fs::write(&missing,serde_json::to_vec(&json!({
+        "languages":[{"name":"rust","language_id":"rust","file_types":["rs"],"language_server":"rust"}],
+        "language_servers":{"rust":{"command":"/bed-guaranteed-no-rust-server"}}
+    })).unwrap()).unwrap();
     let mut pool = WorkspaceLsp::new(WorkspaceId(61), missing, fixture.root.clone());
     pool.register_document(
         DocumentId(2),
@@ -1629,9 +1729,12 @@ impl NavigationWorkbench {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")),
         )
         .unwrap();
-        fs::copy(
-            fixture.root.join("lsp.json"),
+        let mut configuration: Value =
+            serde_json::from_slice(&fs::read(fixture.root.join("lsp.json")).unwrap()).unwrap();
+        configuration["language_servers"]["rust"]["args"] = json!(["--mock-server", "basic"]);
+        fs::write(
             settings.config_dir.join("lsp.json"),
+            serde_json::to_vec(&configuration).unwrap(),
         )
         .unwrap();
         for key in [
@@ -1652,11 +1755,6 @@ impl NavigationWorkbench {
             .initialize(&mut context, WorkbenchHostMode::Fullscreen)
             .unwrap();
         workbench.set_project(&fixture.root).unwrap();
-        workbench
-            .session
-            .lsp_mut()
-            .unwrap()
-            .set_server_arguments("rust", vec!["--mock-server".into(), "basic".into()]);
         workbench.open_or_focus(&path).unwrap();
         let document = workbench.active_document().unwrap();
         let requesting = workbench.active_view().unwrap();
@@ -1677,6 +1775,15 @@ impl NavigationWorkbench {
             })
             .unwrap();
         let path = workbench.session.snapshot(document).unwrap().path;
+        wait_until(|| {
+            workbench.tick().unwrap();
+            workbench
+                .session
+                .lsp()
+                .unwrap()
+                .client_for_document(document)
+                .is_some()
+        });
         let client = workbench
             .session
             .lsp()
@@ -2190,9 +2297,10 @@ fn workspace_config_reload_rebinds_documents_and_parse_failure_keeps_live_server
         .pool
         .update_document_snapshot(DocumentId(1), &first, b"latest", 3, "rust")
         .unwrap();
-    // The pinned Python config supplies --stdio. Our self-spawning executable
-    // exposes that native mode, so this also exercises the preserved format.
-    fs::write(fixture.pool.config_path(),serde_json::to_vec(&json!({"languages":[{"language_name":"python","language_file_extensions":[".rs"],"language_server_paths":[std::env::current_exe().unwrap()]}]})).unwrap()).unwrap();
+    fs::write(fixture.pool.config_path(),serde_json::to_vec(&json!({
+        "languages":[{"name":"python","language_id":"python","file_types":["rs"],"language_server":"python"}],
+        "language_servers":{"python":{"command":std::env::current_exe().unwrap(),"args":["--stdio"]}}
+    })).unwrap()).unwrap();
     fixture.pool.reload_config().unwrap();
     fixture.ready();
     let current = fixture.pool.client_for_document(DocumentId(1)).unwrap();
@@ -2215,9 +2323,206 @@ fn workspace_config_reload_rebinds_documents_and_parse_failure_keeps_live_server
     fs::write(fixture.pool.config_path(), b"invalid JSON").unwrap();
     assert!(fixture.pool.reload_config().is_err());
     assert!(fixture.pool.config_error().is_some());
-    assert_eq!(fixture.pool.config().language_servers[0].language, "python");
+    assert!(
+        fixture
+            .pool
+            .config()
+            .language_servers
+            .contains_key("python")
+    );
     assert_eq!(current.borrow().process_id(), pid);
     assert!(current.borrow().is_initialized());
+}
+
+fn layered_shared_servers_roots_and_reload() {
+    let root = std::env::temp_dir().join(format!(
+        "bed-layered-lsp-{}-{}",
+        std::process::id(),
+        TEMP_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(root.join("packages/a/src")).unwrap();
+    fs::create_dir_all(root.join("packages/b/src")).unwrap();
+    fs::create_dir_all(root.join(".bed")).unwrap();
+    let root = fs::canonicalize(root).unwrap();
+    fs::write(root.join("Cargo.toml"), "workspace").unwrap();
+    fs::write(root.join("packages/a/Cargo.toml"), "nested").unwrap();
+    fs::write(root.join("packages/b/Cargo.toml"), "nested").unwrap();
+    let config = root.join("user.json");
+    fs::write(&config, serde_json::to_vec(&json!({
+        "languages":[
+            {"name":"foundation-a","language_id":"first-language","file_types":["foo"],"roots":["Cargo.toml"],"workspace_lsp_roots":["packages/a","packages/b"],"language_server":"foundation"},
+            {"name":"foundation-b","language_id":"second-language","file_types":["bar"],"roots":["Cargo.toml"],"workspace_lsp_roots":["packages/a","packages/b"],"language_server":"foundation"}
+        ],
+        "language_servers":{"foundation":{"command":std::env::current_exe().unwrap(),"args":["--mock-server","native"],"environment":{"BED_LSP_PROCESS_TEST_MARKER":"user"},"settings":{"foundation":{"value":"user"}}}}
+    })).unwrap()).unwrap();
+    let project = root.join(".bed/lsp.json");
+    fs::write(&project, serde_json::to_vec(&json!({"language_servers":{"foundation":{"environment":{"BED_LSP_PROCESS_TEST_MARKER":"project"},"settings":{"foundation":{"value":"project"}}}}})).unwrap()).unwrap();
+    let mut pool = WorkspaceLsp::new_layered(WorkspaceId(1000), config, root.clone());
+    let path = |relative: &str| root.join(relative).to_string_lossy().into_owned();
+    let first = path("packages/a/src/first.foo");
+    let second = path("packages/a/src/second.bar");
+    let third = path("packages/b/src/third.foo");
+    pool.register_document(DocumentId(1), &first, b"old", 1, "foo")
+        .unwrap();
+    pool.register_document(DocumentId(2), &second, b"second", 2, "bar")
+        .unwrap();
+    pool.register_document(DocumentId(3), &third, b"third", 3, "foo")
+        .unwrap();
+    pool.register_document(
+        DocumentId(4),
+        &path("packages/a/src/closed.foo"),
+        b"closed before discovery",
+        0,
+        "foo",
+    )
+    .unwrap();
+    pool.unregister_document(DocumentId(4)).unwrap();
+    pool.update_document_snapshot(DocumentId(1), &first, b"latest unsaved", 4, "foo")
+        .unwrap();
+    wait_until(|| {
+        pool.poll();
+        !pool.is_discovering()
+            && (1..=3).all(|id| {
+                pool.client_for_document(DocumentId(id))
+                    .is_some_and(|client| client.borrow().is_initialized())
+            })
+    });
+    let a = pool.client_for_document(DocumentId(1)).unwrap();
+    let b = pool.client_for_document(DocumentId(2)).unwrap();
+    let c = pool.client_for_document(DocumentId(3)).unwrap();
+    assert!(Rc::ptr_eq(&a, &b));
+    assert!(!Rc::ptr_eq(&a, &c));
+    let transcript = shared_request(&a, "test/transcript");
+    let opens: Vec<_> = transcript
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["method"] == "textDocument/didOpen")
+        .collect();
+    assert_eq!(opens.len(), 2);
+    assert_eq!(
+        opens[0]["params"]["textDocument"]["languageId"],
+        "first-language"
+    );
+    assert_eq!(opens[0]["params"]["textDocument"]["text"], "latest unsaved");
+    assert_eq!(opens[0]["params"]["textDocument"]["version"], 4);
+    assert_eq!(
+        opens[1]["params"]["textDocument"]["languageId"],
+        "second-language"
+    );
+    assert_eq!(
+        transcript[0]["params"]["rootPath"],
+        root.join("packages/a").to_str().unwrap()
+    );
+    assert_eq!(
+        transcript
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["method"] == "workspace/didChangeConfiguration")
+            .unwrap()["params"]["settings"]["foundation"]["value"],
+        "project"
+    );
+    assert_eq!(shared_request(&a, "test/environment")["marker"], "project");
+    // Expanding the index must not create a server for an unopened language.
+    pool.note_project_paths(&[path("unopened.py")]);
+    assert_eq!(
+        pool.server_statuses()
+            .iter()
+            .filter(|status| status.process_id.is_some())
+            .count(),
+        2
+    );
+    assert!(!pool.diagnostic_coverage_complete());
+    let origin = pool.request_origin(DocumentId(1), ViewId(1), 1, 0).unwrap();
+    let pid = a.borrow().process_id();
+    let pending = path("packages/a/src/pending.bar");
+    pool.register_document(DocumentId(5), &pending, b"pending", 1, "bar")
+        .unwrap();
+    pool.update_document_snapshot(DocumentId(5), &pending, b"latest pending", 2, "bar")
+        .unwrap();
+    fs::write(&project, b"broken JSON").unwrap();
+    pool.reload_config().unwrap();
+    wait_until(|| {
+        pool.poll();
+        !pool.is_discovering() && pool.client_for_document(DocumentId(5)).is_some()
+    });
+    assert!(pool.config_error().unwrap().contains(".bed/lsp.json"));
+    assert_eq!(a.borrow().process_id(), pid);
+    assert!(pool.origin_is_current(&origin));
+    let transcript = shared_request(&a, "test/transcript");
+    let pending_open = transcript
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| {
+            message["method"] == "textDocument/didOpen"
+                && message["params"]["textDocument"]["uri"]
+                    == LspUri::file_uri_from_path(&pending).unwrap().to_string()
+        })
+        .unwrap();
+    assert_eq!(
+        pending_open["params"]["textDocument"]["text"],
+        "latest pending"
+    );
+    assert_eq!(pending_open["params"]["textDocument"]["version"], 2);
+    // Marker observations invalidate cached listings and move only affected
+    // documents to the newly resolved root.
+    fs::remove_file(root.join("packages/a/Cargo.toml")).unwrap();
+    fs::write(root.join("packages/a/src/Cargo.toml"), "new root").unwrap();
+    pool.observe_file_changes(&[
+        bed_remote::FilesystemChange::Removed {
+            path: path("packages/a/Cargo.toml"),
+        },
+        bed_remote::FilesystemChange::Created {
+            path: path("packages/a/src/Cargo.toml"),
+        },
+    ])
+    .unwrap();
+    wait_until(|| {
+        pool.poll();
+        !pool.is_discovering()
+            && pool
+                .client_for_document(DocumentId(1))
+                .is_some_and(|client| client.borrow().is_initialized())
+    });
+    let moved = pool.client_for_document(DocumentId(1)).unwrap();
+    assert!(!Rc::ptr_eq(&moved, &a));
+    assert!(Rc::ptr_eq(
+        &moved,
+        &pool.client_for_document(DocumentId(2)).unwrap()
+    ));
+    assert!(Rc::ptr_eq(
+        &c,
+        &pool.client_for_document(DocumentId(3)).unwrap()
+    ));
+    assert_eq!(
+        moved.borrow().workspace(),
+        root.join("packages/a/src").to_str().unwrap()
+    );
+    assert!(!pool.origin_is_current(&origin));
+    // Successful reload invalidates old replies and rebinds only enabled docs.
+    fs::write(
+        &project,
+        serde_json::to_vec(&json!({"languages":[{"name":"foundation-a","enabled":false}]}))
+            .unwrap(),
+    )
+    .unwrap();
+    pool.reload_config().unwrap();
+    wait_until(|| {
+        pool.poll();
+        !pool.is_discovering()
+            && pool
+                .client_for_document(DocumentId(2))
+                .is_some_and(|client| client.borrow().is_initialized())
+    });
+    assert!(pool.client_for_document(DocumentId(1)).is_none());
+    assert!(pool.client_for_document(DocumentId(3)).is_none());
+    assert!(!pool.origin_is_current(&origin));
+    assert!(!a.borrow().is_process_started());
+    pool.shutdown();
+    drop(pool);
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn mock_server(scenario: &str) {
@@ -2256,6 +2561,7 @@ fn mock_server(scenario: &str) {
     let mut definition_result = None;
     let mut hold_definitions = false;
     let mut held_definitions = Vec::new();
+    let mut pull_documents = std::collections::BTreeMap::<String, (String, i32)>::new();
     while let Ok(packet) = connection.read_packet() {
         let messages = match packet {
             Packet::Single(message) => vec![message],
@@ -2272,6 +2578,33 @@ fn mock_server(scenario: &str) {
                 continue;
             };
             transcript.push(Message::Request(request.clone()).value());
+            if scenario == "document-pull" {
+                if matches!(
+                    request.method.as_str(),
+                    "textDocument/didOpen" | "textDocument/didChange"
+                ) {
+                    let params = request.params.as_ref().unwrap();
+                    let document = &params["textDocument"];
+                    let text = if request.method == "textDocument/didOpen" {
+                        &document["text"]
+                    } else {
+                        &params["contentChanges"][0]["text"]
+                    };
+                    pull_documents.insert(
+                        document["uri"].as_str().unwrap().into(),
+                        (
+                            text.as_str().unwrap().into(),
+                            document["version"].as_i64().unwrap() as i32,
+                        ),
+                    );
+                } else if request.method == "textDocument/didClose" {
+                    pull_documents.remove(
+                        request.params.as_ref().unwrap()["textDocument"]["uri"]
+                            .as_str()
+                            .unwrap(),
+                    );
+                }
+            }
             if scenario == "session-diagnostics" {
                 if request.method == "textDocument/didChange" {
                     last_changed_version =
@@ -2322,11 +2655,33 @@ fn mock_server(scenario: &str) {
                     } else {
                         let sync = match scenario {
                             "full" => json!({"change":1,"save":false}),
+                            "document-pull" => json!({"change":1,"save":true}),
                             "none" => json!({"change":0,"save":false}),
                             "save-no-text" => json!({"change":2,"save":{"includeText":false}}),
                             _ => json!({"change":2,"save":{"includeText":true}}),
                         };
-                        Ok(json!({"capabilities":{"textDocumentSync":sync}}))
+                        let mut capabilities = json!({"textDocumentSync":sync,"hoverProvider":true,"definitionProvider":true,"referencesProvider":true});
+                        if scenario == "document-pull" {
+                            capabilities["diagnosticProvider"] = json!({"identifier":"fixture","interFileDependencies":false,"workspaceDiagnostics":false});
+                        }
+                        Ok(json!({"capabilities":capabilities}))
+                    }
+                }
+                "textDocument/diagnostic" if scenario == "document-pull" => {
+                    let params = request.params.as_ref().unwrap();
+                    assert_eq!(params["identifier"], "fixture");
+                    let (text, version) =
+                        &pull_documents[params["textDocument"]["uri"].as_str().unwrap()];
+                    let result_id = format!("pull-{version}");
+                    if params["previousResultId"] == result_id {
+                        Ok(json!({"kind":"unchanged","resultId":result_id}))
+                    } else {
+                        let items = if text.contains("INVALID") {
+                            json!([{"range":{"start":{"line":0,"character":5},"end":{"line":0,"character":12}},"severity":1,"message":"Unsaved pull diagnostic"}])
+                        } else {
+                            json!([])
+                        };
+                        Ok(json!({"kind":"full","resultId":result_id,"items":items}))
                     }
                 }
                 "shutdown" => Ok(Value::Null),

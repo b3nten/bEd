@@ -56,6 +56,15 @@ struct ByteTransaction {
     redo: Vec<ByteEdit>,
 }
 
+/// How the configured LSP file relates to bed's bundled language catalog.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LspConfigMode {
+    /// The supplied file is a complete configuration, for embedded hosts.
+    #[default]
+    Snapshot,
+    /// Merge bundled defaults, the supplied user overrides, and project overrides.
+    Layered,
+}
 /// No service, settings seeding, GUI, clipboard or global directory is touched
 /// by defaults. Disk/process services require explicit host configuration.
 #[derive(Clone, Debug, Default)]
@@ -67,6 +76,9 @@ pub struct SessionOptions {
     pub highlighting: bool,
     pub persistent_history: bool,
     pub lsp_config: Option<PathBuf>,
+    pub lsp_config_mode: LspConfigMode,
+    /// The host forwards project-wide filesystem observations to this session.
+    pub lsp_file_observations: bool,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ClosePolicy {
@@ -1529,7 +1541,7 @@ impl EditorSession {
         if let Some(paths) = self.project_diagnostics.take_discovered_paths()
             && let Some(pool) = &mut self.lsp
         {
-            pool.start_project_languages(&paths);
+            pool.note_project_paths(&paths);
         }
         if let Some(pool) = &mut self.lsp {
             pool.set_project_check_owner(self.project_diagnostics.owns_cargo_check());
@@ -1719,7 +1731,10 @@ impl EditorSession {
         let monitoring_changed = options.monitoring != self.options.monitoring;
         let start_autosave = options.autosave.is_some() && self.options.autosave.is_none();
         let start_history = options.persistent_history && !self.options.persistent_history;
-        let lsp_changed = root_changed || options.lsp_config != self.options.lsp_config;
+        let lsp_changed = root_changed
+            || options.lsp_config != self.options.lsp_config
+            || options.lsp_config_mode != self.options.lsp_config_mode
+            || options.lsp_file_observations != self.options.lsp_file_observations;
         if root_changed
             && self.options.persistent_history
             && let Some(root) = &self.options.project_root
@@ -1810,6 +1825,11 @@ impl EditorSession {
     /// Index notifications include unopened files. Build outputs are excluded
     /// so a check cannot schedule itself by writing its target directory.
     pub fn observe_project_file_changes(&mut self, changes: &[bed_remote::FilesystemChange]) {
+        if let Some(pool) = &mut self.lsp
+            && let Err(error) = pool.observe_file_changes(changes)
+        {
+            self.record_error(None, "lsp", &error);
+        }
         let mut paths = Vec::new();
         let mut removed = Vec::new();
         for change in changes {
@@ -1845,12 +1865,7 @@ impl EditorSession {
         {
             self.project_diagnostics.saved();
             if let Some(pool) = &mut self.lsp {
-                pool.start_project_languages(&paths);
-                for status in pool.server_statuses() {
-                    if let Some(client) = pool.client_for_language(&status.language) {
-                        client.borrow_mut().refresh_workspace_diagnostics();
-                    }
-                }
+                pool.refresh_workspace_diagnostics();
             }
         }
     }
@@ -1891,6 +1906,15 @@ impl EditorSession {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "LSP is not enabled"))?
             .retry_language(language)
     }
+    pub fn retry_server(
+        &mut self,
+        instance: &bed_lsp::workspace_lsp::ServerInstanceId,
+    ) -> io::Result<bool> {
+        self.lsp
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "LSP is not enabled"))?
+            .retry_server(instance)
+    }
     pub fn accepts_lsp_origin(&self, origin: &bed_lsp::workspace_lsp::LspRequestOrigin) -> bool {
         self.document_for_view(origin.view_id) == Some(origin.document_id)
             && self
@@ -1927,16 +1951,30 @@ impl EditorSession {
             && let (Some(config), Some(root)) =
                 (&self.options.lsp_config, &self.options.project_root)
         {
-            self.lsp = Some(if let Some(remote) = &self.remote {
-                WorkspaceLsp::new_remote(
+            self.lsp = Some(match (&self.remote, self.options.lsp_config_mode) {
+                (Some(remote), LspConfigMode::Layered) => WorkspaceLsp::new_remote_layered(
                     self.workspace,
                     config.clone(),
                     root.clone(),
                     remote.target.clone(),
-                )
-            } else {
-                WorkspaceLsp::new(self.workspace, config.clone(), root.clone())
+                    remote.client.clone(),
+                ),
+                (Some(remote), LspConfigMode::Snapshot) => WorkspaceLsp::new_remote(
+                    self.workspace,
+                    config.clone(),
+                    root.clone(),
+                    remote.target.clone(),
+                ),
+                (None, LspConfigMode::Layered) => {
+                    WorkspaceLsp::new_layered(self.workspace, config.clone(), root.clone())
+                }
+                (None, LspConfigMode::Snapshot) => {
+                    WorkspaceLsp::new(self.workspace, config.clone(), root.clone())
+                }
             });
+        }
+        if let Some(pool) = &mut self.lsp {
+            pool.set_file_observations_available(self.options.lsp_file_observations);
         }
     }
     fn attach_lsp(&mut self, document: DocumentId) {
@@ -2004,11 +2042,7 @@ impl EditorSession {
                 Notification::Save(save) => {
                     self.project_diagnostics.saved();
                     if let Some(pool) = &mut self.lsp {
-                        for status in pool.server_statuses() {
-                            if let Some(client) = pool.client_for_language(&status.language) {
-                                client.borrow_mut().refresh_workspace_diagnostics();
-                            }
-                        }
+                        pool.refresh_workspace_diagnostics();
                     }
                     SessionEvent::Saved { document: id, save }
                 }

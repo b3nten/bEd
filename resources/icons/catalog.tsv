@@ -21,8 +21,8 @@ chevron-left lucide chevron-left
 close lucide x
 settings lucide settings
 terminal lucide terminal
-files lucide panel-left
-structure lucide list-tree
+files lucide folder-tree
+structure lucide table-of-contents
 diagnostics lucide triangle-alert
 debug lucide bug
 git-branch lucide git-branch

@@ -210,9 +210,12 @@ impl Settings {
         fs::create_dir_all(self.config_dir.join("themes"))?;
         self.settings_path = self.config_dir.join(SETTINGS_FILE);
         for name in [SETTINGS_FILE, "keybinds.json", "lsp.json"] {
-            let source = self.resources_root.join("resources/config").join(name);
             let destination = self.config_dir.join(name);
-            let bytes = fs::read(source)?;
+            let bytes = if name == "lsp.json" {
+                b"{}\n".to_vec()
+            } else {
+                fs::read(self.resources_root.join("resources/config").join(name))?
+            };
             match fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -667,6 +670,20 @@ mod tests {
             PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")),
         )
         .unwrap()
+    }
+    #[test]
+    fn lsp_seed_contains_only_overrides_and_keeps_existing_user_configuration() {
+        let temp = TempDir::new();
+        let mut current = settings(&temp);
+        let path = temp.0.join("lsp.json");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),
+            json!({})
+        );
+        let custom = br#"{"languages":[{"name":"rust","enabled":false}]}"#;
+        fs::write(&path, custom).unwrap();
+        current.load_settings().unwrap();
+        assert_eq!(fs::read(path).unwrap(), custom);
     }
     #[test]
     fn startup_preferences_persist_and_missing_or_unknown_values_use_startup() {

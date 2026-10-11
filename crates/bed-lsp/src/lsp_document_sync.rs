@@ -1,11 +1,7 @@
 //! Translated from ned lsp/lsp_document_sync.{h,cpp}; see LICENSE and NOTICE.
 //! State stays on the UI thread; a borrowed sink forwards ordered messages to
 //! the transport worker. Full-text providers are invoked only when needed.
-use crate::{
-    diagnostics::LspDiagnostics,
-    lsp_config::{LanguageServerInfo, LspConfig},
-    lsp_uri::LspUri,
-};
+use crate::{diagnostics::LspDiagnostics, lsp_config::LspConfig, lsp_uri::LspUri};
 use bed_editing::{editor_events::DocumentChange, util::doc_path};
 use serde_json::{Value, json};
 use std::{collections::HashSet, io};
@@ -115,21 +111,21 @@ impl LspDocumentSync {
             open_documents: HashSet::new(),
         }
     }
-    pub fn set_languages(&mut self, languages: &[LanguageServerInfo]) {
-        self.languages.language_servers = languages.to_vec();
+    pub fn set_configuration(&mut self, configuration: &LspConfig) {
+        self.languages = configuration.clone();
     }
     pub fn set_remote_paths(&mut self, remote: bool) {
         self.disconnect();
         self.remote_paths = remote;
     }
-    fn key(&self, path: &str) -> String {
+    pub(crate) fn key(&self, path: &str) -> String {
         if self.remote_paths {
             path.to_owned()
         } else {
             doc_path::normalize(path)
         }
     }
-    fn file_uri(&self, path: &str) -> io::Result<LspUri> {
+    pub(crate) fn file_uri(&self, path: &str) -> io::Result<LspUri> {
         if self.remote_paths {
             LspUri::file_uri_from_remote_path(path)
         } else {
@@ -150,6 +146,20 @@ impl LspDocumentSync {
     }
     pub fn is_ready(&self) -> bool {
         self.ready
+    }
+    pub(crate) fn syncs_changes(&self) -> bool {
+        self.sync_kind != 0
+    }
+    pub(crate) fn language_id(&self, key: &str, content: &str, supplied: &str) -> String {
+        if !supplied.is_empty() {
+            return supplied.to_owned();
+        }
+        self.languages
+            .detect_language_with_content(key, content.as_bytes())
+            .map(|language| language.language_id.as_str())
+            .filter(|id| !id.is_empty())
+            .unwrap_or("plaintext")
+            .to_owned()
     }
     pub fn is_document_open(&self, path: &str) -> bool {
         !path.is_empty() && self.open_documents.contains(&self.key(path))
@@ -232,15 +242,7 @@ impl LspDocumentSync {
         if !self.connected || key.is_empty() {
             return Ok(());
         }
-        let detected = self.languages.detect_language(key);
-        let language = if !detected.is_empty() {
-            detected.as_str()
-        } else if !language_id.is_empty() {
-            language_id
-        } else {
-            "plaintext"
-        };
-        sink.send_notification("textDocument/didOpen",Some(json!({"textDocument":{"uri":self.file_uri(key)?.to_string(),"languageId":language,"version":version,"text":content}})))?;
+        sink.send_notification("textDocument/didOpen",Some(json!({"textDocument":{"uri":self.file_uri(key)?.to_string(),"languageId":language_id,"version":version,"text":content}})))?;
         self.open_documents.insert(key.to_owned());
         Ok(())
     }
@@ -283,14 +285,15 @@ impl LspDocumentSync {
             return Ok(());
         }
         let key = self.key(path);
+        let language_id = self.language_id(&key, content, language_id);
         if !self.ready {
-            self.upsert_pending_open(key, content.to_owned(), version, language_id.to_owned());
+            self.upsert_pending_open(key, content.to_owned(), version, language_id);
             return Ok(());
         }
         if self.open_documents.contains(&key) {
             return self.did_change(&key, version, &[], || Ok(content.to_owned()), sink);
         }
-        self.send_did_open(&key, content, version, language_id, sink)
+        self.send_did_open(&key, content, version, &language_id, sink)
     }
     pub fn did_change(
         &mut self,
@@ -305,7 +308,9 @@ impl LspDocumentSync {
         }
         let key = self.key(path);
         if !self.open_documents.contains(&key) {
-            self.upsert_pending_open(key, full_text()?, version, String::new());
+            let content = full_text()?;
+            let language_id = self.language_id(&key, &content, "");
+            self.upsert_pending_open(key, content, version, language_id);
             if self.ready {
                 self.flush_pending(sink)?;
             }
@@ -600,20 +605,17 @@ mod tests {
         assert_eq!(sink.messages.borrow().len(), 1);
     }
     #[test]
-    fn configured_language_precedes_editor_language_and_disconnect_guards_providers() {
+    fn absent_protocol_id_uses_configuration_and_disconnect_guards_providers() {
         let sink = Sink::default();
         let mut sync = LspDocumentSync::default();
-        sync.set_languages(&[LanguageServerInfo {
-            language: "cpp".into(),
-            file_extensions: vec![".c".into()],
-            ..Default::default()
-        }]);
+        let config = LspConfig::from_json(&json!({"languages":[{"name":"cpp", "language_id":"cpp", "file_types":["c"], "language_server":null}]})).unwrap();
+        sync.set_configuration(&config);
         ready(
             &mut sync,
             &sink,
             json!({"textDocumentSync":{"openClose":false,"change":2}}),
         );
-        sync.did_open("a.c", "int x;", 0, "c", &sink).unwrap();
+        sync.did_open("a.c", "int x;", 0, "", &sink).unwrap();
         assert_eq!(
             sink.messages.borrow()[0].1["textDocument"]["languageId"],
             "cpp"
@@ -623,6 +625,32 @@ mod tests {
             .unwrap();
         sync.did_save("a.c", || panic!("disconnected joined text"), &sink)
             .unwrap();
+    }
+    #[test]
+    fn supplied_protocol_ids_are_used_verbatim_and_absent_ids_detect() {
+        let sink = Sink::default();
+        let mut sync = LspDocumentSync::default();
+        let config = LspConfig::from_json(&json!({"languages":[
+            {"name":"typescript","language_id":"typescript","file_types":["js","tsx"],"language_server":null},
+            {"name":"rust","language_id":"rust","file_types":["rs"],"language_server":null},
+            {"name":"cpp","language_id":"cpp","file_types":["c"],"language_server":null}
+        ]})).unwrap();
+        sync.set_configuration(&config);
+        ready(&mut sync, &sink, json!({"textDocumentSync":2}));
+        for (path, supplied, expected) in [
+            ("main.js", "javascript", "javascript"),
+            ("component.tsx", "typescriptreact", "typescriptreact"),
+            ("main.rs", "rust", "rust"),
+            ("explicit.c", "c", "c"),
+            ("detected.c", "", "cpp"),
+            ("unknown.extension", "", "plaintext"),
+        ] {
+            sync.did_open(path, "text", 0, supplied, &sink).unwrap();
+            assert_eq!(
+                sink.messages.borrow().last().unwrap().1["textDocument"]["languageId"],
+                expected
+            );
+        }
     }
     #[test]
     fn invalid_edit_bytes_and_failed_full_provider_do_not_send_lossy_text() {

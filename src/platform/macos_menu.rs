@@ -659,7 +659,7 @@ pub fn input_shortcut(action: MenuAction, settings: &Settings) -> Option<(Key, b
         NewWindow => (Key::N, true),
         NewDocument => (Key::N, false),
         NewTerminal => (Key::T, true),
-        NewExplorer | NewSettings | NewProjects | NewDiagnostics | NewReferences
+        Explorer | NewExplorer | NewSettings | NewProjects | NewDiagnostics | NewReferences
         | NewLspDashboard | NewContentSearch | DuplicateView | SplitRight | SplitDown
         | ResetLayout | SaveDefaultLayout | ResetDefaultLayout | Projects | Diagnostics
         | Structure | NewStructure | Debug => {
@@ -684,7 +684,6 @@ pub fn input_shortcut(action: MenuAction, settings: &Settings) -> Option<(Key, b
         SelectAll => (Key::A, false),
         Find => (Key::F, false),
         GoToLine => (settings.keybinds.get_action_key("line_jump_key")?, false),
-        Explorer => (settings.keybinds.get_action_key("toggle_sidebar")?, false),
         Terminal => (
             settings
                 .keybinds

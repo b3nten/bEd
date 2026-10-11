@@ -15,7 +15,7 @@ use bed_editor_ui::views::{
 use bed_lsp::{
     lsp_client::LspClient,
     lsp_locations::LspLocation,
-    workspace_lsp::{LspRequestOrigin, WorkspaceLsp},
+    workspace_lsp::{LspRequestOrigin, ServerInstanceId, WorkspaceLsp},
 };
 use dear_imgui_rs::Ui;
 use std::path::PathBuf;
@@ -36,6 +36,7 @@ pub enum LspAction {
     OpenLocation(LspLocation),
     OpenConfig(PathBuf),
     RestartServer(String),
+    RestartInstance(ServerInstanceId),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContextLspAction {
@@ -155,8 +156,8 @@ impl LspUi {
         workspace: &mut WorkspaceLsp,
     ) -> Option<LspAction> {
         let path = self.dashboard.render_workspace_body(ui, workspace);
-        if let Some(language) = self.dashboard.take_restart_language() {
-            return Some(LspAction::RestartServer(language));
+        if let Some(instance) = self.dashboard.take_restart_instance() {
+            return Some(LspAction::RestartInstance(instance));
         }
         path.map(LspAction::OpenConfig)
     }
@@ -347,8 +348,8 @@ impl LspUi {
         settings: &LspPresentationOptions,
     ) -> Option<LspAction> {
         let path = self.dashboard.render_workspace(ui, workspace, settings);
-        if let Some(language) = self.dashboard.take_restart_language() {
-            return Some(LspAction::RestartServer(language));
+        if let Some(instance) = self.dashboard.take_restart_instance() {
+            return Some(LspAction::RestartInstance(instance));
         }
         path.map(LspAction::OpenConfig)
     }
@@ -377,8 +378,8 @@ impl LspUi {
         if dashboard && let Some(path) = self.dashboard.render(ui, client, settings) {
             action = Some(LspAction::OpenConfig(path));
         }
-        if dashboard && let Some(language) = self.dashboard.take_restart_language() {
-            action = Some(LspAction::RestartServer(language));
+        if dashboard && let Some(server) = self.dashboard.take_restart_server() {
+            action = Some(LspAction::RestartServer(server));
         }
         action
     }

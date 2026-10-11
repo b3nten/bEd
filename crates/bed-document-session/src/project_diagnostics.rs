@@ -1,12 +1,12 @@
 //! Workspace diagnostic collection and serialized disk-based checks.
-use bed_lsp::diagnostics::DiagnosticItem;
+use bed_lsp::{diagnostics::DiagnosticItem, lsp_config::LspConfig};
 use bed_remote::{CheckJob, CheckOutput, RemoteClient, Request, Response};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -80,6 +80,35 @@ pub struct ProjectDiagnosticsSnapshot {
     pub warnings: usize,
 }
 type ParsedCheck = (BTreeMap<String, Vec<DiagnosticItem>>, bool);
+
+fn is_non_rust_source(path: &str) -> bool {
+    static CATALOG: OnceLock<LspConfig> = OnceLock::new();
+    let catalog = CATALOG.get_or_init(|| {
+        LspConfig::from_layers(None, None).expect("Bundled language catalog must be valid")
+    });
+    matches!(
+        catalog.detect_language(path).as_str(),
+        "c" | "cpp"
+            | "javascript"
+            | "jsx"
+            | "typescript"
+            | "tsx"
+            | "python"
+            | "go"
+            | "java"
+            | "csharp"
+            | "lua"
+            | "bash"
+            | "ruby"
+            | "php"
+            | "swift"
+            | "elixir"
+            | "erlang"
+            | "ocaml"
+            | "clojure"
+            | "dart"
+    )
+}
 struct Worker {
     canceled: Arc<AtomicBool>,
     result: mpsc::Receiver<Result<ParsedCheck, String>>,
@@ -91,6 +120,7 @@ impl Drop for Worker {
 }
 struct DiscoveredFiles {
     has_cargo: bool,
+    has_non_rust_source: bool,
     paths: Vec<String>,
     complete: bool,
 }
@@ -151,6 +181,7 @@ impl ProjectDiagnostics {
                             has_cargo: paths.iter().any(|path| {
                                 Path::new(path) == root.join("Cargo.toml") || path == "Cargo.toml"
                             }),
+                            has_non_rust_source: paths.iter().any(|path| is_non_rust_source(path)),
                             paths,
                             complete: true,
                         }),
@@ -161,6 +192,7 @@ impl ProjectDiagnostics {
                     let (paths, complete) = discover_files(&root);
                     Ok(DiscoveredFiles {
                         has_cargo: root.join("Cargo.toml").is_file(),
+                        has_non_rust_source: paths.iter().any(|path| is_non_rust_source(path)),
                         paths,
                         complete,
                     })
@@ -205,23 +237,7 @@ impl ProjectDiagnostics {
             .retain(|candidate, _| !Path::new(candidate).starts_with(path));
     }
     pub fn note_file(&mut self, path: &str) {
-        if matches!(
-            Path::new(path).extension().and_then(|part| part.to_str()),
-            Some(
-                "py" | "js"
-                    | "jsx"
-                    | "ts"
-                    | "tsx"
-                    | "go"
-                    | "java"
-                    | "cs"
-                    | "c"
-                    | "cpp"
-                    | "cc"
-                    | "h"
-                    | "hpp"
-            )
-        ) {
+        if is_non_rust_source(path) {
             self.check_covers_project = false;
         }
     }
@@ -245,24 +261,8 @@ impl ProjectDiagnostics {
                 path.file_name().and_then(|part| part.to_str()),
                 Some("Cargo.toml" | "Cargo.lock")
             )
-            || matches!(
-                path.extension().and_then(|part| part.to_str()),
-                Some(
-                    "rs" | "py"
-                        | "js"
-                        | "jsx"
-                        | "ts"
-                        | "tsx"
-                        | "go"
-                        | "java"
-                        | "cs"
-                        | "c"
-                        | "cpp"
-                        | "cc"
-                        | "h"
-                        | "hpp"
-                )
-            )
+            || path.extension().and_then(|part| part.to_str()) == Some("rs")
+            || is_non_rust_source(&path.to_string_lossy())
     }
     pub fn cancel(&mut self) {
         self.worker = None;
@@ -287,31 +287,13 @@ impl ProjectDiagnostics {
             match result {
                 Ok(DiscoveredFiles {
                     has_cargo: cargo,
+                    has_non_rust_source,
                     paths,
                     complete,
                 }) => {
                     self.discovery_complete = complete;
                     self.available = cargo;
-                    self.check_covers_project = complete
-                        && !paths.iter().any(|path| {
-                            matches!(
-                                Path::new(path).extension().and_then(|value| value.to_str()),
-                                Some(
-                                    "py" | "js"
-                                        | "jsx"
-                                        | "ts"
-                                        | "tsx"
-                                        | "go"
-                                        | "java"
-                                        | "cs"
-                                        | "c"
-                                        | "cpp"
-                                        | "cc"
-                                        | "h"
-                                        | "hpp"
-                                )
-                            )
-                        });
+                    self.check_covers_project = complete && !has_non_rust_source;
                     self.discovered_paths = Some(paths);
                     self.status = if cargo || self.configured {
                         "Project check ready".into()

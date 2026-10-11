@@ -1036,6 +1036,8 @@ impl Workbench {
             highlighting: self.settings.bool("treesitter", true),
             persistent_history: project_services,
             lsp_config: project_services.then(|| self.settings.config_dir.join("lsp.json")),
+            lsp_config_mode: bed_document_session::LspConfigMode::Layered,
+            lsp_file_observations: project_services,
         }
     }
     fn sync_services(&mut self) -> io::Result<()> {
@@ -2909,6 +2911,13 @@ impl Workbench {
         }
         for panel in state["panels"].as_array().into_iter().flatten() {
             let kind = panel["kind"].as_str().unwrap_or("");
+            // Attachment maps a saved terminal slot to the calling shell. Keep
+            // its live process and let the saved tiling place that panel below.
+            if self.tabs.iter().any(|tab| {
+                Some(tab.id) == panel["id"].as_u64() && tab.panel.terminal_id().is_some()
+            }) {
+                continue;
+            }
             let result = if panel["default_input"].as_bool() == Some(true) {
                 self.open_plugin_panel(
                     panel["panel_type"].as_str().unwrap_or(""),

@@ -35,6 +35,10 @@ const OUTBOUND_CAPACITY: usize = 64;
 static NEXT_ID: AtomicI32 = AtomicI32::new(1);
 
 type ResponseCallback = Box<dyn FnOnce(Result<Value, ResponseError>)>;
+struct PendingRequest {
+    callback: ResponseCallback,
+    deadline: Instant,
+}
 type RequestHandler = Box<dyn FnMut(Option<Value>) -> Result<Value, ResponseError>>;
 type NotificationHandler = Box<dyn FnMut(Option<Value>) -> Result<(), ResponseError>>;
 
@@ -79,7 +83,8 @@ pub struct RpcSession {
     stop: Arc<AtomicBool>,
     write_budget: Arc<AtomicUsize>,
     stderr: Arc<Mutex<VecDeque<u8>>>,
-    pending: HashMap<RpcId, ResponseCallback>,
+    pending: HashMap<RpcId, PendingRequest>,
+    request_timeout: Duration,
     handlers: HashMap<String, RequestHandler>,
     notification_handlers: HashMap<String, NotificationHandler>,
     connected: bool,
@@ -205,6 +210,7 @@ impl RpcSession {
             write_budget,
             stderr: error_bytes,
             pending: HashMap::new(),
+            request_timeout: Duration::from_secs(20),
             handlers: HashMap::new(),
             notification_handlers: HashMap::new(),
             connected: true,
@@ -220,6 +226,10 @@ impl RpcSession {
     }
     pub fn pending_request_count(&self) -> usize {
         self.pending.len()
+    }
+
+    pub fn set_request_timeout(&mut self, timeout: Duration) {
+        self.request_timeout = timeout;
     }
 
     pub fn register_request_handler(
@@ -268,7 +278,13 @@ impl RpcSession {
             params,
         }));
         self.queue(&packet, None)?;
-        self.pending.insert(id.clone(), Box::new(callback));
+        self.pending.insert(
+            id.clone(),
+            PendingRequest {
+                callback: Box::new(callback),
+                deadline: Instant::now() + self.request_timeout,
+            },
+        );
         Ok(id)
     }
 
@@ -277,8 +293,8 @@ impl RpcSession {
             "$/cancelRequest",
             Some(serde_json::json!({"id":id.value()})),
         );
-        if let Some(callback) = self.pending.remove(id) {
-            callback(Err(ResponseError::new(
+        if let Some(pending) = self.pending.remove(id) {
+            (pending.callback)(Err(ResponseError::new(
                 REQUEST_CANCELLED,
                 "Request canceled",
             )));
@@ -347,6 +363,7 @@ impl RpcSession {
         mut after_message: impl FnMut(&mut Self),
     ) -> Vec<RpcEvent> {
         let mut events = Vec::new();
+        self.expire_requests(Instant::now());
         for _ in 0..256 {
             let event = match self.receiver.as_ref().map(mpsc::Receiver::try_recv) {
                 Some(Ok(event)) => event,
@@ -404,8 +421,8 @@ impl RpcSession {
         for message in messages {
             match message {
                 Message::Response(response) => {
-                    if let Some(callback) = self.pending.remove(&response.id) {
-                        callback(response.result);
+                    if let Some(pending) = self.pending.remove(&response.id) {
+                        (pending.callback)(response.result);
                     }
                 }
                 Message::Request(request) => {
@@ -445,8 +462,28 @@ impl RpcSession {
     }
 
     fn fail_pending(&mut self, error: ResponseError) {
-        for (_, callback) in self.pending.drain() {
-            callback(Err(error.clone()));
+        for (_, pending) in self.pending.drain() {
+            (pending.callback)(Err(error.clone()));
+        }
+    }
+
+    fn expire_requests(&mut self, now: Instant) {
+        let expired: Vec<_> = self
+            .pending
+            .iter()
+            .filter(|(_, pending)| pending.deadline <= now)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in expired {
+            let pending = self.pending.remove(&id).unwrap();
+            let _ = self.send_notification(
+                "$/cancelRequest",
+                Some(serde_json::json!({"id":id.value()})),
+            );
+            (pending.callback)(Err(ResponseError::new(
+                REQUEST_CANCELLED,
+                "Request timed out",
+            )));
         }
     }
 
@@ -539,5 +576,43 @@ impl NotificationSink for RpcSession {
 impl Drop for RpcSession {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::{cell::RefCell, rc::Rc};
+
+    #[test]
+    fn deadlines_complete_once_and_late_responses_cannot_revive_requests() {
+        let mut session = RpcSession::start(Path::new("/bin/cat"), &[]).unwrap();
+        session.set_request_timeout(Duration::from_secs(60));
+        let replies = Rc::new(RefCell::new(Vec::new()));
+        let received = replies.clone();
+        let id = session
+            .send_request("test/slow", None, move |result| {
+                received.borrow_mut().push(result)
+            })
+            .unwrap();
+        assert_eq!(session.pending_request_count(), 1);
+        session.expire_requests(Instant::now() + Duration::from_secs(61));
+        assert_eq!(session.pending_request_count(), 0);
+        assert_eq!(replies.borrow().len(), 1);
+        assert_eq!(
+            replies.borrow()[0].as_ref().unwrap_err().message,
+            "Request timed out"
+        );
+        session.dispatch(
+            Packet::Single(Message::Response(Response {
+                id: id.clone(),
+                result: Ok(Value::Null),
+            })),
+            &mut Vec::new(),
+            &mut |_| {},
+        );
+        session.expire_requests(Instant::now() + Duration::from_secs(120));
+        session.cancel_request(&id).unwrap();
+        assert_eq!(replies.borrow().len(), 1);
     }
 }

@@ -10,6 +10,7 @@ bed-editing = { workspace = true }
 bed-remote = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+globset = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

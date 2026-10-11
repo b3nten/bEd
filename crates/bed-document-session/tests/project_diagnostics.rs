@@ -86,3 +86,36 @@ fn rust_check_does_not_claim_complete_coverage_for_other_project_languages() {
     assert_eq!(snapshot.errors, 0);
     assert!(!snapshot.complete, "Cargo alone does not analyze Python");
 }
+
+#[test]
+fn newly_detected_source_languages_make_cargo_coverage_incomplete() {
+    let fixture = Fixture::new();
+    fs::write(fixture.0.join("src/lib.rs"), "pub fn good() {}\n").unwrap();
+    // Project configuration and prose do not invalidate a Rust check's coverage.
+    fs::write(fixture.0.join("README.md"), "A Rust project.\n").unwrap();
+    fs::write(fixture.0.join("config.json"), "{}\n").unwrap();
+    let mut session = EditorSession::with_options(SessionOptions {
+        project_root: Some(fixture.0.clone()),
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(checked(&mut session).complete);
+    let lua = fixture.0.join("other.lua");
+    fs::write(&lua, "this is not valid lua !\n").unwrap();
+    session.observe_project_file_changes(&[bed_remote::FilesystemChange::Created {
+        path: lua.to_string_lossy().into_owned(),
+    }]);
+    session.request_project_check();
+    let snapshot = checked(&mut session);
+    assert_eq!(snapshot.errors, 0);
+    assert!(!snapshot.complete, "Cargo alone does not analyze Lua");
+    let mut reopened = EditorSession::with_options(SessionOptions {
+        project_root: Some(fixture.0.clone()),
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(
+        !checked(&mut reopened).complete,
+        "Project discovery must detect Lua too"
+    );
+}
