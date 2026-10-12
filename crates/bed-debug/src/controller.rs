@@ -694,7 +694,7 @@ impl Debugger {
                     self.sync_debug_breakpoints(&path)?;
                 }
             }
-            Action::Navigate(path, row) => requests.push(HostRequest::RevealSource {
+            Action::Navigate(path, row) => requests.push(HostRequest::PreviewSource {
                 path,
                 row,
                 column: 0,
@@ -1005,7 +1005,7 @@ impl Debugger {
         }
         if let Some((path, row, column)) = self.navigation.take() {
             if Path::new(&path).is_file() {
-                requests.push(HostRequest::RevealSource {
+                requests.push(HostRequest::PreviewSource {
                     path,
                     row,
                     column,

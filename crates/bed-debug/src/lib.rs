@@ -27,10 +27,11 @@ pub const OUT_COMMAND: &str = "bed.debug.step_out";
 pub const BREAKPOINT_COMMAND: &str = "bed.debug.toggle_breakpoint";
 
 pub(crate) fn show_panel() -> HostRequest {
-    HostRequest::OpenPanel {
+    HostRequest::ShowPanel {
         panel_type: PANEL_ID.into(),
         document: None,
         state: Value::Null,
+        action: None,
     }
 }
 

@@ -191,11 +191,22 @@ fn visible(world: &mut World) -> std::collections::HashSet<u64> {
         .map(|panel| panel.session)
         .collect()
 }
-fn publish(world: &mut World, source: Option<Entity>, area: u32, requests: Vec<HostRequest>) {
+fn publish(
+    world: &mut World,
+    source: Option<Entity>,
+    area: Option<u32>,
+    requests: Vec<HostRequest>,
+) {
     for request in requests {
-        world
-            .resource_mut::<EditorIntents>()
-            .push_at(source, area, request);
+        let mut intents = world.resource_mut::<EditorIntents>();
+        // Source previews use the host's editor-area placement, even when the
+        // user navigates from a smaller Debug panel.
+        if let Some(area) = area.filter(|_| !matches!(&request, HostRequest::PreviewSource { .. }))
+        {
+            intents.push_at(source, area, request);
+        } else {
+            intents.push(source, request);
+        }
     }
     let terminal = world.non_send::<DebugState>().0.terminal;
     let previous = std::mem::replace(&mut world.resource_mut::<RetainedTerminal>().0, terminal);
@@ -279,7 +290,9 @@ fn prepare(world: &mut World) {
             },
         );
     }
-    publish(world, None, 0, requests);
+    // Session updates have no originating surface. Let the host choose the
+    // destination from the current layout when it resolves these intentions.
+    publish(world, None, None, requests);
 }
 fn command(In(invocation): In<CommandInvocation>, world: &mut World) -> CommandResult {
     if invocation.command == BREAKPOINT_COMMAND {
@@ -446,7 +459,7 @@ fn execute(
     {
         debugger.error = Some(error.to_string());
     }
-    publish(world, invocation.source, invocation.area, requests);
+    publish(world, invocation.source, Some(invocation.area), requests);
     Ok(Vec::new())
 }
 fn launch_replies(
@@ -578,11 +591,21 @@ impl Panel for Frontend {
             .non_send_mut::<DebugState>()
             .0
             .draw(ui, Path::new(&frame.project_root));
+        let owner = bed_workbench_api::panel_owner(world, self.0)
+            .expect("Debug frontend belongs to a live panel");
+        let panel = world
+            .get::<bed_workbench_api::PanelPresentation>(owner)
+            .unwrap();
+        let area = world
+            .resource::<bed_workbench::WorkbenchLayout>()
+            .tiling
+            .area_for(panel.id)
+            .expect("Debug panel belongs to a live area");
         requests.extend(actions.into_iter().map(|action| {
             WorkbenchAction::Invoke(CommandInvocation {
                 command: ACTION_COMMAND.into(),
                 source: Some(self.0),
-                area: 0,
+                area,
                 arguments: serde_json::to_value(action).expect("Debug actions serialize"),
             })
         }));
@@ -679,6 +702,13 @@ pub fn shortcuts(world: &mut World, ui: &Ui) -> Vec<WorkbenchAction> {
                 .find(|(_, b)| b.view == Some(view))
                 .map(|(entity, _)| entity)
         });
+    let layout = world.resource::<bed_workbench::WorkbenchLayout>();
+    let area = source
+        .and_then(|source| bed_workbench_api::panel_owner(world, source))
+        .and_then(|owner| world.get::<bed_workbench_api::PanelPresentation>(owner))
+        .and_then(|panel| layout.tiling.area_for(panel.id))
+        .or(layout.focused_area)
+        .unwrap_or_else(|| layout.tiling.layout.largest_area());
     input
         .bindings
         .actions
@@ -688,7 +718,7 @@ pub fn shortcuts(world: &mut World, ui: &Ui) -> Vec<WorkbenchAction> {
             WorkbenchAction::Invoke(CommandInvocation {
                 command: action.id.clone(),
                 source,
-                area: 0,
+                area,
                 arguments: Value::Null,
             })
         })
@@ -770,6 +800,14 @@ mod tests {
         let mut app = App::new();
         app.world_mut().insert_non_send(documents);
         app.add_plugins(DebugPlugin);
+        let mut layout = bed_workbench::WorkbenchLayout::default();
+        let area = layout.tiling.split_area(1, 0, true, [100, 100]).unwrap();
+        layout
+            .tiling
+            .layout
+            .move_border(0, 5000, [0, 10000], 7500, 100);
+        layout.tiling.assign(1, area);
+        app.world_mut().insert_resource(layout);
         let tab = app
             .world_mut()
             .spawn(bed_workbench_api::PanelPresentation::new(1))
@@ -811,6 +849,7 @@ mod tests {
             panic!("F9 must produce exactly its captured command")
         };
         assert_eq!(invocation.source, Some(source));
+        assert_eq!(invocation.area, area);
         app.world_mut().resource_mut::<EditorFrame>().active_view = Some(second_view);
         let handler = app
             .world()

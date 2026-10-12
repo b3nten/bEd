@@ -12,6 +12,7 @@ test-support = []
 bed-keybindings = { workspace = true }
 bevy = { workspace = true, features = ["std"] }
 bed-workbench-api = { workspace = true }
+bed-workbench = { workspace = true }
 bed-terminal-core = { workspace = true, features = ["ui"] }
 serde = { workspace = true }
 bed-ui = { workspace = true, features = ["imgui"] }
@@ -22,6 +23,3 @@ bed-debug-core = { workspace = true }
 bed-editor-api = { workspace = true }
 dear-imgui-rs = { workspace = true }
 serde_json = { workspace = true }
-
-[dev-dependencies]
-bed-workbench = { workspace = true }

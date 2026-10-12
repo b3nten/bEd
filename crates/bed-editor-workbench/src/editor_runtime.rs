@@ -322,7 +322,9 @@ fn explicit_panel_target(action: &EditorAction) -> Option<PanelTarget> {
             Some(PanelTarget::LastFocused)
         }
         EditorAction::HostRequest(
-            HostRequest::OpenTerminalFiles { .. } | HostRequest::OpenTerminalLink { .. },
+            HostRequest::OpenTerminalFiles { .. }
+            | HostRequest::OpenTerminalLink { .. }
+            | HostRequest::PreviewSource { .. },
         ) => Some(PanelTarget::LargestArea),
         _ => None,
     }
@@ -3606,33 +3608,56 @@ fn apply_host_request(
             captured.context.document = Some(document);
             return window_command(world, WindowCommand::SaveAs, &captured, id);
         }
-        HostRequest::RevealSource {
-            path,
+        ref navigation @ HostRequest::RevealSource {
+            ref path,
+            row,
+            column,
+            center,
+        }
+        | ref navigation @ HostRequest::PreviewSource {
+            ref path,
             row,
             column,
             center,
         } => {
-            let panel = match open_file(
+            let source_mode = if matches!(navigation, HostRequest::PreviewSource { .. }) {
+                FileOpenMode::Preview
+            } else {
+                FileOpenMode::Keep
+            };
+            let panel = match open_file_with_origin(
                 world,
-                Path::new(&path),
+                Path::new(path),
                 Some("bed.editor.text"),
                 false,
                 Some(request.area),
+                None,
+                source_mode,
             ) {
                 Ok(panel) => panel,
                 Err(error)
                     if error.kind() == io::ErrorKind::WouldBlock
                         && world.non_send::<EditorSession>().is_remote() =>
                 {
-                    let follow_up = captured_effect(
-                        world,
-                        request,
-                        EditorAction::HostRequest(HostRequest::RevealSource {
+                    let navigation = if source_mode == FileOpenMode::Preview {
+                        HostRequest::PreviewSource {
                             path: path.clone(),
                             row,
                             column,
                             center,
-                        }),
+                        }
+                    } else {
+                        HostRequest::RevealSource {
+                            path: path.clone(),
+                            row,
+                            column,
+                            center,
+                        }
+                    };
+                    let follow_up = captured_effect(
+                        world,
+                        request,
+                        EditorAction::HostRequest(navigation),
                         request.source,
                         None,
                     );
@@ -3645,7 +3670,7 @@ fn apply_host_request(
                             path: PathBuf::from(path),
                             viewer: Some("bed.editor.text".into()),
                             additional: false,
-                            mode: FileOpenMode::Keep,
+                            mode: source_mode,
                             layout_slot: request.layout_slot,
                             move_existing: false,
                             area: Some(request.area),

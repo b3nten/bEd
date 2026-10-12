@@ -644,6 +644,14 @@ pub enum HostRequest {
         column: i32,
         center: bool,
     },
+    /// Reveal source in the largest area's preview tab, replacing its previous clean preview.
+    /// Positions use zero-based lines and byte columns, as in `RevealSource`.
+    PreviewSource {
+        path: String,
+        row: i32,
+        column: i32,
+        center: bool,
+    },
     ShowTerminal {
         id: u64,
     },
