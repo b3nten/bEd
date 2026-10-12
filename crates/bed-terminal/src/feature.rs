@@ -330,7 +330,7 @@ fn terminal_status(world: &World, context: StatusContext) -> Option<StatusText> 
     let remote = terminal.ssh_target(session);
     let current = terminal.cached_working_directory(session);
     let directory = current.or_else(|| terminal.working_directory(session));
-    let mut summary = format!("{title} · {state}");
+    let summary = format!("{title} · {state}");
     let mut details = format!("Terminal: {title}\nState: {state}");
     if let Some(remote) = remote {
         details.push_str(&format!("\nSSH: {}", remote.host));
@@ -342,7 +342,6 @@ fn terminal_status(world: &World, context: StatusContext) -> Option<StatusText> 
             "Launch directory"
         };
         let path = directory.to_string_lossy();
-        summary.push_str(&format!(" · {label}: {path}"));
         details.push_str(&format!("\n{label}: {path}"));
     }
     Some(StatusText::new(summary, details))
@@ -488,7 +487,8 @@ mod tests {
         context.focused_frontend = Some(entity);
         let status = terminal_status(app.world(), context).unwrap();
         assert!(status.summary.contains("Not started"));
-        assert!(status.summary.contains("Launch directory: /remote/launch"));
+        assert!(!status.summary.contains("/remote/launch"));
+        assert!(status.details.contains("Launch directory: /remote/launch"));
         assert!(status.details.contains("SSH: user@status-fixture"));
         app.world_mut()
             .non_send_mut::<BedTerminal>()

@@ -82,6 +82,9 @@ fn presentation(world: &World, ui: &Ui, context: StatusContext) -> Option<Status
         LSP => language_servers(session),
         DIAGNOSTICS => {
             let diagnostics = session.project_diagnostics();
+            if diagnostics.errors == 0 && diagnostics.warnings == 0 && !diagnostics.checking {
+                return None;
+            }
             let mut summary = format!("E: {}  W: {}", diagnostics.errors, diagnostics.warnings);
             if diagnostics.checking {
                 summary.push_str("  Checking workspace…");
@@ -407,6 +410,10 @@ mod tests {
             assert!(
                 presentation(app.world(), ui, context(publisher, LSP, None)).is_none(),
                 "idle LSPs stay quiet"
+            );
+            assert!(
+                presentation(app.world(), ui, context(publisher, DIAGNOSTICS, None)).is_none(),
+                "clear diagnostics stay quiet"
             );
         });
         let _ = imgui.render_legacy();

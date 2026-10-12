@@ -1124,6 +1124,52 @@ fn shortcut_panel_opening_captures_the_focused_area_while_menu_opening_uses_the_
 }
 
 #[test]
+fn location_navigation_uses_the_source_area_after_focus_changes() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let (first, _, _, largest, source_area) = target_fixture(&mut app);
+    assert_ne!(source_area, largest);
+    let source = open_file(
+        app.world_mut(),
+        &dir.write("source.rs", b"fn source() {}"),
+        None,
+        false,
+        Some(source_area),
+    )
+    .unwrap();
+    let surface = panel_presentation(app.world(), source).unwrap();
+    app.world_mut().resource_mut::<EditorIntents>().push(
+        Some(surface),
+        HostRequest::NavigateLocation {
+            path: dir
+                .write("definition.rs", b"fn definition() {}")
+                .to_string_lossy()
+                .into_owned(),
+            row: 0,
+            utf16_column: 3,
+            origin: None,
+        },
+    );
+    drain_feature_intents(app.world_mut());
+    focus_panel(app.world_mut(), first, true).unwrap();
+    process_editor_requests(app.world_mut()).unwrap();
+    let panel = app.world().resource::<WorkbenchLayout>().focused.unwrap();
+    let id = app.world().get::<PanelPresentation>(panel).unwrap().id;
+    let tiling = &app.world().resource::<WorkbenchLayout>().tiling;
+    assert_eq!(tiling.area_for(id), Some(source_area));
+    assert_eq!(
+        tiling
+            .areas
+            .iter()
+            .find(|group| group.area == source_area)
+            .unwrap()
+            .preview,
+        Some(id)
+    );
+    assert!(app.world().entities().contains(source));
+}
+
+#[test]
 fn explicit_open_file_targets_are_captured_before_later_focus_changes() {
     for target in [PanelTarget::LastFocused, PanelTarget::LargestArea] {
         let dir = TempDir::new();

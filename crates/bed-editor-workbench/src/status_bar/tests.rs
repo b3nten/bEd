@@ -274,16 +274,24 @@ fn published_action_uses_registered_open_or_focus_command() {
 }
 
 #[test]
-fn host_information_uses_remote_location_and_standalone_cwd() {
+fn host_information_shows_names_and_keeps_paths_in_details() {
     let mut workspace = EditorWorkspace {
         spec: None,
         project_root: String::new(),
-        working_directory: PathBuf::from("/launcher"),
+        working_directory: PathBuf::from("/home/user/launcher"),
         error: None,
         close_requested: false,
         windows: vec![],
     };
-    assert_eq!(host_information(&workspace).0, "cwd: /launcher");
+    assert_eq!(
+        host_information(&workspace),
+        (
+            "launcher".into(),
+            "Working directory: /home/user/launcher".into()
+        )
+    );
+    workspace.spec = Some(crate::WorkspaceSpec::local("/srv/code"));
+    assert_eq!(host_information(&workspace).0, "code");
     workspace.spec = Some(crate::WorkspaceSpec {
         name: "Remote project".into(),
         target: bed_editor_api::workspace::WorkspaceTarget::Ssh {
@@ -292,6 +300,7 @@ fn host_information_uses_remote_location_and_standalone_cwd() {
         root: "/srv/code".into(),
     });
     let (summary, detail) = host_information(&workspace);
-    assert_eq!(summary, "Remote project · devbox:/srv/code");
+    assert_eq!(summary, "Remote project");
+    assert!(detail.contains("devbox:/srv/code"));
     assert!(!detail.contains("/launcher"));
 }

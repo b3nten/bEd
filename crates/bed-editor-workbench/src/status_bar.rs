@@ -12,12 +12,15 @@ fn host_information(workspace: &EditorWorkspace) -> (String, String) {
     if let Some(spec) = &workspace.spec {
         let location = spec.location();
         (
-            format!("{} · {location}", spec.name),
+            spec.name.clone(),
             format!("Workspace: {}\nLocation: {location}", spec.name),
         )
     } else {
         let cwd = workspace.working_directory.to_string_lossy();
-        (format!("cwd: {cwd}"), format!("Working directory: {cwd}"))
+        (
+            bed_editor_api::workspace::default_name(&cwd),
+            format!("Working directory: {cwd}"),
+        )
     }
 }
 

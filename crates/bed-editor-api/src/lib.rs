@@ -699,7 +699,8 @@ pub enum HostRequest {
         revision: Revision,
     },
     /// LSP locations use UTF-16 columns and retain their original request identity.
-    /// New destinations open as previews; existing tabs keep their mode.
+    /// New destinations open as previews in the source editor's area;
+    /// existing tabs keep their mode.
     NavigateLocation {
         path: String,
         row: i32,

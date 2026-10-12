@@ -2081,6 +2081,33 @@ fn workbench_single_definition_returns_to_requesting_view_without_references() {
 
 fn workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs() {
     let mut fixture = NavigationWorkbench::new();
+    let source_id = fixture
+        .app
+        .world()
+        .get::<bed_editor_workbench::EditorPanel>(fixture.request_tab)
+        .unwrap()
+        .id;
+    let sibling_id = fixture
+        .app
+        .world()
+        .get::<bed_editor_workbench::EditorPanel>(fixture.sibling_tab)
+        .unwrap()
+        .id;
+    let source_area = {
+        let mut layout = fixture
+            .app
+            .world_mut()
+            .resource_mut::<bed_editor_workbench::WorkbenchLayout>();
+        let tiling = &mut layout.tiling;
+        let source_area = tiling.area_for(source_id).unwrap();
+        let rect = tiling.layout.area(source_area).rect;
+        let split = rect.min[0] + (rect.max[0] - rect.min[0]) * 3 / 10;
+        let other_area = tiling.layout.split(source_area, 0, split, 100).unwrap();
+        tiling.add_area(other_area);
+        tiling.assign(sibling_id, other_area);
+        assert_ne!(source_area, tiling.layout.largest_area());
+        source_area
+    };
     let path = fixture.fixture.root.join("definition.rs");
     fs::write(&path, "// target\nfn definition() {}\n").unwrap();
     fixture.configure(json!({
@@ -2110,6 +2137,16 @@ fn workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs()
         .get::<bed_editor_workbench::EditorPanel>(panel)
         .unwrap()
         .id;
+    assert_eq!(
+        fixture
+            .app
+            .world()
+            .resource::<bed_editor_workbench::WorkbenchLayout>()
+            .tiling
+            .area_for(id),
+        Some(source_area),
+        "the preview belongs beside the requesting editor, even after focus moves to a larger panel"
+    );
     assert!(
         fixture
             .app

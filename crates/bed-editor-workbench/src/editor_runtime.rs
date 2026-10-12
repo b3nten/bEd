@@ -312,6 +312,9 @@ fn explicit_panel_target(action: &EditorAction) -> Option<PanelTarget> {
             | HostRequest::OpenFileIn { target, .. }
             | HostRequest::PreviewFileIn { target, .. },
         ) => Some(*target),
+        EditorAction::HostRequest(HostRequest::NavigateLocation { .. }) => {
+            Some(PanelTarget::LastFocused)
+        }
         _ => None,
     }
 }
