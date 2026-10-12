@@ -64,6 +64,10 @@ pub(crate) fn install(app: &mut App) {
     );
 }
 pub(crate) fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Compare", "Inspect the selected repository file’s changes. Open a comparison from the Git panel’s staged or unstaged file actions."),
+        ("Edit", "The working document shares edits with other views. Use diff controls to navigate changes and handle conflicts."),
+    ]).shortcut_scope("bed.editor.text-panel").shortcut_actions(&["bed.navigation.move_left", "bed.navigation.move_right", "bed.navigation.move_up", "bed.navigation.move_down", "bed.navigation.select_left", "bed.navigation.select_right", "bed.navigation.select_up", "bed.navigation.select_down", "bed.view.zoom_in", "bed.view.zoom_out", "bed.view.reset_zoom", "bed.edit.find", "bed.edit.copy", "bed.edit.cut", "bed.edit.paste", "bed.edit.select_all", "bed.edit.undo", "bed.edit.redo"]));
     if world
         .get::<EditorPanelBinding>(creation.entity)
         .is_some_and(|binding| binding.input.local_file().is_some())

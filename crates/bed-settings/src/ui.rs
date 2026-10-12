@@ -505,6 +505,10 @@ impl SettingsView<'_> {
                     crate::theme_editor::draw(ui, &mut self.window.theme_editor, self.service);
                 }
                 SettingsCategory::Effects => {
+                    ui.text("Cursor");
+                    ui.separator();
+                    self.draw_boolean(ui, "Cursor Smear", "cursor_smear", true);
+                    ui.dummy([0.0, ui.current_font_size()]);
                     if shaders_available {
                         self.draw_shader_settings(ui);
                     } else {
@@ -894,6 +898,7 @@ impl SettingsView<'_> {
         let _spacing = ui.push_style_var(StyleVar::ItemSpacing([size * 0.65, size * 0.55]));
         let _padding = ui.push_style_var(StyleVar::FramePadding([size * 0.6, size * 0.3]));
         ui.dummy([0.0, size * 0.5]);
+        ui.text_wrapped("Common shortcuts include application commands and actions handled by the focused panel or widget.");
         ui.input_text(
             "Search actions or shortcuts",
             &mut self.window.shortcut_filter,
@@ -958,17 +963,14 @@ impl SettingsView<'_> {
         let mut groups = actions
             .iter()
             .map(|a| match &a.scope {
-                bed_keybindings::Scope::Global => "Global".to_owned(),
-                bed_keybindings::Scope::Focused => "Common".to_owned(),
+                bed_keybindings::Scope::Global | bed_keybindings::Scope::Focused => {
+                    "Common".to_owned()
+                }
                 bed_keybindings::Scope::Panel(id) => id.clone(),
             })
             .collect::<Vec<_>>();
         groups.sort();
         groups.dedup();
-        if let Some(index) = groups.iter().position(|g| g == "Global") {
-            let global = groups.remove(index);
-            groups.insert(0, global);
-        }
         if let Some(index) = groups.iter().position(|g| g == "Common") {
             let common = groups.remove(index);
             groups.insert(0, common);
@@ -986,8 +988,9 @@ impl SettingsView<'_> {
             let matching = actions
                 .iter()
                 .filter(|a| match &a.scope {
-                    bed_keybindings::Scope::Global => group == "Global",
-                    bed_keybindings::Scope::Focused => group == "Common",
+                    bed_keybindings::Scope::Global | bed_keybindings::Scope::Focused => {
+                        group == "Common"
+                    }
                     bed_keybindings::Scope::Panel(id) => id == &group,
                 })
                 .filter(|action| {
@@ -1166,18 +1169,97 @@ mod tests {
         .unwrap()
     }
     #[test]
+    fn effects_cursor_smear_defaults_on_and_persists_when_shaders_are_unavailable() {
+        use dear_imgui_rs::{FramePrepareOptions, sys};
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let temp = TempDir::new();
+        let mut current = settings(&temp);
+        let mut state = SettingsWindowState {
+            category: SettingsCategory::Effects,
+            ..Default::default()
+        };
+        let mut editor = Editor::new();
+        let mut context = settings_context();
+        assert!(current.bool("cursor_smear", true));
+        current.refresh();
+        let draw = |context: &mut Context,
+                    current: &mut Settings,
+                    state: &mut SettingsWindowState,
+                    editor: &mut Editor| {
+            context.prepare_frame(FramePrepareOptions::new([900.0, 600.0], 1.0 / 60.0));
+            let ui = context.frame();
+            let mut checkbox = [0.0; 2];
+            ui.window("Cursor smear settings")
+                .position([0.0; 2], Condition::Always)
+                .size([900.0, 600.0], Condition::Always)
+                .build(|| {
+                    SettingsView::new(current, state).draw_categories(
+                        ui,
+                        editor,
+                        false,
+                        &mut |_, _| false,
+                    );
+                    checkbox = ui.with_bound_context(|| unsafe {
+                        let native = &*sys::igGetCurrentContext();
+                        let window = (0..native.Windows.Size)
+                            .map(|index| &**native.Windows.Data.add(index as usize))
+                            .find(|window| {
+                                std::ffi::CStr::from_ptr(window.Name)
+                                    .to_string_lossy()
+                                    .contains("SettingsContentEffects")
+                            })
+                            .expect("Effects category rendered without shader support");
+                        [
+                            window.DC.CursorStartPos.x + ui.frame_height() * 0.5,
+                            window.DC.CursorStartPos.y
+                                + ui.text_line_height()
+                                + native.Style.ItemSpacing.y * 2.0
+                                + ui.frame_height() * 0.5,
+                        ]
+                    });
+                });
+            drop(context.render_legacy());
+            checkbox
+        };
+        draw(&mut context, &mut current, &mut state, &mut editor);
+        let checkbox = draw(&mut context, &mut current, &mut state, &mut editor);
+        context.io_mut().add_mouse_pos_event(checkbox);
+        draw(&mut context, &mut current, &mut state, &mut editor);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        draw(&mut context, &mut current, &mut state, &mut editor);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, false);
+        draw(&mut context, &mut current, &mut state, &mut editor);
+        assert!(
+            !current.bool("cursor_smear", true),
+            "Effects checkbox turns the smear off"
+        );
+        assert!(
+            current.refresh(),
+            "toggle requests an immediate presentation refresh"
+        );
+        assert_eq!(
+            read_json(&current.settings_path).unwrap()["cursor_smear"],
+            false
+        );
+        assert!(
+            !settings(&temp).bool("cursor_smear", true),
+            "off state survives restarting"
+        );
+    }
+    #[test]
     fn recording_alternatives_persists_and_escape_cancels_without_changing_bindings() {
-        use bed_keybindings::{Action, Bindings, Platform, Scope};
+        use bed_keybindings::{Bindings, Platform};
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let temp = TempDir::new();
         let mut settings = settings(&temp);
-        let action = Action::new(
-            "fixture.run",
-            "Run",
-            "fixture",
-            Scope::panel("fixture.panel"),
-            &["F5"],
-        );
+        let action = bed_keybindings::common_actions()
+            .into_iter()
+            .find(|action| action.id == bed_keybindings::RESET_ZOOM)
+            .unwrap();
         let mut state = SettingsWindowState::default();
         state.shortcut_actions = vec![action.clone()];
         state.shortcut_recording = Some((action.id.clone(), None));

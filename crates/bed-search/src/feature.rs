@@ -131,6 +131,10 @@ fn cancel(
     Ok(Vec::new())
 }
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Search", "Enter a query to find text across the project. Use the search options to control matching and scope."),
+        ("Results", "Select a match to navigate to it. Replace next or Replace all applies the replacement text; Cancel stops an active search."),
+    ]).shortcut_actions(&["bed.edit.find"]));
     let remote = world.non_send::<SearchState>().remote.clone();
     let mut panel = SearchPanel::new(remote, &creation.state);
     panel.search.root = world.resource::<EditorFrame>().working_directory.clone();

@@ -308,7 +308,9 @@ pub fn capture_editor_request_from(
 fn explicit_panel_target(action: &EditorAction) -> Option<PanelTarget> {
     match action {
         EditorAction::HostRequest(
-            HostRequest::ShowPanelIn { target, .. } | HostRequest::OpenFileIn { target, .. },
+            HostRequest::ShowPanelIn { target, .. }
+            | HostRequest::OpenFileIn { target, .. }
+            | HostRequest::PreviewFileIn { target, .. },
         ) => Some(*target),
         _ => None,
     }
@@ -575,6 +577,7 @@ fn initialize_editor(world: &mut World) {
                 None,
                 None,
                 None,
+                FileOpenMode::Keep,
             )?;
         }
         publish_editor_frame(world);
@@ -802,6 +805,7 @@ fn apply_editor_requests(world: &mut World) {
             let source = match &queued.action {
                 Action::Invoke(invocation) => invocation.source,
                 Action::ClosePanel(entity)
+                | Action::KeepPanel(entity)
                 | Action::FocusPanel(entity)
                 | Action::ObserveFocus(entity)
                 | Action::SplitPanel { panel: entity, .. } => Some(*entity),
@@ -1025,6 +1029,13 @@ fn apply_request(
                 }
             }
             Action::ClosePanel(panel) => return begin_close(world, vec![panel], false, id),
+            Action::KeepPanel(panel) => {
+                if bed_workbench::keep_panel(world, panel) {
+                    EditorRequestOutcome::Applied
+                } else {
+                    EditorRequestOutcome::Ignored
+                }
+            }
             Action::ObserveFocus(panel) => {
                 focus_panel(world, panel, false)?;
                 EditorRequestOutcome::Applied
@@ -1184,6 +1195,7 @@ fn apply_request(
                 Some(request.area),
                 request.tab_index,
                 id,
+                FileOpenMode::Keep,
             );
         }
         EditorAction::OpenFileWithViewer {
@@ -1201,6 +1213,7 @@ fn apply_request(
                 Some(request.area),
                 request.tab_index,
                 id,
+                FileOpenMode::Keep,
             );
         }
         EditorAction::SwitchViewer { panel, viewer } => {
@@ -1476,7 +1489,21 @@ pub fn open_file(
     additional: bool,
     area: Option<u32>,
 ) -> io::Result<Entity> {
-    open_file_with_origin(world, path, explicit, additional, area, None)
+    open_file_with_origin(
+        world,
+        path,
+        explicit,
+        additional,
+        area,
+        None,
+        FileOpenMode::Keep,
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FileOpenMode {
+    Keep,
+    Preview,
 }
 
 fn open_file_with_origin(
@@ -1486,7 +1513,34 @@ fn open_file_with_origin(
     additional: bool,
     area: Option<u32>,
     origin: Option<LspRequestOrigin>,
+    mode: FileOpenMode,
 ) -> io::Result<Entity> {
+    // A newer explorer selection supersedes a pending preview in this area.
+    // Explicitly opening the same file also supersedes its pending preview.
+    let session = world.non_send::<EditorSession>().workspace_id().0;
+    let slot = world.resource::<LayoutSlots>().active();
+    let mut canceled = Vec::new();
+    {
+        let mut operations = world.non_send_mut::<RemoteOperations>();
+        let opens = std::mem::take(&mut operations.opens);
+        for pending in opens {
+            if pending.session == session
+                && pending.mode == FileOpenMode::Preview
+                && ((mode == FileOpenMode::Preview
+                    && pending.layout_slot == slot
+                    && pending.area == area)
+                    || (mode == FileOpenMode::Keep && pending.path == path))
+            {
+                operations.abandoned_paths.insert(pending.path.clone());
+                canceled.push(pending.id);
+            } else {
+                operations.opens.push(pending);
+            }
+        }
+    }
+    for id in canceled {
+        complete(world, id, Ok(EditorRequestOutcome::Ignored));
+    }
     if area.is_some_and(|area| {
         !world
             .resource::<WorkbenchLayout>()
@@ -1566,56 +1620,163 @@ fn open_file_with_origin(
                 "This file is already an editable document",
             ));
         }
-        return open_panel(
-            world,
-            viewer.panel_type,
-            PanelInput::LocalFile(path),
-            Value::Null,
-            Some(viewer.id.into()),
-            area,
-            !additional,
-        );
     }
-    let document = match origin {
-        Some(origin) => world
-            .non_send_mut::<EditorSession>()
-            .open_file_from_lsp(&path, origin)?,
-        None => world.non_send_mut::<EditorSession>().open_file_with_kind(
-            &path,
-            viewer
-                .document_kind()
-                .unwrap_or(bed_editor_api::DocumentKind::Text),
-        )?,
+    let input = if viewer.is_local_file() {
+        PanelInput::LocalFile(path.clone())
+    } else {
+        PanelInput::Document(match origin {
+            Some(origin) => world
+                .non_send_mut::<EditorSession>()
+                .open_file_from_lsp(&path, origin)?,
+            None => world.non_send_mut::<EditorSession>().open_file_with_kind(
+                &path,
+                viewer
+                    .document_kind()
+                    .unwrap_or(bed_editor_api::DocumentKind::Text),
+            )?,
+        })
     };
     if !additional {
-        let existing = world
-            .query::<(Entity, &PanelPresentation, &EditorPanelBinding)>()
-            .iter(world)
-            .find_map(|(entity, _, binding)| {
-                (bed_workbench_api::panel_active(world, entity)
-                    && binding.document == Some(document))
-                .then_some(entity)
-            });
+        let recent = if viewer.is_local_file() {
+            bed_workbench::recent_panel(world, viewer.panel_type).filter(|panel| {
+                world
+                    .get::<EditorPanelBinding>(*panel)
+                    .is_some_and(|binding| binding.input == input)
+            })
+        } else {
+            None
+        };
+        let existing = recent.or_else(|| {
+            world
+                .query::<(
+                    Entity,
+                    &PanelPresentation,
+                    &EditorPanelBinding,
+                    &PanelRecord,
+                )>()
+                .iter(world)
+                .find_map(|(entity, _, binding, record)| {
+                    (bed_workbench_api::panel_active(world, entity)
+                        && binding.input == input
+                        && (!viewer.is_local_file() || record.panel_type == viewer.panel_type))
+                        .then_some(entity)
+                })
+        });
         if let Some(panel) = existing {
-            if explicit.is_some() {
+            if explicit.is_some() && !viewer.is_local_file() {
                 switch_viewer(world, panel, viewer.id)?;
+            }
+            if mode == FileOpenMode::Keep {
+                bed_workbench::keep_panel(world, panel);
             }
             focus_panel(world, panel, true)?;
             return Ok(panel);
         }
     }
-    if !additional && let Some(panel) = reusable_panel(world, area)? {
-        return replace_pristine_panel(world, panel, viewer.panel_type, document, viewer.id);
+    let target = area.unwrap_or_else(|| {
+        world
+            .resource::<WorkbenchLayout>()
+            .tiling
+            .layout
+            .largest_area()
+    });
+    let previous = if mode == FileOpenMode::Preview {
+        let id = world
+            .resource::<WorkbenchLayout>()
+            .tiling
+            .areas
+            .iter()
+            .find(|group| group.area == target)
+            .and_then(|group| group.preview);
+        id.map(|id| {
+            let panel = panel_entities(world)
+                .into_iter()
+                .find(|panel| world.get::<PanelPresentation>(*panel).unwrap().id == id)
+                .expect("preview belongs to a live panel");
+            let index = world
+                .resource::<WorkbenchLayout>()
+                .tiling
+                .areas
+                .iter()
+                .find(|group| group.area == target)
+                .unwrap()
+                .tabs
+                .iter()
+                .position(|tab| *tab == id)
+                .unwrap();
+            (panel, index)
+        })
+    } else {
+        None
+    };
+    // Finish local drafts before deciding whether the previous preview is safe
+    // to retire. A draft failure or unsaved work retains the old panel.
+    let mut previous = previous;
+    if let Some((panel, _)) = previous
+        && let Some(document) = world
+            .get::<EditorPanelBinding>(panel)
+            .and_then(|binding| binding.document)
+    {
+        if let Err(error) = commit_documents(world, &HashSet::from([document])) {
+            bed_workbench::keep_panel(world, panel);
+            return Err(error);
+        }
+        let snapshot = world.non_send::<EditorSession>().snapshot(document)?;
+        if snapshot.dirty || snapshot.disk_conflict.is_some() {
+            bed_workbench::keep_panel(world, panel);
+            previous = None;
+        }
     }
-    open_panel(
-        world,
-        viewer.panel_type,
-        PanelInput::Document(document),
-        Value::Null,
-        Some(viewer.id.into()),
-        area,
-        false,
-    )
+    let reusable = if !additional && input.document().is_some() {
+        reusable_panel(world, area)?
+    } else {
+        None
+    };
+    let panel = if let Some(panel) = reusable {
+        replace_pristine_panel(
+            world,
+            panel,
+            viewer.panel_type,
+            input.document().unwrap(),
+            viewer.id,
+        )?
+    } else {
+        open_panel(
+            world,
+            viewer.panel_type,
+            input,
+            Value::Null,
+            Some(viewer.id.into()),
+            area,
+            false,
+        )?
+    };
+    if mode == FileOpenMode::Preview
+        && world
+            .get::<PanelRecord>(panel)
+            .unwrap()
+            .unavailable
+            .is_none()
+    {
+        if let Some((old, index)) = previous {
+            let id = world.get::<PanelPresentation>(panel).unwrap().id;
+            world
+                .resource_mut::<WorkbenchLayout>()
+                .tiling
+                .move_tab(id, target, index);
+            retire_panels(world, &[old])?;
+        }
+        let id = world.get::<PanelPresentation>(panel).unwrap().id;
+        world
+            .resource_mut::<WorkbenchLayout>()
+            .tiling
+            .areas
+            .iter_mut()
+            .find(|group| group.area == target)
+            .unwrap()
+            .preview = Some(id);
+    }
+    Ok(panel)
 }
 
 pub fn switch_viewer(world: &mut World, panel: Entity, viewer: &str) -> io::Result<()> {
@@ -1961,6 +2122,7 @@ fn begin_save_targets(
             world,
             &targets.iter().map(|target| target.document).collect(),
         )?;
+        publish_editor_frame(world);
         let session = world.non_send::<EditorSession>();
         let mut documents = Vec::new();
         let mut paths = Vec::new();
@@ -2555,6 +2717,32 @@ fn update_editor_services(world: &mut World) {
 }
 
 pub fn publish_editor_frame(world: &mut World) {
+    // Document changes are already owned by the editor host. Retain edited
+    // previews once, even if autosave subsequently makes them clean again.
+    let preview_ids = world
+        .resource::<WorkbenchLayout>()
+        .tiling
+        .areas
+        .iter()
+        .filter_map(|group| group.preview)
+        .collect::<HashSet<_>>();
+    let edited = world
+        .query::<(&PanelPresentation, &EditorPanelBinding)>()
+        .iter(world)
+        .filter_map(|(panel, binding)| {
+            (preview_ids.contains(&panel.id)
+                && binding.document.is_some_and(|document| {
+                    world
+                        .non_send::<EditorSession>()
+                        .with_document(document, |state| state.dirty)
+                        .unwrap_or(false)
+                }))
+            .then_some(panel.id)
+        })
+        .collect::<Vec<_>>();
+    for id in edited {
+        world.resource_mut::<WorkbenchLayout>().tiling.keep_tab(id);
+    }
     world.resource_scope(|world, mut frame: Mut<EditorFrame>| {
         let session = world.non_send::<EditorSession>();
         frame.workspace = session.workspace_id().0;
@@ -3056,6 +3244,20 @@ fn apply_host_request(
                 Some(request.area),
                 request.tab_index,
                 id,
+                FileOpenMode::Keep,
+            );
+        }
+        HostRequest::PreviewFileIn { path, viewer, .. } => {
+            return begin_open_file(
+                world,
+                Path::new(&path),
+                viewer.as_deref(),
+                false,
+                false,
+                Some(request.area),
+                request.tab_index,
+                id,
+                FileOpenMode::Preview,
             );
         }
         HostRequest::DropFile { path } => {
@@ -3068,6 +3270,7 @@ fn apply_host_request(
                 Some(request.area),
                 request.tab_index,
                 id,
+                FileOpenMode::Keep,
             );
         }
         HostRequest::OpenFileDialog { viewer } => {
@@ -3236,6 +3439,7 @@ fn apply_host_request(
                     false,
                     Some(request.area),
                     origin,
+                    FileOpenMode::Keep,
                 ) {
                     Ok(panel) => panel,
                     Err(error)
@@ -3263,6 +3467,8 @@ fn apply_host_request(
                                 path,
                                 viewer: Some("bed.editor.text".into()),
                                 additional: false,
+                                mode: FileOpenMode::Keep,
+                                layout_slot: request.layout_slot,
                                 move_existing: false,
                                 area: Some(request.area),
                                 tab_index: request.tab_index,
@@ -4417,6 +4623,8 @@ struct RemoteOpen {
     path: PathBuf,
     viewer: Option<String>,
     additional: bool,
+    mode: FileOpenMode,
+    layout_slot: u8,
     move_existing: bool,
     area: Option<u32>,
     tab_index: Option<usize>,
@@ -4583,8 +4791,9 @@ fn begin_open_file(
     area: Option<u32>,
     tab_index: Option<usize>,
     id: Option<EditorRequestId>,
+    mode: FileOpenMode,
 ) -> io::Result<Option<EditorRequestOutcome>> {
-    match open_file(world, path, viewer, additional, area) {
+    match open_file_with_origin(world, path, viewer, additional, area, None, mode) {
         Ok(panel) => {
             place_opened_panel(world, panel, area, move_existing, tab_index)?;
             Ok(Some(EditorRequestOutcome::Opened {
@@ -4599,6 +4808,7 @@ fn begin_open_file(
                 && world.non_send::<EditorSession>().is_remote() =>
         {
             let session = world.non_send::<EditorSession>().workspace_id().0;
+            let layout_slot = world.resource::<LayoutSlots>().active();
             world
                 .non_send_mut::<RemoteOperations>()
                 .opens
@@ -4608,6 +4818,8 @@ fn begin_open_file(
                     path: path.to_path_buf(),
                     viewer: viewer.map(str::to_owned),
                     additional,
+                    mode,
+                    layout_slot,
                     move_existing,
                     area,
                     tab_index,
@@ -4634,6 +4846,7 @@ fn queue_remote_restore(world: &mut World, record: Value, area: Option<u32>) -> 
     ));
     world.get_mut::<PanelRecord>(panel).unwrap().unavailable =
         Some("Opening remote document…".into());
+    let layout_slot = world.resource::<LayoutSlots>().active();
     world
         .non_send_mut::<RemoteOperations>()
         .opens
@@ -4643,6 +4856,8 @@ fn queue_remote_restore(world: &mut World, record: Value, area: Option<u32>) -> 
             path: PathBuf::from(record["path"].as_str().unwrap()),
             viewer,
             additional: true,
+            mode: FileOpenMode::Keep,
+            layout_slot,
             move_existing: false,
             area,
             tab_index: None,
@@ -4714,6 +4929,16 @@ fn poll_remote_operations(
                 pending.id,
                 Err("Workspace changed while opening a document".into()),
             );
+            continue;
+        }
+        if pending.mode == FileOpenMode::Preview
+            && pending.layout_slot != world.resource::<LayoutSlots>().active()
+        {
+            world
+                .non_send_mut::<RemoteOperations>()
+                .abandoned_paths
+                .insert(pending.path.clone());
+            complete(world, pending.id, Ok(EditorRequestOutcome::Ignored));
             continue;
         }
         if pending.area.is_some_and(|area| {
@@ -4819,6 +5044,7 @@ fn poll_remote_operations(
                 pending.additional,
                 pending.area,
                 origin,
+                pending.mode,
             )
         };
         match result {

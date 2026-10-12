@@ -755,24 +755,24 @@ impl CsvPanel {
         } else if let (Some(view), Some(selection)) = (&self.view, self.state.selection) {
             let mut point = selection.focus;
             let mut extend = false;
-            let select_up = take("bed.csv.select_up");
+            let select_up = take("bed.navigation.select_up");
             extend |= select_up;
-            if select_up || take("bed.csv.move_up") {
+            if select_up || take("bed.navigation.move_up") {
                 point[0] = point[0].saturating_sub(1);
             }
-            let select_down = take("bed.csv.select_down");
+            let select_down = take("bed.navigation.select_down");
             extend |= select_down;
-            if select_down || take("bed.csv.move_down") {
+            if select_down || take("bed.navigation.move_down") {
                 point[0] = (point[0] + 1).min(view.rows.len().saturating_sub(1));
             }
-            let select_left = take("bed.csv.select_left");
+            let select_left = take("bed.navigation.select_left");
             extend |= select_left;
-            if select_left || take("bed.csv.move_left") {
+            if select_left || take("bed.navigation.move_left") {
                 point[1] = point[1].saturating_sub(1);
             }
-            let select_right = take("bed.csv.select_right");
+            let select_right = take("bed.navigation.select_right");
             extend |= select_right;
-            if select_right || take("bed.csv.move_right") {
+            if select_right || take("bed.navigation.move_right") {
                 point[1] = (point[1] + 1).min(view.table.columns - 1);
             }
             if point != selection.focus {
@@ -1602,6 +1602,66 @@ mod tests {
         PanelActionInvocation, PanelEditResult, PanelInput, PluginDocument,
     };
     use bevy::prelude::{App, Entity};
+
+    #[test]
+    fn shared_navigation_overrides_move_and_extend_cell_selection() {
+        use bed_keybindings::{Bindings, Overrides, Platform};
+        use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
+        let (mut app, entity) = world_table();
+        let host_frame = app.world().resource::<EditorFrame>().clone();
+        let mut states = app.world_mut().non_send_mut::<CsvStates>();
+        let panel = states.get_mut(entity).unwrap();
+        panel.select(0, 0, false);
+        let actions = bed_keybindings::common_actions();
+        let mut overrides = Overrides::default();
+        for (id, key) in [
+            ("bed.navigation.move_right", "Ctrl+J"),
+            ("bed.navigation.select_left", "Ctrl+Shift+J"),
+        ] {
+            overrides
+                .replace(
+                    actions.iter().find(|a| a.id == id).unwrap(),
+                    Some(0),
+                    key.parse().unwrap(),
+                )
+                .unwrap();
+        }
+        panel.shortcuts.bindings =
+            std::rc::Rc::new(Bindings::new(actions, &overrides, Platform::current()));
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context.io_mut().set_config_macosx_behaviors(false);
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let frame = |context: &mut Context, panel: &mut CsvPanel| {
+            context.prepare_frame(FramePrepareOptions::new([400.0, 300.0], 1.0 / 60.0));
+            let ui = context.frame();
+            ui.window("CSV shared navigation")
+                .size([400.0, 300.0], Condition::Always)
+                .focused(true)
+                .build(|| {
+                    panel.keyboard(ui, &host_frame.context(), &mut Vec::new());
+                });
+            drop(context.render_legacy());
+        };
+        frame(&mut context, panel);
+        context.io_mut().add_key_event(Key::ModCtrl, true);
+        context.io_mut().add_key_event(Key::J, true);
+        frame(&mut context, panel);
+        assert_eq!(panel.state.selection.unwrap().focus, [0, 1]);
+        context.io_mut().add_key_event(Key::J, false);
+        frame(&mut context, panel);
+        context.io_mut().add_key_event(Key::ModShift, true);
+        context.io_mut().add_key_event(Key::J, true);
+        frame(&mut context, panel);
+        let selection = panel.state.selection.unwrap();
+        assert_eq!((selection.anchor, selection.focus), ([0, 1], [0, 0]));
+    }
 
     fn world_table() -> (App, Entity) {
         let mut app = App::new();

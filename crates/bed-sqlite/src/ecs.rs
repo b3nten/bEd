@@ -83,6 +83,10 @@ fn shutdown(mut exits: MessageReader<bevy::app::AppExit>, mut states: NonSendMut
 }
 
 fn create_sqlite_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Browse", "Select a table to inspect its rows. Copy cell or Copy row exports data; Inspect cell opens its full value."),
+        ("Query", "Use the Query tab to run SQL. Cancel stops an active query."),
+    ]).shortcut_actions(&["bed.edit.copy"]));
     let input = world
         .get::<EditorPanelBinding>(creation.entity)
         .map(|binding| binding.input.clone())

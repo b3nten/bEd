@@ -94,6 +94,10 @@ fn shutdown(mut exits: MessageReader<bevy::app::AppExit>, mut states: NonSendMut
 }
 
 fn create_gltf_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Camera", "Drag with the left button to orbit, or the right/middle button to pan. Scroll to zoom."),
+        ("View", "Frame All or double-click restores the full model view. Info and Appearance expose model details and rendering controls."),
+    ]).shortcut_actions(&[bed_keybindings::ZOOM_IN, bed_keybindings::ZOOM_OUT, bed_keybindings::RESET_ZOOM]));
     if world
         .get::<EditorPanelBinding>(creation.entity)
         .is_some_and(|binding| binding.input.local_file().is_some())
@@ -274,7 +278,7 @@ impl Panel for GltfFrontend {
         ui: &Ui,
         world: &mut World,
         _requests: &mut Vec<Action>,
-        _shortcuts: &bed_workbench_api::ShortcutInput,
+        shortcuts: &bed_workbench_api::ShortcutInput,
     ) {
         let viewer_menu = bed_editor_api::panel_viewer_menu(world, self.entity, VIEWER_ID);
         let output = {
@@ -288,6 +292,7 @@ impl Panel for GltfFrontend {
                 .expect("Gltf plugin initialized its presentation resources");
             let mut requests = Vec::new();
             let output = if let Some(panel) = states.0.get_mut(&self.entity) {
+                panel.shortcuts = shortcuts.clone();
                 let mut host = frame.context();
                 host.viewer_menu = viewer_menu.as_ref();
                 panel.draw_prepared(ui, &host, &mut requests);

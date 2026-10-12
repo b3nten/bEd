@@ -74,6 +74,10 @@ fn shutdown(mut exits: MessageReader<bevy::app::AppExit>, mut states: NonSendMut
 }
 
 fn create_json_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Tree", "Expand objects and arrays to explore JSON or JSONC. Select values to inspect their contents."),
+        ("Source", "Edit as Text opens the shared source document. Undo and redo use the document’s edit history."),
+    ]).shortcut_actions(&["bed.edit.undo", "bed.edit.redo"]));
     if world
         .get::<EditorPanelBinding>(creation.entity)
         .is_some_and(|binding| binding.input.local_file().is_some())

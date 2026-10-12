@@ -79,8 +79,8 @@ pub(crate) fn keyboard(
     {
         return None;
     }
-    let zoom_in = shortcuts.held(ui, ZOOM_IN);
-    let zoom_out = shortcuts.held(ui, ZOOM_OUT);
+    let zoom_in = shortcuts.held(ui, bed_keybindings::ZOOM_IN) || shortcuts.held(ui, ZOOM_IN);
+    let zoom_out = shortcuts.held(ui, bed_keybindings::ZOOM_OUT) || shortcuts.held(ui, ZOOM_OUT);
     if zoom_in || zoom_out {
         ui.with_bound_context(|| unsafe {
             let queue = &mut (*sys::igGetIO_Nil()).InputQueueCharacters;
@@ -101,13 +101,20 @@ pub(crate) fn keyboard(
             }
         });
     }
-    [ZOOM_IN, ZOOM_OUT, RESET_ZOOM]
-        .into_iter()
-        .find(|id| shortcuts.take(ui, id))
+    [
+        bed_keybindings::ZOOM_IN,
+        bed_keybindings::ZOOM_OUT,
+        bed_keybindings::RESET_ZOOM,
+        ZOOM_IN,
+        ZOOM_OUT,
+        RESET_ZOOM,
+    ]
+    .into_iter()
+    .find(|id| shortcuts.take(ui, id))
 }
 
 fn gestures(world: &mut World, ui: &Ui) {
-    let events = std::mem::take(&mut world.resource_mut::<EditorPinchEvents>().0);
+    let events = world.resource::<EditorPinchEvents>().0.clone();
     let blocked = world.non_send::<EditorConfig>().options.block_input || popup(ui);
     let mut target = world.resource::<GestureTarget>().0;
     if blocked {
@@ -261,6 +268,10 @@ mod tests {
                 });
         }
         gestures(app.world_mut(), ui);
+        app.world_mut()
+            .resource_mut::<EditorPinchEvents>()
+            .0
+            .clear();
         drop(context.render_legacy());
         for action in actions {
             app.world_mut()

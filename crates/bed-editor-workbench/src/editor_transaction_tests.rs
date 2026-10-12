@@ -126,6 +126,48 @@ impl CsvFixture {
 }
 
 #[test]
+fn replacing_a_csv_preview_commits_and_retains_its_unsaved_cell_draft() {
+    let directory = TempDir::new();
+    let mut fixture = CsvFixture::new(&directory);
+    let id = fixture
+        .app
+        .world()
+        .get::<PanelPresentation>(fixture.tab)
+        .unwrap()
+        .id;
+    fixture
+        .app
+        .world_mut()
+        .resource_mut::<WorkbenchLayout>()
+        .tiling
+        .areas[0]
+        .preview = Some(id);
+    fixture.draft("retain this draft");
+    fixture
+        .request(EditorAction::HostRequest(HostRequest::PreviewFileIn {
+            path: directory
+                .write("other.txt", b"other")
+                .to_string_lossy()
+                .into_owned(),
+            viewer: None,
+            target: PanelTarget::LargestArea,
+        }))
+        .unwrap();
+    assert!(fixture.app.world().entities().contains(fixture.tab));
+    assert!(fixture.app.world().entities().contains(fixture.csv));
+    assert_eq!(fixture.draft_text(), None);
+    let snapshot = fixture
+        .app
+        .world()
+        .non_send::<EditorSession>()
+        .snapshot(fixture.document)
+        .unwrap();
+    assert!(snapshot.dirty);
+    assert!(String::from_utf8_lossy(&snapshot.bytes).contains("retain this draft"));
+    assert_eq!(fs::read(&fixture.path).unwrap(), b"name,value\nalpha,one\n");
+}
+
+#[test]
 fn saving_a_world_csv_commits_and_acknowledges_the_pending_cell_before_writing_disk() {
     let directory = TempDir::new();
     let mut fixture = CsvFixture::new(&directory);
@@ -247,7 +289,7 @@ fn closing_a_world_csv_commits_and_saves_the_last_presentation_before_retiring_i
 
 #[test]
 fn stale_csv_drafts_block_save_close_and_viewer_switch_without_discarding_the_draft() {
-    for operation in ["save", "close", "switch"] {
+    for operation in ["save", "close", "switch", "preview"] {
         let directory = TempDir::new();
         let mut fixture = CsvFixture::new(&directory);
         fixture.draft("keep my draft");
@@ -261,6 +303,31 @@ fn stale_csv_drafts_block_save_close_and_viewer_switch_without_discarding_the_dr
             .map(|_| ()),
             "close" => fixture.close(),
             "switch" => fixture.text_view(),
+            "preview" => {
+                let id = fixture
+                    .app
+                    .world()
+                    .get::<PanelPresentation>(fixture.tab)
+                    .unwrap()
+                    .id;
+                fixture
+                    .app
+                    .world_mut()
+                    .resource_mut::<WorkbenchLayout>()
+                    .tiling
+                    .areas[0]
+                    .preview = Some(id);
+                fixture
+                    .request(EditorAction::HostRequest(HostRequest::PreviewFileIn {
+                        path: directory
+                            .write("other.txt", b"other")
+                            .to_string_lossy()
+                            .into_owned(),
+                        viewer: None,
+                        target: PanelTarget::LargestArea,
+                    }))
+                    .map(|_| ())
+            }
             _ => unreachable!(),
         };
         assert!(

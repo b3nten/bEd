@@ -163,6 +163,8 @@ impl EditorInput {
                 _ => id
                     .strip_prefix("bed.editor.")
                     .or_else(|| id.strip_prefix("bed.edit."))
+                    .or_else(|| id.strip_prefix("bed.navigation."))
+                    .or_else(|| id.strip_prefix("bed.view."))
                     .unwrap_or(""),
             };
             if matches!(
@@ -1346,7 +1348,7 @@ mod tests {
         let actions = crate::shortcuts::actions();
         let action = actions
             .iter()
-            .find(|a| a.id == "bed.editor.move_left")
+            .find(|a| a.id == "bed.navigation.move_left")
             .unwrap();
         let mut overrides = Overrides::default();
         overrides

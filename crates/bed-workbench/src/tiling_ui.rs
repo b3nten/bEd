@@ -225,6 +225,7 @@ impl ChromeSettings {
 /// frame-entry read snapshots; the request reducer owns their world state.
 #[derive(Default)]
 pub(crate) struct TilingFrontend {
+    pub preview_font: Option<dear_imgui_rs::FontId>,
     pub tiling: TilingState,
     pub tiling_ui: TilingUi,
     pub tabs: Vec<ChromeTab>,
@@ -1092,6 +1093,10 @@ impl TilingFrontend {
                             let title = self.title(tab);
                             let title = title.split("###").next().unwrap().to_owned();
                             let dirty = tab.dirty;
+                            let _font = (group.preview == Some(*id))
+                                .then_some(self.preview_font)
+                                .flatten()
+                                .map(|font| ui.push_font(font));
                             let width = (ui.calc_text_size(&title)[0]
                                 + 37.0
                                 + if dirty { 8.0 } else { 0.0 })
@@ -1188,7 +1193,13 @@ impl TilingFrontend {
                         [close_min[0] - 3.0, right[1]],
                         true,
                     );
-                    draw.add_text([left[0] + 8.0, bar_min[1] + 5.0], text, &title);
+                    {
+                        let _font = (group.preview == Some(panel))
+                            .then_some(self.preview_font)
+                            .flatten()
+                            .map(|font| ui.push_font(font));
+                        draw.add_text([left[0] + 8.0, bar_min[1] + 5.0], text, &title);
+                    }
                     drop(text_clip);
                     if dirty {
                         draw.add_circle(
@@ -1228,6 +1239,10 @@ impl TilingFrontend {
                     if pressed && self.tiling_ui.gesture.is_none() {
                         if let Some(index) = self.tabs.iter().position(|tab| tab.id == panel) {
                             self.switch_to_tab(index);
+                            if ui.is_mouse_double_clicked(MouseButton::Left) {
+                                self.requests
+                                    .push(Action::KeepPanel(self.tabs[index].entity));
+                            }
                         }
                         self.tiling_ui.gesture = Some(Gesture::Tab {
                             panel,

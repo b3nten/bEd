@@ -33,8 +33,9 @@ ALLOWED_INTERNAL = {
     "bed-automation": {"bed-desktop", "bed-workbench", "bed-workbench-api", "bed-editor-api", "bed-editor-workbench", "bed-document-session", "bed-editing"},
     "bed-idle": {"bed-desktop", "bed-scenes", "bed-editor-api", "bed-ui"},
     "bed-workbench-api": set(),
-    "bed-workbench": {"bed-workbench-api"},
+    "bed-workbench": {"bed-workbench-api", "bed-ui"},
     "bed-layout-app": {"bed-desktop", "bed-workbench", "bed-workbench-api", "bed-ui"},
+    "minimal": {"bed-desktop", "bed-workbench", "bed-terminal", "bed-editor-api", "bedterm"},
     "bed-editor-workbench": {
         "bed-workbench", "bed-workbench-api",
         "bed-editor-api", "bed-editing", "bed-files", "bed-highlight",
@@ -179,6 +180,10 @@ def check(offline=False):
             } | MODULES | LINKED_FEATURES
             if name in {"bed-workbench", "bed-workbench-api"}:
                 forbidden |= NATIVE_BACKENDS | {"bed-desktop", "bed-effects"}
+        elif name == "minimal":
+            forbidden = {"bed", "bed-editor-workbench", "bed-config", "bed-effects",
+                         "bed-scenes", "bed-editor-ui", "bevy_pbr", "bevy_gltf", "rodio"}
+            forbidden |= (MODULES - {"bed-terminal"}) | LINKED_FEATURES
         elif name in HEADLESS:
             forbidden = GUI
         elif name in PORTABLE_UI:

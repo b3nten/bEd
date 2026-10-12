@@ -235,6 +235,67 @@ fn create_hex(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult
 }
 
 fn create_editor(world: &mut World, creation: PanelCreation, hex: bool) -> PanelResult {
+    let mut notes = if hex {
+        bed_workbench_api::PanelDocumentation::new(&[
+            ("Bytes", "Inspect and edit bytes in hexadecimal or text. Select a range to copy it; Toggle Insert Mode switches between inserting and replacing bytes."),
+            ("Views", "The viewer menu switches between text and hex presentations of the same document."),
+        ]).shortcut_actions(&[
+            "bed.editor.delete_left", "bed.editor.delete_right",
+            "bed.navigation.move_left", "bed.navigation.move_right", "bed.navigation.move_up", "bed.navigation.move_down",
+            "bed.editor.move_line_start", "bed.editor.move_line_end", "bed.editor.move_doc_start", "bed.editor.move_doc_end",
+            "bed.navigation.select_left", "bed.navigation.select_right", "bed.navigation.select_up", "bed.navigation.select_down",
+            "bed.editor.select_line_start", "bed.editor.select_line_end", "bed.editor.select_doc_start", "bed.editor.select_doc_end",
+        ])
+    } else {
+        bed_workbench_api::PanelDocumentation::new(&[
+            (
+                "Edit",
+                "Type to edit the document. Use Find or Go to Line to navigate, and the gutter to fold code or set breakpoints.",
+            ),
+            (
+                "Code",
+                "Go to Definition and Find References use the language server. Add cursors above or below to edit multiple lines.",
+            ),
+            (
+                "View",
+                "Toggle word wrap or the minimap from the editor menu. Zoom changes this view’s text size; other views keep their own zoom.",
+            ),
+        ])
+    };
+    notes.shortcut_actions.extend(
+        [
+            "bed.edit.copy",
+            "bed.edit.cut",
+            "bed.edit.paste",
+            "bed.edit.select_all",
+            "bed.edit.undo",
+            "bed.edit.redo",
+        ]
+        .map(str::to_owned),
+    );
+    if !hex {
+        notes.shortcut_actions.extend(
+            [
+                "bed.edit.find",
+                bed_keybindings::ZOOM_IN,
+                bed_keybindings::ZOOM_OUT,
+                bed_keybindings::RESET_ZOOM,
+            ]
+            .into_iter()
+            .chain([
+                "bed.navigation.move_left",
+                "bed.navigation.move_right",
+                "bed.navigation.move_up",
+                "bed.navigation.move_down",
+                "bed.navigation.select_left",
+                "bed.navigation.select_right",
+                "bed.navigation.select_up",
+                "bed.navigation.select_down",
+            ])
+            .map(str::to_owned),
+        );
+    }
+    world.entity_mut(creation.entity).insert(notes);
     let mut binding = world
         .get::<EditorPanelBinding>(creation.entity)
         .cloned()
@@ -342,16 +403,30 @@ fn create_editor(world: &mut World, creation: PanelCreation, hex: bool) -> Panel
     }))
 }
 
-fn create_diagnostics(In(creation): In<PanelCreation>) -> PanelResult {
-    create_tool(creation, runtime::ToolKind::Diagnostics)
+fn create_diagnostics(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    create_tool(creation, world, runtime::ToolKind::Diagnostics)
 }
-fn create_references(In(creation): In<PanelCreation>) -> PanelResult {
-    create_tool(creation, runtime::ToolKind::References)
+fn create_references(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    create_tool(creation, world, runtime::ToolKind::References)
 }
-fn create_dashboard(In(creation): In<PanelCreation>) -> PanelResult {
-    create_tool(creation, runtime::ToolKind::Dashboard)
+fn create_dashboard(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    create_tool(creation, world, runtime::ToolKind::Dashboard)
 }
-fn create_tool(creation: PanelCreation, kind: runtime::ToolKind) -> PanelResult {
+fn create_tool(creation: PanelCreation, world: &mut World, kind: runtime::ToolKind) -> PanelResult {
+    let body = match kind {
+        runtime::ToolKind::Diagnostics => {
+            "Review errors and warnings from language servers and project checks. Select a diagnostic to navigate to its source location."
+        }
+        runtime::ToolKind::References => {
+            "Use Find References in the editor to populate this panel. Select a result to navigate to that use of the symbol."
+        }
+        runtime::ToolKind::Dashboard => {
+            "Inspect language server status, capabilities, and messages. Use the available server controls to manage a connection."
+        }
+    };
+    world
+        .entity_mut(creation.entity)
+        .insert(bed_workbench_api::PanelDocumentation::new(&[("Use", body)]));
     Ok(Box::new(EditorFrontend {
         entity: creation.entity,
         tool: Some(kind),
@@ -409,6 +484,15 @@ impl Panel for EditorFrontend {
             .non_send::<bed_editor_ui::extensions::EditorExtensions>()
             .clone();
         let mut response = None;
+        let before = world
+            .get::<EditorPanelState>(self.entity)
+            .and_then(|state| {
+                world
+                    .non_send::<EditorSession>()
+                    .document_revision(state.document)
+                    .ok()
+                    .map(|revision| (state.document, revision))
+            });
         let window = crate::zoom::window(ui);
         let menu = bed_editor_api::panel_viewer_menu(world, self.entity, TEXT_VIEWER);
         let mut requests = Vec::new();
@@ -436,6 +520,14 @@ impl Panel for EditorFrontend {
             }
         });
         world.entity_mut(self.entity).insert(window);
+        if before.is_some_and(|(document, revision)| {
+            world
+                .non_send::<EditorSession>()
+                .document_revision(document)
+                .is_ok_and(|current| current != revision)
+        }) {
+            actions.push(Action::KeepPanel(self.entity));
+        }
         for request in requests {
             world
                 .resource_mut::<EditorIntents>()
@@ -840,9 +932,9 @@ pub(crate) fn draw_text_view(
         &config.options.shortcuts,
     ) {
         match command {
-            crate::zoom::ZOOM_IN => view.zoom_in(),
-            crate::zoom::ZOOM_OUT => view.zoom_out(),
-            crate::zoom::RESET_ZOOM => view.reset_zoom(),
+            bed_keybindings::ZOOM_IN | crate::zoom::ZOOM_IN => view.zoom_in(),
+            bed_keybindings::ZOOM_OUT | crate::zoom::ZOOM_OUT => view.zoom_out(),
+            bed_keybindings::RESET_ZOOM | crate::zoom::RESET_ZOOM => view.reset_zoom(),
             _ => unreachable!(),
         }
     }

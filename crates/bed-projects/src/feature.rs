@@ -66,6 +66,10 @@ fn open_panel(In(invocation): In<CommandInvocation>) -> CommandResult {
 }
 
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Projects", "Open a folder or choose a recent project to begin working. Remote projects use their saved SSH connection."),
+        ("Recent entries", "Right-click a recent project to open it in a new window, rename its label, or remove the entry."),
+    ]));
     world
         .entity_mut(creation.entity)
         .insert((ProjectsPanelState, PanelPersistence(false)));

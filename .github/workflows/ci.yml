@@ -73,6 +73,7 @@ jobs:
       - name: Minimal desktop composition
         run: |
           cargo check --locked -p bed-layout-app
+          cargo check --locked -p minimal
           cargo check --locked -p bed-ui --no-default-features
           python3 scripts/check-desktop-consumer.py
           cargo check --locked -p bed --no-default-features --bins

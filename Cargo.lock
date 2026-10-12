@@ -2182,6 +2182,7 @@ dependencies = [
  "bed-editor-api",
  "bed-editor-ui",
  "bed-files",
+ "bed-image",
  "bed-json",
  "bed-keybindings",
  "bed-remote",
@@ -2346,6 +2347,7 @@ version = "0.1.0"
 dependencies = [
  "bed-editing",
  "bed-editor-api",
+ "bed-keybindings",
  "bed-ui",
  "bed-workbench-api",
  "bevy",
@@ -2427,6 +2429,7 @@ dependencies = [
  "base64 0.22.1",
  "bed-editing",
  "bed-editor-api",
+ "bed-keybindings",
  "bed-runtime",
  "bed-ui",
  "bed-workbench-api",
@@ -6015,6 +6018,18 @@ dependencies = [
  "cc",
  "float-cmp 0.10.0",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "minimal"
+version = "0.1.0"
+dependencies = [
+ "bed-desktop",
+ "bed-editor-api",
+ "bed-terminal",
+ "bed-workbench",
+ "bedterm",
+ "serde_json",
 ]
 
 [[package]]

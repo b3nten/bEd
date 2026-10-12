@@ -67,62 +67,6 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
             bed_keybindings::Scope::panel(PANEL_ID),
             &["Shift+Tab"],
         ),
-        bed_keybindings::Action::new(
-            "bed.csv.move_up",
-            "Move Up",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Up"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.csv.move_down",
-            "Move Down",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Down"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.csv.move_left",
-            "Move Left",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Left"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.csv.move_right",
-            "Move Right",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Right"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.csv.select_up",
-            "Extend Selection Up",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Shift+Up"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.csv.select_down",
-            "Extend Selection Down",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Shift+Down"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.csv.select_left",
-            "Extend Selection Left",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Shift+Left"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.csv.select_right",
-            "Extend Selection Right",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Shift+Right"],
-        ),
     ]
 }
 pub(crate) fn default_shortcuts() -> bed_keybindings::ShortcutInput {

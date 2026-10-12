@@ -118,6 +118,7 @@ impl Decoder {
 }
 
 pub struct ImagePanel {
+    shortcuts: bed_keybindings::ShortcutInput,
     document: DocumentId,
     texture: TextureHandle,
     decoder: Decoder,
@@ -139,6 +140,12 @@ impl ImagePanel {
                 .map_or(fallback, |v| v as f32)
         };
         Self {
+            shortcuts: bed_keybindings::ShortcutInput::new(bed_keybindings::Bindings::new(
+                bed_keybindings::common_actions(),
+                &Default::default(),
+                bed_keybindings::Platform::current(),
+            ))
+            .with_scope(bed_keybindings::Scope::panel(PANEL_ID)),
             document,
             texture: TextureHandle::next(),
             decoder: Decoder::new(),
@@ -284,6 +291,33 @@ impl ImagePanel {
         let fit_scale =
             (canvas.size[0] / decoded.size[0] as f32).min(canvas.size[1] / decoded.size[1] as f32);
         let mut scale = if *fit { fit_scale } else { self.zoom };
+        if !self.shortcuts.suppressed(ui)
+            && !ui.io().want_text_input()
+            && !ui.is_any_item_active()
+            && !ui.is_popup_open_with_flags(
+                "",
+                dear_imgui_rs::PopupQueryFlags::ANY_POPUP_ID
+                    | dear_imgui_rs::PopupQueryFlags::ANY_POPUP_LEVEL,
+            )
+            && ui.is_window_focused_with_flags(dear_imgui_rs::FocusedFlags::ROOT_AND_CHILD_WINDOWS)
+        {
+            for (action, factor) in [
+                (bed_keybindings::ZOOM_IN, 1.25),
+                (bed_keybindings::ZOOM_OUT, 1.0 / 1.25),
+            ] {
+                if self.shortcuts.take(ui, action) {
+                    self.zoom = (scale * factor).clamp(0.01, 32.0);
+                    *fit = false;
+                    scale = self.zoom;
+                }
+            }
+            if self.shortcuts.take(ui, bed_keybindings::RESET_ZOOM) {
+                *fit = false;
+                self.zoom = 1.0;
+                self.pan = [0.0; 2];
+                scale = self.zoom;
+            }
+        }
         if canvas.hovered {
             let wheel = ui.io().mouse_wheel();
             if wheel != 0.0 {
@@ -389,6 +423,9 @@ impl ImagePanel {
 }
 
 #[cfg(test)]
+static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use bed_editor_api::MenuSlot;
@@ -406,6 +443,119 @@ mod tests {
         let mut bytes = Cursor::new(Vec::new());
         image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
         bytes.into_inner().into()
+    }
+    #[test]
+    fn common_zoom_overrides_target_focused_images_and_reset_actual_size() {
+        use bed_keybindings::{Bindings, Overrides, Platform, Scope, ShortcutInput};
+        use dear_imgui_rs::{Condition, Context, FramePrepareOptions, Key};
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut frame_data = bed_editor_api::EditorFrame::default();
+        frame_data.documents.push(bed_editor_api::PluginDocument {
+            id: DocumentId(1),
+            path: "image.png".into(),
+            kind: DocumentKind::Bytes,
+            language_id: String::new(),
+            revision: (1, 1),
+            dirty: false,
+            bytes: png(100, 100),
+            text: None,
+        });
+        let actions = bed_keybindings::common_actions();
+        let mut overrides = Overrides::default();
+        overrides
+            .replace(
+                actions
+                    .iter()
+                    .find(|a| a.id == bed_keybindings::ZOOM_IN)
+                    .unwrap(),
+                Some(0),
+                "Ctrl+J".parse().unwrap(),
+            )
+            .unwrap();
+        let input = ShortcutInput::new(Bindings::new(actions, &overrides, Platform::current()))
+            .with_scope(Scope::panel(PANEL_ID));
+        let mut panels = [
+            ImagePanel::new(DocumentId(1), &Value::Null),
+            ImagePanel::new(DocumentId(1), &json!({"fit": false})),
+        ];
+        for panel in &mut panels {
+            panel.shortcuts = input.clone();
+            panel.decoded = Some(DecodedImage {
+                size: [100, 100],
+                rgba: vec![255; 40000].into(),
+            });
+        }
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context.io_mut().set_config_macosx_behaviors(false);
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let frame = |context: &mut Context,
+                     panels: &mut [ImagePanel; 2],
+                     first: bool,
+                     suppressed: bool| {
+            context.prepare_frame(FramePrepareOptions::new([800.0, 300.0], 1.0 / 60.0));
+            let ui = context.frame();
+            if suppressed {
+                input.suppress(ui);
+            }
+            for index in [1, 0] {
+                ui.window(if index == 0 {
+                    "First image"
+                } else {
+                    "Second image"
+                })
+                .position([index as f32 * 400.0, 0.0], Condition::Always)
+                .size([390.0, 290.0], Condition::Always)
+                .focused(first == (index == 0))
+                .build(|| {
+                    panels[index].draw_prepared(ui, &frame_data.context(), &mut Vec::new(), None);
+                });
+            }
+            drop(context.render_legacy());
+        };
+        for _ in 0..3 {
+            frame(&mut context, &mut panels, true, false);
+        }
+        let fitted = panels[0].canvas.unwrap().scale;
+        context.io_mut().add_key_event(Key::ModCtrl, true);
+        context.io_mut().add_key_event(Key::J, true);
+        frame(&mut context, &mut panels, true, false);
+        assert!((panels[0].zoom - fitted * 1.25).abs() < 0.00001);
+        assert_eq!(panels[0].fit, Some(false));
+        assert_eq!(panels[1].zoom, 1.0);
+        context.io_mut().add_key_event(Key::J, false);
+        frame(&mut context, &mut panels, false, false);
+        context.io_mut().add_key_event(Key::J, true);
+        frame(&mut context, &mut panels, false, true);
+        assert_eq!(panels[1].zoom, 1.0);
+        context.io_mut().add_key_event(Key::J, false);
+        frame(&mut context, &mut panels, false, false);
+        context.io_mut().add_key_event(Key::J, true);
+        frame(&mut context, &mut panels, false, false);
+        assert_eq!(panels[1].zoom, 1.25);
+        context.io_mut().add_key_event(Key::J, false);
+        context.io_mut().add_key_event(Key::ModCtrl, false);
+        frame(&mut context, &mut panels, true, false);
+        panels[0].pan = [10.0, 20.0];
+        context.io_mut().add_key_event(
+            if cfg!(target_os = "macos") {
+                Key::ModSuper
+            } else {
+                Key::ModCtrl
+            },
+            true,
+        );
+        context.io_mut().add_key_event(Key::Key0, true);
+        frame(&mut context, &mut panels, true, false);
+        assert_eq!(panels[0].zoom, 1.0);
+        assert_eq!(panels[0].pan, [0.0; 2]);
+        assert_eq!(panels[1].zoom, 1.25);
     }
     #[test]
     fn text_backed_svg_preview_tracks_unsaved_revisions() {

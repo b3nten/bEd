@@ -543,6 +543,10 @@ fn publish_readiness(world: &mut World) {
     }
 }
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Run", "Configure a launch profile, then start debugging. Use the session controls to continue, pause, step, or stop."),
+        ("Inspect", "Select a stack frame to inspect variables. Add expressions to Watches and manage breakpoints in this panel or the editor gutter."),
+    ]));
     if world.non_send::<DebugState>().0.profiles.is_empty() {
         world.non_send_mut::<DebugState>().0.load(None);
     }

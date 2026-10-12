@@ -1353,5 +1353,33 @@
     "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
     "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/file-plus.svg",
     "sha256": "bbcf862a2a4425baa8a5bda39c7f16ec1d283816a3db77baf84f2e8766dd223e"
+  },
+  {
+    "key": "key-command",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/command.svg",
+    "sha256": "403972f508e49217baa1371f52d856a25c67eca1d324557c0455b1a657d109fc"
+  },
+  {
+    "key": "key-shift",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/arrow-big-up.svg",
+    "sha256": "3149e1edfa3d8042f37bda6505305d629b0389e313e54327bbb251099977c639"
+  },
+  {
+    "key": "key-option",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/option.svg",
+    "sha256": "e847571add37a4bf913e6ebd77569c2760c0fff10b4c101300dc36191d576922"
+  },
+  {
+    "key": "key-control",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/chevron-up.svg",
+    "sha256": "d09f13fcbef3c493ead7e4663b5ee91804fec38d5edb5e7cc3acfbd547641cf4"
   }
 ]

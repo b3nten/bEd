@@ -35,6 +35,10 @@ plus lucide plus
 minus lucide minus
 search lucide search
 new-file lucide file-plus
+key-command lucide command
+key-shift lucide arrow-big-up
+key-option lucide option
+key-control lucide chevron-up
 rust simple-icons rust
 python simple-icons python
 javascript simple-icons javascript

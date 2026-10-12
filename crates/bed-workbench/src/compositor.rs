@@ -143,6 +143,9 @@ fn draw(world: &mut World, ui: &Ui) {
         geometry.visible = false;
     }
     let _rounding = ui.push_style_var(StyleVar::WindowRounding(0.0));
+    let preview_font = world
+        .get_non_send::<bed_ui::font::UiFonts>()
+        .and_then(|fonts| fonts.italic);
     let docks = {
         let mut state =
             SystemState::<(NonSendMut<TilingFrontend>, NonSendMut<UiAnimations>)>::new(world);
@@ -151,6 +154,7 @@ fn draw(world: &mut World, ui: &Ui) {
             .expect("tiling frontend and opening animations are installed");
         // A removed initiating panel cancels its transient gesture before use.
         chrome.refresh(layout.tiling.clone(), tabs.clone());
+        chrome.preview_font = preview_font;
         chrome.focused = layout
             .focused
             .and_then(|entity| tabs.iter().find(|tab| tab.entity == entity))
@@ -304,6 +308,7 @@ fn draw(world: &mut World, ui: &Ui) {
             }
         }
     }
+    world.resource_mut::<api::PinchEvents>().0.clear();
     world
         .non_send_mut::<UiAnimations>()
         .end(ui, appearance.animations);

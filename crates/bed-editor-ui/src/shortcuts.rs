@@ -48,17 +48,9 @@ pub fn actions() -> Vec<Action> {
         ),
         ("fold_all", "Fold All", vec![]),
         ("unfold_all", "Unfold All", vec![]),
-        (
-            "zoom_in",
-            "Zoom In",
-            vec!["Primary+Equal", "Primary+Shift+Equal", "Primary+KeypadAdd"],
-        ),
-        (
-            "zoom_out",
-            "Zoom Out",
-            vec!["Primary+Minus", "Primary+KeypadSubtract"],
-        ),
-        ("reset_zoom", "Reset Zoom", vec![]),
+        ("zoom_in", "Zoom Text In", vec![]),
+        ("zoom_out", "Zoom Text Out", vec![]),
+        ("reset_zoom", "Reset Text Zoom", vec![]),
         ("toggle_wrap", "Toggle Word Wrap", vec!["Alt+Z"]),
         ("toggle_minimap", "Toggle Minimap", vec![]),
     ] {
@@ -96,10 +88,6 @@ pub fn actions() -> Vec<Action> {
         add(name, label, &keys, true);
     }
     for (name, label, keys) in [
-        ("left", "Left", vec!["Left"]),
-        ("right", "Right", vec!["Right"]),
-        ("up", "Up", vec!["Up"]),
-        ("down", "Down", vec!["Down"]),
         (
             "word_left",
             "Previous Word",

@@ -244,13 +244,15 @@ fn configure(world: &mut World) {
     let idle = settings.bool("bedtime_enabled", true);
     #[cfg(feature = "editor")]
     let navigation_animations = settings.bool("ui_animations", true);
+    #[cfg(feature = "editor")]
+    let cursor_smear = settings.bool("cursor_smear", true);
     world.resource_mut::<bed_desktop::DesktopAppearance>().0 = appearance;
     *world.resource_mut::<bed_workbench::WorkbenchAppearance>() = workbench_appearance;
     #[cfg(feature = "editor")]
     {
-        world
-            .non_send_mut::<bed_editor::EditorConfig>()
-            .navigation_animations = navigation_animations;
+        let mut config = world.non_send_mut::<bed_editor::EditorConfig>();
+        config.navigation_animations = navigation_animations;
+        config.options.cursor_smear = cursor_smear;
     }
     #[cfg(feature = "terminal")]
     {
@@ -422,13 +424,13 @@ fn native_input(world: &mut World) {
     for (delta, phase) in pinches {
         let (position, _) = native_drag_observation(world);
         let phase = match phase {
-            winit::event::TouchPhase::Started => bed_editor_api::EditorPinchPhase::Started,
-            winit::event::TouchPhase::Moved => bed_editor_api::EditorPinchPhase::Moved,
-            winit::event::TouchPhase::Ended => bed_editor_api::EditorPinchPhase::Ended,
-            winit::event::TouchPhase::Cancelled => bed_editor_api::EditorPinchPhase::Cancelled,
+            winit::event::TouchPhase::Started => bed_workbench::api::PinchPhase::Started,
+            winit::event::TouchPhase::Moved => bed_workbench::api::PinchPhase::Moved,
+            winit::event::TouchPhase::Ended => bed_workbench::api::PinchPhase::Ended,
+            winit::event::TouchPhase::Cancelled => bed_workbench::api::PinchPhase::Cancelled,
         };
-        if let Some(mut events) = world.get_resource_mut::<bed_editor_api::EditorPinchEvents>() {
-            events.0.push(bed_editor_api::EditorPinchEvent {
+        if let Some(mut events) = world.get_resource_mut::<bed_workbench::api::PinchEvents>() {
+            events.0.push(bed_workbench::api::PinchEvent {
                 position,
                 delta,
                 phase,

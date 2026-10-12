@@ -973,20 +973,6 @@ mod tests {
 pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
     vec![
         bed_keybindings::Action::new(
-            "bed.explorer.move_down",
-            "Move Down",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Down"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.explorer.move_up",
-            "Move Up",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Up"],
-        ),
-        bed_keybindings::Action::new(
             "bed.explorer.move_first",
             "Move to First Item",
             MODULE_ID,
@@ -1001,20 +987,6 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
             &["End"],
         ),
         bed_keybindings::Action::new(
-            "bed.explorer.select_down",
-            "Extend Selection Down",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Shift+Down"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.explorer.select_up",
-            "Extend Selection Up",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Shift+Up"],
-        ),
-        bed_keybindings::Action::new(
             "bed.explorer.select_first",
             "Extend Selection to First",
             MODULE_ID,
@@ -1027,20 +999,6 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
             MODULE_ID,
             bed_keybindings::Scope::panel(PANEL_ID),
             &["Shift+End"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.explorer.expand",
-            "Expand Folder",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Right"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.explorer.collapse",
-            "Collapse Folder",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Left"],
         ),
         bed_keybindings::Action::new(
             "bed.explorer.open",

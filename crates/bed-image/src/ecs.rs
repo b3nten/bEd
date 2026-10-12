@@ -76,6 +76,10 @@ fn shutdown(mut exits: MessageReader<bevy::app::AppExit>, mut states: NonSendMut
 }
 
 fn create_image_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("View", "Use Fit to fill the panel or 100% for actual size. Scroll over the image to zoom; drag to pan."),
+        ("Details", "Info shows image metadata. The viewer menu lets you inspect the same file in another view."),
+    ]).shortcut_actions(&[bed_keybindings::ZOOM_IN, bed_keybindings::ZOOM_OUT, bed_keybindings::RESET_ZOOM]));
     if world
         .get::<EditorPanelBinding>(creation.entity)
         .is_some_and(|binding| binding.input.local_file().is_some())
@@ -248,7 +252,7 @@ impl Panel for ImageFrontend {
         ui: &Ui,
         world: &mut World,
         _requests: &mut Vec<Action>,
-        _shortcuts: &bed_workbench_api::ShortcutInput,
+        shortcuts: &bed_workbench_api::ShortcutInput,
     ) {
         let output = {
             let mut state = SystemState::<(
@@ -262,6 +266,7 @@ impl Panel for ImageFrontend {
                 .expect("Image plugin initialized its presentation resources");
             let mut requests = Vec::new();
             let output = if let Some(panel) = states.0.get_mut(&self.entity) {
+                panel.shortcuts = shortcuts.clone();
                 panel.draw_prepared(ui, &frame.context(), &mut requests, icons.as_deref());
                 panel.canvas_output()
             } else {
@@ -326,6 +331,7 @@ mod tests {
 
     #[test]
     fn world_workers_follow_unsaved_source_and_ui_publishes_renderable_canvas() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let mut app = App::new();
         app.add_plugins(ImagePlugin);
         app.world_mut().resource_mut::<EditorFrame>().documents = vec![PluginDocument {

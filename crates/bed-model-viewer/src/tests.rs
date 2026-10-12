@@ -14,6 +14,110 @@ fn load(value: &Value) -> Result<Scene, String> {
     model::load(&serde_json::to_vec(value).unwrap())
 }
 
+#[test]
+fn common_zoom_changes_camera_distance_and_reset_frames_the_model() {
+    use bed_keybindings::{Bindings, Overrides, Platform};
+    use dear_imgui_rs::{Condition, FramePrepareOptions, Key};
+    let mut frame_data = bed_editor_api::EditorFrame::default();
+    frame_data.documents.push(bed_editor_api::PluginDocument {
+        id: DocumentId(1),
+        path: "cube.glb".into(),
+        kind: DocumentKind::Bytes,
+        language_id: String::new(),
+        revision: (1, 1),
+        dirty: false,
+        bytes: CUBE_GLB.into(),
+        text: None,
+    });
+    let mut panel = GltfPanel::new(DocumentId(1), &Value::Null);
+    panel.prepared = Some(Arc::new(PreparedModel::Gltf(
+        prepare::load(CUBE_GLB).unwrap(),
+    )));
+    panel.scene = Some(load(&asset()).unwrap());
+    let actions = bed_keybindings::common_actions();
+    let mut overrides = Overrides::default();
+    overrides
+        .replace(
+            actions
+                .iter()
+                .find(|a| a.id == bed_keybindings::ZOOM_IN)
+                .unwrap(),
+            Some(0),
+            "Ctrl+J".parse().unwrap(),
+        )
+        .unwrap();
+    panel.shortcuts.bindings =
+        std::rc::Rc::new(Bindings::new(actions, &overrides, Platform::current()));
+    let mut context = dear_imgui_rs::Context::create();
+    context
+        .set_ini_filename(None::<std::path::PathBuf>)
+        .unwrap();
+    context.io_mut().set_config_macosx_behaviors(false);
+    context
+        .font_atlas()
+        .try_claim_legacy_renderer()
+        .unwrap()
+        .build();
+    let frame = |context: &mut dear_imgui_rs::Context,
+                 panel: &mut GltfPanel,
+                 focused: bool,
+                 suppressed: bool| {
+        context.prepare_frame(FramePrepareOptions::new([800.0, 300.0], 1.0 / 60.0));
+        let ui = context.frame();
+        if suppressed {
+            panel.shortcuts.suppress(ui);
+        }
+        ui.window("Other content")
+            .position([400.0, 0.0], Condition::Always)
+            .size([390.0, 290.0], Condition::Always)
+            .focused(!focused)
+            .build(|| {
+                ui.text("Other content");
+            });
+        ui.window("Model zoom")
+            .position([0.0, 0.0], Condition::Always)
+            .size([390.0, 290.0], Condition::Always)
+            .focused(focused)
+            .build(|| {
+                panel.draw_prepared(ui, &frame_data.context(), &mut Vec::new());
+            });
+        drop(context.render_legacy());
+    };
+    for _ in 0..3 {
+        frame(&mut context, &mut panel, true, false);
+    }
+    let baseline = panel.camera.distance;
+    context.io_mut().add_key_event(Key::ModCtrl, true);
+    context.io_mut().add_key_event(Key::J, true);
+    frame(&mut context, &mut panel, true, false);
+    assert!(panel.camera.distance < baseline);
+    let zoomed = panel.camera.distance;
+    context.io_mut().add_key_event(Key::J, false);
+    frame(&mut context, &mut panel, false, false);
+    context.io_mut().add_key_event(Key::J, true);
+    frame(&mut context, &mut panel, false, false);
+    assert_eq!(panel.camera.distance, zoomed);
+    context.io_mut().add_key_event(Key::J, false);
+    frame(&mut context, &mut panel, true, false);
+    context.io_mut().add_key_event(Key::J, true);
+    frame(&mut context, &mut panel, true, true);
+    assert_eq!(panel.camera.distance, zoomed);
+    context.io_mut().add_key_event(Key::J, false);
+    context.io_mut().add_key_event(Key::ModCtrl, false);
+    frame(&mut context, &mut panel, true, false);
+    context.io_mut().add_key_event(
+        if cfg!(target_os = "macos") {
+            Key::ModSuper
+        } else {
+            Key::ModCtrl
+        },
+        true,
+    );
+    context.io_mut().add_key_event(Key::Key0, true);
+    frame(&mut context, &mut panel, true, false);
+    assert!((panel.camera.distance - baseline).abs() < 0.00001);
+}
+
 fn add_float_attribute(value: &mut Value, semantic: &str, dimensions: &str, data: &[f32]) {
     use base64::{Engine, engine::general_purpose::STANDARD};
     let bytes: Vec<_> = data

@@ -540,6 +540,11 @@ impl FileOperations {
             ExplorerAction::Tree(action) => action,
         };
         match action {
+            FileTreeAction::Preview(path) => requests.push(HostRequest::PreviewFileIn {
+                path,
+                viewer: None,
+                target: bed_editor_api::PanelTarget::LargestArea,
+            }),
             FileTreeAction::Command { command, context } => {
                 requests.push(HostRequest::Command { command, context })
             }
@@ -1932,12 +1937,18 @@ mod tests {
         state
             .actions
             .push(ExplorerAction::PreferencesChanged(Default::default()));
+        state
+            .actions
+            .push(ExplorerAction::Tree(FileTreeAction::Preview(
+                "/captured/preview.txt".into(),
+            )));
         app.update();
         let intents = app
             .world_mut()
             .resource_mut::<bed_editor_api::EditorIntents>()
             .take();
         assert!(intents.iter().any(|intent| matches!(&intent.request, HostRequest::OpenFileIn { path, target: bed_editor_api::PanelTarget::LargestArea, .. } if path == "/captured/file.txt")));
+        assert!(intents.iter().any(|intent| matches!(&intent.request, HostRequest::PreviewFileIn { path, target: bed_editor_api::PanelTarget::LargestArea, .. } if path == "/captured/preview.txt")));
         assert!(
             intents
                 .iter()

@@ -52,6 +52,10 @@ fn open_panel(In(invocation): In<CommandInvocation>) -> CommandResult {
 }
 
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Color", "Choose a color with the picker or edit its numeric values. The preview includes opacity."),
+        ("Palette", "Use the value outputs and swatches to copy colors and keep a reusable palette."),
+    ]));
     let state = ColorState::restore(&creation.state);
     let rgba = state.rgba;
     world.entity_mut(creation.entity).insert(state);

@@ -54,6 +54,10 @@ fn open_panel(In(invocation): In<CommandInvocation>) -> CommandResult {
 }
 
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Preferences", "Choose a category to change appearance, editing, terminal, or plugin settings."),
+        ("Keybindings", "Use the Keybindings category to assign or remove shortcuts. Docs reflects your current assignments."),
+    ]));
     world
         .entity_mut(creation.entity)
         .insert(SettingsPanelState::default());

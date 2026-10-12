@@ -8,6 +8,8 @@ pub struct AreaTabs {
     pub area: u32,
     pub tabs: Vec<u64>,
     pub selected: Option<u64>,
+    /// The sole tab that a subsequent preview opening may replace.
+    pub preview: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,6 +33,7 @@ impl TilingState {
                 area: area.id,
                 tabs: Vec::new(),
                 selected: None,
+                preview: None,
             })
             .collect();
         Self { layout, areas }
@@ -61,11 +64,24 @@ impl TilingState {
 
     pub fn remove(&mut self, panel: u64) {
         for group in &mut self.areas {
+            if group.preview == Some(panel) {
+                group.preview = None;
+            }
             group.tabs.retain(|id| *id != panel);
             if group.selected == Some(panel) {
                 group.selected = group.tabs.first().copied();
             }
         }
+    }
+
+    pub fn keep_tab(&mut self, panel: u64) -> bool {
+        for group in &mut self.areas {
+            if group.preview == Some(panel) {
+                group.preview = None;
+                return true;
+            }
+        }
+        false
     }
 
     pub fn add_area(&mut self, area: u32) {
@@ -75,6 +91,7 @@ impl TilingState {
             area,
             tabs: Vec::new(),
             selected: None,
+            preview: None,
         });
     }
 
@@ -93,6 +110,7 @@ impl TilingState {
                         area: area.id,
                         tabs: Vec::new(),
                         selected: None,
+                        preview: None,
                     }),
             );
         }
@@ -115,6 +133,7 @@ impl TilingState {
             .find(|group| group.area == area)
             .expect("live area has a tab group");
         group.selected = selected.or_else(|| tabs.first().copied());
+        group.preview = group.preview.filter(|id| tabs.contains(id));
         group.tabs = tabs;
     }
 
@@ -133,6 +152,7 @@ impl TilingState {
 
     /// The insertion index refers to the destination after removing the tab,
     /// so moving within an area uses the same transition as moving between areas.
+    /// Explicit placement retains the moved tab instead of moving a preview slot.
     pub fn move_tab(&mut self, panel: u64, target: u32, index: usize) {
         let source = self.move_tab_contents(panel, target, index);
         if source != target {
@@ -213,6 +233,7 @@ impl TilingState {
         let ids = ids.into_iter().collect::<HashSet<_>>();
         for group in &mut self.areas {
             group.tabs.retain(|id| ids.contains(id));
+            group.preview = group.preview.filter(|id| group.tabs.contains(id));
             if group.selected.is_some_and(|id| !group.tabs.contains(&id)) {
                 group.selected = group.tabs.first().copied();
             }
@@ -241,7 +262,8 @@ impl TilingState {
                     .selected
                     .filter(|id| tabs.contains(id))
                     .or_else(|| tabs.first().copied());
-                json!({"area":group.area,"tabs":tabs,"selected":selected})
+                let preview = group.preview.filter(|id| tabs.contains(id));
+                json!({"area":group.area,"tabs":tabs,"selected":selected,"preview":preview})
             })
             .collect::<Vec<_>>();
         assert_eq!(assigned, panel_ids, "every saved panel belongs to an area");
@@ -301,10 +323,21 @@ impl TilingState {
                         .ok_or("Selected workspace panel is outside its area")?,
                 )
             };
+            let preview = if group["preview"].is_null() {
+                None
+            } else {
+                Some(
+                    group["preview"]
+                        .as_u64()
+                        .filter(|id| tabs.contains(id))
+                        .ok_or("Preview workspace panel is outside its area")?,
+                )
+            };
             areas.push(AreaTabs {
                 area,
                 tabs,
                 selected,
+                preview,
             });
         }
         if assigned != panel_ids {
@@ -333,6 +366,7 @@ impl TilingState {
                 *id = ids[&*id];
             }
             group.selected = group.selected.map(|id| ids[&id]);
+            group.preview = group.preview.map(|id| ids[&id]);
         }
     }
 }
@@ -663,6 +697,46 @@ mod tests {
         assert_eq!(state.areas[0].tabs, vec![12, 11]);
         assert_eq!(state.areas[0].selected, Some(12));
         assert_eq!(state.areas[1].tabs, vec![21, 22]);
+    }
+
+    #[test]
+    fn previews_round_trip_and_follow_tab_membership_and_identity() {
+        let mut state = contents();
+        state.areas[0].preview = Some(11);
+        state.areas[1].preview = Some(22);
+        let saved = state.to_value([11, 12, 21, 22, 31]);
+        assert_eq!(
+            TilingState::from_value(&saved, [11, 12, 21, 22, 31]).unwrap(),
+            state
+        );
+        let mut invalid = saved.clone();
+        invalid["areas"][0]["preview"] = json!(22);
+        assert!(TilingState::from_value(&invalid, [11, 12, 21, 22, 31]).is_err());
+        let mut legacy = saved;
+        for group in legacy["areas"].as_array_mut().unwrap() {
+            group.as_object_mut().unwrap().remove("preview");
+        }
+        assert!(
+            TilingState::from_value(&legacy, [11, 12, 21, 22, 31])
+                .unwrap()
+                .areas
+                .iter()
+                .all(|group| group.preview.is_none())
+        );
+        state.remap_panel_ids(&HashMap::from([
+            (11, 111),
+            (12, 112),
+            (21, 121),
+            (22, 122),
+            (31, 131),
+        ]));
+        assert_eq!(state.areas[0].preview, Some(111));
+        assert_eq!(state.areas[1].preview, Some(122));
+        state.move_tab(111, 2, 0);
+        assert_eq!(state.areas[0].preview, None);
+        assert_eq!(state.areas[1].preview, Some(122));
+        state.remove(122);
+        assert_eq!(state.areas[1].preview, None);
     }
 
     #[test]

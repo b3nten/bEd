@@ -53,6 +53,10 @@ fn open(In(invocation): In<CommandInvocation>) -> CommandResult {
     }])
 }
 fn create(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Structure", "Focus a text document to view its outline. Expand entries to reveal nested symbols."),
+        ("Navigate", "Select a symbol to jump to its location in the document."),
+    ]));
     world.entity_mut(creation.entity).insert(StructureSurface);
     Ok(Box::new(StructureFrontend {
         entity: creation.entity,

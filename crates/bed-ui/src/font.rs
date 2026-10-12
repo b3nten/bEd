@@ -211,6 +211,7 @@ fn source(bytes: &[u8], size: f32, config: FontConfig) -> FontSource<'_> {
 #[derive(Default)]
 pub struct UiFonts {
     pub main: Option<FontId>,
+    pub italic: Option<FontId>,
     pub large: Option<FontId>,
     pub resolved: Option<ResolvedFonts>,
     pub warning: Option<String>,
@@ -290,29 +291,53 @@ impl UiFonts {
         if !embedded {
             atlas.clear();
         }
-        let mut sources = vec![source(
-            &regular,
-            options.size,
-            FontConfig::new().name("Desktop Main"),
-        )];
-        for (data, _, emoji) in &fallback_data {
-            let mut config = FontConfig::new()
-                .merge_mode(true)
-                .name("Desktop System Fallback");
-            if *emoji {
-                config = config
-                    .font_loader_flags(FontLoaderFlags::LOAD_COLOR | FontLoaderFlags::BITMAP)
-                    .rasterizer_density(20.0 / options.size);
+        for (italic, face) in [(false, &resolved.faces[0]), (true, &resolved.faces[2])] {
+            let data = face.source.read()?;
+            let flags = if italic && !face.italic {
+                FontLoaderFlags::OBLIQUE
+            } else {
+                FontLoaderFlags::NONE
+            };
+            let mut sources = vec![source(
+                &data,
+                options.size,
+                FontConfig::new()
+                    .name(if italic {
+                        "Desktop Italic"
+                    } else {
+                        "Desktop Main"
+                    })
+                    .font_loader_flags(flags),
+            )];
+            for (data, _, emoji) in &fallback_data {
+                let mut config = FontConfig::new()
+                    .merge_mode(true)
+                    .name("Desktop System Fallback")
+                    .font_loader_flags(if italic {
+                        FontLoaderFlags::OBLIQUE
+                    } else {
+                        FontLoaderFlags::NONE
+                    });
+                if *emoji {
+                    config = config
+                        .font_loader_flags(FontLoaderFlags::LOAD_COLOR | FontLoaderFlags::BITMAP)
+                        .rasterizer_density(20.0 / options.size);
+                }
+                sources.push(source(data, options.size, config));
             }
-            sources.push(source(data, options.size, config));
-        }
-        let first = unsafe { (*atlas.raw()).Sources.Size as usize };
-        self.main = Some(atlas.add_font(&sources));
-        // The binding has no FontNo setter. Set collection indices before bake.
-        unsafe {
-            (*(*atlas.raw()).Sources.Data.add(first)).FontNo = resolved.faces[0].index;
-            for (i, (_, index, _)) in fallback_data.iter().enumerate() {
-                (*(*atlas.raw()).Sources.Data.add(first + i + 1)).FontNo = *index;
+            let first = unsafe { (*atlas.raw()).Sources.Size as usize };
+            let font = Some(atlas.add_font(&sources));
+            if italic {
+                self.italic = font;
+            } else {
+                self.main = font;
+            }
+            // The binding has no FontNo setter. Set collection indices before bake.
+            unsafe {
+                (*(*atlas.raw()).Sources.Data.add(first)).FontNo = face.index;
+                for (i, (_, index, _)) in fallback_data.iter().enumerate() {
+                    (*(*atlas.raw()).Sources.Data.add(first + i + 1)).FontNo = *index;
+                }
             }
         }
         let first = unsafe { (*atlas.raw()).Sources.Size as usize };
@@ -373,6 +398,8 @@ mod tests {
         assert_eq!(host.reference_size(), Some(13.0));
         assert_eq!(context.style().font_size_base(), 27.0);
         assert_eq!(fonts.main.unwrap().reference_size(), Some(20.0));
+        assert_eq!(fonts.italic.unwrap().reference_size(), Some(20.0));
+        assert_ne!(fonts.main, fonts.italic);
         assert_eq!(fonts.generation, 1);
         let first = fonts.main;
         assert!(!fonts.apply(&mut context, &options, true).unwrap());

@@ -193,6 +193,10 @@ fn update_workspace(world: &mut World) {
 }
 
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Shell", "Type commands into the terminal. Drag to select text; copy and paste use Bed’s configured shortcuts."),
+        ("Tabs", "Open additional terminals from the panel picker. Each terminal has its own shell session."),
+    ]).shortcut_actions(&["bed.edit.copy", "bed.edit.paste", "bed.edit.select_all"]));
     if world
         .get::<EditorPanelBinding>(creation.entity)
         .is_some_and(|binding| {

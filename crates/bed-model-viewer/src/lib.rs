@@ -125,6 +125,7 @@ struct CanvasState {
 }
 
 pub struct GltfPanel {
+    shortcuts: bed_keybindings::ShortcutInput,
     document: DocumentId,
     texture: TextureHandle,
     loader: Loader,
@@ -211,6 +212,12 @@ impl GltfPanel {
     fn new(document: DocumentId, state: &Value) -> Self {
         let (camera, fitted) = Camera::restore(state);
         Self {
+            shortcuts: bed_keybindings::ShortcutInput::new(bed_keybindings::Bindings::new(
+                bed_keybindings::common_actions(),
+                &Default::default(),
+                bed_keybindings::Platform::current(),
+            ))
+            .with_scope(bed_keybindings::Scope::panel(PANEL_ID)),
             document,
             texture: TextureHandle::next(),
             loader: Loader::new(),
@@ -512,6 +519,31 @@ impl GltfPanel {
         {
             self.camera.fit(scene, canvas.size[0] / canvas.size[1]);
             self.fitted = true;
+        }
+        if !self.shortcuts.suppressed(ui)
+            && !ui.io().want_text_input()
+            && !ui.is_any_item_active()
+            && !ui.is_popup_open_with_flags(
+                "",
+                dear_imgui_rs::PopupQueryFlags::ANY_POPUP_ID
+                    | dear_imgui_rs::PopupQueryFlags::ANY_POPUP_LEVEL,
+            )
+            && ui.is_window_focused_with_flags(dear_imgui_rs::FocusedFlags::ROOT_AND_CHILD_WINDOWS)
+        {
+            for (action, wheel) in [
+                (bed_keybindings::ZOOM_IN, 1.0),
+                (bed_keybindings::ZOOM_OUT, -1.0),
+            ] {
+                if self.shortcuts.take(ui, action) {
+                    self.camera
+                        .zoom(wheel, self.scene.as_ref().map_or(1.0, Scene::radius));
+                }
+            }
+            if self.shortcuts.take(ui, bed_keybindings::RESET_ZOOM)
+                && let Some(scene) = &self.scene
+            {
+                self.camera.fit(scene, canvas.size[0] / canvas.size[1]);
+            }
         }
         if canvas.hovered {
             self.camera.zoom(

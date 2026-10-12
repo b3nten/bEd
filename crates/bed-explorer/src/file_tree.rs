@@ -448,6 +448,7 @@ pub enum FileTreeAction {
         context: bed_editor_api::CommandContext,
     },
     Open(String),
+    Preview(String),
     OpenWith {
         path: String,
         viewer: String,
@@ -551,7 +552,7 @@ impl FileTree {
     ) -> Option<String> {
         let actions = self.draw_rows(ui, current_path, style, icons, modified, false, false, None);
         actions.into_iter().find_map(|action| match action {
-            FileTreeAction::Open(path) => Some(path),
+            FileTreeAction::Open(path) | FileTreeAction::Preview(path) => Some(path),
             _ => None,
         })
     }
@@ -692,8 +693,13 @@ impl FileTree {
             ("first", 0),
             ("last", visible.len().saturating_sub(1)),
         ] {
-            let selected = input.take(ui, &format!("bed.explorer.select_{motion}"));
-            if selected || input.take(ui, &format!("bed.explorer.move_{motion}")) {
+            let owner = if matches!(motion, "up" | "down") {
+                "bed.navigation"
+            } else {
+                "bed.explorer"
+            };
+            let selected = input.take(ui, &format!("{owner}.select_{motion}"));
+            if selected || input.take(ui, &format!("{owner}.move_{motion}")) {
                 next = Some(index);
                 extend = selected;
                 break;
@@ -712,13 +718,13 @@ impl FileTree {
         if let Some(path) = selection.focused.clone() {
             let parent = parent_directory(&path);
             if let Some(node) = find(root, &path) {
-                if input.take(ui, "bed.explorer.expand") && node.is_directory {
+                if input.take(ui, "bed.navigation.move_right") && node.is_directory {
                     if !node.is_open {
                         node.is_open = true;
                     } else if let Some(child) = node.children.first() {
                         selection.select(&child.full_path, visible, false, false);
                     }
-                } else if input.take(ui, "bed.explorer.collapse") {
+                } else if input.take(ui, "bed.navigation.move_left") {
                     if node.is_directory && node.is_open {
                         node.is_open = false;
                     } else if visible.contains(&parent) {
@@ -1174,7 +1180,11 @@ impl FileTree {
                         node.is_open = !node.is_open;
                     }
                 } else {
-                    actions.push(FileTreeAction::Open(node.full_path.clone()));
+                    actions.push(if repeated_click {
+                        FileTreeAction::Open(node.full_path.clone())
+                    } else {
+                        FileTreeAction::Preview(node.full_path.clone())
+                    });
                 }
             }
         }
@@ -1566,6 +1576,24 @@ mod tests {
             },
             ..Default::default()
         };
+        let actions = bed_keybindings::common_actions();
+        let mut overrides = bed_keybindings::Overrides::default();
+        let down = actions
+            .iter()
+            .find(|a| a.id == "bed.navigation.move_down")
+            .unwrap();
+        overrides
+            .replace(down, Some(0), "Ctrl+J".parse().unwrap())
+            .unwrap();
+        tree.shortcuts = bed_keybindings::ShortcutInput::new(bed_keybindings::Bindings::new(
+            actions
+                .into_iter()
+                .chain(crate::shortcut_actions())
+                .collect(),
+            &overrides,
+            bed_keybindings::Platform::current(),
+        ))
+        .with_scope(bed_keybindings::Scope::panel(crate::PANEL_ID));
         frame(&mut context, &mut tree);
         frame(&mut context, &mut tree);
         let first_id = *tree
@@ -1590,7 +1618,7 @@ mod tests {
         let a = point(&tree, first_id, "/fixture/a");
         assert_eq!(
             click(&mut context, &mut tree, a),
-            [FileTreeAction::Open("/fixture/a".into())],
+            [FileTreeAction::Preview("/fixture/a".into())],
             "single click selects and opens the file"
         );
         assert_eq!(
@@ -1598,6 +1626,20 @@ mod tests {
             [FileTreeAction::Open("/fixture/a".into())],
             "the second click restores document focus through the host"
         );
+        context.io_mut().add_key_event(Key::ModCtrl, true);
+        context.io_mut().add_key_event(Key::J, true);
+        frame(&mut context, &mut tree);
+        assert_eq!(
+            tree.animations.hosts[&first_id]
+                .interaction
+                .focused
+                .as_deref(),
+            Some("/fixture/b")
+        );
+        context.io_mut().add_key_event(Key::J, false);
+        context.io_mut().add_key_event(Key::ModCtrl, false);
+        frame(&mut context, &mut tree);
+        click(&mut context, &mut tree, a);
         context.io_mut().add_key_event(Key::ModSuper, true);
         let b = point(&tree, first_id, "/fixture/b");
         assert!(click(&mut context, &mut tree, b).is_empty());
@@ -1690,7 +1732,7 @@ mod tests {
         let other_file = point(&tree, second_id, "/fixture/b");
         assert_eq!(
             click(&mut context, &mut tree, other_file),
-            [FileTreeAction::Open("/fixture/b".into())]
+            [FileTreeAction::Preview("/fixture/b".into())]
         );
         assert_eq!(
             tree.animations.hosts[&first_id].interaction,

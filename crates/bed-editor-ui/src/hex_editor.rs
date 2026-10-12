@@ -336,8 +336,13 @@ impl HexEditor {
             "doc_start",
             "doc_end",
         ] {
-            let select = take(&format!("bed.editor.select_{motion}"));
-            if select || take(&format!("bed.editor.move_{motion}")) {
+            let owner = if matches!(motion, "left" | "right" | "up" | "down") {
+                "bed.navigation"
+            } else {
+                "bed.editor"
+            };
+            let select = take(&format!("{owner}.select_{motion}"));
+            if select || take(&format!("{owner}.move_{motion}")) {
                 let next = match motion {
                     "left" => self.cursor.saturating_sub(1),
                     "right" => self.cursor + 1,
@@ -468,6 +473,60 @@ mod tests {
             });
         context.render_legacy().draw_data().total_vtx_count()
     }
+    #[test]
+    fn shared_navigation_overrides_move_and_extend_hex_selection() {
+        use bed_keybindings::{Bindings, Overrides, Platform};
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut session = EditorSession::new();
+        let document = session
+            .create_document_with_kind(&[0x11, 0x22, 0x33], DocumentKind::Bytes)
+            .unwrap();
+        let mut editor = HexEditor::new(document);
+        let actions = crate::shortcuts::actions();
+        let mut overrides = Overrides::default();
+        for (id, key) in [
+            ("bed.navigation.move_left", "H"),
+            ("bed.navigation.select_left", "Shift+H"),
+        ] {
+            overrides
+                .replace(
+                    actions.iter().find(|a| a.id == id).unwrap(),
+                    Some(0),
+                    key.parse().unwrap(),
+                )
+                .unwrap();
+        }
+        editor.shortcuts.bindings =
+            std::rc::Rc::new(Bindings::new(actions, &overrides, Platform::current()));
+        editor.cursor = 2;
+        editor.anchor = 2;
+        frame(&mut context, &mut editor, &mut session);
+        context.io_mut().add_key_event(Key::H, true);
+        frame(&mut context, &mut editor, &mut session);
+        assert_eq!((editor.anchor, editor.cursor), (1, 1));
+        for _ in 0..40 {
+            frame(&mut context, &mut editor, &mut session);
+        }
+        assert_eq!(
+            (editor.anchor, editor.cursor),
+            (0, 0),
+            "holding navigation repeats movement"
+        );
+        context.io_mut().add_key_event(Key::H, false);
+        frame(&mut context, &mut editor, &mut session);
+        editor.cursor = 2;
+        editor.anchor = 2;
+        context.io_mut().add_key_event(Key::ModShift, true);
+        context.io_mut().add_key_event(Key::H, true);
+        frame(&mut context, &mut editor, &mut session);
+        assert_eq!((editor.anchor, editor.cursor), (2, 1));
+        assert_eq!(
+            session.snapshot(document).unwrap().bytes,
+            [0x11, 0x22, 0x33]
+        );
+    }
+
     #[test]
     fn native_hex_typing_insert_delete_and_undo_redo_use_the_byte_session() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();

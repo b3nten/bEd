@@ -30,22 +30,10 @@ pub struct EditorPanelDefaultInput {
     pub revision: Revision,
 }
 
-/// Native gestures are queued as logical desktop facts; the editor owns targeting.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EditorPinchPhase {
-    Started,
-    Moved,
-    Ended,
-    Cancelled,
-}
-#[derive(Clone, Copy, Debug)]
-pub struct EditorPinchEvent {
-    pub position: [f32; 2],
-    pub delta: f64,
-    pub phase: EditorPinchPhase,
-}
-#[derive(bevy::prelude::Resource, Default)]
-pub struct EditorPinchEvents(pub Vec<EditorPinchEvent>);
+pub use bed_workbench_api::{
+    PinchEvent as EditorPinchEvent, PinchEvents as EditorPinchEvents,
+    PinchPhase as EditorPinchPhase,
+};
 
 /// Actual feature work state for this presentation; absence means synchronous Ready.
 #[derive(bevy::prelude::Component, Clone, Debug, PartialEq, Eq)]
@@ -683,6 +671,12 @@ pub enum HostRequest {
     },
     /// Open a file, choosing where newly created content is placed.
     OpenFileIn {
+        path: String,
+        viewer: Option<String>,
+        target: PanelTarget,
+    },
+    /// Preview a file in the target area, replacing its previous clean preview.
+    PreviewFileIn {
         path: String,
         viewer: Option<String>,
         target: PanelTarget,

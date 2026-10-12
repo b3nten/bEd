@@ -262,6 +262,10 @@ fn find(
     Ok(Vec::new())
 }
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Files", "Expand folders and open files from the tree. Use Shift to extend a selection, or Cmd/Ctrl to toggle individual items."),
+        ("Operations", "Right-click files or folders for rename, duplicate, copy, paste, and delete. Drag files onto a tab area to open them there."),
+    ]).shortcut_actions(&["bed.navigation.move_left", "bed.navigation.move_right", "bed.navigation.move_up", "bed.navigation.move_down", "bed.navigation.select_up", "bed.navigation.select_down", "bed.edit.copy", "bed.edit.cut", "bed.edit.paste", "bed.edit.select_all"]));
     world
         .non_send_mut::<ExplorerPanels>()
         .0

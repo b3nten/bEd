@@ -13,6 +13,25 @@ pub use status::{
 };
 use std::collections::HashSet;
 
+/// Native pinch facts for the current UI frame. Presentations capture the
+/// gesture beneath its starting position; the compositor clears these after
+/// every panel and overlay has read them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PinchPhase {
+    Started,
+    Moved,
+    Ended,
+    Cancelled,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct PinchEvent {
+    pub position: [f32; 2],
+    pub delta: f64,
+    pub phase: PinchPhase,
+}
+#[derive(Resource, Default)]
+pub struct PinchEvents(pub Vec<PinchEvent>);
+
 /// Saved panel numbers are independent of the entity's live identity.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct PanelPresentation {
@@ -60,6 +79,48 @@ pub fn panel_active(world: &World, entity: Entity) -> bool {
 /// Content padding requested by this presentation. The compositor owns its scope.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct PanelPadding(pub [f32; 2]);
+
+/// Usage notes published on a panel's frontend. Shortcut labels and assignments
+/// come from the live keymap, rather than being repeated in this prose.
+#[derive(Component, Clone, Debug, Default)]
+pub struct PanelDocumentation {
+    pub sections: Vec<DocumentationSection>,
+    /// Additional widget scopes handled by this frontend (such as a text editor).
+    pub shortcut_scopes: Vec<String>,
+    /// Individual action IDs supported by this frontend, including shared focused actions.
+    pub shortcut_actions: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DocumentationSection {
+    pub title: String,
+    pub body: String,
+}
+
+impl PanelDocumentation {
+    pub fn new(sections: &[(&str, &str)]) -> Self {
+        Self {
+            sections: sections
+                .iter()
+                .map(|(title, body)| DocumentationSection {
+                    title: (*title).into(),
+                    body: (*body).into(),
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    pub fn shortcut_scope(mut self, scope: &str) -> Self {
+        self.shortcut_scopes.push(scope.into());
+        self
+    }
+
+    pub fn shortcut_actions(mut self, actions: &[&str]) -> Self {
+        self.shortcut_actions = actions.iter().map(|id| (*id).into()).collect();
+        self
+    }
+}
 
 /// Observed content bounds for the current UI frame, in logical screen pixels.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
@@ -182,6 +243,8 @@ pub enum Action {
         area: Option<u32>,
     },
     ClosePanel(Entity),
+    /// Retain the owning tab if it was opened as a replaceable preview.
+    KeepPanel(Entity),
     FocusPanel(Entity),
     ObserveFocus(Entity),
     FocusArea(u32),

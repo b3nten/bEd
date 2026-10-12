@@ -1,5 +1,7 @@
 //! Content-independent desktop panels, layout, persistence and command dispatch.
 mod compositor;
+mod docs;
+pub use docs::{DOCS_PANEL_ID, DocsPlugin, SHOW_DOCS_COMMAND};
 mod shortcuts;
 #[derive(Resource, Default)]
 struct PanelFocusHistory(Vec<Entity>);
@@ -206,6 +208,7 @@ pub struct WorkbenchPlugin;
 impl Plugin for WorkbenchPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Registry>()
+            .init_resource::<api::PinchEvents>()
             .init_resource::<WorkbenchLayout>()
             .init_resource::<PanelFocusHistory>()
             .init_resource::<WorkbenchViewport>()
@@ -404,6 +407,17 @@ fn execute_action(
                 Ok((WorkbenchOutcome::Closed(entity), vec![entity]))
             }
         }
+        Action::KeepPanel(source) => {
+            let kept = keep_panel(world, source);
+            Ok((
+                if kept {
+                    WorkbenchOutcome::Applied
+                } else {
+                    WorkbenchOutcome::Ignored
+                },
+                Vec::new(),
+            ))
+        }
         Action::ObserveFocus(source) => {
             let Some(panel) =
                 api::panel_owner(world, source).filter(|entity| owns_panel(world, *entity))
@@ -471,6 +485,16 @@ fn execute_action(
             Ok((WorkbenchOutcome::Ignored, Vec::new()))
         }
     }
+}
+
+/// Resolve a frontend to its owning tab; only the workbench changes replaceability.
+pub fn keep_panel(world: &mut World, source: Entity) -> bool {
+    let Some(panel) = api::panel_owner(world, source).filter(|panel| owns_panel(world, *panel))
+    else {
+        return false;
+    };
+    let id = world.get::<PanelPresentation>(panel).unwrap().id;
+    world.resource_mut::<WorkbenchLayout>().tiling.keep_tab(id)
 }
 
 pub fn focus_panel(world: &mut World, entity: Entity) {

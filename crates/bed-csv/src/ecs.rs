@@ -109,6 +109,10 @@ fn shutdown(mut exits: MessageReader<bevy::app::AppExit>, mut states: NonSendMut
 }
 
 fn create_csv_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Cells", "Select cells with the mouse or arrow keys. Double-click or use Edit Cell to edit; Tab moves between cells."),
+        ("Table", "Use column sorting, filters, and search to find rows. Copy/paste supports tabular selections; edits share the text document’s undo history."),
+    ]).shortcut_actions(&["bed.navigation.move_left", "bed.navigation.move_right", "bed.navigation.move_up", "bed.navigation.move_down", "bed.navigation.select_left", "bed.navigation.select_right", "bed.navigation.select_up", "bed.navigation.select_down", "bed.edit.find", "bed.edit.copy", "bed.edit.cut", "bed.edit.paste", "bed.edit.select_all", "bed.edit.undo", "bed.edit.redo"]));
     if world
         .get::<EditorPanelBinding>(creation.entity)
         .is_some_and(|binding| binding.input.local_file().is_some())

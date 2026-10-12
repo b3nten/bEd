@@ -80,6 +80,9 @@ fn create_duck(In(creation): In<PanelCreation>, world: &mut World) -> PanelResul
     create_scene(creation, world, SceneKind::Duck)
 }
 fn create_scene(creation: PanelCreation, world: &mut World, kind: SceneKind) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Scene", "Move the pointer over the scene to see the mascot react. Resize or dock the panel to arrange it alongside your work."),
+    ]));
     if world
         .get::<EditorPanelBinding>(creation.entity)
         .is_some_and(|binding| {

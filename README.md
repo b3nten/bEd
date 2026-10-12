@@ -2,7 +2,8 @@ bed.
 
 ## Keyboard shortcuts
 
-Settings → Keybindings lists built-in commands and plugin actions by scope. Click
+Settings → Keybindings lists application commands and shared content actions under
+**Common**, followed by panel-specific actions. Click
 an existing shortcut to replace it, or choose **Add binding** for another
 combination. **Clear** unbinds an action; **Restore defaults** removes its override.
 Recording accepts one key with any modifiers. Escape cancels recording; **Assign
@@ -14,7 +15,16 @@ include Primary+N/O/S/W for documents, Primary+P for file search, Primary+Shift+
 for project search, Primary+Comma for settings, Ctrl+Grave for the terminal, and
 F5/F9/F10/F11 for debugging. Find, copy, cut, paste, select all, undo and redo
 share one binding each across panels. Save, Save As and Open File are application
-commands. Navigation and other panel-specific actions have their own keymaps.
+commands. Arrow navigation and Shift+arrow selection share bindings across text,
+hex, CSV, and Explorer where supported. Explorer uses Left/Right to collapse and
+expand folders. Word, line, and document navigation retain the Editor keymap.
+
+Primary+plus/minus and Primary+0 zoom and reset the focused text editor, Docs,
+image, or model view. Images reset to 100%; models reset through Frame All.
+Editor menu/API zoom commands remain text-specific and have no default shortcuts.
+
+Cursor movement has an elastic smear by default. Turn it off under
+Settings → Effects → Cursor Smear. General → UI Animations also disables it.
 
 Global shortcuts with modifiers take priority over editor and panel bindings.
 Shared editing commands follow the focused widget or panel. A panel type shares
@@ -28,10 +38,18 @@ like dragging a file from the Explorer.
 
 Overrides are stored in `keybindings.json` in the configuration directory. The
 file uses current action IDs directly. Defaults come from action declarations.
+Custom bindings for the removed panel-specific navigation and Docs zoom IDs
+must be reassigned under Common; their old entries remain in the file.
 Plugin registration and host integration are described in
 [the workbench documentation](crates/bed-workbench/README.md#keyboard-shortcuts).
 
 ## Saved layouts
+
+**Show Docs** opens a compact panel with usage notes and current shortcuts for
+the focused panel. It keeps that context while you read or interact with Docs.
+Collapse sections to save space; use Primary+plus/minus while Docs is focused or
+pinch over it to zoom, and Primary+0 to reset. Zoom and section choices
+are remembered with the panel. Built-in layout 1 includes Docs on the right.
 
 Command+1–9 (Control+1–9 elsewhere) switches between nine fixed layout slots.
 Command+Shift+1–9 focuses panels within the active slot. Both sets of shortcuts
@@ -39,8 +57,9 @@ are configurable in Settings → Keybindings.
 
 Each slot keeps its own panels, geometry, tabs, and focus for the workspace.
 Switching keeps unsaved documents and terminal processes alive. Slot 1 starts
-with the usual arrangement, slot 2 with Git changes, diff, and a terminal, slot 3
-with four terminals in a grid, and slots 4–9 with one editor area.
+with the usual arrangement and a narrow Docs column, slot 2 with Git changes,
+diff, and a terminal, slot 3 with four terminals in a grid, and slots 4–9 with
+one editor area.
 
 **Window → Set Layout → Layout 1–9** saves the current arrangement as that slot's
 global template in settings. Existing workspace versions keep their changes.
@@ -154,6 +173,7 @@ also select `structure`, `images`, `models`, `fonts`, `audio`, `csv`, `markdown`
 cargo build -p bed --no-default-features --features editor,images,csv
 cargo run -p bed --features automation -- --smoke-test --capture-frame target/editor.png
 cargo run -p bed-layout-app
+cargo run -p minimal
 ```
 
 The [independent desktop consumer](tests/fixtures/desktop-app/README.md) has its
@@ -169,6 +189,11 @@ services, terminal, Git, LSP, audio, PBR and glTF. Unavailable feature panels re
 their saved record in a placeholder, so saving a reduced build preserves state
 for a later build that enables the feature again. The dependency boundary check
 resolves each consumer separately and enforces this minimal composition.
+
+The [minimal target](examples/minimal/README.md) starts a fresh Bevy app with
+`DesktopPlugins`, `WorkbenchPlugin` and `TerminalPlugin`: a window, UI, tiled
+panels and live shells. It uses plugin defaults and the built-in panel picker,
+with no editor workbench or test harness.
 
 `bed-headless` remains a separate bEd executable for remote helper services.
 It does not install Bevy, a window, ImGui or a renderer. Its protocol version,

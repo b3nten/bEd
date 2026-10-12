@@ -21,6 +21,8 @@ pub struct EditorViewOptions {
     pub font: Option<FontId>,
     pub background_color: Option<[f32; 4]>,
     pub rainbow_mode: bool,
+    /// Stretch the moving caret into a short fading smear. Enabled by default.
+    pub cursor_smear: bool,
     pub minimap_enabled: bool,
     /// Wrap long lines to the view width without changing document contents.
     pub soft_wrap: bool,
@@ -40,6 +42,7 @@ impl Default for EditorViewOptions {
             font: None,
             background_color: None,
             rainbow_mode: true,
+            cursor_smear: true,
             minimap_enabled: false,
             soft_wrap: true,
             shortcuts: crate::shortcuts::default_input(),
@@ -151,7 +154,7 @@ impl EditorView {
     pub fn context_id(&self) -> Option<ContextId> {
         self.context
     }
-    /// Animate explicit location jumps and zoom resets.
+    /// Animate caret movement, folding, explicit location jumps and zoom resets.
     /// Wheel, trackpad and ordinary caret scrolling always use native behavior.
     /// Enabled by default; disabling finishes active animations on the next draw.
     pub fn set_navigation_animations(&mut self, enabled: bool) {
@@ -257,6 +260,7 @@ impl EditorView {
                 .background_color
                 .unwrap_or_else(|| ui.style_color(StyleColor::WindowBg));
             self.frame.rainbow_mode = options.rainbow_mode;
+            self.frame.cursor_smear = options.cursor_smear;
             self.frame.minimap_enabled = self.minimap_enabled(options.minimap_enabled);
             self.frame.soft_wrap = self.soft_wrap(options.soft_wrap);
             self.frame.shortcuts = options.shortcuts.clone();

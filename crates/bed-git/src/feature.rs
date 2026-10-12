@@ -202,6 +202,10 @@ fn command(
     Ok(Vec::new())
 }
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Changes", "Select a changed file to inspect its diff. Right-click for staged or unstaged comparisons and file operations."),
+        ("Staging", "Stage or unstage changes, then enter a commit message. Refresh updates repository status."),
+    ]));
     let workspace = world.get_non_send::<EditorSession>().map_or_else(
         || world.resource::<EditorFrame>().workspace,
         |session| session.workspace_id().0,

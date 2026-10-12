@@ -83,6 +83,10 @@ fn shutdown(mut exits: MessageReader<bevy::app::AppExit>, mut states: NonSendMut
 }
 
 fn create_markdown_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Preview", "Read the rendered Markdown document. The preview updates as the shared text document changes."),
+        ("Links and images", "Click links to follow them. Reload images refreshes external image assets; Edit as Text returns to the source."),
+    ]));
     if world
         .get::<EditorPanelBinding>(creation.entity)
         .is_some_and(|binding| binding.input.local_file().is_some())

@@ -32,6 +32,7 @@ members = [
     "crates/bed-workbench",
     "crates/bed-desktop",
     "examples/layout-app",
+    "examples/minimal",
     "crates/bed-editor",
     "crates/bed-debug",
     "crates/bed-git",

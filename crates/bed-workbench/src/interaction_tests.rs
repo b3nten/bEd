@@ -4,6 +4,52 @@ use dear_imgui_rs::{Context, Key, MouseButton, sys};
 use std::ffi::CString;
 use workspace::tiling::{EXTENT, Layout, Rect};
 
+#[test]
+fn double_clicking_a_preview_tab_keeps_it_and_italic_titles_render_through_the_compositor() {
+    let _lock = tests::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = Fixture::new();
+    let mut fonts = bed_ui::font::UiFonts::default();
+    fonts
+        .apply(
+            &mut fixture.context,
+            &bed_ui::font::UiFontOptions::default(),
+            true,
+        )
+        .unwrap();
+    fixture
+        .context
+        .font_atlas()
+        .try_claim_legacy_renderer()
+        .unwrap()
+        .build();
+    fixture.app.world_mut().insert_non_send(fonts);
+    let panel = fixture.panels[0];
+    let id = fixture.id(panel);
+    fixture
+        .app
+        .world_mut()
+        .resource_mut::<WorkbenchLayout>()
+        .tiling
+        .areas[0]
+        .preview = Some(id);
+    fixture.frame();
+    fixture.press_tab(panel);
+    fixture.release();
+    assert_eq!(
+        fixture.layout().areas[0].preview,
+        Some(id),
+        "a single click only selects the preview"
+    );
+    fixture.press_tab(panel);
+    fixture.release();
+    assert_eq!(
+        fixture.layout().areas[0].preview,
+        None,
+        "double click promotes the tab"
+    );
+    assert!(fixture.app.world().entities().contains(panel));
+}
+
 struct Pane;
 impl Panel for Pane {
     fn title(&self, _: &World) -> String {

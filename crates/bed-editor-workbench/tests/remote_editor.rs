@@ -392,6 +392,61 @@ fn save_and_close_receipts_wait_for_acknowledged_bytes() {
     shutdown(&mut app);
 }
 
+fn preview_selections_and_double_clicks_supersede_pending_remote_opens() {
+    let directory = TempDir::new();
+    let first = directory.write("first.txt", b"first");
+    let second = directory.write("second.txt", b"second");
+    let mut app = remote_app(&directory, false);
+    let preview_request = |app: &mut App, path: &Path| {
+        submit(
+            app,
+            EditorAction::HostRequest(bed_editor_api::HostRequest::PreviewFileIn {
+                path: path.to_string_lossy().into_owned(),
+                viewer: None,
+                target: PanelTarget::LargestArea,
+            }),
+            None,
+        )
+    };
+    let old = preview_request(&mut app, &first);
+    let latest = preview_request(&mut app, &second);
+    process_editor_requests(app.world_mut()).unwrap();
+    assert!(matches!(
+        poll_editor_request_result(app.world_mut(), old)
+            .unwrap()
+            .unwrap(),
+        EditorRequestOutcome::Ignored
+    ));
+    let panel = match outcome(&mut app, latest) {
+        EditorRequestOutcome::Opened { panel, .. } => panel,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().tiling.areas[0].preview,
+        Some(app.world().get::<EditorPanel>(panel).unwrap().id)
+    );
+    // A double click before the first read completes requests a kept opening.
+    let third = directory.write("third.txt", b"third");
+    let preview = preview_request(&mut app, &third);
+    let kept = request_open(&mut app, &third, 1);
+    process_editor_requests(app.world_mut()).unwrap();
+    assert!(matches!(
+        poll_editor_request_result(app.world_mut(), preview)
+            .unwrap()
+            .unwrap(),
+        EditorRequestOutcome::Ignored
+    ));
+    let kept_panel = match outcome(&mut app, kept) {
+        EditorRequestOutcome::Opened { panel, .. } => panel,
+        other => panic!("{other:?}"),
+    };
+    let last = preview_request(&mut app, &directory.write("last.txt", b"last"));
+    outcome(&mut app, last);
+    assert!(app.world().entities().contains(kept_panel));
+    assert!(!app.world().entities().contains(panel));
+    shutdown(&mut app);
+}
+
 fn main() {
     if std::env::args().any(|arg| arg == "--stdio") {
         serve_with(
@@ -416,7 +471,8 @@ fn main() {
     captured_destination_and_cancellation();
     restoration_keeps_reserved_identity_and_group_selection();
     save_and_close_receipts_wait_for_acknowledged_bytes();
+    preview_selections_and_double_clicks_supersede_pending_remote_opens();
     println!(
-        "remote editor: captured destinations, cancellation, shared restoration, delayed save and close receipts passed"
+        "remote editor: captured destinations, cancellation, shared restoration, delayed save and close receipts, preview supersession passed"
     );
 }

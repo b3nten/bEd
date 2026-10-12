@@ -117,6 +117,10 @@ fn cancel_run(
     Ok(Vec::new())
 }
 fn create(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Requests", "Create or select a request, then edit its method, URL, headers, and body."),
+        ("Response", "Run sends the request; Cancel stops it. Inspect response headers and body, or use Copy to export the response."),
+    ]));
     world.entity_mut(creation.entity).insert(HttpSurface);
     Ok(Box::new(HttpFrontend {
         entity: creation.entity,

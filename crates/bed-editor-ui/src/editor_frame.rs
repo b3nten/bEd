@@ -8,7 +8,7 @@ use crate::{
     editor_input::{EditorInput, HostAction},
     util::{editor_finder::EditorFinder, editor_line_jump::EditorLineJump},
     views::{
-        caret_view::CaretView,
+        caret_view::{CaretAnimation, CaretView},
         gutter_view::GutterView,
         hover_tooltip::{TooltipArbiter, render_diagnostic_tooltip},
         hover_trigger::{HoverTrigger, Info, Target, Zone},
@@ -121,6 +121,7 @@ impl ViewportAnchor {
 pub struct EditorFrame {
     pub layout: ViewLayout,
     pub caret_position: [f32; 2],
+    caret_animation: CaretAnimation,
     pub finder: EditorFinder,
     pub line_jump: EditorLineJump,
     pub error: Option<String>,
@@ -133,6 +134,7 @@ pub struct EditorFrame {
     width_document_generation: u64,
     smooth_scroll: Option<SmoothScroll>,
     pub navigation_animations: bool,
+    pub cursor_smear: bool,
     was_focused: bool,
     pub rainbow_mode: bool,
     pub shortcuts: bed_keybindings::ShortcutInput,
@@ -204,6 +206,7 @@ impl EditorFrame {
         Self {
             layout: ViewLayout::default(),
             caret_position: [0.0; 2],
+            caret_animation: CaretAnimation::default(),
             finder: EditorFinder::default(),
             line_jump: EditorLineJump::default(),
             error: None,
@@ -216,6 +219,7 @@ impl EditorFrame {
             width_document_generation: 0,
             smooth_scroll: None,
             navigation_animations: true,
+            cursor_smear: true,
             was_focused: false,
             rainbow_mode: true,
             shortcuts: crate::shortcuts::default_input(),
@@ -673,13 +677,25 @@ impl EditorFrame {
                         Some(&self.projection),
                     );
                 }
-                CaretView::draw_projected(
-                    ui,
-                    &editor.state,
-                    &editor.view,
-                    &self.layout,
-                    Some(&self.projection),
-                );
+                if self.navigation_animations && self.cursor_smear {
+                    CaretView::draw_animated_projected(
+                        ui,
+                        &editor.state,
+                        &editor.view,
+                        &self.layout,
+                        &self.projection,
+                        &mut self.caret_animation,
+                    );
+                } else {
+                    self.caret_animation.clear();
+                    CaretView::draw_projected(
+                        ui,
+                        &editor.state,
+                        &editor.view,
+                        &self.layout,
+                        Some(&self.projection),
+                    );
+                }
                 self.draw_controls(ui, !overlay_active);
                 let mut cursor = ui.cursor_pos();
                 cursor[1] += self.layout.total_height + self.layout.editor_top_margin;
@@ -908,6 +924,7 @@ impl EditorFrame {
                 self.reflow_anchor = self.viewport_anchor(editor, self.layout.line_height);
             }
             if !same_document {
+                self.caret_animation.clear();
                 self.wrap_cache.clear();
                 self.reflow_anchor = None;
             }

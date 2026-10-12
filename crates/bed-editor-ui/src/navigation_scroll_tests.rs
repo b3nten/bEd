@@ -20,6 +20,95 @@ impl ScrollSample {
     }
 }
 
+#[test]
+fn cursor_smear_can_be_disabled_mid_motion_and_never_leaks_between_documents() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = ScrollFixture::new(10, 20);
+    let caret_paint = |fixture: &ScrollFixture| {
+        fixture.context.binding().with_bound_context(|| unsafe {
+            let native = &*sys::igGetCurrentContext();
+            let window = (0..native.Windows.Size)
+                .map(|index| *native.Windows.Data.add(index as usize))
+                .find(|window| {
+                    let name = std::ffi::CStr::from_ptr((**window).Name).to_string_lossy();
+                    name.contains("Navigation scroll fixture") && name.contains("##editor")
+                })
+                .expect("editor child was rendered");
+            let vertices = &(*(*window).DrawList).VtxBuffer;
+            // The cursor is the last paint in this fixture (no overlays).
+            (vertices.Size - 4..vertices.Size)
+                .map(|index| {
+                    let vertex = &*vertices.Data.add(index as usize);
+                    [vertex.pos.x, vertex.pos.y]
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    fixture.editor.commands().set_cursor(
+        1,
+        8,
+        false,
+        bed_editing::editor_commands::CursorReveal::Ensure,
+    );
+    fixture.render(1.0 / 60.0);
+    fixture.render(1.0 / 60.0);
+    let moving = caret_paint(&fixture);
+    assert_ne!(moving[0][0] + 1.0, fixture.frame.caret_position[0]);
+    assert_eq!(
+        (fixture.editor.view.row, fixture.editor.view.column),
+        (1, 8)
+    );
+    fixture.frame.cursor_smear = false;
+    fixture.render(1.0 / 60.0);
+    let disabled = caret_paint(&fixture);
+    assert_eq!(
+        disabled[0],
+        [
+            fixture.frame.caret_position[0] - 1.0,
+            fixture.frame.caret_position[1]
+        ]
+    );
+    fixture.frame.cursor_smear = true;
+    fixture.editor.commands().set_cursor(
+        2,
+        10,
+        false,
+        bed_editing::editor_commands::CursorReveal::Ensure,
+    );
+    fixture.render(1.0 / 60.0);
+    assert_eq!(
+        caret_paint(&fixture)[0],
+        [
+            fixture.frame.caret_position[0] - 1.0,
+            fixture.frame.caret_position[1]
+        ],
+        "reenabling starts at the current selection"
+    );
+    fixture.editor.commands().set_cursor(
+        3,
+        3,
+        false,
+        bed_editing::editor_commands::CursorReveal::Ensure,
+    );
+    fixture.render(1.0 / 60.0);
+    fixture.editor.set_content(b"another document\nsecond line");
+    fixture.editor.commands().set_cursor(
+        0,
+        2,
+        false,
+        bed_editing::editor_commands::CursorReveal::Ensure,
+    );
+    fixture.render(1.0 / 60.0);
+    assert_eq!(
+        caret_paint(&fixture)[0],
+        [
+            fixture.frame.caret_position[0] - 1.0,
+            fixture.frame.caret_position[1]
+        ],
+        "new documents discard previous cursor geometry"
+    );
+}
+
 fn context() -> Context {
     let mut context = Context::create();
     context

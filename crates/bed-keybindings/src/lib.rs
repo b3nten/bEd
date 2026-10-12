@@ -178,9 +178,14 @@ impl Action {
     }
 }
 
+/// Shared zoom actions handled by the focused content presentation.
+pub const ZOOM_IN: &str = "bed.view.zoom_in";
+pub const ZOOM_OUT: &str = "bed.view.zoom_out";
+pub const RESET_ZOOM: &str = "bed.view.reset_zoom";
+
 /// One keymap for operations whose meaning follows the current focus.
 pub fn common_actions() -> Vec<Action> {
-    [
+    let mut actions: Vec<_> = [
         ("find", "Find", vec!["Primary+F"]),
         ("copy", "Copy", vec!["Primary+C"]),
         ("cut", "Cut", vec!["Primary+X"]),
@@ -215,7 +220,50 @@ pub fn common_actions() -> Vec<Action> {
             &keys,
         )
     })
-    .collect()
+    .collect();
+    for (id, label, keys) in [
+        (
+            ZOOM_IN,
+            "Zoom In",
+            &["Primary+Equal", "Primary+Shift+Equal", "Primary+KeypadAdd"][..],
+        ),
+        (
+            ZOOM_OUT,
+            "Zoom Out",
+            &["Primary+Minus", "Primary+KeypadSubtract"][..],
+        ),
+        (RESET_ZOOM, "Reset Zoom", &["Primary+0"][..]),
+    ] {
+        actions.push(Action::new(id, label, "bed.view", Scope::Focused, keys));
+    }
+    for (direction, key) in [
+        ("left", "Left"),
+        ("right", "Right"),
+        ("up", "Up"),
+        ("down", "Down"),
+    ] {
+        actions.push(
+            Action::new(
+                &format!("bed.navigation.move_{direction}"),
+                &format!("Navigate {key}"),
+                "bed.navigation",
+                Scope::Focused,
+                &[key],
+            )
+            .repeating(),
+        );
+        actions.push(
+            Action::new(
+                &format!("bed.navigation.select_{direction}"),
+                &format!("Extend Selection {key}"),
+                "bed.navigation",
+                Scope::Focused,
+                &[&format!("Shift+{key}")],
+            )
+            .repeating(),
+        );
+    }
+    actions
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -75,6 +75,10 @@ fn shutdown(mut exits: MessageReader<bevy::app::AppExit>, mut states: NonSendMut
 }
 
 fn create_font_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Preview", "Explore the font’s characters and preview text at different sizes."),
+        ("Glyphs", "Select a character to inspect its glyph. Copy character places it on the clipboard; Go jumps to a character."),
+    ]));
     if world
         .get::<EditorPanelBinding>(creation.entity)
         .is_some_and(|binding| binding.input.local_file().is_some())

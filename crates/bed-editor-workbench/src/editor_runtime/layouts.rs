@@ -372,7 +372,8 @@ fn builtin(slot: u8) -> Value {
     let mut layout = Layout::default();
     let placements: Vec<(&str, u32, Option<&str>)> = match slot {
         1 => {
-            let editor = layout.split(1, 0, 1754, 1).unwrap();
+            let docs = layout.split(1, 0, 8200, 1).unwrap();
+            let editor = layout.split(1, 0, 1438, 1).unwrap();
             let bottom = layout.split(editor, 1, 7255, 1).unwrap();
             let mascot = layout.split(1, 1, 7500, 1).unwrap();
             vec![
@@ -381,6 +382,7 @@ fn builtin(slot: u8) -> Value {
                 ("bed.editor.diagnostics-panel", bottom, None),
                 ("bed.debug.panel", bottom, None),
                 ("bed.mascot.panel", mascot, None),
+                ("bed.docs.panel", docs, None),
             ]
         }
         2 => {
@@ -429,6 +431,44 @@ mod tests {
     use crate::test_support::TempDir;
     use bed_workbench_api::{Panel, PanelResult};
     use dear_imgui_rs::Ui;
+
+    #[test]
+    fn builtin_layout_one_reserves_a_full_height_docs_column() {
+        let value = builtin(1);
+        let panels = value["panels"].as_array().unwrap();
+        let docs = panels
+            .iter()
+            .find(|panel| panel["panel_type"] == "bed.docs.panel")
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let tiling = TilingState::from_value(
+            &value["tiling"],
+            panels.iter().map(|p| p["id"].as_u64().unwrap()),
+        )
+        .unwrap();
+        let area = tiling.layout.area(tiling.area_for(docs).unwrap());
+        assert_eq!(area.rect.min, [8200, 0]);
+        assert_eq!(area.rect.max, [10000, 10000]);
+        assert_eq!(
+            tiling
+                .areas
+                .iter()
+                .find(|group| group.area == area.id)
+                .unwrap()
+                .tabs,
+            vec![docs]
+        );
+        for slot in 2..=9 {
+            assert!(
+                !builtin(slot)["panels"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|panel| panel["panel_type"] == "bed.docs.panel")
+            );
+        }
+    }
 
     #[derive(Component)]
     struct FixtureState(Value);
@@ -873,6 +913,8 @@ mod tests {
                 path: dir.path("opening.txt"),
                 viewer: None,
                 additional: true,
+                mode: FileOpenMode::Keep,
+                layout_slot: 1,
                 move_existing: false,
                 area: Some(1),
                 tab_index: None,

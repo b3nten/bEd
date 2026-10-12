@@ -84,6 +84,10 @@ fn shutdown(mut exits: MessageReader<bevy::app::AppExit>, mut states: NonSendMut
 }
 
 fn create_audio_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
+        ("Playback", "Use Play/Pause, Restart, and Volume to control audio. Drag the seek slider or click/drag the waveform to seek."),
+        ("Analysis", "Expand Waveform, Spectrum, or Spectrogram to inspect the sound."),
+    ]));
     if world
         .get::<EditorPanelBinding>(creation.entity)
         .is_some_and(|binding| binding.input.local_file().is_some())

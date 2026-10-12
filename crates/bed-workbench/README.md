@@ -33,6 +33,16 @@ components. Close, focus and split actions accept either identity. The
 layout-app counter plugin demonstrates these lookups and needs no editor
 dependency.
 
+Install the optional `DocsPlugin` to provide `bed.docs.panel` and the
+`bed.docs.show` command. Factories publish `api::PanelDocumentation` on their
+frontend entity, with short titled usage sections. The Docs panel reads the
+focused frontend and retains the most recent active work panel while Docs is
+focused. It uses the live keymap for local and global shortcuts. Publish only
+the shared focused actions the frontend actually supports in `shortcut_actions`.
+Embedded widgets can publish individual action IDs there too, or a complete
+widget scope through `shortcut_scope`. The panel's own scope is
+included automatically. Notes can be updated by their owning feature as needed.
+
 With `bed-desktop`, install `DesktopUi(draw)` and call
 `bed_workbench::render_ui(world, ui)` from that callback. Configure
 `WorkbenchSystems::Requests.in_set(DesktopSystems::AfterUi)` in `PreUpdate`. UI borrows
@@ -115,6 +125,13 @@ Plugins attach global defaults to commands with `registrar.global_shortcut(comma
 Hosts publish user overrides through `ShortcutRuntime::overrides`. Editor integration reads `keybindings.json` automatically, using current action IDs directly. Overrides replace the action's full default list; an empty list unbinds it. Removing an override restores defaults. Each alternative records its assignment order. Latest user assignments win within a scope; default ties use stable action IDs. Settings warns about conflicting and overlapping combinations without blocking saves. Global shortcuts with modifiers take priority over local bindings. Shared `bed.edit.*` actions follow the focused widget or panel and are registered once by the workbench. Editor widgets share their keymap wherever embedded; Settings never inspects a panel's contents. Panel-opening shortcuts capture the focused tab area when invoked.
 
 `Primary` resolves to Command on macOS and Ctrl elsewhere. Explicit Ctrl and Command stay distinct. Single combinations support exact modifiers and alternative bindings; sequential chords are not supported.
+
+Settings groups global commands and focused actions under **Common** while their
+dispatch remains distinct. The registry also provides `bed.navigation.move_*`
+and `bed.navigation.select_*` for arrow movement and selection, and
+`bed.view.zoom_in`, `bed.view.zoom_out`, and `bed.view.reset_zoom` for content zoom.
+Frontends handle the actions they support with their existing scoped input and
+publish those IDs in `PanelDocumentation::shortcut_actions`.
 
 Hosts can retain inactive panels by adding `PanelSuspended` to their layout
 panel entities. The workbench excludes suspended panels from drawing, focus,

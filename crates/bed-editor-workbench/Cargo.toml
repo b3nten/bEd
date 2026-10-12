@@ -29,6 +29,7 @@ bed-editor = { workspace = true }
 bed-color = { workspace = true }
 bed-csv = { workspace = true, features = ["test-support"] }
 bed-json = { workspace = true }
+bed-image = { workspace = true }
 
 [[test]]
 name = "remote_editor"
