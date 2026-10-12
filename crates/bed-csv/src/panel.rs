@@ -714,29 +714,29 @@ impl CsvPanel {
             handled |= pressed;
             pressed
         };
-        if take("bed.csv.select_all") {
+        if take("bed.edit.select_all") {
             self.select_all();
         }
-        if take("bed.csv.find") {
+        if take("bed.edit.find") {
             self.find_open = true;
             self.find_focus = true;
         }
-        if take("bed.csv.copy") {
+        if take("bed.edit.copy") {
             self.copy(ui);
         }
-        if take("bed.csv.cut") {
+        if take("bed.edit.cut") {
             self.copy(ui);
             self.clear(requests);
         }
-        if take("bed.csv.paste") {
+        if take("bed.edit.paste") {
             self.paste(ui, requests);
         }
-        if take("bed.csv.undo") {
+        if take("bed.edit.undo") {
             requests.push(HostRequest::Undo {
                 document: self.document,
             });
         }
-        if take("bed.csv.redo") {
+        if take("bed.edit.redo") {
             requests.push(HostRequest::Redo {
                 document: self.document,
             });

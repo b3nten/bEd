@@ -56,7 +56,7 @@ impl Plugin for HttpPlugin {
         });
         bed_workbench_api::register(app.world_mut(), MODULE_ID, |registrar| {
             registrar.panel(PANEL_ID, "HTTP Client", create);
-            registrar.command(OPEN_COMMAND, "Open HTTP Client", open);
+            registrar.command(OPEN_COMMAND, "HTTP Client", open);
             registrar.command(crate::status::SHOW_COMMAND, "Show HTTP Client", show);
             registrar.command(
                 crate::status::CANCEL_COMMAND,

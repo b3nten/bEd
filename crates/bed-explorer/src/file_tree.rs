@@ -702,7 +702,7 @@ impl FileTree {
         if let Some(path) = next.and_then(|index| visible.get(index)) {
             selection.select(path, visible, false, extend);
         }
-        if input.take(ui, "bed.explorer.select_all") {
+        if input.take(ui, "bed.edit.select_all") {
             selection.selected = visible
                 .iter()
                 .filter(|path| *path != &root.full_path)
@@ -740,10 +740,10 @@ impl FileTree {
             }
         }
         if !paths.is_empty() {
-            if input.take(ui, "bed.explorer.copy") {
+            if input.take(ui, "bed.edit.copy") {
                 actions.push(FileTreeAction::Copy(paths.clone()));
             }
-            if input.take(ui, "bed.explorer.cut") {
+            if input.take(ui, "bed.edit.cut") {
                 actions.push(FileTreeAction::Cut(paths.clone()));
             }
             if input.take(ui, "bed.explorer.duplicate") {
@@ -756,7 +756,7 @@ impl FileTree {
                 actions.push(FileTreeAction::Rename(paths[0].clone()));
             }
         }
-        if input.take(ui, "bed.explorer.paste") {
+        if input.take(ui, "bed.edit.paste") {
             let destination = selection
                 .focused
                 .as_ref()
@@ -1178,7 +1178,11 @@ impl FileTree {
                 }
             }
         }
-        if !root && let Some(_source) = ui.drag_drop_source_config("BED_FILES").begin_payload(0_u32)
+        if !root
+            && let Some(_source) = ui
+                .drag_drop_source_config("BED_FILES")
+                .flags(dear_imgui_rs::DragDropSourceFlags::NO_PREVIEW_TOOLTIP)
+                .begin_payload(0_u32)
         {
             if !selection.selected.contains(&node.full_path) {
                 selection.select(&node.full_path, visible, false, false);
@@ -1193,7 +1197,10 @@ impl FileTree {
                 });
             }
             if let Some(drag) = drag.as_ref() {
-                ui.text(format!("Move {} item(s)", drag.paths.len()));
+                bed_workbench_api::draw_panel_drag_label(
+                    ui,
+                    &format!("Move {} item(s)", drag.paths.len()),
+                );
             }
         }
         if let Some(dragging) = drag.as_ref()

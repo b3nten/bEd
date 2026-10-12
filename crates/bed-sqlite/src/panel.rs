@@ -1023,7 +1023,7 @@ impl SqlitePanel {
             if self.shortcuts.take(ui, "bed.sqlite.run_query") && self.state.tab == Tab::Query {
                 self.run_query();
             }
-            if !ui.is_any_item_active() && self.shortcuts.take(ui, "bed.sqlite.copy_cell") {
+            if !ui.is_any_item_active() && self.shortcuts.take(ui, "bed.edit.copy") {
                 self.copy_cell(ui);
             }
             if self.shortcuts.take(ui, "bed.sqlite.cancel_query") && self.pending.is_some() {

@@ -100,6 +100,33 @@ fn handles_cannot_cross_app_instances() {
         ErrorKind::StaleHandle
     );
 }
+
+#[test]
+fn snapshots_describe_the_active_layout_while_suspended_panels_remain_alive() {
+    let mut app = app();
+    let suspended = open(&mut app);
+    let active = open(&mut app);
+    let id = app
+        .world()
+        .get::<PanelPresentation>(suspended.entity())
+        .unwrap()
+        .id;
+    app.world_mut()
+        .entity_mut(suspended.entity())
+        .insert(bed_workbench_api::PanelSuspended);
+    app.world_mut()
+        .resource_mut::<WorkbenchLayout>()
+        .tiling
+        .remove(id);
+    let inspect = submit(&mut app, Operation::Inspect);
+    app.update();
+    let OperationValue::Snapshot(snapshot) = result(&mut app, inspect).unwrap() else {
+        panic!("snapshot")
+    };
+    assert_eq!(snapshot.panels.len(), 1);
+    assert_eq!(snapshot.panels[0].handle, active);
+    assert!(app.world().entities().contains(suspended.entity()));
+}
 #[test]
 fn missing_desktop_and_failed_dependencies_complete_as_errors() {
     let mut app = app();

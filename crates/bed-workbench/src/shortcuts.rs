@@ -53,11 +53,11 @@ pub fn global_shortcuts(world: &mut World, ui: &Ui) {
                 .map_or(panel, |front| front.0)
         })
     });
-    let area = world
-        .resource::<WorkbenchLayout>()
-        .tiling
-        .layout
-        .largest_area();
+    let layout = world.resource::<WorkbenchLayout>();
+    let area = observed
+        .map(|(_, area)| area)
+        .or(layout.focused_area)
+        .unwrap_or_else(|| layout.tiling.layout.largest_area());
     let mut requests = Vec::new();
     for action in &input.bindings.actions {
         if action.scope == Scope::Global && input.take(ui, &action.id) {

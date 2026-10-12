@@ -6,27 +6,55 @@ Settings → Keybindings lists built-in commands and plugin actions by scope. Cl
 an existing shortcut to replace it, or choose **Add binding** for another
 combination. **Clear** unbinds an action; **Restore defaults** removes its override.
 Recording accepts one key with any modifiers. Escape cancels recording; **Assign
-Escape** binds Escape itself.
+Escape** binds Escape itself. A pulsing red dot indicates recording. Sections
+start collapsed and expand when searching.
 
 Defaults use Command on macOS and Control elsewhere for `Primary`. Common defaults
 include Primary+N/O/S/W for documents, Primary+P for file search, Primary+Shift+F
 for project search, Primary+Comma for settings, Ctrl+Grave for the terminal, and
-F5/F9/F10/F11 for debugging. Text editing, navigation, CSV, Explorer, SQLite,
-Search and Audio actions have their own panel/widget keymaps.
+F5/F9/F10/F11 for debugging. Find, copy, cut, paste, select all, undo and redo
+share one binding each across panels. Save, Save As and Open File are application
+commands. Navigation and other panel-specific actions have their own keymaps.
 
-Focused widgets handle input first, then the focused panel, then globals. A panel
-type shares its bindings across instances; embedded editors share the Editor
-keymap. Settings warns whenever a shortcut is reused, including across different
-panels, and permits saving it. Within the same scope, the newest user assignment
-wins. Show-panel commands focus the most recently used instance or open one;
-new-panel commands create another instance. New windows open in the largest
-layout area by default. Drag a titlebar panel button into an area to choose its
-destination, just like dragging a file from the Explorer.
+Global shortcuts with modifiers take priority over editor and panel bindings.
+Shared editing commands follow the focused widget or panel. A panel type shares
+its bindings across instances; embedded editors share the Editor keymap. Settings
+warns about conflicting bindings and permits saving them. Within the same scope,
+the newest user assignment wins. Show-panel commands focus the most recently used
+instance or open one; new-panel commands create another instance. Shortcuts open
+panels in the focused tab area; menu commands use the largest layout area by
+default. Drag a titlebar panel button into an area to choose its destination, just
+like dragging a file from the Explorer.
 
 Overrides are stored in `keybindings.json` in the configuration directory. The
-legacy `keybinds.json` is ignored. Defaults come from action declarations rather
-than a configuration seed. Plugin registration and host integration are described
-in [the workbench documentation](crates/bed-workbench/README.md#keyboard-shortcuts).
+file uses current action IDs directly. Defaults come from action declarations.
+Plugin registration and host integration are described in
+[the workbench documentation](crates/bed-workbench/README.md#keyboard-shortcuts).
+
+## Saved layouts
+
+Command+1–9 (Control+1–9 elsewhere) switches between nine fixed layout slots.
+Command+Shift+1–9 focuses panels within the active slot. Both sets of shortcuts
+are configurable in Settings → Keybindings.
+
+Each slot keeps its own panels, geometry, tabs, and focus for the workspace.
+Switching keeps unsaved documents and terminal processes alive. Slot 1 starts
+with the usual arrangement, slot 2 with Git changes, diff, and a terminal, slot 3
+with four terminals in a grid, and slots 4–9 with one editor area.
+
+**Window → Set Layout → Layout 1–9** saves the current arrangement as that slot's
+global template in settings. Existing workspace versions keep their changes.
+**Reset Current Layout** restores the global arrangement, reusing live panels
+and retaining extra documents and terminals as tabs. **Restore Built-in Layout**
+removes a slot's global override; reset the workspace slot to apply it.
+
+Workspace sessions remember the last active slot and all initialized layouts.
+They use the existing configuration-directory workspace store. Restarting launches
+fresh terminal processes; the existing unsaved-scratch persistence rules apply.
+
+Tools opens utility panels, including Terminal, Git Changes, and HTTP Client.
+Window contains layout selection and native window controls. Document view
+creation and splits live in File; file and project search live in Edit.
 
 ## Shared runtime and rendering
 

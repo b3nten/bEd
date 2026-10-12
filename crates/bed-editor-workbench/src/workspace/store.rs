@@ -48,6 +48,40 @@ impl WorkspaceStore {
                 "Invalid workspace state",
             ));
         }
+        for (layouts, active) in state["workspaces"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|workspace| {
+                (
+                    workspace.get("layouts"),
+                    workspace.get("active_layout_slot"),
+                )
+            })
+            .chain(std::iter::once((
+                state.get("standalone_layouts"),
+                state.get("standalone_active_layout_slot"),
+            )))
+        {
+            if active
+                .is_some_and(|active| !active.as_u64().is_some_and(|slot| (1..=9).contains(&slot)))
+                || layouts.is_some_and(|layouts| {
+                    !layouts.as_object().is_some_and(|layouts| {
+                        layouts.iter().all(|(slot, layout)| {
+                            matches!(
+                                slot.as_str(),
+                                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+                            ) && layout["panels"].is_array()
+                        })
+                    })
+                })
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Invalid saved layout slots",
+                ));
+            }
+        }
         Ok(Self { path, state })
     }
     pub fn recent_workspaces(&self) -> Vec<WorkspaceSpec> {
@@ -147,10 +181,11 @@ impl WorkspaceStore {
         Ok(renamed)
     }
     pub fn layout(&self, spec: &WorkspaceSpec) -> Option<&Value> {
-        self.state
-            .get("workspaces")?
-            .get(spec.identity())?
-            .get("layout")
+        let workspace = self.state.get("workspaces")?.get(spec.identity())?;
+        workspace
+            .get("layouts")
+            .and_then(|layouts| layouts.get(self.active_layout_slot(Some(spec)).to_string()))
+            .or_else(|| workspace.get("layout"))
     }
     /// Module state belongs to the workspace, independent of its visible panels.
     pub fn all_module_settings(&self, spec: &WorkspaceSpec) -> Option<&Value> {
@@ -234,7 +269,25 @@ impl WorkspaceStore {
         }
     }
     pub fn standalone_layout(&self) -> Option<&Value> {
-        self.state.get("standalone_layout")
+        self.session_layouts(None)
+            .and_then(|layouts| layouts.get(self.active_layout_slot(None).to_string()))
+            .or_else(|| self.state.get("standalone_layout"))
+    }
+    pub fn session_layouts(&self, spec: Option<&WorkspaceSpec>) -> Option<&Value> {
+        match spec {
+            Some(spec) => self.state["workspaces"][spec.identity()].get("layouts"),
+            None => self.state.get("standalone_layouts"),
+        }
+    }
+    pub fn active_layout_slot(&self, spec: Option<&WorkspaceSpec>) -> u8 {
+        let value = match spec {
+            Some(spec) => &self.state["workspaces"][spec.identity()]["active_layout_slot"],
+            None => &self.state["standalone_active_layout_slot"],
+        };
+        value
+            .as_u64()
+            .filter(|slot| (1..=9).contains(slot))
+            .unwrap_or(1) as u8
     }
     pub fn save_session_layout(
         &mut self,
@@ -242,13 +295,62 @@ impl WorkspaceStore {
         layout: Value,
     ) -> io::Result<()> {
         let _lock = self.reload_for_write()?;
+        if let Some(layouts) = layout.get("layouts") {
+            let slot = layout["active_layout_slot"]
+                .as_u64()
+                .filter(|slot| (1..=9).contains(slot))
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "Invalid layout slot")
+                })?;
+            if !layouts.is_object()
+                || layouts.as_object().unwrap().keys().any(|key| {
+                    key.parse::<u8>()
+                        .ok()
+                        .filter(|slot| (1..=9).contains(slot))
+                        .is_none()
+                })
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Invalid layout slots",
+                ));
+            }
+            if let Some(spec) = spec {
+                self.ensure_record(spec);
+                let id = spec.identity();
+                let workspace = &mut self.state["workspaces"][&id];
+                workspace["layouts"] = layouts.clone();
+                workspace["active_layout_slot"] = json!(slot);
+                workspace.as_object_mut().unwrap().remove("layout");
+                self.state["last_workspace"] = json!(id);
+            } else {
+                self.state["standalone_layouts"] = layouts.clone();
+                self.state["standalone_active_layout_slot"] = json!(slot);
+                self.state
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("standalone_layout");
+                self.state["last_workspace"] = Value::Null;
+            }
+            return self.save();
+        }
         if let Some(spec) = spec {
             self.ensure_record(spec);
             let id = spec.identity();
-            self.state["workspaces"][&id]["layout"] = layout;
+            if self.state["workspaces"][&id]["layouts"].is_object() {
+                let slot = self.active_layout_slot(Some(spec)).to_string();
+                self.state["workspaces"][&id]["layouts"][slot] = layout;
+            } else {
+                self.state["workspaces"][&id]["layout"] = layout;
+            }
             self.state["last_workspace"] = json!(id);
         } else {
-            self.state["standalone_layout"] = layout;
+            if self.state["standalone_layouts"].is_object() {
+                let slot = self.active_layout_slot(None).to_string();
+                self.state["standalone_layouts"][slot] = layout;
+            } else {
+                self.state["standalone_layout"] = layout;
+            }
             self.state["last_workspace"] = Value::Null;
         }
         self.save()
@@ -256,7 +358,13 @@ impl WorkspaceStore {
     pub fn set_layout(&mut self, spec: &WorkspaceSpec, layout: Value) -> io::Result<()> {
         let _lock = self.reload_for_write()?;
         self.ensure_record(spec);
-        self.state["workspaces"][spec.identity()]["layout"] = layout;
+        let id = spec.identity();
+        if self.state["workspaces"][&id]["layouts"].is_object() {
+            let slot = self.active_layout_slot(Some(spec)).to_string();
+            self.state["workspaces"][&id]["layouts"][slot] = layout;
+        } else {
+            self.state["workspaces"][&id]["layout"] = layout;
+        }
         self.save()
     }
     pub(crate) fn stored_spec(&self, spec: &WorkspaceSpec) -> Option<WorkspaceSpec> {

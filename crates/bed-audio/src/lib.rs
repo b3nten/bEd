@@ -1,7 +1,7 @@
 //! Read-only audio preview, with background decoding and native playback.
 use bed_editing::identity::DocumentId;
 use bed_editor_api::gpu::GpuContext;
-use bed_editor_api::{DocumentKind, HostContext, HostRequest, MenuSlot, Registrar, Revision};
+use bed_editor_api::{DocumentKind, HostContext, HostRequest, Registrar, Revision};
 use bed_ui::TextureHandle;
 use bed_ui::gpu::{RenderOutput, RenderTarget};
 use bed_ui::util::popup_style::tooltip_text;
@@ -51,7 +51,6 @@ fn register_metadata(r: &mut Registrar<'_>) {
     );
     r.command(OPEN_COMMAND, "Open Audio…", None);
     r.command(OPEN_FILE_COMMAND, "Open in Audio Viewer", None);
-    r.menu(MenuSlot::Application, OPEN_COMMAND);
 }
 
 fn supported_path(path: &str) -> bool {

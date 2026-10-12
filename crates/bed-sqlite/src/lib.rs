@@ -7,7 +7,7 @@ mod worker;
 
 pub use ecs::{SqliteFile, SqlitePlugin, SqliteStates, SqliteSystems};
 
-use bed_editor_api::{MenuSlot, Registrar};
+use bed_editor_api::Registrar;
 
 pub use panel::SqlitePanel;
 pub const PLUGIN_ID: &str = "bed.sqlite";
@@ -27,7 +27,6 @@ fn register_metadata(registrar: &mut Registrar<'_>) {
     );
     registrar.command(OPEN_COMMAND, "Open SQLite Database…", None);
     registrar.command(OPEN_FILE_COMMAND, "Open in SQLite Viewer", None);
-    registrar.menu(MenuSlot::Application, OPEN_COMMAND);
 }
 
 #[cfg(test)]
@@ -81,13 +80,6 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
             &["Primary+Enter"],
         ),
         bed_keybindings::Action::new(
-            "bed.sqlite.copy_cell",
-            "Copy Cell",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Primary+C"],
-        ),
-        bed_keybindings::Action::new(
             "bed.sqlite.cancel_query",
             "Cancel Query",
             PLUGIN_ID,
@@ -98,7 +90,10 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
 }
 pub(crate) fn default_shortcuts() -> bed_keybindings::ShortcutInput {
     bed_keybindings::ShortcutInput::new(bed_keybindings::Bindings::new(
-        shortcut_actions(),
+        bed_keybindings::common_actions()
+            .into_iter()
+            .chain(shortcut_actions())
+            .collect(),
         &Default::default(),
         bed_keybindings::Platform::current(),
     ))

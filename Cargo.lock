@@ -2183,6 +2183,7 @@ dependencies = [
  "bed-editor-ui",
  "bed-files",
  "bed-json",
+ "bed-keybindings",
  "bed-remote",
  "bed-runtime",
  "bed-ui",
@@ -2622,6 +2623,7 @@ name = "bed-workbench"
 version = "0.1.0"
 dependencies = [
  "bed-keybindings",
+ "bed-ui",
  "bed-workbench-api",
  "bevy",
  "dear-imgui-rs",

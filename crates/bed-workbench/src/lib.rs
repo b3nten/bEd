@@ -477,7 +477,7 @@ pub fn focus_panel(world: &mut World, entity: Entity) {
     let Some(entity) = api::panel_owner(world, entity) else {
         return;
     };
-    if !owns_panel(world, entity) {
+    if !owns_panel(world, entity) || !api::panel_active(world, entity) {
         return;
     }
     let Some(id) = world.get::<PanelPresentation>(entity).map(|value| value.id) else {
@@ -530,22 +530,25 @@ pub fn recent_panel(world: &mut World, panel_type: &str) -> Option<Entity> {
         .rev()
         .copied()
         .find(|entity| {
-            world
-                .get::<PanelRecord>(*entity)
-                .is_some_and(|r| r.panel_type == panel_type)
+            api::panel_active(world, *entity)
+                && world
+                    .get::<PanelRecord>(*entity)
+                    .is_some_and(|r| r.panel_type == panel_type)
         })
         .or_else(|| {
             world
                 .query::<(Entity, &PanelRecord, &PanelPresentation)>()
                 .iter(world)
-                .filter(|(_, r, _)| r.panel_type == panel_type)
+                .filter(|(entity, r, _)| {
+                    api::panel_active(world, *entity) && r.panel_type == panel_type
+                })
                 .max_by_key(|(_, _, p)| p.id)
                 .map(|(entity, _, _)| entity)
         })
 }
 
 pub fn observe_focus(world: &mut World, entity: Entity) {
-    if !owns_panel(world, entity) {
+    if !owns_panel(world, entity) || !api::panel_active(world, entity) {
         return;
     }
     {
@@ -584,7 +587,9 @@ fn request_layout(world: &mut World, value: &Value, close: &[Entity]) -> Result<
     let ids = world
         .query::<(Entity, &PanelPresentation, &WorkbenchPanel)>()
         .iter(world)
-        .filter_map(|(entity, panel, _)| (!close.contains(&entity)).then_some(panel.id))
+        .filter_map(|(entity, panel, _)| {
+            (api::panel_active(world, entity) && !close.contains(&entity)).then_some(panel.id)
+        })
         .collect::<Vec<_>>();
     TilingState::from_value(value, ids).map_err(str::to_owned)?;
     let policy = world.get_resource::<WorkbenchClosePolicy>().copied();
@@ -607,13 +612,31 @@ fn request_layout(world: &mut World, value: &Value, close: &[Entity]) -> Result<
 }
 pub fn apply_layout(world: &mut World, value: &Value) -> Result<(), String> {
     let ids = world
-        .query::<(&PanelPresentation, &WorkbenchPanel)>()
+        .query_filtered::<(&PanelPresentation, &WorkbenchPanel), Without<api::PanelSuspended>>()
         .iter(world)
         .map(|(panel, _)| panel.id)
         .collect::<Vec<_>>();
     let tiling = TilingState::from_value(value, ids).map_err(str::to_owned)?;
     install_tiling(world, tiling);
     Ok(())
+}
+
+/// A host replaced its whole active layout. Drop stale native dock placement
+/// and drag state before drawing the new panels; feature state stays retained.
+pub fn invalidate_layout_frontend(world: &mut World) {
+    world
+        .non_send_mut::<tiling_ui::TilingFrontend>()
+        .tiling_ui
+        .clear_roots = true;
+    for mut panel in world.query::<&mut PanelPresentation>().iter_mut(world) {
+        panel.dock_next = true;
+        panel.focus = false;
+    }
+    if let Some(panel) = world.resource::<WorkbenchLayout>().focused
+        && let Some(mut presentation) = world.get_mut::<PanelPresentation>(panel)
+    {
+        presentation.focus = true;
+    }
 }
 
 // Geometry and focused-area ownership change together, including tab moves
@@ -718,9 +741,18 @@ pub fn spawn_panel(
     {
         return Err("Invalid or duplicate saved panel ID".into());
     }
+    // Retained inactive layouts can have IDs beyond this layout's allocator.
+    let next_live_id = world
+        .query::<&PanelPresentation>()
+        .iter(world)
+        .map(|panel| panel.id)
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or("Panel IDs exhausted")?;
     let (id, area) = {
         let mut layout = world.resource_mut::<WorkbenchLayout>();
-        let id = saved_id.unwrap_or(layout.next_id);
+        let id = saved_id.unwrap_or(layout.next_id.max(next_live_id));
         if id > u32::MAX as u64 {
             return Err("Panel IDs exhausted".into());
         }
@@ -966,7 +998,7 @@ pub fn save(world: &mut World) -> Value {
         "save runs between frontend scopes"
     );
     let records = world
-        .query_filtered::<(Entity, &PanelPresentation, &PanelRecord), With<WorkbenchPanel>>()
+        .query_filtered::<(Entity, &PanelPresentation, &PanelRecord), (With<WorkbenchPanel>, Without<api::PanelSuspended>)>()
         .iter(world)
         .map(|(entity, panel, record)| (entity, panel.id, record.serialized.clone()))
         .collect::<Vec<_>>();

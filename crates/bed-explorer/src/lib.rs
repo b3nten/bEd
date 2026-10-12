@@ -1029,13 +1029,6 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
             &["Shift+End"],
         ),
         bed_keybindings::Action::new(
-            "bed.explorer.select_all",
-            "Select All",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Primary+A"],
-        ),
-        bed_keybindings::Action::new(
             "bed.explorer.expand",
             "Expand Folder",
             MODULE_ID,
@@ -1055,20 +1048,6 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
             MODULE_ID,
             bed_keybindings::Scope::panel(PANEL_ID),
             &["Enter", "KeypadEnter"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.explorer.copy",
-            "Copy Files",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Primary+C"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.explorer.cut",
-            "Cut Files",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Primary+X"],
         ),
         bed_keybindings::Action::new(
             "bed.explorer.duplicate",
@@ -1092,13 +1071,6 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
             &["F2"],
         ),
         bed_keybindings::Action::new(
-            "bed.explorer.paste",
-            "Paste Files",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Primary+V"],
-        ),
-        bed_keybindings::Action::new(
             "bed.explorer.refresh",
             "Refresh",
             MODULE_ID,
@@ -1109,7 +1081,10 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
 }
 pub(crate) fn default_shortcuts() -> bed_keybindings::ShortcutInput {
     bed_keybindings::ShortcutInput::new(bed_keybindings::Bindings::new(
-        shortcut_actions(),
+        bed_keybindings::common_actions()
+            .into_iter()
+            .chain(shortcut_actions())
+            .collect(),
         &Default::default(),
         bed_keybindings::Platform::current(),
     ))

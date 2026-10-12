@@ -7,7 +7,7 @@ mod worker;
 
 pub use ecs::{CsvDocument, CsvPlugin, CsvStates, CsvSystems};
 
-use bed_editor_api::{DocumentKind, MenuSlot, Registrar};
+use bed_editor_api::{DocumentKind, Registrar};
 
 pub use panel::CsvPanel;
 pub const PLUGIN_ID: &str = "bed.csv";
@@ -28,7 +28,6 @@ fn register_metadata(registrar: &mut Registrar<'_>) {
     );
     registrar.command(OPEN_COMMAND, "Open CSV/TSV…", None);
     registrar.command(OPEN_FILE_COMMAND, "Open in CSV Table", None);
-    registrar.menu(MenuSlot::Application, OPEN_COMMAND);
 }
 
 fn supported_path(path: &str) -> bool {
@@ -40,55 +39,6 @@ fn supported_path(path: &str) -> bool {
 
 pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
     vec![
-        bed_keybindings::Action::new(
-            "bed.csv.select_all",
-            "Select All",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Primary+A"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.csv.find",
-            "Find",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Primary+F"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.csv.copy",
-            "Copy",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Primary+C"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.csv.cut",
-            "Cut",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Primary+X"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.csv.paste",
-            "Paste",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Primary+V"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.csv.undo",
-            "Undo",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Primary+Z"],
-        ),
-        bed_keybindings::Action::new(
-            "bed.csv.redo",
-            "Redo",
-            PLUGIN_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Primary+Shift+Z", "Ctrl+Y"],
-        ),
         bed_keybindings::Action::new(
             "bed.csv.clear",
             "Clear Cells",
@@ -177,7 +127,10 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
 }
 pub(crate) fn default_shortcuts() -> bed_keybindings::ShortcutInput {
     bed_keybindings::ShortcutInput::new(bed_keybindings::Bindings::new(
-        shortcut_actions(),
+        bed_keybindings::common_actions()
+            .into_iter()
+            .chain(shortcut_actions())
+            .collect(),
         &Default::default(),
         bed_keybindings::Platform::current(),
     ))

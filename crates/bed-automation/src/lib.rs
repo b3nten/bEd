@@ -597,7 +597,7 @@ fn poll(world: &mut World, pending: &mut Pending) -> Option<OperationResult> {
 fn inspect(world: &mut World) -> Result<Snapshot, AutomationError> {
     let frame = world.get_resource::<DesktopFrameInfo>().cloned();
     let records = world
-        .query::<(Entity, &PanelPresentation, &bed_workbench::PanelRecord)>()
+        .query_filtered::<(Entity, &PanelPresentation, &bed_workbench::PanelRecord), Without<bed_workbench_api::PanelSuspended>>()
         .iter(world)
         .map(|(entity, panel, record)| {
             (

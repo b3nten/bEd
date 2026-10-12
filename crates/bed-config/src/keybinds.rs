@@ -12,7 +12,7 @@ pub struct KeybindsManager {
     pub reload_error: Option<String>,
 }
 impl KeybindsManager {
-    pub fn new(config_dir: &Path, _resources_root: &Path) -> Self {
+    pub fn new(config_dir: &Path) -> Self {
         Self {
             overrides: Overrides::default(),
             path: config_dir.join("keybindings.json"),
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn saved_overrides_reload_and_malformed_edits_preserve_last_good_bindings() {
         let dir = crate::test_support::TempDir::new();
-        let mut manager = KeybindsManager::new(&dir.path("config"), Path::new("."));
+        let mut manager = KeybindsManager::new(&dir.path("config"));
         manager.load_keybinds().unwrap();
         let action = Action::new(
             "fixture.save",
@@ -125,7 +125,7 @@ mod tests {
         manager
             .assign(&action, None, "Ctrl+Alt+F12".parse().unwrap())
             .unwrap();
-        let mut reloaded = KeybindsManager::new(&dir.path("config"), Path::new("."));
+        let mut reloaded = KeybindsManager::new(&dir.path("config"));
         reloaded.load_keybinds().unwrap();
         assert_eq!(reloaded.overrides, manager.overrides);
         assert_eq!(

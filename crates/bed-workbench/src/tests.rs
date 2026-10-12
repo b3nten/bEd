@@ -71,6 +71,43 @@ fn invoke(app: &mut App, command: &str) {
 }
 
 #[test]
+fn suspended_panels_keep_state_without_editor_or_slot_integration() {
+    let mut app = app();
+    invoke(&mut app, "test.open");
+    process_requests(app.world_mut());
+    let hidden = app.world().resource::<WorkbenchLayout>().focused.unwrap();
+    app.world_mut()
+        .entity_mut(hidden)
+        .insert(api::PanelSuspended);
+    app.world_mut().resource_mut::<WorkbenchLayout>().focused = None;
+    let empty = TilingState::default().to_value([]);
+    apply_layout(app.world_mut(), &empty).unwrap();
+    assert!(recent_panel(app.world_mut(), "test.counter").is_none());
+    focus_panel(app.world_mut(), hidden);
+    observe_focus(app.world_mut(), hidden);
+    assert!(app.world().resource::<WorkbenchLayout>().focused.is_none());
+    assert_eq!(
+        panel_state(app.world_mut(), hidden).unwrap(),
+        json!({"count":7})
+    );
+    assert!(
+        save(app.world_mut())["panels"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    invoke(&mut app, "test.open");
+    process_requests(app.world_mut());
+    let active = app.world().resource::<WorkbenchLayout>().focused.unwrap();
+    assert_ne!(active, hidden);
+    assert_ne!(
+        app.world().get::<PanelPresentation>(hidden).unwrap().id,
+        app.world().get::<PanelPresentation>(active).unwrap().id
+    );
+    assert_eq!(save(app.world_mut())["panels"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn transient_panels_are_omitted_from_persisted_content_focus_and_layout() {
     let mut app = app();
     invoke(&mut app, "test.open");

@@ -9,7 +9,7 @@ mod model;
 mod panel;
 mod worker;
 
-use bed_editor_api::{DocumentKind, MenuSlot, Registrar};
+use bed_editor_api::{DocumentKind, Registrar};
 pub use panel::MarkdownPanel;
 
 pub const PLUGIN_ID: &str = "bed.markdown";
@@ -31,7 +31,6 @@ fn register_metadata(r: &mut Registrar<'_>) {
     );
     r.command(OPEN_COMMAND, "Open Markdown…", None);
     r.command(OPEN_FILE_COMMAND, "Open in Markdown Preview", None);
-    r.menu(MenuSlot::Application, OPEN_COMMAND);
 }
 
 fn supported_path(path: &str) -> bool {

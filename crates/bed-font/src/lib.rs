@@ -1,7 +1,7 @@
 //! Read-only font inspection with HarfRust shaping and FreeType rasterization.
 use bed_editing::identity::DocumentId;
 use bed_editor_api::gpu::GpuContext;
-use bed_editor_api::{DocumentKind, HostContext, HostRequest, MenuSlot, Registrar, Revision};
+use bed_editor_api::{DocumentKind, HostContext, HostRequest, Registrar, Revision};
 use bed_ui::TextureHandle;
 use bed_ui::gpu::{Canvas, RenderOutput, RenderTarget};
 use dear_imgui_rs::{MouseButton, StyleColor, StyleVar, Ui, WindowFlags};
@@ -44,7 +44,6 @@ fn register_metadata(registrar: &mut Registrar<'_>) {
     );
     registrar.command(OPEN_COMMAND, "Open Font…", Some("font"));
     registrar.command(OPEN_FILE_COMMAND, "Open in Font Viewer", Some("font"));
-    registrar.menu(MenuSlot::Application, OPEN_COMMAND);
 }
 
 fn supported_path(path: &str) -> bool {

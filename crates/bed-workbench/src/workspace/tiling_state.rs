@@ -166,6 +166,25 @@ impl TilingState {
     ) -> Option<u32> {
         assert!(axis < 2 && minimum.iter().all(|size| *size > 0));
         let source = self.area_for(panel).expect("live tab belongs to an area");
+        let new_area = self.split_area(target, axis, high, minimum)?;
+        self.move_tab_contents(panel, new_area, 0);
+        // Splitting within the source deliberately creates an empty half.
+        // A cross-area drop instead removes the footprint it vacates.
+        if source != target {
+            self.close_empty_area(source);
+        }
+        Some(new_area)
+    }
+
+    /// Reserve the requested half for content, preserving the target's tabs.
+    pub fn split_area(
+        &mut self,
+        target: u32,
+        axis: usize,
+        high: bool,
+        minimum: [i32; 2],
+    ) -> Option<u32> {
+        assert!(axis < 2 && minimum.iter().all(|size| *size > 0));
         let rect = self.layout.area(target).rect;
         let mut layout = self.layout.clone();
         let new_area = layout.split(
@@ -187,12 +206,6 @@ impl TilingState {
         }
         self.layout = layout;
         self.add_area(new_area);
-        self.move_tab_contents(panel, new_area, 0);
-        // Splitting within the source deliberately creates an empty half.
-        // A cross-area drop instead removes the footprint it vacates.
-        if source != target {
-            self.close_empty_area(source);
-        }
         Some(new_area)
     }
 

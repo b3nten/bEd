@@ -19,7 +19,7 @@ pub const OPEN_COMMAND: &str = "bed.http.open";
 
 fn register_metadata(registrar: &mut Registrar<'_>) {
     registrar.panel_options(PANEL_ID, "HTTP Client", true, PanelPlacement::Center, None);
-    registrar.command(OPEN_COMMAND, "Open HTTP Client", None);
+    registrar.command(OPEN_COMMAND, "HTTP Client", None);
     registrar.menu(MenuSlot::Application, OPEN_COMMAND);
 }
 

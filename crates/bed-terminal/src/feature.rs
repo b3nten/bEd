@@ -134,9 +134,6 @@ impl Plugin for TerminalPlugin {
             .expect("terminal editor contributions are unique");
         register(app.world_mut(), MODULE_ID, |registrar| {
             registrar.panel(PANEL_ID, "Terminal", create_panel);
-            for action in shortcut_actions() {
-                registrar.shortcut_action(action);
-            }
             registrar.command(NEW_COMMAND, "New Terminal", open_panel);
             registrar.command("bed.terminal.show", "Show Terminal", show_panel);
             registrar.global_shortcut("bed.terminal.show", &["Ctrl+Grave"]);
@@ -247,7 +244,7 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
             id: "bed.terminal.session",
             label: "Terminal",
             priority: 50,
-            icon: Some("terminal"),
+            icon: "terminal",
             prefer_icon: false,
             measure: status_measure,
             draw: status_draw,
@@ -775,28 +772,4 @@ fn show_panel(In(invocation): In<CommandInvocation>) -> CommandResult {
         state: Value::Null,
         area: Some(invocation.area),
     }])
-}
-
-pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
-    let prefix = if cfg!(target_os = "macos") {
-        "Primary"
-    } else {
-        "Ctrl+Shift"
-    };
-    [
-        ("copy", "Copy Selection", "C"),
-        ("paste", "Paste", "V"),
-        ("select_all", "Select All", "A"),
-    ]
-    .into_iter()
-    .map(|(id, label, key)| {
-        bed_keybindings::Action::new(
-            &format!("bed.terminal.{id}"),
-            label,
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &[&format!("{prefix}+{key}")],
-        )
-    })
-    .collect()
 }

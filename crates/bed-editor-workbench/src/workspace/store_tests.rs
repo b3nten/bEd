@@ -1,5 +1,33 @@
 use super::*;
 use crate::test_support::TempDir;
+
+#[test]
+fn numbered_sessions_keep_active_selection_and_legacy_accessors() {
+    let temp = TempDir::new();
+    let config = temp.path("config");
+    let mut store = WorkspaceStore::load(&config).unwrap();
+    let spec = remote("host", "/project");
+    let first = json!({"panels":[],"state":"first"});
+    let third = json!({"panels":[],"state":"third"});
+    store
+        .save_session_layout(
+            Some(&spec),
+            json!({"active_layout_slot":3,"layouts":{"1":first,"3":third}}),
+        )
+        .unwrap();
+    store
+        .save_session_layout(None, json!({"active_layout_slot":1,"layouts":{"1":first}}))
+        .unwrap();
+    let mut reloaded = WorkspaceStore::load(&config).unwrap();
+    assert_eq!(reloaded.active_layout_slot(Some(&spec)), 3);
+    assert_eq!(reloaded.layout(&spec), Some(&third));
+    assert_eq!(reloaded.standalone_layout(), Some(&first));
+    reloaded
+        .set_layout(&spec, json!({"panels":[],"state":"updated"}))
+        .unwrap();
+    assert_eq!(reloaded.layout(&spec).unwrap()["state"], "updated");
+    assert_eq!(reloaded.session_layouts(Some(&spec)).unwrap()["1"], first);
+}
 #[test]
 fn independent_instances_preserve_other_projects_and_fields() {
     let temp = TempDir::new();

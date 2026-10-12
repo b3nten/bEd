@@ -2,7 +2,14 @@
 use bed_keybindings::{Action, Bindings, EDITOR_SCOPE, Overrides, Platform, Scope, ShortcutInput};
 pub fn actions() -> Vec<Action> {
     let scope = Scope::panel(EDITOR_SCOPE);
-    let mut result = Vec::new();
+    let mut result = bed_keybindings::common_actions();
+    for (id, label, keys) in [
+        ("bed.app.Save", "Save", vec!["Primary+S"]),
+        ("bed.app.SaveAs", "Save As", vec!["Primary+Shift+S"]),
+        ("bed.app.OpenFile", "Open File", vec!["Primary+O"]),
+    ] {
+        result.push(Action::new(id, label, "bed.app", Scope::Focused, &keys));
+    }
     let mut add = |name: &str, label: &str, keys: &[&str], repeat| {
         let mut action = Action::new(
             &format!("bed.editor.{name}"),
@@ -15,25 +22,7 @@ pub fn actions() -> Vec<Action> {
         result.push(action);
     };
     for (name, label, keys) in [
-        ("find", "Find", vec!["Primary+F"]),
         ("go_to_line", "Go to Line", vec!["Ctrl+G"]),
-        ("copy", "Copy", vec!["Primary+C"]),
-        ("cut", "Cut", vec!["Primary+X"]),
-        ("paste", "Paste", vec!["Primary+V"]),
-        ("select_all", "Select All", vec!["Primary+A"]),
-        ("undo", "Undo", vec!["Primary+Z"]),
-        (
-            "redo",
-            "Redo",
-            if cfg!(target_os = "macos") {
-                vec!["Primary+Shift+Z"]
-            } else {
-                vec!["Primary+Shift+Z", "Ctrl+Y"]
-            },
-        ),
-        ("save", "Save", vec!["Primary+S"]),
-        ("save_as", "Save As", vec!["Primary+Shift+S"]),
-        ("open", "Open File", vec!["Primary+O"]),
         ("collapse_selection", "Collapse Selection", vec!["Escape"]),
         (
             "add_cursor_above",

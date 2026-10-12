@@ -5,8 +5,8 @@ panels. Terminal rendering, shells, and workspace promotion belong to bEd's
 terminal plugin and editor request reducer. There is one application binary, `bed`.
 
 Choose **General → Startup → Terminal** to start a standalone shell. New Window
-opens Startup. **Window → Save Default Layout** records fresh panels for the
-first opening of a workspace. Bare launches use `$HOME`. A folder argument opens its workspace only if
+opens Startup. **Window → Set Layout → Layout 1–9** saves an arrangement for a
+numbered slot. Each workspace retains its own version of every used slot. Bare launches use `$HOME`. A folder argument opens its workspace only if
 that exact root is already saved; other folders stay standalone. Files open
 afterward. Use `--cwd` to choose the initial working directory without opening a
 workspace. Explicit directories, including `/`, are used as supplied.
@@ -43,7 +43,7 @@ workspace. It takes no arguments. `bed workspace` and
 **Open Folder** and the Projects panel also open or create local workspaces
 through an explicit selection. There is no terminal-directory toolbar button.
 An attached local workspace opens other workspaces in new windows, creating a
-workspace with the default layout when necessary; selecting its current root
+workspace with layout 1 when necessary; selecting its current root
 does nothing. These commands do not upgrade SSH workspaces.
 
 In a standalone window, shell promotion opens the workspace in place and keeps
@@ -51,7 +51,7 @@ the calling shell's process, jobs, scrollback and panel entity. Other panels clo
 through the normal draft and save barriers; a rejected draft or failed save
 aborts promotion. Other terminal processes stop when their panels retire.
 
-- bEd restores a saved workspace layout, or uses the saved default layout for a
+- bEd restores a saved workspace layout, or uses the global arrangement for layout 1 for a
   new workspace. Without a default it uses the built-in workspace arrangement.
 - The calling shell fills the first terminal slot. If the arrangement has no
   terminal slot, that shell joins the largest tiled area.
@@ -70,7 +70,7 @@ restored terminals retain their saved directories. Git uses the discovered
 repository root. The titlebar shows the window directory and panels show their scope.
 Language servers, project diagnostics, references, debugging and SSH require a
 workspace. Workspace sessions, undo/redo, and feature data persist after
-promotion; default layouts and global settings persist throughout.
+promotion; layout templates and global settings persist throughout.
 
 Run the helper in a local shell at the directory you want to open. Application
 restarts start fresh terminal processes; preserving running jobs and scrollback applies to promotion within the

@@ -10,7 +10,7 @@ pub(crate) fn items() -> StatusItems {
         id: "bed.csv.document",
         label: "CSV table",
         priority: 50,
-        icon: Some("spreadsheet"),
+        icon: "spreadsheet",
         prefer_icon: false,
         measure,
         draw,

@@ -198,16 +198,11 @@ fn configure(world: &mut World) {
             bed_keybindings::Platform::current(),
         );
         let strokes = |id| {
-            bindings
-                .for_action(id)
-                .into_iter()
-                .filter(|b| {
-                    bindings
-                        .winner(&b.scope, b.shortcut)
-                        .is_some_and(|winner| winner.action == id)
-                })
-                .map(|b| b.shortcut)
-                .collect()
+            bed_terminal::TerminalInputPolicy::clipboard_shortcuts(
+                &bindings,
+                id,
+                settings.keybinds.overrides.actions.contains_key(id),
+            )
         };
         bed_terminal::TerminalInputPolicy {
             application_shortcuts: bindings
@@ -222,9 +217,9 @@ fn configure(world: &mut World) {
                 })
                 .map(|b| b.shortcut)
                 .collect(),
-            copy: strokes("bed.terminal.copy"),
-            paste: strokes("bed.terminal.paste"),
-            select_all: strokes("bed.terminal.select_all"),
+            copy: strokes("bed.edit.copy"),
+            paste: strokes("bed.edit.paste"),
+            select_all: strokes("bed.edit.select_all"),
             recording: world
                 .get_non_send::<bed_workbench::WorkbenchShortcuts>()
                 .is_some_and(|runtime| runtime.recording.is_some()),
@@ -314,7 +309,8 @@ fn draw(world: &mut World, ui: &Ui) {
     if let Some((command, label)) = bed_desktop::native::macos_window::toolbar_drag() {
         ui.with_bound_context(|| unsafe {
             if dear_imgui_sys::igBeginDragDropSource(
-                dear_imgui_sys::ImGuiDragDropFlags_SourceExtern,
+                dear_imgui_sys::ImGuiDragDropFlags_SourceExtern
+                    | dear_imgui_sys::ImGuiDragDropFlags_SourceNoPreviewTooltip,
             ) {
                 dear_imgui_sys::igSetDragDropPayload(
                     c"BED_TOOLBAR_COMMAND".as_ptr(),
@@ -322,7 +318,7 @@ fn draw(world: &mut World, ui: &Ui) {
                     command.len(),
                     dear_imgui_sys::ImGuiCond_Always,
                 );
-                ui.text(label);
+                bed_workbench::api::draw_panel_drag_label(ui, &label);
                 dear_imgui_sys::igEndDragDropSource();
             }
         });
@@ -352,6 +348,7 @@ fn draw(world: &mut World, ui: &Ui) {
                 drop.panel,
             );
             request.area = drop.area;
+            request.tab_index = drop.tab_index;
             world
                 .resource_mut::<bed_editor_workbench::EditorRequests>()
                 .enqueue(request);
@@ -826,6 +823,9 @@ fn update_native_presentation(world: &mut World) {
         text_input_focused,
         editor_shortcuts_focused(world),
         &application,
+        world
+            .resource::<bed_editor_workbench::LayoutSlots>()
+            .active(),
     );
     let presentation = bed_desktop::DesktopNativePresentation {
         opacity: settings.background_opacity(),
@@ -1034,6 +1034,9 @@ fn native_menu_command(
         MenuAction::DuplicateView => WindowCommand::DuplicateView,
         MenuAction::SplitRight => WindowCommand::SplitRight,
         MenuAction::SplitDown => WindowCommand::SplitDown,
+        MenuAction::UseLayout(slot) => WindowCommand::UseLayout(slot),
+        MenuAction::SetLayoutDefault(slot) => WindowCommand::SetLayoutDefault(slot),
+        MenuAction::RestoreBuiltinLayout(slot) => WindowCommand::RestoreBuiltinLayout(slot),
         MenuAction::ResetLayout => WindowCommand::ResetLayout,
         MenuAction::SaveDefaultLayout => WindowCommand::SaveDefaultLayout,
         MenuAction::ResetDefaultLayout => WindowCommand::ResetDefaultLayout,

@@ -30,7 +30,7 @@ pub(crate) fn install(app: &mut App) {
             id,
             label,
             priority,
-            icon: Some(icon),
+            icon: icon,
             prefer_icon: false,
             measure,
             draw,

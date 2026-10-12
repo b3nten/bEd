@@ -385,15 +385,17 @@ fn open_dropped_files(world: &mut World) {
             continue;
         }
         if let Some(paths) = tree.dragged_paths() {
-            for path in paths
+            for (offset, path) in paths
                 .iter()
                 .filter(|path| tree.is_directory(path) != Some(true))
+                .enumerate()
             {
-                intents.push_at(
-                    drop.panel,
-                    drop.area,
-                    HostRequest::DropFile { path: path.clone() },
-                );
+                intents.push_intent(bed_editor_api::EditorIntent {
+                    source: drop.panel,
+                    area: Some(drop.area),
+                    tab_index: drop.tab_index.map(|index| index + offset),
+                    request: HostRequest::DropFile { path: path.clone() },
+                });
             }
         }
     }

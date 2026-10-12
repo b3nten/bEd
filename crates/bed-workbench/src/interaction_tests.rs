@@ -174,6 +174,31 @@ impl Fixture {
         self.frame();
         self.settle();
     }
+    fn payload_frame(&mut self, payload_type: &std::ffi::CStr, position: [f32; 2], pressed: bool) {
+        self.context.io_mut().add_mouse_pos_event(position);
+        self.context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, pressed);
+        self.context.io_mut().set_delta_time(1. / 60.);
+        let ui = self.context.frame();
+        ui.with_bound_context(|| unsafe {
+            assert!(sys::igBeginDragDropSource(
+                sys::ImGuiDragDropFlags_SourceExtern
+                    | sys::ImGuiDragDropFlags_SourceNoPreviewTooltip
+            ));
+            let data = b"gesture.new";
+            sys::igSetDragDropPayload(
+                payload_type.as_ptr(),
+                data.as_ptr().cast(),
+                data.len(),
+                sys::ImGuiCond_Always,
+            );
+            sys::igEndDragDropSource();
+        });
+        render_ui(self.app.world_mut(), ui);
+        drop(self.context.render_legacy());
+        process_requests(self.app.world_mut());
+    }
     fn membership(&self) {
         self.context.binding().with_bound_context(|| unsafe {
             for panel in self
@@ -743,4 +768,254 @@ fn native_toolbar_payloads_use_the_same_occupied_and_empty_area_drop_targets() {
         assert_eq!(drops[0].payload_type, "BED_TOOLBAR_COMMAND");
         assert_eq!(drops[0].data, b"gesture.new");
     }
+}
+
+#[test]
+fn incoming_panel_content_splits_each_edge_and_preserves_existing_tabs() {
+    let _lock = tests::IMGUI_TEST_LOCK.lock().unwrap();
+    for payload_type in [c"BED_TOOLBAR_COMMAND", c"BED_FILES"] {
+        for (point, axis, high) in [
+            ([5100, 7500], 0, false),
+            ([9900, 7500], 0, true),
+            ([7500, 5600], 1, false),
+            ([7500, 9900], 1, true),
+        ] {
+            let mut fixture = Fixture::new();
+            let original = fixture.layout().clone();
+            let position = fixture.screen(point);
+            fixture.context.io_mut().add_mouse_pos_event(position);
+            fixture.frame();
+            let mut cursor = bevy::ecs::message::MessageCursor::<api::PanelDrop>::default();
+            fixture.payload_frame(payload_type, position, true);
+            fixture.payload_frame(payload_type, position, true);
+            assert_eq!(fixture.layout(), &original, "hover is only a preview");
+            let preview = fixture
+                .app
+                .world()
+                .non_send::<tiling_ui::TilingFrontend>()
+                .tiling_ui
+                .preview_bounds
+                .expect("shared split preview is visible");
+            fixture.payload_frame(payload_type, position, false);
+            let drops = cursor
+                .read(fixture.app.world().resource::<Messages<api::PanelDrop>>())
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(drops.len(), 1);
+            let drop = &drops[0];
+            assert_eq!(drop.panel, None);
+            assert_eq!(drop.payload_type, payload_type.to_str().unwrap());
+            assert_eq!(drop.data, b"gesture.new");
+            assert_eq!(
+                fixture.layout().layout.areas.len(),
+                original.layout.areas.len() + 1
+            );
+            assert!(
+                fixture
+                    .layout()
+                    .areas
+                    .iter()
+                    .find(|group| group.area == drop.area)
+                    .unwrap()
+                    .tabs
+                    .is_empty()
+            );
+            for group in &original.areas {
+                assert_eq!(
+                    fixture
+                        .layout()
+                        .areas
+                        .iter()
+                        .find(|next| next.area == group.area)
+                        .unwrap(),
+                    group
+                );
+            }
+            let rect = fixture.layout().layout.area(drop.area).rect;
+            assert_eq!(
+                if high { rect.max[axis] } else { rect.min[axis] },
+                if high { EXTENT } else { EXTENT / 2 }
+            );
+            let bounds = (fixture.screen(rect.min), fixture.screen(rect.max));
+            assert!((preview.0[axis] - bounds.0[axis]).abs() <= 5.0);
+            assert!((preview.1[axis] - bounds.1[axis]).abs() <= 5.0);
+            fixture.settle();
+            fixture.membership();
+        }
+    }
+}
+
+#[test]
+fn incoming_panel_content_uses_tab_insertion_and_animated_preview_transitions() {
+    let _lock = tests::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = Fixture::new();
+    fixture
+        .app
+        .world_mut()
+        .resource_mut::<WorkbenchAppearance>()
+        .animations = true;
+    let position = fixture.screen([7500, 7500]);
+    fixture.context.io_mut().add_mouse_pos_event(position);
+    fixture.frame();
+    fixture.payload_frame(c"BED_FILES", position, true);
+    let first = fixture
+        .app
+        .world()
+        .non_send::<tiling_ui::TilingFrontend>()
+        .tiling_ui
+        .preview_bounds
+        .unwrap();
+    fixture.payload_frame(c"BED_FILES", fixture.screen([5100, 7500]), true);
+    let moving = fixture
+        .app
+        .world()
+        .non_send::<tiling_ui::TilingFrontend>()
+        .tiling_ui
+        .preview_bounds
+        .unwrap();
+    assert!(moving.1[0] < first.1[0] && moving.1[0] > fixture.screen([7500, 7500])[0]);
+    let panel = fixture.panels[2];
+    let area = fixture.layout().area_for(fixture.id(panel)).unwrap();
+    let (min, max) = tab_bounds(fixture.app.world(), panel).unwrap();
+    let position = [min[0] + 1.0, (min[1] + max[1]) * 0.5];
+    fixture.payload_frame(c"BED_FILES", position, true);
+    fixture.payload_frame(c"BED_FILES", position, false);
+    let mut cursor = bevy::ecs::message::MessageCursor::<api::PanelDrop>::default();
+    let drops = cursor
+        .read(fixture.app.world().resource::<Messages<api::PanelDrop>>())
+        .collect::<Vec<_>>();
+    assert_eq!(drops.len(), 1);
+    assert_eq!(drops[0].area, area);
+    assert_eq!(drops[0].tab_index, Some(0));
+    assert_eq!(drops[0].panel, Some(panel));
+    assert_eq!(fixture.layout().layout.areas.len(), 3);
+}
+
+#[test]
+fn cancelled_and_outside_payload_drops_leave_layout_unchanged() {
+    let _lock = tests::IMGUI_TEST_LOCK.lock().unwrap();
+    for cancel in ["escape", "right", "outside"] {
+        let mut fixture = Fixture::new();
+        let original = fixture.layout().clone();
+        let position = fixture.screen([5100, 7500]);
+        fixture.context.io_mut().add_mouse_pos_event(position);
+        fixture.frame();
+        fixture.payload_frame(c"BED_TOOLBAR_COMMAND", position, true);
+        match cancel {
+            "right" => fixture
+                .context
+                .io_mut()
+                .add_mouse_button_event(MouseButton::Right, true),
+            "escape" => fixture.context.io_mut().add_key_event(Key::Escape, true),
+            _ => {}
+        }
+        let position = if cancel != "outside" {
+            position
+        } else {
+            [-20.0; 2]
+        };
+        fixture.payload_frame(c"BED_TOOLBAR_COMMAND", position, true);
+        fixture.payload_frame(c"BED_TOOLBAR_COMMAND", position, false);
+        let mut cursor = bevy::ecs::message::MessageCursor::<api::PanelDrop>::default();
+        assert_eq!(
+            cursor
+                .read(fixture.app.world().resource::<Messages<api::PanelDrop>>())
+                .count(),
+            0
+        );
+        assert_eq!(fixture.layout(), &original);
+        assert!(
+            fixture
+                .app
+                .world()
+                .non_send::<tiling_ui::TilingFrontend>()
+                .tiling_ui
+                .preview_bounds
+                .is_none()
+        );
+    }
+}
+
+#[derive(Resource, Default)]
+struct WidgetDrops(usize);
+struct DropWidget;
+impl Panel for DropWidget {
+    fn title(&self, _: &World) -> String {
+        "Drop widget".into()
+    }
+    fn draw(
+        &mut self,
+        ui: &Ui,
+        world: &mut World,
+        _: &mut Vec<Action>,
+        _: &bed_workbench_api::ShortcutInput,
+    ) {
+        let min = ui.cursor_screen_pos();
+        let size = ui.content_region_avail();
+        let center = [min[0] + size[0] * 0.5, min[1] + size[1] * 0.5];
+        let bounds = sys::ImRect_c {
+            Min: [center[0] - 50.0, center[1] - 40.0].into(),
+            Max: [center[0] + 50.0, center[1] + 40.0].into(),
+        };
+        unsafe {
+            if sys::igBeginDragDropTargetCustom(bounds, ui.get_id("drop widget").raw()) {
+                let payload = sys::igAcceptDragDropPayload(
+                    c"BED_FILES".as_ptr(),
+                    sys::ImGuiDragDropFlags_AcceptBeforeDelivery
+                        | sys::ImGuiDragDropFlags_AcceptNoDrawDefaultRect,
+                );
+                if !payload.is_null() && (*payload).Delivery {
+                    world.resource_mut::<WidgetDrops>().0 += 1;
+                }
+                sys::igEndDragDropTarget();
+            }
+        }
+    }
+}
+fn drop_widget_factory(_: In<api::PanelCreation>) -> PanelResult {
+    Ok(Box::new(DropWidget))
+}
+
+#[test]
+fn content_widget_drop_targets_take_precedence_over_workspace_placement() {
+    let _lock = tests::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = Fixture::new();
+    fixture.app.init_resource::<WidgetDrops>();
+    register(fixture.app.world_mut(), "drop", |registry| {
+        registry.panel("drop.widget", "Drop widget", drop_widget_factory);
+    })
+    .unwrap();
+    open_panel(
+        fixture.app.world_mut(),
+        json!({"panel_type":"drop.widget"}),
+        Some(3),
+        None,
+    )
+    .unwrap();
+    fixture.settle();
+    let original = fixture.layout().clone();
+    let position = fixture.screen([7500, 7500]);
+    fixture.context.io_mut().add_mouse_pos_event(position);
+    fixture.frame();
+    for pressed in [true, true, false] {
+        fixture.payload_frame(c"BED_FILES", position, pressed);
+        assert!(
+            fixture
+                .app
+                .world()
+                .non_send::<tiling_ui::TilingFrontend>()
+                .tiling_ui
+                .preview_bounds
+                .is_none()
+        );
+    }
+    assert_eq!(fixture.app.world().resource::<WidgetDrops>().0, 1);
+    let mut cursor = bevy::ecs::message::MessageCursor::<api::PanelDrop>::default();
+    assert_eq!(
+        cursor
+            .read(fixture.app.world().resource::<Messages<api::PanelDrop>>())
+            .count(),
+        0
+    );
+    assert_eq!(fixture.layout(), &original);
 }

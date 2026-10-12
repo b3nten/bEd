@@ -1,6 +1,7 @@
 //! One status row. Features own content; this renderer owns sizing and requests.
 use super::{UiLoan, WorkbenchLayout, WorkbenchRequests, WorkbenchViewport, api};
 use api::{Action, StatusContext, StatusDrawContext, StatusDrawMode, StatusItem, StatusItems};
+use bed_ui::util::popup_style;
 use bevy::prelude::*;
 use dear_imgui_rs::{Condition, StyleColor, StyleVar, TextureId, Ui, WindowFlags, sys};
 use std::{
@@ -9,11 +10,13 @@ use std::{
 };
 
 const PADDING: [f32; 2] = [10.0, 4.0];
-const GAP: f32 = 12.0;
+const GAP: f32 = 20.0;
+const ICON_GAP: f32 = 6.0;
 type Key = (Entity, &'static str);
 
 /// Application-owned information is independent of the contribution collection.
 pub struct StatusBarHost<'a> {
+    pub icon: &'a str,
     pub summary: &'a str,
     pub details: &'a str,
 }
@@ -46,7 +49,7 @@ impl Entry {
     }
     fn shown_width(&self, icon_width: f32) -> f32 {
         match self.representation {
-            Representation::Inline => self.width,
+            Representation::Inline => icon_width + ICON_GAP + self.width,
             Representation::Icon => icon_width,
             Representation::Overflow => 0.0,
         }
@@ -149,13 +152,13 @@ fn collect(
                 }
             };
             if let Some(width) = measured {
-                let icon = item.icon.and_then(|key| icons(world, key));
+                let icon = icons(world, item.icon);
                 entries.push(Entry {
                     item,
                     context,
                     width: width.max(1.0),
                     icon,
-                    representation: if item.prefer_icon && icon.is_some() {
+                    representation: if item.prefer_icon {
                         Representation::Icon
                     } else {
                         Representation::Inline
@@ -199,15 +202,12 @@ fn total_width(entries: &[Entry], icon_width: f32, overflow_width: f32) -> f32 {
 
 fn allocate(entries: &mut [Entry], budget: f32, icon_width: f32, overflow_width: f32) {
     // Exhaust a lower-priority item's representations before shrinking a
-    // higher-priority widget. Iconless items follow the same ordering.
+    // higher-priority widget.
     for index in (0..entries.len()).rev() {
         if total_width(entries, icon_width, overflow_width) <= budget {
             break;
         }
-        if entries[index].representation == Representation::Inline
-            && entries[index].icon.is_some()
-            && entries[index].width > icon_width
-        {
+        if entries[index].representation == Representation::Inline {
             entries[index].representation = Representation::Icon;
         }
         if total_width(entries, icon_width, overflow_width) > budget {
@@ -250,7 +250,7 @@ fn draw_entry(
     actions: &mut Vec<Action>,
 ) {
     if let Some(error) = state.failures.get(&entry.key()) {
-        ui.text_wrapped(format!("{}: unavailable\n{error}", entry.item.label));
+        ui.text(format!("{}: unavailable\n{error}", entry.item.label));
         return;
     }
     let mut produced = Vec::new();
@@ -263,13 +263,58 @@ fn draw_entry(
 }
 
 fn tooltip(world: &World, ui: &Ui, entry: &Entry, state: &mut StatusBarState) {
-    ui.tooltip(|| {
+    status_tooltip(ui, || {
         if let Some(error) = state.failures.get(&entry.key()) {
-            ui.text_wrapped(error);
+            ui.text(error);
         } else if let Err(error) = callback(ui, || (entry.item.tooltip)(world, ui, entry.context)) {
             state.failures.insert(entry.key(), error);
         }
     });
+}
+
+fn status_tooltip(ui: &Ui, contents: impl FnOnce()) {
+    let _style = popup_style::context_menu_style(ui);
+    let padding = [12.0, 10.0];
+    let wrap_width = (ui.current_font_size() * 36.0)
+        .min((ui.window_viewport().work_size()[0] - padding[0] * 4.0).max(1.0));
+    let _padding = ui.push_style_var(StyleVar::WindowPadding(padding));
+    popup_style::tooltip(ui, || {
+        let _wrap = ui.push_text_wrap_pos(ui.cursor_pos()[0] + wrap_width);
+        contents();
+    });
+}
+
+fn separator(ui: &Ui, x: f32, y: f32, height: f32) {
+    let color = ui.style_color(StyleColor::Separator);
+    let color = bed_ui::color::blend([1.0, 1.0, 1.0, color[3]], color, 0.12);
+    ui.get_window_draw_list()
+        .add_line([x, y + 2.0], [x, y + height - 2.0], color)
+        .build();
+}
+
+fn draw_icon(ui: &Ui, icon: Option<TextureId>, point: [f32; 2], side: f32) {
+    let icon_side = side * 0.75;
+    let inset = (side - icon_side) * 0.5;
+    let point = [point[0] + inset, point[1] + inset];
+    if let Some(icon) = icon {
+        ui.get_window_draw_list().add_image(
+            icon,
+            point,
+            [point[0] + icon_side, point[1] + icon_side],
+            [0.0; 2],
+            [1.0; 2],
+            ui.style_color(StyleColor::TextDisabled),
+        );
+    } else {
+        // Keep a visible icon while the host's textures are unavailable.
+        ui.get_window_draw_list()
+            .add_circle(
+                [point[0] + icon_side * 0.5, point[1] + icon_side * 0.5],
+                icon_side * 0.25,
+                ui.style_color(StyleColor::TextDisabled),
+            )
+            .build();
+    }
 }
 
 /// Draw after panel surfaces. Consequential actions run after all UI scopes end.
@@ -339,6 +384,12 @@ fn draw(
                 | WindowFlags::NO_NAV,
         )
         .build(|| {
+            if let Some(mut animations) =
+                world.get_non_send_mut::<super::ui_animations::UiAnimations>()
+                && animations.matches_context(ui)
+            {
+                animations.exclude_current(ui);
+            }
             ui.get_window_draw_list()
                 .add_line(
                     position,
@@ -347,9 +398,10 @@ fn draw(
                 )
                 .build();
             let width = ui.content_region_avail()[0].max(0.0);
-            let host_width = ui.calc_text_size(host.summary)[0].min(width * 0.4);
-            let left_width = (width - host_width - GAP).max(0.0);
             let side = ui.text_line_height();
+            let host_width =
+                (side + ICON_GAP + ui.calc_text_size(host.summary)[0]).min(width * 0.4);
+            let left_width = (width - host_width - GAP).max(0.0);
             let overflow_width = ui.calc_text_size("…")[0] + 8.0;
             allocate(&mut entries, left_width, side, overflow_width);
             let start = ui.cursor_screen_pos();
@@ -365,6 +417,9 @@ fn draw(
                 if slot_width <= 0.0 {
                     continue;
                 }
+                if x > start[0] {
+                    separator(ui, x - GAP * 0.5, start[1], side);
+                }
                 ui.set_cursor_screen_pos([x, start[1]]);
                 let id = format!("{}/{}", entry.context.publisher.to_bits(), entry.item.id);
                 let _id = ui.push_id(&id);
@@ -372,24 +427,14 @@ fn draw(
                 {
                     let _clip =
                         ui.push_clip_rect([x, start[1]], [x + slot_width, start[1] + side], true);
-                    if entry.representation == Representation::Icon {
-                        if ui.invisible_button("compact", [slot_width, side]) {
-                            state.popup = Some((entry.key(), entry.context));
-                            open_widget = true;
-                            // Open at the footer scope, independent of the item's representation.
-                        }
-                        if let Some(icon) = entry.icon {
-                            ui.get_window_draw_list().add_image(
-                                icon,
-                                [x, start[1]],
-                                [x + side, start[1] + side],
-                                [0.0; 2],
-                                [1.0; 2],
-                                ui.style_color(StyleColor::TextDisabled),
-                            );
-                        }
-                        hovered = ui.is_item_hovered();
-                    } else {
+                    if ui.invisible_button("compact", [side.min(slot_width), side]) {
+                        state.popup = Some((entry.key(), entry.context));
+                        open_widget = true;
+                        // Open at the footer scope, independent of the item's representation.
+                    }
+                    draw_icon(ui, entry.icon, [x, start[1]], side);
+                    if entry.representation == Representation::Inline {
+                        ui.set_cursor_screen_pos([x + side + ICON_GAP, start[1]]);
                         // Ordinary buttons fit the same single-line slot as text.
                         let _frame_padding = ui.push_style_var(StyleVar::FramePadding([
                             ui.clone_style().frame_padding()[0],
@@ -402,16 +447,17 @@ fn draw(
                             StatusDrawContext {
                                 context: entry.context,
                                 mode: StatusDrawMode::Inline,
-                                width: slot_width,
+                                width: (slot_width - side - ICON_GAP).max(1.0),
                             },
                             &mut state,
                             &mut actions,
                         );
-                        hovered = ui.is_mouse_hovering_rect(
+                    }
+                    hovered = ui.is_window_hovered()
+                        && ui.is_mouse_hovering_rect(
                             [x, start[1]],
                             [x + slot_width, start[1] + side],
                         );
-                    }
                 }
                 if hovered {
                     tooltip(world, ui, entry, &mut state);
@@ -428,6 +474,9 @@ fn draw(
                     start[1],
                 ]);
                 let point = ui.cursor_screen_pos();
+                if point[0] > start[0] {
+                    separator(ui, point[0] - GAP * 0.5, start[1], side);
+                }
                 if ui.invisible_button("overflow", [overflow_width.min(left_width), side]) {
                     state.overflow_contexts = hidden
                         .iter()
@@ -441,27 +490,45 @@ fn draw(
                     "…",
                 );
                 if ui.is_item_hovered() {
-                    ui.tooltip(|| ui.text(format!("{} more status items", hidden.len())));
+                    status_tooltip(ui, || {
+                        ui.text(format!("{} more status items", hidden.len()))
+                    });
                 }
             }
             ui.set_cursor_screen_pos([start[0] + width - host_width, start[1]]);
             if host_width > 0.0 {
+                if x > start[0] || !hidden.is_empty() {
+                    separator(
+                        ui,
+                        start[0] + width - host_width - GAP * 0.5,
+                        start[1],
+                        side,
+                    );
+                }
                 ui.invisible_button("host", [host_width, side]);
+                let point = [start[0] + width - host_width, start[1]];
+                let _clip =
+                    ui.push_clip_rect(point, [point[0] + host_width, point[1] + side], true);
+                draw_icon(ui, icons(world, host.icon), point, side);
                 ui.get_window_draw_list().add_text(
-                    [start[0] + width - host_width, start[1]],
+                    [point[0] + side + ICON_GAP, point[1]],
                     ui.style_color(StyleColor::TextDisabled),
-                    fit_text(ui, host.summary, host_width),
+                    fit_text(ui, host.summary, (host_width - side - ICON_GAP).max(0.0)),
                 );
+                drop(_clip);
                 if ui.is_item_hovered() {
-                    ui.tooltip(|| ui.text_wrapped(host.details));
+                    status_tooltip(ui, || ui.text(host.details));
                 }
             }
             // A single popup identity survives icon/inline/overflow layout changes.
             if open_widget {
                 ui.open_popup("status-widget");
             }
+            let _popup_style = popup_style::context_menu_style(ui);
             popup_constraints(size);
             if let Some(_popup) = ui.begin_popup("status-widget") {
+                let _wrap =
+                    ui.push_text_wrap_pos(ui.cursor_pos()[0] + ui.content_region_avail()[0]);
                 if let Some((key, captured)) = state.popup
                     && let Some(entry) = entries.iter().find(|entry| entry.key() == key)
                 {
@@ -490,6 +557,8 @@ fn draw(
             }
             popup_constraints(size);
             if let Some(_popup) = ui.begin_popup("status-overflow") {
+                let _wrap =
+                    ui.push_text_wrap_pos(ui.cursor_pos()[0] + ui.content_region_avail()[0]);
                 if hidden.is_empty() {
                     ui.close_current_popup();
                 }
@@ -522,6 +591,14 @@ fn draw(
             }
         });
     world.insert_resource(state);
+    // The footer is drawn after render_ui, so include its transient windows
+    // in the same opening animation pass as panel tooltips and menus.
+    let enabled = world.resource::<super::WorkbenchAppearance>().animations;
+    if let Some(mut animations) = world.get_non_send_mut::<super::ui_animations::UiAnimations>()
+        && animations.matches_context(ui)
+    {
+        animations.end(ui, enabled);
+    }
     actions
 }
 

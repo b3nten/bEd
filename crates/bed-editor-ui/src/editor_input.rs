@@ -141,17 +141,30 @@ impl EditorInput {
         // Navigation applies after queued text (including IME commits). Other
         // commands suppress text from a printable key remapped to that command.
         let mut text = ui.with_bound_context(take_input_characters);
+        if self.shortcuts.global_pending(ui) {
+            text.clear();
+        }
         let mut handled = false;
         let ids = self
             .shortcuts
             .bindings
             .actions
             .iter()
-            .filter(|a| a.scope == self.shortcuts.scope)
+            .filter(|a| {
+                a.scope == self.shortcuts.scope || a.scope == bed_keybindings::Scope::Focused
+            })
             .map(|a| a.id.clone())
             .collect::<Vec<_>>();
         for id in ids {
-            let command = id.strip_prefix("bed.editor.").unwrap_or("");
+            let command = match id.as_str() {
+                "bed.app.Save" => "save",
+                "bed.app.SaveAs" => "save_as",
+                "bed.app.OpenFile" => "open",
+                _ => id
+                    .strip_prefix("bed.editor.")
+                    .or_else(|| id.strip_prefix("bed.edit."))
+                    .unwrap_or(""),
+            };
             if matches!(
                 command,
                 "find"
@@ -189,7 +202,9 @@ impl EditorInput {
             if read_only && mutating {
                 continue;
             }
-            if command.starts_with("move_") || command.starts_with("select_") {
+            if command.starts_with("move_")
+                || command.starts_with("select_") && command != "select_all"
+            {
                 if !read_only && !text.is_empty() {
                     let printable_binding =
                         self.shortcuts
@@ -1204,6 +1219,76 @@ mod tests {
         context.io_mut().add_key_event(Key::ModCtrl, false);
         render(&mut context, &mut editor, &mut input, true, false);
         assert_eq!(editor.state.join(), "aé雪b".as_bytes());
+    }
+
+    #[test]
+    fn the_shared_select_all_binding_selects_the_document() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut editor = Editor::new();
+        editor.set_content(b"all\nlines");
+        let mut input = EditorInput::default();
+        render(&mut context, &mut editor, &mut input, true, false);
+        context.io_mut().add_key_event(
+            if cfg!(target_os = "macos") {
+                Key::ModSuper
+            } else {
+                Key::ModCtrl
+            },
+            true,
+        );
+        context.io_mut().add_key_event(Key::A, true);
+        render(&mut context, &mut editor, &mut input, true, false);
+        assert_eq!(editor.commands().copy(), b"all\nlines");
+    }
+
+    #[test]
+    fn command_digits_dispatch_globally_without_inserting_or_running_editor_commands() {
+        use bed_keybindings::{Action, Bindings, Overrides, Platform, Scope};
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        for mac_mode in [false, true] {
+            let mut context = context();
+            context.io_mut().set_config_macosx_behaviors(mac_mode);
+            let mut editor = Editor::new();
+            editor.set_content(b"unchanged");
+            let mut input = EditorInput::default();
+            let mut actions = crate::shortcuts::actions();
+            actions.push(Action::new(
+                "fixture.focus_1",
+                "Focus Panel 1",
+                "fixture",
+                Scope::Global,
+                &["Command+1"],
+            ));
+            let mut overrides = Overrides::default();
+            let indent = actions
+                .iter()
+                .find(|a| a.id == "bed.editor.indent")
+                .unwrap();
+            overrides
+                .replace(indent, Some(0), "Command+1".parse().unwrap())
+                .unwrap();
+            input.shortcuts.bindings =
+                std::rc::Rc::new(Bindings::new(actions, &overrides, Platform::Mac));
+            render(&mut context, &mut editor, &mut input, true, false);
+            context.io_mut().add_key_event(Key::ModSuper, true);
+            context.io_mut().add_key_event(Key::Key1, true);
+            context.io_mut().add_input_characters_utf8("1");
+            context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], 1.0 / 60.0));
+            let ui = context.frame();
+            ui.window("Input editor").build(|| {
+                ui.set_window_focus(None);
+                input.process(ui, &mut editor.view_context(), &ViewLayout::default());
+                assert!(
+                    input
+                        .shortcuts
+                        .with_scope(Scope::Global)
+                        .take(ui, "fixture.focus_1")
+                );
+            });
+            assert_eq!(editor.state.join(), b"unchanged");
+            drop(context.render_legacy());
+        }
     }
 
     #[test]

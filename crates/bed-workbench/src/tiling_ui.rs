@@ -19,6 +19,12 @@ const CORNER_SIZE: f32 = 20.0;
 const HANDLE_SIZE: f32 = 8.0;
 type Bounds = ([f32; 2], [f32; 2]);
 
+#[derive(Clone, Copy)]
+pub(super) enum TabPlacement {
+    Insert { area: u32, index: usize },
+    Split { area: u32, axis: usize, high: bool },
+}
+
 pub(super) enum TilingAction {
     Split {
         area: u32,
@@ -45,6 +51,11 @@ pub(super) enum TilingAction {
     AddPanel {
         area: u32,
         kind: String,
+    },
+    Drop {
+        placement: TabPlacement,
+        payload_type: String,
+        data: Vec<u8>,
     },
 }
 
@@ -83,6 +94,9 @@ pub(super) struct TilingUi {
     tab_scroll: HashMap<u32, TabScroll>,
     gesture: Option<Gesture>,
     pub(super) preview_bounds: Option<Bounds>,
+    preview_target: Option<(Bounds, usize)>,
+    dragging_panel: Option<u64>,
+    payload_cancelled: bool,
     pub clear_roots: bool,
     pub origin: [f32; 2],
     pub size: [f32; 2],
@@ -105,6 +119,9 @@ impl Default for TilingUi {
             tab_scroll: HashMap::new(),
             gesture: None,
             preview_bounds: None,
+            preview_target: None,
+            dragging_panel: None,
+            payload_cancelled: false,
             clear_roots: true,
             origin: [0.0; 2],
             size: [1.0; 2],
@@ -121,6 +138,8 @@ impl TilingUi {
     pub fn cancel_interaction(&mut self) {
         self.gesture = None;
         self.preview_bounds = None;
+        self.preview_target = None;
+        self.dragging_panel = None;
         self.corner_cursor = false;
         self.actions.clear();
     }
@@ -313,7 +332,183 @@ impl TilingFrontend {
 }
 
 impl TilingFrontend {
+    // Existing tabs and incoming payloads use the same insertion and split targets.
+    fn tab_drop_target(
+        &self,
+        ui: &Ui,
+        panel: Option<u64>,
+    ) -> Option<(TabPlacement, Bounds, usize)> {
+        let mouse = ui.io().mouse_pos();
+        let screen = |point: [i32; 2]| {
+            [0, 1].map(|axis| {
+                self.tiling_ui.origin[axis]
+                    + point[axis] as f32 * self.tiling_ui.size[axis] / EXTENT as f32
+            })
+        };
+        if let Some((&area, &(min, max))) = self
+            .tiling_ui
+            .bar_rects
+            .iter()
+            .find(|(_, bounds)| contains(**bounds, mouse))
+        {
+            let group = self
+                .tiling
+                .areas
+                .iter()
+                .find(|group| group.area == area)
+                .unwrap();
+            let mut index = 0;
+            let mut x = min[0] + ui.text_line_height() + 10.0;
+            for id in group.tabs.iter().filter(|id| Some(**id) != panel) {
+                if let Some((left, right)) = self.tiling_ui.tab_positions.get(id) {
+                    if mouse[0] < (left[0] + right[0]) * 0.5 {
+                        break;
+                    }
+                    x = right[0];
+                }
+                index += 1;
+            }
+            return Some((
+                TabPlacement::Insert { area, index },
+                ([x, min[1] + 3.0], [x, max[1] - 3.0]),
+                self.tiling.layout.areas.len(),
+            ));
+        }
+        let point = [0, 1].map(|axis| {
+            ((mouse[axis] - self.tiling_ui.origin[axis]) * EXTENT as f32
+                / self.tiling_ui.size[axis])
+                .round() as i32
+        });
+        let target = self
+            .tiling
+            .layout
+            .areas
+            .iter()
+            .find(|area| area.rect.contains(point))?;
+        let relative = [0, 1].map(|axis| {
+            (point[axis] - target.rect.min[axis]) as f32
+                / (target.rect.max[axis] - target.rect.min[axis]) as f32
+        });
+        let edges = [
+            relative[0],
+            1.0 - relative[0],
+            relative[1],
+            1.0 - relative[1],
+        ];
+        let edge = (0..4)
+            .min_by(|a, b| edges[*a].total_cmp(&edges[*b]))
+            .unwrap();
+        let mut next = self.tiling.clone();
+        let (placement, destination) = if edges[edge] < 0.25 {
+            let axis = edge / 2;
+            let high = edge % 2 == 1;
+            let destination = if let Some(panel) = panel {
+                next.split_tab(panel, target.id, axis, high, self.tiling_ui.minimum)?
+            } else {
+                next.split_area(target.id, axis, high, self.tiling_ui.minimum)?
+            };
+            (
+                TabPlacement::Split {
+                    area: target.id,
+                    axis,
+                    high,
+                },
+                destination,
+            )
+        } else {
+            let index = self
+                .tiling
+                .areas
+                .iter()
+                .find(|group| group.area == target.id)
+                .unwrap()
+                .tabs
+                .iter()
+                .position(|id| Some(*id) == panel)
+                .unwrap_or(usize::MAX);
+            if let Some(panel) = panel {
+                next.move_tab(panel, target.id, index);
+            }
+            (
+                TabPlacement::Insert {
+                    area: target.id,
+                    index,
+                },
+                target.id,
+            )
+        };
+        let rect = next.layout.area(destination).rect;
+        let count = next.layout.areas.len();
+        Some((
+            placement,
+            area_surface(screen(rect.min), screen(rect.max), rect, count),
+            count,
+        ))
+    }
+
+    pub(super) fn accept_panel_drop(&mut self, ui: &Ui) {
+        let active = unsafe { sys::igGetDragDropPayload() };
+        if active.is_null() {
+            self.tiling_ui.payload_cancelled = false;
+            return;
+        }
+        if ui.is_key_pressed(Key::Escape) || ui.is_mouse_clicked(MouseButton::Right) {
+            self.tiling_ui.payload_cancelled = true;
+            self.tiling_ui.suppress_right_picker |= ui.is_mouse_clicked(MouseButton::Right);
+        }
+        if self.tiling_ui.payload_cancelled {
+            return;
+        }
+        let Some((placement, preview, count)) = self.tab_drop_target(ui, None) else {
+            return;
+        };
+        let area = match placement {
+            TabPlacement::Insert { area, .. } | TabPlacement::Split { area, .. } => area,
+        };
+        let (min, max) = self.tiling_ui.area_bounds[&area];
+        unsafe {
+            // Viewport targets include the workspace tab strip and gaps. A smaller
+            // content widget (such as a Files row) still owns its payload.
+            let bounds = sys::ImRect_c {
+                Min: min.into(),
+                Max: max.into(),
+            };
+            if !sys::igBeginDragDropTargetViewport(sys::igGetMainViewport(), &bounds) {
+                return;
+            }
+            let payload_type = std::ffi::CStr::from_ptr((*active).DataType.as_ptr());
+            let accepted = sys::igAcceptDragDropPayload(
+                payload_type.as_ptr(),
+                sys::ImGuiDragDropFlags_AcceptBeforeDelivery
+                    | sys::ImGuiDragDropFlags_AcceptNoDrawDefaultRect,
+            );
+            if !accepted.is_null() {
+                if !(*accepted).Delivery {
+                    self.tiling_ui.preview_target = Some((preview, count));
+                } else {
+                    let data = if (*accepted).DataSize > 0 {
+                        std::slice::from_raw_parts(
+                            (*accepted).Data.cast::<u8>(),
+                            (*accepted).DataSize as usize,
+                        )
+                        .to_vec()
+                    } else {
+                        Vec::new()
+                    };
+                    self.tiling_ui.actions.push(TilingAction::Drop {
+                        placement,
+                        payload_type: payload_type.to_string_lossy().into_owned(),
+                        data,
+                    });
+                }
+            }
+            sys::igEndDragDropTarget();
+        }
+    }
+
     pub(super) fn draw_tiling(&mut self, ui: &Ui, origin: [f32; 2], size: [f32; 2]) {
+        self.tiling_ui.preview_target = None;
+        self.tiling_ui.dragging_panel = None;
         let size = size.map(|value| value.max(1.0));
         let viewport = ui.main_viewport().id().raw();
         let view_changed = self.tiling_ui.origin != origin
@@ -358,7 +553,7 @@ impl TilingFrontend {
         };
         let rounding = if area_count == 1 { 0.0 } else { AREA_ROUNDING };
         let tab_height = ui.text_line_height() + 10.0;
-        let interacting = self.tiling_ui.gesture.is_some();
+        let interacting = self.tiling_ui.gesture.is_some() || ui.drag_drop_payload().is_some();
         if interacting && (self.tiling_ui.expanding || view_changed) {
             // The initiating press hit the displayed control. Finish expansion
             // before using final-model coordinates for its drag, and move the
@@ -396,8 +591,6 @@ impl TilingFrontend {
         let mut preview: Option<Rect> = None;
         let mut preview_count = area_count;
         let mut preview_line = None;
-        let mut insertion: Option<([f32; 2], [f32; 2])> = None;
-        let mut dragging_panel = None;
         if let Some(gesture) = self.tiling_ui.gesture.take() {
             let cancel = ui.is_key_pressed(Key::Escape) || ui.is_mouse_clicked(MouseButton::Right);
             if ui.is_mouse_clicked(MouseButton::Right) {
@@ -548,94 +741,24 @@ impl TilingFrontend {
                             (mouse[0] - start[0]).abs().max((mouse[1] - start[1]).abs()) >= 7.0;
                         let mut action = None;
                         if dragging {
-                            dragging_panel = Some(panel);
-                            // Tab strips are insertion targets, including inside the source group.
-                            let bar = self
-                                .tiling_ui
-                                .bar_rects
-                                .iter()
-                                .find(|(_, bounds)| contains(**bounds, mouse))
-                                .map(|(area, bounds)| (*area, *bounds));
-                            if let Some((area, (min, max))) = bar {
-                                let group = self
-                                    .tiling
-                                    .areas
-                                    .iter()
-                                    .find(|group| group.area == area)
-                                    .unwrap();
-                                let mut index = 0;
-                                let mut x = min[0] + tab_height;
-                                for id in group.tabs.iter().filter(|id| **id != panel) {
-                                    if let Some((left, right)) =
-                                        self.tiling_ui.tab_positions.get(id)
-                                    {
-                                        if mouse[0] < (left[0] + right[0]) * 0.5 {
-                                            break;
-                                        }
-                                        x = right[0];
-                                    }
-                                    index += 1;
-                                }
-                                insertion = Some(([x, min[1] + 3.0], [x, max[1] - 3.0]));
-                                action = Some(TilingAction::MoveTab { panel, area, index });
-                            } else if let Some(target) = self
-                                .tiling
-                                .layout
-                                .areas
-                                .iter()
-                                .find(|area| area.rect.contains(point))
-                                .copied()
+                            self.tiling_ui.dragging_panel = Some(panel);
+                            if let Some((placement, bounds, count)) =
+                                self.tab_drop_target(ui, Some(panel))
                             {
-                                let relative = [0, 1].map(|axis| {
-                                    (point[axis] - target.rect.min[axis]) as f32
-                                        / (target.rect.max[axis] - target.rect.min[axis]) as f32
-                                });
-                                let edges = [
-                                    relative[0],
-                                    1.0 - relative[0],
-                                    relative[1],
-                                    1.0 - relative[1],
-                                ];
-                                let edge = (0..4)
-                                    .min_by(|a, b| edges[*a].total_cmp(&edges[*b]))
-                                    .unwrap();
-                                if edges[edge] < 0.25 {
-                                    let axis = edge / 2;
-                                    let high = edge % 2 == 1;
-                                    let mut next = self.tiling.clone();
-                                    if let Some(new_area) =
-                                        next.split_tab(panel, target.id, axis, high, minimum)
-                                    {
-                                        preview = Some(next.layout.area(new_area).rect);
-                                        preview_count = next.layout.areas.len();
-                                        action = Some(TilingAction::SplitTab {
+                                self.tiling_ui.preview_target = Some((bounds, count));
+                                action = Some(match placement {
+                                    TabPlacement::Insert { area, index } => {
+                                        TilingAction::MoveTab { panel, area, index }
+                                    }
+                                    TabPlacement::Split { area, axis, high } => {
+                                        TilingAction::SplitTab {
                                             panel,
-                                            area: target.id,
+                                            area,
                                             axis,
                                             high,
-                                        });
+                                        }
                                     }
-                                } else {
-                                    let index = self
-                                        .tiling
-                                        .areas
-                                        .iter()
-                                        .find(|group| group.area == target.id)
-                                        .unwrap()
-                                        .tabs
-                                        .iter()
-                                        .position(|id| *id == panel)
-                                        .unwrap_or(usize::MAX);
-                                    let mut next = self.tiling.clone();
-                                    next.move_tab(panel, target.id, index);
-                                    preview = Some(next.layout.area(target.id).rect);
-                                    preview_count = next.layout.areas.len();
-                                    action = Some(TilingAction::MoveTab {
-                                        panel,
-                                        area: target.id,
-                                        index,
-                                    });
-                                }
+                                });
                             }
                         }
                         if ui.is_mouse_released(MouseButton::Left) {
@@ -981,7 +1104,7 @@ impl TilingFrontend {
                 let scroll = self.tiling_ui.tab_scroll.entry(*id).or_default();
                 if contains((tabs_min, bar_max), mouse) {
                     scroll.offset -= (ui.io().mouse_wheel() + ui.io().mouse_wheel_h()) * 40.0;
-                    if dragging_panel.is_some() {
+                    if self.tiling_ui.dragging_panel.is_some() || ui.drag_drop_payload().is_some() {
                         if mouse[0] < tabs_min[0] + 18.0 {
                             scroll.offset -= 5.0;
                         }
@@ -1151,6 +1274,19 @@ impl TilingFrontend {
                 bed_imgui_dock_node_clear_background(sys::igDockBuilderGetNode(dock));
             }
         }
+        if self.tiling_ui.gesture.is_some() && self.tiling_ui.preview_target.is_none() {
+            self.tiling_ui.preview_target = preview
+                .map(|rect| area_surface(screen(rect.min), screen(rect.max), rect, preview_count))
+                .or_else(|| preview_line.map(|(first, second)| (screen(first), screen(second))))
+                .map(|bounds| (bounds, preview_count));
+        }
+        if self.tiling_ui.gesture.is_none() {
+            self.tiling_ui.preview_target = None;
+        }
+    }
+
+    fn draw_placement_preview(&mut self, ui: &Ui) {
+        let border = ui.style_color(StyleColor::Border);
         let draw = ui.get_foreground_draw_list();
         let text = ui.style_color(StyleColor::Text);
         let preview_border =
@@ -1161,7 +1297,11 @@ impl TilingFrontend {
             preview_border[2],
             preview_border[3] * 0.14,
         ];
-        let preview_rounding = if preview_count == 1 {
+        let preview_rounding = if self
+            .tiling_ui
+            .preview_target
+            .is_some_and(|(_, count)| count == 1)
+        {
             0.0
         } else {
             AREA_ROUNDING
@@ -1169,17 +1309,7 @@ impl TilingFrontend {
         // The primary indicator can be a rectangle or a collapsed rectangle
         // representing a split/insertion line. Retarget its current visual
         // position so crossing between targets never restarts the animation.
-        let moving = self.tiling_ui.gesture.is_some();
-        let target = moving
-            .then(|| {
-                preview
-                    .map(|rect| {
-                        area_surface(screen(rect.min), screen(rect.max), rect, preview_count)
-                    })
-                    .or_else(|| preview_line.map(|(first, second)| (screen(first), screen(second))))
-                    .or(insertion)
-            })
-            .flatten();
+        let target = self.tiling_ui.preview_target.map(|(bounds, _)| bounds);
         let blend = if self.settings.bool("ui_animations", true) {
             // An exponential step settles about 95% of the distance in 0.12s.
             1.0 - (-ui.io().delta_time() / 0.04).exp()
@@ -1199,10 +1329,8 @@ impl TilingFrontend {
             };
             (point(current.0, target.0), point(current.1, target.1))
         };
-        let previous = self.tiling_ui.preview_bounds;
         self.tiling_ui.preview_bounds = target
             .map(|target| interpolate(self.tiling_ui.preview_bounds.unwrap_or(target), target));
-        let changed = previous != self.tiling_ui.preview_bounds;
         if let Some((min, max)) = self.tiling_ui.preview_bounds {
             if (max[0] - min[0]).abs() < 0.5 || (max[1] - min[1]).abs() < 0.5 {
                 draw.add_line(min, max, preview_border)
@@ -1219,8 +1347,8 @@ impl TilingFrontend {
                     .build();
             }
         }
-        let _ = changed;
-        if let Some(panel) = dragging_panel {
+        drop(draw);
+        if let Some(panel) = self.tiling_ui.dragging_panel {
             let title = self
                 .tabs
                 .iter()
@@ -1228,21 +1356,7 @@ impl TilingFrontend {
                 .map(|tab| self.title(tab))
                 .unwrap();
             let title = title.split("###").next().unwrap();
-            let min = [mouse[0] + 14.0, mouse[1] + 14.0];
-            let max = [
-                min[0] + ui.calc_text_size(title)[0] + 16.0,
-                min[1] + tab_height,
-            ];
-            draw.add_rect(min, max, ui.style_color(StyleColor::PopupBg))
-                .rounding(3.0)
-                .filled(true)
-                .build();
-            draw.add_rect(min, max, border).rounding(3.0).build();
-            draw.add_text(
-                [min[0] + 8.0, min[1] + 5.0],
-                ui.style_color(StyleColor::Text),
-                title,
-            );
+            bed_workbench_api::draw_panel_drag_label(ui, title);
         }
     }
 
@@ -1287,8 +1401,7 @@ impl TilingFrontend {
         }
     }
 
-    pub(super) fn draw_empty_areas(&mut self, ui: &Ui) -> Vec<bed_workbench_api::PanelDrop> {
-        let mut drops = Vec::new();
+    pub(super) fn draw_empty_areas(&mut self, ui: &Ui) {
         let empty = self
             .tiling
             .areas
@@ -1325,18 +1438,15 @@ impl TilingFrontend {
                         self.focus_empty_area(area);
                     }
                     self.draw_window_picker(ui, area, picker);
-                    if let Some(drop) = super::compositor::accept_panel_drop(ui, area, None) {
-                        drops.push(drop);
-                    }
                 });
         }
         if ui.is_mouse_released(MouseButton::Right) {
             self.tiling_ui.suppress_right_picker = false;
         }
-        drops
     }
 
     pub(super) fn finish_tiling(&mut self, ui: &Ui) {
+        self.draw_placement_preview(ui);
         if self.tiling_ui.corner_cursor {
             ui.set_mouse_cursor(None);
             let [x, y] = ui.io().mouse_pos();

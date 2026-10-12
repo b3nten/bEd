@@ -134,6 +134,7 @@ impl Plugin for EditorPlugin {
             for action in bed_editor_ui::shortcuts::actions()
                 .into_iter()
                 .chain(bed_editor_ui::shortcuts::hex_actions())
+                .filter(|action| action.owner == MODULE_ID)
             {
                 registrar.shortcut_action(action);
             }

@@ -28,6 +28,11 @@ pub struct DesktopMenuCommand {
 #[derive(Clone, Debug, PartialEq)]
 pub enum DesktopMenuItem {
     Command(DesktopMenuCommand),
+    SelectedCommand(DesktopMenuCommand),
+    Submenu {
+        label: String,
+        items: Vec<DesktopMenuItem>,
+    },
     /// Same activation protocol as commands; the host applies its configured close policy.
     Quit(DesktopMenuCommand),
     Separator,

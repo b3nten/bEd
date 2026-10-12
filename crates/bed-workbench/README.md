@@ -1,8 +1,9 @@
 # Desktop workbench
 
 `bed-workbench` supplies content-independent panel entities, queued commands,
-layout and persistence. It depends on Bevy and Dear ImGui; it does not depend on
-Bed's editor, documents, terminal, language servers or content viewers.
+layout and persistence. It depends on Bevy, Dear ImGui and Bed's shared UI styles;
+it does not depend on Bed's editor, documents, terminal, language servers or
+content viewers.
 
 A feature is an ordinary Bevy `Plugin`. In its `build` method, call
 `bed_workbench::register(app.world_mut(), "feature", |registrar| { ... })` to
@@ -41,20 +42,21 @@ applies capture before Bevy's input systems. Gameplay in `Update` sees the
 resulting world.
 
 Plugins can attach `api::StatusItems` to a panel frontend or any ordinary entity.
-Each item has a stable namespaced ID, numeric priority, optional icon, and
+Each item has a stable namespaced ID, numeric priority, required icon key, and
 measurement, drawing and tooltip callbacks. A measurement of `None` withdraws
 the item. Producers choose whether their content is focused, open-panel or
-ambient; the renderer does not filter publishers by panel visibility. Callbacks
-read existing feature state, and drawing returns queued `Action`s through
+ambient; the renderer does not filter publishers by panel visibility.
+Measurements describe content width; the renderer adds the leading icon and
+separators. Callbacks read existing feature state, and drawing returns queued `Action`s through
 `StatusContext::invoke` rather than performing commands during the UI borrow.
 `api::StatusText` provides an optional text-and-commands presentation; custom
 callbacks may draw interactive widgets directly.
 
 Hosts reserve `status_bar_height(ui)` in `WorkbenchViewport::bottom_inset` and
 call `render_status_bar` after `render_ui`, supplying their permanent right-hand
-information and an icon resolver. Higher priorities keep inline space longer;
-equal priorities sort by item ID and publisher identity. Lower-priority items
-collapse to icons, or a shared overflow menu when no icon or space is available.
+information with a leading icon and an icon resolver. Higher priorities keep
+inline space longer; equal priorities sort by item ID and publisher identity.
+Lower-priority items collapse to icons, or a shared overflow menu when space runs out.
 `prefer_icon` explicitly requests compact presentation. Hover shows the item's
 tooltip; clicking an icon opens its full widget. Overflow also renders full
 widgets, so their controls remain available. Popup commands retain the producer
@@ -68,9 +70,11 @@ owner of area geometry, tab membership, selection and focus. Corner edits,
 border resizing and tab drops enqueue layout transitions through the same
 request system. Closing the last tab leaves its area available for new content.
 
-Content windows and empty areas accept ImGui drag payloads and publish `api::PanelDrop`
-messages before the application overlays draw. The message retains the destination
-area, optional panel, payload type and bytes. Smaller widget targets take precedence.
+Incoming ImGui drag payloads use the same tab insertion, edge split and animated
+placement previews as workspace tabs. The compositor reserves split destinations
+through the layout request queue, then publishes `api::PanelDrop` before application
+overlays draw. The message retains the destination area, optional panel, tab insertion
+position, payload type and bytes. Smaller widget targets take precedence.
 Features read these messages during the frontend and enqueue their effects through
 the usual request queues.
 
@@ -108,6 +112,14 @@ without borrowing the workbench or advancing a separate app.
 
 Plugins attach global defaults to commands with `registrar.global_shortcut(command_id, &["Primary+Shift+E"])`. Every command remains bindable without a default. Declare frontend actions with `registrar.panel_shortcut(action_id, label, panel_type, defaults)`; inside `Panel::draw`, call `shortcuts.take(ui, action_id)` after the focused widget has handled input. The supplied input is scoped to the panel type and shares consumption with embedded widgets and globals. Check focus and action availability before taking a shortcut.
 
-Hosts publish user overrides through `ShortcutRuntime::overrides`. Editor integration reads `keybindings.json` automatically. Overrides replace the action's full default list; an empty list unbinds it. Removing an override restores defaults. Each alternative records its assignment order. Latest user assignments win within a scope; default ties use stable action IDs. Settings warns about all reused combinations without blocking saves. Widget actions run before panel actions and globals. Editor widgets share their keymap wherever embedded; Settings never inspects a panel's contents.
+Hosts publish user overrides through `ShortcutRuntime::overrides`. Editor integration reads `keybindings.json` automatically, using current action IDs directly. Overrides replace the action's full default list; an empty list unbinds it. Removing an override restores defaults. Each alternative records its assignment order. Latest user assignments win within a scope; default ties use stable action IDs. Settings warns about conflicting and overlapping combinations without blocking saves. Global shortcuts with modifiers take priority over local bindings. Shared `bed.edit.*` actions follow the focused widget or panel and are registered once by the workbench. Editor widgets share their keymap wherever embedded; Settings never inspects a panel's contents. Panel-opening shortcuts capture the focused tab area when invoked.
 
-`Primary` resolves to Command on macOS and Ctrl elsewhere. Explicit Ctrl and Command stay distinct. Single combinations support exact modifiers and alternative bindings; sequential chords are not supported. The legacy `keybinds.json` is ignored.
+`Primary` resolves to Command on macOS and Ctrl elsewhere. Explicit Ctrl and Command stay distinct. Single combinations support exact modifiers and alternative bindings; sequential chords are not supported.
+
+Hosts can retain inactive panels by adding `PanelSuspended` to their layout
+panel entities. The workbench excludes suspended panels from drawing, focus,
+reuse, and active layout validation, while feature systems and panel state remain
+alive. Numbered slots and their persistence belong to the host; feature plugins
+keep their ordinary panel factories, save methods, and close hooks. A host that
+replaces the active layout calls `invalidate_layout_frontend` to clear native
+dock placement and unfinished gestures without touching feature lifecycles.

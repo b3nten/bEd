@@ -63,29 +63,44 @@ pub struct TerminalInputPolicy {
 impl Default for TerminalInputPolicy {
     fn default() -> Self {
         let bindings = bed_keybindings::Bindings::new(
-            crate::feature::shortcut_actions(),
+            bed_keybindings::common_actions(),
             &Default::default(),
             bed_keybindings::Platform::current(),
         );
         Self {
             application_shortcuts: Vec::new(),
-            copy: bindings
-                .for_action("bed.terminal.copy")
-                .iter()
-                .map(|b| b.shortcut)
-                .collect(),
-            paste: bindings
-                .for_action("bed.terminal.paste")
-                .iter()
-                .map(|b| b.shortcut)
-                .collect(),
-            select_all: bindings
-                .for_action("bed.terminal.select_all")
-                .iter()
-                .map(|b| b.shortcut)
-                .collect(),
+            copy: Self::clipboard_shortcuts(&bindings, "bed.edit.copy", false),
+            paste: Self::clipboard_shortcuts(&bindings, "bed.edit.paste", false),
+            select_all: Self::clipboard_shortcuts(&bindings, "bed.edit.select_all", false),
             recording: false,
         }
+    }
+}
+impl TerminalInputPolicy {
+    /// Default Control chords belong to the shell. An explicit common binding
+    /// applies here too; otherwise terminals use the shared Shift alternatives.
+    pub fn clipboard_shortcuts(
+        bindings: &bed_keybindings::Bindings,
+        id: &str,
+        customized: bool,
+    ) -> Vec<bed_keybindings::Stroke> {
+        bindings
+            .for_action(id)
+            .into_iter()
+            .filter(|binding| {
+                (bindings.platform == bed_keybindings::Platform::Mac
+                    || customized
+                    || !binding.shortcut.modifiers.ctrl
+                    || binding.shortcut.modifiers.shift)
+                    && bindings
+                        .active_winner(
+                            &bed_keybindings::Scope::panel(crate::PANEL_ID),
+                            binding.shortcut,
+                        )
+                        .is_some_and(|winner| winner.action == id)
+            })
+            .map(|binding| binding.shortcut)
+            .collect()
     }
 }
 fn stroke(key: &TerminalKeyEvent) -> Option<bed_keybindings::Stroke> {
@@ -764,6 +779,46 @@ mod tests {
         assert!(app.world().non_send::<BedTerminal>().is_focused());
         (app, context, entity)
     }
+    #[test]
+    fn shared_clipboard_bindings_preserve_shell_defaults_and_respect_global_chords() {
+        use bed_keybindings::{Action, Bindings, Overrides, Platform, Scope};
+        let mut actions = bed_keybindings::common_actions();
+        let copy = actions
+            .iter_mut()
+            .find(|a| a.id == "bed.edit.copy")
+            .unwrap();
+        copy.defaults = ["Primary+C", "Ctrl+Shift+C"]
+            .map(|s| s.parse().unwrap())
+            .to_vec();
+        let copy = copy.clone();
+        let defaults = Bindings::new(actions.clone(), &Overrides::default(), Platform::Other);
+        assert_eq!(
+            TerminalInputPolicy::clipboard_shortcuts(&defaults, &copy.id, false),
+            vec!["Ctrl+Shift+C".parse().unwrap()]
+        );
+        let mut overrides = Overrides::default();
+        overrides
+            .replace(&copy, Some(0), "Ctrl+K".parse().unwrap())
+            .unwrap();
+        let customized = Bindings::new(actions.clone(), &overrides, Platform::Other);
+        assert!(
+            TerminalInputPolicy::clipboard_shortcuts(&customized, &copy.id, true)
+                .contains(&"Ctrl+K".parse().unwrap())
+        );
+        actions.push(Action::new(
+            "fixture.global",
+            "Global",
+            "fixture",
+            Scope::Global,
+            &["Ctrl+K"],
+        ));
+        let conflicting = Bindings::new(actions, &overrides, Platform::Other);
+        assert!(
+            !TerminalInputPolicy::clipboard_shortcuts(&conflicting, &copy.id, true)
+                .contains(&"Ctrl+K".parse().unwrap())
+        );
+    }
+
     #[test]
     fn host_supplied_shortcuts_are_reserved_without_configuration_storage() {
         let modifiers = TerminalModifiers {

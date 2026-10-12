@@ -561,9 +561,17 @@ fn application_tab_shortcut_restores_editor_focus_from_a_tool() {
         dear_imgui_rs::Key::Key8,
         dear_imgui_rs::Key::Key9,
     ][index];
+    context.io_mut().add_key_event(
+        if cfg!(target_os = "macos") {
+            dear_imgui_rs::Key::ModSuper
+        } else {
+            dear_imgui_rs::Key::ModCtrl
+        },
+        true,
+    );
     context
         .io_mut()
-        .add_key_event(dear_imgui_rs::Key::ModCtrl, true);
+        .add_key_event(dear_imgui_rs::Key::ModShift, true);
     context.io_mut().add_key_event(key, true);
     fixture.frame(&mut context);
     assert_eq!(
@@ -571,9 +579,17 @@ fn application_tab_shortcut_restores_editor_focus_from_a_tool() {
         Some(panel)
     );
     context.io_mut().add_key_event(key, false);
+    context.io_mut().add_key_event(
+        if cfg!(target_os = "macos") {
+            dear_imgui_rs::Key::ModSuper
+        } else {
+            dear_imgui_rs::Key::ModCtrl
+        },
+        false,
+    );
     context
         .io_mut()
-        .add_key_event(dear_imgui_rs::Key::ModCtrl, false);
+        .add_key_event(dear_imgui_rs::Key::ModShift, false);
     fixture.frame(&mut context);
     context.io_mut().add_input_characters_utf8("雪");
     fixture.frame(&mut context);
@@ -623,9 +639,14 @@ fn byte_view_save_shortcut_uses_the_document_save_pipeline() {
     });
     fixture.frame(&mut context);
     fixture.frame(&mut context);
-    context
-        .io_mut()
-        .add_key_event(dear_imgui_rs::Key::ModCtrl, true);
+    context.io_mut().add_key_event(
+        if cfg!(target_os = "macos") {
+            dear_imgui_rs::Key::ModSuper
+        } else {
+            dear_imgui_rs::Key::ModCtrl
+        },
+        true,
+    );
     context.io_mut().add_key_event(dear_imgui_rs::Key::S, true);
     fixture.frame(&mut context);
     assert_eq!(fs::read(path).unwrap(), [0xff, 42, 1]);

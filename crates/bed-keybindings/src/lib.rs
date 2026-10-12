@@ -140,6 +140,8 @@ pub const EDITOR_SCOPE: &str = "bed.editor.text-panel";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Scope {
     Global,
+    /// A common operation handled by the focused widget or panel.
+    Focused,
     Panel(String),
 }
 impl Scope {
@@ -175,6 +177,47 @@ impl Action {
         self
     }
 }
+
+/// One keymap for operations whose meaning follows the current focus.
+pub fn common_actions() -> Vec<Action> {
+    [
+        ("find", "Find", vec!["Primary+F"]),
+        ("copy", "Copy", vec!["Primary+C"]),
+        ("cut", "Cut", vec!["Primary+X"]),
+        ("paste", "Paste", vec!["Primary+V"]),
+        ("select_all", "Select All", vec!["Primary+A"]),
+        ("undo", "Undo", vec!["Primary+Z"]),
+        (
+            "redo",
+            "Redo",
+            if cfg!(target_os = "macos") {
+                vec!["Primary+Shift+Z"]
+            } else {
+                vec!["Primary+Shift+Z", "Ctrl+Y"]
+            },
+        ),
+    ]
+    .into_iter()
+    .map(|(name, label, mut keys)| {
+        if !cfg!(target_os = "macos") {
+            match name {
+                "copy" => keys.push("Ctrl+Shift+C"),
+                "paste" => keys.push("Ctrl+Shift+V"),
+                "select_all" => keys.push("Ctrl+Shift+A"),
+                _ => {}
+            }
+        }
+        Action::new(
+            &format!("bed.edit.{name}"),
+            label,
+            "bed.edit",
+            Scope::Focused,
+            &keys,
+        )
+    })
+    .collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Assignment {
@@ -369,6 +412,17 @@ impl Bindings {
     pub fn for_action(&self, id: &str) -> Vec<&Binding> {
         self.entries.iter().filter(|b| b.action == id).collect()
     }
+    pub fn active_winner(&self, scope: &Scope, shortcut: Stroke) -> Option<&Binding> {
+        let shortcut = shortcut.resolved(self.platform);
+        let global = self.winner(&Scope::Global, shortcut);
+        if *scope == Scope::Global || shortcut.modifiers.modified() && global.is_some() {
+            return global;
+        }
+        self.entries
+            .iter()
+            .filter(|b| (b.scope == *scope || b.scope == Scope::Focused) && b.shortcut == shortcut)
+            .max_by(|a, b| (a.order, &a.action).cmp(&(b.order, &b.action)))
+    }
     pub fn collisions(&self) -> Vec<Collision> {
         let mut result = Vec::new();
         for (index, a) in self.entries.iter().enumerate() {
@@ -380,6 +434,8 @@ impl Bindings {
                     CollisionKind::Conflict
                 } else if a.scope == Scope::Global
                     || b.scope == Scope::Global
+                    || a.scope == Scope::Focused
+                    || b.scope == Scope::Focused
                     || a.scope == Scope::panel(EDITOR_SCOPE)
                     || b.scope == Scope::panel(EDITOR_SCOPE)
                 {
@@ -462,17 +518,15 @@ impl ShortcutInput {
         }
         let modifiers = Modifiers::from_ui(ui);
         for binding in self.bindings.for_action(action) {
-            if binding.scope != self.scope
+            if (binding.scope != self.scope
+                && !(binding.scope == Scope::Focused && self.scope != Scope::Global))
                 || binding.shortcut.modifiers != modifiers
                 || self.frame.borrow().consumed.contains(&binding.shortcut)
             {
                 continue;
             }
-            if self
-                .bindings
-                .winner(&self.scope, binding.shortcut)
-                .is_none_or(|b| b.action != action)
-            {
+            let winner = self.bindings.active_winner(&self.scope, binding.shortcut);
+            if winner.is_none_or(|b| b.action != action) {
                 continue;
             }
             if self.scope == Scope::Global {
@@ -494,12 +548,36 @@ impl ShortcutInput {
         }
         false
     }
+    /// Modified application shortcuts must not turn into text in custom widgets.
+    pub fn global_pending(&self, ui: &Ui) -> bool {
+        let modifiers = Modifiers::from_ui(ui);
+        modifiers.modified()
+            && self.bindings.entries.iter().any(|b| {
+                b.scope == Scope::Global
+                    && b.shortcut.modifiers == modifiers
+                    && ui.is_key_pressed_with_repeat(b.shortcut.key, b.repeat)
+            })
+    }
     /// Custom widgets claim ordinary typing before panel/global action dispatch.
     pub fn claim_text(&self, ui: &Ui) {
         self.begin_frame(ui);
         let modifiers = Modifiers::from_ui(ui);
         let mut frame = self.frame.borrow_mut();
         for (key, _) in KEY_NAMES {
+            if modifiers.modified()
+                && self
+                    .bindings
+                    .winner(
+                        &Scope::Global,
+                        Stroke {
+                            key: *key,
+                            modifiers,
+                        },
+                    )
+                    .is_some()
+            {
+                continue;
+            }
             if ui.is_key_pressed_with_repeat(*key, true) {
                 frame.consumed.insert(Stroke {
                     key: *key,
@@ -511,12 +589,12 @@ impl ShortcutInput {
     pub fn held(&self, ui: &Ui, action: &str) -> bool {
         !self.suppressed(ui)
             && self.bindings.for_action(action).iter().any(|b| {
-                b.scope == self.scope
+                (b.scope == self.scope || b.scope == Scope::Focused && self.scope != Scope::Global)
                     && b.shortcut.modifiers == Modifiers::from_ui(ui)
                     && ui.is_key_down(b.shortcut.key)
                     && self
                         .bindings
-                        .winner(&self.scope, b.shortcut)
+                        .active_winner(&self.scope, b.shortcut)
                         .is_some_and(|winner| winner.action == action)
             })
     }
@@ -813,7 +891,7 @@ mod tests {
         }
     }
     #[test]
-    fn frame_consumption_scope_and_recording_prevent_duplicate_execution() {
+    fn global_chords_win_over_local_bindings_and_recording_suppresses_dispatch() {
         let _lock = IMGUI_LOCK.lock().unwrap();
         use dear_imgui_rs::{Context, FramePrepareOptions};
         let mut context = Context::create();
@@ -845,7 +923,14 @@ mod tests {
         context.prepare_frame(FramePrepareOptions::new([600.0, 400.0], 1.0 / 60.0));
         let ui = context.frame();
         assert!(
-            input
+            !input
+                .with_scope(Scope::panel("fixture.widget"))
+                .take(ui, "fixture.widget")
+        );
+        input.claim_text(ui);
+        assert!(input.take(ui, "fixture.global"));
+        assert!(
+            !input
                 .with_scope(Scope::panel("fixture.widget"))
                 .take(ui, "fixture.widget")
         );
@@ -867,6 +952,56 @@ mod tests {
         assert!(!input.take(ui, "fixture.global"));
         assert_eq!(record(ui).unwrap().to_string(), "Ctrl+K");
         drop(context.render_legacy());
+    }
+    #[test]
+    fn shared_bindings_follow_focus() {
+        let overrides = Overrides::parse(
+            br#"{"version":1,"actions":{
+            "bed.edit.copy":[{"shortcut":"Ctrl+J","order":9}]
+        }}"#,
+        )
+        .unwrap();
+        let _lock = IMGUI_LOCK.lock().unwrap();
+        let mut context = dear_imgui_rs::Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context.io_mut().set_config_macosx_behaviors(false);
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let input =
+            ShortcutInput::new(Bindings::new(common_actions(), &overrides, Platform::Other));
+        for scope in [EDITOR_SCOPE, "bed.csv.panel", "bed.explorer.panel"] {
+            context.io_mut().add_key_event(Key::J, false);
+            context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
+                [600.0, 400.0],
+                1.0 / 60.0,
+            ));
+            let _ = context.frame();
+            drop(context.render_legacy());
+            context.io_mut().add_key_event(Key::ModCtrl, true);
+            context.io_mut().add_key_event(Key::J, true);
+            context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
+                [600.0, 400.0],
+                1.0 / 60.0,
+            ));
+            let ui = context.frame();
+            assert!(
+                input
+                    .with_scope(Scope::panel(scope))
+                    .take(ui, "bed.edit.copy")
+            );
+            assert!(
+                !input
+                    .with_scope(Scope::panel(scope))
+                    .take(ui, "bed.edit.copy")
+            );
+            assert!(!input.take(ui, "bed.edit.copy"));
+            drop(context.render_legacy());
+        }
     }
     #[test]
     fn physical_command_and_control_match_exactly_with_both_imgui_mac_modes() {

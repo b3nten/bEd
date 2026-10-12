@@ -370,7 +370,7 @@ impl EditorFrame {
             self.close_internal_overlays_except(keep);
         }
         let pane_focused = ui.is_window_focused_with_flags(FocusedFlags::CHILD_WINDOWS);
-        if !self.external_overlay && pane_focused && self.shortcuts.take(ui, "bed.editor.find") {
+        if !self.external_overlay && pane_focused && self.shortcuts.take(ui, "bed.edit.find") {
             self.line_jump.dismiss();
             self.finder.open(editor);
             editor.api().request_exclusive_overlay(Overlay::Find);

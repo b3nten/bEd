@@ -30,6 +30,7 @@ impl Plugin for ColorPlugin {
                     None,
                 );
                 registrar.command(OPEN_COMMAND, "Color Picker", Some("image"));
+                registrar.menu(bed_editor_api::MenuSlot::Application, OPEN_COMMAND);
             })
             .expect("feature metadata is installed once");
         register(app.world_mut(), MODULE_ID, |registrar| {

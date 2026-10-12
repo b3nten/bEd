@@ -27,6 +27,7 @@ pub(crate) fn draw(world: &mut World, ui: &Ui) {
         world,
         ui,
         StatusBarHost {
+            icon: "folder",
             summary: &summary,
             details: &details,
         },

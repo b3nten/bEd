@@ -198,6 +198,129 @@ pub struct MacOsMenu {
     pending: Rc<RefCell<Vec<DesktopNativeAction>>>,
     dock: Option<DockMenu>,
 }
+fn append_items(
+    submenu: &Submenu,
+    entries: &[DesktopMenuItem],
+    items: &mut Vec<MenuItem>,
+) -> io::Result<()> {
+    for entry in entries {
+        match entry {
+            DesktopMenuItem::Submenu {
+                label,
+                items: children,
+            } => {
+                let child = Submenu::new(label, true);
+                append_items(&child, children, items)?;
+                submenu.append(&child).map_err(io::Error::other)?;
+            }
+            DesktopMenuItem::Command(command)
+            | DesktopMenuItem::SelectedCommand(command)
+            | DesktopMenuItem::Quit(command) => {
+                let item = MenuItem::with_id(
+                    &command.id,
+                    &command.label,
+                    command.enabled,
+                    command.shortcut.as_ref().map(accelerator).transpose()?,
+                );
+                submenu.append(&item).map_err(io::Error::other)?;
+                items.push(item);
+            }
+            DesktopMenuItem::Separator => submenu
+                .append(&PredefinedMenuItem::separator())
+                .map_err(io::Error::other)?,
+            DesktopMenuItem::About {
+                label,
+                name,
+                version,
+                comments,
+                credits,
+            } => submenu
+                .append(&PredefinedMenuItem::about(
+                    Some(label),
+                    Some(AboutMetadata {
+                        name: Some(name.clone()),
+                        version: Some(version.clone()),
+                        comments: Some(comments.clone()),
+                        credits: Some(credits.clone()),
+                        ..Default::default()
+                    }),
+                ))
+                .map_err(io::Error::other)?,
+            DesktopMenuItem::Services => submenu
+                .append(&PredefinedMenuItem::services(None))
+                .map_err(io::Error::other)?,
+            DesktopMenuItem::Hide(label) => submenu
+                .append(&PredefinedMenuItem::hide(Some(label)))
+                .map_err(io::Error::other)?,
+            DesktopMenuItem::HideOthers => submenu
+                .append(&PredefinedMenuItem::hide_others(None))
+                .map_err(io::Error::other)?,
+            DesktopMenuItem::ShowAll => submenu
+                .append(&PredefinedMenuItem::show_all(None))
+                .map_err(io::Error::other)?,
+            DesktopMenuItem::Minimize => submenu
+                .append(&PredefinedMenuItem::minimize(None))
+                .map_err(io::Error::other)?,
+            DesktopMenuItem::Maximize => submenu
+                .append(&PredefinedMenuItem::maximize(Some("Zoom")))
+                .map_err(io::Error::other)?,
+            DesktopMenuItem::BringAllToFront => submenu
+                .append(&PredefinedMenuItem::bring_all_to_front(None))
+                .map_err(io::Error::other)?,
+        }
+    }
+    Ok(())
+}
+
+fn commands(entries: &[DesktopMenuItem]) -> Vec<&DesktopMenuCommand> {
+    entries
+        .iter()
+        .flat_map(|entry| match entry {
+            DesktopMenuItem::Command(command)
+            | DesktopMenuItem::SelectedCommand(command)
+            | DesktopMenuItem::Quit(command) => vec![command],
+            DesktopMenuItem::Submenu { items, .. } => commands(items),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+fn normalize_enabled(entries: &mut [DesktopMenuItem]) {
+    for entry in entries {
+        match entry {
+            DesktopMenuItem::Command(command)
+            | DesktopMenuItem::SelectedCommand(command)
+            | DesktopMenuItem::Quit(command) => command.enabled = true,
+            DesktopMenuItem::Submenu { items, .. } => normalize_enabled(items),
+            _ => {}
+        }
+    }
+}
+
+fn perform_command(menu: &NSMenu, entries: &[DesktopMenuItem], id: &str) -> bool {
+    for (index, (entry, item)) in entries.iter().zip(menu.itemArray().iter()).enumerate() {
+        match entry {
+            DesktopMenuItem::Command(command)
+            | DesktopMenuItem::SelectedCommand(command)
+            | DesktopMenuItem::Quit(command)
+                if command.id == id =>
+            {
+                menu.performActionForItemAtIndex(index as isize);
+                return true;
+            }
+            DesktopMenuItem::Submenu { items, .. } => {
+                if let Some(submenu) = item.submenu()
+                    && perform_command(&submenu, items, id)
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 impl MacOsMenu {
     pub fn install(definitions: &[DesktopMenu], dock: &[DesktopMenuCommand]) -> io::Result<Self> {
         let mtm = MainThreadMarker::new()
@@ -208,62 +331,7 @@ impl MacOsMenu {
         let mut items = Vec::new();
         for definition in definitions {
             let submenu = Submenu::new(&definition.label, true);
-            for entry in &definition.items {
-                match entry {
-                    DesktopMenuItem::Command(command) | DesktopMenuItem::Quit(command) => {
-                        let item = MenuItem::with_id(
-                            &command.id,
-                            &command.label,
-                            command.enabled,
-                            command.shortcut.as_ref().map(accelerator).transpose()?,
-                        );
-                        submenu.append(&item).map_err(io::Error::other)?;
-                        items.push(item);
-                    }
-                    DesktopMenuItem::Separator => submenu
-                        .append(&PredefinedMenuItem::separator())
-                        .map_err(io::Error::other)?,
-                    DesktopMenuItem::About {
-                        label,
-                        name,
-                        version,
-                        comments,
-                        credits,
-                    } => submenu
-                        .append(&PredefinedMenuItem::about(
-                            Some(label),
-                            Some(AboutMetadata {
-                                name: Some(name.clone()),
-                                version: Some(version.clone()),
-                                comments: Some(comments.clone()),
-                                credits: Some(credits.clone()),
-                                ..Default::default()
-                            }),
-                        ))
-                        .map_err(io::Error::other)?,
-                    DesktopMenuItem::Services => submenu
-                        .append(&PredefinedMenuItem::services(None))
-                        .map_err(io::Error::other)?,
-                    DesktopMenuItem::Hide(label) => submenu
-                        .append(&PredefinedMenuItem::hide(Some(label)))
-                        .map_err(io::Error::other)?,
-                    DesktopMenuItem::HideOthers => submenu
-                        .append(&PredefinedMenuItem::hide_others(None))
-                        .map_err(io::Error::other)?,
-                    DesktopMenuItem::ShowAll => submenu
-                        .append(&PredefinedMenuItem::show_all(None))
-                        .map_err(io::Error::other)?,
-                    DesktopMenuItem::Minimize => submenu
-                        .append(&PredefinedMenuItem::minimize(None))
-                        .map_err(io::Error::other)?,
-                    DesktopMenuItem::Maximize => submenu
-                        .append(&PredefinedMenuItem::maximize(Some("Zoom")))
-                        .map_err(io::Error::other)?,
-                    DesktopMenuItem::BringAllToFront => submenu
-                        .append(&PredefinedMenuItem::bring_all_to_front(None))
-                        .map_err(io::Error::other)?,
-                }
-            }
+            append_items(&submenu, &definition.items, &mut items)?;
             menu.append(&submenu).map_err(io::Error::other)?;
             if definition.windows_menu {
                 submenu.set_as_windows_menu_for_nsapp();
@@ -304,24 +372,11 @@ impl MacOsMenu {
         let mut new = definitions.to_vec();
         for list in [&mut old, &mut new] {
             for menu in list {
-                for item in &mut menu.items {
-                    if let DesktopMenuItem::Command(command) | DesktopMenuItem::Quit(command) = item
-                    {
-                        command.enabled = true;
-                    }
-                }
+                normalize_enabled(&mut menu.items);
             }
         }
         if old == new && self.dock_definitions == dock {
-            let commands = definitions
-                .iter()
-                .flat_map(|menu| &menu.items)
-                .filter_map(|entry| match entry {
-                    DesktopMenuItem::Command(command) | DesktopMenuItem::Quit(command) => {
-                        Some(command)
-                    }
-                    _ => None,
-                });
+            let commands = definitions.iter().flat_map(|menu| commands(&menu.items));
             for (item, command) in self.items.iter_mut().zip(commands) {
                 item.set_enabled(command.enabled);
             }
@@ -348,35 +403,57 @@ impl MacOsMenu {
         // SAFETY: Muda owns this live native menu.
         let root = unsafe { self.menu.ns_menu().cast::<NSMenu>().as_ref() }
             .ok_or_else(|| io::Error::other("native menu is missing"))?;
-        for (definition, root_item) in self.definitions.iter().zip(root.itemArray().iter()) {
-            let Some(submenu) = root_item.submenu() else {
-                continue;
-            };
-            for (entry, item) in definition.items.iter().zip(submenu.itemArray().iter()) {
-                let (command, quit) = match entry {
-                    DesktopMenuItem::Command(command) => (command, false),
-                    DesktopMenuItem::Quit(command) => (command, true),
-                    _ => continue,
-                };
-                let target = MenuTarget::alloc(mtm).set_ivars(MenuTargetState {
-                    original_target: item
-                        .target()
-                        .ok_or_else(|| io::Error::other("native menu item target is missing"))?,
-                    original_selector: item
-                        .action()
-                        .ok_or_else(|| io::Error::other("native menu item action is missing"))?,
-                    command: command.id.clone(),
-                    quit,
-                    pending: Rc::clone(&self.pending),
-                });
-                // SAFETY: NSObject initialization preserves ivars.
-                let target: Retained<MenuTarget> = unsafe { msg_send![super(target), init] };
-                unsafe {
-                    item.setTarget(Some(&target));
-                    item.setAction(Some(sel!(performMenuAction:)));
-                }
-                self.targets.push((item, target));
+        for (definition, root_item) in self.definitions.clone().iter().zip(root.itemArray().iter())
+        {
+            if let Some(submenu) = root_item.submenu() {
+                self.attach_menu_targets(&submenu, &definition.items, mtm)?;
             }
+        }
+        Ok(())
+    }
+    fn attach_menu_targets(
+        &mut self,
+        submenu: &NSMenu,
+        entries: &[DesktopMenuItem],
+        mtm: MainThreadMarker,
+    ) -> io::Result<()> {
+        for (entry, item) in entries.iter().zip(submenu.itemArray().iter()) {
+            let (command, quit) = match entry {
+                DesktopMenuItem::Command(command) | DesktopMenuItem::SelectedCommand(command) => {
+                    (command, false)
+                }
+                DesktopMenuItem::Submenu { items, .. } => {
+                    if let Some(child) = item.submenu() {
+                        self.attach_menu_targets(&child, items, mtm)?;
+                    }
+                    continue;
+                }
+                DesktopMenuItem::Quit(command) => (command, true),
+                _ => continue,
+            };
+            item.setState(if matches!(entry, DesktopMenuItem::SelectedCommand(_)) {
+                1
+            } else {
+                0
+            });
+            let target = MenuTarget::alloc(mtm).set_ivars(MenuTargetState {
+                original_target: item
+                    .target()
+                    .ok_or_else(|| io::Error::other("native menu item target is missing"))?,
+                original_selector: item
+                    .action()
+                    .ok_or_else(|| io::Error::other("native menu item action is missing"))?,
+                command: command.id.clone(),
+                quit,
+                pending: Rc::clone(&self.pending),
+            });
+            // SAFETY: NSObject initialization preserves ivars.
+            let target: Retained<MenuTarget> = unsafe { msg_send![super(target), init] };
+            unsafe {
+                item.setTarget(Some(&target));
+                item.setAction(Some(sel!(performMenuAction:)));
+            }
+            self.targets.push((item, target));
         }
         Ok(())
     }
@@ -396,12 +473,8 @@ impl MacOsMenu {
             let Some(submenu) = item.submenu() else {
                 continue;
             };
-            for (index, entry) in definition.items.iter().enumerate() {
-                if matches!(entry, DesktopMenuItem::Command(command)|DesktopMenuItem::Quit(command) if command.id == id)
-                {
-                    submenu.performActionForItemAtIndex(index as isize);
-                    return Ok(());
-                }
+            if perform_command(&submenu, &definition.items, id) {
+                return Ok(());
             }
         }
         Err(io::Error::other(format!(

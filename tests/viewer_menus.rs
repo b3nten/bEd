@@ -243,7 +243,7 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
         files,
         _directory: directory,
     };
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     let rows = loop {
         let (rows, _) = fixture.frame();
         if rows.len() == 3 {

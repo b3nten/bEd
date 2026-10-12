@@ -304,24 +304,24 @@ impl HexEditor {
             handled |= pressed;
             pressed
         };
-        if take("bed.editor.select_all") {
+        if take("bed.edit.select_all") {
             self.select_all(session)?;
         }
-        if take("bed.editor.copy") {
+        if take("bed.edit.copy") {
             self.copy(ui, session)?;
         }
-        if take("bed.editor.cut") {
+        if take("bed.edit.cut") {
             self.cut(ui, session)?;
         }
-        if take("bed.editor.paste") {
+        if take("bed.edit.paste") {
             self.paste(ui, session)?;
         }
-        if take("bed.editor.undo") {
+        if take("bed.edit.undo") {
             session.undo_document(self.document)?;
             self.synchronize(session)?;
             self.pending_nibble = None;
         }
-        if take("bed.editor.redo") {
+        if take("bed.edit.redo") {
             session.redo_document(self.document)?;
             self.synchronize(session)?;
             self.pending_nibble = None;
@@ -370,7 +370,10 @@ impl HexEditor {
             self.replace(session, range, Vec::new())?;
         }
         handled |= toggled;
-        let input = ui.with_bound_context(crate::editor_input::take_input_characters);
+        let mut input = ui.with_bound_context(crate::editor_input::take_input_characters);
+        if self.shortcuts.global_pending(ui) {
+            input.clear();
+        }
         if !input.is_empty() {
             self.shortcuts.claim_text(ui);
         }

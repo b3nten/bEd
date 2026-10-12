@@ -725,6 +725,72 @@ fn default_opening_uses_geometry_while_explicit_areas_override_it() {
 }
 
 #[test]
+fn shortcut_panel_opening_captures_the_focused_area_while_menu_opening_uses_the_default() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    for keyboard in [false, true] {
+        let dir = TempDir::new();
+        let mut app = app(&dir);
+        let (first, _, _, largest, focused_area) = target_fixture(&mut app);
+        let actions = app
+            .world()
+            .resource::<bed_workbench_api::Registry>()
+            .shortcuts();
+        for label in [
+            "Find",
+            "Copy",
+            "Cut",
+            "Paste",
+            "Select All",
+            "Undo",
+            "Redo",
+            "Save",
+            "Save As",
+            "Open File",
+        ] {
+            assert_eq!(
+                actions.iter().filter(|a| a.label == label).count(),
+                1,
+                "{label} has one configurable binding"
+            );
+        }
+        let mut imgui = navigation_context();
+        imgui.io_mut().set_config_macosx_behaviors(false);
+        if keyboard {
+            imgui.io_mut().add_key_event(
+                if cfg!(target_os = "macos") {
+                    dear_imgui_rs::Key::ModSuper
+                } else {
+                    dear_imgui_rs::Key::ModCtrl
+                },
+                true,
+            );
+            imgui.io_mut().add_key_event(dear_imgui_rs::Key::N, true);
+            let ui = imgui.frame();
+            bed_workbench::prepare_shortcuts(app.world_mut(), ui);
+            bed_workbench::global_shortcuts(app.world_mut(), ui);
+            drop(imgui.render_legacy());
+        } else {
+            let invocation =
+                bed_workbench::capture_command(app.world(), "bed.app.NewDocument", Value::Null);
+            app.world_mut()
+                .resource_mut::<WorkbenchRequests>()
+                .push(Action::Invoke(invocation));
+        }
+        focus_panel(app.world_mut(), first, true).unwrap();
+        process_editor_requests(app.world_mut()).unwrap();
+        let opened = app.world().resource::<WorkbenchLayout>().focused.unwrap();
+        let id = app.world().get::<PanelPresentation>(opened).unwrap().id;
+        assert_eq!(
+            app.world()
+                .resource::<WorkbenchLayout>()
+                .tiling
+                .area_for(id),
+            Some(if keyboard { focused_area } else { largest })
+        );
+    }
+}
+
+#[test]
 fn explicit_open_file_targets_are_captured_before_later_focus_changes() {
     for target in [PanelTarget::LastFocused, PanelTarget::LargestArea] {
         let dir = TempDir::new();
@@ -1704,4 +1770,89 @@ fn restored_empty_areas_and_failed_splits_never_create_or_discard_content() {
         app.world().non_send::<EditorSession>().view_count(document),
         1
     );
+}
+
+#[test]
+fn dropped_files_and_toolbar_commands_keep_the_captured_tab_insertion() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let existing = open_file(
+        app.world_mut(),
+        &dir.write("existing.txt", b"existing"),
+        None,
+        false,
+        Some(1),
+    )
+    .unwrap();
+    let existing_id = app.world().get::<PanelPresentation>(existing).unwrap().id;
+    let path = dir.write("dropped.txt", b"dropped");
+    app.world_mut()
+        .resource_mut::<EditorIntents>()
+        .push_intent(bed_editor_api::EditorIntent {
+            source: Some(existing),
+            area: Some(1),
+            tab_index: Some(0),
+            request: HostRequest::DropFile {
+                path: path.to_string_lossy().into_owned(),
+            },
+        });
+    process_editor_requests(app.world_mut()).unwrap();
+    let dropped = app.world().resource::<WorkbenchLayout>().focused.unwrap();
+    let dropped_id = app.world().get::<PanelPresentation>(dropped).unwrap().id;
+    assert_ne!(dropped, existing);
+    let mut command = capture_editor_request_from(
+        app.world(),
+        EditorAction::PluginCommand(bed_color::OPEN_COMMAND.into()),
+        PanelTarget::LargestArea,
+        Some(existing),
+    );
+    command.area = 1;
+    command.tab_index = Some(1);
+    let id = submit_editor_request(app.world_mut(), command);
+    process_editor_requests(app.world_mut()).unwrap();
+    let toolbar_panel = match poll_editor_request(app.world_mut(), id).unwrap().unwrap() {
+        EditorRequestOutcome::Opened { panel, .. } => panel,
+        outcome => panic!("{outcome:?}"),
+    };
+    let toolbar_id = app
+        .world()
+        .get::<PanelPresentation>(toolbar_panel)
+        .unwrap()
+        .id;
+    let tabs = &app
+        .world()
+        .resource::<WorkbenchLayout>()
+        .tiling
+        .areas
+        .iter()
+        .find(|group| group.area == 1)
+        .unwrap()
+        .tabs;
+    assert_eq!(tabs[0..3], [dropped_id, toolbar_id, existing_id]);
+    // Dropping an already open file also moves its existing tab into position.
+    let mut request = capture_editor_request_from(
+        app.world(),
+        EditorAction::HostRequest(HostRequest::DropFile {
+            path: path.to_string_lossy().into_owned(),
+        }),
+        PanelTarget::LargestArea,
+        Some(existing),
+    );
+    request.area = 1;
+    request.tab_index = Some(2);
+    let id = submit_editor_request(app.world_mut(), request);
+    process_editor_requests(app.world_mut()).unwrap();
+    assert!(
+        matches!(poll_editor_request(app.world_mut(), id).unwrap().unwrap(), EditorRequestOutcome::Opened { panel, .. } if panel == dropped)
+    );
+    let tabs = &app
+        .world()
+        .resource::<WorkbenchLayout>()
+        .tiling
+        .areas
+        .iter()
+        .find(|group| group.area == 1)
+        .unwrap()
+        .tabs;
+    assert_eq!(tabs[0..3], [toolbar_id, existing_id, dropped_id]);
 }

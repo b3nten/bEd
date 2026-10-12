@@ -14,9 +14,10 @@ pub struct StatusItem {
     pub label: &'static str,
     /// Larger priorities retain inline space longer.
     pub priority: i32,
-    pub icon: Option<&'static str>,
+    /// Required icon key; the renderer places it before the measured content.
+    pub icon: &'static str,
     pub prefer_icon: bool,
-    /// Read-only measurement; None means this producer currently has no item.
+    /// Read-only content width, excluding the icon; None withdraws the item.
     pub measure: fn(&World, &Ui, StatusContext) -> Option<f32>,
     pub draw: fn(&mut World, &Ui, StatusDrawContext, &mut Vec<Action>),
     pub tooltip: fn(&World, &Ui, StatusContext),
@@ -142,9 +143,10 @@ impl StatusText {
         }
     }
     pub fn tooltip(&self, ui: &Ui) {
-        ui.text_wrapped(&self.summary);
+        // The renderer supplies a wrap width for tooltips and widget popups.
+        ui.text(&self.summary);
         if !self.details.is_empty() && self.details != self.summary {
-            ui.text_wrapped(&self.details);
+            ui.text(&self.details);
         }
     }
 }

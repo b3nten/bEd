@@ -11,7 +11,7 @@ pub(crate) fn items() -> StatusItems {
         id: "bed.image.document",
         label: "Image",
         priority: 50,
-        icon: Some("image"),
+        icon: "image",
         prefer_icon: false,
         measure,
         draw,

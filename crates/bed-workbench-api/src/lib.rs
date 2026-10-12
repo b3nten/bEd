@@ -48,6 +48,15 @@ impl PanelPresentation {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PanelPersistence(pub bool);
 
+/// Retain a panel and its services while excluding it from the active layout.
+/// The host owns suspension; feature plugins keep their ordinary lifecycle.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PanelSuspended;
+
+pub fn panel_active(world: &World, entity: Entity) -> bool {
+    panel_owner(world, entity).is_some_and(|owner| world.get::<PanelSuspended>(owner).is_none())
+}
+
 /// Content padding requested by this presentation. The compositor owns its scope.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct PanelPadding(pub [f32; 2]);
@@ -92,14 +101,39 @@ pub struct WorkbenchOverlay(pub fn(&mut World, &Ui));
 #[derive(Component, Clone, Debug)]
 pub struct OverlayError(pub String);
 
-/// An ImGui payload delivered to a panel's content or an empty layout area.
+/// An ImGui payload placed through the workspace's tab and split targets.
 /// Features resolve the payload into intentions after all content has drawn.
 #[derive(Message, Clone, Debug)]
 pub struct PanelDrop {
     pub area: u32,
     pub panel: Option<Entity>,
+    /// Tab insertion position; `None` appends to the destination area.
+    pub tab_index: Option<usize>,
     pub payload_type: String,
     pub data: Vec<u8>,
+}
+
+/// Floating label shared by workspace tabs and sources of new panel content.
+pub fn draw_panel_drag_label(ui: &Ui, title: &str) {
+    let mouse = ui.io().mouse_pos();
+    let min = [mouse[0] + 14.0, mouse[1] + 14.0];
+    let max = [
+        min[0] + ui.calc_text_size(title)[0] + 16.0,
+        min[1] + ui.text_line_height() + 10.0,
+    ];
+    let draw = ui.get_foreground_draw_list();
+    draw.add_rect(min, max, ui.style_color(dear_imgui_rs::StyleColor::PopupBg))
+        .rounding(3.0)
+        .filled(true)
+        .build();
+    draw.add_rect(min, max, ui.style_color(dear_imgui_rs::StyleColor::Border))
+        .rounding(3.0)
+        .build();
+    draw.add_text(
+        [min[0] + 8.0, min[1] + 5.0],
+        ui.style_color(dear_imgui_rs::StyleColor::Text),
+        title,
+    );
 }
 
 /// A frontend object is main-thread state. Its entity and feature resources
@@ -185,13 +219,24 @@ pub struct PanelDefinition {
 }
 
 /// Ordered definitions, published only by a validated registration transaction.
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct Registry {
     owners: HashSet<&'static str>,
     commands: Vec<CommandDefinition>,
     panels: Vec<PanelDefinition>,
     menus: Vec<&'static str>,
     shortcuts: Vec<ShortcutAction>,
+}
+impl Default for Registry {
+    fn default() -> Self {
+        Self {
+            owners: HashSet::new(),
+            commands: Vec::new(),
+            panels: Vec::new(),
+            menus: Vec::new(),
+            shortcuts: bed_keybindings::common_actions(),
+        }
+    }
 }
 impl Registry {
     pub fn shortcuts(&self) -> &[ShortcutAction] {
@@ -466,7 +511,8 @@ mod shortcut_tests {
         })
         .unwrap();
         let registry = world.resource::<Registry>();
-        assert_eq!(registry.shortcuts().len(), 3);
+        let shortcut_count = registry.shortcuts().len();
+        assert_eq!(shortcut_count, bed_keybindings::common_actions().len() + 3);
         let show = registry
             .shortcuts()
             .iter()
@@ -514,7 +560,10 @@ mod shortcut_tests {
                     .command("invalid.show")
                     .is_none()
             );
-            assert_eq!(world.resource::<Registry>().shortcuts().len(), 3);
+            assert_eq!(
+                world.resource::<Registry>().shortcuts().len(),
+                shortcut_count
+            );
         }
     }
 }

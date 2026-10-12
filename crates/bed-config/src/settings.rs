@@ -59,8 +59,7 @@ impl EffectPreset {
     }
 }
 
-/// nlohmann's stream extraction reads one JSON value and permits trailing text.
-/// This matters for the comments after upstream's keybinds object.
+/// Reads the first JSON value, permitting trailing text.
 pub fn read_json(path: &Path) -> io::Result<Value> {
     let bytes = fs::read(path)?;
     serde_json::Deserializer::from_slice(&bytes)
@@ -104,6 +103,43 @@ pub struct Settings {
 }
 
 impl Settings {
+    pub fn layout_default(&self, slot: u8) -> Option<&Value> {
+        self.settings.get("layout_defaults")?.get(slot.to_string())
+    }
+
+    /// Persist an arrangement override. `None` restores the bundled template.
+    pub fn set_layout_default(&mut self, slot: u8, layout: Option<Value>) -> io::Result<()> {
+        if !(1..=9).contains(&slot) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Layout slots are 1–9",
+            ));
+        }
+        // Refresh first so another window's unrelated preferences are retained.
+        self.check_settings_file();
+        if let Some(error) = &self.reload_error {
+            return Err(io::Error::other(error.clone()));
+        }
+        let previous = self.settings.clone();
+        if !self.settings["layout_defaults"].is_object() {
+            self.settings["layout_defaults"] = json!({});
+        }
+        let defaults = self.settings["layout_defaults"].as_object_mut().unwrap();
+        match layout {
+            Some(layout) => {
+                defaults.insert(slot.to_string(), layout);
+            }
+            None => {
+                defaults.remove(&slot.to_string());
+            }
+        }
+        if let Err(error) = self.save_settings() {
+            self.settings = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub fn startup_mode(&self) -> StartupMode {
         match self.settings["startup_mode"].as_str() {
             Some("terminal") => StartupMode::Terminal,
@@ -116,7 +152,7 @@ impl Settings {
         Self::with_paths(Self::get_user_config_dir()?, Self::get_app_resources_path())
     }
     pub fn with_paths(config_dir: PathBuf, resources_root: PathBuf) -> io::Result<Self> {
-        let keybinds = KeybindsManager::new(&config_dir, &resources_root);
+        let keybinds = KeybindsManager::new(&config_dir);
         let mut this = Self {
             settings: json!({}),
             effect_preset: EffectPreset::Off,
@@ -179,6 +215,36 @@ impl Settings {
                 io::ErrorKind::InvalidData,
                 "settings.json must contain an object",
             ));
+        }
+        if let Some(defaults) = value.get("layout_defaults") {
+            let valid = defaults.as_object().is_some_and(|defaults| {
+                defaults.iter().all(|(slot, layout)| {
+                    let mut ids = std::collections::HashSet::new();
+                    matches!(
+                        slot.as_str(),
+                        "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+                    ) && layout.is_object()
+                        && layout["tiling"].is_object()
+                        && layout["panels"].as_array().is_some_and(|panels| {
+                            panels.iter().all(|panel| {
+                                panel["id"].as_u64().is_some_and(|id| {
+                                    id > 0 && id <= u32::MAX as u64 && ids.insert(id)
+                                }) && panel["panel_type"]
+                                    .as_str()
+                                    .is_some_and(|kind| !kind.is_empty())
+                                    && panel
+                                        .get("viewer")
+                                        .is_none_or(|viewer| viewer.is_null() || viewer.is_string())
+                            })
+                        })
+                })
+            });
+            if !valid {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "layout_defaults must contain arrangement templates keyed by slots 1–9",
+                ));
+            }
         }
         // Upgrade the previous bundled associations only on the first legacy
         // read, so removing STL afterward remains a persistent preference.

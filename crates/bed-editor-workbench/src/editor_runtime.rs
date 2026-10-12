@@ -1,4 +1,7 @@
 //! Canonical editor resources and one ordered application transition boundary.
+mod layouts;
+pub use layouts::LayoutSlots;
+
 use crate::workspace::store::{WorkspaceSpec, WorkspaceStore, WorkspaceTarget};
 use bed_config::Settings;
 use bed_document_session::editor_session::{
@@ -47,6 +50,9 @@ pub enum WindowCommand {
     SplitRight,
     SplitDown,
     ResetLayout,
+    UseLayout(u8),
+    SetLayoutDefault(u8),
+    RestoreBuiltinLayout(u8),
     SaveDefaultLayout,
     ResetDefaultLayout,
     Projects,
@@ -100,7 +106,7 @@ pub struct EditorWorkspace {
     pub windows: Vec<WorkspaceSpec>,
 }
 
-#[derive(Resource, Default, Debug)]
+#[derive(Resource, Clone, Default, Debug)]
 pub struct EditorNavigation {
     pub active_view: Option<ViewId>,
     pub active_document: Option<DocumentId>,
@@ -193,9 +199,11 @@ pub enum EditorAction {
 pub struct EditorRequest {
     pub action: EditorAction,
     pub session: u64,
+    pub layout_slot: u8,
     pub source: Option<Entity>,
     pub panel: Option<Entity>,
     pub area: u32,
+    pub tab_index: Option<usize>,
     pub context: CommandContext,
     pub arguments: Value,
 }
@@ -287,9 +295,11 @@ pub fn capture_editor_request_from(
     EditorRequest {
         action,
         session: session.workspace_id().0,
+        layout_slot: world.resource::<LayoutSlots>().active(),
         source,
         panel,
         area,
+        tab_index: None,
         context,
         arguments: Value::Null,
     }
@@ -443,6 +453,7 @@ impl Plugin for EditorWorkbenchPlugin {
             .init_resource::<EditorIntents>()
             .init_resource::<EditorRequests>()
             .init_resource::<EditorNavigation>()
+            .init_resource::<LayoutSlots>()
             .init_resource::<PendingOperations>()
             .init_resource::<TerminalCompanions>()
             .init_resource::<EditorInitialized>()
@@ -528,6 +539,7 @@ fn initialize_editor(world: &mut World) {
         return;
     };
     let result = (|| -> io::Result<()> {
+        layouts::migrate_default(world)?;
         // Initial factories need the configured working directory before the
         // first PreUpdate frame publisher has run.
         publish_editor_frame(world);
@@ -560,6 +572,7 @@ fn initialize_editor(world: &mut World) {
                 file.viewer.as_deref(),
                 file.additional,
                 false,
+                None,
                 None,
                 None,
             )?;
@@ -711,11 +724,15 @@ fn captured_effect(
     let explicit_target = explicit_panel_target(&action).is_some();
     let mut request = capture_editor_request_from(world, action, PanelTarget::LargestArea, source);
     request.session = template.session;
+    request.layout_slot = template.layout_slot;
     request.context = template.context.clone();
     if let Some(area) = area {
         request.area = area;
     } else if !explicit_target {
         request.area = template.area;
+    }
+    if request.area == template.area {
+        request.tab_index = template.tab_index;
     }
     request
 }
@@ -766,6 +783,9 @@ fn apply_editor_requests(world: &mut World) {
     // Both public queues are consumed in submission order by this owner.
     drain_feature_intents(world);
     loop {
+        if layouts::waiting(world) {
+            break;
+        }
         let generic_sequence = world.resource::<WorkbenchRequests>().next_sequence();
         let editor_sequence = world
             .resource::<EditorRequests>()
@@ -845,6 +865,7 @@ fn drain_feature_intents(world: &mut World) {
         if let Some(area) = intent.area {
             request.area = area;
         }
+        request.tab_index = intent.tab_index;
         world.resource_mut::<EditorRequests>().enqueue(request);
     }
 }
@@ -865,6 +886,30 @@ fn apply_request(
                 "The request's originating workspace or panel is no longer available",
             ));
         }
+        return Ok(Some(EditorRequestOutcome::Ignored));
+    }
+    let layout_independent = matches!(
+        &request.action,
+        EditorAction::Command(
+            WindowCommand::UseLayout(_)
+                | WindowCommand::SetLayoutDefault(_)
+                | WindowCommand::RestoreBuiltinLayout(_)
+                | WindowCommand::Quit
+        ) | EditorAction::ApplyEdits { .. }
+            | EditorAction::SaveDocuments(_)
+            | EditorAction::SaveAs { .. }
+            | EditorAction::SetWorkspace(_)
+            | EditorAction::AttachWorkspace(_)
+    );
+    let switch_command = matches!(&request.action,
+        EditorAction::WorkbenchAction(Action::Invoke(invocation)) if invocation.command.starts_with("bed.app.layout_"));
+    if !layout_independent
+        && !switch_command
+        && (request.layout_slot != world.resource::<LayoutSlots>().active()
+            || request
+                .source
+                .is_some_and(|source| !bed_workbench_api::panel_active(world, source)))
+    {
         return Ok(Some(EditorRequestOutcome::Ignored));
     }
     let action = std::mem::replace(
@@ -902,17 +947,7 @@ fn apply_request(
                 .and_then(|result| result.map_err(io::Error::other));
             let created = world.resource_mut::<EditorIntents>().take();
             for intent in previous {
-                if let Some(area) = intent.area {
-                    world.resource_mut::<EditorIntents>().push_at(
-                        intent.source,
-                        area,
-                        intent.request,
-                    );
-                } else {
-                    world
-                        .resource_mut::<EditorIntents>()
-                        .push(intent.source, intent.request);
-                }
+                world.resource_mut::<EditorIntents>().push_intent(intent);
             }
             let effects = result?;
             let mut requests = effects
@@ -1000,7 +1035,7 @@ fn apply_request(
             }
             Action::SetLayout { tiling, close } => {
                 let closing = close.iter().copied().collect::<HashSet<_>>();
-                let ids = panel_entities(world)
+                let ids = active_panel_entities(world)
                     .into_iter()
                     .filter(|entity| !closing.contains(entity))
                     .map(|entity| world.get::<PanelPresentation>(entity).unwrap().id)
@@ -1140,7 +1175,16 @@ fn apply_request(
         EditorAction::ClosePanel(panel) => return begin_close(world, vec![panel], false, id),
         EditorAction::ClosePanels(panels) => return begin_close(world, panels, false, id),
         EditorAction::OpenFile(path) => {
-            return begin_open_file(world, &path, None, false, false, Some(request.area), id);
+            return begin_open_file(
+                world,
+                &path,
+                None,
+                false,
+                false,
+                Some(request.area),
+                request.tab_index,
+                id,
+            );
         }
         EditorAction::OpenFileWithViewer {
             path,
@@ -1155,6 +1199,7 @@ fn apply_request(
                 additional,
                 move_existing,
                 Some(request.area),
+                request.tab_index,
                 id,
             );
         }
@@ -1202,6 +1247,9 @@ fn apply_request(
             return apply_batch(world, requests, id, EditorRequestOutcome::Applied);
         }
     };
+    if let EditorRequestOutcome::Opened { panel, .. } = &outcome {
+        place_opened_panel(world, *panel, Some(request.area), false, request.tab_index)?;
+    }
     Ok(Some(outcome))
 }
 
@@ -1218,6 +1266,13 @@ pub fn panel_entities(world: &mut World) -> Vec<Entity> {
         .collect::<Vec<_>>();
     panels.sort_by_key(|(id, _)| *id);
     panels.into_iter().map(|(_, entity)| entity).collect()
+}
+
+pub fn active_panel_entities(world: &mut World) -> Vec<Entity> {
+    panel_entities(world)
+        .into_iter()
+        .filter(|panel| bed_workbench_api::panel_active(world, *panel))
+        .collect()
 }
 
 pub fn open_panel(
@@ -1263,7 +1318,8 @@ pub fn open_panel(
                     .query::<(Entity, &PanelRecord, &EditorPanelBinding)>()
                     .iter(world)
                     .find_map(|(entity, record, binding)| {
-                        (record.panel_type == kind
+                        (bed_workbench_api::panel_active(world, entity)
+                            && record.panel_type == kind
                             && binding.input == input
                             && world.get::<PanelPresentation>(entity).is_some())
                         .then_some(entity)
@@ -1369,7 +1425,7 @@ pub fn focus_panel(world: &mut World, source: Entity, request_native: bool) -> i
     let Some(panel) = bed_workbench_api::panel_owner(world, source) else {
         return Ok(());
     };
-    if !bed_workbench::owns_panel(world, panel) {
+    if !bed_workbench::owns_panel(world, panel) || !bed_workbench_api::panel_active(world, panel) {
         return Ok(());
     }
     let changed = world.resource::<WorkbenchLayout>().focused != Some(panel);
@@ -1536,7 +1592,9 @@ fn open_file_with_origin(
             .query::<(Entity, &PanelPresentation, &EditorPanelBinding)>()
             .iter(world)
             .find_map(|(entity, _, binding)| {
-                (binding.document == Some(document)).then_some(entity)
+                (bed_workbench_api::panel_active(world, entity)
+                    && binding.document == Some(document))
+                .then_some(entity)
             });
         if let Some(panel) = existing {
             if explicit.is_some() {
@@ -1780,15 +1838,7 @@ pub fn commit_documents(world: &mut World, documents: &HashSet<DocumentId>) -> i
             .and_then(|result| result.map_err(io::Error::other));
         let edits = world.resource_mut::<EditorIntents>().take();
         for intent in previous {
-            if let Some(area) = intent.area {
-                world
-                    .resource_mut::<EditorIntents>()
-                    .push_at(intent.source, area, intent.request);
-            } else {
-                world
-                    .resource_mut::<EditorIntents>()
-                    .push(intent.source, intent.request);
-            }
+            world.resource_mut::<EditorIntents>().push_intent(intent);
         }
         result?;
         if edits.iter().any(|edit| {
@@ -2368,7 +2418,7 @@ pub fn retire_panels(world: &mut World, panels: &[Entity]) -> io::Result<()> {
         .last_document_panel
         .is_some_and(|panel| !world.entities().contains(panel))
     {
-        let last = panel_entities(world).into_iter().find(|panel| {
+        let last = active_panel_entities(world).into_iter().find(|panel| {
             world
                 .get::<EditorPanelBinding>(*panel)
                 .is_some_and(|binding| binding.document.is_some())
@@ -2448,6 +2498,7 @@ fn update_editor_services(world: &mut World) {
         world.resource_mut::<EditorWorkspace>().error = Some(error.to_string());
     }
     poll_batches(world);
+    layouts::poll(world);
     for event in &report.events {
         if let bed_document_session::editor_session::SessionEvent::Removed { document, .. } = event
         {
@@ -2563,6 +2614,7 @@ fn window_command(
         );
         captured.context = request.context.clone();
         captured.area = request.area;
+        captured.tab_index = request.tab_index;
         return apply_request(world, captured, id);
     }
     let panel_kind = match command {
@@ -2769,15 +2821,25 @@ fn window_command(
                 id,
             );
         }
+        WindowCommand::UseLayout(slot) => return layouts::request_switch(world, slot, id),
+        WindowCommand::SetLayoutDefault(slot) => {
+            layouts::save_default(world, slot)?;
+            EditorRequestOutcome::Applied
+        }
+        WindowCommand::RestoreBuiltinLayout(slot) => {
+            world
+                .non_send_mut::<Settings>()
+                .set_layout_default(slot, None)?;
+            EditorRequestOutcome::Applied
+        }
         WindowCommand::SaveDefaultLayout => {
             save_default_layout(world)?;
             EditorRequestOutcome::Applied
         }
         WindowCommand::ResetDefaultLayout => {
             world
-                .non_send_mut::<WorkspacePersistence>()
-                .store
-                .reset_default_layout()?;
+                .non_send_mut::<Settings>()
+                .set_layout_default(1, None)?;
             EditorRequestOutcome::Applied
         }
         WindowCommand::ResetLayout => {
@@ -2786,6 +2848,9 @@ fn window_command(
         }
         _ => EditorRequestOutcome::Ignored,
     };
+    if let EditorRequestOutcome::Opened { panel, .. } = &outcome {
+        place_opened_panel(world, *panel, Some(request.area), false, request.tab_index)?;
+    }
     Ok(Some(outcome))
 }
 
@@ -2812,6 +2877,7 @@ fn apply_host_request(
             );
             captured.context = context;
             captured.area = request.area;
+            captured.tab_index = request.tab_index;
             return apply_request(world, captured, id);
         }
         HostRequest::Project(action) => match action {
@@ -2870,7 +2936,7 @@ fn apply_host_request(
             ProjectRequest::Error(message) => return Err(io::Error::other(message)),
         },
         HostRequest::ClosePanels { panel_type } => {
-            let panels = panel_entities(world)
+            let panels = active_panel_entities(world)
                 .into_iter()
                 .filter(|entity| {
                     world
@@ -2884,7 +2950,10 @@ fn apply_host_request(
             let panel = world
                 .query::<(Entity, &PanelPresentation, &EditorPanelBinding)>()
                 .iter(world)
-                .find_map(|(entity, _, binding)| (binding.view == Some(view)).then_some(entity));
+                .find_map(|(entity, _, binding)| {
+                    (bed_workbench_api::panel_active(world, entity) && binding.view == Some(view))
+                        .then_some(entity)
+                });
             if let Some(panel) = panel {
                 focus_panel(world, panel, true)?;
                 EditorRequestOutcome::Applied
@@ -2897,7 +2966,9 @@ fn apply_host_request(
                 .query::<(Entity, &PanelPresentation, &EditorPanelBinding)>()
                 .iter(world)
                 .find_map(|(entity, _, binding)| {
-                    (binding.terminal == Some(terminal)).then_some(entity)
+                    (bed_workbench_api::panel_active(world, entity)
+                        && binding.terminal == Some(terminal))
+                    .then_some(entity)
                 });
             let panel = match panel {
                 Some(panel) => {
@@ -2983,6 +3054,7 @@ fn apply_host_request(
                 false,
                 false,
                 Some(request.area),
+                request.tab_index,
                 id,
             );
         }
@@ -2994,6 +3066,7 @@ fn apply_host_request(
                 false,
                 true,
                 Some(request.area),
+                request.tab_index,
                 id,
             );
         }
@@ -3038,7 +3111,7 @@ fn apply_host_request(
                         .is_some_and(|binding| binding.document == Some(document))
                 })
                 .or_else(|| {
-                    panel_entities(world).into_iter().find(|entity| {
+                    active_panel_entities(world).into_iter().find(|entity| {
                         world
                             .get::<PanelPresentation>(*entity)
                             .is_some_and(|panel| panel.id == tab)
@@ -3076,7 +3149,7 @@ fn apply_host_request(
                         })
                 })
                 .or_else(|| {
-                    panel_entities(world).into_iter().find(|entity| {
+                    active_panel_entities(world).into_iter().find(|entity| {
                         world
                             .get::<EditorPanelBinding>(*entity)
                             .is_some_and(|binding| {
@@ -3192,6 +3265,7 @@ fn apply_host_request(
                                 additional: false,
                                 move_existing: false,
                                 area: Some(request.area),
+                                tab_index: request.tab_index,
                                 restore: None,
                                 follow_up: Some(follow_up),
                             });
@@ -3403,6 +3477,9 @@ fn apply_host_request(
             EditorRequestOutcome::Applied
         }
     };
+    if let EditorRequestOutcome::Opened { panel, .. } = &outcome {
+        place_opened_panel(world, *panel, Some(request.area), false, request.tab_index)?;
+    }
     Ok(Some(outcome))
 }
 
@@ -3445,8 +3522,12 @@ fn session_options(world: &World, root: Option<PathBuf>) -> SessionOptions {
     }
 }
 
-pub fn persist_workspace(world: &mut World) -> io::Result<()> {
-    let panels = panel_entities(world);
+fn snapshot_layout(
+    world: &mut World,
+    panels: Vec<Entity>,
+    layout: &WorkbenchLayout,
+    navigation: &EditorNavigation,
+) -> io::Result<Value> {
     let mut records = Vec::new();
     for entity in panels {
         let presentation = world.get::<PanelPresentation>(entity).unwrap().clone();
@@ -3517,9 +3598,7 @@ pub fn persist_workspace(world: &mut World) -> io::Result<()> {
         }
         records.push(value);
     }
-    let layout = world.resource::<WorkbenchLayout>();
-    let active_document_panel = world
-        .resource::<EditorNavigation>()
+    let active_document_panel = navigation
         .last_document_panel
         .and_then(|panel| world.get::<PanelPresentation>(panel))
         .map(|panel| panel.id)
@@ -3531,6 +3610,11 @@ pub fn persist_workspace(world: &mut World) -> io::Result<()> {
     let value = json!({"version":2,"panels":records,"focused_area":layout.focused_area,"tiling":layout.tiling.to_value(records.iter().filter_map(|record|record["id"].as_u64())),
         "ini":"","focused":layout.focused.and_then(|entity|world.get::<PanelPresentation>(entity)).map(|panel|panel.id),
         "active_document_panel":active_document_panel});
+    Ok(value)
+}
+
+pub fn persist_workspace(world: &mut World) -> io::Result<()> {
+    let value = layouts::snapshot(world)?;
     let spec = world.resource::<EditorWorkspace>().spec.clone();
     let hooks = world
         .query::<&EditorWorkspaceContribution>()
@@ -3611,22 +3695,7 @@ fn restore_contributions(world: &mut World) -> io::Result<()> {
 
 pub fn restore_workspace(world: &mut World) -> io::Result<()> {
     restore_contributions(world)?;
-    let value = {
-        let persistence = world.non_send::<WorkspacePersistence>();
-        let workspace = world.resource::<EditorWorkspace>();
-        workspace
-            .spec
-            .as_ref()
-            .and_then(|spec| persistence.store.layout(spec))
-            .or_else(|| {
-                if workspace.spec.is_none() {
-                    persistence.store.standalone_layout()
-                } else {
-                    None
-                }
-            })
-            .cloned()
-    };
+    let value = layouts::load(world);
     match value {
         Some(value) => restore_layout(world, &value, false),
         None => compose_default_layout(world),
@@ -3649,11 +3718,12 @@ fn restore_layout_with_terminal(
         .ok_or_else(|| io::Error::other("Saved panels must be an array"))?
         .clone();
     let carried = if attach {
-        panel_entities(world)
+        active_panel_entities(world)
     } else {
         Vec::new()
     };
-    let mut used = carried
+    let all_panels = panel_entities(world);
+    let mut used = all_panels
         .iter()
         .map(|entity| world.get::<PanelPresentation>(*entity).unwrap().id)
         .collect::<HashSet<_>>();
@@ -3749,7 +3819,7 @@ fn restore_layout_with_terminal(
             tiling
         }
     };
-    if !attach && !panel_entities(world).is_empty() {
+    if !attach && !active_panel_entities(world).is_empty() {
         return Err(io::Error::other("Saved layout requires an empty editor"));
     }
     let mut restored = HashMap::new();
@@ -3853,7 +3923,7 @@ fn restore_layout_with_terminal(
         let id = world.get::<PanelPresentation>(entity).unwrap().id;
         tiling.assign(id, destination);
     }
-    let live_ids = panel_entities(world)
+    let live_ids = active_panel_entities(world)
         .iter()
         .map(|entity| world.get::<PanelPresentation>(*entity).unwrap().id)
         .collect::<Vec<_>>();
@@ -3907,99 +3977,21 @@ fn compose_default_layout_with_terminal(
     world: &mut World,
     terminal: Option<Entity>,
 ) -> io::Result<()> {
-    if let Some(saved) = world
-        .non_send::<WorkspacePersistence>()
-        .store
-        .default_layout()
-        .cloned()
-    {
-        let mut saved = saved;
-        for panel in saved["panels"]
-            .as_array_mut()
-            .ok_or_else(|| io::Error::other("Default panels must be an array"))?
-        {
-            panel["state"] = Value::Null;
-            panel["default_input"] = json!(true);
-        }
-        return restore_layout_with_terminal(world, &saved, true, terminal);
-    }
     if world.resource::<EditorWorkspace>().spec.is_none() {
         return Ok(());
     }
-    let mut layout = bed_workbench::workspace::tiling::Layout::default();
-    let editor = layout.split(1, 0, 1754, 1).unwrap();
-    let bottom = layout.split(editor, 1, 7255, 1).unwrap();
-    let mascot = layout.split(1, 1, 7500, 1).unwrap();
-    world.resource_mut::<WorkbenchLayout>().tiling =
-        bed_workbench::workspace::tiling_state::TilingState::new(layout);
-    for (kind, area) in [
-        ("bed.explorer.panel", 1),
-        ("bed.terminal.panel", bottom),
-        ("bed.editor.diagnostics-panel", bottom),
-        ("bed.debug.panel", bottom),
-        ("bed.mascot.panel", mascot),
-    ] {
-        if kind == "bed.terminal.panel"
-            && let Some(terminal) = terminal
-        {
-            let id = world.get::<PanelPresentation>(terminal).unwrap().id;
-            world
-                .resource_mut::<WorkbenchLayout>()
-                .tiling
-                .assign(id, area);
-            continue;
-        }
-        if world
-            .resource::<bed_workbench_api::Registry>()
-            .panel(kind)
-            .is_some()
-        {
-            open_panel(
-                world,
-                kind,
-                PanelInput::None,
-                Value::Null,
-                None,
-                Some(area),
-                true,
-            )?;
-        }
-    }
-    let panels = panel_entities(world);
-    for panel in panels {
-        let id = world.get::<PanelPresentation>(panel).unwrap().id;
-        if world
-            .resource::<WorkbenchLayout>()
-            .tiling
-            .area_for(id)
-            .is_none()
-        {
-            world
-                .resource_mut::<WorkbenchLayout>()
-                .tiling
-                .assign(id, editor);
-        }
-    }
-    Ok(())
+    let slot = world.resource::<LayoutSlots>().active();
+    let template = layouts::template(world, slot);
+    restore_layout_with_terminal(world, &template, true, terminal)
 }
 
+/// Compatibility helper: save the current arrangement into slot 1.
 pub fn save_default_layout(world: &mut World) -> io::Result<()> {
-    let panels = panel_entities(world).into_iter().map(|entity| { let panel=world.get::<PanelPresentation>(entity).unwrap(); let binding=world.get::<EditorPanelBinding>(entity).unwrap(); json!({"id":panel.id,"panel_type":world.get::<PanelRecord>(entity).unwrap().panel_type,"viewer":binding.viewer}) }).collect::<Vec<_>>();
-    let layout = world.resource::<WorkbenchLayout>();
-    let value = json!({"version":1,"panels":panels,"tiling":layout.tiling.to_value(panels.iter().filter_map(|panel|panel["id"].as_u64())),"focused":layout.focused.and_then(|entity|world.get::<PanelPresentation>(entity)).map(|panel|panel.id)});
-    world
-        .non_send_mut::<WorkspacePersistence>()
-        .store
-        .set_default_layout(value)
+    layouts::save_default(world, 1)
 }
 
 pub fn reset_layout(world: &mut World) -> io::Result<()> {
-    let mut tiling = bed_workbench::workspace::tiling_state::TilingState::default();
-    for panel in panel_entities(world) {
-        tiling.assign(world.get::<PanelPresentation>(panel).unwrap().id, 1);
-    }
-    world.resource_mut::<WorkbenchLayout>().tiling = tiling;
-    Ok(())
+    layouts::reset(world)
 }
 
 fn begin_workspace(
@@ -4118,7 +4110,7 @@ fn begin_terminal_promotion(
         return Ok(Some(EditorRequestOutcome::Applied));
     }
     validate_terminal_promotion(world, caller, terminal)?;
-    let panels = panel_entities(world)
+    let panels = active_panel_entities(world)
         .into_iter()
         .filter(|panel| *panel != caller)
         .collect();
@@ -4180,7 +4172,10 @@ fn open_terminal_companions(
             .views
             .get(&(caller, path.clone()))
             .copied()
-            .filter(|panel| bed_workbench::owns_panel(world, *panel));
+            .filter(|panel| {
+                bed_workbench::owns_panel(world, *panel)
+                    && bed_workbench_api::panel_active(world, *panel)
+            });
         if let Some(panel) = existing {
             focus_panel(world, panel, true)?;
             outcome = EditorRequestOutcome::Opened {
@@ -4196,13 +4191,15 @@ fn open_terminal_companions(
             .views
             .iter()
             .filter_map(|((shell, _), panel)| {
-                (*shell == caller && bed_workbench::owns_panel(world, *panel))
-                    .then(|| {
-                        world
-                            .get::<PanelPresentation>(*panel)
-                            .map(|presentation| (presentation.id, *panel))
-                    })
-                    .flatten()
+                (*shell == caller
+                    && bed_workbench::owns_panel(world, *panel)
+                    && bed_workbench_api::panel_active(world, *panel))
+                .then(|| {
+                    world
+                        .get::<PanelPresentation>(*panel)
+                        .map(|presentation| (presentation.id, *panel))
+                })
+                .flatten()
             })
             .min_by_key(|(id, _)| *id)
             .map(|(_, panel)| panel);
@@ -4329,6 +4326,7 @@ pub fn replace_workspace(world: &mut World, spec: WorkspaceSpec) -> io::Result<(
     ));
     *world.resource_mut::<EditorNavigation>() = EditorNavigation::default();
     *world.resource_mut::<WorkbenchLayout>() = WorkbenchLayout::default();
+    layouts::clear(world);
     {
         let mut workspace = world.resource_mut::<EditorWorkspace>();
         workspace.project_root = spec.root.clone();
@@ -4421,6 +4419,7 @@ struct RemoteOpen {
     additional: bool,
     move_existing: bool,
     area: Option<u32>,
+    tab_index: Option<usize>,
     restore: Option<Entity>,
     follow_up: Option<EditorRequest>,
 }
@@ -4542,6 +4541,7 @@ fn replace_connected_workspace(world: &mut World, connected: ConnectedWorkspace)
     ));
     *world.resource_mut::<EditorNavigation>() = EditorNavigation::default();
     *world.resource_mut::<WorkbenchLayout>() = WorkbenchLayout::default();
+    layouts::clear(world);
     cancel_foreign_pending(world);
     restore_workspace(world)
 }
@@ -4550,8 +4550,11 @@ fn place_opened_panel(
     panel: Entity,
     area: Option<u32>,
     move_existing: bool,
+    tab_index: Option<usize>,
 ) -> io::Result<()> {
-    if move_existing && let Some(area) = area {
+    if (move_existing || tab_index.is_some())
+        && let Some(area) = area
+    {
         let id = world
             .get::<PanelPresentation>(panel)
             .expect("opened content belongs to a panel")
@@ -4560,6 +4563,13 @@ fn place_opened_panel(
             .resource_mut::<WorkbenchLayout>()
             .tiling
             .assign(id, area);
+        if let Some(index) = tab_index {
+            world
+                .resource_mut::<WorkbenchLayout>()
+                .tiling
+                .move_tab(id, area, index);
+        }
+        world.get_mut::<PanelPresentation>(panel).unwrap().dock_next = true;
         focus_panel(world, panel, true)?;
     }
     Ok(())
@@ -4571,11 +4581,12 @@ fn begin_open_file(
     additional: bool,
     move_existing: bool,
     area: Option<u32>,
+    tab_index: Option<usize>,
     id: Option<EditorRequestId>,
 ) -> io::Result<Option<EditorRequestOutcome>> {
     match open_file(world, path, viewer, additional, area) {
         Ok(panel) => {
-            place_opened_panel(world, panel, area, move_existing)?;
+            place_opened_panel(world, panel, area, move_existing, tab_index)?;
             Ok(Some(EditorRequestOutcome::Opened {
                 panel,
                 document: world
@@ -4599,6 +4610,7 @@ fn begin_open_file(
                     additional,
                     move_existing,
                     area,
+                    tab_index,
                     restore: None,
                     follow_up: None,
                 });
@@ -4633,6 +4645,7 @@ fn queue_remote_restore(world: &mut World, record: Value, area: Option<u32>) -> 
             additional: true,
             move_existing: false,
             area,
+            tab_index: None,
             restore: Some(panel),
             follow_up: None,
         });
@@ -4810,7 +4823,13 @@ fn poll_remote_operations(
         };
         match result {
             Ok(panel) => {
-                place_opened_panel(world, panel, pending.area, pending.move_existing)?;
+                place_opened_panel(
+                    world,
+                    panel,
+                    pending.area,
+                    pending.move_existing,
+                    pending.tab_index,
+                )?;
                 if let Some(follow_up) = pending.follow_up {
                     let result = apply_request(world, follow_up, pending.id);
                     match result {

@@ -6,7 +6,7 @@
 //! installed yet may add `ModelViewerPlugin` directly.
 use bed_editing::identity::DocumentId;
 use bed_editor_api::gpu::GpuContext;
-use bed_editor_api::{DocumentKind, HostContext, HostRequest, MenuSlot, Registrar, Revision};
+use bed_editor_api::{DocumentKind, HostContext, HostRequest, Registrar, Revision};
 use bed_ui::TextureHandle;
 use bed_ui::gpu::{Canvas, RenderOutput, RenderTarget};
 use bed_ui::util::popup_style::tooltip_text;
@@ -61,7 +61,6 @@ fn register_metadata(registrar: &mut Registrar<'_>) {
     registrar.viewer_document_kinds(VIEWER_ID, &[DocumentKind::Text, DocumentKind::Bytes]);
     registrar.command(OPEN_COMMAND, "Open 3D Model…", Some("image"));
     registrar.command(OPEN_FILE_COMMAND, "Open in Model Viewer", Some("image"));
-    registrar.menu(MenuSlot::Application, OPEN_COMMAND);
 }
 
 fn supported_path(path: &str) -> bool {

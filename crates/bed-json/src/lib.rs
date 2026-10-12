@@ -9,7 +9,7 @@ pub use ecs::{JsonDocument, JsonPlugin, JsonStates, JsonSystems};
 #[cfg(test)]
 pub(crate) static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-use bed_editor_api::{DocumentKind, MenuSlot, Registrar};
+use bed_editor_api::{DocumentKind, Registrar};
 
 pub use panel::JsonPanel;
 pub const PLUGIN_ID: &str = "bed.json";
@@ -41,5 +41,4 @@ fn register_metadata(registrar: &mut Registrar<'_>) {
     );
     registrar.command(OPEN_COMMAND, "Open JSON/JSONC…", None);
     registrar.command(OPEN_FILE_COMMAND, "Open in JSON Tree", None);
-    registrar.menu(MenuSlot::Application, OPEN_COMMAND);
 }

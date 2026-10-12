@@ -1112,7 +1112,15 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
             }
         }
         5 => {
-            if editor_focused(world, smoke.panel.unwrap())?
+            if smoke.operation.is_none() && !native_window(world, |window| window.has_focus())? {
+                crate::bed::smoke_focus_window(world);
+                return Ok(false);
+            }
+            if smoke.operation.is_none() && !editor_focused(world, smoke.panel.unwrap())? {
+                bed_editor_workbench::focus_panel(world, smoke.panel.unwrap().entity(), true)?;
+                return Ok(false);
+            }
+            if (smoke.operation.is_some() || editor_focused(world, smoke.panel.unwrap())?)
                 && smoke
                     .operation(
                         world,
@@ -1152,12 +1160,15 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                     && std::fs::read(path)? == bytes
                 {
                     crate::bed::smoke_native_menu(world, MenuAction::Save)?;
+                    crate::bed::smoke_focus_window(world);
                     smoke.next(world);
                 }
             }
         }
         9 => {
-            if smoke.elapsed_frames(world) >= 2 {
+            if !native_window(world, |window| window.has_focus())? {
+                crate::bed::smoke_focus_window(world);
+            } else if smoke.elapsed_frames(world) >= 2 {
                 crate::bed::smoke_native_key_equivalent(world, "s", 1, false)?;
                 smoke.next(world);
             }
@@ -1205,15 +1216,20 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                     }
                 }
                 if done {
-                    crate::bed::smoke_native_menu(world, MenuAction::SaveDefaultLayout)?;
+                    crate::bed::smoke_native_menu(world, MenuAction::SetLayoutDefault(1))?;
                     smoke.next(world);
                 }
             }
         }
         14 => {
             if smoke.elapsed_frames(world) >= 2 {
-                let stored = workspace_store(world)?;
-                let default = &stored["default_layout"];
+                let settings: Value = serde_json::from_slice(&std::fs::read(
+                    world
+                        .non_send::<bed_config::Settings>()
+                        .settings_path
+                        .clone(),
+                )?)?;
+                let default = &settings["layout_defaults"]["1"];
                 ensure(
                     default["version"] == 1
                         && default["panels"].as_array().is_some_and(|panels| {
@@ -1224,14 +1240,17 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                         }),
                     "Save Default Layout did not persist a fresh arrangement",
                 )?;
-                crate::bed::smoke_native_menu(world, MenuAction::ResetDefaultLayout)?;
+                crate::bed::smoke_native_menu(world, MenuAction::RestoreBuiltinLayout(1))?;
                 smoke.next(world);
             }
         }
         15 => {
             if smoke.elapsed_frames(world) >= 2 {
                 ensure(
-                    workspace_store(world)?.get("default_layout").is_none(),
+                    world
+                        .non_send::<bed_config::Settings>()
+                        .layout_default(1)
+                        .is_none(),
                     "Reset Default Layout did not clear template",
                 )?;
                 ensure(
@@ -1243,7 +1262,102 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 smoke.next(world);
             }
         }
-        16 => return basic(world, smoke),
+        16 => {
+            if !native_window(world, |window| window.has_focus())? {
+                crate::bed::smoke_focus_window(world);
+            } else {
+                crate::bed::smoke_native_key_equivalent(world, "3", 20, false)?;
+                smoke.next(world);
+            }
+        }
+        17 => {
+            if smoke.elapsed_frames(world) >= 8 {
+                let panels = bed_editor_workbench::active_panel_entities(world);
+                ensure(
+                    world
+                        .resource::<bed_editor_workbench::LayoutSlots>()
+                        .active()
+                        == 3
+                        && panels.len() == 4,
+                    "terminal layout did not create four panels",
+                )?;
+                let areas = panels
+                    .iter()
+                    .map(|panel| {
+                        let id = world
+                            .get::<bed_workbench::PanelPresentation>(*panel)
+                            .unwrap()
+                            .id;
+                        world
+                            .resource::<bed_workbench::WorkbenchLayout>()
+                            .tiling
+                            .area_for(id)
+                    })
+                    .collect::<HashSet<_>>();
+                ensure(
+                    areas.len() == 4 && !areas.contains(&None),
+                    "terminal grid does not have four distinct areas",
+                )?;
+                for panel in &panels {
+                    ensure(
+                        world
+                            .get::<EditorPanelBinding>(*panel)
+                            .is_some_and(|binding| binding.terminal.is_some()),
+                        "terminal grid has an unavailable terminal",
+                    )?;
+                    ensure(
+                        world
+                            .get::<bed_workbench::api::PanelGeometry>(*panel)
+                            .is_some_and(|geometry| {
+                                geometry.visible
+                                    && geometry.content_max[0] > geometry.content_min[0]
+                                    && geometry.content_max[1] > geometry.content_min[1]
+                            }),
+                        "terminal grid panel has no visible content",
+                    )?;
+                }
+                smoke.entities = panels;
+                crate::bed::smoke_native_menu(world, MenuAction::ResetLayout)?;
+                smoke.next(world);
+            }
+        }
+        18 => {
+            if smoke.elapsed_frames(world) >= 3 {
+                ensure(
+                    bed_editor_workbench::active_panel_entities(world) == smoke.entities,
+                    "reset replaced live terminals",
+                )?;
+                crate::bed::smoke_native_menu(world, MenuAction::UseLayout(1))?;
+                smoke.next(world);
+            }
+        }
+        19 => {
+            if smoke.elapsed_frames(world) >= 3 {
+                ensure(
+                    world
+                        .resource::<bed_editor_workbench::LayoutSlots>()
+                        .active()
+                        == 1,
+                    "layout 1 was not restored",
+                )?;
+                ensure(
+                    document_bytes(world, smoke.panel.unwrap())?.0
+                        == b"NATIVE_EDIT_native menu baseline\n",
+                    "slot switching changed the document",
+                )?;
+                crate::bed::smoke_native_menu(world, MenuAction::UseLayout(3))?;
+                smoke.next(world);
+            }
+        }
+        20 => {
+            if smoke.elapsed_frames(world) >= 8 {
+                ensure(
+                    bed_editor_workbench::active_panel_entities(world) == smoke.entities,
+                    "switching recreated terminal sessions",
+                )?;
+                return basic(world, smoke);
+            }
+        }
         _ => unreachable!(),
     }
     Ok(false)
@@ -1252,15 +1366,6 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
 fn menu(_: &mut World, _: &mut Smoke) -> io::Result<bool> {
     Err(io::Error::other("menu smoke requires macOS/editor"))
 }
-#[cfg(target_os = "macos")]
-fn workspace_store(world: &World) -> io::Result<Value> {
-    let path = world
-        .non_send::<bed_config::Settings>()
-        .config_dir
-        .join("workspaces.json");
-    serde_json::from_slice(&std::fs::read(path)?).map_err(io::Error::other)
-}
-
 #[cfg(all(target_os = "macos", feature = "editor"))]
 fn platform(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     use crate::native_commands::MenuAction;
@@ -1395,10 +1500,15 @@ fn platform(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                     MenuAction::NewSettings,
                     MenuAction::NewContentSearch,
                     MenuAction::NewDiagnostics,
-                    MenuAction::NewStructure,
                 ] {
                     crate::bed::smoke_native_menu(world, action)?;
                 }
+                world
+                    .non_send::<bed_desktop::DesktopNativePlatform>()
+                    .menu
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("native menu is not initialized"))?
+                    .perform_plugin_for_smoke("bed.structure.open")?;
                 smoke.next(world);
             }
         }

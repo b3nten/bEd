@@ -427,6 +427,7 @@ pub enum EditorFeatureSystems {
 pub struct EditorIntent {
     pub source: Option<bevy::prelude::Entity>,
     pub area: Option<u32>,
+    pub tab_index: Option<usize>,
     pub request: HostRequest,
 }
 
@@ -440,6 +441,7 @@ impl EditorIntents {
         self.pending.push(EditorIntent {
             source,
             area: None,
+            tab_index: None,
             request,
         });
     }
@@ -452,11 +454,15 @@ impl EditorIntents {
         self.pending.push(EditorIntent {
             source,
             area: Some(area),
+            tab_index: None,
             request,
         });
     }
     pub fn take(&mut self) -> Vec<EditorIntent> {
         std::mem::take(&mut self.pending)
+    }
+    pub fn push_intent(&mut self, intent: EditorIntent) {
+        self.pending.push(intent);
     }
 }
 

@@ -22,6 +22,9 @@ pub enum MenuAction {
     SplitRight,
     SplitDown,
     ResetLayout,
+    UseLayout(u8),
+    SetLayoutDefault(u8),
+    RestoreBuiltinLayout(u8),
     SaveDefaultLayout,
     ResetDefaultLayout,
     Projects,
@@ -59,6 +62,9 @@ impl MenuAction {
     pub fn command_id(self) -> String {
         use MenuAction::*;
         match self {
+            UseLayout(slot) => format!("bed.app.layout_{slot}"),
+            SetLayoutDefault(slot) => format!("bed.app.set_layout_{slot}"),
+            RestoreBuiltinLayout(slot) => format!("bed.app.restore_layout_{slot}"),
             NewWindow => "bed.desktop.new_window".into(),
             Settings => "bed.settings.show".into(),
             NewSettings => "bed.settings.new".into(),
@@ -70,19 +76,32 @@ impl MenuAction {
             FindProject => "bed.search.show".into(),
             Diagnostics => "bed.editor.show_diagnostics".into(),
             Debug => "bed.debug.show".into(),
-            Undo => "bed.editor.undo".into(),
-            Redo => "bed.editor.redo".into(),
-            Cut => "bed.editor.cut".into(),
-            Copy => "bed.editor.copy".into(),
-            Paste => "bed.editor.paste".into(),
-            SelectAll => "bed.editor.select_all".into(),
-            Find => "bed.editor.find".into(),
+            Undo => "bed.edit.undo".into(),
+            Redo => "bed.edit.redo".into(),
+            Cut => "bed.edit.cut".into(),
+            Copy => "bed.edit.copy".into(),
+            Paste => "bed.edit.paste".into(),
+            SelectAll => "bed.edit.select_all".into(),
+            Find => "bed.edit.find".into(),
             GoToLine => "bed.editor.go_to_line".into(),
             _ => format!("bed.app.{self:?}"),
         }
     }
     pub fn from_command(id: &str) -> Option<Self> {
         use MenuAction::*;
+        for (prefix, action) in [
+            ("bed.app.layout_", UseLayout as fn(u8) -> Self),
+            ("bed.app.set_layout_", SetLayoutDefault),
+            ("bed.app.restore_layout_", RestoreBuiltinLayout),
+        ] {
+            if let Some(slot) = id.strip_prefix(prefix) {
+                return slot
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|slot| (1..=9).contains(slot))
+                    .map(action);
+            }
+        }
         [
             NewWindow,
             NewDocument,
@@ -150,7 +169,7 @@ pub fn input_shortcut(action: MenuAction, bindings: &Bindings) -> Option<Stroke>
         .into_iter()
         .find(|binding| {
             bindings
-                .winner(&binding.scope, binding.shortcut)
+                .active_winner(&binding.scope, binding.shortcut)
                 .is_some_and(|winner| winner.action == binding.action)
         })
         .map(|binding| binding.shortcut)
@@ -196,6 +215,7 @@ pub fn menus(
     text_input: bool,
     editor_focused: bool,
     commands: &[bed_editor_workbench::commands::CommandItem],
+    active_layout: u8,
 ) -> Vec<DesktopMenu> {
     use DesktopMenuItem::*;
     use MenuAction as A;
@@ -259,7 +279,7 @@ pub fn menus(
         Separator,
         command(A::Quit, "Quit bEd"),
     ];
-    let file = mapped(&[
+    let mut file = mapped(&[
         (A::NewWindow, "New Window"),
         (A::NewDocument, "New Document"),
         (A::OpenFolder, "Open Folder…"),
@@ -268,6 +288,12 @@ pub fn menus(
         (A::SaveAs, "Save As…"),
         (A::Close, "Close Panel"),
     ]);
+    file.push(Separator);
+    file.extend(mapped(&[
+        (A::DuplicateView, "New View of Document"),
+        (A::SplitRight, "Split Right"),
+        (A::SplitDown, "Split Down"),
+    ]));
     let edit = mapped(&[
         (A::Undo, "Undo"),
         (A::Redo, "Redo"),
@@ -276,78 +302,88 @@ pub fn menus(
         (A::Paste, "Paste"),
         (A::SelectAll, "Select All"),
         (A::Find, "Find…"),
-        (A::GoToLine, "Go to Line…"),
-    ]);
-    let view = mapped(&[
-        (A::Explorer, "File Explorer"),
-        (A::Terminal, "Terminal"),
         (A::FindFile, "Find File…"),
         (A::FindProject, "Find in Project…"),
-        (A::LspDashboard, "Language Server Dashboard"),
-        (A::Projects, "Startup"),
-        (A::Diagnostics, "Diagnostics"),
-        (A::Debug, "Debug"),
-        (A::Structure, "Structure"),
+        (A::GoToLine, "Go to Line…"),
     ]);
-    let mut window = mapped(&[
-        (A::NewExplorer, "New File Explorer"),
-        (A::NewTerminal, "New Terminal"),
-        (A::NewSettings, "New Settings"),
-        (A::NewProjects, "New Startup"),
-        (A::NewContentSearch, "New Project Search"),
-        (A::NewDiagnostics, "New Diagnostics"),
-        (A::NewStructure, "New Structure"),
-        (A::NewReferences, "New References"),
-        (A::NewLspDashboard, "New Language Server Dashboard"),
-        (A::DuplicateView, "New View of Document"),
-        (A::SplitRight, "Split Right"),
-        (A::SplitDown, "Split Down"),
-    ]);
-    window.push(Separator);
-    window.extend(mapped(&[
-        (A::SaveDefaultLayout, "Save Default Layout"),
-        (A::ResetDefaultLayout, "Reset Default Layout"),
-        (A::ResetLayout, "Reset Layout"),
-    ]));
+    let mut window = Vec::new();
+    for slot in 1..=9 {
+        let item = command(A::UseLayout(slot), &format!("Layout {slot}"));
+        window.push(if slot == active_layout {
+            match item {
+                Command(command) => SelectedCommand(command),
+                item => item,
+            }
+        } else {
+            item
+        });
+    }
+    window.push(command(A::ResetLayout, "Reset Current Layout"));
+    window.push(Submenu {
+        label: "Set Layout".into(),
+        items: (1..=9)
+            .map(|slot| command(A::SetLayoutDefault(slot), &format!("Layout {slot}")))
+            .collect(),
+    });
+    window.push(Submenu {
+        label: "Restore Built-in Layout".into(),
+        items: (1..=9)
+            .map(|slot| command(A::RestoreBuiltinLayout(slot), &format!("Layout {slot}")))
+            .collect(),
+    });
     window.extend([Separator, Minimize, Maximize, Separator, BringAllToFront]);
-    let tools = commands
-        .iter()
-        .map(|item| {
-            Command(DesktopMenuCommand {
-                id: item.id.clone(),
-                label: item.label.clone(),
-                enabled: item.enabled,
-                shortcut: bindings
-                    .for_action(&item.id)
-                    .into_iter()
-                    .find(|binding| {
-                        (binding.scope == bed_keybindings::Scope::Global
-                            || (editor_focused
-                                && binding.scope
-                                    == bed_keybindings::Scope::panel(
-                                        bed_keybindings::EDITOR_SCOPE,
-                                    )))
-                            && bindings
-                                .winner(&binding.scope, binding.shortcut)
-                                .is_some_and(|winner| winner.action == item.id)
-                    })
-                    .map(|binding| DesktopShortcut {
-                        key: binding.shortcut.key,
-                        modifiers: DesktopModifiers {
-                            ctrl: binding.shortcut.modifiers.ctrl,
-                            shift: binding.shortcut.modifiers.shift,
-                            alt: binding.shortcut.modifiers.alt,
-                            super_key: binding.shortcut.modifiers.super_key,
-                        },
-                    }),
+    let mut tools = mapped(&[
+        (A::NewExplorer, "File Explorer"),
+        (A::NewTerminal, "Terminal"),
+        (A::NewSettings, "Settings"),
+        (A::NewProjects, "Startup"),
+        (A::NewContentSearch, "Project Search"),
+        (A::NewDiagnostics, "Diagnostics"),
+        (A::NewReferences, "References"),
+        (A::NewLspDashboard, "Language Server Dashboard"),
+    ]);
+    if !commands.is_empty() {
+        tools.push(Separator);
+    }
+    tools.extend(
+        commands
+            .iter()
+            .map(|item| {
+                Command(DesktopMenuCommand {
+                    id: item.id.clone(),
+                    label: item.label.clone(),
+                    enabled: item.enabled,
+                    shortcut: bindings
+                        .for_action(&item.id)
+                        .into_iter()
+                        .find(|binding| {
+                            (binding.scope == bed_keybindings::Scope::Global
+                                || (editor_focused
+                                    && binding.scope
+                                        == bed_keybindings::Scope::panel(
+                                            bed_keybindings::EDITOR_SCOPE,
+                                        )))
+                                && bindings
+                                    .winner(&binding.scope, binding.shortcut)
+                                    .is_some_and(|winner| winner.action == item.id)
+                        })
+                        .map(|binding| DesktopShortcut {
+                            key: binding.shortcut.key,
+                            modifiers: DesktopModifiers {
+                                ctrl: binding.shortcut.modifiers.ctrl,
+                                shift: binding.shortcut.modifiers.shift,
+                                alt: binding.shortcut.modifiers.alt,
+                                super_key: binding.shortcut.modifiers.super_key,
+                            },
+                        }),
+                })
             })
-        })
-        .collect();
+            .collect::<Vec<_>>(),
+    );
     vec![
         make("bEd", app, false),
         make("File", file, false),
         make("Edit", edit, false),
-        make("View", view, false),
         make("Tools", tools, false),
         make("Window", window, true),
     ]
@@ -357,6 +393,91 @@ pub fn menus(
 mod tests {
     use super::*;
     use bed_keybindings::{Action, Overrides, Platform, Scope};
+
+    #[test]
+    fn tools_own_panel_creation_and_window_owns_layouts() {
+        let bindings = Bindings::new(Vec::new(), &Overrides::default(), Platform::Mac);
+        let commands = vec![bed_editor_workbench::commands::CommandItem {
+            id: "bed.http.open".into(),
+            label: "HTTP Client".into(),
+            icon: None,
+            enabled: true,
+        }];
+        let menus = menus(&bindings, true, true, false, false, true, &commands, 1);
+        assert!(!menus.iter().any(|menu| menu.label == "View"));
+        let window = menus.iter().find(|menu| menu.label == "Window").unwrap();
+        for item in &window.items {
+            if let DesktopMenuItem::Command(command) | DesktopMenuItem::SelectedCommand(command) =
+                item
+            {
+                assert!(matches!(
+                    MenuAction::from_command(&command.id),
+                    Some(MenuAction::UseLayout(_) | MenuAction::ResetLayout)
+                ));
+            }
+        }
+        let tools = menus.iter().find(|menu| menu.label == "Tools").unwrap();
+        let ids = tools
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                DesktopMenuItem::Command(command) => Some(command.id.as_str()),
+                _ => None,
+            })
+            .collect::<std::collections::HashSet<_>>();
+        assert!(ids.contains("bed.terminal.new"));
+        assert!(ids.contains("bed.explorer.new"));
+        assert!(ids.contains("bed.http.open"));
+        assert!(!ids.contains("bed.app.NewStructure"));
+        let file = menus.iter().find(|menu| menu.label == "File").unwrap();
+        assert!(file.items.iter().any(|item| matches!(item, DesktopMenuItem::Command(command) if command.id == MenuAction::SplitRight.command_id())));
+    }
+
+    #[test]
+    fn layout_menus_select_the_active_slot_and_keep_save_reset_unbound() {
+        let actions = (1..=9)
+            .map(|slot| {
+                Action::new(
+                    &format!("bed.app.layout_{slot}"),
+                    &format!("Switch to Layout {slot}"),
+                    "bed.app",
+                    Scope::Global,
+                    &[&format!("Primary+{slot}")],
+                )
+            })
+            .collect();
+        let bindings = Bindings::new(actions, &Overrides::default(), Platform::Mac);
+        let menus = menus(&bindings, true, true, false, false, true, &[], 3);
+        let window = menus.iter().find(|menu| menu.label == "Window").unwrap();
+        let selected = window
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                DesktopMenuItem::SelectedCommand(command) => Some(command),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, "bed.app.layout_3");
+        for item in &window.items {
+            if let DesktopMenuItem::Submenu { label, items } = item {
+                assert!(matches!(
+                    label.as_str(),
+                    "Set Layout" | "Restore Built-in Layout"
+                ));
+                assert_eq!(items.len(), 9);
+                for item in items {
+                    let DesktopMenuItem::Command(command) = item else {
+                        panic!("expected a menu command")
+                    };
+                    assert!(command.shortcut.is_none());
+                    assert!(MenuAction::from_command(&command.id).is_some());
+                }
+            }
+        }
+        assert!(MenuAction::from_command("bed.app.layout_0").is_none());
+        assert!(MenuAction::from_command("bed.app.layout_10").is_none());
+    }
     #[test]
     fn native_accelerators_preserve_all_modifiers_and_skip_shadowed_or_cleared_bindings() {
         let save = Action::new(
@@ -381,7 +502,7 @@ mod tests {
         let stroke = input_shortcut(MenuAction::Save, &model).unwrap();
         assert_eq!(stroke.to_string(), "Ctrl+Command+Alt+Shift+F12");
         let editor_action = Action::new(
-            "bed.editor.copy",
+            "bed.edit.copy",
             "Copy",
             "bed.editor",
             Scope::panel(bed_keybindings::EDITOR_SCOPE),

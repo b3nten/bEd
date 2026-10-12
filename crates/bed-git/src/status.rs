@@ -17,7 +17,7 @@ pub(crate) fn install(app: &mut App) {
                 id,
                 label,
                 priority,
-                icon: Some("git-branch"),
+                icon: "git-branch",
                 prefer_icon: false,
                 measure,
                 draw,

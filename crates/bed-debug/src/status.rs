@@ -18,7 +18,7 @@ pub(super) fn install(app: &mut App) {
                 id,
                 label,
                 priority,
-                icon: Some("debug"),
+                icon: "debug",
                 prefer_icon: false,
                 measure,
                 draw,

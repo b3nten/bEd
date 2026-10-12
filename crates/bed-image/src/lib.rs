@@ -1,7 +1,7 @@
 //! A read-only raster and SVG viewer implemented entirely through the plugin API.
 use bed_editing::identity::DocumentId;
 use bed_editor_api::gpu::GpuContext;
-use bed_editor_api::{DocumentKind, HostContext, HostRequest, MenuSlot, Registrar, Revision};
+use bed_editor_api::{DocumentKind, HostContext, HostRequest, Registrar, Revision};
 use bed_ui::TextureHandle;
 use bed_ui::gpu::{Canvas, RenderOutput, RenderTarget};
 use dear_imgui_rs::{MouseButton, Ui};
@@ -46,7 +46,6 @@ fn register_metadata(registrar: &mut Registrar<'_>) {
     registrar.viewer_document_kinds(VIEWER_ID, &[DocumentKind::Text, DocumentKind::Bytes]);
     registrar.command(OPEN_COMMAND, "Open Image…", Some("image"));
     registrar.command(OPEN_FILE_COMMAND, "Open in Image Viewer", Some("image"));
-    registrar.menu(MenuSlot::Application, OPEN_COMMAND);
     registrar.settings_ui("bed.image.settings", "Image Viewer", image_settings);
 }
 fn image_settings(ui: &Ui, settings: &mut Value) -> bool {
@@ -392,6 +391,7 @@ impl ImagePanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bed_editor_api::MenuSlot;
     use std::{
         collections::HashMap,
         io::Cursor,
@@ -576,7 +576,7 @@ mod tests {
                 .all(|entry| entry.slot != MenuSlot::File)
         );
         assert!(
-            registry.menus().iter().any(|entry| {
+            !registry.menus().iter().any(|entry| {
                 entry.slot == MenuSlot::Application && entry.command == OPEN_COMMAND
             })
         );

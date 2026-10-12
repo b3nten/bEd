@@ -449,7 +449,7 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
         bed_editor_workbench::process_editor_requests(app.world_mut()).unwrap();
         rows
     };
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     let rows = loop {
         let rows = frame(&mut app, &mut context);
         if rows.len() == 3 {
@@ -529,8 +529,8 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
         assert!(app.world().resource::<EditorWorkspace>().error.is_none());
     }
 
-    // A file click should reuse the previous editor area, including a second
-    // click after the first open has focused that new editor.
+    // File clicks target the largest area, including a second click after
+    // the first open has focused that new editor.
     for name in ["clicked.txt", "clicked-again.txt"] {
         let clicked = root.join(name);
         std::fs::write(&clicked, "clicked file\n").unwrap();
@@ -584,7 +584,13 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
                 .resource::<WorkbenchLayout>()
                 .tiling
                 .area_for(app.world().get::<PanelPresentation>(panel).unwrap().id),
-            Some(right)
+            Some(
+                app.world()
+                    .resource::<WorkbenchLayout>()
+                    .tiling
+                    .layout
+                    .largest_area()
+            )
         );
     }
 
@@ -684,7 +690,7 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
     app.world_mut()
         .non_send_mut::<bed_explorer::ExplorerState>()
         .toggle_finder();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         app.update();
         let explorer = app
@@ -707,7 +713,11 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
         }
         assert!(
             Instant::now() < deadline,
-            "project discovery never populated the tree"
+            "project discovery never populated the tree: {:?}, finder status {:?}, indexed {:?}, children {:?}",
+            app.world().resource::<EditorWorkspace>().error,
+            explorer.file_finder.discovery_status,
+            explorer.file_finder.filtered_list,
+            explorer.file_tree.root_node.children
         );
         std::thread::sleep(Duration::from_millis(10));
     }

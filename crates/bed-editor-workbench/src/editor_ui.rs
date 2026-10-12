@@ -105,15 +105,9 @@ pub fn draw_ui(world: &mut World, ui: &Ui) -> io::Result<()> {
         }) {
             continue;
         }
-        if let Some(area) = intent.area {
-            world
-                .resource_mut::<bed_editor_api::EditorIntents>()
-                .push_at(intent.source, area, intent.request);
-        } else {
-            world
-                .resource_mut::<bed_editor_api::EditorIntents>()
-                .push(intent.source, intent.request);
-        }
+        world
+            .resource_mut::<bed_editor_api::EditorIntents>()
+            .push_intent(intent);
     }
     let surfaces = world
         .query::<(

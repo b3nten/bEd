@@ -3,7 +3,9 @@
 use super::*;
 use bevy::ecs::system::SystemState;
 use dear_imgui_rs::{FocusedFlags, StyleVar, sys};
-use tiling_ui::{ChromePanel, ChromeSettings, ChromeTab, TilingAction, TilingFrontend};
+use tiling_ui::{
+    ChromePanel, ChromeSettings, ChromeTab, TabPlacement, TilingAction, TilingFrontend,
+};
 use ui_animations::UiAnimations;
 
 #[derive(Resource, Clone, Debug)]
@@ -74,7 +76,7 @@ fn draw(world: &mut World, ui: &Ui) {
     let owned = world
         .query::<(Entity, &PanelPresentation, &PanelRecord)>()
         .iter(world)
-        .filter(|(entity, _, _)| owns_panel(world, *entity))
+        .filter(|(entity, _, _)| owns_panel(world, *entity) && api::panel_active(world, *entity))
         .map(|(entity, panel, record)| (entity, panel.id, record.panel_type.clone()))
         .collect::<Vec<_>>();
     let tabs = owned
@@ -182,7 +184,6 @@ fn draw(world: &mut World, ui: &Ui) {
         chrome.tiling_ui.docks.clone()
     };
     let mut requests = Vec::new();
-    let mut drops = Vec::new();
     for tab in &tabs {
         let surface = world
             .get::<api::PanelFrontend>(tab.entity)
@@ -247,10 +248,6 @@ fn draw(world: &mut World, ui: &Ui) {
                     Ok(actions) => requests.extend(actions),
                     Err(error) => ui.text_wrapped(&error),
                 }
-                let area = layout.tiling.area_for(tab.id).unwrap();
-                if let Some(drop) = accept_panel_drop(ui, area, Some(tab.entity)) {
-                    drops.push(drop);
-                }
             });
         if !opened {
             requests.push(Action::ClosePanel(tab.entity));
@@ -260,7 +257,8 @@ fn draw(world: &mut World, ui: &Ui) {
         let mut state = SystemState::<NonSendMut<TilingFrontend>>::new(world);
         let mut chrome = state.get_mut(world).expect("tiling frontend is installed");
         chrome.draw_tab_context_menu(ui);
-        drops.extend(chrome.draw_empty_areas(ui));
+        chrome.draw_empty_areas(ui);
+        chrome.accept_panel_drop(ui);
         chrome.finish_tiling(ui);
         (
             chrome.tiling.clone(),
@@ -269,6 +267,13 @@ fn draw(world: &mut World, ui: &Ui) {
             chrome.tiling_ui.minimum,
         )
     };
+    requests.extend(chrome_requests);
+    let (gestures, drops) = resolve_gestures(&layout.tiling, draft, &tabs, actions, minimum);
+    requests.extend(gestures);
+    // Reserve incoming split destinations before features enqueue their opens.
+    for request in requests {
+        world.resource_mut::<WorkbenchRequests>().push(request);
+    }
     for drop in drops {
         world.write_message(drop);
     }
@@ -302,63 +307,6 @@ fn draw(world: &mut World, ui: &Ui) {
     world
         .non_send_mut::<UiAnimations>()
         .end(ui, appearance.animations);
-    requests.extend(chrome_requests);
-    requests.extend(resolve_gestures(
-        &layout.tiling,
-        draft,
-        &tabs,
-        actions,
-        minimum,
-    ));
-    for request in requests {
-        world.resource_mut::<WorkbenchRequests>().push(request);
-    }
-}
-
-pub(super) fn accept_panel_drop(
-    ui: &Ui,
-    area: u32,
-    panel: Option<Entity>,
-) -> Option<api::PanelDrop> {
-    ui.with_bound_context(|| unsafe {
-        let active = sys::igGetDragDropPayload();
-        if active.is_null() {
-            return None;
-        }
-        let payload_type = std::ffi::CStr::from_ptr((*active).DataType.as_ptr());
-        let window = sys::igGetCurrentWindow();
-        if !sys::igBeginDragDropTargetCustom(
-            (*window).InnerRect,
-            ui.get_id("##bed_area_drop").into(),
-        ) {
-            return None;
-        }
-        let accepted = sys::igAcceptDragDropPayload(
-            payload_type.as_ptr(),
-            sys::ImGuiDragDropFlags_AcceptBeforeDelivery,
-        );
-        let drop = if !accepted.is_null() && (*accepted).Delivery {
-            let data = if (*accepted).DataSize > 0 {
-                std::slice::from_raw_parts(
-                    (*accepted).Data.cast::<u8>(),
-                    (*accepted).DataSize as usize,
-                )
-                .to_vec()
-            } else {
-                Vec::new()
-            };
-            Some(api::PanelDrop {
-                area,
-                panel,
-                payload_type: payload_type.to_string_lossy().into_owned(),
-                data,
-            })
-        } else {
-            None
-        };
-        sys::igEndDragDropTarget();
-        drop
-    })
 }
 
 fn resolve_gestures(
@@ -367,7 +315,7 @@ fn resolve_gestures(
     tabs: &[ChromeTab],
     actions: Vec<TilingAction>,
     minimum: [i32; 2],
-) -> Vec<Action> {
+) -> (Vec<Action>, Vec<api::PanelDrop>) {
     let closing = actions
         .iter()
         .filter_map(|action| match action {
@@ -378,6 +326,7 @@ fn resolve_gestures(
     let entity = |id| tabs.iter().find(|tab| tab.id == id).map(|tab| tab.entity);
     let mut requests = Vec::new();
     let mut close = Vec::new();
+    let mut drops = Vec::new();
     for action in actions {
         match action {
             TilingAction::Split { area, axis, at } => {
@@ -424,6 +373,36 @@ fn resolve_gestures(
             } if !closing.contains(&panel) && draft.area_for(panel).is_some() => {
                 draft.split_tab(panel, area, axis, high, minimum);
             }
+            TilingAction::Drop {
+                placement,
+                payload_type,
+                data,
+            } => {
+                let (area, tab_index) = match placement {
+                    TabPlacement::Insert { area, index } => {
+                        (area, (index != usize::MAX).then_some(index))
+                    }
+                    TabPlacement::Split { area, axis, high } => {
+                        let Some(area) = draft.split_area(area, axis, high, minimum) else {
+                            continue;
+                        };
+                        (area, None)
+                    }
+                };
+                let panel = draft
+                    .areas
+                    .iter()
+                    .find(|group| group.area == area)
+                    .and_then(|group| group.selected)
+                    .and_then(entity);
+                drops.push(api::PanelDrop {
+                    area,
+                    panel,
+                    tab_index,
+                    payload_type,
+                    data,
+                });
+            }
             TilingAction::CloseTab(panel) => {
                 if let Some(entity) = entity(panel) {
                     requests.push(Action::ClosePanel(entity));
@@ -463,5 +442,5 @@ fn resolve_gestures(
             },
         );
     }
-    requests
+    (requests, drops)
 }

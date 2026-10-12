@@ -441,7 +441,7 @@ impl SettingsView<'_> {
                     }
                     ui.text_disabled("New Window always opens the Startup screen.");
                     ui.text_disabled(
-                        "Save Default Layout sets the arrangement for new workspaces.",
+                        "Window → Set Layout saves an arrangement for a numbered layout.",
                     );
                     if ui.button("Open Settings JSON") {
                         self.request_config_file = Some(self.settings_path.clone());
@@ -511,7 +511,7 @@ impl SettingsView<'_> {
                         ui.text_disabled("Effects are provided by the desktop host.");
                     }
                 }
-                SettingsCategory::Keybindings => self.draw_keybinds_settings(ui, false),
+                SettingsCategory::Keybindings => self.draw_keybinds_settings(ui),
                 SettingsCategory::Extensions => {
                     if extensions(ui, &mut self.settings) {
                         self.persist_ui();
@@ -888,9 +888,12 @@ impl SettingsView<'_> {
             ui.spacing();
         }
     }
-    fn draw_keybinds_settings(&mut self, ui: &Ui, _lsp_available: bool) {
+    fn draw_keybinds_settings(&mut self, ui: &Ui) {
         use bed_keybindings::{Bindings, CollisionKind, Platform, Stroke};
-        ui.text_wrapped("Widget shortcuts run before panel shortcuts, then globals. Within a scope, the latest user assignment wins. Reused shortcuts are warnings and can be saved.");
+        let size = ui.current_font_size();
+        let _spacing = ui.push_style_var(StyleVar::ItemSpacing([size * 0.65, size * 0.55]));
+        let _padding = ui.push_style_var(StyleVar::FramePadding([size * 0.6, size * 0.3]));
+        ui.dummy([0.0, size * 0.5]);
         ui.input_text(
             "Search actions or shortcuts",
             &mut self.window.shortcut_filter,
@@ -914,6 +917,18 @@ impl SettingsView<'_> {
         if let Some((id, index)) = self.window.shortcut_recording.clone() {
             ui.separator();
             let action = actions.iter().find(|a| a.id == id);
+            let position = ui.cursor_screen_pos();
+            let pulse = (ui.time() as f32 * std::f32::consts::TAU).sin() * 0.5 + 0.5;
+            ui.get_window_draw_list()
+                .add_circle(
+                    [position[0] + size * 0.35, position[1] + size * 0.5],
+                    size * (0.22 + pulse * 0.05),
+                    [0.95, 0.2, 0.22, 0.45 + pulse * 0.55],
+                )
+                .filled(true)
+                .build();
+            ui.dummy([size * 0.7, size]);
+            ui.same_line();
             ui.text(format!(
                 "Recording: {}",
                 action.map_or(id.as_str(), |a| a.label.as_str())
@@ -944,6 +959,7 @@ impl SettingsView<'_> {
             .iter()
             .map(|a| match &a.scope {
                 bed_keybindings::Scope::Global => "Global".to_owned(),
+                bed_keybindings::Scope::Focused => "Common".to_owned(),
                 bed_keybindings::Scope::Panel(id) => id.clone(),
             })
             .collect::<Vec<_>>();
@@ -952,6 +968,10 @@ impl SettingsView<'_> {
         if let Some(index) = groups.iter().position(|g| g == "Global") {
             let global = groups.remove(index);
             groups.insert(0, global);
+        }
+        if let Some(index) = groups.iter().position(|g| g == "Common") {
+            let common = groups.remove(index);
+            groups.insert(0, common);
         }
         for group in groups {
             let header = if group == bed_keybindings::EDITOR_SCOPE {
@@ -963,42 +983,53 @@ impl SettingsView<'_> {
                     .cloned()
                     .unwrap_or_else(|| group.clone())
             };
-            if !ui.collapsing_header(&header, dear_imgui_rs::TreeNodeFlags::DEFAULT_OPEN) {
+            let matching = actions
+                .iter()
+                .filter(|a| match &a.scope {
+                    bed_keybindings::Scope::Global => group == "Global",
+                    bed_keybindings::Scope::Focused => group == "Common",
+                    bed_keybindings::Scope::Panel(id) => id == &group,
+                })
+                .filter(|action| {
+                    format!(
+                        "{} {} {} {}",
+                        action.id,
+                        action.label,
+                        action.owner,
+                        bindings
+                            .for_action(&action.id)
+                            .iter()
+                            .map(|b| b.shortcut.to_string())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    )
+                    .to_lowercase()
+                    .contains(&filter)
+                })
+                .collect::<Vec<_>>();
+            if matching.is_empty() {
                 continue;
             }
-            for action in actions.iter().filter(|a| match &a.scope {
-                bed_keybindings::Scope::Global => group == "Global",
-                bed_keybindings::Scope::Panel(id) => id == &group,
-            }) {
-                let search = format!(
-                    "{} {} {} {} {:?}",
-                    action.id,
-                    action.label,
-                    action.owner,
-                    bindings
-                        .for_action(&action.id)
-                        .iter()
-                        .map(|b| b.shortcut.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    action.scope
-                )
-                .to_lowercase();
-                if !filter.is_empty() && !search.contains(&filter) {
-                    continue;
-                }
+            if !filter.is_empty() {
+                ui.set_next_item_open(true);
+            }
+            ui.dummy([0.0, size * 0.35]);
+            if !ui.collapsing_header(&header, dear_imgui_rs::TreeNodeFlags::empty()) {
+                continue;
+            }
+            ui.indent_by(size * 0.8);
+            for action in matching {
+                ui.dummy([0.0, size * 0.45]);
                 let _id = ui.push_id(&action.id);
                 ui.text(&action.label);
                 ui.same_line();
-                ui.text_disabled(format!(
-                    "{} · {}",
-                    action.owner,
+                ui.text_disabled(
                     if self.keybinds.overrides.actions.contains_key(&action.id) {
                         "Custom"
                     } else {
                         "Default"
-                    }
-                ));
+                    },
+                );
                 let shortcuts = self
                     .keybinds
                     .overrides
@@ -1057,10 +1088,10 @@ impl SettingsView<'_> {
                         }
                     ));
                 }
-                for warning in collisions
-                    .iter()
-                    .filter(|c| c.first == action.id || c.second == action.id)
-                {
+                for warning in collisions.iter().filter(|c| {
+                    c.kind != CollisionKind::Reuse
+                        && (c.first == action.id || c.second == action.id)
+                }) {
                     let other = if warning.first == action.id {
                         &warning.second
                     } else {
@@ -1070,28 +1101,18 @@ impl SettingsView<'_> {
                         .iter()
                         .find(|a| &a.id == other)
                         .map_or(other.as_str(), |a| a.label.as_str());
-                    let detail = match warning.kind {
-                        CollisionKind::Conflict => format!(
-                            "{} takes precedence",
-                            actions
-                                .iter()
-                                .find(|a| Some(&a.id) == warning.winner.as_ref())
-                                .map_or("Another action", |a| a.label.as_str())
-                        ),
-                        CollisionKind::Overlap => {
-                            "Focused widget, then panel, then global takes precedence".into()
-                        }
-                        CollisionKind::Reuse => {
-                            "Different panels; focus determines which runs".into()
-                        }
-                    };
+                    let _font =
+                        ui.push_font_with_size(None, ui.clone_style().font_size_base() * 0.85);
+                    let _color = ui.push_style_color(StyleColor::Text, [0.78, 0.57, 0.34, 1.0]);
                     ui.text_wrapped(format!(
-                        "Warning: {} also binds {}. {}.",
-                        warning.shortcut, other, detail
+                        "{} is also assigned to {}.",
+                        warning.shortcut, other
                     ));
                 }
+                ui.dummy([0.0, size * 0.3]);
                 ui.separator();
             }
+            ui.unindent_by(size * 0.8);
         }
         if actions.is_empty() {
             ui.text_disabled("No shortcut actions registered by this host.");
@@ -1171,7 +1192,7 @@ mod tests {
                 ui.window("Shortcut settings")
                     .size([900.0, 700.0], Condition::Always)
                     .build(|| {
-                        SettingsView::new(settings, state).draw_keybinds_settings(ui, false);
+                        SettingsView::new(settings, state).draw_keybinds_settings(ui);
                     });
                 drop(context.render_legacy());
             };
