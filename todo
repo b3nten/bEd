@@ -1,5 +1,4 @@
 - dependency cleanup
-- fix lsp issue with rust, remote server
 - keybindings
 	- vim mode
 	- comment line out 

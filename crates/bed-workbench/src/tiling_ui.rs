@@ -1061,7 +1061,7 @@ impl TilingFrontend {
                         .rounding(3.0)
                         .filled(true)
                         .build();
-                        ui.tooltip_text("Add a window");
+                        bed_ui::util::popup_style::tooltip_text(ui, "Add a window");
                     }
                     let center = [bar_min[0] + tab_height * 0.5, tab_center_y];
                     let icon_color = ui.style_color(if hovered {
@@ -1234,7 +1234,7 @@ impl TilingFrontend {
                         self.tiling_ui.actions.push(TilingAction::CloseTab(panel));
                     }
                     if hovered {
-                        ui.tooltip_text(&title);
+                        bed_ui::util::popup_style::tooltip_text(ui, &title);
                     }
                     if pressed && self.tiling_ui.gesture.is_none() {
                         if let Some(index) = self.tabs.iter().position(|tab| tab.id == panel) {

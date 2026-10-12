@@ -84,6 +84,8 @@ pub struct PanelPadding(pub [f32; 2]);
 /// come from the live keymap, rather than being repeated in this prose.
 #[derive(Component, Clone, Debug, Default)]
 pub struct PanelDocumentation {
+    /// Last selected symbol, including its LSP markup and syntax palette.
+    pub symbol: Option<bed_ui::documentation::Documentation>,
     pub sections: Vec<DocumentationSection>,
     /// Additional widget scopes handled by this frontend (such as a text editor).
     pub shortcut_scopes: Vec<String>,

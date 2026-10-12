@@ -38,6 +38,7 @@ pub enum LspAction {
     OpenConfig(PathBuf),
     RestartServer(String),
     RestartInstance(ServerInstanceId),
+    InstallRustTooling(ServerInstanceId),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContextLspAction {
@@ -170,6 +171,9 @@ impl LspUi {
         workspace: &mut WorkspaceLsp,
     ) -> Option<LspAction> {
         let path = self.dashboard.render_workspace_body(ui, workspace);
+        if let Some(instance) = self.dashboard.take_install_instance() {
+            return Some(LspAction::InstallRustTooling(instance));
+        }
         if let Some(instance) = self.dashboard.take_restart_instance() {
             return Some(LspAction::RestartInstance(instance));
         }
@@ -358,6 +362,9 @@ impl LspUi {
         settings: &LspPresentationOptions,
     ) -> Option<LspAction> {
         let path = self.dashboard.render_workspace(ui, workspace, settings);
+        if let Some(instance) = self.dashboard.take_install_instance() {
+            return Some(LspAction::InstallRustTooling(instance));
+        }
         if let Some(instance) = self.dashboard.take_restart_instance() {
             return Some(LspAction::RestartInstance(instance));
         }

@@ -399,7 +399,19 @@ fn completion_and_documentation_share_hover_motion_and_settings() {
         .add_key_event(dear_imgui_rs::Key::DownArrow, true);
     let moved =
         completion_and_hover_frame(&mut context, &mut animations, true, true, [135.0, 120.0], 1);
-    assert!(marker_alphas(&moved).iter().all(|&alpha| alpha > alphas[0]));
+    for (index, window) in moved.after.iter().enumerate() {
+        let content_alpha = window
+            .vertices
+            .iter()
+            .find(|vertex| vertex.col & 0x00ff_ffff == MARKER & 0x00ff_ffff)
+            .unwrap()
+            .col
+            >> 24;
+        assert!(
+            content_alpha > u32::from(alphas[0]),
+            "Selection changes continue the opening fade for window {index}"
+        );
+    }
     assert_eq!(moved.before[0].pos, [135.0, 120.0]);
     for (before, after) in moved.before.iter().zip(&moved.after) {
         assert!(
@@ -462,7 +474,7 @@ fn completion_and_documentation_share_hover_motion_and_settings() {
         false,
         true,
         [150.0, 140.0],
-        0,
+        1,
     );
     for (before, after) in disabled.before.iter().zip(&disabled.after) {
         assert_eq!(
@@ -470,6 +482,45 @@ fn completion_and_documentation_share_hover_motion_and_settings() {
             "animations=false must snap every popover"
         );
         assert_eq!(before.clips, after.clips);
+    }
+}
+
+#[test]
+fn completion_documentation_updates_remain_visible_without_reopening_the_panel() {
+    let _lock = crate::tests::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut context = context();
+    let mut animations = UiAnimations::new(context.binding());
+    for _ in 0..20 {
+        completion_and_hover_frame(&mut context, &mut animations, true, true, [135.0, 120.0], 1);
+    }
+    // Changing selection in a settled popup keeps its content fully visible.
+    // The background, borders, list, layout and hit testing also stay settled.
+    let changed =
+        completion_and_hover_frame(&mut context, &mut animations, true, true, [135.0, 120.0], 0);
+    for (before, after) in changed.before.iter().zip(&changed.after) {
+        assert_eq!(before.pos, after.pos);
+        assert_eq!(before.size, after.size);
+        assert_eq!(before.clips, after.clips);
+        assert_eq!(before.vertices, after.vertices);
+    }
+    let continuing =
+        completion_and_hover_frame(&mut context, &mut animations, true, true, [140.0, 120.0], 0);
+    assert!(
+        marker_alphas(&continuing)
+            .iter()
+            .zip(marker_alphas(&changed))
+            .all(|(&next, old)| next >= old)
+    );
+    let disabled = completion_and_hover_frame(
+        &mut context,
+        &mut animations,
+        false,
+        true,
+        [140.0, 120.0],
+        1,
+    );
+    for (before, after) in disabled.before.iter().zip(&disabled.after) {
+        assert_eq!(before.vertices, after.vertices);
     }
 }
 

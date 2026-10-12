@@ -71,7 +71,7 @@ fn target(world: &World) -> Option<Entity> {
         })
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct KeyRow {
     label: String,
     keys: String,
@@ -134,11 +134,18 @@ fn key_rows(
 
 struct DocsPanel {
     zoom: f32,
-    expanded: [bool; 3],
+    expanded: [bool; 2],
+    symbol_expanded: bool,
+    symbol: Option<bed_ui::documentation::Documentation>,
     source: Option<Entity>,
     scroll: f32,
     pinch: bool,
     frame: Option<usize>,
+    disclosures: [bed_ui::util::transition::Disclosure; 3],
+    symbol_transition:
+        bed_ui::util::transition::ContentTransition<Option<bed_ui::documentation::Documentation>>,
+    usage_transition: bed_ui::util::transition::ContentTransition<Vec<(String, String)>>,
+    key_transitions: [bed_ui::util::transition::ContentTransition<Vec<KeyRow>>; 2],
 }
 impl DocsPanel {
     fn from_state(state: &Value) -> Self {
@@ -148,16 +155,30 @@ impl DocsPanel {
             .unwrap_or(1.0) as f32;
         let mut panel = Self {
             zoom: zoom.clamp(0.5, 2.0),
-            expanded: [true, true, false],
+            expanded: [true, false],
+            symbol: None,
+            symbol_expanded: state["symbol_expanded"].as_bool().unwrap_or(true),
             source: None,
             scroll: 0.0,
             pinch: false,
             frame: None,
+            disclosures: Default::default(),
+            symbol_transition: Default::default(),
+            usage_transition: Default::default(),
+            key_transitions: Default::default(),
         };
         for (index, expanded) in panel.expanded.iter_mut().enumerate() {
             if let Some(saved) = state["expanded"][index].as_bool() {
                 *expanded = saved;
             }
+        }
+        if state["expanded"]
+            .as_array()
+            .is_some_and(|saved| saved.len() == 3)
+        {
+            // Merge the previous Usage and Panel keybinds preferences.
+            panel.expanded[0] |= state["expanded"][1].as_bool().unwrap_or(true);
+            panel.expanded[1] = state["expanded"][2].as_bool().unwrap_or(false);
         }
         panel
     }
@@ -171,7 +192,7 @@ impl Panel for DocsPanel {
         "Docs".into()
     }
     fn save(&self, _: &World) -> Value {
-        json!({"zoom": self.zoom, "expanded": self.expanded})
+        json!({"zoom": self.zoom, "expanded": self.expanded, "symbol_expanded": self.symbol_expanded})
     }
     fn draw(&mut self, ui: &Ui, world: &mut World, _: &mut Vec<Action>, input: &ShortcutInput) {
         let source = target(world);
@@ -182,6 +203,9 @@ impl Panel for DocsPanel {
         }
         let record = source.and_then(|entity| world.get::<PanelRecord>(entity));
         let docs = source.and_then(|entity| world.get::<PanelDocumentation>(entity));
+        if let Some(symbol) = docs.and_then(|docs| docs.symbol.as_ref()) {
+            self.symbol = Some(symbol.clone());
+        }
         let context = record
             .and_then(|r| world.resource::<api::Registry>().panel(&r.panel_type))
             .map(|p| p.label)
@@ -252,8 +276,21 @@ impl Panel for DocsPanel {
             false,
         );
         let global_keys = key_rows(&input.bindings, None, None, true);
+        let animations = world.resource::<crate::WorkbenchAppearance>().animations;
+        let usage = if source.is_none() {
+            vec![(String::new(), "Focus a panel to see its docs".into())]
+        } else if let Some(docs) = docs.filter(|docs| !docs.sections.is_empty()) {
+            docs.sections
+                .iter()
+                .map(|section| (section.title.clone(), section.body.clone()))
+                .collect()
+        } else {
+            vec![(
+                String::new(),
+                "No usage notes published for this panel.".into(),
+            )]
+        };
         let _font = ui.push_font_with_size(None, ui.current_font_size() * self.zoom);
-        ui.text_wrapped(context);
         let _spacing = ui.push_style_var(StyleVar::ItemSpacing([6.0 * self.zoom, 4.0 * self.zoom]));
         let _padding =
             ui.push_style_var(StyleVar::FramePadding([3.0 * self.zoom, 2.0 * self.zoom]));
@@ -269,21 +306,34 @@ impl Panel for DocsPanel {
             .size([0.0, 0.0])
             .flags(flags)
             .build(ui, || {
-                for (index, label) in ["Usage", "Panel keybinds", "Global keybinds"]
-                    .into_iter()
-                    .enumerate()
-                {
+                ui.set_next_item_open(self.symbol_expanded);
+                let width =
+                    (ui.content_region_avail()[0] - ui.current_font_size() - 6.0 * self.zoom)
+                        .max(0.0);
+                let heading = bed_ui::presentation::fit_text(ui, "Symbol", width);
+                self.symbol_expanded = ui
+                    .collapsing_header(format!("{heading}###docs_symbol"), TreeNodeFlags::empty());
+                if ui.is_item_hovered() {
+                    ui.tooltip_text("Symbol");
+                }
+                self.disclosures[0].draw(ui, self.symbol_expanded, animations, || {
+                    self.symbol_transition
+                        .draw(ui, &self.symbol, animations, |ui, symbol| {
+                            if let Some(symbol) = symbol {
+                                symbol.render(ui);
+                            } else {
+                                ui.text_wrapped(
+                                    "Select a symbol in an editor to see its documentation.",
+                                );
+                            }
+                        });
+                });
+                for (index, label) in [context, "Keybinds"].into_iter().enumerate() {
                     ui.set_next_item_open(self.expanded[index]);
                     let width =
                         (ui.content_region_avail()[0] - ui.current_font_size() - 6.0 * self.zoom)
                             .max(0.0);
-                    let short = ["Usage", "Keybinds", "Global"][index];
-                    let heading = if ui.calc_text_size(label)[0] <= width {
-                        label
-                    } else {
-                        short
-                    };
-                    let heading = bed_ui::presentation::fit_text(ui, heading, width);
+                    let heading = bed_ui::presentation::fit_text(ui, label, width);
                     self.expanded[index] = ui.collapsing_header(
                         format!("{heading}###docs_section_{index}"),
                         TreeNodeFlags::empty(),
@@ -291,39 +341,39 @@ impl Panel for DocsPanel {
                     if ui.is_item_hovered() {
                         ui.tooltip_text(label);
                     }
-                    if !self.expanded[index] {
-                        continue;
-                    }
-                    if index == 0 {
-                        if source.is_none() {
-                            ui.text_wrapped("Focus a panel to see its docs");
-                        } else if let Some(docs) = docs.filter(|docs| !docs.sections.is_empty()) {
-                            for section in &docs.sections {
-                                if !section.title.is_empty() {
-                                    let _color = ui.push_style_color(
-                                        dear_imgui_rs::StyleColor::Text,
-                                        ui.style_color(dear_imgui_rs::StyleColor::TextDisabled),
-                                    );
-                                    ui.text_wrapped(&section.title);
-                                }
-                                ui.text_wrapped(&section.body);
-                            }
-                        } else {
-                            ui.text_wrapped("No usage notes published for this panel.");
+                    self.disclosures[index + 1].draw(ui, self.expanded[index], animations, || {
+                        if index == 0 {
+                            self.usage_transition
+                                .draw(ui, &usage, animations, |ui, sections| {
+                                    for (title, body) in sections {
+                                        if !title.is_empty() {
+                                            let _color = ui.push_style_color(
+                                                dear_imgui_rs::StyleColor::Text,
+                                                ui.style_color(
+                                                    dear_imgui_rs::StyleColor::TextDisabled,
+                                                ),
+                                            );
+                                            ui.text_wrapped(title);
+                                        }
+                                        ui.text_wrapped(body);
+                                    }
+                                });
+                            ui.separator();
                         }
-                    } else {
-                        let rows = if index == 1 {
+                        let rows = if index == 0 {
                             &panel_keys
                         } else {
                             &global_keys
                         };
-                        if rows.is_empty() {
-                            ui.text_wrapped("No bound shortcuts.");
-                        }
-                        for row in rows {
-                            draw_key_row(ui, row, world.get_non_send::<bed_ui::icons::Icons>());
-                        }
-                    }
+                        self.key_transitions[index].draw(ui, rows, animations, |ui, rows| {
+                            if rows.is_empty() {
+                                ui.text_wrapped("No bound shortcuts.");
+                            }
+                            for row in rows {
+                                draw_key_row(ui, row, world.get_non_send::<bed_ui::icons::Icons>());
+                            }
+                        });
+                    });
                 }
                 self.scroll = ui.scroll_y();
             });

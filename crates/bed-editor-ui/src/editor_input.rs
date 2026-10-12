@@ -35,6 +35,7 @@ pub struct EditorInput {
     dragging: bool,
     anchor: Option<(i32, i32)>,
     definition_request: Option<DefinitionRequest>,
+    symbol_request: Option<(i32, i32)>,
     visual_navigation: Option<VisualNavigation>,
     typed_text: Option<String>,
     prefix_backspace: bool,
@@ -49,6 +50,7 @@ impl Default for EditorInput {
             dragging: false,
             anchor: None,
             definition_request: None,
+            symbol_request: None,
             visual_navigation: None,
             typed_text: None,
             prefix_backspace: false,
@@ -118,6 +120,7 @@ impl EditorInput {
         read_only: bool,
     ) -> Vec<HostAction> {
         self.definition_request = None;
+        self.symbol_request = None;
         self.typed_text = None;
         self.prefix_backspace = false;
         if ui.is_window_hovered_with_flags(WindowHoveredFlags::ALLOW_WHEN_BLOCKED_BY_ACTIVE_ITEM) {
@@ -131,6 +134,9 @@ impl EditorInput {
 
     pub fn take_definition_request(&mut self) -> Option<DefinitionRequest> {
         self.definition_request.take()
+    }
+    pub fn take_symbol_request(&mut self) -> Option<(i32, i32)> {
+        self.symbol_request.take()
     }
     pub fn take_typed_text(&mut self) -> Option<String> {
         self.typed_text.take()
@@ -557,6 +563,9 @@ impl EditorInput {
                 self.definition_request = Some(DefinitionRequest { row, column: col });
             }
             return;
+        }
+        if allow_navigation && ui.is_mouse_clicked(MouseButton::Left) {
+            self.symbol_request = Some((row, col));
         }
         if ui.is_mouse_double_clicked(MouseButton::Left) {
             self.visual_navigation = None;

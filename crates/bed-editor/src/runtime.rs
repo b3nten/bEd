@@ -421,7 +421,8 @@ impl EditorRuntime {
         }
         self.language_actions.render(ui, view, session, requests)?;
         self.completion.observe(&response, session, &config.lsp)?;
-        self.completion.render(ui, view, session)?;
+        self.completion
+            .render(ui, view, session, config.navigation_animations)?;
         for (view, command) in self.completion.take_commands() {
             if let Err(error) = self
                 .language_actions
@@ -1249,6 +1250,11 @@ impl EditorRuntime {
                     session.retry_server(&instance)?;
                 }
             }
+            LspAction::InstallRustTooling(instance) => {
+                if let Some(pool) = session.lsp_mut() {
+                    pool.install_rust_tooling(&instance)?;
+                }
+            }
             LspAction::OpenLocation(location) => {
                 let origin = self.lsp_ui.take_navigation_origin();
                 if let Some(origin) = origin
@@ -1457,6 +1463,60 @@ mod tests {
             .unwrap();
         assert_eq!(generation(&session, &first), first_before);
         assert_ne!(generation(&session, &second), second_before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dashboard_install_action_repairs_the_selected_rust_server() {
+        use crate::rustup_fixture::RustupFixture;
+        use bed_document_session::SessionOptions;
+        use bed_lsp::workspace_lsp::ServerInstanceId;
+        use std::{
+            thread,
+            time::{Duration, Instant},
+        };
+        let fixture = RustupFixture::new();
+        let root = fixture.root("first");
+        let mut session = EditorSession::with_options(SessionOptions {
+            project_root: Some(root.clone()),
+            lsp_config: Some(fixture.config.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+        let instance = ServerInstanceId {
+            server: "rust-analyzer".into(),
+            root,
+        };
+        session.retry_server(&instance).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while session.lsp().unwrap().server_statuses()[0]
+            .rust_issue
+            .is_none()
+        {
+            session.tick();
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        let mut requests = Vec::new();
+        EditorRuntime::default()
+            .open_lsp_action(
+                &mut session,
+                LspAction::InstallRustTooling(instance.clone()),
+                &mut requests,
+            )
+            .unwrap();
+        assert!(requests.is_empty());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !session.lsp().unwrap().server_statuses()[0].initialized {
+            session.tick();
+            assert!(
+                Instant::now() < deadline,
+                "{:?}",
+                session.lsp().unwrap().server_statuses()
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(fixture.dir.path("installed").exists());
     }
 
     #[cfg(unix)]

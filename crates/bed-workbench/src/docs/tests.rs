@@ -61,7 +61,7 @@ fn docs_reuses_its_panel_and_tracks_live_frontends_across_focus_and_layout_chang
     assert_eq!(world.resource::<WorkbenchLayout>().focused, Some(docs));
     let saved = crate::panel_state(world, docs).unwrap();
     assert!((saved["zoom"].as_f64().unwrap() - 0.7).abs() < 0.00001);
-    assert_eq!(saved["expanded"], json!([false, true, true]));
+    assert_eq!(saved["expanded"], json!([true, true]));
     world.entity_mut(work).insert(api::PanelSuspended);
     assert_eq!(
         target(world),
@@ -181,12 +181,22 @@ fn zoom_and_sections_round_trip_and_external_zoom_is_bounded() {
     let world = World::new();
     let mut panel = DocsPanel::from_state(&Value::Null);
     assert_eq!(panel.zoom, 1.0);
-    assert_eq!(panel.expanded, [true, true, false]);
-    panel.expanded = [false, true, true];
+    assert_eq!(panel.expanded, [true, false]);
+    panel.expanded = [false, true];
+    panel.symbol_expanded = false;
     panel.zoom_by(1.0 / 1.1);
     let restored = DocsPanel::from_state(&panel.save(&world));
     assert_eq!(restored.zoom, panel.zoom);
     assert_eq!(restored.expanded, panel.expanded);
+    assert!(!restored.symbol_expanded);
+    assert_eq!(
+        DocsPanel::from_state(&json!({"expanded":[false,false,true]})).expanded,
+        [false, true],
+    );
+    assert_eq!(
+        DocsPanel::from_state(&json!({"expanded":[false,true,false]})).expanded,
+        [true, false],
+    );
     panel.zoom_by(1e6);
     assert_eq!(panel.zoom, 2.0);
     panel.zoom_by(1e-6);
@@ -219,6 +229,11 @@ fn narrow_docs_wraps_and_keyboard_and_captured_pinch_zoom_keep_the_reading_posit
         "Guide",
         &"A short explanation of how to use this focused panel. ".repeat(40),
     )]));
+    world.get_mut::<PanelDocumentation>(work).unwrap().symbol = Some(
+        "pub fn documented_symbol(name: &str) -> usize\n\nDocumentation for the clicked symbol. "
+            .repeat(8)
+            .into(),
+    );
     let mut icons = bed_ui::icons::Icons::default();
     for key in ["key-command", "key-shift", "key-option", "key-control"] {
         icons.set_texture(key, dear_imgui_rs::TextureId::new(99));
@@ -482,4 +497,57 @@ fn embedded_widgets_can_publish_only_the_actions_they_handle() {
             keys: "LeftArrow".into()
         },]
     );
+}
+
+#[test]
+fn symbol_documentation_survives_focus_changes_and_updates_to_the_next_symbol() {
+    use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
+    let _lock = crate::tests::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut app = app();
+    let world = app.world_mut();
+    let first = open_panel(world, json!({"panel_type":"fixture.first"}), None, None).unwrap();
+    let second = open_panel(world, json!({"panel_type":"fixture.second"}), None, None).unwrap();
+    let documentation = bed_ui::documentation::Documentation {
+        text: "```rust\npub fn selected_symbol()\n```\n\nA **documented** `symbol`.".into(),
+        markdown: true,
+        language: "rust".into(),
+        ..Default::default()
+    };
+    world.entity_mut(first).insert(PanelDocumentation {
+        symbol: Some(documentation.clone()),
+        ..Default::default()
+    });
+    let mut context = Context::create();
+    context
+        .set_ini_filename(None::<std::path::PathBuf>)
+        .unwrap();
+    context
+        .font_atlas()
+        .try_claim_legacy_renderer()
+        .unwrap()
+        .build();
+    let input = ShortcutInput::default();
+    let mut panel = DocsPanel::from_state(&Value::Null);
+    let draw = |context: &mut Context, panel: &mut DocsPanel, world: &mut World| {
+        context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], 1.0 / 60.0));
+        let ui = context.frame();
+        ui.window("Symbol retention fixture")
+            .size([260.0, 380.0], Condition::Always)
+            .build(|| panel.draw(ui, world, &mut Vec::new(), &input));
+        drop(context.render_legacy());
+    };
+    focus_panel(world, first);
+    draw(&mut context, &mut panel, world);
+    assert_eq!(panel.symbol.as_ref(), Some(&documentation));
+    focus_panel(world, second);
+    draw(&mut context, &mut panel, world);
+    assert_eq!(panel.source, Some(second));
+    assert_eq!(panel.symbol.as_ref(), Some(&documentation));
+    let next = bed_ui::documentation::Documentation::from("Literal **punctuation**.".to_owned());
+    world.entity_mut(second).insert(PanelDocumentation {
+        symbol: Some(next.clone()),
+        ..Default::default()
+    });
+    draw(&mut context, &mut panel, world);
+    assert_eq!(panel.symbol.as_ref(), Some(&next));
 }

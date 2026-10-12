@@ -22,3 +22,8 @@ pub mod presentation;
 pub mod util;
 #[cfg(all(test, feature = "imgui"))]
 static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(feature = "documentation")]
+pub mod documentation;
+#[cfg(feature = "documentation")]
+pub mod documentation_markdown;

@@ -29,6 +29,9 @@ use std::{cell::RefCell, io, path::Path};
 #[cfg(test)]
 pub(crate) static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[cfg(all(test, unix))]
+#[path = "../../../tests/support/rustup_fixture.rs"]
+pub(crate) mod rustup_fixture;
 #[cfg(test)]
 #[allow(dead_code)]
 #[path = "../../../tests/support/temp_dir.rs"]
@@ -51,7 +54,7 @@ pub const LSP_DASHBOARD_PANEL_TYPE: &str = "bed.editor.language-servers-panel";
 #[derive(Clone, Debug)]
 pub struct EditorConfig {
     pub options: EditorViewOptions,
-    /// Animate explicit navigation jumps and zoom resets.
+    /// Animate navigation, zoom resets, and completion selection/documentation.
     pub navigation_animations: bool,
     pub lsp: crate::presentation::LspPresentationOptions,
 }

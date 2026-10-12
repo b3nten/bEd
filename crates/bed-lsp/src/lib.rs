@@ -12,6 +12,7 @@ pub mod lsp_request;
 pub mod lsp_uri;
 pub mod message_handler;
 pub mod process;
+pub mod rust_recovery;
 mod workspace_diagnostics;
 pub mod workspace_lsp;
 

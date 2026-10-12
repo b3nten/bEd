@@ -6,4 +6,4 @@ pub mod lsp_symbol_info;
 pub mod lsp_ui;
 pub mod lsp_uri_options;
 #[cfg(test)]
-mod test_fixture;
+pub(crate) mod test_fixture;

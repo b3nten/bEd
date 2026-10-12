@@ -5,6 +5,80 @@ use std::ffi::CString;
 use workspace::tiling::{EXTENT, Layout, Rect};
 
 #[test]
+fn tab_bar_tooltips_are_styled_and_animate_when_the_hover_target_changes() {
+    let _lock = tests::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = Fixture::new();
+    {
+        let mut appearance = fixture
+            .app
+            .world_mut()
+            .resource_mut::<WorkbenchAppearance>();
+        appearance.animations = true;
+        appearance.add_button = true;
+    }
+    fixture.settle();
+    let tab_points = fixture.panels[..2]
+        .iter()
+        .map(|&panel| {
+            let (min, max) = tab_bounds(fixture.app.world(), panel).unwrap();
+            [min[0] + (max[0] - min[0]) * 0.4, (min[1] + max[1]) * 0.5]
+        })
+        .collect::<Vec<_>>();
+    let (bar_min, bar_max) = fixture
+        .app
+        .world()
+        .non_send::<tiling_ui::TilingFrontend>()
+        .tiling_ui
+        .bar_rects[&1];
+    let add_point = [
+        bar_min[0] + (bar_max[1] - bar_min[1]) * 0.5,
+        (bar_min[1] + bar_max[1]) * 0.5,
+    ];
+    for point in tab_points.into_iter().chain([add_point]) {
+        fixture.context.io_mut().add_mouse_pos_event(point);
+        let mut alphas = Vec::new();
+        for _ in 0..20 {
+            fixture.frame();
+            let alpha = fixture.context.binding().with_bound_context(|| unsafe {
+                let context = &*sys::igGetCurrentContext();
+                let window = (0..context.Windows.Size).find_map(|index| {
+                    let window = &**context.Windows.Data.add(index as usize);
+                    (window.Active
+                        && !window.Hidden
+                        && window.Flags & sys::ImGuiWindowFlags_Tooltip != 0)
+                        .then_some(window)
+                })?;
+                assert_eq!(
+                    window.WindowRounding,
+                    bed_ui::util::popup_style::POPUP_ROUNDING
+                );
+                assert_eq!(
+                    window.WindowBorderSize,
+                    bed_ui::util::popup_style::POPUP_BORDER_SIZE
+                );
+                assert_eq!(
+                    [window.WindowPadding.x, window.WindowPadding.y],
+                    [12.0, 10.0]
+                );
+                assert_eq!(window.ViewportId, (*sys::igGetMainViewport()).ID);
+                let draw = &*window.DrawList;
+                (0..draw.VtxBuffer.Size as usize)
+                    .map(|index| (*draw.VtxBuffer.Data.add(index)).col >> 24)
+                    .max()
+            });
+            if let Some(alpha) = alpha {
+                alphas.push(alpha);
+            }
+        }
+        assert!(
+            alphas.iter().any(|alpha| *alpha < 200),
+            "opening animation missing: {alphas:?}"
+        );
+        assert_eq!(alphas.last(), Some(&255));
+    }
+}
+
+#[test]
 fn double_clicking_a_preview_tab_keeps_it_and_italic_titles_render_through_the_compositor() {
     let _lock = tests::IMGUI_TEST_LOCK.lock().unwrap();
     let mut fixture = Fixture::new();

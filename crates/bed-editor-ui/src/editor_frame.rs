@@ -654,6 +654,8 @@ impl EditorFrame {
                         ) * self.layout.line_height)
                         .floor(),
                 ];
+                self.tooltip_arbiter
+                    .set_caret_line(self.caret_position[1], self.layout.line_height);
                 self.update_hover_trigger(ui, editor, gutter_pos, gutter_width);
                 TextView::draw_projected(
                     ui,

@@ -13,6 +13,7 @@ use crate::{
     lsp_uri::LspUri,
     message_handler::{MAX_STDERR_BYTES, RpcEvent, RpcSession},
     process::ProcessOptions,
+    rust_recovery::{RustStartupIssue, RustupLaunch, diagnose, probe},
     workspace_diagnostics::{
         Input as WorkspacePullInput, Inputs as WorkspacePullInputs,
         Provider as WorkspaceDiagnosticProvider, WorkspaceDiagnosticPull,
@@ -255,6 +256,11 @@ pub struct LspClient {
     session: Option<RpcSession>,
     initialize_result: Option<mpsc::Receiver<Result<Value, ResponseError>>>,
     last_error: Option<String>,
+    startup_failure: Option<String>,
+    rust_issue: Option<RustStartupIssue>,
+    rust_probe_key: Option<RustStartupIssue>,
+    rust_probe: Option<mpsc::Receiver<Option<RustStartupIssue>>>,
+    rustup_launch: Option<RustupLaunch>,
     stderr_tail: VecDeque<u8>,
     stderr_pending: RefCell<VecDeque<u8>>,
     progress: Rc<RefCell<ProgressState>>,
@@ -284,6 +290,11 @@ impl LspClient {
             session: None,
             initialize_result: None,
             last_error: None,
+            startup_failure: None,
+            rust_issue: None,
+            rust_probe_key: None,
+            rust_probe: None,
+            rustup_launch: None,
             stderr_tail: VecDeque::new(),
             stderr_pending: RefCell::new(VecDeque::new()),
             progress: Rc::new(RefCell::new(ProgressState::default())),
@@ -309,6 +320,7 @@ impl LspClient {
         self.sync.set_configuration(&config);
         self.config = config;
         self.last_error = None;
+        self.clear_startup_issue();
     }
 
     pub fn reload_config(&mut self) -> io::Result<()> {
@@ -317,6 +329,7 @@ impl LspClient {
                 self.config = config;
                 self.sync.set_configuration(&self.config);
                 self.last_error = None;
+                self.clear_startup_issue();
                 Ok(())
             }
             Err(error) => {
@@ -345,6 +358,9 @@ impl LspClient {
 
     pub fn workspace(&self) -> &str {
         &self.workspace
+    }
+    pub fn is_remote(&self) -> bool {
+        self.ssh_target.is_some()
     }
     pub fn config(&self) -> &LspConfig {
         &self.config
@@ -490,6 +506,29 @@ impl LspClient {
     pub fn stderr_text(&self) -> String {
         String::from_utf8_lossy(&self.stderr_tail.iter().copied().collect::<Vec<_>>()).into_owned()
     }
+    pub fn rust_startup_issue(&self) -> Option<&RustStartupIssue> {
+        self.rust_issue.as_ref()
+    }
+    pub fn startup_error_details(&self) -> Option<String> {
+        self.startup_failure.as_ref().map(|error| {
+            let stderr = self.stderr_text();
+            if stderr.trim().is_empty() {
+                error.clone()
+            } else {
+                format!("{error}\n{}", stderr.trim())
+            }
+        })
+    }
+    pub(crate) fn rustup_launch(&self) -> Option<RustupLaunch> {
+        self.rustup_launch.clone()
+    }
+    fn clear_startup_issue(&mut self) {
+        self.startup_failure = None;
+        self.rust_issue = None;
+        self.rust_probe_key = None;
+        self.rust_probe = None;
+        self.rustup_launch = None;
+    }
     /// Active jobs followed by recent completed jobs; initialization alone is
     /// not a statement that workspace loading/indexing has completed.
     pub fn progress(&self) -> Vec<WorkDoneProgress> {
@@ -541,6 +580,7 @@ impl LspClient {
             return Ok(true);
         }
         self.session.take();
+        self.clear_startup_issue();
         self.sync.disconnect();
         self.current_server = self.config.server_id(language).unwrap_or(language).into();
         let server = self.config.server(language).cloned().ok_or_else(|| {
@@ -626,6 +666,9 @@ impl LspClient {
                 },
             )
         };
+        if !remote && self.current_server == "rust-analyzer" {
+            self.rustup_launch = RustupLaunch::for_server(&program, &options);
+        }
         self.stderr_tail.clear();
         self.stderr_pending.borrow_mut().clear();
         *self.progress.borrow_mut() = ProgressState::default();
@@ -663,6 +706,7 @@ impl LspClient {
         let Some(session) = self.session.as_mut() else {
             return Vec::new();
         };
+        let was_initialized = self.sync.is_ready();
         let sync = &mut self.sync;
         let initialize_result = &mut self.initialize_result;
         let last_error = &mut self.last_error;
@@ -697,6 +741,12 @@ impl LspClient {
                     self.last_error = Some(error.to_string());
                 }
                 RpcEvent::Disconnected(error) => {
+                    if !was_initialized
+                        && !self.sync.is_ready()
+                        && self.current_server == "rust-analyzer"
+                    {
+                        self.startup_failure = Some(error.clone());
+                    }
                     *self.progress.borrow_mut() = ProgressState::default();
                     self.sync.disconnect();
                     self.document_pull = DocumentDiagnosticPull::default();
@@ -713,6 +763,34 @@ impl LspClient {
                 }
                 _ => {}
             }
+        }
+        // Stderr readers can publish their last bytes after the EOF event.
+        // Revisit the startup failure while disconnected, without re-probing
+        // the same diagnosis on every frame.
+        if self.startup_failure.is_some() {
+            if let Some(issue) = diagnose(&self.stderr_text())
+                && self.rust_probe_key.as_ref() != Some(&issue)
+            {
+                self.rust_probe_key = Some(issue.clone());
+                if self.ssh_target.is_some() {
+                    self.rust_issue = Some(issue);
+                } else if let Some(launch) = self.rustup_launch.clone() {
+                    self.rust_probe = Some(probe(launch, issue));
+                }
+            }
+            if let Some(result) = self
+                .rust_probe
+                .as_ref()
+                .and_then(|receiver| receiver.try_recv().ok())
+            {
+                self.rust_probe = None;
+                self.rust_issue = result;
+            }
+            self.last_error = self
+                .rust_issue
+                .as_ref()
+                .map(RustStartupIssue::message)
+                .or_else(|| self.startup_error_details());
         }
         if let Some(session) = self.session.as_mut() {
             self.document_pull.poll(
@@ -914,6 +992,7 @@ impl LspClient {
     }
 
     pub fn stop_server(&mut self) {
+        self.clear_startup_issue();
         if let Some(mut session) = self.session.take() {
             session.shutdown();
         }
@@ -1407,6 +1486,36 @@ pub type SharedLspClient = std::rc::Rc<std::cell::RefCell<LspClient>>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn late_rustup_stderr_updates_remote_startup_error_without_local_queries() {
+        let directory = crate::test_support::TempDir::new();
+        let mut client = LspClient::new(directory.path("lsp.json"));
+        client.set_ssh_target(Some(bed_remote::SshTarget::new("fixture-host")));
+        // Simulate EOF being published before the stderr reader's final bytes.
+        client.current_server = "rust-analyzer".into();
+        client.session = Some(RpcSession::start(Path::new("/bin/cat"), &[]).unwrap());
+        client.startup_failure = Some("LSP header reached EOF".into());
+        client.poll();
+        assert_eq!(client.last_error(), Some("LSP header reached EOF"));
+        retain_stderr(&mut client.stderr_tail, b"launcher log\nerror: Unknown binary 'rust-analyzer' in official toolchain '1.99.0-aarch64-apple-darwin'.\n");
+        client.poll();
+        let issue = client.rust_startup_issue().unwrap();
+        assert!(!issue.install_available);
+        assert!(
+            client
+                .last_error()
+                .unwrap()
+                .contains("missing rust-analyzer")
+        );
+        assert!(
+            client
+                .startup_error_details()
+                .unwrap()
+                .contains("LSP header reached EOF")
+        );
+        assert!(client.rust_probe.is_none());
+        assert!(client.rustup_launch.is_none());
+    }
     #[test]
     fn watched_files_support_relative_patterns_kinds_and_literal_roots() {
         let watch = WatchedFile::parse(&json!({"globPattern":{"baseUri":{"uri":"file:///project/a%27b"},"pattern":"**/*.{rs,toml}"},"kind":5}), false).unwrap();

@@ -67,6 +67,8 @@ pub struct ViewResponse {
     pub source_hover: Option<crate::extensions::SourceHoverObservation>,
     pub diff_actions: Vec<crate::DiffAction>,
     pub definition_request: Option<DefinitionRequest>,
+    /// Documentation at an ordinary click, in document UTF-8 byte coordinates.
+    pub symbol_request: Option<(i32, i32)>,
     /// Ordinary committed text, excluding paste, commands and programmatic edits.
     pub typed_text: Option<String>,
     pub prefix_backspace: bool,
@@ -303,6 +305,7 @@ impl EditorView {
                                 source_hover: None,
                                 diff_actions: self.frame.take_diff_actions(),
                                 definition_request: self.input.take_definition_request(),
+                                symbol_request: self.input.take_symbol_request(),
                                 typed_text: self.input.take_typed_text(),
                                 prefix_backspace: self.input.prefix_backspace(),
                             }
@@ -374,6 +377,10 @@ impl EditorView {
                                         &format!("##debug_hover_{}", self.id.0),
                                         hover.anchor,
                                         self.source_hover_rect,
+                                        Some([
+                                            presentation.caret_position[1],
+                                            presentation.caret_position[1] + layout.line_height,
+                                        ]),
                                         || {
                                             ui.text(&hover.expression);
                                             ui.separator();
@@ -414,6 +421,7 @@ impl EditorView {
                         source_hover: None,
                         diff_actions: Vec::new(),
                         definition_request: None,
+                        symbol_request: None,
                         typed_text: None,
                         prefix_backspace: false,
                     })
@@ -772,6 +780,55 @@ mod tests {
         for &mac_mapping in mappings {
             verify_primary_click(mac_mapping);
         }
+    }
+
+    #[test]
+    fn ordinary_click_requests_symbol_docs_only_in_the_clicked_unblocked_view() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut session = EditorSession::new();
+        let document = session
+            .create_document("prefix\né🙂target tail".as_bytes())
+            .unwrap();
+        let mut left = EditorView::new(&mut session, document).unwrap();
+        let mut right = EditorView::new(&mut session, document).unwrap();
+        frame(&mut context, &mut session, &mut left, &mut right, false);
+        let (_, target) = frame(&mut context, &mut session, &mut left, &mut right, false);
+        context.io_mut().add_mouse_pos_event(target);
+        frame(&mut context, &mut session, &mut left, &mut right, false);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        let (responses, _) = frame(&mut context, &mut session, &mut left, &mut right, false);
+        assert_eq!(responses[0].symbol_request, None);
+        assert_eq!(responses[1].symbol_request, Some((1, 6)));
+        assert_eq!(responses[1].definition_request, None);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, false);
+        let (responses, _) = frame(&mut context, &mut session, &mut left, &mut right, false);
+        assert!(
+            responses
+                .iter()
+                .all(|response| response.symbol_request.is_none())
+        );
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        let (responses, _) = frame(&mut context, &mut session, &mut left, &mut right, true);
+        assert!(
+            responses
+                .iter()
+                .all(|response| response.symbol_request.is_none())
+        );
     }
 
     fn verify_primary_click(mac_mapping: bool) {

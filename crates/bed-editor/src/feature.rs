@@ -1,5 +1,6 @@
 //! The session owns documents and selections; typed main-thread state owns widgets.
 use super::*;
+use crate::lsp::lsp_symbol_info::LspSymbolDocumentation;
 use bed_editor_api::{
     EditorFeatureSystems, EditorFrame, EditorIntents, EditorPanelActions, EditorPanelBinding,
     EditorPanelClose, EditorPanelFocus, PanelActionInvocation, PanelActionResult,
@@ -413,6 +414,7 @@ fn create_editor(world: &mut World, creation: PanelCreation, hex: bool) -> Panel
             hex,
         },
         hooks,
+        LspSymbolDocumentation::default(),
     ));
     if let Some(revision) = initial_revision {
         world
@@ -518,6 +520,7 @@ impl Panel for EditorFrontend {
         let window = crate::zoom::window(ui);
         let menu = bed_editor_api::panel_viewer_menu(world, self.entity, TEXT_VIEWER);
         let mut requests = Vec::new();
+        let mut symbol_request = None;
         let result = with_editor(world, |views, runtime, session| {
             if let Some(tool) = self.tool {
                 return runtime.draw_tool(tool, ui, session, &mut requests);
@@ -529,11 +532,12 @@ impl Panel for EditorFrontend {
             {
                 Widget::Text(view) => {
                     runtime.set_viewer_menu(view.id(), menu);
-                    draw_text_view(ui, view, runtime, session, &config, &mut requests).map(
-                        |drawn| {
-                            response = Some(drawn);
-                        },
-                    )
+                    let drawn = draw_text_view(ui, view, runtime, session, &config, &mut requests)?;
+                    if let Some((row, column)) = drawn.symbol_request {
+                        symbol_request = Some((view.id(), row, column));
+                    }
+                    response = Some(drawn);
+                    Ok(())
                 }
                 Widget::Hex(editor) => {
                     editor.get_mut().shortcuts = config.options.shortcuts.clone();
@@ -541,6 +545,18 @@ impl Panel for EditorFrontend {
                 }
             }
         });
+        if let Some((view, row, column)) = symbol_request {
+            let mut state = bevy::ecs::system::SystemState::<(
+                NonSendMut<EditorSession>,
+                Query<&mut LspSymbolDocumentation>,
+            )>::new(world);
+            let (mut session, mut docs) =
+                state.get_mut(world).expect("editor services are installed");
+            let mut symbol = docs.get_mut(self.entity).expect("text frontend owns docs");
+            if let Err(error) = symbol.request(&mut session, view, row, column) {
+                ui.text_disabled(error.to_string());
+            }
+        }
         world.entity_mut(self.entity).insert(window);
         if before.is_some_and(|(document, revision)| {
             world
@@ -821,6 +837,22 @@ fn prepare(world: &mut World) {
         }
         runtime.tick(session, &mut requests)
     });
+    // Publish replies even when Docs has replaced the editor's visible tab.
+    {
+        let mut state = bevy::ecs::system::SystemState::<(
+            NonSend<EditorSession>,
+            Query<(
+                &LspSymbolDocumentation,
+                &mut bed_workbench_api::PanelDocumentation,
+            )>,
+        )>::new(world);
+        let (session, mut docs) = state.get_mut(world).expect("editor services are installed");
+        for (symbol, mut notes) in &mut docs {
+            if let Some(documentation) = symbol.snapshot(&session) {
+                notes.symbol = Some(documentation);
+            }
+        }
+    }
     for request in requests {
         world.resource_mut::<EditorIntents>().push(None, request);
     }
@@ -1512,6 +1544,166 @@ mod tests {
                 .is_empty()
         );
         assert!(!input_is_empty(app.world(), entity));
+    }
+
+    #[test]
+    fn clicked_frontend_publishes_docs_after_it_stops_drawing() {
+        use dear_imgui_rs::{Condition, Context, FramePrepareOptions, MouseButton};
+        use std::time::{Duration, Instant};
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let (_directory, session, document) =
+            crate::lsp::test_fixture::session_mode("hover-delayed");
+        let mut app = app();
+        app.world_mut().insert_non_send(session);
+        let (entity, mut frontend) = attach(&mut app, TEXT_PANEL_TYPE, document, None, Value::Null);
+        let input = bed_workbench_api::ShortcutInput::default();
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut draw = |context: &mut Context, app: &mut App| {
+            context.prepare_frame(FramePrepareOptions::new([600.0, 400.0], 1.0 / 60.0));
+            let ui = context.frame();
+            let mut target = [0.0; 2];
+            ui.window("Symbol docs editor")
+                .position([0.0; 2], Condition::Always)
+                .size([600.0, 400.0], Condition::Always)
+                .build(|| {
+                    frontend.draw(ui, app.world_mut(), &mut Vec::new(), &input);
+                    let views = app.world().non_send::<EditorViews>();
+                    let layout = views.text(entity).unwrap().presentation().layout;
+                    target = [
+                        bed_editor_ui::views::view_layout::line_column_x(
+                            ui,
+                            b"let value = St",
+                            12,
+                            layout.text_pos[0],
+                        ) + 1.0,
+                        layout.text_pos[1] + layout.line_height * 0.5,
+                    ];
+                });
+            drop(context.render_legacy());
+            target
+        };
+        draw(&mut context, &mut app);
+        let target = draw(&mut context, &mut app);
+        context.io_mut().add_mouse_pos_event(target);
+        draw(&mut context, &mut app);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        draw(&mut context, &mut app);
+        assert!(
+            app.world()
+                .get::<bed_workbench_api::PanelDocumentation>(entity)
+                .unwrap()
+                .symbol
+                .is_none()
+        );
+        // No more editor frames: replies must publish through the update schedule.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            app.world_mut().non_send_mut::<EditorSession>().tick();
+            app.update();
+            if let Some(text) = &app
+                .world()
+                .get::<bed_workbench_api::PanelDocumentation>(entity)
+                .unwrap()
+                .symbol
+            {
+                assert_eq!(
+                    text.text,
+                    "```rust\npub fn St()\n```\n\nA **Unicode** `string`."
+                );
+                assert!(text.markdown);
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "hidden editor did not publish clicked symbol docs"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // Empty targets and pending replies leave the last published symbol readable.
+        let published = app
+            .world()
+            .get::<bed_workbench_api::PanelDocumentation>(entity)
+            .unwrap()
+            .symbol
+            .clone()
+            .unwrap();
+        {
+            let view = app
+                .world()
+                .non_send::<EditorViews>()
+                .text(entity)
+                .unwrap()
+                .id();
+            let mut state = bevy::ecs::system::SystemState::<(
+                NonSendMut<EditorSession>,
+                Query<&mut LspSymbolDocumentation>,
+            )>::new(app.world_mut());
+            let (mut session, mut symbols) = state.get_mut(app.world_mut()).unwrap();
+            symbols
+                .get_mut(entity)
+                .unwrap()
+                .request(&mut session, view, 0, 0)
+                .unwrap();
+        }
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<bed_workbench_api::PanelDocumentation>(entity)
+                .unwrap()
+                .symbol
+                .as_ref(),
+            Some(&published)
+        );
+        let until = Instant::now() + Duration::from_secs(5);
+        while app
+            .world()
+            .get::<LspSymbolDocumentation>(entity)
+            .unwrap()
+            .pending()
+        {
+            app.world_mut().non_send_mut::<EditorSession>().tick();
+            app.update();
+            assert!(Instant::now() < until, "empty hover did not arrive");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            app.world()
+                .get::<bed_workbench_api::PanelDocumentation>(entity)
+                .unwrap()
+                .symbol
+                .as_ref(),
+            Some(&published)
+        );
+        let mut session = app.world_mut().non_send_mut::<EditorSession>();
+        let revision = session.document_revision(document).unwrap();
+        session
+            .apply_edits(
+                document,
+                revision,
+                &[ByteEdit {
+                    range: 0..0,
+                    bytes: b"x".to_vec(),
+                }],
+            )
+            .unwrap();
+        app.update();
+        assert!(
+            app.world()
+                .get::<bed_workbench_api::PanelDocumentation>(entity)
+                .unwrap()
+                .symbol
+                .is_some()
+        );
     }
 
     #[test]

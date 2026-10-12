@@ -8,6 +8,7 @@ use crate::{
     lsp_config::{LanguageConfiguration, LspConfig},
     lsp_project::{layered_config, resolve_root},
     message_handler::RpcEvent,
+    rust_recovery::{RustInstallStatus, RustStartupIssue, SharedOutput, output_text},
 };
 pub use bed_editing::identity::{DocumentId, ViewId, WorkspaceId};
 use bed_editing::util::doc_path;
@@ -76,6 +77,17 @@ pub struct WorkspaceServerStatus {
     pub stderr: String,
     pub generation: u64,
     pub progress: Vec<WorkDoneProgress>,
+    pub rust_issue: Option<RustStartupIssue>,
+    pub startup_details: Option<String>,
+    pub rust_install: Option<RustInstallStatus>,
+}
+struct RustInstallJob {
+    instance: ServerInstanceId,
+    generation: u64,
+    epoch: u64,
+    receiver: Option<Receiver<io::Result<std::process::ExitStatus>>>,
+    output: SharedOutput,
+    message: String,
 }
 struct ServerSlot {
     client: SharedLspClient,
@@ -218,6 +230,7 @@ pub struct WorkspaceLsp {
     pending_config: Option<DiscoveryJob>,
     config_queued: bool,
     clear_cache_pending: bool,
+    rust_install: Option<RustInstallJob>,
 }
 impl WorkspaceLsp {
     /// Exact supplied configuration, preserving the embedded-host contract.
@@ -254,6 +267,7 @@ impl WorkspaceLsp {
             pending_config: None,
             config_queued: false,
             clear_cache_pending: false,
+            rust_install: None,
         }
     }
     pub fn new_remote(
@@ -971,6 +985,7 @@ impl WorkspaceLsp {
     }
     pub fn poll(&mut self) -> Vec<WorkspaceLspEvent> {
         self.poll_discovery();
+        self.poll_rust_install();
         let mut events = std::mem::take(&mut self.events);
         for (instance, slot) in &self.servers {
             events.extend(slot.client.borrow_mut().poll().into_iter().map(|event| {
@@ -982,6 +997,100 @@ impl WorkspaceLsp {
             }));
         }
         events
+    }
+    pub fn is_installing_rust(&self) -> bool {
+        self.rust_install
+            .as_ref()
+            .is_some_and(|job| job.receiver.is_some())
+    }
+    pub fn install_rust_tooling(&mut self, instance: &ServerInstanceId) -> io::Result<()> {
+        if self.ssh_target.is_some() {
+            return Err(io::Error::other(
+                "Run the Rust repair command on the remote host",
+            ));
+        }
+        if self.is_installing_rust() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "A Rust installation is already running",
+            ));
+        }
+        let slot = self
+            .servers
+            .get(instance)
+            .ok_or_else(|| io::Error::other("Language server no longer exists"))?;
+        let client = slot.client.borrow();
+        let issue = client
+            .rust_startup_issue()
+            .filter(|issue| issue.install_available)
+            .cloned()
+            .ok_or_else(|| io::Error::other("No verified Rust installation is available"))?;
+        let launch = client
+            .rustup_launch()
+            .ok_or_else(|| io::Error::other("Rustup is unavailable"))?;
+        let output = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let retained = output.clone();
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            // A project pin or environment may have changed since diagnosis.
+            // Verify the target again before making the requested mutation.
+            let result = if launch.verify(issue.clone()).as_ref() == Some(&issue) {
+                launch.run(&issue.arguments(), retained, None)
+            } else {
+                Err(io::Error::other(
+                    "Rust toolchain selection or component availability changed; restart the language server to refresh the diagnosis",
+                ))
+            };
+            let _ = sender.send(result);
+        });
+        self.rust_install = Some(RustInstallJob {
+            instance: instance.clone(),
+            generation: slot.generation.get(),
+            epoch: self.epoch,
+            receiver: Some(receiver),
+            output,
+            message: "Installing Rust tooling…".into(),
+        });
+        Ok(())
+    }
+    fn poll_rust_install(&mut self) {
+        let result = self
+            .rust_install
+            .as_ref()
+            .and_then(|job| job.receiver.as_ref())
+            .and_then(|receiver| match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Some(Err(io::Error::other("Rust installer worker stopped")))
+                }
+                Err(mpsc::TryRecvError::Empty) => None,
+            });
+        let Some(result) = result else {
+            return;
+        };
+        let mut job = self.rust_install.take().unwrap();
+        job.receiver = None;
+        let current = job.epoch == self.epoch
+            && self
+                .servers
+                .get(&job.instance)
+                .is_some_and(|slot| slot.generation.get() == job.generation);
+        job.message = match result {
+            Ok(status) if status.success() && current => {
+                match self.retry_server(&job.instance) {
+                    Ok(true) => "Rust tooling installed. Language server restarted.".into(),
+                    Ok(false) => "Rust tooling installed, but the language server could not start. See the server error.".into(),
+                    Err(error) => format!("Rust tooling installed, but restart failed: {error}"),
+                }
+            }
+            Ok(status) if status.success() => "Rust tooling installed. The original language server has changed; it was not restarted.".into(),
+            Ok(status) => format!("Rust installation failed: {status}"),
+            Err(error) => format!("Rust installation failed: {error}"),
+        };
+        if current {
+            job.generation = self.servers[&job.instance].generation.get();
+        }
+        self.rust_install = Some(job);
     }
     pub fn retry_language(&mut self, language: &str) -> io::Result<bool> {
         let server = self
@@ -1011,6 +1120,16 @@ impl WorkspaceLsp {
         Ok(started)
     }
     pub fn retry_server(&mut self, instance: &ServerInstanceId) -> io::Result<bool> {
+        if self
+            .rust_install
+            .as_ref()
+            .is_some_and(|job| job.receiver.is_some() && &job.instance == instance)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Wait for the Rust installation to finish before restarting this server",
+            ));
+        }
         if self.config.server(&instance.server).is_none()
             && self.outside_config.server(&instance.server).is_none()
         {
@@ -1091,6 +1210,22 @@ impl WorkspaceLsp {
                 stderr: client.stderr_text(),
                 generation: slot.generation.get(),
                 progress: client.progress(),
+                rust_issue: client.rust_startup_issue().cloned().map(|mut issue| {
+                    issue.install_available &= !self.is_installing_rust();
+                    issue
+                }),
+                startup_details: client.startup_error_details(),
+                rust_install: self
+                    .rust_install
+                    .as_ref()
+                    .filter(|job| {
+                        job.instance == *instance && job.generation == slot.generation.get()
+                    })
+                    .map(|job| RustInstallStatus {
+                        running: job.receiver.is_some(),
+                        message: job.message.clone(),
+                        output: output_text(&job.output),
+                    }),
             });
         }
         for (server, configured) in &self.config.language_servers {
@@ -1118,6 +1253,9 @@ impl WorkspaceLsp {
                 stderr: String::new(),
                 generation: 0,
                 progress: Vec::new(),
+                rust_issue: None,
+                startup_details: None,
+                rust_install: None,
             });
         }
         statuses.sort_by(|a, b| a.instance.cmp(&b.instance));

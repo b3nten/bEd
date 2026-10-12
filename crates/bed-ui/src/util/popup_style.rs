@@ -15,7 +15,15 @@ pub fn tooltip(ui: &Ui, contents: impl FnOnce()) {
 }
 
 pub fn tooltip_text(ui: &Ui, text: impl AsRef<str>) {
-    tooltip(ui, || ui.text(text));
+    let _style = context_menu_style(ui);
+    let padding = [12.0, 10.0];
+    let wrap_width = (ui.current_font_size() * 36.0)
+        .min((ui.window_viewport().work_size()[0] - padding[0] * 4.0).max(1.0));
+    let _padding = ui.push_style_var(StyleVar::WindowPadding(padding));
+    tooltip(ui, || {
+        let _wrap = ui.push_text_wrap_pos(ui.cursor_pos()[0] + wrap_width);
+        ui.text(text);
+    });
 }
 
 /// Derive every control state from the active theme's surface, ink and accent.

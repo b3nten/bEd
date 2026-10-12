@@ -3,6 +3,7 @@ use crate::presentation::LspPresentationOptions;
 use bed_lsp::{
     lsp_client::{LspClient, WorkDoneProgress},
     lsp_config::resolve_server_paths,
+    rust_recovery::{RustInstallStatus, RustStartupIssue, RustStartupIssueKind},
     workspace_lsp::{ServerInstanceId, WorkspaceLsp},
 };
 use bed_ui::presentation::same_line_if_fits;
@@ -27,6 +28,10 @@ pub struct LspServerInfo {
     pub error: Option<String>,
     pub stderr: String,
     pub progress: Vec<WorkDoneProgress>,
+    pub rust_issue: Option<RustStartupIssue>,
+    pub startup_details: Option<String>,
+    pub rust_install: Option<RustInstallStatus>,
+    pub is_remote: bool,
 }
 #[derive(Clone, Debug)]
 enum RestartRequest {
@@ -40,6 +45,7 @@ pub struct LspDashboard {
     server_infos: Vec<LspServerInfo>,
     notification: Option<(String, f32)>,
     restart_requested: Option<RestartRequest>,
+    install_requested: Option<ServerInstanceId>,
 }
 impl Default for LspDashboard {
     fn default() -> Self {
@@ -50,6 +56,7 @@ impl Default for LspDashboard {
             server_infos: Vec::new(),
             notification: None,
             restart_requested: None,
+            install_requested: None,
         }
     }
 }
@@ -84,6 +91,9 @@ impl LspDashboard {
         } else {
             None
         }
+    }
+    pub fn take_install_instance(&mut self) -> Option<ServerInstanceId> {
+        self.install_requested.take()
     }
     pub fn take_restart_instance(&mut self) -> Option<ServerInstanceId> {
         if matches!(self.restart_requested, Some(RestartRequest::Instance(_))) {
@@ -346,6 +356,11 @@ impl LspDashboard {
                     ui.align_text_to_frame_padding();
                     ui.text_colored(bed_ui::presentation::readable_color(ui, color), status);
                     same_line_if_fits(ui, button_width(ui, "Restart"));
+                    let restart_disabled = ui.begin_disabled_with_cond(
+                        info.rust_install
+                            .as_ref()
+                            .is_some_and(|install| install.running),
+                    );
                     if ui.button("Restart") {
                         self.restart_requested = Some(if let Some(instance) = &info.instance {
                             RestartRequest::Instance(instance.clone())
@@ -356,6 +371,7 @@ impl LspDashboard {
                     if ui.is_item_hovered() {
                         tooltip_text(ui, "Restart this language server");
                     }
+                    drop(restart_disabled);
                     ui.spacing();
                     let label_width = ui.calc_text_size("Executable")[0];
                     let gap = ui.clone_style().item_spacing()[0];
@@ -415,6 +431,50 @@ impl LspDashboard {
                             bed_ui::presentation::readable_color(ui, [1.0, 0.4, 0.3, 1.0]),
                             error,
                         );
+                    }
+                    if let Some(issue) = &info.rust_issue {
+                        ui.text_wrapped(issue.command());
+                        if info.is_remote {
+                            ui.text_disabled("Run this command on the remote host.");
+                        }
+                        if ui.button("Copy command") {
+                            let command = std::ffi::CString::new(issue.command()).unwrap();
+                            ui.with_bound_context(|| unsafe {
+                                sys::igSetClipboardText(command.as_ptr())
+                            });
+                        }
+                        if let Some(instance) = &info.instance
+                            && !info.is_remote
+                        {
+                            let label = match issue.kind {
+                                RustStartupIssueKind::MissingComponents => {
+                                    "Install Rust components"
+                                }
+                                RustStartupIssueKind::MissingToolchain => "Install Rust toolchain",
+                            };
+                            same_line_if_fits(ui, button_width(ui, label));
+                            let _disabled = ui.begin_disabled_with_cond(!issue.install_available);
+                            if ui.button(label) {
+                                self.install_requested = Some(instance.clone());
+                            }
+                        }
+                        ui.text_disabled("Includes rust-src for standard-library analysis.");
+                        if let Some(details) = &info.startup_details
+                            && ui.collapsing_header("Error details", TreeNodeFlags::empty())
+                        {
+                            ui.text_wrapped(details);
+                        }
+                    }
+                    if let Some(install) = &info.rust_install {
+                        ui.text_wrapped(&install.message);
+                        if !install.output.is_empty()
+                            && ui.collapsing_header(
+                                "Installation output",
+                                TreeNodeFlags::DEFAULT_OPEN,
+                            )
+                        {
+                            ui.text_wrapped(&install.output);
+                        }
                     }
                     if !info.stderr.is_empty()
                         && ui.collapsing_header("Server output", TreeNodeFlags::empty())
@@ -481,6 +541,12 @@ impl DashboardBackend for LspClient {
                         String::new()
                     },
                     progress: if current { self.progress() } else { Vec::new() },
+                    rust_issue: current
+                        .then(|| self.rust_startup_issue().cloned())
+                        .flatten(),
+                    startup_details: current.then(|| self.startup_error_details()).flatten(),
+                    rust_install: None,
+                    is_remote: self.is_remote(),
                 }
             })
             .collect()
@@ -536,6 +602,10 @@ impl DashboardBackend for WorkspaceLsp {
                 error: status.last_error,
                 stderr: status.stderr,
                 progress: status.progress,
+                rust_issue: status.rust_issue,
+                startup_details: status.startup_details,
+                rust_install: status.rust_install,
+                is_remote: self.ssh_target().is_some(),
                 instance: Some(status.instance),
             })
             .collect()
@@ -597,6 +667,61 @@ mod tests {
     use crate::{presentation::LspPresentationOptions, test_support::TempDir};
     use dear_imgui_rs::{Context, FramePrepareOptions};
     use serde_json::json;
+    #[test]
+    fn rust_recovery_card_wraps_in_narrow_dashboard_panels() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let issue = RustStartupIssue {
+            toolchain: "1.99.0-aarch64-apple-darwin".into(),
+            kind: RustStartupIssueKind::MissingComponents,
+            install_available: true,
+        };
+        let mut dashboard = LspDashboard {
+            server_infos: vec![LspServerInfo {
+                language: "rust".into(), server: "rust-analyzer".into(),
+                instance: Some(ServerInstanceId { server: "rust-analyzer".into(), root: "/project".into() }),
+                is_found: true, error: Some(issue.message()), rust_issue: Some(issue),
+                startup_details: Some("LSP header reached EOF\nerror: Unknown binary 'rust-analyzer' in official toolchain '1.99.0-aarch64-apple-darwin'.".into()),
+                rust_install: Some(RustInstallStatus { running: true, message: "Installing Rust tooling…".into(), output: "info: downloading component rust-analyzer for 1.99.0-aarch64-apple-darwin".into() }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut context = Context::create();
+        context.set_ini_filename(None::<PathBuf>).unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        for width in [240.0, 320.0, 800.0] {
+            for frame in 0..3 {
+                context.prepare_frame(FramePrepareOptions::new([1000.0, 900.0], 1.0 / 60.0));
+                let ui = context.frame();
+                ui.window("Rust recovery layout")
+                    .position([0.0; 2], Condition::Always)
+                    .size([width, 850.0], Condition::Always)
+                    .build(|| {
+                        dashboard.render_server_list(ui);
+                        if frame > 0 {
+                            ui.with_bound_context(|| unsafe {
+                                let parent = sys::igGetCurrentWindow();
+                                let child = *(*parent).DC.ChildWindows.Data;
+                                assert!(
+                                    (*child).ScrollMax.x <= 4.0,
+                                    "Recovery overflow at {width}"
+                                );
+                            });
+                        }
+                    });
+                assert!(context.render_legacy().draw_data().total_vtx_count() > 0);
+                assert!(
+                    dashboard.take_install_instance().is_none(),
+                    "Drawing must not start installation"
+                );
+                assert!(dashboard.take_restart_instance().is_none());
+            }
+        }
+    }
     #[test]
     fn dashboard_discovery_is_per_configuration_and_cached_until_refresh() {
         let directory = TempDir::new();

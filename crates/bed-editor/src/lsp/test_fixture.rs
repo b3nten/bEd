@@ -32,11 +32,19 @@ while True:
     if 'id' not in msg: continue
     result=None
     if method=='initialize':
-        result={'capabilities':{'textDocumentSync':2,'completionProvider':{'resolveProvider':True,'triggerCharacters':['.']},'documentFormattingProvider':True,'renameProvider':{'prepareProvider':True},'codeActionProvider':{'resolveProvider':True},'executeCommandProvider':{'commands':['fixture.fix']}}}
+        result={'capabilities':{'textDocumentSync':2,'hoverProvider':mode.startswith('hover'),'completionProvider':{'resolveProvider':True,'triggerCharacters':['.']},'documentFormattingProvider':True,'renameProvider':{'prepareProvider':True},'codeActionProvider':{'resolveProvider':True},'executeCommandProvider':{'commands':['fixture.fix']}}}
+    elif method=='textDocument/hover':
+        if mode=='hover-delayed': time.sleep(.1)
+        position=msg['params']['position']
+        with open(trace,'a') as out: out.write('hover:%s:%s\n'%(position['line'],position['character']))
+        if position['character']==12:
+            result={'contents':{'kind':'markdown','value':'```rust\npub fn St()\n```\n\nA **Unicode** `string`.'}}
+        elif position['character']==13:
+            result={'contents':{'kind':'plaintext','value':'Literal **text** with `punctuation`.'}}
     elif method=='textDocument/completion':
         completion_count+=1
         with open(trace,'a') as out: out.write('completion:%s\n'%msg['params']['context']['triggerKind'])
-        if mode=='delayed': time.sleep(.1)
+        if mode=='delayed' or (mode=='incomplete' and completion_count>1): time.sleep(.1)
         position=msg['params']['position']
         end=position['character']
         result={'isIncomplete':mode=='incomplete' and completion_count==1,'itemDefaults':{'editRange':{'start':{'line':0,'character':12},'end':{'line':0,'character':end}}},'items':[{'label':'String','sortText':'a','data':'string'},{'label':'Strange','sortText':'b'}]}
@@ -66,7 +74,7 @@ while True:
 pub(super) fn session() -> (TempDir, EditorSession, DocumentId) {
     session_mode("normal")
 }
-pub(super) fn session_mode(mode: &str) -> (TempDir, EditorSession, DocumentId) {
+pub(crate) fn session_mode(mode: &str) -> (TempDir, EditorSession, DocumentId) {
     let directory = TempDir::new();
     let path = directory
         .write("test.rs", b"let value = St")

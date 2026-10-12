@@ -1,6 +1,7 @@
 //! Translated from ned lsp/lsp_symbol_info.{h,cpp}; see LICENSE and NOTICE.
 use crate::lsp::lsp_ui::LspView;
 use bed_document_session::editor::Editor;
+use bed_document_session::{EditorSession, ViewId};
 use bed_editing::util::utf8::utf8_byte_offset_to_utf16;
 use bed_editor_ui::views::{
     hover_tooltip::{
@@ -14,7 +15,7 @@ use bed_lsp::{
     lsp_client::LspClient, lsp_request::LspRequestState, lsp_uri::LspUri,
     workspace_lsp::LspRequestOrigin,
 };
-use dear_imgui_rs::Ui;
+use dear_imgui_rs::{MouseButton, PopupQueryFlags, Ui};
 use serde_json::{Value, json};
 use std::{io, sync::Arc};
 
@@ -86,6 +87,104 @@ impl HoverContents {
     fn text(&self) -> &str {
         match self {
             Self::Markdown(text) | Self::Plaintext(text) => text,
+        }
+    }
+}
+
+/// Each editor frontend owns its clicked symbol independently of transient hovers.
+#[derive(bevy::prelude::Component, Default)]
+pub(crate) struct LspSymbolDocumentation {
+    state: Arc<LspRequestState<HoverContents>>,
+    language: String,
+    colors: bed_highlight::tree_sitter::ThemeColors,
+}
+
+impl LspSymbolDocumentation {
+    #[cfg(test)]
+    pub(crate) fn pending(&self) -> bool {
+        self.state.is_pending()
+    }
+
+    pub(crate) fn request(
+        &mut self,
+        session: &mut EditorSession,
+        view: ViewId,
+        row: i32,
+        column: i32,
+    ) -> io::Result<()> {
+        self.state.cancel();
+        let document = session
+            .document_for_view(view)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Editor view is detached"))?;
+        let snapshot = session.snapshot(document)?;
+        (self.language, self.colors) = session.with_view(view, |editor| {
+            (
+                editor.state.language_id.clone(),
+                bed_editor_ui::views::hover_tooltip::documentation_colors(editor),
+            )
+        })?;
+        let Some(pool) = session.lsp() else {
+            return Ok(());
+        };
+        let Some(origin) = pool.request_origin(document, view, snapshot.generation, 0) else {
+            return Ok(());
+        };
+        let Some(client) = pool.client_for_document(document) else {
+            return Ok(());
+        };
+        let mut client = client.borrow_mut();
+        if !client.is_initialized() || !client.supports_method("textDocument/hover") {
+            return Ok(());
+        }
+        session.with_view(view, |editor| {
+            request_hover(&mut client, editor, row, column, Some(origin), &self.state);
+        })
+    }
+
+    pub(crate) fn snapshot(
+        &self,
+        session: &EditorSession,
+    ) -> Option<bed_ui::documentation::Documentation> {
+        let origin = self.state.origin()?;
+        if !session.accepts_lsp_origin(&origin) {
+            return None;
+        }
+        let contents = self.state.snapshot_for(&origin)?;
+        Some(bed_ui::documentation::Documentation {
+            text: contents.text().to_owned(),
+            markdown: matches!(contents, HoverContents::Markdown(_)),
+            language: self.language.clone(),
+            colors: self.colors.clone(),
+        })
+        .filter(|docs| !docs.text.trim().is_empty())
+    }
+}
+
+fn request_hover(
+    client: &mut LspClient,
+    editor: &Editor,
+    row: i32,
+    byte_column: i32,
+    origin: Option<LspRequestOrigin>,
+    state: &Arc<LspRequestState<HoverContents>>,
+) {
+    let utf16 = utf8_byte_offset_to_utf16(&editor.state.line(row), byte_column);
+    let origin = origin.map(|origin| state.begin_for(origin));
+    let ticket = origin.map_or_else(|| state.begin(), |origin| origin.ticket);
+    let language = editor.state.language_id.clone();
+    let reply = state.clone();
+    let result = LspUri::file_uri_from_path(&editor.state.path).and_then(|uri| {
+        client.send_request("textDocument/hover",json!({"textDocument":{"uri":uri.to_string()},"position":{"line":row as u32,"character":utf16 as u32}}),move |result| {
+            let text = result.ok().and_then(|result| result.get("contents").and_then(|contents| HoverContents::decode(contents, &language).ok())).filter(|text| !text.text().trim().is_empty());
+            if let Some(origin) = origin { reply.deliver_for(origin, text); } else { reply.deliver(ticket, text); }
+        }).map(|_| ())
+    });
+    if let Err(error) = result {
+        eprintln!("LSP: hover request failed: {error}");
+        if let Some(origin) = origin {
+            state.deliver_for(origin, None);
+        } else {
+            state.deliver(ticket, None);
         }
     }
 }
@@ -200,25 +299,7 @@ impl LspSymbolInfo {
         self.popup_rect = None;
         self.popup_anchor = None;
         self.requested_for_cell = true;
-        let utf16 = utf8_byte_offset_to_utf16(&editor.state.line(row), byte_column);
-        let origin = origin.map(|origin| self.hover_state.begin_for(origin));
-        let ticket = origin.map_or_else(|| self.hover_state.begin(), |origin| origin.ticket);
-        let language = editor.state.language_id.clone();
-        let state = self.hover_state.clone();
-        let result = LspUri::file_uri_from_path(&editor.state.path).and_then(|uri| {
-            client.send_request("textDocument/hover",json!({"textDocument":{"uri":uri.to_string()},"position":{"line":row as u32,"character":utf16 as u32}}),move |result| {
-                let text = result.ok().and_then(|result| result.get("contents").and_then(|contents| HoverContents::decode(contents, &language).ok())).filter(|text| !text.text().is_empty());
-                if let Some(origin) = origin { state.deliver_for(origin, text); } else { state.deliver(ticket, text); }
-            }).map(|_| ())
-        });
-        if let Err(error) = result {
-            eprintln!("LSP: hover request failed: {error}");
-            if let Some(origin) = origin {
-                self.hover_state.deliver_for(origin, None);
-            } else {
-                self.hover_state.deliver(ticket, None);
-            }
-        }
+        request_hover(client, editor, row, byte_column, origin, &self.hover_state);
     }
     fn update_mouse_hover(
         &mut self,
@@ -227,6 +308,14 @@ impl LspSymbolInfo {
         editor: &Editor,
         view: &LspView<'_>,
     ) {
+        // Menus take over from symbol hovers, including clicks inside the
+        // tooltip's sticky bounds and replies arriving while a menu is open.
+        if ui.is_mouse_clicked(MouseButton::Right)
+            || ui.is_popup_open_with_flags("", PopupQueryFlags::ANY_POPUP)
+        {
+            self.cancel();
+            return;
+        }
         let over_popup = ui.is_mouse_pos_valid() && self.popup_contains(ui.io().mouse_pos());
         // Scrollbar drags and wheel input belong to the popup. Keyboard input,
         // clicks outside it, and scrolling the editor dismiss the hover.
@@ -286,19 +375,19 @@ impl LspSymbolInfo {
             return;
         }
         let fs = ui.current_font_size();
+        let caret = view.caret_position.unwrap_or_else(|| {
+            [
+                line_column_x(
+                    ui,
+                    &editor.state.line(editor.view.row),
+                    editor.view.column,
+                    view.layout.text_pos[0],
+                )
+                .floor(),
+                view.layout.text_pos[1] + editor.view.row as f32 * view.layout.line_height,
+            ]
+        });
         let anchor = if self.at_caret {
-            let caret = view.caret_position.unwrap_or_else(|| {
-                [
-                    line_column_x(
-                        ui,
-                        &editor.state.line(editor.view.row),
-                        editor.view.column,
-                        view.layout.text_pos[0],
-                    )
-                    .floor(),
-                    view.layout.text_pos[1] + editor.view.row as f32 * view.layout.line_height,
-                ]
-            });
             [
                 caret[0] + fs * 0.25,
                 caret[1] + view.layout.line_height + fs * 0.25,
@@ -314,6 +403,7 @@ impl LspSymbolInfo {
             "##bed_lsp_hover",
             anchor,
             self.popup_rect,
+            Some([caret[1], caret[1] + view.layout.line_height]),
             || match &contents {
                 HoverContents::Markdown(markdown) => {
                     render_hover_markdown(ui, markdown, editor, &editor.state.language_id);
@@ -327,6 +417,92 @@ impl LspSymbolInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clicked_symbol_replies_preserve_markup_and_reject_superseded_or_edited_requests() {
+        use std::time::{Duration, Instant};
+        let (_directory, mut session, document) =
+            crate::lsp::test_fixture::session_mode("hover-delayed");
+        let view = bed_editor_ui::EditorView::new(&mut session, document).unwrap();
+        let sibling = bed_editor_ui::EditorView::new(&mut session, document).unwrap();
+        let mut docs = LspSymbolDocumentation::default();
+        let mut sibling_docs = LspSymbolDocumentation::default();
+        docs.request(&mut session, view.id(), 0, 12).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while docs.snapshot(&session).is_none() {
+            session.tick();
+            assert!(Instant::now() < deadline, "hover did not arrive");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            docs.snapshot(&session).unwrap().text,
+            "```rust\npub fn St()\n```\n\nA **Unicode** `string`."
+        );
+        // Moving focus into Docs must leave the selected symbol readable.
+        session.request_focus(sibling.id()).unwrap();
+        assert!(docs.snapshot(&session).is_some());
+        sibling_docs
+            .request(&mut session, sibling.id(), 0, 12)
+            .unwrap();
+        docs.request(&mut session, view.id(), 0, 12).unwrap();
+        docs.request(&mut session, view.id(), 0, 13).unwrap();
+        assert!(
+            docs.snapshot(&session).is_none(),
+            "the new request has no reply yet"
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while docs.state.is_pending() {
+            session.tick();
+            if let Some(text) = docs.snapshot(&session) {
+                assert_eq!(text.text, "Literal **text** with `punctuation`.");
+                assert!(!text.markdown);
+            }
+            assert!(Instant::now() < deadline, "latest hover did not arrive");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            docs.snapshot(&session).unwrap().text,
+            "Literal **text** with `punctuation`."
+        );
+        assert_eq!(
+            sibling_docs.snapshot(&session).unwrap().text,
+            "```rust\npub fn St()\n```\n\nA **Unicode** `string`."
+        );
+        docs.request(&mut session, view.id(), 0, 0).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while docs.state.is_pending() {
+            session.tick();
+            assert!(Instant::now() < deadline, "empty hover did not arrive");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(docs.snapshot(&session).is_none());
+        docs.request(&mut session, view.id(), 0, 12).unwrap();
+        let revision = session.document_revision(document).unwrap();
+        session
+            .apply_edits(
+                document,
+                revision,
+                &[bed_document_session::ByteEdit {
+                    range: 0..0,
+                    bytes: b"x".to_vec(),
+                }],
+            )
+            .unwrap();
+        assert!(
+            docs.snapshot(&session).is_none(),
+            "edits invalidate pending docs"
+        );
+        let deadline = Instant::now() + Duration::from_millis(200);
+        while Instant::now() < deadline {
+            session.tick();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            docs.snapshot(&session).is_none(),
+            "late reply cannot restore edited docs"
+        );
+        assert!(sibling_docs.snapshot(&session).is_none());
+    }
     use bed_editor_ui::views::{
         hover_tooltip::TooltipArbiter, hover_trigger::Info, view_layout::ViewLayout,
     };
@@ -556,6 +732,80 @@ mod tests {
         assert!(symbol.hover_state.snapshot().is_none());
         assert!(symbol.popup_rect.is_none());
         assert!(!symbol.hover_state.is_pending());
+    }
+
+    #[test]
+    fn native_hover_dismisses_for_right_click_and_open_context_menu() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        for at_caret in [false, true] {
+            for right_click in [false, true] {
+                let mut context = Context::create();
+                context
+                    .set_ini_filename(None::<std::path::PathBuf>)
+                    .unwrap();
+                context
+                    .font_atlas()
+                    .try_claim_legacy_renderer()
+                    .unwrap()
+                    .build();
+                let editor = Editor::new();
+                let mut client = LspClient::new("/bed-no-lsp-config.json");
+                let mut symbol = LspSymbolInfo {
+                    at_caret,
+                    ..Default::default()
+                };
+                let ticket = symbol.hover_state.begin();
+                symbol.hover_state.deliver(
+                    ticket,
+                    Some(HoverContents::Markdown("Symbol documentation.".into())),
+                );
+                symbol_frame(&mut context, &mut symbol, &editor, &mut client, false);
+                let (min, _) = symbol.popup_rect.expect("hover is visible before the menu");
+                context.io_mut().add_mouse_pos_event(min);
+                context
+                    .io_mut()
+                    .add_mouse_button_event(MouseButton::Right, right_click);
+                // Keep the pointer in the sticky bounds on both the opening
+                // frame and a later frame with the context menu still open.
+                for frame in 0..2 {
+                    context.prepare_frame(FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0));
+                    let ui = context.frame();
+                    ui.window("host")
+                        .size([700.0, 500.0], Condition::Always)
+                        .build(|| {
+                            if !right_click {
+                                if frame == 0 {
+                                    ui.open_popup("context menu");
+                                }
+                                let _popup = ui.begin_popup("context menu").unwrap();
+                                ui.text("Menu action");
+                            }
+                            symbol.render(
+                                ui,
+                                &mut client,
+                                &editor,
+                                &LspView {
+                                    layout: &ViewLayout::default(),
+                                    hover_info: Info::default(),
+                                    hover_dismissed: right_click && frame == 0,
+                                    tooltip_arbiter: &TooltipArbiter::default(),
+                                    caret_position: None,
+                                },
+                            );
+                        });
+                    drop(context.render_legacy());
+                    assert!(symbol.popup_rect.is_none());
+                    assert!(!symbol.at_caret());
+                    symbol
+                        .hover_state
+                        .deliver(ticket, Some(HoverContents::Markdown("Late reply.".into())));
+                    assert!(symbol.hover_state.snapshot().is_none());
+                    context
+                        .io_mut()
+                        .add_mouse_button_event(MouseButton::Right, false);
+                }
+            }
+        }
     }
 
     #[test]

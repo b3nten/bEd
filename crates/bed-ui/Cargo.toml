@@ -8,9 +8,11 @@ license.workspace = true
 [features]
 default = []
 imgui = ["dep:dear-imgui-rs", "dep:dear-imgui-sys", "dep:fontdb", "dep:resvg"]
+documentation = ["imgui", "dep:bed-highlight"]
 gpu = ["dep:bevy", "dep:wgpu"]
 
 [dependencies]
+bed-highlight = { workspace = true, optional = true }
 bevy = { workspace = true, optional = true, features = ["std"] }
 wgpu = { workspace = true, optional = true }
 dear-imgui-rs = { workspace = true, optional = true }

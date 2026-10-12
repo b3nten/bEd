@@ -3,6 +3,7 @@
 //! Layout and input stay in ImGui's final coordinates. Editing the finished
 //! vertices also fades Bed's custom editor/terminal painters, which bypass style
 //! alpha. No native pointers are retained between frames.
+use bed_ui::util::content_fade;
 use dear_imgui_rs::{ContextBinding, Ui, sys};
 use std::collections::{HashMap, HashSet};
 
@@ -131,11 +132,14 @@ struct Animation {
     last_visible: i32,
     open_frame: i32,
     grow_settled: bool,
+    content_identity: Option<u32>,
+    content_began: f64,
 }
 
 #[derive(Clone, Copy)]
 struct Effect {
     alpha: f32,
+    content_alpha: f32,
     scale: f32,
     pivot: [f32; 2],
 }
@@ -149,6 +153,7 @@ struct Window {
     size: [f32; 2],
     identity: Identity,
     open_frame: i32,
+    content: Option<(usize, u32)>,
 }
 
 unsafe extern "C" fn render_pre(context: *mut sys::ImGuiContext, hook: *mut sys::ImGuiContextHook) {
@@ -235,6 +240,18 @@ impl State {
                             .map_or(0, |animation| animation.identity.source);
                     }
                 }
+                // GetInt is read-only; the generated C binding takes a mutable pointer.
+                let storage = std::ptr::addr_of!(window.StateStorage).cast_mut();
+                let content =
+                    if sys::ImGuiStorage_GetInt(storage, content_fade::FRAME_KEY, -1) == frame {
+                        Some((
+                            sys::ImGuiStorage_GetInt(storage, content_fade::FIRST_VERTEX_KEY, 0)
+                                as usize,
+                            sys::ImGuiStorage_GetInt(storage, content_fade::IDENTITY_KEY, 0) as u32,
+                        ))
+                    } else {
+                        None
+                    };
                 windows.push(Window {
                     id: window.ID,
                     parent,
@@ -244,6 +261,7 @@ impl State {
                     size: [window.Size.x, window.Size.y],
                     identity,
                     open_frame,
+                    content,
                 });
             }
         }
@@ -301,7 +319,12 @@ impl State {
                 0
             };
             unsafe {
-                transform(window.draw_list, first_vertex, effect);
+                let first_content_vertex = if root == window.id {
+                    window.content.map_or(usize::MAX, |(first, _)| first)
+                } else {
+                    0
+                };
+                transform(window.draw_list, first_vertex, first_content_vertex, effect);
             }
         }
         self.animations
@@ -318,6 +341,8 @@ impl State {
             last_visible: frame - 2,
             open_frame: window.open_frame,
             grow_settled: false,
+            content_identity: None,
+            content_began: now,
         });
         // Consecutive OpenPopup calls can refresh OpenFrameCount each frame.
         let reopened = window.open_frame >= 0
@@ -334,6 +359,11 @@ impl State {
         } else if kind == Kind::Popover && interacted(context, window, self.text_input) {
             animation.grow_settled = true;
         }
+        let content_identity = window.content.map(|(_, identity)| identity);
+        if appearing || animation.content_identity != content_identity {
+            animation.content_began = now - f64::from(context.IO.DeltaTime.min(1.0 / 60.0));
+        }
+        animation.content_identity = content_identity;
         animation.identity = window.identity;
         animation.kind = kind;
         animation.last_visible = frame;
@@ -341,9 +371,17 @@ impl State {
         if !self.enabled {
             animation.began = now - kind.duration();
             animation.grow_settled = true;
+            animation.content_began = now - POPOVER_SECONDS;
         }
         let progress = ((now - animation.began) / kind.duration()).clamp(0.0, 1.0) as f32;
         let alpha = 1.0 - (1.0 - progress).powi(3);
+        let content_progress =
+            ((now - animation.content_began) / POPOVER_SECONDS).clamp(0.0, 1.0) as f32;
+        let content_alpha = if content_identity.is_some() {
+            alpha.min(1.0 - (1.0 - content_progress).powi(3))
+        } else {
+            alpha
+        };
         let scale = if kind == Kind::Popover && !animation.grow_settled {
             INITIAL_SCALE + (1.0 - INITIAL_SCALE) * alpha
         } else {
@@ -360,6 +398,7 @@ impl State {
         };
         Effect {
             alpha,
+            content_alpha,
             scale,
             pivot,
         }
@@ -384,8 +423,13 @@ fn interacted(context: &sys::ImGuiContext, window: &Window, text_input: bool) ->
             .any(|key| key.Down && key.DownDuration == 0.0)
 }
 
-unsafe fn transform(list: *mut sys::ImDrawList, first_vertex: usize, effect: Effect) {
-    if effect.alpha == 1.0 && effect.scale == 1.0 {
+unsafe fn transform(
+    list: *mut sys::ImDrawList,
+    first_vertex: usize,
+    first_content_vertex: usize,
+    effect: Effect,
+) {
+    if effect.alpha == 1.0 && effect.content_alpha == 1.0 && effect.scale == 1.0 {
         return;
     }
     // SAFETY: the live RenderPre hook owns access to each deduplicated list.
@@ -394,7 +438,12 @@ unsafe fn transform(list: *mut sys::ImDrawList, first_vertex: usize, effect: Eff
         let list = &mut *list;
         for index in first_vertex..list.VtxBuffer.Size as usize {
             let vertex = &mut *list.VtxBuffer.Data.add(index);
-            let alpha = ((vertex.col >> 24) as f32 * effect.alpha).round() as u32;
+            let fade = if index >= first_content_vertex {
+                effect.content_alpha
+            } else {
+                effect.alpha
+            };
+            let alpha = ((vertex.col >> 24) as f32 * fade).round() as u32;
             vertex.col = (vertex.col & 0x00ff_ffff) | (alpha << 24);
             if effect.scale != 1.0 {
                 vertex.pos.x = effect.pivot[0] + (vertex.pos.x - effect.pivot[0]) * effect.scale;
