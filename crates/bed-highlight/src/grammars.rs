@@ -163,9 +163,65 @@ pub(crate) fn language_name(id: &str) -> Option<&'static str> {
     }
 }
 
+/// Comment markers for the selected language, using filename detection only
+/// when the document's language has not been manually changed.
+pub fn comment_delimiters(
+    state: &bed_editing::editor_state::EditorState,
+) -> Option<(&'static [u8], &'static [u8])> {
+    use bed_editing::editor_state::EditorState;
+    let language = if state.language_id == EditorState::language_id_from_path(&state.path) {
+        language_name(&state.path).or_else(|| language_name(&state.language_id))
+    } else {
+        language_name(&state.language_id)
+    }?;
+    Some(match language {
+        "rust" | "c" | "cpp" | "c-sharp" | "java" | "javascript" | "typescript" | "tsx" | "go"
+        | "kotlin" | "swift" | "scala" | "dart" | "zig" | "fsharp" | "php" | "hcl" | "groovy"
+        | "proto" => (b"//", b""),
+        "python" | "ruby" | "bash" | "zsh" | "fish" | "toml" | "yaml" | "perl" | "r" | "make"
+        | "cmake" | "dockerfile" | "meson" | "just" | "caddy" | "ssh-config" | "nginx"
+        | "powershell" | "nix" | "elixir" => (b"#", b""),
+        "lua" | "sql" | "haskell" | "elm" | "ada" | "vhdl" => (b"--", b""),
+        "erlang" | "matlab" => (b"%", b""),
+        "clojure" | "scheme" | "commonlisp" | "elisp" => (b";", b""),
+        "css" => (b"/*", b"*/"),
+        "html" | "xml" | "markdown" => (b"<!--", b"-->"),
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn comment_markers_follow_filename_detection_and_manual_language_selection() {
+        use bed_editing::editor_state::EditorState;
+        for (path, start, end) in [
+            ("main.rs", &b"//"[..], &b""[..]),
+            ("script.py", b"#", b""),
+            ("Makefile", b"#", b""),
+            ("CMakeLists.txt", b"#", b""),
+            ("styles.css", b"/*", b"*/"),
+            ("page.html", b"<!--", b"-->"),
+            ("query.sql", b"--", b""),
+            ("config.nix", b"#", b""),
+            ("script.lisp", b";", b""),
+        ] {
+            let mut state = EditorState::new();
+            state.path = path.into();
+            state.language_id = EditorState::language_id_from_path(path);
+            assert_eq!(comment_delimiters(&state), Some((start, end)), "{path}");
+        }
+        let mut state = EditorState::new();
+        state.path = "main.rs".into();
+        state.language_id = "python".into();
+        assert_eq!(comment_delimiters(&state), Some((&b"#"[..], &b""[..])));
+        for language in ["txt", "json", "unknown-language"] {
+            state.language_id = language.into();
+            assert_eq!(comment_delimiters(&state), None);
+        }
+    }
 
     #[test]
     fn detects_upstream_languages_and_bed_file_aliases() {

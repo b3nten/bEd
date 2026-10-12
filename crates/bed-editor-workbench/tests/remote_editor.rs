@@ -503,6 +503,56 @@ fn location_navigation_replaces_a_remote_preview_and_finishes_the_jump() {
     shutdown(&mut app);
 }
 
+fn terminal_file_links_finish_the_jump_after_a_remote_read() {
+    let directory = TempDir::new();
+    let path = directory.write("terminal.rs", "first\n// 🦀 target\nlast".as_bytes());
+    let mut app = remote_app(&directory, false);
+    let id = submit(
+        &mut app,
+        EditorAction::HostRequest(bed_editor_api::HostRequest::OpenTerminalLink {
+            path: path.clone(),
+            position: Some((1, 8)),
+        }),
+        None,
+    );
+    process_editor_requests(app.world_mut()).unwrap();
+    assert!(poll_editor_request_result(app.world_mut(), id).is_none());
+    let panel = match outcome(&mut app, id) {
+        EditorRequestOutcome::Opened { panel, .. } => panel,
+        other => panic!("{other:?}"),
+    };
+    let view = app
+        .world()
+        .get::<EditorPanelBinding>(panel)
+        .unwrap()
+        .view
+        .unwrap();
+    let snapshot = app
+        .world()
+        .non_send::<EditorSession>()
+        .view_snapshot(view)
+        .unwrap();
+    assert_eq!((snapshot.row, snapshot.column), (1, 8));
+    let id = submit(
+        &mut app,
+        EditorAction::HostRequest(bed_editor_api::HostRequest::OpenTerminalLink {
+            path,
+            position: Some((2, 1)),
+        }),
+        None,
+    );
+    assert!(
+        matches!(outcome(&mut app, id), EditorRequestOutcome::Opened { panel: reused, .. } if reused == panel)
+    );
+    let snapshot = app
+        .world()
+        .non_send::<EditorSession>()
+        .view_snapshot(view)
+        .unwrap();
+    assert_eq!((snapshot.row, snapshot.column), (2, 1));
+    shutdown(&mut app);
+}
+
 fn main() {
     if std::env::args().any(|arg| arg == "--stdio") {
         serve_with(
@@ -529,6 +579,7 @@ fn main() {
     save_and_close_receipts_wait_for_acknowledged_bytes();
     preview_selections_and_double_clicks_supersede_pending_remote_opens();
     location_navigation_replaces_a_remote_preview_and_finishes_the_jump();
+    terminal_file_links_finish_the_jump_after_a_remote_read();
     println!(
         "remote editor: captured destinations, cancellation, shared restoration, delayed save and close receipts, preview supersession and location navigation passed"
     );

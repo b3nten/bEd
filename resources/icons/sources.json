@@ -1381,5 +1381,33 @@
     "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
     "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/chevron-up.svg",
     "sha256": "d09f13fcbef3c493ead7e4663b5ee91804fec38d5edb5e7cc3acfbd547641cf4"
+  },
+  {
+    "key": "cloud-download",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/cloud-download.svg",
+    "sha256": "c50569ad4c39d6ecf911debd62d37e805e610f71d696495d353be4cbf6bd8b1f"
+  },
+  {
+    "key": "arrow-down-to-line",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/arrow-down-to-line.svg",
+    "sha256": "d44032ba6c8d27fa6b1589831a4cf5e22acf3b1e7bb7852913c1bf323b1fd7de"
+  },
+  {
+    "key": "arrow-up-from-line",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/arrow-up-from-line.svg",
+    "sha256": "4b8f99c4836217108bedc4122c4375abcd8ddb45d0453fbf44775df26656c5c8"
+  },
+  {
+    "key": "refresh-cw",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/refresh-cw.svg",
+    "sha256": "2e10dd403c85a24f163d59fc6151aa21147fe9402e1305dfc8979208caee8944"
   }
 ]

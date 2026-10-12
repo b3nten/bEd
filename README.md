@@ -19,6 +19,10 @@ commands. Arrow navigation and Shift+arrow selection share bindings across text,
 hex, CSV, and Explorer where supported. Explorer uses Left/Right to collapse and
 expand folders. Word, line, and document navigation retain the Editor keymap.
 
+Primary+/ toggles comments on the current line or selected lines using the
+document's language. Rebind **Toggle Line Comment** under Settings → Keybindings
+→ Editor. Each toggle is one undo step.
+
 Primary+plus/minus and Primary+0 zoom and reset the focused text editor, Docs,
 image, or model view. Images reset to 100%; models reset through Frame All.
 Editor menu/API zoom commands remain text-specific and have no default shortcuts.

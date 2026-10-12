@@ -321,6 +321,9 @@ fn explicit_panel_target(action: &EditorAction) -> Option<PanelTarget> {
         EditorAction::HostRequest(HostRequest::NavigateLocation { .. }) => {
             Some(PanelTarget::LastFocused)
         }
+        EditorAction::HostRequest(
+            HostRequest::OpenTerminalFiles { .. } | HostRequest::OpenTerminalLink { .. },
+        ) => Some(PanelTarget::LargestArea),
         _ => None,
     }
 }
@@ -466,7 +469,6 @@ impl Plugin for EditorWorkbenchPlugin {
             .init_resource::<EditorNavigation>()
             .init_resource::<LayoutSlots>()
             .init_resource::<PendingOperations>()
-            .init_resource::<TerminalCompanions>()
             .init_resource::<EditorInitialized>()
             .add_message::<EditorFeatureReply>()
             .add_message::<bed_editor_api::EditorDocumentEvent>()
@@ -666,12 +668,6 @@ struct PendingOperations {
     saves: Vec<PendingSave>,
     formats: Vec<format_save::PendingFormatSave>,
     batches: Vec<PendingBatch>,
-}
-
-#[derive(Resource, Default)]
-struct TerminalCompanions {
-    session: u64,
-    views: HashMap<(Entity, PathBuf), Entity>,
 }
 
 struct PendingBatch {
@@ -1685,7 +1681,7 @@ fn open_file_with_origin(
             return Ok(panel);
         }
     }
-    let target = area.unwrap_or_else(|| {
+    let mut target = area.unwrap_or_else(|| {
         world
             .resource::<WorkbenchLayout>()
             .tiling
@@ -1744,6 +1740,31 @@ fn open_file_with_origin(
     } else {
         None
     };
+    // Keep a sole terminal visible when its first file opens. Do the split in
+    // the standard opening path so shell commands and links share this rule.
+    // Commit the new area only after the file's panel has opened successfully.
+    let active = active_panel_entities(world);
+    let mut terminal_split = None;
+    if active.len() == 1
+        && world
+            .get::<EditorPanelBinding>(active[0])
+            .is_some_and(|binding| binding.terminal.is_some())
+        && world.resource::<WorkbenchLayout>().tiling.areas.len() == 1
+    {
+        let mut tiling = world.resource::<WorkbenchLayout>().tiling.clone();
+        let rect = tiling.layout.area(target).rect;
+        let destination = tiling
+            .layout
+            .split(target, 0, (rect.min[0] + rect.max[0]) / 2, 100)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "This area is too small to split",
+                )
+            })?;
+        tiling.add_area(destination);
+        terminal_split = Some((tiling, destination));
+    }
     let panel = if let Some(panel) = reusable {
         replace_pristine_panel(
             world,
@@ -1763,6 +1784,15 @@ fn open_file_with_origin(
             false,
         )?
     };
+    if let Some((mut tiling, destination)) = terminal_split {
+        tiling.assign(
+            world.get::<PanelPresentation>(panel).unwrap().id,
+            destination,
+        );
+        world.resource_mut::<WorkbenchLayout>().tiling = tiling;
+        target = destination;
+        focus_panel(world, panel, true)?;
+    }
     if mode == FileOpenMode::Preview
         && world
             .get::<PanelRecord>(panel)
@@ -3067,8 +3097,50 @@ fn apply_host_request(
 ) -> io::Result<Option<EditorRequestOutcome>> {
     let relocate_panel = matches!(&host, HostRequest::ShowPanelIn { .. });
     let outcome = match host {
-        HostRequest::OpenTerminalCompanions { paths } => {
-            return open_terminal_companions(world, paths, request).map(Some);
+        HostRequest::OpenTerminalFiles { paths } => {
+            if world.non_send::<EditorSession>().is_remote() {
+                return Err(io::Error::other(
+                    "Local shell file requests require a local workspace",
+                ));
+            }
+            let mut area = request.area;
+            let mut outcome = EditorRequestOutcome::Ignored;
+            for path in paths {
+                let area_count = world.resource::<WorkbenchLayout>().tiling.areas.len();
+                let panel = open_file(world, &path, None, false, Some(area))?;
+                if world.resource::<WorkbenchLayout>().tiling.areas.len() != area_count {
+                    // The first file split a sole terminal; put the rest in the
+                    // newly created editor area as well.
+                    area = world
+                        .resource::<WorkbenchLayout>()
+                        .tiling
+                        .area_for(world.get::<PanelPresentation>(panel).unwrap().id)
+                        .unwrap();
+                }
+                outcome = EditorRequestOutcome::Opened {
+                    panel,
+                    document: world
+                        .get::<EditorPanelBinding>(panel)
+                        .and_then(|binding| binding.document),
+                };
+            }
+            return Ok(Some(outcome));
+        }
+        HostRequest::OpenTerminalLink { path, position } => {
+            let host = if let Some((row, column)) = position {
+                HostRequest::RevealSource {
+                    path: path.to_string_lossy().into_owned(),
+                    row,
+                    column,
+                    center: true,
+                }
+            } else {
+                HostRequest::OpenFile {
+                    path: path.to_string_lossy().into_owned(),
+                    viewer: None,
+                }
+            };
+            return apply_host_request(world, host, request, id);
         }
         HostRequest::PromoteWorkspace { root } => {
             return begin_terminal_promotion(world, &root, request, id);
@@ -3540,13 +3612,51 @@ fn apply_host_request(
             column,
             center,
         } => {
-            let panel = open_file(
+            let panel = match open_file(
                 world,
                 Path::new(&path),
                 Some("bed.editor.text"),
                 false,
                 Some(request.area),
-            )?;
+            ) {
+                Ok(panel) => panel,
+                Err(error)
+                    if error.kind() == io::ErrorKind::WouldBlock
+                        && world.non_send::<EditorSession>().is_remote() =>
+                {
+                    let follow_up = captured_effect(
+                        world,
+                        request,
+                        EditorAction::HostRequest(HostRequest::RevealSource {
+                            path: path.clone(),
+                            row,
+                            column,
+                            center,
+                        }),
+                        request.source,
+                        None,
+                    );
+                    world
+                        .non_send_mut::<RemoteOperations>()
+                        .opens
+                        .push(RemoteOpen {
+                            session: request.session,
+                            id,
+                            path: PathBuf::from(path),
+                            viewer: Some("bed.editor.text".into()),
+                            additional: false,
+                            mode: FileOpenMode::Keep,
+                            layout_slot: request.layout_slot,
+                            move_existing: false,
+                            area: Some(request.area),
+                            tab_index: request.tab_index,
+                            restore: None,
+                            follow_up: Some(follow_up),
+                        });
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            };
             if let Some(view) = world
                 .get::<EditorPanelBinding>(panel)
                 .and_then(|binding| binding.view)
@@ -4348,119 +4458,6 @@ fn begin_terminal_promotion(
         },
         id,
     )
-}
-
-fn open_terminal_companions(
-    world: &mut World,
-    paths: Vec<PathBuf>,
-    request: &EditorRequest,
-) -> io::Result<EditorRequestOutcome> {
-    let caller = request
-        .panel
-        .filter(|caller| {
-            bed_workbench::owns_panel(world, *caller)
-                && world
-                    .get::<EditorPanelBinding>(*caller)
-                    .is_some_and(|binding| binding.terminal.is_some())
-        })
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "The calling terminal is unavailable",
-            )
-        })?;
-    if world.non_send::<EditorSession>().is_remote() {
-        return Err(io::Error::other(
-            "Local shell companions require a local workspace",
-        ));
-    }
-    let session = world.non_send::<EditorSession>().workspace_id().0;
-    if world.resource::<TerminalCompanions>().session != session {
-        *world.resource_mut::<TerminalCompanions>() = TerminalCompanions {
-            session,
-            ..Default::default()
-        };
-    }
-    let mut outcome = EditorRequestOutcome::Ignored;
-    for path in paths {
-        let path = std::fs::canonicalize(path)?;
-        if !path.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Shell companions require a file",
-            ));
-        }
-        let existing = world
-            .resource::<TerminalCompanions>()
-            .views
-            .get(&(caller, path.clone()))
-            .copied()
-            .filter(|panel| {
-                bed_workbench::owns_panel(world, *panel)
-                    && bed_workbench_api::panel_active(world, *panel)
-            });
-        if let Some(panel) = existing {
-            focus_panel(world, panel, true)?;
-            outcome = EditorRequestOutcome::Opened {
-                panel,
-                document: world
-                    .get::<EditorPanelBinding>(panel)
-                    .and_then(|binding| binding.document),
-            };
-            continue;
-        }
-        let anchor = world
-            .resource::<TerminalCompanions>()
-            .views
-            .iter()
-            .filter_map(|((shell, _), panel)| {
-                (*shell == caller
-                    && bed_workbench::owns_panel(world, *panel)
-                    && bed_workbench_api::panel_active(world, *panel))
-                .then(|| {
-                    world
-                        .get::<PanelPresentation>(*panel)
-                        .map(|presentation| (presentation.id, *panel))
-                })
-                .flatten()
-            })
-            .min_by_key(|(id, _)| *id)
-            .map(|(_, panel)| panel);
-        let anchor = anchor.unwrap_or(caller);
-        let anchor_id = world.get::<PanelPresentation>(anchor).unwrap().id;
-        let mut tiling = world.resource::<WorkbenchLayout>().tiling.clone();
-        let area = tiling
-            .area_for(anchor_id)
-            .expect("a live shell companion belongs to an area");
-        let panel = open_file(world, &path, None, true, Some(area))?;
-        if anchor == caller {
-            let rect = tiling.layout.area(area).rect;
-            if let Some(destination) =
-                tiling
-                    .layout
-                    .split(area, 0, (rect.min[0] + rect.max[0]) / 2, 100)
-            {
-                tiling.add_area(destination);
-                tiling.assign(
-                    world.get::<PanelPresentation>(panel).unwrap().id,
-                    destination,
-                );
-                world.resource_mut::<WorkbenchLayout>().tiling = tiling;
-            }
-        }
-        world
-            .resource_mut::<TerminalCompanions>()
-            .views
-            .insert((caller, path), panel);
-        focus_panel(world, panel, true)?;
-        outcome = EditorRequestOutcome::Opened {
-            panel,
-            document: world
-                .get::<EditorPanelBinding>(panel)
-                .and_then(|binding| binding.document),
-        };
-    }
-    Ok(outcome)
 }
 
 fn attach_workspace_with_terminal(

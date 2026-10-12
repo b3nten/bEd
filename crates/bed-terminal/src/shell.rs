@@ -131,8 +131,13 @@ fn poll(
                         })
                         .map_err(|error| error.to_string())?;
                 }
-                LinkTarget::File { host, path } => {
-                    let request = if let Some(ssh) = terminal.ssh_target(session) {
+                LinkTarget::File {
+                    host,
+                    mut path,
+                    position,
+                } => {
+                    let remote = terminal.ssh_target(session);
+                    if let Some(ssh) = remote {
                         let remote_host = ssh.host.split('@').next_back().unwrap_or(&ssh.host);
                         if host.as_deref().is_some_and(|host| host != remote_host) {
                             return Err("The file link belongs to a different SSH host".into());
@@ -147,14 +152,31 @@ fn poll(
                                     .into(),
                             );
                         }
-                        HostRequest::OpenFile {
-                            path: path.to_str().ok_or("The file path is not UTF-8")?.into(),
-                            viewer: None,
+                    }
+                    if let Ok(relative) = path.strip_prefix("~") {
+                        if remote.is_some() {
+                            return Err("SSH file links must use an absolute path or a path relative to the shell's directory".into());
                         }
-                    } else {
-                        HostRequest::OpenTerminalCompanions { paths: vec![path] }
-                    };
-                    intents.push(Some(source), request);
+                        let home =
+                            std::env::var_os("HOME").ok_or("The home directory is unavailable")?;
+                        path = std::path::PathBuf::from(home).join(relative);
+                    }
+                    if !path.is_absolute() {
+                        let directory = if remote.is_some() {
+                            terminal.reported_working_directory(session)
+                                .ok_or("The SSH shell must report its working directory with OSC 7 to open relative file links")?
+                                .to_owned()
+                        } else {
+                            terminal
+                                .live_working_directory(session)
+                                .map_err(|error| error.to_string())?
+                        };
+                        path = directory.join(path);
+                    }
+                    intents.push(
+                        Some(source),
+                        HostRequest::OpenTerminalLink { path, position },
+                    );
                 }
             }
             Ok(())
@@ -219,7 +241,7 @@ fn poll(
                 return Err("The shell that requested this command is no longer available".into());
             }
             let host = match request {
-                Request::Open { paths, .. } => HostRequest::OpenTerminalCompanions { paths },
+                Request::Open { paths, .. } => HostRequest::OpenTerminalFiles { paths },
                 Request::Workspace { root, .. } => {
                     if frame.as_ref().is_some_and(|frame| frame.remote)
                         || documents
@@ -303,7 +325,9 @@ pub(crate) fn apply_request(
     }
     if matches!(
         &request.request,
-        HostRequest::ShowPanelIn { .. } | HostRequest::OpenFileIn { .. }
+        HostRequest::ShowPanelIn { .. }
+            | HostRequest::OpenFileIn { .. }
+            | HostRequest::OpenTerminalFiles { .. }
     ) {
         intents.push(request.source, request.request);
     } else {
@@ -515,6 +539,100 @@ mod tests {
     }
 
     #[test]
+    fn clicking_a_bare_file_location_uses_the_shells_live_directory() {
+        use dear_imgui_rs::{Key, MouseButton};
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let directory = TempDir::new();
+        let file = directory.write("changed/src.rs", b"first\nabcdefghijk\nlast");
+        let mut app = app(&directory, None);
+        let (caller, _, session) = terminal(&mut app);
+        let mut context = start_shell(&mut app, session);
+        app.world()
+            .non_send::<BedTerminal>()
+            .write_active(b"cd changed; printf '\\033[2J\\033[Hsrc.rs:2:4\\r\\n'\n")
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            app.update();
+            let terminal = app.world().non_send::<BedTerminal>();
+            let snapshot = terminal.active_terminal().unwrap();
+            let line: String = snapshot.lines[0]
+                .cells
+                .iter()
+                .map(|cell| cell.text.as_ref())
+                .collect();
+            if line.starts_with("src.rs:2:4") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "shell did not print the diagnostic"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let frame = |app: &mut App, context: &mut Context| {
+            let fonts = TerminalFonts::default();
+            let mut terminal = app.world_mut().non_send_mut::<BedTerminal>();
+            terminal.prepare_frame(context, &fonts, 1.0).unwrap();
+            context.prepare_frame(FramePrepareOptions::new([640.0, 360.0], 1.0 / 60.0));
+            let ui = context.frame();
+            let mut target = [0.0; 2];
+            ui.window("Shell bridge fixture")
+                .position([0.0; 2], Condition::Always)
+                .size([640.0, 360.0], Condition::Always)
+                .build(|| {
+                    let origin = ui.cursor_screen_pos();
+                    target = [origin[0] + 12.0, origin[1] + 12.0];
+                    terminal.render_session(ui, &fonts, session).unwrap();
+                });
+            drop(context.render_legacy());
+            target
+        };
+        let target = frame(&mut app, &mut context);
+        context.io_mut().add_mouse_pos_event(target);
+        frame(&mut app, &mut context);
+        let modifier = if cfg!(target_os = "macos") {
+            Key::ModSuper
+        } else {
+            Key::ModCtrl
+        };
+        context.io_mut().add_key_event(modifier, true);
+        frame(&mut app, &mut context);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, true);
+        frame(&mut app, &mut context);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, false);
+        context.io_mut().add_key_event(modifier, false);
+        frame(&mut app, &mut context);
+        app.update();
+        let panel = app.world().resource::<WorkbenchLayout>().focused.unwrap();
+        assert_ne!(
+            panel, caller,
+            "click must open an editor beside the sole terminal"
+        );
+        assert_eq!(
+            app.world().resource::<WorkbenchLayout>().tiling.areas.len(),
+            2
+        );
+        let binding = app
+            .world()
+            .get::<bed_editor_api::EditorPanelBinding>(panel)
+            .unwrap();
+        let documents = app.world().non_send::<EditorSession>();
+        assert_eq!(
+            binding.document,
+            documents.document_for_path(&file.canonicalize().unwrap())
+        );
+        let snapshot = documents.view_snapshot(binding.view.unwrap()).unwrap();
+        assert_eq!((snapshot.row, snapshot.column), (1, 3));
+        app.world_mut().write_message(bevy::app::AppExit::Success);
+        app.update();
+    }
+
+    #[test]
     fn shell_socket_tracks_actual_open_and_save_promotion_while_preserving_its_calling_process() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let directory = TempDir::new();
@@ -570,6 +688,11 @@ mod tests {
             Some(session)
         );
         let (other, _, other_session) = terminal(&mut app);
+        let mut tiling = app.world().resource::<WorkbenchLayout>().tiling.clone();
+        let largest = tiling.layout.split(1, 0, 2500, 100).unwrap();
+        tiling.add_area(largest);
+        tiling.assign(app.world().get::<EditorPanel>(other).unwrap().id, largest);
+        app.world_mut().resource_mut::<WorkbenchLayout>().tiling = tiling;
         assert_eq!(
             app.world().non_send::<BedTerminal>().active_session_id(),
             Some(other_session)
@@ -596,21 +719,20 @@ mod tests {
         app.update();
         has_no_reply(&mut open);
         assert!(reply(&mut app, open)["error"].is_null());
-        let companion = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-        let companion_frontend = panel_presentation(app.world(), companion).unwrap();
+        let editor = app.world().resource::<WorkbenchLayout>().focused.unwrap();
+        let editor_frontend = panel_presentation(app.world(), editor).unwrap();
         let binding = app
             .world()
-            .get::<bed_editor_api::EditorPanelBinding>(companion_frontend)
+            .get::<bed_editor_api::EditorPanelBinding>(editor_frontend)
             .unwrap();
         let view = binding.view.unwrap();
         let layout = app.world().resource::<WorkbenchLayout>();
-        assert_ne!(
+        assert_eq!(layout.tiling.areas.len(), 2);
+        assert_eq!(
             layout
                 .tiling
-                .area_for(app.world().get::<EditorPanel>(caller).unwrap().id),
-            layout
-                .tiling
-                .area_for(app.world().get::<EditorPanel>(companion).unwrap().id)
+                .area_for(app.world().get::<EditorPanel>(editor).unwrap().id),
+            Some(largest),
         );
         app.world_mut()
             .non_send_mut::<EditorSession>()
@@ -650,7 +772,7 @@ mod tests {
             vec![session]
         );
         assert!(app.world().get::<EditorPanel>(other).is_none());
-        assert!(app.world().get::<EditorPanel>(companion).is_none());
+        assert!(app.world().get::<EditorPanel>(editor).is_none());
         assert_eq!(fs::read(file).unwrap(), b"dirty original");
 
         app.world_mut().write_message(bevy::app::AppExit::Success);

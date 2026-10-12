@@ -41,7 +41,12 @@ impl TerminalLink {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LinkTarget {
     External(String),
-    File { host: Option<String>, path: PathBuf },
+    File {
+        host: Option<String>,
+        path: PathBuf,
+        /// Zero-based line and byte column, matching editor coordinates.
+        position: Option<(i32, i32)>,
+    },
 }
 
 /// Only schemes with a defined opening action cross the host boundary. In
@@ -50,7 +55,7 @@ pub fn classify_link(target: &str) -> Option<LinkTarget> {
     if target.chars().any(char::is_control) {
         return None;
     }
-    let (scheme, remainder) = target.split_once(':')?;
+    let (scheme, remainder) = target.split_once(':').unwrap_or(("", ""));
     if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") {
         let authority = remainder
             .strip_prefix("//")?
@@ -62,12 +67,15 @@ pub fn classify_link(target: &str) -> Option<LinkTarget> {
         return (!remainder.is_empty()).then(|| LinkTarget::External(target.into()));
     }
     if !scheme.eq_ignore_ascii_case("file") {
-        return None;
+        return classify_path(target);
     }
     let path_and_host = remainder.strip_prefix("//")?;
     let (host, path) = path_and_host.split_once('/')?;
     let path = format!("/{path}");
     // A fragment identifies a location within a file; it is not part of its path.
+    let position = path
+        .split_once('#')
+        .and_then(|(_, fragment)| parse_position(fragment.strip_prefix('L').unwrap_or(fragment)));
     let path = decode_percent(path.split(['?', '#']).next()?)?;
     if path.as_bytes().contains(&0) {
         return None;
@@ -79,6 +87,69 @@ pub fn classify_link(target: &str) -> Option<LinkTarget> {
             Some(host.into())
         },
         path: PathBuf::from(path),
+        position,
+    })
+}
+
+fn parse_position(text: &str) -> Option<(i32, i32)> {
+    let (line, column) = text.split_once([':', 'C']).unwrap_or((text, "1"));
+    let coordinate = |value: &str| {
+        if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        value
+            .parse::<i32>()
+            .ok()?
+            .checked_sub(1)
+            .filter(|value| *value >= 0)
+    };
+    Some((coordinate(line)?, coordinate(column)?))
+}
+
+fn classify_path(target: &str) -> Option<LinkTarget> {
+    // A colon is allowed only in a numeric location suffix. This also keeps
+    // unsupported URI schemes from being interpreted as local paths.
+    let (path, position) = if let Some((path, location)) = target.split_once(':') {
+        (path, Some(parse_position(location)?))
+    } else {
+        (target, None)
+    };
+    if path.is_empty()
+        || path.ends_with('/')
+        || path
+            .chars()
+            .any(|character| matches!(character, '?' | '#' | '*' | '=' | '|' | '\\'))
+        || path
+            .split('/')
+            .all(|part| part.is_empty() || matches!(part, "." | ".." | "~"))
+    {
+        return None;
+    }
+    let name = path.rsplit('/').next()?;
+    if !path.contains('/') {
+        if !name
+            .chars()
+            .any(|character| character.is_alphabetic() || character == '_')
+            || (!name.contains('.')
+                && !matches!(
+                    name,
+                    "Makefile"
+                        | "Dockerfile"
+                        | "Justfile"
+                        | "Gemfile"
+                        | "Rakefile"
+                        | "README"
+                        | "LICENSE"
+                        | "NOTICE"
+                ))
+        {
+            return None;
+        }
+    }
+    Some(LinkTarget::File {
+        host: None,
+        path: PathBuf::from(path),
+        position,
     })
 }
 
@@ -177,46 +248,52 @@ fn append_span(spans: &mut Vec<LinkSpan>, span: LinkSpan) {
 fn recognize_plain(text: &str, mapping: &[CellBytes], links: &mut Vec<TerminalLink>) {
     let mut at = 0;
     while at < text.len() {
-        let rest = &text[at..];
-        let scheme = ["https://", "http://", "mailto:", "file://"]
-            .into_iter()
-            .find(|scheme| {
-                rest.get(..scheme.len())
-                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
-            });
-        let Some(scheme) = scheme else {
-            at += rest.chars().next().unwrap().len_utf8();
-            continue;
-        };
-        // A scheme embedded in an identifier is not a separate URL.
-        if text[..at]
-            .chars()
-            .next_back()
-            .is_some_and(|character| character.is_alphanumeric() || character == '_')
+        let character = text[at..].chars().next().unwrap();
+        if character.is_whitespace()
+            || character.is_control()
+            || matches!(character, '<' | '>' | '`' | '(' | '[' | '{' | '=')
         {
-            at += scheme.len();
+            at += character.len_utf8();
             continue;
         }
-        let mut end = at + scheme.len();
+        let quote = matches!(character, '"' | '\'').then_some(character);
+        if quote.is_some() {
+            at += character.len_utf8();
+        }
+        let uri = ["https://", "http://", "mailto:", "file://"]
+            .iter()
+            .any(|scheme| {
+                text[at..]
+                    .get(..scheme.len())
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme))
+            });
+        let mut end = at;
         for character in text[end..].chars() {
-            if character.is_whitespace()
-                || character.is_control()
-                || matches!(character, '<' | '>' | '"' | '\'' | '`')
-            {
+            let delimiter = if let Some(quote) = quote {
+                character == quote || character.is_control()
+            } else {
+                character.is_whitespace()
+                    || character.is_control()
+                    || matches!(character, '<' | '>' | '"' | '\'' | '`')
+                    || (!uri && character == '=')
+            };
+            if delimiter {
                 break;
             }
             end += character.len_utf8();
         }
-        end = trim_punctuation(text, at, end);
+        let scanned_end = end;
+        let end = if quote.is_some() {
+            end
+        } else {
+            trim_punctuation(text, at, end)
+        };
         let candidate = &text[at..end];
         let cells = mapping
             .iter()
             .filter(|cell| cell.start < end && at < cell.end)
             .collect::<Vec<_>>();
-        if end > at + scheme.len()
-            && classify_link(candidate).is_some()
-            && !cells.iter().any(|cell| cell.explicit)
-        {
+        if classify_link(candidate).is_some() && !cells.iter().any(|cell| cell.explicit) {
             let mut spans = Vec::new();
             for cell in cells {
                 append_span(&mut spans, cell.span);
@@ -228,7 +305,10 @@ fn recognize_plain(text: &str, mapping: &[CellBytes], links: &mut Vec<TerminalLi
             });
         }
         // Advance beyond the whole scanned token, including trailing punctuation.
-        at = end.max(at + scheme.len());
+        at = scanned_end;
+        if at < text.len() {
+            at += text[at..].chars().next().unwrap().len_utf8();
+        }
     }
 }
 
@@ -334,6 +414,14 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["https://example.com/a_(b)", "https://other.example/",]
         );
+        let links = collect_links(&[row("URL=https://example.com/?a=1 FILE=src/main.rs", false)]);
+        assert_eq!(
+            links
+                .iter()
+                .map(|link| link.target.as_str())
+                .collect::<Vec<_>>(),
+            ["https://example.com/?a=1", "src/main.rs"]
+        );
     }
 
     #[test]
@@ -343,6 +431,7 @@ mod tests {
             Some(LinkTarget::File {
                 host: None,
                 path: "/tmp/a b.rs".into(),
+                position: Some((9, 0)),
             })
         );
         assert_eq!(
@@ -350,11 +439,119 @@ mod tests {
             Some(LinkTarget::File {
                 host: Some("devbox".into()),
                 path: "/home/user/main.rs".into(),
+                position: None,
             })
         );
         assert!(classify_link("file:///tmp/%00").is_none());
         assert!(classify_link("javascript:alert(1)").is_none());
         assert!(classify_link("https:///path").is_none());
         assert!(classify_link("file:///tmp/%XX").is_none());
+    }
+
+    #[test]
+    fn bare_paths_and_locations_are_detected_in_diagnostic_output() {
+        let rows = [row(
+            "--> src/main.rs:42:7: error; (/tmp/log.txt:3), ./readme.md ../lib.rs ~/notes.txt main.rs Makefile:2 1.23 ordinary words",
+            false,
+        )];
+        let links = collect_links(&rows);
+        assert_eq!(
+            links
+                .iter()
+                .map(|link| link.target.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "src/main.rs:42:7",
+                "/tmp/log.txt:3",
+                "./readme.md",
+                "../lib.rs",
+                "~/notes.txt",
+                "main.rs",
+                "Makefile:2",
+            ]
+        );
+        assert_eq!(
+            classify_link(&links[0].target),
+            Some(LinkTarget::File {
+                host: None,
+                path: "src/main.rs".into(),
+                position: Some((41, 6)),
+            })
+        );
+        for invalid in [
+            "main.rs:0",
+            "main.rs:2:0",
+            "main.rs:2147483648",
+            "main.rs:2:3:4",
+            "main.rs:no",
+            "javascript:1",
+            "data:text/plain,x",
+            ".",
+            "..",
+            "/",
+            "~/",
+            "1.23",
+        ] {
+            assert!(classify_link(invalid).is_none(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn paths_wrap_and_quoted_paths_keep_spaces_and_literal_percent_signs() {
+        let rows = [
+            row("src/long/", true),
+            row("main.rs:12:4 \"my files/100%.rs:2\"", false),
+        ];
+        let links = collect_links(&rows);
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].target, "src/long/main.rs:12:4");
+        assert!(links[0].contains(1, 0));
+        assert_eq!(
+            classify_link(&links[1].target),
+            Some(LinkTarget::File {
+                host: None,
+                path: "my files/100%.rs".into(),
+                position: Some((1, 0)),
+            })
+        );
+        assert_eq!(
+            collect_links(&[row("src/long/", false), row("main.rs:12", false)]).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn file_url_fragments_and_explicit_labels_retain_locations() {
+        for (fragment, position) in [
+            ("L10", Some((9, 0))),
+            ("L10C3", Some((9, 2))),
+            ("10:3", Some((9, 2))),
+            ("L0", None),
+            ("section", None),
+        ] {
+            assert_eq!(
+                classify_link(&format!("file:///tmp/a.rs#{fragment}")),
+                Some(LinkTarget::File {
+                    host: None,
+                    path: "/tmp/a.rs".into(),
+                    position,
+                })
+            );
+        }
+        let mut label = row("source", false);
+        for cell in &mut label.cells {
+            cell.explicit = Some("file:///tmp/a.rs#L10C3");
+        }
+        let links = collect_links(&[label]);
+        assert_eq!(links.len(), 1);
+        assert!(links[0].explicit);
+        assert_eq!(
+            classify_link(&links[0].target),
+            Some(LinkTarget::File {
+                host: None,
+                path: "/tmp/a.rs".into(),
+                position: Some((9, 2)),
+            })
+        );
     }
 }

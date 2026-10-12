@@ -618,10 +618,15 @@ pub enum HostRequest {
     PromoteWorkspace {
         root: PathBuf,
     },
-    /// Share documents through views beside the requesting terminal. Each
-    /// terminal retains its own companion views and reuses their tiled area.
-    OpenTerminalCompanions {
+    /// Open shell-requested files using the standard largest-area placement.
+    OpenTerminalFiles {
         paths: Vec<PathBuf>,
+    },
+    /// Open a terminal file link using the standard largest-area placement.
+    /// Positions use zero-based lines and byte columns.
+    OpenTerminalLink {
+        path: PathBuf,
+        position: Option<(i32, i32)>,
     },
     Command {
         command: String,

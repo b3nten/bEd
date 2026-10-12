@@ -108,8 +108,7 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
     persist_workspace(original.world_mut()).unwrap();
     drop(original);
 
-    let path = dir.path("note.txt");
-    std::fs::write(&path, "note").unwrap();
+    let path = dir.write("note.txt", b"note").canonicalize().unwrap();
     let mut fresh = app(
         &dir,
         EditorWorkbenchOptions {
@@ -126,10 +125,10 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
         LayoutSlot::Startup
     );
     let panels = active_panel_entities(fresh.world_mut());
-    assert_eq!(
-        panels.len(),
-        template["panels"].as_array().unwrap().len() + 1
-    );
+    assert!(panels.iter().any(
+        |panel| fresh.world().get::<PanelRecord>(*panel).unwrap().panel_type
+            == bed_projects::PANEL_ID
+    ));
     assert_eq!(
         fresh
             .world()
@@ -232,6 +231,7 @@ fn startup_switches_preserve_dirty_documents_and_attachment_adopts_workspace_sel
     assert!(bed_workbench::api::panel_active(app.world(), picker));
     let root = dir.path("project");
     std::fs::create_dir(&root).unwrap();
+    let root = root.canonicalize().unwrap();
     let spec = WorkspaceSpec::local(root.to_string_lossy());
     let empty = json!({"panels":[],"tiling":bed_workbench::workspace::tiling_state::TilingState::default().to_value([])});
     WorkspaceStore::load(&dir.path("config"))

@@ -2,6 +2,7 @@
 pub mod capture_map;
 pub mod folding;
 mod grammars;
+pub use grammars::comment_delimiters;
 pub mod highlight_service;
 pub mod outline;
 pub mod span_map;

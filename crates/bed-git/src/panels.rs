@@ -3,10 +3,7 @@ use bed_document_session::DocumentId;
 use bed_editor_api::{HostRequest, PanelTarget};
 use bed_editor_ui::DiffActionKind;
 use bed_git_core::{ConflictChoice, DiffSide, Operation, RepositoryOperation, StatusEntry};
-use dear_imgui_rs::{
-    ItemFlags, MouseButton, StyleColor, StyleVar, TableColumnFlags, TableColumnWidth, TableFlags,
-    TreeNodeFlags, Ui,
-};
+use dear_imgui_rs::{ItemFlags, MouseButton, StyleColor, StyleVar, TreeNodeFlags, Ui};
 use serde_json::json;
 use std::io;
 
@@ -40,31 +37,6 @@ impl GitPanel {
             }
         }
         ui.set_cursor_pos(body_origin);
-        // A wide tile gives the change list its own column; a sidebar stacks it.
-        let _layout = if ui.content_region_avail()[0] >= fs * 44.0 {
-            ui.begin_table_with_sizing(
-                "##git-layout",
-                2,
-                TableFlags::NO_SAVED_SETTINGS | TableFlags::BORDERS_INNER_V,
-                [0.0; 2],
-                0.0,
-            )
-        } else {
-            None
-        };
-        if _layout.is_some() {
-            ui.table_setup_column(
-                "Repository",
-                TableColumnFlags::NONE,
-                Some(TableColumnWidth::Fixed(fs * 23.0)),
-            );
-            ui.table_setup_column(
-                "Changes",
-                TableColumnFlags::NONE,
-                Some(TableColumnWidth::Stretch(1.0)),
-            );
-            ui.table_next_column();
-        }
         if project_root.is_empty() {
             bed_ui::presentation::directory_label(ui, state.repo_root());
         }
@@ -76,33 +48,86 @@ impl GitPanel {
                 &status.branch
             }
         });
-        let right = ui.cursor_pos()[0] + ui.content_region_avail()[0];
-        let refresh_width = button_width(ui, "Refresh");
-        if let Some(icon) = icons.and_then(|icons| icons.get("git-branch")) {
-            ui.image_config(icon, [fs; 2])
-                .tint_color(ui.style_color(StyleColor::Text))
-                .build();
-            ui.same_line();
-        }
-        let branch_width = (ui.content_region_avail()[0] - refresh_width - fs * 0.6).max(1.0);
-        let label = fit_label(
-            ui,
-            &format!("{branch} ▾"),
-            branch_width - ui.clone_style().frame_padding()[0] * 2.0,
-        );
         {
-            let _disabled =
-                ui.begin_disabled_with_cond(!state.writable() || state.mutation_pending());
-            if ui.button_with_size(format!("{label}###git-branch-picker"), [branch_width, 0.0]) {
-                ui.open_popup("##git-branches");
+            let style = ui.clone_style();
+            let gap = style.item_spacing()[0].min(fs * 0.25);
+            let _spacing = ui.push_style_var(StyleVar::ItemSpacing([gap, style.item_spacing()[1]]));
+            let width = ui.content_region_avail()[0];
+            let action_width = ui
+                .frame_height()
+                .min((width - fs * 2.0 - gap * 4.0) / 4.0)
+                .max(1.0);
+            let branch_width = (width - (action_width + gap) * 4.0).max(1.0);
+            let label = fit_label(
+                ui,
+                branch,
+                branch_width - style.frame_padding()[0] * 2.0 - ui.calc_text_size(" ▾")[0],
+            );
+            {
+                let _disabled =
+                    ui.begin_disabled_with_cond(!state.writable() || state.mutation_pending());
+                if ui.button_with_size(
+                    format!("{label} ▾###git-branch-picker"),
+                    [branch_width, 0.0],
+                ) {
+                    ui.open_popup("##git-branches");
+                }
             }
-        }
-        if ui.is_item_hovered() {
-            ui.tooltip_text(format!("{branch}\nSwitch or create a branch"));
-        }
-        ui.same_line_with_pos(right - refresh_width);
-        if ui.small_button("Refresh") {
-            state.refresh = true;
+            if ui.is_item_hovered() {
+                ui.tooltip_text(format!("{branch}\nSwitch or create a branch"));
+            }
+            for (key, id, fallback, tooltip, operation) in [
+                (
+                    "cloud-download",
+                    "git-fetch",
+                    "↓",
+                    "Fetch changes from the remote",
+                    Some(Operation::Fetch),
+                ),
+                (
+                    "arrow-down-to-line",
+                    "git-pull",
+                    "↓",
+                    "Pull remote changes into this branch",
+                    Some(Operation::Pull),
+                ),
+                (
+                    "arrow-up-from-line",
+                    "git-push",
+                    "↑",
+                    if status
+                        .as_ref()
+                        .is_some_and(|status| status.upstream.is_some())
+                    {
+                        "Push this branch to its upstream"
+                    } else {
+                        "Publish this branch to the remote"
+                    },
+                    Some(Operation::Push),
+                ),
+                (
+                    "refresh-cw",
+                    "git-refresh",
+                    "↻",
+                    "Refresh repository status",
+                    None,
+                ),
+            ] {
+                ui.same_line();
+                let _disabled = ui.begin_disabled_with_cond(
+                    operation.is_some() && (!state.writable() || state.mutation_pending()),
+                );
+                if bed_ui::icons::icon_button(ui, icons, key, id, fallback, [action_width, 0.0]) {
+                    if let Some(operation) = operation {
+                        state.mutate(operation, documents, requests);
+                    } else {
+                        state.refresh = true;
+                    }
+                }
+                if ui.is_item_hovered() {
+                    ui.tooltip_text(tooltip);
+                }
+            }
         }
         {
             let _popup_style = bed_ui::util::popup_style::context_menu_style(ui);
@@ -171,44 +196,6 @@ impl GitPanel {
             ));
         }
         let enabled = state.writable() && !state.mutation_pending();
-        {
-            let _disabled = ui.begin_disabled_with_cond(!enabled);
-            let sync_width = ui.content_region_avail()[0];
-            let gap = ui.clone_style().item_spacing()[0];
-            let columns = (sync_width - gap * 2.0) / 3.0;
-            let inline = columns >= button_width(ui, "Publish");
-            for (index, (label, operation)) in [
-                ("Fetch", Operation::Fetch),
-                ("Pull", Operation::Pull),
-                (
-                    if status.upstream.is_some() {
-                        "Push"
-                    } else {
-                        "Publish"
-                    },
-                    Operation::Push,
-                ),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                if index > 0 && inline {
-                    ui.same_line();
-                }
-                if ui.button_with_size(label, [if inline { columns } else { sync_width }, 0.0]) {
-                    state.mutate(operation, documents, requests);
-                }
-                if ui.is_item_hovered() {
-                    ui.tooltip_text(match label {
-                        "Fetch" => "Fetch changes from the remote",
-                        "Pull" => "Pull remote changes into this branch",
-                        "Push" => "Push this branch to its upstream",
-                        _ => "Publish this branch to the remote",
-                    });
-                }
-            }
-        }
-        ui.dummy([0.0, fs * 0.2]);
         match status.operation {
             RepositoryOperation::None => {}
             operation => {
@@ -246,75 +233,6 @@ impl GitPanel {
             .collect();
         // Git lists indexed additions first; keep rows in path order when staging.
         untracked.sort_by(|a, b| a.path.cmp(&b.path));
-        let staged_count = status
-            .entries
-            .iter()
-            .filter(|entry| state.staging_state(entry) != StagingState::Unstaged)
-            .count();
-        // Keep the composer outside the scrolling list, even in busy repositories.
-        ui.dummy([0.0, fs * 0.3]);
-        ui.separator();
-        ui.dummy([0.0, fs * 0.2]);
-        ui.text("Commit message");
-        let summary = format!("{staged_count} staged");
-        let summary_width = ui.calc_text_size(&summary)[0];
-        let right = ui.cursor_pos()[0] + ui.content_region_avail()[0];
-        if ui.item_rect_max()[0] + ui.clone_style().item_spacing()[0] + summary_width
-            <= ui.cursor_screen_pos()[0] + ui.content_region_avail()[0]
-        {
-            ui.same_line_with_pos(right - summary_width);
-            ui.text_disabled(summary);
-        }
-        let input_origin = ui.cursor_screen_pos();
-        let empty_draft = state.draft.is_empty();
-        ui.input_text_multiline(
-            "##git-commit",
-            &mut state.draft,
-            [ui.content_region_avail()[0], fs * 4.2],
-        )
-        .build();
-        if empty_draft && !ui.is_item_active() {
-            let padding = ui.clone_style().frame_padding();
-            let hint = fit_label(
-                ui,
-                "Describe your changes…",
-                ui.item_rect_size()[0] - padding[0] * 2.0,
-            );
-            ui.get_window_draw_list().add_text(
-                [input_origin[0] + padding[0], input_origin[1] + padding[1]],
-                ui.style_color(StyleColor::TextDisabled),
-                hint,
-            );
-        }
-        {
-            let _disabled = ui.begin_disabled_with_cond(!state.can_commit());
-            let accent = ui.style_color(StyleColor::CheckMark);
-            let background = ui.style_color(StyleColor::WindowBg);
-            let _button = ui.push_style_color(
-                StyleColor::Button,
-                bed_ui::color::blend(accent, background, 0.22),
-            );
-            let _hover = ui.push_style_color(
-                StyleColor::ButtonHovered,
-                bed_ui::color::blend(accent, background, 0.32),
-            );
-            let _active = ui.push_style_color(
-                StyleColor::ButtonActive,
-                bed_ui::color::blend(accent, background, 0.42),
-            );
-            let _text = ui.push_style_color(
-                StyleColor::Text,
-                bed_ui::color::ensure_contrast(
-                    ui.style_color(StyleColor::Text),
-                    bed_ui::color::blend(accent, background, 0.42),
-                    4.5,
-                ),
-            );
-            if ui.button_with_size("Commit staged", [ui.content_region_avail()[0], 0.0]) {
-                let message = state.draft.clone();
-                state.mutate(Operation::Commit { message }, documents, requests);
-            }
-        }
         if let Some(operation) = self.confirm.clone() {
             ui.separator();
             let (message, button) = confirmation_text(&operation);
@@ -333,14 +251,14 @@ impl GitPanel {
         {
             ui.text_wrapped(&state.output);
         }
-        if _layout.is_some() {
-            ui.table_next_column();
-        } else {
-            ui.dummy([0.0, fs * 0.35]);
-            ui.separator();
-            ui.dummy([0.0, fs * 0.2]);
-        }
-        let list_height = (ui.content_region_avail()[1] - footer_height).max(fs * 6.0);
+        ui.dummy([0.0, fs * 0.35]);
+        ui.separator();
+        ui.dummy([0.0, fs * 0.2]);
+        // Reserve the composer and cancellation footer below the scrolling list.
+        let spacing = ui.clone_style().item_spacing()[1];
+        let composer_height = fs * 5.7 + ui.frame_height() + spacing * 6.0 + 1.0;
+        let composer_y = footer_y - composer_height;
+        let list_height = (composer_y - ui.cursor_pos()[1] - spacing).max(1.0);
         ui.child_window("##git-change-list")
             .size([0.0, list_height])
             .build(ui, || {
@@ -384,6 +302,78 @@ impl GitPanel {
                     icons,
                 );
             });
+        ui.set_cursor_pos_y(composer_y.max(ui.cursor_pos()[1]));
+        let staged_entries: Vec<_> = status
+            .entries
+            .iter()
+            .filter(|entry| state.staging_state(entry) != StagingState::Unstaged)
+            .collect();
+        let staged_count = staged_entries.len();
+        let placeholder = if let [entry] = staged_entries.as_slice() {
+            format!("update {}", entry.path.rsplit('/').next().unwrap())
+        } else {
+            "Describe your changes…".into()
+        };
+        // Keep the composer outside the scrolling list, even in busy repositories.
+        ui.dummy([0.0, fs * 0.3]);
+        ui.separator();
+        ui.dummy([0.0, fs * 0.2]);
+        ui.text("Commit message");
+        let summary = format!("{staged_count} staged");
+        let summary_width = ui.calc_text_size(&summary)[0];
+        let right = ui.cursor_pos()[0] + ui.content_region_avail()[0];
+        if ui.item_rect_max()[0] + ui.clone_style().item_spacing()[0] + summary_width
+            <= ui.cursor_screen_pos()[0] + ui.content_region_avail()[0]
+        {
+            ui.same_line_with_pos(right - summary_width);
+            ui.text_disabled(summary);
+        }
+        let input_origin = ui.cursor_screen_pos();
+        let empty_draft = state.draft.is_empty();
+        ui.input_text_multiline(
+            "##git-commit",
+            &mut state.draft,
+            [ui.content_region_avail()[0], fs * 4.2],
+        )
+        .build();
+        if empty_draft && !ui.is_item_active() {
+            let padding = ui.clone_style().frame_padding();
+            let hint = fit_label(ui, &placeholder, ui.item_rect_size()[0] - padding[0] * 2.0);
+            ui.get_window_draw_list().add_text(
+                [input_origin[0] + padding[0], input_origin[1] + padding[1]],
+                ui.style_color(StyleColor::TextDisabled),
+                hint,
+            );
+        }
+        {
+            let _disabled = ui.begin_disabled_with_cond(!state.can_commit());
+            let accent = ui.style_color(StyleColor::CheckMark);
+            let background = ui.style_color(StyleColor::WindowBg);
+            let _button = ui.push_style_color(
+                StyleColor::Button,
+                bed_ui::color::blend(accent, background, 0.22),
+            );
+            let _hover = ui.push_style_color(
+                StyleColor::ButtonHovered,
+                bed_ui::color::blend(accent, background, 0.32),
+            );
+            let _active = ui.push_style_color(
+                StyleColor::ButtonActive,
+                bed_ui::color::blend(accent, background, 0.42),
+            );
+            let _text = ui.push_style_color(
+                StyleColor::Text,
+                bed_ui::color::ensure_contrast(
+                    ui.style_color(StyleColor::Text),
+                    bed_ui::color::blend(accent, background, 0.42),
+                    4.5,
+                ),
+            );
+            if ui.button_with_size("Commit staged", [ui.content_region_avail()[0], 0.0]) {
+                let message = state.draft.clone();
+                state.mutate(Operation::Commit { message }, documents, requests);
+            }
+        }
         Ok(())
     }
 }
@@ -821,7 +811,17 @@ mod tests {
         let mut panel = GitPanel::default();
         let mut session = EditorSession::default();
         let mut icons = bed_ui::icons::Icons::default();
-        for key in ["default", "rust", "git-branch", "plus", "minus"] {
+        for key in [
+            "default",
+            "rust",
+            "git-branch",
+            "plus",
+            "minus",
+            "cloud-download",
+            "arrow-down-to-line",
+            "arrow-up-from-line",
+            "refresh-cw",
+        ] {
             icons.set_texture(key, TextureId::new(1));
         }
         let mut requests = Vec::new();
@@ -876,6 +876,23 @@ mod tests {
                         })
                         .expect("the file list has its own scroll region");
                     assert!((*list).ScrollMax.y > 0.0, "long lists scroll at {width}px");
+                    let composer = std::slice::from_raw_parts(windows.Data, windows.Size as usize)
+                        .iter()
+                        .copied()
+                        .find(|window| {
+                            std::ffi::CStr::from_ptr((**window).Name)
+                                .to_string_lossy()
+                                .contains("##git-commit")
+                        })
+                        .expect("the commit message input is visible");
+                    assert!(
+                        (*composer).Pos.y >= (*list).Pos.y + (*list).Size.y,
+                        "the composer sits below the file list at {width}px"
+                    );
+                    assert!(
+                        (*composer).Pos.y + (*composer).Size.y < (*parent).Pos.y + (*parent).Size.y,
+                        "the composer stays inside the panel at {width}px"
+                    );
                     let position = [(*list).Pos.x, (*list).Pos.y];
                     if let Some(idle) = idle_position {
                         assert_eq!(position, idle, "push progress does not shift the file list");

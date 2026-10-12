@@ -263,82 +263,223 @@ fn promotion_uses_default_terminal_placement_and_opens_later_roots_in_another_wi
 }
 
 #[test]
-fn shell_companions_share_documents_but_keep_per_caller_views_and_group_placement() {
-    let dir = TempDir::new();
-    let first = dir.write("first.txt", b"first");
-    let next = dir.write("next.txt", b"next");
-    let mut app = app(&dir);
-    let caller = open_terminal(app.world_mut());
-    let other = open_terminal(app.world_mut());
-    let source = panel_presentation(app.world(), caller).unwrap();
-    let queued = capture_editor_request_from(
-        app.world(),
-        EditorAction::HostRequest(HostRequest::OpenTerminalCompanions {
-            paths: vec![first.clone()],
-        }),
-        PanelTarget::LastFocused,
-        Some(source),
-    );
-    focus_panel(app.world_mut(), other, true).unwrap();
-    let id = submit_editor_request(app.world_mut(), queued);
-    process_editor_requests(app.world_mut()).unwrap();
-    let a = match poll_editor_request_result(app.world_mut(), id)
-        .unwrap()
-        .unwrap()
-    {
-        EditorRequestOutcome::Opened { panel, .. } => panel,
-        _ => panic!(),
-    };
-    let area = app
-        .world()
-        .resource::<WorkbenchLayout>()
-        .tiling
-        .area_for(app.world().get::<PanelPresentation>(a).unwrap().id)
-        .unwrap();
-    assert_ne!(
-        area,
-        app.world()
-            .resource::<WorkbenchLayout>()
-            .tiling
-            .area_for(app.world().get::<PanelPresentation>(caller).unwrap().id)
+fn terminal_file_requests_use_the_largest_area_and_reuse_existing_tabs() {
+    for linked in [false, true] {
+        let dir = TempDir::new();
+        let existing = dir.write("existing.rs", b"existing");
+        let path = dir.write("source.rs", "first\n// 🦀 target\nlast".as_bytes());
+        let mut app = app(&dir);
+        let editor = open_file(app.world_mut(), &existing, None, false, None).unwrap();
+        let caller = open_terminal(app.world_mut());
+        let other = open_terminal(app.world_mut());
+        let source = panel_presentation(app.world(), caller).unwrap();
+        let mut tiling = app.world().resource::<WorkbenchLayout>().tiling.clone();
+        let largest = tiling.layout.split(1, 0, 2500, 100).unwrap();
+        tiling.add_area(largest);
+        tiling.assign(
+            app.world().get::<PanelPresentation>(editor).unwrap().id,
+            largest,
+        );
+        app.world_mut().resource_mut::<WorkbenchLayout>().tiling = tiling;
+        focus_panel(app.world_mut(), caller, true).unwrap();
+        let host = if linked {
+            HostRequest::OpenTerminalLink {
+                path: path.clone(),
+                position: Some((1, 8)),
+            }
+        } else {
+            HostRequest::OpenTerminalFiles {
+                paths: vec![path.clone()],
+            }
+        };
+        let queued = capture_editor_request_from(
+            app.world(),
+            EditorAction::HostRequest(host),
+            PanelTarget::LastFocused,
+            Some(source),
+        );
+        assert_eq!(queued.area, largest);
+        focus_panel(app.world_mut(), other, true).unwrap();
+        let id = submit_editor_request(app.world_mut(), queued);
+        process_editor_requests(app.world_mut()).unwrap();
+        let opened = match poll_editor_request_result(app.world_mut(), id)
             .unwrap()
-    );
-    let b = match request(
-        app.world_mut(),
-        other,
-        HostRequest::OpenTerminalCompanions {
-            paths: vec![first.clone()],
-        },
-    ) {
-        EditorRequestOutcome::Opened { panel, .. } => panel,
-        _ => panic!(),
-    };
-    assert_ne!(a, b);
-    let first_binding = app.world().get::<EditorPanelBinding>(a).unwrap();
-    let other_binding = app.world().get::<EditorPanelBinding>(b).unwrap();
-    assert_eq!(first_binding.document, other_binding.document);
-    assert_ne!(first_binding.view, other_binding.view);
-    let again = request(
-        app.world_mut(),
-        source,
-        HostRequest::OpenTerminalCompanions { paths: vec![first] },
-    );
-    assert!(matches!(again, EditorRequestOutcome::Opened {panel,..} if panel == a));
-    let c = match request(
-        app.world_mut(),
-        source,
-        HostRequest::OpenTerminalCompanions { paths: vec![next] },
-    ) {
-        EditorRequestOutcome::Opened { panel, .. } => panel,
-        _ => panic!(),
-    };
-    assert_eq!(
-        app.world()
-            .resource::<WorkbenchLayout>()
+            .unwrap()
+        {
+            EditorRequestOutcome::Opened { panel, .. } => panel,
+            other => panic!("{other:?}"),
+        };
+        let layout = app.world().resource::<WorkbenchLayout>();
+        assert_eq!(layout.tiling.areas.len(), 2);
+        assert_eq!(
+            layout
+                .tiling
+                .area_for(app.world().get::<PanelPresentation>(opened).unwrap().id),
+            Some(largest)
+        );
+        let view = app
+            .world()
+            .get::<EditorPanelBinding>(opened)
+            .unwrap()
+            .view
+            .unwrap();
+        if linked {
+            let snapshot = app
+                .world()
+                .non_send::<EditorSession>()
+                .view_snapshot(view)
+                .unwrap();
+            assert_eq!((snapshot.row, snapshot.column), (1, 8));
+        }
+        // The other terminal and both entry points share the existing editor tab.
+        let reused = request(
+            app.world_mut(),
+            other,
+            HostRequest::OpenTerminalFiles {
+                paths: vec![path.clone()],
+            },
+        );
+        assert!(matches!(reused, EditorRequestOutcome::Opened { panel, .. } if panel == opened));
+        let reused = request(
+            app.world_mut(),
+            source,
+            HostRequest::OpenTerminalLink {
+                path,
+                position: Some((2, 1)),
+            },
+        );
+        assert!(matches!(reused, EditorRequestOutcome::Opened { panel, .. } if panel == opened));
+        assert_eq!(
+            app.world().get::<EditorPanelBinding>(opened).unwrap().view,
+            Some(view)
+        );
+        let snapshot = app
+            .world()
+            .non_send::<EditorSession>()
+            .view_snapshot(view)
+            .unwrap();
+        assert_eq!((snapshot.row, snapshot.column), (2, 1));
+        assert_eq!(
+            app.world().resource::<WorkbenchLayout>().focused,
+            Some(opened)
+        );
+        assert_eq!(app.world().resource::<Terminals>().created, 2);
+        assert!(app.world().resource::<Terminals>().closed.is_empty());
+    }
+}
+
+#[test]
+fn a_sole_terminal_gets_one_editor_area_for_file_links_and_multi_file_open() {
+    for linked in [false, true] {
+        let dir = TempDir::new();
+        let first = dir.write("first.rs", b"first\nsecond");
+        let next = dir.write("next.rs", b"next");
+        let mut app = app(&dir);
+        let caller = open_terminal(app.world_mut());
+        let host = if linked {
+            HostRequest::OpenTerminalLink {
+                path: first.clone(),
+                position: Some((1, 2)),
+            }
+        } else {
+            HostRequest::OpenTerminalFiles {
+                paths: vec![first.clone(), next.clone()],
+            }
+        };
+        let opened = match request(app.world_mut(), caller, host) {
+            EditorRequestOutcome::Opened { panel, .. } => panel,
+            other => panic!("{other:?}"),
+        };
+        let layout = app.world().resource::<WorkbenchLayout>();
+        assert_eq!(layout.tiling.areas.len(), 2);
+        let destination = layout
             .tiling
-            .area_for(app.world().get::<PanelPresentation>(c).unwrap().id),
-        Some(area)
-    );
-    assert_eq!(app.world().resource::<Terminals>().created, 2);
-    assert!(app.world().resource::<Terminals>().closed.is_empty());
+            .area_for(app.world().get::<PanelPresentation>(opened).unwrap().id)
+            .unwrap();
+        assert_ne!(
+            layout
+                .tiling
+                .area_for(app.world().get::<PanelPresentation>(caller).unwrap().id),
+            Some(destination)
+        );
+        let reused = request(
+            app.world_mut(),
+            caller,
+            HostRequest::OpenTerminalFiles {
+                paths: vec![first.clone()],
+            },
+        );
+        let first_panel = match reused {
+            EditorRequestOutcome::Opened { panel, .. } => panel,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            app.world().resource::<WorkbenchLayout>().tiling.area_for(
+                app.world()
+                    .get::<PanelPresentation>(first_panel)
+                    .unwrap()
+                    .id
+            ),
+            Some(destination)
+        );
+        let last = request(
+            app.world_mut(),
+            caller,
+            HostRequest::OpenTerminalFiles { paths: vec![next] },
+        );
+        let last = match last {
+            EditorRequestOutcome::Opened { panel, .. } => panel,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            app.world().resource::<WorkbenchLayout>().tiling.areas.len(),
+            2
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorkbenchLayout>()
+                .tiling
+                .area_for(app.world().get::<PanelPresentation>(last).unwrap().id),
+            Some(destination)
+        );
+        assert_eq!(active_panel_entities(app.world_mut()).len(), 3);
+        assert!(app.world().resource::<Terminals>().closed.is_empty());
+    }
+}
+
+#[test]
+fn failed_terminal_file_opens_leave_the_sole_terminal_layout_unchanged() {
+    for linked in [false, true] {
+        let dir = TempDir::new();
+        let mut app = app(&dir);
+        let caller = open_terminal(app.world_mut());
+        let original = app.world().resource::<WorkbenchLayout>().tiling.clone();
+        let path = dir.path("missing.rs");
+        let host = if linked {
+            HostRequest::OpenTerminalLink {
+                path,
+                position: Some((4, 2)),
+            }
+        } else {
+            HostRequest::OpenTerminalFiles { paths: vec![path] }
+        };
+        let queued = capture_editor_request_from(
+            app.world(),
+            EditorAction::HostRequest(host),
+            PanelTarget::LargestArea,
+            Some(caller),
+        );
+        let id = submit_editor_request(app.world_mut(), queued);
+        process_editor_requests(app.world_mut()).unwrap();
+        assert!(
+            poll_editor_request_result(app.world_mut(), id)
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(app.world().resource::<WorkbenchLayout>().tiling, original);
+        assert_eq!(
+            app.world().resource::<WorkbenchLayout>().focused,
+            Some(caller)
+        );
+    }
 }

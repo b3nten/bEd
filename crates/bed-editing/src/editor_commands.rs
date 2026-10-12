@@ -1014,6 +1014,107 @@ impl<'a> EditorCommands<'a> {
         self.type_text(&text);
         self.request_ensure_visible();
     }
+    /// Toggle comments on the union of selected lines (or caret lines). A
+    /// selection ending at column zero does not include that final line.
+    /// Empty end markers denote line comments; paired markers wrap each line.
+    pub fn toggle_comment(&mut self, start: &[u8], end: &[u8]) {
+        if self.state.read_only {
+            return;
+        }
+        assert!(!start.is_empty());
+        let mut rows = std::collections::BTreeSet::new();
+        for selection in &self.view.selections {
+            let (first, _, mut last, column) = selection.ordered();
+            if last > first && column == 0 {
+                last -= 1;
+            }
+            rows.extend(first..=last);
+        }
+        let multiple = rows.len() > 1;
+        let lines: Vec<_> = rows
+            .into_iter()
+            .filter_map(|row| {
+                let line = self.state.line(row);
+                let indent = line
+                    .iter()
+                    .take_while(|&&b| b == b' ' || b == b'\t')
+                    .count();
+                if multiple && indent == line.len() {
+                    return None;
+                }
+                let body_end = line
+                    .iter()
+                    .rposition(|&b| b != b' ' && b != b'\t')
+                    .map_or(indent, |i| i + 1);
+                let body = &line[indent..body_end];
+                let commented = body.len() >= start.len() + end.len()
+                    && body.starts_with(start)
+                    && body.ends_with(end);
+                Some((row, line, indent, body_end, commented))
+            })
+            .collect();
+        if lines.is_empty() {
+            return;
+        }
+        let uncomment = lines.iter().all(|line| line.4);
+        let mut operations = Vec::new();
+        for (row, line, indent, body_end, _) in lines.into_iter().rev() {
+            let mut content_end = line.len();
+            // Edit the suffix first so both operations use original columns.
+            if !end.is_empty() {
+                let mut column = body_end;
+                let mut text = Vec::new();
+                let mut length = 0;
+                if uncomment {
+                    column -= end.len();
+                    if column > indent + start.len() && line[column - 1] == b' ' {
+                        column -= 1;
+                    }
+                    length = (body_end - column) as i32;
+                    content_end = column;
+                } else {
+                    text.push(b' ');
+                    text.extend_from_slice(end);
+                }
+                operations.push(TextOp {
+                    kind: if uncomment {
+                        OpKind::Delete
+                    } else {
+                        OpKind::Insert
+                    },
+                    row,
+                    column: column as i32,
+                    length,
+                    text,
+                });
+            }
+            let mut text = Vec::new();
+            let mut length = 0;
+            if uncomment {
+                length = start.len();
+                // Do not consume a space already removed with the suffix.
+                if indent + length < content_end && line[indent + length] == b' ' {
+                    length += 1;
+                }
+            } else {
+                text.extend_from_slice(start);
+                text.push(b' ');
+            }
+            operations.push(TextOp {
+                kind: if uncomment {
+                    OpKind::Delete
+                } else {
+                    OpKind::Insert
+                },
+                row,
+                column: indent as i32,
+                length: length as i32,
+                text,
+            });
+        }
+        self.apply_transaction(&operations);
+    }
+
     pub fn indent(&mut self) {
         if !self.view.selection_empty() {
             self.indent_multi_line();
@@ -1523,6 +1624,71 @@ mod tests {
         assert_eq!(f.state.line(0), b"\ta");
         assert_eq!(f.state.line(1), b"\tb");
         assert_eq!(f.state.line(2), b"c");
+    }
+
+    #[test]
+    fn toggle_comment_preserves_unicode_caret_and_has_one_undo_step() {
+        let mut f = Fixture::new("  café();".as_bytes());
+        f.caret(0, 7);
+        f.commands().toggle_comment(b"//", b"");
+        assert_eq!(f.content(), "  // café();".as_bytes());
+        assert_eq!(f.view.column, 10);
+        f.commands().undo();
+        assert_eq!(f.content(), "  café();".as_bytes());
+        assert_eq!(f.view.column, 7);
+        f.commands().redo();
+        assert_eq!(f.content(), "  // café();".as_bytes());
+        f.commands().toggle_comment(b"//", b"");
+        assert_eq!(f.content(), "  café();".as_bytes());
+        assert_eq!(f.view.column, 7);
+    }
+
+    #[test]
+    fn toggle_comment_handles_reversed_selection_blanks_and_crlf() {
+        let original = b"  first\r\n\tsecond\r\n \t\r\nafter";
+        let mut f = Fixture::new(original);
+        f.selection(3, 0, 0, 2);
+        f.commands().toggle_comment(b"#", b"");
+        assert_eq!(f.content(), b"  # first\r\n\t# second\r\n \t\r\nafter");
+        assert_eq!(f.view.primary().ordered(), (0, 4, 3, 0));
+        f.commands().undo();
+        assert_eq!(f.content(), original);
+        assert_eq!(f.view.primary().ordered(), (0, 2, 3, 0));
+        f.commands().redo();
+        f.commands().toggle_comment(b"#", b"");
+        assert_eq!(f.content(), original);
+    }
+
+    #[test]
+    fn toggle_comment_deduplicates_caret_lines_and_comments_mixed_lines_together() {
+        let mut f = Fixture::new(b"// first\nsecond\nthird");
+        f.carets(&[(0, 3), (0, 5), (1, 2)], 1);
+        f.commands().toggle_comment(b"//", b"");
+        assert_eq!(f.content(), b"// // first\n// second\nthird");
+        assert_eq!(f.view.selection_count(), 3);
+        assert_eq!(f.view.primary_index, 1);
+        f.commands().toggle_comment(b"//", b"");
+        assert_eq!(f.content(), b"// first\nsecond\nthird");
+        assert_eq!(f.view.primary().head_column, 5);
+        f.state.read_only = true;
+        f.commands().toggle_comment(b"//", b"");
+        assert_eq!(f.content(), b"// first\nsecond\nthird");
+    }
+
+    #[test]
+    fn toggle_comment_paired_markers_and_empty_lines_round_trip() {
+        for (start, end) in [(&b"/*"[..], &b"*/"[..]), (b"//", b"")] {
+            for original in [&b"  color: red;  "[..], b" \t", b""] {
+                let mut f = Fixture::new(original);
+                f.commands().toggle_comment(start, end);
+                assert!(f.content().windows(start.len()).any(|bytes| bytes == start));
+                f.commands().toggle_comment(start, end);
+                assert_eq!(f.content(), original);
+            }
+        }
+        let mut f = Fixture::new(b"  /*color: red;*/");
+        f.commands().toggle_comment(b"/*", b"*/");
+        assert_eq!(f.content(), b"  color: red;");
     }
     #[test]
     fn outdent_tab_and_four_spaces() {

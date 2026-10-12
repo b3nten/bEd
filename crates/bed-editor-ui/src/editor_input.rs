@@ -215,6 +215,7 @@ impl EditorInput {
                 "newline"
                     | "indent"
                     | "outdent"
+                    | "toggle_comment"
                     | "delete_left"
                     | "delete_right"
                     | "delete_word_left"
@@ -322,6 +323,11 @@ impl EditorInput {
                 "outdent" => {
                     editor.commands().outdent();
                     ui.set_keyboard_focus_here_with_offset(-1);
+                }
+                "toggle_comment" => {
+                    if let Some((start, end)) = bed_highlight::comment_delimiters(&editor.state) {
+                        editor.commands().toggle_comment(start, end);
+                    }
                 }
                 "select_all" => editor.commands().select_all(),
                 "collapse_selection" => editor.commands().collapse_selection(),
@@ -1273,6 +1279,73 @@ mod tests {
         context.io_mut().add_key_event(Key::A, true);
         render(&mut context, &mut editor, &mut input, true, false);
         assert_eq!(editor.commands().copy(), b"all\nlines");
+    }
+
+    #[test]
+    fn toggle_comment_shortcut_respects_rebinding_selection_and_read_only() {
+        use bed_keybindings::{Bindings, Overrides, Platform};
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        for (rebind, read_only) in [(false, false), (true, false), (false, true)] {
+            let mut context = context();
+            let mut editor = Editor::new();
+            editor.set_content(b"  first\nsecond\nafter");
+            editor.state.language_id = "rs".into();
+            editor.state.read_only = read_only;
+            editor
+                .commands()
+                .set_selection(0, 2, 2, 0, CursorReveal::Ensure);
+            let mut input = EditorInput::default();
+            let mut overrides = Overrides::default();
+            let actions = crate::shortcuts::actions();
+            let action = actions
+                .iter()
+                .find(|a| a.id == "bed.editor.toggle_comment")
+                .unwrap();
+            if rebind {
+                overrides
+                    .replace(action, Some(0), "Primary+K".parse().unwrap())
+                    .unwrap();
+            }
+            input.shortcuts.bindings =
+                std::rc::Rc::new(Bindings::new(actions, &overrides, Platform::current()));
+            render(&mut context, &mut editor, &mut input, true, false);
+            context.io_mut().add_key_event(
+                if cfg!(target_os = "macos") {
+                    Key::ModSuper
+                } else {
+                    Key::ModCtrl
+                },
+                true,
+            );
+            context.io_mut().add_key_event(Key::Slash, true);
+            if !rebind {
+                context.io_mut().add_input_characters_utf8("/");
+            }
+            render(&mut context, &mut editor, &mut input, true, false);
+            if rebind {
+                assert_eq!(editor.state.join(), b"  first\nsecond\nafter");
+                context.io_mut().add_key_event(Key::Slash, false);
+                context.io_mut().add_key_event(Key::K, true);
+                context.io_mut().add_input_characters_utf8("k");
+                render(&mut context, &mut editor, &mut input, true, false);
+            }
+            assert_eq!(
+                editor.state.join(),
+                if read_only {
+                    &b"  first\nsecond\nafter"[..]
+                } else {
+                    &b"  // first\n// second\nafter"[..]
+                }
+            );
+            if !read_only {
+                let key = if rebind { Key::K } else { Key::Slash };
+                context.io_mut().add_key_event(key, false);
+                render(&mut context, &mut editor, &mut input, true, false);
+                context.io_mut().add_key_event(key, true);
+                render(&mut context, &mut editor, &mut input, true, false);
+                assert_eq!(editor.state.join(), b"  first\nsecond\nafter");
+            }
+        }
     }
 
     #[test]

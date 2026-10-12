@@ -25,6 +25,11 @@ pub fn actions() -> Vec<Action> {
         ("go_to_line", "Go to Line", vec!["Ctrl+G"]),
         ("collapse_selection", "Collapse Selection", vec!["Escape"]),
         (
+            "toggle_comment",
+            "Toggle Line Comment",
+            vec!["Primary+Slash"],
+        ),
+        (
             "add_cursor_above",
             "Add Cursor Above",
             vec!["Primary+Alt+Up"],

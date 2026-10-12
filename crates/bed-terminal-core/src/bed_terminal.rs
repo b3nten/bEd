@@ -260,6 +260,15 @@ impl BedTerminal {
             .current_directory
             .as_deref()
     }
+    /// Directory reported by the shell with OSC 7, including SSH shells.
+    pub fn reported_working_directory(&self, id: u64) -> Option<&Path> {
+        self.sessions
+            .iter()
+            .find(|session| session.id == id)?
+            .terminal
+            .current_directory
+            .as_deref()
+    }
     pub fn session_state(&self, id: u64) -> Option<TerminalSessionState> {
         self.sessions
             .iter()

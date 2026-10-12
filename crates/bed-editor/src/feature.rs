@@ -1093,6 +1093,23 @@ mod tests {
     }
 
     #[test]
+    fn toggle_comment_is_registered_for_keybinding_settings() {
+        let app = app();
+        let registry = app.world().resource::<bed_workbench_api::Registry>();
+        let action = registry
+            .shortcuts()
+            .iter()
+            .find(|action| action.id == "bed.editor.toggle_comment")
+            .unwrap();
+        assert_eq!(action.label, "Toggle Line Comment");
+        assert_eq!(
+            action.scope,
+            bed_keybindings::Scope::panel(bed_keybindings::EDITOR_SCOPE)
+        );
+        assert_eq!(action.defaults, vec!["Primary+Slash".parse().unwrap()]);
+    }
+
+    #[test]
     fn plugin_creates_independent_buffers_and_routes_actions_to_the_originating_view() {
         let mut app = app();
         let first = open(&mut app, TEXT_PANEL_TYPE);
