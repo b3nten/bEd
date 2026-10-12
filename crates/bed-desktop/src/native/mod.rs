@@ -1,4 +1,5 @@
 //! Native mechanisms accept application-owned presentation and emit owned intents.
+mod clipboard;
 #[cfg(target_os = "linux")]
 pub mod linux_window;
 #[cfg(target_os = "macos")]
@@ -142,6 +143,21 @@ impl DesktopFileClipboard {
             .set()
             .file_list(paths)
             .map_err(io::Error::other)
+    }
+    /// Files for an explicit paste, including a temporary PNG for a copied image.
+    /// An empty list means the caller should use its ordinary text clipboard.
+    pub fn read_paste_files(&mut self) -> io::Result<Vec<PathBuf>> {
+        let mut clipboard = self.0.borrow_mut();
+        match clipboard.get().file_list() {
+            Ok(paths) if !paths.is_empty() => return Ok(paths),
+            Ok(_) | Err(arboard::Error::ContentNotAvailable) => {}
+            Err(error) => return Err(io::Error::other(error)),
+        }
+        match clipboard.get_image() {
+            Ok(image) => Ok(vec![clipboard::save_paste_image(image)?]),
+            Err(arboard::Error::ContentNotAvailable) => Ok(Vec::new()),
+            Err(error) => Err(io::Error::other(error)),
+        }
     }
 }
 struct TextClipboard(arboard::Clipboard);

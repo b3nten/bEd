@@ -23,7 +23,7 @@ pub fn shell_directory(saved: Option<&str>, base_directory: &str, remote: bool) 
 #[cfg(feature = "desktop")]
 mod input;
 #[cfg(feature = "desktop")]
-pub use input::{TerminalInputPolicy, TerminalInputSystems};
+pub use input::{TerminalInputPolicy, TerminalInputSystems, clipboard_file_paste};
 
 #[cfg(test)]
 #[path = "../../../tests/support/temp_dir.rs"]

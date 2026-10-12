@@ -420,7 +420,8 @@ fn native_input(world: &mut World) {
             }
         }
     }
-    native_file_events(world, file_events);
+
+    let x = String::
     for (delta, phase) in pinches {
         let (position, _) = native_drag_observation(world);
         let phase = match phase {
@@ -1164,11 +1165,32 @@ fn route_native_edit(
         let operation = match action {
             MenuAction::Copy => Some(ClipboardAction::Copy),
             MenuAction::Cut => Some(ClipboardAction::Cut),
-            MenuAction::Paste => world
-                .non_send_mut::<DesktopContext>()
-                .context
-                .clipboard_text()
-                .map(ClipboardAction::Paste),
+            MenuAction::Paste => {
+                let files = if world
+                    .get::<bed_terminal::TerminalPanelState>(entity)
+                    .is_some()
+                {
+                    let mut clipboard =
+                        world.get_non_send_mut::<bed_desktop::DesktopFileClipboard>();
+                    match bed_terminal::clipboard_file_paste(clipboard.as_deref_mut()) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            world.resource_mut::<EditorWorkspace>().error = Some(error.to_string());
+                            return;
+                        }
+                    }
+                } else {
+                    None
+                };
+                files
+                    .or_else(|| {
+                        world
+                            .non_send_mut::<DesktopContext>()
+                            .context
+                            .clipboard_text()
+                    })
+                    .map(ClipboardAction::Paste)
+            }
             MenuAction::SelectAll => Some(ClipboardAction::SelectAll),
             _ => None,
         };

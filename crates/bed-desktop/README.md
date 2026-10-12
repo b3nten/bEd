@@ -105,6 +105,10 @@ before input interception. `DesktopContentInsets` reports chrome geometry;
 `DesktopNativeCapabilities` reports platform support and clipboard availability.
 ImGui receives a native text clipboard backend. Cloneable main-thread
 `DesktopFileClipboard` exposes path operations independently of editor APIs.
+Its explicit `read_paste_files` operation prefers copied file paths and saves
+raw clipboard images as unique temporary PNGs for applications that accept files.
+The PNGs remain available for the receiving process; the OS cleans its temporary
+directory. Ordinary ImGui text paste keeps its text-only behavior.
 Native integration never replaces Winit's view or delegate.
 Window visibility, focus, decorations and resizability remain under Bevy/Winit
 control. Borderless windows have no native titlebar controls or content inset.

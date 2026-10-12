@@ -1,7 +1,7 @@
 //! Terminal input ownership is resolved before ImGui and gameplay receive events.
 use bed_desktop::{
-    DesktopContext, DesktopInjectedEvent, DesktopInjectedInputEvents, DesktopInputEvents,
-    DesktopSystems,
+    DesktopContext, DesktopFileClipboard, DesktopInjectedEvent, DesktopInjectedInputEvents,
+    DesktopInputEvents, DesktopSystems,
 };
 use bed_terminal_core::{
     bed_terminal_core::BedTerminal,
@@ -179,6 +179,7 @@ fn deliver_key(
     state: &mut InputState,
     terminal: &mut BedTerminal,
     desktop: Option<&mut DesktopContext>,
+    file_clipboard: Option<&mut DesktopFileClipboard>,
     physical: PhysicalKey,
     key: TerminalKeyEvent,
     policy: &TerminalInputPolicy,
@@ -215,7 +216,9 @@ fn deliver_key(
                     .native_select_all()
                     .map_err(|error| error.to_string())?,
                 _ => {
-                    if let Some(text) = desktop.and_then(|desktop| desktop.context.clipboard_text())
+                    if let Some(text) = clipboard_file_paste(file_clipboard)
+                        .map_err(|error| error.to_string())?
+                        .or_else(|| desktop.and_then(|desktop| desktop.context.clipboard_text()))
                     {
                         terminal
                             .native_paste(text)
@@ -245,6 +248,7 @@ fn intercept(
     mut events: Option<ResMut<DesktopInputEvents>>,
     mut injected: Option<ResMut<DesktopInjectedInputEvents>>,
     mut desktop: Option<NonSendMut<DesktopContext>>,
+    mut file_clipboard: Option<NonSendMut<DesktopFileClipboard>>,
     layout: Option<Res<WorkbenchLayout>>,
     frontends: Query<&PanelFrontend>,
     panels: Query<&crate::TerminalPanelState>,
@@ -329,6 +333,7 @@ fn intercept(
                         &mut state,
                         &mut terminal,
                         desktop.as_deref_mut(),
+                        file_clipboard.as_deref_mut(),
                         key.physical_key,
                         translated,
                         &policy,
@@ -434,6 +439,7 @@ fn intercept(
                         &mut state,
                         &mut terminal,
                         desktop.as_deref_mut(),
+                        file_clipboard.as_deref_mut(),
                         physical,
                         key,
                         &policy,
@@ -470,6 +476,51 @@ fn intercept(
     for message in errors {
         intents.push(None, bed_editor_api::HostRequest::Notify { message });
     }
+}
+
+/// Resolve copied files or image data into terminal paste text. Hosts use this
+/// for native menus; ordinary text still comes from their text clipboard.
+pub fn clipboard_file_paste(
+    clipboard: Option<&mut DesktopFileClipboard>,
+) -> std::io::Result<Option<String>> {
+    let Some(clipboard) = clipboard else {
+        return Ok(None);
+    };
+    let paths = clipboard.read_paste_files()?;
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    file_paste_text(&paths).map(Some)
+}
+
+/// Preserve each path as one shell argument. Reject control characters because
+/// terminal paste normalizes newlines and strips escape bytes.
+fn file_paste_text(paths: &[std::path::PathBuf]) -> std::io::Result<String> {
+    let mut text = String::new();
+    for path in paths {
+        let path = path.to_str().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Clipboard file path is not UTF-8",
+            )
+        })?;
+        if path.is_empty() || path.chars().any(char::is_control) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Clipboard file path is empty or contains control characters",
+            ));
+        }
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        for character in path.chars() {
+            if !character.is_alphanumeric() && !matches!(character, '/' | '.' | '_' | '-') {
+                text.push('\\');
+            }
+            text.push(character);
+        }
+    }
+    Ok(text)
 }
 fn terminal_key_event(event: &KeyEvent, modifiers: TerminalModifiers) -> TerminalKeyEvent {
     let key = match &event.logical_key {
@@ -847,6 +898,106 @@ mod tests {
         let mut alt = key;
         alt.modifiers.alt = true;
         assert!(!application_shortcut(&alt, &policy));
+    }
+
+    #[test]
+    fn copied_file_paths_reach_the_shell_as_distinct_literal_arguments() {
+        let paths = [
+            "/tmp/screenshot 2026-10-11.png",
+            "/tmp/日本語's $file;`name`\\[1].png",
+        ]
+        .map(std::path::PathBuf::from);
+        let paste = file_paste_text(&paths).unwrap();
+        let result = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!("set -- {paste}; printf '%s\\000' \"$@\""))
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        let expected: Vec<u8> = paths
+            .iter()
+            .flat_map(|path| path.to_str().unwrap().bytes().chain([0]))
+            .collect();
+        assert_eq!(result.stdout, expected);
+        for path in [
+            "/tmp/line\nbreak.png",
+            "/tmp/escape\x1b.png",
+            "/tmp/tab\t.png",
+            "",
+        ] {
+            assert!(file_paste_text(&[path.into()]).is_err());
+        }
+    }
+
+    #[test]
+    fn paste_shortcut_preserves_text_when_no_file_clipboard_is_available() {
+        let _lock = UI_LOCK.lock().unwrap();
+        let temp = crate::test_support::TempDir::new();
+        let capture = temp.path("capture");
+        let (mut app, mut context, _) = focused_terminal(&capture);
+        struct Clipboard;
+        impl dear_imgui_rs::ClipboardBackend for Clipboard {
+            fn get(&mut self) -> Option<String> {
+                Some("ordinary clipboard text".into())
+            }
+            fn set(&mut self, _: &str) {}
+        }
+        context.set_clipboard_backend(Clipboard);
+        let mut desktop = DesktopContext {
+            platform: bed_desktop::DesktopPlatform::new(&mut context),
+            context,
+            snapshot_context: None,
+        };
+        let mut state = InputState::default();
+        let modifiers = TerminalModifiers {
+            super_key: cfg!(target_os = "macos"),
+            control: !cfg!(target_os = "macos"),
+            shift: !cfg!(target_os = "macos"),
+            ..default()
+        };
+        let mut terminal = app.world_mut().non_send_mut::<BedTerminal>();
+        // Paste reaches the real PTY once, including a held key and its release,
+        // without accessing the user's system clipboard.
+        for key_state in [KeyState::Press, KeyState::Repeat, KeyState::Release] {
+            assert!(
+                deliver_key(
+                    &mut state,
+                    &mut terminal,
+                    Some(&mut desktop),
+                    None,
+                    PhysicalKey::Code(KeyCode::KeyV),
+                    TerminalKeyEvent {
+                        key: TerminalKey::Character("v".into()),
+                        modifiers,
+                        state: key_state,
+                        ..default()
+                    },
+                    &TerminalInputPolicy::default(),
+                )
+                .unwrap()
+            );
+        }
+        deliver_key(
+            &mut state,
+            &mut terminal,
+            None,
+            None,
+            PhysicalKey::Code(KeyCode::Enter),
+            TerminalKeyEvent {
+                key: TerminalKey::Enter,
+                state: KeyState::Press,
+                ..default()
+            },
+            &TerminalInputPolicy::default(),
+        )
+        .unwrap();
+        drop(terminal);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !capture.exists() && Instant::now() < deadline {
+            app.update();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(fs::read(&capture).unwrap(), b"ordinary clipboard text");
     }
 
     #[test]

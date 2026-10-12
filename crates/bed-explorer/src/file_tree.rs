@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::{collections::BTreeSet, fs, io, path::Path};
 
 /// Personal, project-scoped tree preferences. Paths use project-relative `/` components.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileTreePreferences {
     /// Finder scope is independent of tree visibility filters.
     pub include_ignored: bool,
@@ -14,12 +14,29 @@ pub struct FileTreePreferences {
     pub hide_hidden: bool,
     pub hidden_paths: BTreeSet<String>,
 }
+impl Default for FileTreePreferences {
+    fn default() -> Self {
+        Self {
+            include_ignored: false,
+            hide_gitignored: true,
+            hide_hidden: true,
+            hidden_paths: BTreeSet::new(),
+        }
+    }
+}
 impl FileTreePreferences {
     pub fn from_value(value: &Value) -> Self {
+        let defaults = Self::default();
         Self {
-            include_ignored: value["include_ignored"].as_bool().unwrap_or(false),
-            hide_gitignored: value["hide_gitignored"].as_bool().unwrap_or(false),
-            hide_hidden: value["hide_hidden"].as_bool().unwrap_or(false),
+            include_ignored: value["include_ignored"]
+                .as_bool()
+                .unwrap_or(defaults.include_ignored),
+            hide_gitignored: value["hide_gitignored"]
+                .as_bool()
+                .unwrap_or(defaults.hide_gitignored),
+            hide_hidden: value["hide_hidden"]
+                .as_bool()
+                .unwrap_or(defaults.hide_hidden),
             hidden_paths: value["hidden_paths"]
                 .as_array()
                 .into_iter()
@@ -500,22 +517,27 @@ impl Default for FileTreeStyle {
     }
 }
 impl FileTree {
-    fn visibility_menu(ui: &Ui, visibility: &Visibility<'_>, actions: &mut Vec<FileTreeAction>) {
+    pub(crate) fn visibility_menu(
+        ui: &Ui,
+        preferences: &FileTreePreferences,
+        show_hidden: bool,
+        actions: &mut Vec<FileTreeAction>,
+    ) {
         for (label, checked, action) in [
             (
                 "Hide Gitignored Files",
-                visibility.preferences.hide_gitignored,
-                FileTreeAction::SetHideGitignored(!visibility.preferences.hide_gitignored),
+                preferences.hide_gitignored,
+                FileTreeAction::SetHideGitignored(!preferences.hide_gitignored),
             ),
             (
                 "Hide Hidden Files",
-                visibility.preferences.hide_hidden,
-                FileTreeAction::SetHideHidden(!visibility.preferences.hide_hidden),
+                preferences.hide_hidden,
+                FileTreeAction::SetHideHidden(!preferences.hide_hidden),
             ),
             (
-                "Show Hidden Files",
-                visibility.show_hidden,
-                FileTreeAction::SetShowHidden(!visibility.show_hidden),
+                "Show All Files Temporarily",
+                show_hidden,
+                FileTreeAction::SetShowHidden(!show_hidden),
             ),
         ] {
             if ui.menu_item_enabled_selected_no_shortcut(label, checked, true) {
@@ -607,12 +629,6 @@ impl FileTree {
             extensions,
         );
         let root = self.root_node.full_path.clone();
-        let visibility = Visibility {
-            root: &root,
-            preferences: &self.preferences,
-            show_hidden: self.show_hidden,
-            remote,
-        };
         // NoOpenOverItems keeps a row's menu separate from the background menu.
         // SAFETY: This call is inside the live Ui context and its matching End
         // runs synchronously without retaining an ImGui pointer.
@@ -637,7 +653,7 @@ impl FileTree {
                         actions.push(FileTreeAction::Refresh);
                     }
                     ui.separator();
-                    Self::visibility_menu(ui, &visibility, &mut actions);
+                    Self::visibility_menu(ui, &self.preferences, self.show_hidden, &mut actions);
                     if let Some(extensions) = extensions {
                         extensions(ui, &root, true, true, &[], &mut actions);
                     }
@@ -1322,7 +1338,7 @@ impl FileTree {
                     }
                 }
                 ui.separator();
-                Self::visibility_menu(ui, visibility, actions);
+                Self::visibility_menu(ui, visibility.preferences, visibility.show_hidden, actions);
                 if let Some(extensions) = extensions {
                     extensions(
                         ui,
@@ -1991,8 +2007,8 @@ mod tests {
             }
             node.is_gitignored = node.name == "ignored";
         }
-        tree.apply_visibility_action(&FileTreeAction::SetHideHidden(true), false);
-        tree.apply_visibility_action(&FileTreeAction::SetHideGitignored(true), false);
+        assert!(tree.preferences.hide_hidden);
+        assert!(tree.preferences.hide_gitignored);
         tree.apply_visibility_action(
             &FileTreeAction::SetPathHidden {
                 path: temp.path("manual").to_str().unwrap().into(),

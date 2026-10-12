@@ -7,8 +7,11 @@ File clipboard exports on macOS and Linux retain absolute lexical paths so
 symbolic links, including dangling links staged from remote projects, are copied
 as links. All paths are validated before replacing clipboard contents, so a
 conversion failure preserves the preceding clipboard. Both Linux X11 and Wayland
-backends share the corrected URI-list serialization. Other clipboard APIs retain
-upstream behavior.
+backends share the corrected URI-list serialization.
+
+macOS image reads accept PNG-only pasteboards as well as TIFF, preferring PNG
+when available. This lets terminal paste save screenshots and images copied
+from applications that do not publish the TIFF representation.
 
 Linux URI-list reads accept standard CRLF endings and localhost URLs, preserve
 non-UTF-8 Unix filename bytes, and reject remote hosts and embedded NUL bytes.

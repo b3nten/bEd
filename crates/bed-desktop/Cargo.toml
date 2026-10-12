@@ -14,7 +14,7 @@ wgpu = { workspace = true }
 winit = { workspace = true }
 image = { workspace = true }
 bed-ui = { workspace = true, features = ["imgui", "gpu"] }
-arboard = { workspace = true }
+arboard = { workspace = true, features = ["image-data"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11-dl = "=2.21.0"

@@ -99,7 +99,7 @@ version = "0.13"
 
 [target.'cfg(target_os = "macos")'.dependencies.image]
 version = "0.25"
-features = ["tiff"]
+features = ["png", "tiff"]
 optional = true
 default-features = false
 

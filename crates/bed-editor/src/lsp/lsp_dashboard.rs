@@ -5,10 +5,11 @@ use bed_lsp::{
     lsp_config::resolve_server_paths,
     workspace_lsp::{ServerInstanceId, WorkspaceLsp},
 };
-use bed_ui::util::popup_style::tooltip_text;
+use bed_ui::presentation::same_line_if_fits;
+use bed_ui::util::popup_style::{controls_style, tooltip, tooltip_text};
 use dear_imgui_rs::{
-    Condition, Key, MouseButton, StyleColor, TableColumnFlags, TableColumnWidth, TableFlags, Ui,
-    WindowFlags, sys,
+    ChildFlags, Condition, Key, MouseButton, StyleColor, StyleVar, TreeNodeFlags, Ui, WindowFlags,
+    sys,
 };
 use std::{
     io,
@@ -170,7 +171,6 @@ impl LspDashboard {
                 self.show = false;
             }
         }
-        self.render_notification(ui, settings);
         action
     }
     /// Draw inside a host-owned dock window. This does not change window
@@ -187,14 +187,33 @@ impl LspDashboard {
         for info in &mut self.server_infos {
             info.progress = client.dashboard_progress(info);
         }
+        let _controls = controls_style(ui);
+        let fs = ui.current_font_size();
+        let _padding = ui.push_style_var(StyleVar::WindowPadding([fs * 0.7, fs * 0.6]));
+        let _rounding = ui.push_style_var(StyleVar::ChildRounding(fs * 0.45));
+        let _border = ui.push_style_var(StyleVar::ChildBorderSize(1.0));
         let mut action = None;
-        ui.text("Language Server Protocol Dashboard");
-        ui.separator();
-        if ui.button("Refresh Server Status") {
+        ui.text("Language Servers");
+        {
+            let _wrap = ui.push_text_wrap_pos(0.0);
+            ui.text_disabled(format!(
+                "{} configured · {} active · {} missing",
+                self.server_infos.len(),
+                self.server_infos
+                    .iter()
+                    .filter(|info| info.is_active)
+                    .count(),
+                self.server_infos
+                    .iter()
+                    .filter(|info| !info.is_found)
+                    .count(),
+            ));
+        }
+        if ui.button("Refresh") {
             self.server_infos = client.dashboard_servers();
         }
-        ui.same_line();
-        if ui.button("Reload LSP.json") {
+        same_line_if_fits(ui, button_width(ui, "Reload"));
+        if ui.button("Reload") {
             match client.reload_dashboard_config() {
                 Ok(()) => {
                     let message = if client.dashboard_is_discovering() {
@@ -210,227 +229,191 @@ impl LspDashboard {
             }
             self.server_infos = client.dashboard_servers();
         }
-        ui.same_line();
-        if ui.button("Open LSP.json") {
+        if ui.is_item_hovered() {
+            tooltip_text(ui, "Reload the language server configuration");
+        }
+        same_line_if_fits(ui, button_width(ui, "Open config"));
+        if ui.button("Open config") {
             let path = client.dashboard_config_path();
             if path.exists() {
                 action = Some(path.to_owned());
                 self.show = false;
             } else {
-                eprintln!(
-                    "[LSP Dashboard] LSP.json file not found at: {}",
-                    path.display()
-                );
-            }
-        }
-        ui.text(format!("{} server entries", self.server_infos.len()));
-        if client.dashboard_is_discovering() {
-            ui.text_disabled("Discovering language servers and project roots...");
-        }
-        let sources = client.dashboard_config_sources();
-        if !sources.is_empty() {
-            ui.text_disabled("Configuration layers (later files override earlier ones):");
-            for source in sources {
-                ui.text_wrapped(source.to_string_lossy());
-            }
-        }
-        if !client.dashboard_current_server().is_empty() {
-            ui.same_line();
-            if ui.button("Restart Server") {
-                self.restart_requested = Some(RestartRequest::Server(
-                    client.dashboard_current_server().to_owned(),
+                self.notification = Some((
+                    format!("Configuration file not found: {}", path.display()),
+                    8.0,
                 ));
             }
         }
-        if let Some(error) = client.dashboard_error() {
-            ui.text_colored(
-                bed_ui::presentation::readable_color(ui, [1.0, 0.4, 0.3, 1.0]),
-                error,
-            );
-        }
-        for (index, info) in self.server_infos.iter().enumerate() {
-            let label = if let Some(instance) = &info.instance {
-                format!("{} ({})", info.server, instance.root.display())
-            } else {
-                info.server.clone()
-            };
-            for job in &info.progress {
-                let mut text = format!("{label}: {}", job.title);
-                if let Some(message) = &job.message
-                    && !message.is_empty()
-                    && message != &job.title
-                {
-                    text.push_str(" — ");
-                    text.push_str(message);
+        ui.spacing();
+        // One scroll region keeps long diagnostics and configuration details
+        // from crowding the server list out of a short docked panel.
+        ui.child_window("ServerList").build(ui, || {
+            let _wrap = ui.push_text_wrap_pos(0.0);
+            if let Some((message, timer)) = &mut self.notification {
+                ui.text_wrapped(message.as_str());
+                *timer -= ui.io().delta_time();
+                if *timer <= 0.0 {
+                    self.notification = None;
                 }
-                if let Some(percentage) = job.percentage {
-                    text.push_str(&format!(" ({percentage}%)"));
-                }
-                if job.finished {
-                    ui.text_disabled(format!("Completed: {text}"));
-                } else {
-                    ui.text_colored(
-                        bed_ui::presentation::readable_color(ui, [0.9, 0.8, 0.4, 1.0]),
-                        &text,
-                    );
-                }
+                ui.spacing();
             }
-            if let Some(error) = &info.error {
+            if client.dashboard_is_discovering() {
+                ui.text_disabled("Discovering language servers and project roots…");
+                ui.spacing();
+            }
+            if let Some(error) = client.dashboard_error()
+                && !self
+                    .server_infos
+                    .iter()
+                    .any(|info| info.error.as_deref() == Some(error))
+            {
                 ui.text_colored(
                     bed_ui::presentation::readable_color(ui, [1.0, 0.4, 0.3, 1.0]),
-                    format!("{label}: {error}"),
+                    error,
                 );
+                ui.spacing();
             }
-            if !info.stderr.is_empty()
-                && ui.collapsing_header(
-                    format!("{label} stderr##{index}"),
-                    dear_imgui_rs::TreeNodeFlags::empty(),
-                )
-            {
-                ui.text_wrapped(&info.stderr);
+            if ui.collapsing_header("Configuration", TreeNodeFlags::empty()) {
+                ui.child_window("ConfigurationDetails")
+                    .child_flags(ChildFlags::AUTO_RESIZE_Y | ChildFlags::BORDERS)
+                    .flags(WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE)
+                    .build(ui, || {
+                        ui.text_disabled("Later configuration files override earlier ones.");
+                        for source in client.dashboard_config_sources() {
+                            path_text(ui, &source.to_string_lossy());
+                        }
+                    });
             }
-        }
-        ui.spacing();
-        self.render_server_list(ui);
+            ui.spacing();
+            self.render_server_list(ui);
+        });
         action
     }
     fn render_server_list(&mut self, ui: &Ui) {
-        ui.child_window("ServerList")
-            .size([0.0, -ui.frame_height_with_spacing()])
-            .border(true)
-            .build(ui, || {
-                if self.server_infos.is_empty() {
-                    ui.text_disabled("No LSP servers configured");
-                } else if let Some(_table) = ui.begin_table_with_flags(
-                    "ServerTable",
-                    5,
-                    TableFlags::ROW_BG | TableFlags::SCROLL_Y | TableFlags::RESIZABLE,
-                ) {
-                    ui.table_setup_column(
-                        "Server / Languages",
-                        TableColumnFlags::NONE,
-                        Some(TableColumnWidth::Fixed(120.0)),
-                    );
-                    ui.table_setup_column(
-                        "Project Root",
-                        TableColumnFlags::NONE,
-                        Some(TableColumnWidth::Stretch(0.0)),
-                    );
-                    ui.table_setup_column(
-                        "Server Path",
-                        TableColumnFlags::NONE,
-                        Some(TableColumnWidth::Stretch(0.0)),
-                    );
-                    ui.table_setup_column(
-                        "Found",
-                        TableColumnFlags::NONE,
-                        Some(TableColumnWidth::Fixed(140.0)),
-                    );
-                    ui.table_setup_column(
-                        "Status",
-                        TableColumnFlags::NONE,
-                        Some(TableColumnWidth::Fixed(180.0)),
-                    );
-                    ui.table_headers_row();
-                    for (index, info) in self.server_infos.iter().enumerate() {
-                        ui.table_next_row();
-                        ui.table_set_column_index(0);
-                        ui.text(&info.server);
-                        if info.language != info.server {
-                            ui.text_disabled(&info.language);
-                        }
-                        ui.table_set_column_index(1);
-                        if let Some(instance) = &info.instance {
-                            let root = instance.root.to_string_lossy();
-                            ui.text(display_path(&root));
-                            if ui.is_item_hovered() {
-                                tooltip_text(ui, &root);
-                            }
+        self.server_infos.sort_by_key(|info| {
+            !(info.is_active
+                || info.error.is_some()
+                || info.progress.iter().any(|job| !job.finished))
+        });
+        let _surface = ui.push_style_color(
+            StyleColor::ChildBg,
+            bed_ui::color::blend(
+                ui.style_color(StyleColor::Text),
+                ui.style_color(StyleColor::WindowBg),
+                0.025,
+            ),
+        );
+        if self.server_infos.is_empty() {
+            ui.child_window("NoServers")
+                .child_flags(ChildFlags::AUTO_RESIZE_Y | ChildFlags::BORDERS)
+                .build(ui, || {
+                    ui.text("No language servers configured");
+                    ui.text_disabled("Open the configuration to add a language server.");
+                });
+            return;
+        }
+        for info in &self.server_infos {
+            let _id = ui.push_id(&info.server);
+            let _root_id = info
+                .instance
+                .as_ref()
+                .map(|instance| ui.push_id(instance.root.to_string_lossy().as_ref()));
+            ui.child_window("Server")
+                .child_flags(ChildFlags::AUTO_RESIZE_Y | ChildFlags::BORDERS)
+                .flags(WindowFlags::NO_SCROLLBAR | WindowFlags::NO_SCROLL_WITH_MOUSE)
+                .build(ui, || {
+                    let _wrap = ui.push_text_wrap_pos(0.0);
+                    ui.text_wrapped(&info.server);
+                    if !info.language.is_empty() && info.language != info.server {
+                        ui.text_disabled(&info.language);
+                    }
+                    let (color, status) = if !info.is_found {
+                        ([1.0, 0.6, 0.3, 1.0], "Missing executable")
+                    } else if info.error.is_some() {
+                        ([1.0, 0.4, 0.3, 1.0], "Error")
+                    } else if info.is_active {
+                        ([0.2, 0.8, 0.2, 1.0], "Active")
+                    } else {
+                        (ui.style_color(StyleColor::TextDisabled), "Inactive")
+                    };
+                    ui.align_text_to_frame_padding();
+                    ui.text_colored(bed_ui::presentation::readable_color(ui, color), status);
+                    same_line_if_fits(ui, button_width(ui, "Restart"));
+                    if ui.button("Restart") {
+                        self.restart_requested = Some(if let Some(instance) = &info.instance {
+                            RestartRequest::Instance(instance.clone())
                         } else {
-                            ui.text_disabled("Standalone client");
-                        }
-                        ui.table_set_column_index(2);
-                        ui.text(display_path(&info.server_path));
-                        if ui.is_item_hovered() {
-                            tooltip_text(ui, &info.server_path);
-                        }
-                        ui.table_set_column_index(3);
-                        ui.text_colored(
-                            bed_ui::presentation::readable_color(
-                                ui,
-                                if info.is_found {
-                                    [0.2, 0.8, 0.2, 1.0]
-                                } else {
-                                    [0.8, 0.2, 0.2, 1.0]
-                                },
-                            ),
-                            if info.is_found {
-                                "● Found"
-                            } else {
-                                "● Missing"
-                            },
-                        );
-                        ui.table_set_column_index(4);
-                        let (color, text) = if !info.is_found {
-                            ([0.5, 0.5, 0.5, 1.0], "N/A")
-                        } else if info.is_active {
-                            ([0.2, 0.8, 0.2, 1.0], "● Active")
+                            RestartRequest::Server(info.server.clone())
+                        });
+                    }
+                    ui.spacing();
+                    let label_width = ui.calc_text_size("Executable")[0];
+                    let gap = ui.clone_style().item_spacing()[0];
+                    let value_column = ui.cursor_pos()[0] + label_width + gap;
+                    let inline_paths = ui.content_region_avail()[0]
+                        >= label_width + gap + ui.current_font_size() * 9.0;
+                    ui.text_disabled("Project");
+                    if inline_paths {
+                        ui.same_line_with_pos(value_column);
+                    }
+                    if let Some(instance) = &info.instance {
+                        path_text(ui, &instance.root.to_string_lossy());
+                    } else {
+                        ui.text_disabled("Standalone client");
+                    }
+                    ui.text_disabled("Executable");
+                    if inline_paths {
+                        ui.same_line_with_pos(value_column);
+                    }
+                    path_text(ui, &info.server_path);
+
+                    if !info.progress.is_empty() || info.error.is_some() || !info.stderr.is_empty()
+                    {
+                        ui.spacing();
+                        ui.separator();
+                    }
+                    for job in &info.progress {
+                        let text = if job.finished {
+                            format!("Completed: {}", job.title)
                         } else {
-                            ([0.7, 0.7, 0.7, 1.0], "● Inactive")
+                            job.title.clone()
                         };
-                        ui.text_colored(bed_ui::presentation::readable_color(ui, color), text);
-                        ui.same_line();
-                        if ui.button(format!("Restart##{}-{index}", info.server)) {
-                            self.restart_requested = Some(if let Some(instance) = &info.instance {
-                                RestartRequest::Instance(instance.clone())
-                            } else {
-                                RestartRequest::Server(info.server.clone())
-                            });
+                        if job.finished {
+                            ui.text_disabled(text);
+                        } else {
+                            ui.text_colored(
+                                bed_ui::presentation::readable_color(ui, [0.9, 0.8, 0.4, 1.0]),
+                                text,
+                            );
+                        }
+                        if let Some(message) = &job.message
+                            && !message.is_empty()
+                            && message != &job.title
+                        {
+                            ui.text_disabled(message);
+                        }
+                        if let Some(percentage) = job.percentage
+                            && !job.finished
+                        {
+                            ui.progress_bar(percentage as f32 / 100.0)
+                                .overlay_text(format!("{percentage}%"))
+                                .build();
                         }
                     }
-                }
-            });
-    }
-    // LspPresentationOptions::renderNotification is immediate-mode upstream. Keep its same
-    // foreground draw and 2-second timer local to this dashboard adapter.
-    fn render_notification(&mut self, ui: &Ui, settings: &LspPresentationOptions) {
-        let Some((text, timer)) = &mut self.notification else {
-            return;
-        };
-        let viewport = ui.main_viewport();
-        let pos = viewport.pos();
-        let size = viewport.size();
-        let max_width = size[0] * 0.8;
-        let text_size = ui.with_bound_context(|| unsafe {
-            let text = std::ffi::CString::new(text.as_str()).unwrap();
-            sys::igCalcTextSize(text.as_ptr(), std::ptr::null(), false, max_width - 30.0)
-        });
-        let width = (text_size.x + 30.0).max(200.0).min(max_width);
-        let height = (text_size.y + 30.0).max(50.0).min(size[1] * 0.4);
-        let origin = [pos[0] + 20.0, pos[1] + size[1] - height - 20.0];
-        let bg = settings.background_color();
-        let color = (bg[0] * 255.0) as u32
-            | (((bg[1] * 255.0) as u32) << 8)
-            | (((bg[2] * 255.0) as u32) << 16)
-            | (230 << 24);
-        let draw = ui.get_foreground_draw_list();
-        let max = [origin[0] + width, origin[1] + height];
-        draw.add_rect(origin, max, color)
-            .rounding(8.0)
-            .filled(true)
-            .build();
-        draw.add_rect(origin, max, ui.style_color(StyleColor::Border))
-            .rounding(8.0)
-            .thickness(1.0)
-            .build();
-        draw.add_text(
-            [origin[0] + 15.0, origin[1] + 15.0],
-            ui.style_color(StyleColor::Text),
-            text.as_str(),
-        );
-        *timer -= ui.io().delta_time();
-        if *timer <= 0.0 {
-            self.notification = None;
+                    if let Some(error) = &info.error {
+                        ui.text_colored(
+                            bed_ui::presentation::readable_color(ui, [1.0, 0.4, 0.3, 1.0]),
+                            error,
+                        );
+                    }
+                    if !info.stderr.is_empty()
+                        && ui.collapsing_header("Server output", TreeNodeFlags::empty())
+                    {
+                        ui.text_wrapped(&info.stderr);
+                    }
+                });
+            ui.spacing();
         }
     }
 }
@@ -439,9 +422,6 @@ trait DashboardBackend {
     fn dashboard_progress(&self, server: &LspServerInfo) -> Vec<WorkDoneProgress>;
     fn dashboard_config_path(&self) -> &Path;
     fn reload_dashboard_config(&mut self) -> io::Result<()>;
-    fn dashboard_current_server(&self) -> &str {
-        ""
-    }
     fn dashboard_error(&self) -> Option<&str>;
     fn dashboard_config_sources(&self) -> Vec<PathBuf> {
         vec![self.dashboard_config_path().to_owned()]
@@ -501,9 +481,6 @@ impl DashboardBackend for LspClient {
     }
     fn reload_dashboard_config(&mut self) -> io::Result<()> {
         self.reload_config()
-    }
-    fn dashboard_current_server(&self) -> &str {
-        self.current_server()
     }
     fn dashboard_error(&self) -> Option<&str> {
         self.last_error()
@@ -571,15 +548,37 @@ impl DashboardBackend for WorkspaceLsp {
     }
 }
 
-fn display_path(path: &str) -> String {
-    if path.len() <= 40 {
+fn button_width(ui: &Ui, label: &str) -> f32 {
+    ui.calc_text_size(label)[0] + ui.clone_style().frame_padding()[0] * 2.0
+}
+
+fn path_text(ui: &Ui, path: &str) {
+    ui.text(display_path(ui, path, ui.content_region_avail()[0]));
+    if ui.is_item_hovered() {
+        tooltip(ui, || {
+            let _wrap = ui.push_text_wrap_pos(ui.current_font_size() * 36.0);
+            ui.text_wrapped(path);
+        });
+    }
+}
+
+// Keep the filename visible, sizing to the actual font and available space.
+fn display_path(ui: &Ui, path: &str, width: f32) -> String {
+    if ui.calc_text_size(path)[0] <= width {
         return path.to_owned();
     }
-    let mut start = path.len() - 37;
-    while !path.is_char_boundary(start) {
-        start += 1;
+    let ellipsis = ui.calc_text_size("…")[0];
+    if width < ellipsis {
+        return String::new();
     }
-    format!("...{}", &path[start..])
+    let mut start = path.len();
+    for (index, _) in path.char_indices().rev() {
+        if ui.calc_text_size(&path[index..])[0] > width - ellipsis {
+            break;
+        }
+        start = index;
+    }
+    format!("…{}", &path[start..])
 }
 
 #[cfg(test)]
@@ -620,14 +619,6 @@ mod tests {
         assert_eq!(dashboard.server_infos.len(), 2);
         dashboard.refresh_server_info(&client);
         assert!(dashboard.server_infos.is_empty());
-        assert_eq!(
-            display_path("abcdefghijklmnopqrstuvwxyz0123456789abcdef"),
-            "...fghijklmnopqrstuvwxyz0123456789abcdef"
-        );
-        assert_eq!(
-            display_path(&"é".repeat(30)),
-            format!("...{}", "é".repeat(18))
-        );
     }
     #[test]
     fn native_workspace_dashboard_body_keeps_docked_host_geometry_and_style() {
@@ -677,7 +668,7 @@ mod tests {
         assert!(!dashboard.is_visible());
     }
     #[test]
-    fn native_dashboard_table_escape_and_outside_dismissal() {
+    fn native_dashboard_layout_escape_and_outside_dismissal() {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let directory = TempDir::new();
         let settings = LspPresentationOptions {

@@ -265,6 +265,7 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
     world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
         ("Files", "Expand folders and open files from the tree. Use Shift to extend a selection, or Cmd/Ctrl to toggle individual items."),
         ("Operations", "Right-click files or folders for rename, duplicate, copy, paste, and delete. Drag files onto a tab area to open them there."),
+        ("Visibility", "Hidden and gitignored files are hidden by default. Use View Options to change these workspace preferences or temporarily show all files."),
     ]).shortcut_actions(&["bed.navigation.move_left", "bed.navigation.move_right", "bed.navigation.move_up", "bed.navigation.move_down", "bed.navigation.select_up", "bed.navigation.select_down", "bed.edit.copy", "bed.edit.cut", "bed.edit.paste", "bed.edit.select_all"]));
     world
         .non_send_mut::<ExplorerPanels>()
@@ -642,20 +643,70 @@ mod tests {
             .query::<&EditorWorkspaceContribution>()
             .single(app.world())
             .unwrap();
+        // New workspaces and snapshots predating these filters use the defaults.
+        for state in [None, Some(serde_json::json!({"include_ignored":true}))] {
+            app.world_mut()
+                .run_system_with(
+                    contribution.restore,
+                    EditorWorkspaceRestore {
+                        workspace: 1,
+                        root: "/new-project".into(),
+                        state,
+                    },
+                )
+                .unwrap()
+                .unwrap();
+            let saved = app.world_mut().run_system(contribution.save).unwrap();
+            assert_eq!(saved["hide_hidden"], true);
+            assert_eq!(saved["hide_gitignored"], true);
+        }
         app.world_mut()
-            .run_system_with(
-                contribution.restore,
-                EditorWorkspaceRestore {
-                    workspace: 1,
-                    root: "/new-project".into(),
-                    state: Some(serde_json::json!({"hide_hidden":true,"include_ignored":true})),
-                },
+            .non_send_mut::<ExplorerState>()
+            .submit(
+                vec![
+                    FileTreeAction::SetHideHidden(false),
+                    FileTreeAction::SetHideGitignored(false),
+                    FileTreeAction::SetShowHidden(true),
+                ],
+                false,
+                &mut Vec::new(),
             )
-            .unwrap()
             .unwrap();
+        app.update();
+        assert!(
+            app.world_mut()
+                .resource_mut::<EditorIntents>()
+                .take()
+                .iter()
+                .any(|intent| matches!(intent.request, HostRequest::PersistWorkspace))
+        );
         let saved = app.world_mut().run_system(contribution.save).unwrap();
-        assert_eq!(saved["hide_hidden"], true);
+        assert_eq!(saved["hide_hidden"], false);
+        assert_eq!(saved["hide_gitignored"], false);
         assert_eq!(saved["include_ignored"], true);
+        assert!(saved.get("show_hidden").is_none());
+        // Switching workspaces resets the temporary reveal and restores defaults.
+        for (root, state) in [("/other-project", None), ("/new-project", Some(saved))] {
+            let expected_hide = state.is_none();
+            app.world_mut()
+                .run_system_with(
+                    contribution.restore,
+                    EditorWorkspaceRestore {
+                        workspace: 2,
+                        root: root.into(),
+                        state,
+                    },
+                )
+                .unwrap()
+                .unwrap();
+            let explorer = app.world().non_send::<ExplorerState>().explorer();
+            assert_eq!(explorer.file_tree.preferences.hide_hidden, expected_hide);
+            assert_eq!(
+                explorer.file_tree.preferences.hide_gitignored,
+                expected_hide
+            );
+            assert!(!explorer.file_tree.show_hidden);
+        }
         assert_eq!(
             app.world()
                 .non_send::<ExplorerState>()

@@ -217,19 +217,23 @@ impl<'clipboard> Get<'clipboard> {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
-		use objc2_app_kit::NSPasteboardTypeTIFF;
+		use objc2_app_kit::{NSPasteboardTypePNG, NSPasteboardTypeTIFF};
 		use std::io::Cursor;
 
 		// XXX: There does not appear to be an alternative for obtaining images without the need for
 		// autorelease behavior.
 		let image = autoreleasepool(|_| {
-			let image_data = unsafe { self.clipboard.pasteboard.dataForType(NSPasteboardTypeTIFF) }
-				.ok_or(Error::ContentNotAvailable)?;
+			let (image_data, format) = unsafe {
+				self.clipboard.pasteboard.dataForType(NSPasteboardTypePNG)
+					.map(|data| (data, image::ImageFormat::Png))
+					.or_else(|| self.clipboard.pasteboard.dataForType(NSPasteboardTypeTIFF)
+						.map(|data| (data, image::ImageFormat::Tiff)))
+			}.ok_or(Error::ContentNotAvailable)?;
 
 			// SAFETY: The data is not modified while in use here.
 			let data = Cursor::new(unsafe { image_data.as_bytes_unchecked() });
 
-			let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
+			let reader = image::ImageReader::with_format(data, format);
 			reader.decode().map_err(|_| Error::ConversionFailure)
 		})?;
 
@@ -462,6 +466,39 @@ mod file_clipboard_tests {
 		let path = PathBuf::from("/tmp/nonexistent-symlink-for-clipboard");
 		let urls = file_urls(std::slice::from_ref(&path)).unwrap();
 		assert_eq!(PathBuf::from(urls[0].path().unwrap().to_string()), path);
+	}
+
+	#[cfg(feature = "image-data")]
+	#[test]
+	#[ignore = "requires the macOS pasteboard server; uses a private pasteboard"]
+	fn full_file_paths_and_png_tiff_images_can_be_read_independently_of_text() {
+		use objc2_app_kit::{NSPasteboardTypePNG, NSPasteboardTypeTIFF};
+		use objc2_foundation::NSData;
+		let mut clipboard = Clipboard { pasteboard: NSPasteboard::pasteboardWithUniqueName() };
+		let file = PathBuf::from("/tmp/bed clipboard screenshot.png");
+		Set::new(&mut clipboard).file_list(std::slice::from_ref(&file)).unwrap();
+		assert!(clipboard.pasteboard.setString_forType(
+			ns_string!("bed clipboard screenshot.png"), unsafe { NSPasteboardTypeString },
+		));
+		assert_eq!(Get::new(&mut clipboard).text().unwrap(), "bed clipboard screenshot.png");
+		assert_eq!(Get::new(&mut clipboard).file_list().unwrap(), vec![file]);
+		let pixels = vec![255, 0, 20, 128, 10, 30, 40, 255];
+		let image = image::RgbaImage::from_raw(2, 1, pixels.clone()).unwrap();
+		for (format, type_) in [
+			(image::ImageFormat::Png, unsafe { NSPasteboardTypePNG }),
+			(image::ImageFormat::Tiff, unsafe { NSPasteboardTypeTIFF }),
+		] {
+			let mut encoded = std::io::Cursor::new(Vec::new());
+			image.write_to(&mut encoded, format).unwrap();
+			clipboard.clear();
+			assert!(clipboard.pasteboard.setData_forType(Some(&NSData::with_bytes(encoded.get_ref())), type_));
+			assert!(matches!(Get::new(&mut clipboard).text(), Err(Error::ContentNotAvailable)));
+			assert!(matches!(Get::new(&mut clipboard).file_list(), Err(Error::ContentNotAvailable)));
+			let decoded = Get::new(&mut clipboard).image().unwrap();
+			assert_eq!((decoded.width, decoded.height), (2, 1));
+			assert_eq!(decoded.bytes.as_ref(), &pixels);
+		}
+		clipboard.clear();
 	}
 }
 

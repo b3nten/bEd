@@ -515,7 +515,7 @@ fn work_done_progress_is_main_thread_owned_and_resets() {
     // caller's native window, then stop presenting it as active after end.
     {
         use bed_editor::lsp::lsp_dashboard::LspDashboard;
-        use dear_imgui_rs::{Condition, Context, FramePrepareOptions, sys};
+        use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
         let mut context = Context::create();
         context.set_ini_filename(None::<PathBuf>).unwrap();
         context
@@ -536,18 +536,17 @@ fn work_done_progress_is_main_thread_owned_and_resets() {
                         assert!(dashboard.render_workspace_body(ui, pool).is_none());
                         assert_eq!(geometry, (ui.window_pos(), ui.window_size()));
                     });
-                let active_vertices = ui.with_bound_context(|| unsafe {
-                    let window = &*sys::igFindWindowByName(c"Work-done dashboard".as_ptr());
-                    let draw = &*window.DrawList;
-                    (0..draw.VtxBuffer.Size)
-                        .filter(|index| {
-                            (*draw.VtxBuffer.Data.add(*index as usize)).col
-                                == u32::from_le_bytes([230, 204, 102, 255])
-                        })
-                        .count()
-                });
-                assert!(context.render_legacy().draw_data().total_vtx_count() > 0);
-                active_vertices
+                let frame = context.render_legacy();
+                let draw = frame.draw_data();
+                assert!(draw.total_vtx_count() > 0);
+                draw.draw_lists()
+                    .map(|list| {
+                        list.vtx_buffer()
+                            .iter()
+                            .filter(|vertex| vertex.col == u32::from_le_bytes([230, 204, 102, 255]))
+                            .count()
+                    })
+                    .sum::<usize>()
             };
         draw(&mut context, &mut dashboard, &mut pool.pool);
         assert!(

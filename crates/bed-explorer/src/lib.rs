@@ -604,6 +604,25 @@ impl ExplorerPanel {
         };
         let actions = {
             let state = &mut controller.file_explorer;
+            let mut actions = Vec::new();
+            if ui.small_button("View Options") {
+                ui.open_popup("##file_tree_options");
+            }
+            if ui.is_item_hovered() {
+                ui.tooltip_text("File tree visibility settings are saved for this workspace");
+            }
+            {
+                let _menu_style = bed_ui::util::popup_style::context_menu_style(ui);
+                if let Some(_menu) = ui.begin_popup("##file_tree_options") {
+                    file_tree::FileTree::visibility_menu(
+                        ui,
+                        &state.file_tree.preferences,
+                        state.file_tree.show_hidden,
+                        &mut actions,
+                    );
+                }
+            }
+            ui.separator();
             if let Some(status) = &state.file_finder.discovery_status {
                 ui.text_disabled("File watching degraded — periodic refresh active");
                 if ui.is_item_hovered() {
@@ -619,7 +638,7 @@ impl ExplorerPanel {
             style.rainbow_time = ui.time() as f32;
             state.file_tree.external_drop_target = self.external_destination.clone();
             state.file_tree.external_drag_position = self.external_position;
-            let actions = state.file_tree.display_backend_actions_with_menu(
+            actions.extend(state.file_tree.display_backend_actions_with_menu(
                 ui,
                 active_path,
                 &style,
@@ -627,7 +646,7 @@ impl ExplorerPanel {
                 Some(&modified),
                 remote,
                 Some(&menus),
-            );
+            ));
             self.drop_targets = state.file_tree.drop_targets(ui);
             state.file_tree.external_drop_target = None;
             state.file_tree.external_drag_position = None;
@@ -827,6 +846,132 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn view_options_menu_changes_workspace_filters() {
+        use dear_imgui_rs::{Condition, Context, FramePrepareOptions, MouseButton, WindowFlags};
+
+        fn frame(
+            context: &mut Context,
+            controller: &mut ExplorerState,
+            panel: &mut ExplorerPanel,
+        ) -> ([f32; 2], Option<[[f32; 2]; 3]>) {
+            context.prepare_frame(FramePrepareOptions::new([400.0, 300.0], 1.0 / 60.0));
+            let ui = context.frame();
+            let mut button = [0.0; 2];
+            let mut menu = None;
+            ui.window("Files")
+                .position([0.0; 2], Condition::Always)
+                .size([400.0, 300.0], Condition::Always)
+                .flags(WindowFlags::NO_TITLE_BAR | WindowFlags::NO_MOVE | WindowFlags::NO_RESIZE)
+                .build(|| {
+                    let origin = ui.cursor_screen_pos();
+                    button = [origin[0] + 10.0, origin[1] + ui.text_line_height() * 0.5];
+                    panel
+                        .draw_body(
+                            controller,
+                            ui,
+                            &bed_editor_api::EditorFrame {
+                                project_root: "/fixture".into(),
+                                ..Default::default()
+                            },
+                            &mut bed_document_session::EditorSession::new(),
+                            None,
+                            &mut Vec::new(),
+                        )
+                        .unwrap();
+                    ui.with_bound_context(|| unsafe {
+                        let stack = &(*dear_imgui_rs::sys::igGetCurrentContext()).OpenPopupStack;
+                        if stack.Size > 0 {
+                            let window = (*stack.Data.add(stack.Size as usize - 1)).Window;
+                            if !window.is_null() {
+                                let origin = (*window).DC.CursorStartPos;
+                                let height = ui.text_line_height();
+                                menu = Some(std::array::from_fn(|row| {
+                                    [
+                                        origin.x + 20.0,
+                                        origin.y + row as f32 * (height + 4.0) + height * 0.5,
+                                    ]
+                                }));
+                            }
+                        }
+                    });
+                });
+            drop(context.render_legacy());
+            (button, menu)
+        }
+
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut controller = ExplorerState::default();
+        controller.file_explorer.project_root = "/fixture".into();
+        controller.file_explorer.file_tree.root_node = FileNode {
+            name: "project".into(),
+            full_path: "/fixture".into(),
+            is_directory: true,
+            is_open: true,
+            children: [".secret", "ignored", "visible"]
+                .map(|name| FileNode {
+                    name: name.into(),
+                    full_path: format!("/fixture/{name}"),
+                    is_directory: true,
+                    is_open: true,
+                    is_gitignored: name == "ignored",
+                    ..Default::default()
+                })
+                .into(),
+            ..Default::default()
+        };
+        let mut panel = ExplorerPanel::new();
+        frame(&mut context, &mut controller, &mut panel);
+        let (button, _) = frame(&mut context, &mut controller, &mut panel);
+        assert_eq!(
+            controller.open_directories(),
+            ["/fixture", "/fixture/visible"]
+        );
+        for row in 0..3 {
+            context.io_mut().add_mouse_pos_event(button);
+            for down in [true, false] {
+                context
+                    .io_mut()
+                    .add_mouse_button_event(MouseButton::Left, down);
+                frame(&mut context, &mut controller, &mut panel);
+            }
+            let (_, menu) = frame(&mut context, &mut controller, &mut panel);
+            context
+                .io_mut()
+                .add_mouse_pos_event(menu.expect("View Options opens its menu")[row]);
+            for down in [true, false] {
+                context
+                    .io_mut()
+                    .add_mouse_button_event(MouseButton::Left, down);
+                frame(&mut context, &mut controller, &mut panel);
+            }
+            let tree = &controller.file_explorer.file_tree;
+            assert!(!tree.preferences.hide_gitignored);
+            assert_eq!(tree.preferences.hide_hidden, row == 0);
+            assert_eq!(tree.show_hidden, row == 2);
+            assert_eq!(
+                controller.open_directories().len(),
+                if row == 0 { 3 } else { 4 }
+            );
+            let actions = controller.take_actions();
+            assert_eq!(actions.len(), usize::from(row != 2));
+            assert!(
+                actions
+                    .iter()
+                    .all(|action| matches!(action, ExplorerAction::PreferencesChanged(_)))
+            );
+        }
     }
 
     #[test]
