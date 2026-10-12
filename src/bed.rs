@@ -421,7 +421,6 @@ fn native_input(world: &mut World) {
         }
     }
 
-    let x = String::
     for (delta, phase) in pinches {
         let (position, _) = native_drag_observation(world);
         let phase = match phase {
