@@ -85,6 +85,17 @@ impl Default for Layout {
 }
 
 impl Layout {
+    /// Default destination for new windows; geometry is independent of focus.
+    pub fn largest_area(&self) -> u32 {
+        self.areas
+            .iter()
+            .max_by_key(|area| {
+                (area.rect.max[0] - area.rect.min[0]) * (area.rect.max[1] - area.rect.min[1])
+            })
+            .expect("workbench has an area")
+            .id
+    }
+
     /// Construct a tiling at a persistence or migration boundary. Internal
     /// transitions preserve the same invariant without repeating validation.
     pub fn from_areas(areas: Vec<Area>) -> Result<Self, &'static str> {

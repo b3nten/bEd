@@ -1,15 +1,18 @@
 //! Small, windowless decorative scenes. Bed owns input, targets and GPU recovery;
-//! each view owns its Bevy world and advances it only while its surface is drawn.
+//! each view owns entities in the shared runtime and synchronizes only while drawn.
+mod ecs;
+pub use ecs::{
+    BedPlugin, DuckPlugin, ScenePanel, SceneRenderingPlugin, SceneStates, spawn_scene, update_scene,
+};
 mod mascot;
 #[cfg(test)]
 mod native_tests;
 mod renderer;
 
-use bed_workbench_api::{
-    TextureHandle,
-    gpu::{GpuContext, RenderOutput, RenderTarget},
-};
-pub use mascot::{BedModule, DuckModule};
+use bed_editor_api::gpu::GpuContext;
+use bed_ui::TextureHandle;
+use bed_ui::gpu::{RenderOutput, RenderTarget};
+
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,12 +137,8 @@ impl SceneView {
             return Ok(());
         }
         self.failed_generation = None;
-        if self
-            .renderer
-            .as_ref()
-            .is_none_or(|r| r.generation != gpu.generation)
-        {
-            match renderer::SceneRenderer::new(gpu, self.kind) {
+        if self.renderer.as_ref().is_none() {
+            match renderer::SceneRenderer::new(gpu, self.kind, self.texture.0) {
                 Ok(renderer) => {
                     self.renderer = Some(renderer);
                     self.settle = 12;
@@ -151,13 +150,12 @@ impl SceneView {
                 }
             }
         }
-        let result = self.renderer.as_mut().unwrap().render(
-            gpu,
-            target,
-            self.frame,
-            self.time,
-            self.impulse,
-        );
+        self.renderer.as_mut().unwrap().generation = gpu.generation;
+        let result =
+            self.renderer
+                .as_mut()
+                .unwrap()
+                .sync(gpu, target, self.frame, self.time, self.impulse);
         if result.is_err() {
             self.failed_generation = Some(gpu.generation);
             self.renderer = None;

@@ -415,6 +415,7 @@ impl EditorViewState {
     }
     pub fn request_cursor_center(&mut self, line: i32, character: i32) {
         self.folds.reveal(line);
+        self.requested_scroll = None;
         self.pending_cursor_center = Some((line, character));
     }
 }

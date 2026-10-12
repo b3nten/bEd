@@ -28,6 +28,12 @@ The original attribution is also present in the GLB's asset metadata and in
 [Original model on Sketchfab](https://sketchfab.com/models/94b24a60dc1b48248de50bf087c0f042).
 The attribution above is recorded in the GLB's asset metadata. The supplied
 model is used unchanged to exercise Draco decoding and static skin posing.
+The complete fixture is checked in so clean checkouts can run the loader tests
+without downloads. It was obtained unchanged from the
+[three.js r180 mirror](https://github.com/mrdoob/three.js/blob/r180/examples/models/gltf/LittlestTokyo.glb),
+retaining the original Sketchfab attribution and licence in its asset metadata.
+The file is 4,133,072 bytes; its SHA-256 is
+`8375c2aa6808e28ad1cb9c0d43e1513f57ffd7865244bf66bbbd5bb0e907e06d`.
 
 ## Model development
 

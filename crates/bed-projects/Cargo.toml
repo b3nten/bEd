@@ -1,0 +1,23 @@
+[package]
+name = "bed-projects"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = ["scenes"]
+scenes = ["dep:bed-scenes"]
+
+[dependencies]
+bed-document-session = { workspace = true }
+bed-scenes = { workspace = true, optional = true }
+bed-ui = { workspace = true, features = ["imgui", "gpu"] }
+bed-editor-api = { workspace = true, features = ["gpu"] }
+bed-workbench-api = { workspace = true }
+bevy = { workspace = true, features = ["std"] }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+bed-workbench = { workspace = true }

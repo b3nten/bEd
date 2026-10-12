@@ -1,0 +1,20 @@
+[package]
+name = "bed-idle"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = []
+scenes = ["dep:bed-scenes", "dep:bed-editor-api"]
+
+[dependencies]
+bed-ui = { workspace = true, features = ["imgui", "gpu"] }
+bevy = { workspace = true, features = ["std"] }
+bed-desktop = { workspace = true }
+winit = { workspace = true }
+dear-imgui-rs = { workspace = true }
+
+bed-scenes = { workspace = true, optional = true }
+bed-editor-api = { workspace = true, features = ["gpu"], optional = true }

@@ -11,7 +11,7 @@ use crate::{
 use bed_document_session::editor_session::{
     ClosePolicy, DocumentId, EditorSession, ViewId, WorkspaceId,
 };
-use dear_imgui_rs::{ContextId, FocusedFlags, FontId, Key, StyleColor, StyleVar, Ui, WindowFlags};
+use dear_imgui_rs::{ContextId, FocusedFlags, FontId, StyleColor, StyleVar, Ui, WindowFlags};
 use std::{io, rc::Rc};
 
 #[derive(Clone, Debug)]
@@ -24,7 +24,7 @@ pub struct EditorViewOptions {
     pub minimap_enabled: bool,
     /// Wrap long lines to the view width without changing document contents.
     pub soft_wrap: bool,
-    pub line_jump_key: Option<Key>,
+    pub shortcuts: bed_keybindings::ShortcutInput,
     pub block_input: bool,
     pub source_debug: Option<SourceDebugPresentation>,
     pub diff: Option<crate::DiffPresentation>,
@@ -42,7 +42,7 @@ impl Default for EditorViewOptions {
             rainbow_mode: true,
             minimap_enabled: false,
             soft_wrap: true,
-            line_jump_key: Some(Key::Semicolon),
+            shortcuts: crate::shortcuts::default_input(),
             block_input: false,
             source_debug: None,
             diff: None,
@@ -59,6 +59,9 @@ pub struct ViewResponse {
     pub focused: bool,
     pub actions: Vec<HostAction>,
     pub source_actions: Vec<SourceDebugAction>,
+    pub source_git_actions: Vec<crate::SourceGitAction>,
+    pub source_revision: crate::extensions::SourceRevision,
+    pub source_hover: Option<crate::extensions::SourceHoverObservation>,
     pub diff_actions: Vec<crate::DiffAction>,
     pub definition_request: Option<DefinitionRequest>,
 }
@@ -85,6 +88,7 @@ pub struct EditorView {
     zoom: f32,
     zoom_reset: Option<ZoomReset>,
     rendered_font: Option<(FontId, f32)>,
+    source_hover_rect: Option<crate::views::hover_tooltip::HoverRect>,
     _lifetime: Rc<()>,
 }
 struct ZoomReset {
@@ -101,7 +105,24 @@ pub enum TextHit {
 impl EditorView {
     pub fn new(session: &mut EditorSession, document: DocumentId) -> io::Result<Self> {
         let (id, token) = session.create_managed_view(document)?;
-        let frame = session.with_view(id, |editor| Box::new(EditorFrame::new(editor)))?;
+        Self::with_identity(session, document, id, token)
+    }
+    /// Adopt a live managed view without changing its identity or selections.
+    pub fn from_existing(session: &mut EditorSession, id: ViewId) -> io::Result<Self> {
+        let token = session.retain_managed_view(id)?;
+        let document = session
+            .document_for_view(id)
+            .ok_or_else(|| io::Error::other("Existing view is unavailable"))?;
+        Self::with_identity(session, document, id, token)
+    }
+    fn with_identity(
+        session: &mut EditorSession,
+        document: DocumentId,
+        id: ViewId,
+        token: Rc<()>,
+    ) -> io::Result<Self> {
+        let mut frame = session.with_view(id, |editor| Box::new(EditorFrame::new(editor)))?;
+        frame.read_only = session.with_document(document, |state| state.read_only)?;
         Ok(Self {
             id,
             document,
@@ -114,6 +135,7 @@ impl EditorView {
             zoom: 1.0,
             zoom_reset: None,
             rendered_font: None,
+            source_hover_rect: None,
             _lifetime: token,
         })
     }
@@ -122,6 +144,9 @@ impl EditorView {
     }
     pub fn document_id(&self) -> DocumentId {
         self.document
+    }
+    pub fn workspace_id(&self) -> WorkspaceId {
+        self.workspace
     }
     pub fn context_id(&self) -> Option<ContextId> {
         self.context
@@ -205,8 +230,12 @@ impl EditorView {
                 ));
             }
             let source_revision = session.document_revision(self.document)?;
-            let source_extension = options.extensions.source_debug(session, self.document)?;
-            let git_extension = options.extensions.source_git(session, self.document)?;
+            let source_extension = options
+                .extensions
+                .source_debug(self.document, source_revision);
+            let git_extension = options
+                .extensions
+                .source_git(self.document, source_revision);
             if let Some(reset) = &mut self.zoom_reset {
                 reset.elapsed += ui.io().delta_time();
                 let t = (reset.elapsed / 0.1).min(1.0);
@@ -230,17 +259,15 @@ impl EditorView {
             self.frame.rainbow_mode = options.rainbow_mode;
             self.frame.minimap_enabled = self.minimap_enabled(options.minimap_enabled);
             self.frame.soft_wrap = self.soft_wrap(options.soft_wrap);
-            self.frame.line_jump_key = options.line_jump_key;
+            self.frame.shortcuts = options.shortcuts.clone();
+            self.input.shortcuts = options.shortcuts.clone();
             self.frame.external_overlay = options.block_input;
             self.frame.read_only =
                 options.read_only || session.with_document(self.document, |s| s.read_only)?;
             self.frame.diff = options.diff.clone();
-            self.frame.source_git = git_extension
-                .as_ref()
-                .map(|(_, presentation)| presentation.clone());
+            self.frame.source_git = git_extension.cloned();
             self.frame.source_debug = source_extension
-                .as_ref()
-                .map(|(_, presentation)| presentation.clone())
+                .cloned()
                 .or_else(|| options.source_debug.clone());
             let mut response = None;
             ui.child_window(format!("##bed_view_{}", self.id.0))
@@ -264,6 +291,9 @@ impl EditorView {
                                     .is_window_focused_with_flags(FocusedFlags::CHILD_WINDOWS),
                                 actions,
                                 source_actions: self.frame.take_source_actions(),
+                                source_git_actions: self.frame.take_git_actions(),
+                                source_revision,
+                                source_hover: None,
                                 diff_actions: self.frame.take_diff_actions(),
                                 definition_request: self.input.take_definition_request(),
                             }
@@ -274,29 +304,65 @@ impl EditorView {
                         if session.document_revision(self.document)? != source_revision {
                             response.diff_actions.clear();
                         }
-                        if let Some((provider, _)) = &git_extension {
-                            if session.document_revision(self.document)? == source_revision {
-                                for action in self.frame.take_git_actions() {
-                                    provider
-                                        .borrow_mut()
-                                        .action(session, self.document, action)?;
-                                }
-                            } else {
-                                self.frame.take_git_actions();
-                            }
-                        }
-                        if let Some((provider, _)) = &source_extension {
-                            // Input may edit the document while drawing. A row or
-                            // hover collected for the old text must not escape.
-                            if session.document_revision(self.document)? == source_revision {
-                                let mut provider = provider.borrow_mut();
-                                for action in response.source_actions.drain(..) {
-                                    provider.action(session, self.document, action)?;
-                                }
-                                provider.draw_hover(ui, session, self)?;
-                            } else {
-                                response.source_actions.clear();
-                            }
+                        if session.document_revision(self.document)? != source_revision {
+                            response.source_actions.clear();
+                            response.source_git_actions.clear();
+                            self.source_hover_rect = None;
+                        } else if source_extension.is_some() {
+                            use crate::views::hover_tooltip::{
+                                hover_key_pressed, hover_rect_contains, render_hover_popup,
+                            };
+                            let presentation = self.presentation();
+                            let info = presentation.hover_info;
+                            let dismissed = presentation.hover_dismissed;
+                            let mouse = ui.io().mouse_pos();
+                            let layout = presentation.layout;
+                            let over_popup = self
+                                .source_hover_rect
+                                .is_some_and(|rect| hover_rect_contains(rect, mouse));
+                            let in_pane = mouse[0] >= layout.text_pos[0]
+                                && mouse[0] < layout.pane_pos[0] + layout.pane_size[0]
+                                && mouse[1] >= layout.pane_pos[1]
+                                && mouse[1] < layout.pane_pos[1] + layout.pane_size[1];
+                            let key_pressed = hover_key_pressed(ui);
+                            let rect = options
+                                .extensions
+                                .source_hover(self.id, self.document, source_revision)
+                                .filter(|hover| {
+                                    !key_pressed
+                                        && (!dismissed || over_popup)
+                                        && (over_popup
+                                            || (in_pane
+                                                && info.active
+                                                && info.row == hover.row
+                                                && info.column == hover.column))
+                                })
+                                .filter(|_| presentation.tooltip_arbiter.claim(ui))
+                                .and_then(|hover| {
+                                    render_hover_popup(
+                                        ui,
+                                        &format!("##debug_hover_{}", self.id.0),
+                                        hover.anchor,
+                                        self.source_hover_rect,
+                                        || {
+                                            ui.text(&hover.expression);
+                                            ui.separator();
+                                            ui.text(&hover.value);
+                                        },
+                                    )
+                                });
+                            self.source_hover_rect = rect;
+                            response.source_hover =
+                                Some(crate::extensions::SourceHoverObservation {
+                                    info,
+                                    dismissed,
+                                    key_pressed,
+                                    in_pane,
+                                    over_popup,
+                                    mouse,
+                                    frame: ui.frame_count(),
+                                    window_size: ui.window_size(),
+                                });
                         }
                         Ok(response)
                     })());
@@ -313,6 +379,9 @@ impl EditorView {
                         focused: false,
                         actions: Vec::new(),
                         source_actions: Vec::new(),
+                        source_git_actions: Vec::new(),
+                        source_revision,
+                        source_hover: None,
                         diff_actions: Vec::new(),
                         definition_request: None,
                     })
@@ -439,76 +508,10 @@ impl EditorView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extensions::{EditorExtensions, SourceDebugExtension};
+    use crate::extensions::EditorExtensions;
     use crate::views::view_layout::{glyph_advance, line_column_x};
     use bed_editing::{editor_commands::CursorReveal, util::utf8::utf8_byte_offset_to_utf16};
     use dear_imgui_rs::{Condition, Context, FontSource, FramePrepareOptions, MouseButton};
-    use std::cell::RefCell;
-
-    #[derive(Default)]
-    struct ExtensionCalls {
-        queries: Vec<DocumentId>,
-        actions: Vec<(DocumentId, SourceDebugAction)>,
-        hovers: Vec<(DocumentId, ViewId, [f32; 2])>,
-    }
-
-    struct SourceExtensionProbe {
-        document: DocumentId,
-        calls: Rc<RefCell<ExtensionCalls>>,
-    }
-
-    impl SourceDebugExtension for SourceExtensionProbe {
-        fn presentation(
-            &self,
-            _session: &EditorSession,
-            document: DocumentId,
-        ) -> io::Result<Option<SourceDebugPresentation>> {
-            self.calls.borrow_mut().queries.push(document);
-            Ok((document == self.document).then(SourceDebugPresentation::default))
-        }
-
-        fn action(
-            &mut self,
-            session: &EditorSession,
-            document: DocumentId,
-            action: SourceDebugAction,
-        ) -> io::Result<()> {
-            assert_eq!(document, self.document);
-            // Extensions can inspect documents after the drawing borrow ends.
-            session.snapshot(document)?;
-            self.calls.borrow_mut().actions.push((document, action));
-            Ok(())
-        }
-
-        fn draw_hover(
-            &mut self,
-            ui: &Ui,
-            session: &EditorSession,
-            view: &EditorView,
-        ) -> io::Result<()> {
-            assert_eq!(session.document_for_view(view.id()), Some(self.document));
-            self.calls
-                .borrow_mut()
-                .hovers
-                .push((view.document_id(), view.id(), ui.window_size()));
-            Ok(())
-        }
-    }
-
-    fn source_extension_probe(
-        document: DocumentId,
-    ) -> (
-        Rc<RefCell<dyn SourceDebugExtension>>,
-        Rc<RefCell<ExtensionCalls>>,
-    ) {
-        let calls = Rc::new(RefCell::new(ExtensionCalls::default()));
-        let provider: Rc<RefCell<dyn SourceDebugExtension>> =
-            Rc::new(RefCell::new(SourceExtensionProbe {
-                document,
-                calls: calls.clone(),
-            }));
-        (provider, calls)
-    }
 
     fn extension_context() -> Context {
         let mut context = Context::create();
@@ -570,56 +573,49 @@ mod tests {
     }
 
     #[test]
-    fn source_extensions_route_actions_and_hovers_to_the_provider_and_originating_views() {
+    fn source_facts_return_revision_bound_actions_from_the_originating_view() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let mut context = extension_context();
         let mut session = EditorSession::new();
-        let source = b"first\nsecond\nthird\nfourth";
-        let document = session.create_document(source).unwrap();
-        let other = session.create_document(source).unwrap();
+        let document = session
+            .create_document(b"first\nsecond\nthird\nfourth")
+            .unwrap();
+        let other = session.create_document(b"other").unwrap();
         let mut left = EditorView::new(&mut session, document).unwrap();
         let mut right = EditorView::new(&mut session, document).unwrap();
         let mut third = EditorView::new(&mut session, other).unwrap();
-        let (provider, calls) = source_extension_probe(document);
-        let (other_provider, other_calls) = source_extension_probe(other);
-        let extensions = EditorExtensions::default();
-        // The first provider declines the two views of the other document.
-        extensions.register_source_debug(&other_provider);
-        extensions.register_source_debug(&provider);
-        extension_frame(
+        let mut facts = EditorExtensions::default();
+        let revision = session.document_revision(document).unwrap();
+        facts.set_source_debug(document, revision, SourceDebugPresentation::default());
+        for _ in 0..2 {
+            extension_frame(
+                &mut context,
+                &mut session,
+                &mut [&mut left, &mut right, &mut third],
+                &facts,
+                false,
+            );
+        }
+        let (responses, targets) = extension_frame(
             &mut context,
             &mut session,
             &mut [&mut left, &mut right, &mut third],
-            &extensions,
+            &facts,
             false,
         );
-        calls.borrow_mut().hovers.clear();
-        other_calls.borrow_mut().hovers.clear();
-        let (_, targets) = extension_frame(
-            &mut context,
-            &mut session,
-            &mut [&mut left, &mut right, &mut third],
-            &extensions,
-            false,
-        );
+        assert!(responses[0].source_hover.is_some());
+        assert!(responses[1].source_hover.is_some());
+        assert!(responses[2].source_hover.is_none());
         assert_eq!(
-            calls.borrow().hovers,
-            vec![
-                (document, left.id(), [300.0, 360.0]),
-                (document, right.id(), [300.0, 360.0]),
-            ],
-            "hover callbacks must retain each editor child's scope"
-        );
-        assert_eq!(
-            other_calls.borrow().hovers,
-            vec![(other, third.id(), [300.0, 360.0])]
+            responses[1].source_hover.as_ref().unwrap().window_size,
+            [300.0, 360.0]
         );
         context.io_mut().add_mouse_pos_event(targets[1]);
         extension_frame(
             &mut context,
             &mut session,
             &mut [&mut left, &mut right, &mut third],
-            &extensions,
+            &facts,
             false,
         );
         context
@@ -629,123 +625,62 @@ mod tests {
             &mut context,
             &mut session,
             &mut [&mut left, &mut right, &mut third],
-            &extensions,
+            &facts,
             false,
         );
+        assert!(responses[0].source_actions.is_empty());
+        assert_eq!(responses[1].view, right.id());
+        assert_eq!(responses[1].source_revision, revision);
         assert_eq!(
-            calls.borrow().actions,
-            vec![(document, SourceDebugAction::ToggleBreakpoint { row: 2 })]
+            responses[1].source_actions,
+            vec![SourceDebugAction::ToggleBreakpoint { row: 2 }]
         );
-        assert!(other_calls.borrow().actions.is_empty());
-        assert!(
-            responses
-                .iter()
-                .all(|response| response.source_actions.is_empty())
-        );
-        drop(provider);
-        let (_, targets) = extension_frame(
+        assert!(responses[2].source_actions.is_empty());
+        facts.clear_source_debug(document);
+        context
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, false);
+        extension_frame(
             &mut context,
             &mut session,
             &mut [&mut left, &mut right, &mut third],
-            &extensions,
+            &facts,
             false,
         );
         assert!(left.frame.source_debug.is_none());
         assert!(right.frame.source_debug.is_none());
-        assert!(third.frame.source_debug.is_some());
-        context
-            .io_mut()
-            .add_mouse_button_event(MouseButton::Left, false);
-        context.io_mut().add_mouse_pos_event(targets[2]);
     }
 
     #[test]
-    fn source_extensions_skip_hidden_or_changed_view_presentations() {
+    fn source_observations_do_not_escape_changed_or_hidden_views() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let mut context = extension_context();
         let mut session = EditorSession::new();
         let document = session.create_document(b"source").unwrap();
         let mut view = EditorView::new(&mut session, document).unwrap();
-        let (provider, calls) = source_extension_probe(document);
-        let extensions = EditorExtensions::default();
-        extensions.register_source_debug(&provider);
+        let mut facts = EditorExtensions::default();
+        let revision = session.document_revision(document).unwrap();
+        facts.set_source_debug(document, revision, SourceDebugPresentation::default());
         session.request_focus(view.id()).unwrap();
         for _ in 0..2 {
-            extension_frame(
-                &mut context,
-                &mut session,
-                &mut [&mut view],
-                &extensions,
-                false,
-            );
+            extension_frame(&mut context, &mut session, &mut [&mut view], &facts, false);
         }
-        let before = session.document_revision(document).unwrap();
-        calls.borrow_mut().hovers.clear();
         context.io_mut().add_input_characters_utf8("x");
-        extension_frame(
-            &mut context,
-            &mut session,
-            &mut [&mut view],
-            &extensions,
-            false,
+        let (responses, _) =
+            extension_frame(&mut context, &mut session, &mut [&mut view], &facts, false);
+        assert_ne!(session.document_revision(document).unwrap(), revision);
+        assert!(responses[0].source_hover.is_none());
+        facts.set_source_debug(
+            document,
+            session.document_revision(document).unwrap(),
+            SourceDebugPresentation::default(),
         );
-        assert_ne!(session.document_revision(document).unwrap(), before);
-        assert!(
-            calls.borrow().hovers.is_empty(),
-            "hover geometry belongs to the old revision"
-        );
-        extension_frame(
-            &mut context,
-            &mut session,
-            &mut [&mut view],
-            &extensions,
-            false,
-        );
-        assert_eq!(calls.borrow().hovers.len(), 1);
-        calls.borrow_mut().hovers.clear();
-        extension_frame(
-            &mut context,
-            &mut session,
-            &mut [&mut view],
-            &extensions,
-            true,
-        );
-        assert!(
-            calls.borrow().hovers.is_empty(),
-            "a clipped child has no live hover scope"
-        );
-    }
-
-    #[test]
-    fn source_extensions_are_not_called_for_foreign_or_detached_views() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let mut context = extension_context();
-        let mut session = EditorSession::new();
-        let document = session.create_document(b"source").unwrap();
-        let mut view = EditorView::new(&mut session, document).unwrap();
-        let (provider, calls) = source_extension_probe(document);
-        let extensions = EditorExtensions::default();
-        extensions.register_source_debug(&provider);
-        let options = EditorViewOptions {
-            extensions,
-            ..Default::default()
-        };
-        context.prepare_frame(FramePrepareOptions::new([800.0, 500.0], 1.0));
-        let ui = context.frame();
-        let mut foreign = EditorSession::new();
-        assert_eq!(
-            view.draw(ui, &mut foreign, &options).unwrap_err().kind(),
-            io::ErrorKind::InvalidInput
-        );
-        session.detach_view(view.id());
-        assert_eq!(
-            view.draw(ui, &mut session, &options).unwrap_err().kind(),
-            io::ErrorKind::NotFound
-        );
-        assert!(calls.borrow().queries.is_empty());
-        assert!(calls.borrow().actions.is_empty());
-        assert!(calls.borrow().hovers.is_empty());
-        drop(context.render_legacy());
+        let (responses, _) =
+            extension_frame(&mut context, &mut session, &mut [&mut view], &facts, false);
+        assert!(responses[0].source_hover.is_some());
+        let (responses, _) =
+            extension_frame(&mut context, &mut session, &mut [&mut view], &facts, true);
+        assert!(responses[0].source_hover.is_none());
     }
 
     fn frame(
@@ -1246,66 +1181,27 @@ mod tests {
 
     #[test]
     fn conflict_controls_resolve_in_normal_editor_and_undo_as_one_edit() {
-        use crate::extensions::SourceGitExtension;
         use crate::{ConflictChoice, SourceConflict, SourceGitAction, SourceGitPresentation};
-        struct ConflictProvider {
-            document: DocumentId,
-        }
-        impl SourceGitExtension for ConflictProvider {
-            fn presentation(
-                &self,
-                session: &EditorSession,
-                document: DocumentId,
-            ) -> io::Result<Option<SourceGitPresentation>> {
-                let snapshot = session.snapshot(document)?;
-                Ok(
-                    (document == self.document && snapshot.bytes.starts_with(b"<<<<<<<")).then(
-                        || SourceGitPresentation {
-                            conflicts: vec![SourceConflict {
-                                id: 7,
-                                row: 0,
-                                label: "Conflict 1".into(),
-                                current_label: "ours".into(),
-                                incoming_label: "theirs".into(),
-                            }],
-                        },
-                    ),
-                )
-            }
-            fn action(
-                &mut self,
-                session: &mut EditorSession,
-                document: DocumentId,
-                action: SourceGitAction,
-            ) -> io::Result<()> {
-                assert_eq!(
-                    action,
-                    SourceGitAction::ResolveConflict {
-                        id: 7,
-                        choice: ConflictChoice::Current
-                    }
-                );
-                let snapshot = session.snapshot(document)?;
-                session.apply_edits(
-                    document,
-                    session.document_revision(document)?,
-                    &[bed_document_session::editor_session::ByteEdit {
-                        range: 0..snapshot.bytes.len(),
-                        bytes: b"ours\n".to_vec(),
-                    }],
-                )
-            }
-        }
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let mut context = extension_context();
         let mut session = EditorSession::new();
         let bytes = b"<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n";
         let document = session.create_document(bytes).unwrap();
         let mut view = EditorView::new(&mut session, document).unwrap();
-        let provider: Rc<RefCell<dyn SourceGitExtension>> =
-            Rc::new(RefCell::new(ConflictProvider { document }));
-        let options = EditorViewOptions::default();
-        options.extensions.register_source_git(&provider);
+        let mut options = EditorViewOptions::default();
+        options.extensions.set_source_git(
+            document,
+            session.document_revision(document).unwrap(),
+            SourceGitPresentation {
+                conflicts: vec![SourceConflict {
+                    id: 7,
+                    row: 0,
+                    label: "Conflict 1".into(),
+                    current_label: "ours".into(),
+                    incoming_label: "theirs".into(),
+                }],
+            },
+        );
         session.request_focus(view.id()).unwrap();
         diff_frame(&mut context, &mut session, &mut view, &options);
         diff_frame(&mut context, &mut session, &mut view, &options);
@@ -1321,13 +1217,35 @@ mod tests {
         context
             .io_mut()
             .add_mouse_button_event(MouseButton::Left, false);
-        diff_frame(&mut context, &mut session, &mut view, &options);
+        let response = diff_frame(&mut context, &mut session, &mut view, &options);
+        assert_eq!(
+            response.source_git_actions,
+            vec![SourceGitAction::ResolveConflict {
+                id: 7,
+                choice: ConflictChoice::Current
+            }]
+        );
+        assert_eq!(
+            session.snapshot(document).unwrap().bytes,
+            bytes,
+            "presentation only returns intent"
+        );
+        session
+            .apply_edits(
+                document,
+                response.source_revision,
+                &[bed_document_session::editor_session::ByteEdit {
+                    range: 0..bytes.len(),
+                    bytes: b"ours\n".to_vec(),
+                }],
+            )
+            .unwrap();
         assert_eq!(session.snapshot(document).unwrap().bytes, b"ours\n");
         session
             .with_commands(view.id(), |commands| commands.undo())
             .unwrap();
         assert_eq!(session.snapshot(document).unwrap().bytes, bytes);
-        drop(provider);
+        options.extensions.clear_source_git(document);
         diff_frame(&mut context, &mut session, &mut view, &options);
         assert!(!view.projected());
     }
@@ -1382,3 +1300,6 @@ mod tests {
         drop(context.render_legacy());
     }
 }
+
+#[cfg(test)]
+use dear_imgui_rs::Key;

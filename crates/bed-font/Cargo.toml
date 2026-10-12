@@ -1,0 +1,19 @@
+[package]
+name = "bed-font"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bevy = { workspace = true, features = ["std"] }
+bed-workbench-api = { workspace = true }
+bed-editing = { workspace = true }
+bed-editor-api = { workspace = true, features = ["gpu"] }
+bed-ui = { workspace = true, features = ["imgui", "gpu"] }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+serde_json = { workspace = true }
+harfrust = { workspace = true }
+wuff = { workspace = true }
+flate2 = { workspace = true }

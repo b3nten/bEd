@@ -268,8 +268,29 @@ impl WgpuInitInfo {
 ///
 /// This corresponds to ImGui_ImplWGPU_Data in the C++ implementation
 pub(crate) struct WgpuBackendData {
-    /// Initialization info
+    /// Window-specific initialization policy; it can retain UI-thread-bound objects.
     pub(crate) init_info: WgpuInitInfo,
+    gpu: WgpuGpuData,
+}
+
+impl std::ops::Deref for WgpuBackendData {
+    type Target = WgpuGpuData;
+
+    fn deref(&self) -> &Self::Target {
+        &self.gpu
+    }
+}
+
+impl std::ops::DerefMut for WgpuBackendData {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.gpu
+    }
+}
+
+/// Device resources shared by synchronous and detached rendering.
+/// Unlike the window-specific backend policy, these contain no Dear ImGui context binding.
+pub(crate) struct WgpuGpuData {
+    pub(crate) pipeline_multisample_state: MultisampleState,
     /// WGPU device
     pub(crate) device: Device,
     /// Default queue
@@ -334,19 +355,27 @@ impl FrameEpochCursor {
 }
 
 impl WgpuBackendData {
-    /// Create new backend data from initialization info
+    /// Create backend data, retaining the UI-thread-bound window policy separately.
     pub(crate) fn new(init_info: WgpuInitInfo) -> Self {
-        let queue = init_info.queue.clone();
         Self {
+            gpu: WgpuGpuData::new(&init_info),
+            init_info,
+        }
+    }
+}
+
+impl WgpuGpuData {
+    pub(crate) fn new(init_info: &WgpuInitInfo) -> Self {
+        Self {
+            pipeline_multisample_state: init_info.pipeline_multisample_state,
             device: init_info.device.clone(),
-            queue,
+            queue: init_info.queue.clone(),
             render_target_format: init_info.render_target_format,
             depth_stencil_format: init_info.depth_stencil_format,
             pipeline_state: None,
             render_resources: RenderResources::new(),
             frame_resources: FrameResourceArena::new(),
             frame_cursor: FrameEpochCursor::default(),
-            init_info,
         }
     }
 

@@ -1,0 +1,11 @@
+[package]
+name = "bed-keybindings"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+dear-imgui-rs = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

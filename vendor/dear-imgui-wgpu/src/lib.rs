@@ -310,10 +310,10 @@ pub use data::{
     WgpuInitInfo, WgpuRenderState, WgpuRenderStateAccessError, WgpuViewportSurfaceConfig,
 };
 pub use error::{RendererError, RendererResult};
-pub use renderer::{FramebufferExtent, WgpuRenderer};
+pub use renderer::{FramebufferExtent, WgpuRenderer, WgpuSnapshotContext, WgpuSnapshotRenderer};
 pub use texture::ExternalTextureId;
 
-pub(crate) use data::{WgpuBackendData, WgpuRenderStateStorage};
+pub(crate) use data::{WgpuBackendData, WgpuGpuData, WgpuRenderStateStorage};
 pub(crate) use frame_resources::{FrameResourceArena, FrameResources};
 pub(crate) use render_resources::RenderResources;
 pub(crate) use shaders::ShaderManager;

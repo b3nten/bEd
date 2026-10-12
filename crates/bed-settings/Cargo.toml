@@ -6,11 +6,15 @@ publish = false
 license.workspace = true
 
 [dependencies]
-bed-editing = { workspace = true }
-bed-effects-config = { workspace = true }
-bed-highlight = { workspace = true }
+bed-keybindings = { workspace = true }
 bed-document-session = { workspace = true }
-bed-ui = { workspace = true }
+bed-config = { workspace = true }
+bed-ui = { workspace = true, features = ["imgui"] }
+bed-editor-api = { workspace = true }
+bed-workbench-api = { workspace = true }
+bevy = { workspace = true, features = ["std"] }
 dear-imgui-rs = { workspace = true }
-fontdb = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+bed-workbench = { workspace = true }

@@ -1,4 +1,7 @@
 use super::*;
+use bed_document_session::editor::Editor;
+use bed_editor_ui::editor_input::EditorInput;
+use std::time::{Duration, Instant};
 
 #[test]
 fn workspace_window_launch_passes_only_the_shared_config_and_selected_root() {
@@ -41,27 +44,6 @@ fn bundled_workspace_window_launch_uses_launch_services_for_a_new_instance() {
             std::ffi::OsStr::new("--config-dir"),
             config.as_os_str(),
         ]
-    );
-}
-
-#[test]
-fn transparent_surfaces_select_the_pinned_metal_mode_and_prefer_premultiplied() {
-    use wgpu::{Backend, CompositeAlphaMode as Alpha};
-    assert_eq!(
-        transparent_alpha_mode(Backend::Metal, &[Alpha::Opaque, Alpha::PostMultiplied]),
-        Alpha::PostMultiplied
-    );
-    assert_eq!(
-        transparent_alpha_mode(Backend::Metal, &[Alpha::Opaque, Alpha::PreMultiplied]),
-        Alpha::PreMultiplied
-    );
-    assert_eq!(
-        transparent_alpha_mode(Backend::Vulkan, &[Alpha::Opaque, Alpha::Inherit]),
-        Alpha::Inherit
-    );
-    assert_eq!(
-        transparent_alpha_mode(Backend::Vulkan, &[Alpha::Opaque]),
-        Alpha::Opaque
     );
 }
 
@@ -195,10 +177,11 @@ fn native_edit_shortcuts_undo_and_redo_once_without_inserting_characters() {
 #[cfg(target_os = "macos")]
 #[test]
 fn native_copy_and_paste_use_terminal_service_commands() {
-    use bed_terminal::{
-        bed_terminal::BedTerminal,
+    use bed_terminal_core::{
+        bed_terminal_core::BedTerminal,
         terminal_pty::{PtyOptions, TerminalShell},
     };
+    use dear_imgui_rs::ClipboardBackend;
     use std::{cell::RefCell, rc::Rc};
     struct Clipboard(Rc<RefCell<String>>);
     impl ClipboardBackend for Clipboard {
@@ -282,8 +265,8 @@ fn native_copy_and_paste_use_terminal_service_commands() {
 #[cfg(unix)]
 #[test]
 fn native_window_focus_reports_transitions_once_and_keeps_hidden_terminal_blurred() {
-    use bed_terminal::{
-        bed_terminal::BedTerminal,
+    use bed_terminal_core::{
+        bed_terminal_core::BedTerminal,
         terminal_font::TerminalFonts,
         terminal_pty::{PtyOptions, TerminalShell},
     };
@@ -377,7 +360,7 @@ fn native_window_focus_reports_transitions_once_and_keeps_hidden_terminal_blurre
 #[cfg(target_os = "macos")]
 #[test]
 fn native_panel_clicks_create_and_configured_shortcuts_reveal() {
-    use crate::platform::macos_menu::MenuAction;
+    use crate::native_commands::MenuAction;
     for (action, create, reveal) in [
         (
             MenuAction::Explorer,
@@ -422,7 +405,7 @@ fn native_panel_clicks_create_and_configured_shortcuts_reveal() {
 #[cfg(target_os = "macos")]
 #[test]
 fn native_edit_actions_respect_text_input_ownership() {
-    use crate::platform::macos_menu::MenuAction;
+    use crate::native_commands::MenuAction;
     use dear_imgui_rs::Key;
     assert_eq!(
         native_edit_route(MenuAction::Copy, false),
@@ -438,47 +421,13 @@ fn native_edit_actions_respect_text_input_ownership() {
     );
     assert_eq!(
         native_edit_route(MenuAction::SelectAll, false),
-        NativeEditRoute::SelectAllDocument
+        NativeEditRoute::Shortcut(Key::A, false)
     );
-}
-
-#[test]
-fn screenshot_exports_bgra_padded_rows_in_display_order() {
-    let path = std::env::temp_dir().join(format!("bed-screenshot-test-{}.ppm", std::process::id()));
-    let pixels = [
-        30, 20, 10, 255, 60, 50, 40, 255, 0, 0, 0, 0, 90, 80, 70, 255, 120, 110, 100, 255, 0, 0, 0,
-        0,
-    ];
-    write_ppm(
-        &path,
-        &pixels,
-        2,
-        2,
-        12,
-        wgpu::TextureFormat::Bgra8UnormSrgb,
-    )
-    .unwrap();
-    let bytes = std::fs::read(&path).unwrap();
-    std::fs::remove_file(path).unwrap();
-    assert_eq!(&bytes[..11], b"P6\n2 2\n255\n");
-    assert_eq!(
-        &bytes[11..],
-        &[10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120]
-    );
-}
-
-#[test]
-fn screenshot_rejects_incompatible_extent_before_creating_file() {
-    let path =
-        std::env::temp_dir().join(format!("bed-screenshot-invalid-{}.ppm", std::process::id()));
-    assert!(write_ppm(&path, &[0; 4], 2, 2, 8, wgpu::TextureFormat::Rgba8Unorm).is_err());
-    assert!(write_ppm(&path, &[0; 16], 2, 2, 4, wgpu::TextureFormat::Bgra8Unorm).is_err());
-    assert!(!path.exists());
 }
 
 #[test]
 fn workspace_window_launch_preserves_local_and_ssh_identity_as_one_argument() {
-    use bed_workbench_api::workspace::{WorkspaceSpec, WorkspaceTarget};
+    use bed_editor_api::workspace::{WorkspaceSpec, WorkspaceTarget};
     let config = std::env::temp_dir().canonicalize().unwrap();
     for workspace in [
         WorkspaceSpec::local("/tmp/project with spaces"),

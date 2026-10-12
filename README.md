@@ -1,5 +1,151 @@
 bed.
 
+## Keyboard shortcuts
+
+Settings → Keybindings lists built-in commands and plugin actions by scope. Click
+an existing shortcut to replace it, or choose **Add binding** for another
+combination. **Clear** unbinds an action; **Restore defaults** removes its override.
+Recording accepts one key with any modifiers. Escape cancels recording; **Assign
+Escape** binds Escape itself.
+
+Defaults use Command on macOS and Control elsewhere for `Primary`. Common defaults
+include Primary+N/O/S/W for documents, Primary+P for file search, Primary+Shift+F
+for project search, Primary+Comma for settings, Ctrl+Grave for the terminal, and
+F5/F9/F10/F11 for debugging. Text editing, navigation, CSV, Explorer, SQLite,
+Search and Audio actions have their own panel/widget keymaps.
+
+Focused widgets handle input first, then the focused panel, then globals. A panel
+type shares its bindings across instances; embedded editors share the Editor
+keymap. Settings warns whenever a shortcut is reused, including across different
+panels, and permits saving it. Within the same scope, the newest user assignment
+wins. Show-panel commands focus the most recently used instance or open one;
+new-panel commands create another instance. New windows open in the largest
+layout area by default. Drag a titlebar panel button into an area to choose its
+destination, just like dragging a file from the Explorer.
+
+Overrides are stored in `keybindings.json` in the configuration directory. The
+legacy `keybinds.json` is ignored. Defaults come from action declarations rather
+than a configuration seed. Plugin registration and host integration are described
+in [the workbench documentation](crates/bed-workbench/README.md#keyboard-shortcuts).
+
+## Shared runtime and rendering
+
+Bed runs one headful Bevy 0.20 `App`. The `bed-desktop::DesktopPlugins` group installs Bevy's window,
+event-loop and rendering plugins, owns the main-thread Dear ImGui integration,
+and composites owned ImGui frame snapshots through a window-targeting render
+graph. Bevy initializes the GPU, acquires the surface and presents the result.
+The adapter uses Bevy's borrowed native window handle; no second event loop or
+retained ImGui frame crosses into the render world.
+
+The frame order is native input, ImGui frontend, captured editor requests,
+gameplay systems, then rendering. Input capture is resolved before Bevy's input
+systems; releases and focus loss clear held input even when the UI captures new
+presses. Native menus, clipboard, file drops and titlebar styling belong to the desktop base.
+Terminal input belongs to the terminal plugin; document quit barriers belong to
+the editor transition owner. IME and input routing belong to the desktop plugin.
+
+`bed-runtime` supplies windowless core schedules, time and input without editor
+dependencies. Games can add ordinary Bevy plugins to the editor's app. Embedding
+hosts can install `BedRenderPlugin` with their own GPU resources for windowless
+rendering; the plugin explicitly selects renderer plugins so linking the desktop
+does not accidentally install a second native runner.
+
+Scene/model previews have separate cameras, render layers and texture targets in
+this same world. The render schedule produces panel textures, runs custom canvas
+commands, composites the ImGui snapshot and applies the editor's window effects.
+`bed-desktop` has no dependency on editor effects or scene rendering. GPU recovery
+rebuilds device resources while retaining the main world and live panel entities.
+
+Viewer and scene features install ordinary Bevy plugins into the desktop app.
+Panel entities register canvas rendering systems; scene/model panels use cameras
+and texture targets in the shared world without advancing a separate app.
+
+## Reusable workbench and feature composition
+
+`bed-workbench-api` defines validated panel and command contributions.
+Definitions live in a read-only Bevy `Registry` resource; commands and panel
+factories are registered Bevy systems. `bed-workbench` owns live panel entities,
+focus, tiling, ordered requests and layout persistence. Its panel frontend objects
+are main-thread state, with a scoped UI borrow. Commands execute after that borrow
+returns and retain their originating entity and area rather than using later
+focus. Saved layout numbers remain independent of live entity identities.
+
+`bed-editor-api` adds document and editor service contracts, and
+`bed-editor-workbench` composes the editor-specific services and panels. It reuses
+the generic panel presentation, tiling and command registration. Features install
+ordinary Bevy plugins. Typed components and resources own document associations,
+controller state and background workers; ordered systems process feature work and
+commands. The frontend holds widget state and emits owned intentions. Stable tab
+entities own separate presentation entities, so switching viewers retains each
+viewer's state and workers.
+
+The document session and settings remain installed as main-thread Bevy resources.
+Each feature owns its controller and widgets in typed resources/components.
+Systems borrow what they need, and one editor reducer resolves captured requests
+in FIFO order. Command effects finish before the next independent request.
+Saving, closing and viewer/workspace transitions flush active and retained drafts;
+remote save receipts wait for matching acknowledgements. The legacy Workbench
+loan protocol and ModulePanel/Module interfaces have been removed.
+
+The root binary supplies bEd's configuration, icons, workspace storage, working
+directory and helper directory, then composes `BedAppPlugin`, `DesktopPlugins`
+and the enabled feature plugins. `bed-config` owns stored settings and profiles;
+`BedAppPlugin` projects them into runtime appearance, workbench, input and
+terminal resources before UI preparation. Feature plugins consume those typed
+resources instead of discovering bEd configuration themselves.
+
+`bed-ui` contains portable colors, presentation data, font resolution and canvas
+contracts. Its default build has no dependencies; its `imgui` and `gpu` features
+add only the presentation capabilities requested by a consumer. `bed-desktop`
+owns the canonical live font atlas and embedded default fonts, so a new desktop
+does not need a configuration directory or repository resource files. Runtime
+palette changes update styling without rebuilding fonts; font changes validate
+their sources before replacing the atlas. Native presentation accepts menus,
+toolbar buttons and command IDs and emits owned actions for application systems.
+Platform capability flags describe which native features are available.
+
+Feature crates have plain descriptive names such as
+`bed-editor`, `bed-git` and `bed-model-viewer`. GUI-free service implementations use
+`-core` where a feature crate shares the name, such as `bed-git-core` and
+`bed-terminal-core`. Existing persisted `bed.*` identifiers are unchanged.
+
+`bed-automation` provides an optional typed Rust API for editor operations,
+revision-bound document edits, explicit input frame steps, readiness observations
+and asynchronous window/panel captures. It uses the same requests and save
+barriers as the UI. Captures share one final composited frame and can export PNG
+or PPM; captures after an operation wait for its actual receipt and a subsequent
+UI frame. See its [API guide](crates/bed-automation/README.md).
+
+The full editor enables all tools, effects, idle, viewers and scenes by default.
+Tools are individually optional: `editor`, `debug`, `git`, `explorer`, `search`,
+`terminal`, `projects`, `color` and `settings`; `tools` enables the set. Builds can
+also select `structure`, `images`, `models`, `fonts`, `audio`, `csv`, `markdown`, `json`,
+`sqlite`, `http` and `scenes`; `viewers` enables all viewer features. For example:
+
+```sh
+cargo build -p bed --no-default-features --features editor,images,csv
+cargo run -p bed --features automation -- --smoke-test --capture-frame target/editor.png
+cargo run -p bed-layout-app
+```
+
+The [independent desktop consumer](tests/fixtures/desktop-app/README.md) has its
+own Cargo workspace and lockfile. It builds the base alone, with layout, with
+effects, and with both. Its native smoke runs from an unrelated directory and
+checks input, clipboard, runtime appearance, font replacement and screenshots.
+The current desktop integration still requires the documented local dependency
+patches listed in its manifest; these crates are not yet a published toolkit.
+
+The [layout-only example](examples/layout-app/src/main.rs) composes `bed-desktop`
+and `bed-workbench` with ordinary application plugins. It excludes editor/document
+services, terminal, Git, LSP, audio, PBR and glTF. Unavailable feature panels retain
+their saved record in a placeholder, so saving a reduced build preserves state
+for a later build that enables the feature again. The dependency boundary check
+resolves each consumer separately and enforces this minimal composition.
+
+`bed-headless` remains a separate bEd executable for remote helper services.
+It does not install Bevy, a window, ImGui or a renderer. Its protocol version,
+CLI and helper packaging remain independent of desktop composition.
+
 Syntax highlighting uses Arborium's bundled collection of 112 language grammars
 and queries, including Markdown headings, inline formatting and embedded code.
 The Markdown inline grammar comes from tree-sitter-md. Grammars and queries are

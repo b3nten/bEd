@@ -1,10 +1,11 @@
-//! Application settings, profile persistence, keybindings and appearance.
-pub mod font;
-pub mod keybinds;
-mod persistence;
-pub mod settings;
-pub mod theme;
-pub use settings::{EffectPreset, SETTINGS_FILE, Settings, StartupMode, read_json, write_json};
+//! Settings controls hosted through the ordinary workbench module API.
+mod feature;
+mod panel;
+mod theme_editor;
+mod ui;
+pub use feature::{SettingsFrontend, SettingsPanelState, SettingsPlugin};
+pub use panel::{MODULE_ID, NEW_COMMAND, PANEL_ID};
+pub use ui::{SettingsCategory, SettingsUi, SettingsWindowState};
 #[cfg(test)]
 static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(test)]

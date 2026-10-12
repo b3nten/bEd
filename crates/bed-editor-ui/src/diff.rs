@@ -593,11 +593,11 @@ impl RowProjection {
                 }
                 continue;
             }
-            if let ProjectedRow::Document { row, .. } = &entry {
-                if !visible[*row as usize] {
-                    self.document_rows[*row as usize] = self.rows.len();
-                    visible[*row as usize] = true;
-                }
+            if let ProjectedRow::Document { row, .. } = &entry
+                && !visible[*row as usize]
+            {
+                self.document_rows[*row as usize] = self.rows.len();
+                visible[*row as usize] = true;
             }
             self.rows.push(entry);
             if !segments.is_empty() {

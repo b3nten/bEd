@@ -1,8 +1,7 @@
 //! Startup preferences select standalone panels or resume the last project.
 //! Explicit launch paths take precedence and only exact saved roots attach.
-use bed_settings::{Settings, StartupMode};
-use bed_workbench::{WindowCommand, Workbench};
-use bed_workbench_api::workspace::{WorkspaceSpec, WorkspaceTarget};
+use bed_config::{Settings, StartupMode};
+use bed_editor_api::workspace::{WorkspaceSpec, WorkspaceTarget};
 use std::{
     io,
     path::{Path, PathBuf},
@@ -81,484 +80,396 @@ pub(crate) struct Startup {
 }
 
 impl Startup {
-    pub fn into_workbench(self, settings: Settings) -> io::Result<Workbench> {
+    pub fn into_options(
+        self,
+        settings: &Settings,
+    ) -> io::Result<(bed_editor_workbench::EditorWorkbenchOptions, Option<String>)> {
+        use bed_editor_workbench::{EditorWorkbenchOptions, OpenFileOptions};
         let mode = if self.new_window {
             StartupMode::Startup
         } else {
             settings.startup_mode()
         };
-        let mut workbench = Workbench::with_settings(settings, crate::builtins::modules);
-        workbench.set_directory(&self.directory)?;
-        let attached = if let Some(spec) = self.requested_workspace {
-            if !matches!(spec.target, WorkspaceTarget::Local)
-                || !workbench.open_startup_workspace(Path::new(&spec.root))?
-            {
-                workbench.set_workspace(spec)?;
-            }
-            true
+        let store = crate::workbench::workspace::store::WorkspaceStore::load(&settings.config_dir)?;
+        let mut error = None;
+        let workspace = if let Some(spec) = self.requested_workspace {
+            Some(spec)
+        } else if let Some(root) = self.workspace {
+            store.recent_workspaces().into_iter().find(|spec| {
+                matches!(spec.target, WorkspaceTarget::Local) && Path::new(&spec.root) == root
+            })
+        } else if mode == StartupMode::LastProject && self.resume_last {
+            store.last_workspace().filter(|spec| {
+                if matches!(spec.target, WorkspaceTarget::Local) && !Path::new(&spec.root).is_dir()
+                {
+                    error = Some(format!(
+                        "Could not restore last project: {} is unavailable",
+                        spec.root
+                    ));
+                    false
+                } else {
+                    true
+                }
+            })
         } else {
-            match self.workspace {
-                Some(root) => workbench.open_startup_workspace(&root)?,
-                None => false,
-            }
+            None
         };
-        if !attached {
-            match mode {
-                StartupMode::Terminal => {
-                    workbench.dispatch(WindowCommand::NewTerminal)?;
-                    // A standalone terminal launch contains exactly one panel.
-                    workbench.close_tab(0)?;
-                }
-                StartupMode::LastProject if self.resume_last => {
-                    if let Err(error) = workbench.restore_last_workspace() {
-                        workbench.error = Some(format!("Could not restore last project: {error}"));
-                    }
-                }
-                _ => {}
+        let startup_panel = workspace.is_none().then(|| {
+            if mode == StartupMode::Terminal {
+                "bed.terminal.panel"
+            } else {
+                "bed.projects.panel"
             }
-        }
-        for path in self.files {
-            workbench.open_or_focus(&path)?;
-        }
-        Ok(workbench)
+            .to_string()
+        });
+        let options = EditorWorkbenchOptions {
+            working_directory: Some(self.directory),
+            workspace,
+            startup_panel,
+            files: self
+                .files
+                .into_iter()
+                .map(|path| OpenFileOptions {
+                    path,
+                    viewer: None,
+                    additional: false,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        Ok((options, error))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bed_workbench::WindowCommand;
+    use crate::workbench::workspace::store::WorkspaceStore;
     use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-
-    struct Fixture(PathBuf);
+    struct Fixture {
+        root: PathBuf,
+        settings: Settings,
+    }
     impl Fixture {
-        fn new() -> Self {
+        fn new(mode: StartupMode) -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
             let root = std::env::temp_dir().join(format!(
                 "bed-startup-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             std::fs::create_dir_all(&root).unwrap();
-            Self(root)
-        }
-        fn workbench(&self, paths: Vec<PathBuf>, cwd: &Path) -> Workbench {
-            let settings =
-                Settings::with_paths(self.0.join("config"), Settings::get_app_resources_path())
-                    .unwrap();
-            StartupOptions::default()
-                .resolve(paths, Some(cwd))
-                .unwrap()
-                .into_workbench(settings)
-                .unwrap()
-        }
-        fn save_workspace(&self, root: &Path) {
-            let file = root.join("saved.txt");
-            std::fs::write(&file, b"saved document").unwrap();
-            let mut previous = self.workbench(vec![root.to_owned(), file], root);
-            previous.set_project(root).unwrap();
-            previous.cleanup().unwrap();
-        }
-        fn startup_mode(&self, mode: &str) {
             let mut settings =
-                Settings::with_paths(self.0.join("config"), Settings::get_app_resources_path())
+                Settings::with_paths(root.join("config"), Settings::get_app_resources_path())
                     .unwrap();
-            settings.settings["startup_mode"] = serde_json::json!(mode);
-            settings.save_settings().unwrap();
+            settings.settings["startup_mode"] = serde_json::json!(mode.name());
+            Self { root, settings }
+        }
+        fn project(&self, name: &str) -> WorkspaceSpec {
+            let root = self.root.join(name);
+            std::fs::create_dir_all(&root).unwrap();
+            let mut store = WorkspaceStore::load(&self.settings.config_dir).unwrap();
+            let spec = store
+                .record_workspace(WorkspaceSpec::local(root.to_str().unwrap()))
+                .unwrap();
+            store
+                .save_session_layout(Some(&spec), serde_json::json!({"panels":[]}))
+                .unwrap();
+            spec
+        }
+        fn options(
+            &self,
+            options: StartupOptions,
+            paths: Vec<PathBuf>,
+        ) -> (bed_editor_workbench::EditorWorkbenchOptions, Option<String>) {
+            options
+                .resolve(paths, Some(&self.root))
+                .unwrap()
+                .into_options(&self.settings)
+                .unwrap()
         }
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = std::fs::remove_dir_all(&self.root);
         }
     }
-
     #[test]
-    fn bare_launch_uses_projects_and_ignores_saved_cwd_workspace() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        fixture.save_workspace(&fixture.0);
-        let mut workbench = fixture.workbench(vec![], &fixture.0);
-        workbench.tick().unwrap();
-        assert!(workbench.workspace_spec.is_none());
-        assert_eq!(workbench.panel_count(bed_module_projects::PANEL_ID), 1);
-        assert_eq!(workbench.terminal.session_count(), 0);
-        workbench.cleanup().unwrap();
+    fn only_exact_saved_folder_roots_attach() {
+        let fixture = Fixture::new(StartupMode::Startup);
+        let saved = fixture.project("saved");
+        let root = PathBuf::from(&saved.root);
+        let nested = root.join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let (options, _) = fixture.options(StartupOptions::default(), vec![root.clone()]);
+        assert_eq!(options.workspace, Some(saved));
+        for paths in [vec![nested], vec![root.join("file.txt")], vec![]] {
+            let (options, _) = fixture.options(StartupOptions::default(), paths);
+            assert!(options.workspace.is_none());
+            assert!(!options.restore_standalone);
+        }
+        let (options, _) = fixture.options(
+            StartupOptions {
+                cwd: Some(root),
+                ..Default::default()
+            },
+            vec![],
+        );
+        assert!(options.workspace.is_none());
     }
-
     #[test]
-    fn explicit_saved_folder_restores_directly_without_default_terminals() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        fixture.save_workspace(&fixture.0);
-        let mut workbench = fixture.workbench(vec![fixture.0.clone()], &fixture.0);
-        assert!(workbench.workspace_spec.is_some());
-        assert_eq!(workbench.panel_count(bed_module_projects::PANEL_ID), 0);
-        assert_eq!(workbench.panel_count(bed_module_editor::TEXT_PANEL_TYPE), 1);
-        assert_eq!(workbench.terminal.session_count(), 1);
-        workbench.cleanup().unwrap();
-    }
-
-    #[test]
-    fn file_only_launch_does_not_attach_its_saved_workspace() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        fixture.save_workspace(&fixture.0);
-        let file = fixture.0.join("standalone.txt");
-        std::fs::write(&file, b"standalone").unwrap();
-        let mut workbench = fixture.workbench(vec![file], &fixture.0);
-        assert!(workbench.workspace_spec.is_none());
-        assert_eq!(workbench.active_snapshot().unwrap().bytes, b"standalone");
-        assert_eq!(workbench.terminal.session_count(), 0);
-        workbench.cleanup().unwrap();
-    }
-
-    #[test]
-    fn last_folder_sets_standalone_base_then_all_files_open_in_order() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        let first = fixture.0.join("first");
-        let last = fixture.0.join("last");
+    fn last_folder_selects_directory_and_preserves_file_order() {
+        let fixture = Fixture::new(StartupMode::Startup);
+        let first = fixture.root.join("first");
+        let last = fixture.root.join("last");
         std::fs::create_dir(&first).unwrap();
         std::fs::create_dir(&last).unwrap();
-        let a = first.join("a.txt");
-        let b = last.join("b.txt");
-        std::fs::write(&a, b"first file").unwrap();
-        std::fs::write(&b, b"last file").unwrap();
-        let paths = vec![a, first, b, last.clone()];
-        let mut workbench = fixture.workbench(paths, &fixture.0);
-        assert!(workbench.workspace_spec.is_none());
-        assert_eq!(workbench.working_directory(), last.canonicalize().unwrap());
-        assert_eq!(workbench.panel_count(bed_module_editor::TEXT_PANEL_TYPE), 2);
-        assert_eq!(workbench.active_snapshot().unwrap().bytes, b"last file");
-        let store =
-            bed_workbench::workspace::store::WorkspaceStore::load(&fixture.0.join("config"))
-                .unwrap();
-        assert!(
-            store
-                .recent_workspaces()
+        let a = fixture.root.join("a.txt");
+        let b = fixture.root.join("b.txt");
+        let (options, _) = fixture.options(
+            StartupOptions::default(),
+            vec![first, a.clone(), last.clone(), b.clone()],
+        );
+        assert_eq!(
+            options.working_directory,
+            Some(last.canonicalize().unwrap())
+        );
+        assert_eq!(
+            options
+                .files
                 .iter()
-                .all(|spec| spec.root != fixture.0.join("first").to_str().unwrap())
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>(),
+            vec![a, b]
         );
-        workbench.cleanup().unwrap();
+        assert!(options.workspace.is_none());
     }
-
     #[test]
-    fn cwd_sets_working_directory_without_attaching_a_workspace() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        fixture.save_workspace(&fixture.0);
-        let settings =
-            Settings::with_paths(fixture.0.join("config"), Settings::get_app_resources_path())
-                .unwrap();
-        let mut workbench = StartupOptions {
-            cwd: Some(fixture.0.clone()),
-            ..Default::default()
-        }
-        .resolve(vec![], Some(Path::new("/")))
-        .unwrap()
-        .into_workbench(settings)
-        .unwrap();
-        assert!(workbench.workspace_spec.is_none());
-        assert_eq!(
-            workbench.working_directory(),
-            fixture.0.canonicalize().unwrap()
+    fn terminal_preference_only_composes_before_files_in_standalone_launches() {
+        let fixture = Fixture::new(StartupMode::Terminal);
+        let (options, _) = fixture.options(
+            StartupOptions::default(),
+            vec![fixture.root.join("file.txt")],
         );
-        assert_eq!(workbench.terminal.session_count(), 0);
-        workbench.cleanup().unwrap();
-    }
-
-    #[test]
-    fn terminal_startup_opens_only_one_fresh_shell() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        fixture.save_workspace(&fixture.0);
-        fixture.startup_mode("terminal");
-        let mut workbench = fixture.workbench(vec![], &fixture.0);
-        workbench.tick().unwrap();
-        assert!(workbench.workspace_spec.is_none());
-        assert_eq!(workbench.tab_count(), 1);
-        assert_eq!(workbench.panel_count(bed_module_projects::PANEL_ID), 0);
-        assert_eq!(workbench.terminal.session_count(), 1);
-        workbench.cleanup().unwrap();
-    }
-
-    #[test]
-    fn saved_default_only_initializes_new_workspaces() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        let mut previous = fixture.workbench(vec![], &fixture.0);
-        previous.close_tab(0).unwrap();
-        previous.dispatch(WindowCommand::NewTerminal).unwrap();
-        previous.dispatch(WindowCommand::NewDocument).unwrap();
-        assert_eq!(previous.panel_count(bed_module_editor::TEXT_PANEL_TYPE), 1);
-        previous.dispatch(WindowCommand::SaveDefaultLayout).unwrap();
-        previous.cleanup().unwrap();
-        drop(previous);
-
-        let file = fixture.0.join("file.txt");
-        std::fs::write(&file, b"standalone document").unwrap();
-        let mut standalone = fixture.workbench(vec![file], &fixture.0);
-        assert!(standalone.workspace_spec.is_none());
-        assert_eq!(
-            standalone.panel_count(bed_module_editor::TEXT_PANEL_TYPE),
-            1,
-        );
-        assert_eq!(standalone.panel_count(bed_module_projects::PANEL_ID), 1);
-        assert_eq!(standalone.terminal.session_count(), 0);
-        assert_eq!(
-            standalone.active_snapshot().unwrap().bytes,
-            b"standalone document"
-        );
-        standalone.cleanup().unwrap();
-        drop(standalone);
-
-        let folder = fixture.0.join("new-workspace");
-        std::fs::create_dir(&folder).unwrap();
-        let mut fresh_workspace = fixture.workbench(vec![folder.clone()], &fixture.0);
-        assert!(fresh_workspace.workspace_spec.is_none());
-        assert_eq!(
-            fresh_workspace.panel_count(bed_module_projects::PANEL_ID),
-            1
-        );
-        assert_eq!(fresh_workspace.terminal.session_count(), 0);
-        fresh_workspace.set_project(&folder).unwrap();
-        assert!(fresh_workspace.workspace_spec.is_some());
-        assert_eq!(
-            fresh_workspace.panel_count(bed_module_editor::TEXT_PANEL_TYPE),
-            1
-        );
-        assert_eq!(
-            fresh_workspace.panel_count(bed_module_projects::PANEL_ID),
-            0
-        );
-        assert_eq!(fresh_workspace.terminal.session_count(), 1);
-        assert!(fresh_workspace.active_snapshot().unwrap().bytes.is_empty());
-        let terminal = fresh_workspace.terminal.active_session_id().unwrap();
-        assert_eq!(
-            fresh_workspace.terminal.working_directory(terminal),
-            Some(folder.canonicalize().unwrap().as_path())
-        );
-        fresh_workspace.cleanup().unwrap();
-    }
-
-    #[test]
-    fn last_project_survives_standalone_windows_and_restores_saved_layout() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        fixture.save_workspace(&fixture.0);
-        let mut standalone = fixture.workbench(vec![], &fixture.0);
-        standalone.cleanup().unwrap();
-        fixture.startup_mode("last_project");
-        let mut resumed = fixture.workbench(vec![], &fixture.0);
-        assert_eq!(
-            resumed.workspace_spec.as_ref().unwrap().root,
-            fixture.0.canonicalize().unwrap().to_str().unwrap()
-        );
-        assert_eq!(resumed.panel_count(bed_module_projects::PANEL_ID), 0);
-        assert_eq!(resumed.panel_count(bed_module_editor::TEXT_PANEL_TYPE), 1);
-        assert_eq!(resumed.terminal.session_count(), 1);
-        resumed.cleanup().unwrap();
-    }
-
-    #[test]
-    fn last_project_without_a_project_or_with_a_missing_root_keeps_startup() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        fixture.startup_mode("last_project");
-        let mut empty = fixture.workbench(vec![], &fixture.0);
-        assert!(empty.workspace_spec.is_none());
-        assert_eq!(empty.panel_count(bed_module_projects::PANEL_ID), 1);
-        assert!(empty.error.is_none());
-        empty.cleanup().unwrap();
-        let root = fixture.0.join("deleted-project");
-        std::fs::create_dir(&root).unwrap();
-        fixture.save_workspace(&root);
-        std::fs::remove_dir_all(&root).unwrap();
-        let mut missing = fixture.workbench(vec![], &fixture.0);
-        assert!(missing.workspace_spec.is_none());
-        assert_eq!(missing.panel_count(bed_module_projects::PANEL_ID), 1);
-        assert!(
-            missing
-                .error
-                .as_ref()
-                .unwrap()
-                .contains("Could not restore last project")
-        );
-        missing.cleanup().unwrap();
-    }
-
-    #[test]
-    fn explicit_paths_and_cwd_suppress_last_project_and_new_window_always_uses_startup() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        fixture.save_workspace(&fixture.0);
-        fixture.startup_mode("last_project");
-        let file = fixture.0.join("saved.txt");
-        let mut standalone = fixture.workbench(vec![file], &fixture.0);
-        assert!(standalone.workspace_spec.is_none());
-        standalone.cleanup().unwrap();
-        for mode in ["terminal", "last_project"] {
-            fixture.startup_mode(mode);
-            let settings =
-                Settings::with_paths(fixture.0.join("config"), Settings::get_app_resources_path())
-                    .unwrap();
-            let mut window = StartupOptions {
+        assert_eq!(options.startup_panel.as_deref(), Some("bed.terminal.panel"));
+        assert_eq!(options.files.len(), 1);
+        let saved = fixture.project("project");
+        let (options, _) =
+            fixture.options(StartupOptions::default(), vec![PathBuf::from(saved.root)]);
+        assert!(options.startup_panel.is_none());
+        let (options, _) = fixture.options(
+            StartupOptions {
                 new_window: true,
                 ..Default::default()
-            }
-            .resolve(vec![], Some(&fixture.0))
-            .unwrap()
-            .into_workbench(settings)
-            .unwrap();
-            assert!(window.workspace_spec.is_none());
-            assert_eq!(window.tab_count(), 1);
-            assert_eq!(window.panel_count(bed_module_projects::PANEL_ID), 1);
-            assert_eq!(window.terminal.session_count(), 0);
-            window.cleanup().unwrap();
-        }
-        let settings =
-            Settings::with_paths(fixture.0.join("config"), Settings::get_app_resources_path())
-                .unwrap();
-        let mut cwd = StartupOptions {
-            cwd: Some(fixture.0.clone()),
-            ..Default::default()
-        }
-        .resolve(vec![], None)
-        .unwrap()
-        .into_workbench(settings)
-        .unwrap();
-        assert!(cwd.workspace_spec.is_none());
-        assert_eq!(cwd.panel_count(bed_module_projects::PANEL_ID), 1);
-        cwd.cleanup().unwrap();
+            },
+            vec![],
+        );
+        assert_eq!(options.startup_panel.as_deref(), Some("bed.projects.panel"));
     }
-
     #[test]
-    fn explicit_workspace_launch_does_not_compose_startup_terminals() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        fixture.save_workspace(&fixture.0);
-        fixture.startup_mode("terminal");
-        let settings =
-            Settings::with_paths(fixture.0.join("config"), Settings::get_app_resources_path())
-                .unwrap();
-        let mut workbench = StartupOptions {
-            new_window: true,
-            requested_workspace: Some(WorkspaceSpec::local(fixture.0.to_str().unwrap())),
-            ..Default::default()
+    fn last_project_restores_only_for_bare_launches() {
+        let fixture = Fixture::new(StartupMode::LastProject);
+        let saved = fixture.project("project");
+        let (options, error) = fixture.options(StartupOptions::default(), vec![]);
+        assert_eq!(options.workspace, Some(saved));
+        assert!(error.is_none());
+        for (startup, paths) in [
+            (
+                StartupOptions::default(),
+                vec![fixture.root.join("file.txt")],
+            ),
+            (
+                StartupOptions {
+                    cwd: Some(fixture.root.clone()),
+                    ..Default::default()
+                },
+                vec![],
+            ),
+            (
+                StartupOptions {
+                    new_window: true,
+                    ..Default::default()
+                },
+                vec![],
+            ),
+        ] {
+            let (options, _) = fixture.options(startup, paths);
+            assert!(options.workspace.is_none());
         }
-        .resolve(vec![], None)
-        .unwrap()
-        .into_workbench(settings)
-        .unwrap();
-        assert!(workbench.workspace_spec.is_some());
-        assert_eq!(workbench.terminal.session_count(), 1);
-        assert_eq!(workbench.panel_count(bed_module_projects::PANEL_ID), 0);
-        workbench.cleanup().unwrap();
     }
-
     #[test]
-    fn every_registered_bundled_panel_can_restore_with_no_input_and_null_state() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        let composition = crate::builtins::modules();
-        let mut registry = bed_workbench_api::Registry::default();
-        for module in &composition.instances {
-            registry.register(module.as_ref()).unwrap();
-        }
-        let ids: Vec<u64> = (1..=registry.panels.len() as u64).collect();
-        let panels: Vec<_> = registry
-            .panels
-            .iter()
-            .zip(&ids)
-            .map(
-                |(panel, id)| serde_json::json!({"id": id, "panel_type": panel.id, "viewer": null}),
-            )
-            .collect();
-        let mut store =
-            bed_workbench::workspace::store::WorkspaceStore::load(&fixture.0.join("config"))
-                .unwrap();
-        store
-            .set_default_layout(serde_json::json!({
-                "version": 1,
-                "panels": panels,
-                "focused": ids.first(),
-                "tiling": {
-                    "version": 1,
-                    "layout": { "version": 1, "next_id": 2, "areas": [
-                        {"id": 1, "min": [0, 0], "max": [10000, 10000]}
-                    ] },
-                    "areas": [{"area": 1, "tabs": ids, "selected": ids.first()}]
-                }
-            }))
-            .unwrap();
-        drop(store);
-        let mut workbench = fixture.workbench(vec![], &fixture.0);
-        workbench.apply_default_layout().unwrap();
-        assert!(workbench.error.is_none(), "{:?}", workbench.error);
-        assert_eq!(workbench.tab_count(), registry.panels.len());
-        for panel in &registry.panels {
-            assert_eq!(workbench.panel_count(panel.id), 1, "{}", panel.id);
-        }
-        workbench.cleanup().unwrap();
+    fn unavailable_last_project_keeps_standalone_and_reports_failure() {
+        let fixture = Fixture::new(StartupMode::LastProject);
+        let spec = fixture.project("missing");
+        std::fs::remove_dir_all(&spec.root).unwrap();
+        let (options, error) = fixture.options(StartupOptions::default(), vec![]);
+        assert!(options.workspace.is_none());
+        assert!(error.unwrap().contains(&spec.root));
     }
-
     #[test]
-    fn launch_directory_defaults_to_home_and_validates_explicit_directories() {
-        let fixture = Fixture::new();
-        let home = fixture.0.join("home");
-        std::fs::create_dir(&home).unwrap();
+    fn explicit_remote_workspace_wins_over_preferences_without_local_canonicalization() {
+        let fixture = Fixture::new(StartupMode::Terminal);
+        let spec = WorkspaceSpec {
+            name: "remote".into(),
+            target: WorkspaceTarget::Ssh {
+                host: "example.invalid".into(),
+            },
+            root: "/srv/project".into(),
+        };
+        let (options, error) = fixture.options(
+            StartupOptions {
+                requested_workspace: Some(spec.clone()),
+                ..Default::default()
+            },
+            vec![],
+        );
+        assert_eq!(options.workspace, Some(spec));
+        assert!(options.startup_panel.is_none());
+        assert!(error.is_none());
+    }
+    #[test]
+    fn launch_directory_validates_and_defaults_to_home() {
+        let home = std::env::temp_dir();
         assert_eq!(
             launch_directory(None, Some(&home)).unwrap(),
             home.canonicalize().unwrap()
         );
-        assert_eq!(
-            launch_directory(Some(Path::new("/")), Some(&home)).unwrap(),
-            Path::new("/")
-        );
-        assert!(launch_directory(Some(&fixture.0.join("deleted")), Some(&home)).is_err());
-        let file = fixture.0.join("file");
-        std::fs::write(&file, b"file").unwrap();
-        assert!(launch_directory(Some(&file), Some(&home)).is_err());
         assert!(launch_directory(None, None).is_err());
+        assert!(launch_directory(Some(&home.join("bed-missing-launch-dir")), Some(&home)).is_err());
     }
-
     #[test]
-    fn unknown_folder_and_workspace_subdirectory_stay_standalone() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        let root = fixture.0.join("project");
-        let child = root.join("child");
-        std::fs::create_dir_all(&child).unwrap();
-        let mut standalone = fixture.workbench(vec![root.clone()], &fixture.0);
-        assert!(standalone.workspace_spec.is_none());
-        standalone.cleanup().unwrap();
-        assert!(!fixture.0.join("config/workspaces.json").exists());
-        fixture.save_workspace(&root);
-        let mut nested = fixture.workbench(vec![child.clone()], &fixture.0);
-        assert!(nested.workspace_spec.is_none());
-        assert_eq!(nested.working_directory(), child.canonicalize().unwrap());
-        nested.cleanup().unwrap();
-    }
-
-    #[test]
-    fn bare_and_relative_file_launches_use_home_without_rebasing_file_paths() {
-        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let fixture = Fixture::new();
-        fixture.save_workspace(&fixture.0);
-        let mut bare = fixture.workbench(vec![], &fixture.0);
+    fn relative_files_keep_process_directory_while_standalone_defaults_to_home() {
+        let cwd = std::env::temp_dir();
+        let startup = StartupOptions::default()
+            .resolve(vec![PathBuf::from("a.txt")], Some(&cwd))
+            .unwrap();
+        assert_eq!(startup.files, vec![cwd.join("a.txt")]);
         assert_eq!(
-            bare.working_directory(),
+            startup.directory,
             PathBuf::from(std::env::var_os("HOME").unwrap())
                 .canonicalize()
                 .unwrap()
         );
-        assert!(bare.workspace_spec.is_none());
-        bare.cleanup().unwrap();
-        let mut file = fixture.workbench(vec![PathBuf::from("saved.txt")], &fixture.0);
-        assert!(file.workspace_spec.is_none());
-        assert_eq!(file.active_snapshot().unwrap().bytes, b"saved document");
-        file.cleanup().unwrap();
+        assert!(!startup.resume_last);
+    }
+}
+
+#[derive(Default, Clone)]
+pub(crate) struct SmokeOptions {
+    pub scenarios: Vec<String>,
+    pub capture: Option<PathBuf>,
+    pub after_frames: u32,
+}
+impl SmokeOptions {
+    pub fn requested(&self) -> bool {
+        !self.scenarios.is_empty() || self.capture.is_some()
+    }
+}
+pub(crate) struct Launch {
+    pub startup: StartupOptions,
+    pub paths: Vec<PathBuf>,
+    pub config_dir: Option<PathBuf>,
+    pub smoke: SmokeOptions,
+}
+impl Launch {
+    pub fn parse(
+        arguments: impl IntoIterator<Item = std::ffi::OsString>,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+        let mut launch = Self {
+            startup: StartupOptions::default(),
+            paths: Vec::new(),
+            config_dir: None,
+            smoke: SmokeOptions {
+                after_frames: 2,
+                ..Default::default()
+            },
+        };
+        let mut arguments = arguments.into_iter();
+        while let Some(argument) = arguments.next() {
+            match argument.to_str() {
+                Some("--help" | "-h") => {
+                    println!(
+                        "Usage: bed [FILE_OR_FOLDER ...] [--cwd DIRECTORY] [--config-dir DIRECTORY]\n  --new-window     Open a standalone instance\n  --workspace JSON\n  --capture-frame OUTPUT.png|OUTPUT.ppm [--capture-after-frames N]\n  --smoke-test | --main-only-smoke | --lifecycle-smoke | --effects-smoke\n  --appearance-smoke | --platform-smoke | --menu-smoke | --plugin-smoke\n  --debug-smoke | --git-smoke | --terminal-smoke | --term-promotion-smoke\n\nSmoke and screenshot commands require --features automation.\nGeneral startup preferences select Startup, Terminal or Last project.\nOnly exact saved folder roots attach at launch; explicit paths suppress Last project."
+                    );
+                    return Ok(None);
+                }
+                Some("--cwd") => {
+                    launch.startup.cwd =
+                        Some(PathBuf::from(arguments.next().ok_or_else(|| {
+                            io::Error::other("--cwd requires a directory")
+                        })?))
+                }
+                Some("--config-dir") => {
+                    launch.config_dir =
+                        Some(PathBuf::from(arguments.next().ok_or_else(|| {
+                            io::Error::other("--config-dir requires a directory")
+                        })?))
+                }
+                Some("--new-window") => launch.startup.new_window = true,
+                Some("--workspace") => {
+                    let value = arguments
+                        .next()
+                        .ok_or_else(|| io::Error::other("--workspace requires JSON"))?;
+                    let value = serde_json::from_str(&value.to_string_lossy())?;
+                    launch.startup.requested_workspace = Some(
+                        WorkspaceSpec::from_value(&value)
+                            .ok_or_else(|| io::Error::other("Invalid workspace specification"))?,
+                    );
+                }
+                Some("--capture-frame") => {
+                    launch.smoke.capture =
+                        Some(PathBuf::from(arguments.next().ok_or_else(|| {
+                            io::Error::other("--capture-frame requires an output path")
+                        })?))
+                }
+                Some("--capture-after-frames") => {
+                    launch.smoke.after_frames = arguments
+                        .next()
+                        .ok_or_else(|| {
+                            io::Error::other("--capture-after-frames requires a positive count")
+                        })?
+                        .to_string_lossy()
+                        .parse()?;
+                    if launch.smoke.after_frames == 0 {
+                        return Err(
+                            io::Error::other("--capture-after-frames must be positive").into()
+                        );
+                    }
+                }
+                Some(
+                    "--smoke-test"
+                    | "--main-only-smoke"
+                    | "--lifecycle-smoke"
+                    | "--effects-smoke"
+                    | "--appearance-smoke"
+                    | "--platform-smoke"
+                    | "--menu-smoke"
+                    | "--plugin-smoke"
+                    | "--debug-smoke"
+                    | "--git-smoke"
+                    | "--terminal-smoke"
+                    | "--term-promotion-smoke",
+                ) => launch
+                    .smoke
+                    .scenarios
+                    .push(argument.to_string_lossy().into_owned()),
+                Some("--viewports-smoke") => {
+                    return Err(
+                        io::Error::other("detached native windows are not supported").into(),
+                    );
+                }
+                Some("--term" | "--edit") => {
+                    return Err(io::Error::other(
+                        "--term and --edit have been removed; choose Startup in General settings",
+                    )
+                    .into());
+                }
+                Some(value) if value.starts_with("--") => {
+                    return Err(io::Error::other(format!("Unknown option {value}")).into());
+                }
+                _ => launch.paths.push(PathBuf::from(argument)),
+            }
+        }
+        Ok(Some(launch))
     }
 }

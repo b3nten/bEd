@@ -1,6 +1,4 @@
-pub(crate) mod file_actions;
-pub(crate) mod layout;
-pub mod remote_helpers;
-pub mod store;
-pub(crate) mod tiling;
-pub(crate) mod tiling_state;
+//! Shared geometry and ordered tab membership, independent of panel content.
+pub mod layout;
+pub mod tiling;
+pub mod tiling_state;

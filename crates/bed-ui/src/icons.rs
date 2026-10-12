@@ -472,6 +472,7 @@ mod tests {
     #[test]
     fn icon_buttons_keep_clicks_hit_rectangles_and_disabled_theme_tint() {
         use dear_imgui_rs::{Condition, Context, FramePrepareOptions, MouseButton, sys};
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let mut context = Context::create();
         context.set_ini_filename(None::<PathBuf>).unwrap();
         context

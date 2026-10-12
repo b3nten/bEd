@@ -875,7 +875,9 @@ mod tests {
                         .collect();
                     let d = Density::new(ui.current_font_size());
                     let continuation: Vec<_> = density
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .filter(|rectangle| {
                             (rectangle[0].pos.y - layout.minimap_min[1] - d.line_h).abs() < 0.01
                         })

@@ -2,11 +2,11 @@
 
 This crate dispatches the private shell helpers used by ordinary bEd terminal
 panels. Terminal rendering, shells, and workspace promotion belong to bEd's
-terminal module. There is one application binary, `bed`.
+terminal plugin and editor request reducer. There is one application binary, `bed`.
 
-To start with terminals, arrange the window and choose **Window → Save Default
-Layout**. Future bare launches and New Window reuse that arrangement with fresh
-shells. Bare launches use `$HOME`. A folder argument opens its workspace only if
+Choose **General → Startup → Terminal** to start a standalone shell. New Window
+opens Startup. **Window → Save Default Layout** records fresh panels for the
+first opening of a workspace. Bare launches use `$HOME`. A folder argument opens its workspace only if
 that exact root is already saved; other folders stay standalone. Files open
 afterward. Use `--cwd` to choose the initial working directory without opening a
 workspace. Explicit directories, including `/`, are used as supplied.
@@ -46,16 +46,18 @@ An attached local workspace opens other workspaces in new windows, creating a
 workspace with the default layout when necessary; selecting its current root
 does nothing. These commands do not upgrade SSH workspaces.
 
-In a standalone window, promotion opens the workspace in place and preserves all
-running terminals, jobs, scrollback, live viewer panels, and unsaved documents:
+In a standalone window, shell promotion opens the workspace in place and keeps
+the calling shell's process, jobs, scrollback and panel entity. Other panels close
+through the normal draft and save barriers; a rejected draft or failed save
+aborts promotion. Other terminal processes stop when their panels retire.
 
-- For a saved workspace, bEd restores its layout and adds the window's live
-  panels as tabs in the largest tiled area. Startup closes. Earlier terminal
-  split groups are combined into that group.
-- For a new workspace, bEd applies the saved default layout, or the built-in
-  workspace arrangement if no default is saved. The calling shell fills the
-  first terminal slot; other live panels join the largest area. If the default
-  has no terminal slot, the calling shell joins that area too.
+- bEd restores a saved workspace layout, or uses the saved default layout for a
+  new workspace. Without a default it uses the built-in workspace arrangement.
+- The calling shell fills the first terminal slot. If the arrangement has no
+  terminal slot, that shell joins the largest tiled area.
+
+Ordinary workspace attachment through the editor API preserves all live panels,
+documents and terminal processes while adding the workspace's saved layout.
 
 Saved workspace layouts retain area geometry, tab order, selection, and
 deliberately empty areas. Older docking layouts migrate into the main window.
@@ -63,11 +65,11 @@ deliberately empty areas. Older docking layouts migrate into the main window.
 Files, folder search, Git, Structure, terminals and document editing are
 available before promotion. Window tools and fresh terminals use the fixed
 launch directory, independent of terminal focus and shell `cd`. Promotion resets
-that base to the selected workspace root. Existing shells remain where they are;
+that base to the selected workspace root. The calling shell remains in its directory;
 restored terminals retain their saved directories. Git uses the discovered
 repository root. The titlebar shows the window directory and panels show their scope.
 Language servers, project diagnostics, references, debugging and SSH require a
-workspace. Workspace sessions, undo/redo, and module data persist after
+workspace. Workspace sessions, undo/redo, and feature data persist after
 promotion; default layouts and global settings persist throughout.
 
 Run the helper in a local shell at the directory you want to open. Application
@@ -79,7 +81,7 @@ existing window.
 All startup paths use one configuration directory, `~/.config/bed`:
 
 - `settings.json` contains application preferences and shader effect settings.
-- `keybinds.json` contains the ordinary bEd keybindings.
+- `keybindings.json` stores user overrides for the keymaps shown in Settings.
 - `themes/` contains custom themes.
 
 There is no separate terminal profile or terminal shortcut scheme. Settings and
@@ -94,11 +96,11 @@ for ordinary launches and New Window.
 
 ```sh
 cargo test --locked -p bed startup::tests
-cargo test --locked -p bed-terminal
-cargo test --locked -p bed-workbench shell::promotion::tests
-cargo run --locked --bin bed -- --terminal-smoke \
+cargo test --locked -p bed-terminal-core
+cargo test --locked -p bed-editor-workbench terminal
+cargo run --locked --bin bed --features automation -- --terminal-smoke \
   --config-dir "$(mktemp -d)" --capture-frame /tmp/bed-term-smoke.ppm
-cargo run --locked --bin bed -- --term-promotion-smoke \
+cargo run --locked --bin bed --features automation -- --term-promotion-smoke \
   --config-dir "$(mktemp -d)" --capture-frame /tmp/bed-term-promotion.ppm
 ```
 

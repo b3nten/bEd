@@ -1,0 +1,13 @@
+- dependency cleanup
+- clean main function and main bin module
+- menu buttons click and drag like file tree
+- fix lsp issue with rust, remote server
+- keybindings
+	- vim mode
+	- comment line out
+	
+- debug in toolbar
+- make sure status bar is not coupled
+
+
+-our ui and functionality for dragging menubar panel buttons and file tree items is different from our normal panel interactions. non rounded corners, different border color, no animations, and less features (eg cannot create splits)

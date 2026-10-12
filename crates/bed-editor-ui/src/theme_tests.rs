@@ -1,6 +1,6 @@
 use crate::views::{caret_view::CaretView, gutter_view::GutterView, view_layout::ViewLayout};
 use bed_document_session::editor::Editor;
-use bed_editing::util::color::{blend, contrast_ratio};
+use bed_ui::color::{blend, contrast_ratio};
 use dear_imgui_rs::{Condition, Context, FramePrepareOptions, StyleColor, sys};
 
 fn colors(ui: &dear_imgui_rs::Ui, draw: impl FnOnce()) -> Vec<[f32; 4]> {

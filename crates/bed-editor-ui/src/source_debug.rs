@@ -27,7 +27,7 @@ pub struct SourceDebugPresentation {
     pub execution_row: Option<i32>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SourceDebugAction {
     ToggleBreakpoint { row: i32 },
 }

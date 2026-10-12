@@ -1,0 +1,35 @@
+[package]
+name = "bed-editor-workbench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-workbench = { workspace = true }
+bed-workbench-api = { workspace = true }
+bed-runtime = { workspace = true }
+bevy = { workspace = true }
+bed-editor-api = { workspace = true, features = ["gpu"] }
+bed-config = { workspace = true }
+bed-editor-ui = { workspace = true }
+bed-ui = { workspace = true, features = ["imgui", "gpu"] }
+bed-editing = { workspace = true }
+bed-files = { workspace = true }
+bed-document-session = { workspace = true }
+bed-remote = { workspace = true }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+serde_json = { workspace = true }
+rfd = { workspace = true }
+
+[dev-dependencies]
+bed-editor = { workspace = true }
+bed-color = { workspace = true }
+bed-csv = { workspace = true, features = ["test-support"] }
+bed-json = { workspace = true }
+
+[[test]]
+name = "remote_editor"
+path = "tests/remote_editor.rs"
+harness = false

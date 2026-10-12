@@ -1,4 +1,4 @@
-use bed_editing::util::color::{blend, ensure_contrast};
+use crate::color::{blend, ensure_contrast};
 use dear_imgui_rs::{StyleColor, TextureId, Ui};
 
 /// Continue a control row only when the next item fits the available width.

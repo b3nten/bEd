@@ -1,0 +1,67 @@
+{
+  "source": "Cat Black.blend",
+  "target": "cat.blend",
+  "fps": 24,
+  "rotation_map": {
+    "torso_02": "ORG-spine",
+    "spine.01_012": "ORG-spine.002",
+    "spine.02_013": "ORG-spine.003",
+    "neck_017": "ORG-spine.005",
+    "head_018": "ORG-spine.006",
+    "tail_07": "ORG-tail.001",
+    "tail.01_08": "ORG-tail.002",
+    "tail.02_09": "ORG-tail.003",
+    "tail.03_010": "ORG-tail.004",
+    "tail.end_011": "ORG-tail.006",
+    "thigh.B.L_03": "ORG-thigh.L",
+    "leg.upper.B.L_04": "ORG-shin.L",
+    "leg.lower.B.L_05": "ORG-foot.L",
+    "foot.B.L_06": "ORG-r_toe.L",
+    "thigh.B.R_026": "ORG-thigh.R",
+    "leg.upper.B.R_027": "ORG-shin.R",
+    "leg.lower.B.R_028": "ORG-foot.R",
+    "foot.B.R_029": "ORG-r_toe.R",
+    "leg.upper.F.L_014": "ORG-upper_arm.L",
+    "leg.lower.FL_015": "ORG-forearm.L",
+    "foot.F.L_016": "ORG-f_toe.L",
+    "leg.upper.F.R_024": "ORG-upper_arm.R",
+    "leg.lower.F.R_00": "ORG-forearm.R",
+    "foot.F.R_025": "ORG-f_toe.R"
+  },
+  "body_motion_scale": 4.836834880498664,
+  "actions": [
+    {
+      "source_action": "Cat_Walk (1_32)",
+      "baked_action": "Retarget / Cat_Walk (1_32)",
+      "frames": [
+        1,
+        33.0
+      ],
+      "samples": 65,
+      "max_paw_reach_error": 0.00027709846136369587,
+      "body_height_correction": [
+        0.0,
+        0.12337401704194673
+      ],
+      "paw_ground_ranges": {
+        "front.L": [
+          -0.0052950382232666016,
+          0.08164435625076294
+        ],
+        "front.R": [
+          -0.005297064781188965,
+          0.08164829015731812
+        ],
+        "back.L": [
+          0.0027331113815307617,
+          0.1182679831981659
+        ],
+        "back.R": [
+          0.005278006196022034,
+          0.12794086337089539
+        ]
+      },
+      "loop_position_difference": 0.0
+    }
+  ]
+}

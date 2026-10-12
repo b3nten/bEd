@@ -1,6 +1,134 @@
 //! Opt-in validation of every decorative scene on Bed's shared GPU contract.
 use super::*;
-use bed_workbench_api::gpu::{renderer_device_descriptor, wgpu};
+use bed_ui::gpu::{renderer_device_descriptor, wgpu};
+
+#[test]
+#[ignore = "requires a native GPU adapter; run with --ignored on desktop CI"]
+fn native_registered_duck_renderer_owns_entities_in_the_shared_world() {
+    use bed_ui::gpu::{CanvasRenderInvocation, CanvasRenderer};
+    use bevy::prelude::*;
+    #[derive(Component)]
+    struct GameState;
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = bevy::tasks::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (device, queue) =
+        bevy::tasks::block_on(adapter.request_device(&renderer_device_descriptor(&adapter)))
+            .unwrap();
+    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut app = App::new();
+    app.add_plugins((bed_runtime::BedRuntimePlugin, DuckPlugin));
+    app.add_plugins(bed_runtime::render::BedRenderPlugin {
+        resources: bevy::render::settings::RenderResources(
+            bevy::render::renderer::RenderDevice::from(device.clone()),
+            bevy::render::renderer::RenderQueue::new(queue.clone()),
+            bevy::render::renderer::RenderAdapterInfo::new(adapter.get_info()),
+            bevy::render::renderer::RenderAdapter::new(adapter.clone()),
+            bevy::render::renderer::RenderInstance::new(instance.clone()),
+        ),
+    });
+    app.finish();
+    app.cleanup();
+    let game = app.world_mut().spawn(GameState).id();
+    let entity = app.world_mut().spawn_empty().id();
+    let factory = app
+        .world()
+        .resource::<bed_workbench_api::Registry>()
+        .panel("bed.duck.panel")
+        .unwrap()
+        .factory;
+    let _frontend = app
+        .world_mut()
+        .run_system_with(
+            factory,
+            bed_workbench_api::PanelCreation {
+                entity,
+                state: serde_json::Value::Null,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let output = {
+        let mut states = app.world_mut().non_send_mut::<SceneStates>();
+        let scene = states.get_mut(entity).unwrap();
+        scene.update(
+            [64; 2],
+            SceneFrame {
+                background: [0.0; 4],
+                animations: false,
+                ..Default::default()
+            },
+        );
+        scene.render_output().unwrap()
+    };
+    let target = RenderTarget::new(&device, output).unwrap();
+    let renderer = app.world().get::<CanvasRenderer>(entity).unwrap().0;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let rendered = loop {
+        bed_runtime::render::begin_preview_frame(app.world_mut());
+        let commands = app
+            .world_mut()
+            .run_system_with(
+                renderer,
+                CanvasRenderInvocation {
+                    entity,
+                    instance: instance.clone(),
+                    adapter: adapter.clone(),
+                    device: device.clone(),
+                    queue: queue.clone(),
+                    target: RenderTarget {
+                        texture: target.texture.clone(),
+                        view: target.view.clone(),
+                        depth: target.depth.clone(),
+                        size: target.size,
+                    },
+                    generation: 1,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        queue.submit(commands);
+        app.update();
+        let rendered = pixels(&device, &queue, &target);
+        if rendered[3] == 0
+            && rendered
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|pixel| pixel[3] == 255)
+                .count()
+                > 100
+        {
+            break rendered;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "registered duck renderer did not produce geometry"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    assert_eq!(rendered[3], 0);
+    assert!(app.world().get::<GameState>(game).is_some());
+    assert!(
+        app.world_mut()
+            .query::<&bed_runtime::render::PreviewView>()
+            .iter(app.world())
+            .any(|view| view.0 == output.handle.0)
+    );
+    app.world_mut().entity_mut(entity).despawn();
+    app.update();
+    assert!(app.world().non_send::<SceneStates>().get(entity).is_none());
+    bed_runtime::render::retire_previews(app.world_mut(), &Default::default());
+    assert_eq!(
+        app.world_mut()
+            .query::<&bed_runtime::render::PreviewView>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+    assert!(app.world().get::<GameState>(game).is_some());
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    assert!(bevy::tasks::block_on(scope.pop()).is_none());
+}
 
 #[test]
 #[ignore = "requires a native GPU adapter; run with --ignored on desktop CI"]
@@ -10,15 +138,28 @@ fn native_scenes_render_geometry_and_react_to_mascot_input() {
     let (device, queue) =
         bevy::tasks::block_on(adapter.request_device(&renderer_device_descriptor(&adapter)))
             .unwrap();
+    let mut app = bevy::app::App::new();
+    app.add_plugins(bed_runtime::BedRuntimePlugin);
+    app.add_plugins(bed_runtime::render::BedRenderPlugin {
+        resources: bevy::render::settings::RenderResources(
+            bevy::render::renderer::RenderDevice::from(device.clone()),
+            bevy::render::renderer::RenderQueue::new(queue.clone()),
+            bevy::render::renderer::RenderAdapterInfo::new(adapter.get_info()),
+            bevy::render::renderer::RenderAdapter::new(adapter.clone()),
+            bevy::render::renderer::RenderInstance::new(instance.clone()),
+        ),
+    });
+    app.finish();
+    app.cleanup();
     let mut encoder = device.create_command_encoder(&Default::default());
-    let mut gpu = GpuContext {
+    let mut gpu = SceneTestGpu {
+        app: &mut app,
         instance: &instance,
         adapter: &adapter,
         device: &device,
         queue: &queue,
         encoder: &mut encoder,
         generation: 1,
-        error_handlers: None,
     };
     let capture = std::env::var_os("BED_SCENE_CAPTURE_DIR").map(std::path::PathBuf::from);
     let size = if capture.is_some() {
@@ -37,7 +178,9 @@ fn native_scenes_render_geometry_and_react_to_mascot_input() {
         } else {
             size
         };
-        let mut scene = renderer::SceneRenderer::new(&gpu, kind).unwrap();
+        let mut scene =
+            renderer::SceneRenderer::new(&mut gpu.context(), kind, TextureHandle::next().0)
+                .unwrap();
         let target = RenderTarget::new(
             &device,
             RenderOutput {
@@ -532,7 +675,62 @@ fn pixels(device: &wgpu::Device, queue: &wgpu::Queue, target: &RenderTarget) -> 
         .recv_timeout(Duration::from_secs(30))
         .unwrap()
         .unwrap();
-    let result = buffer.slice(..).get_mapped_range().to_vec();
+    let result = buffer
+        .slice(..)
+        .get_mapped_range()
+        .expect("readback buffer is mapped")
+        .to_vec();
     buffer.unmap();
     result
+}
+
+struct SceneTestGpu<'a> {
+    app: &'a mut bevy::app::App,
+    instance: &'a wgpu::Instance,
+    adapter: &'a wgpu::Adapter,
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    encoder: &'a mut wgpu::CommandEncoder,
+    generation: u64,
+}
+impl SceneTestGpu<'_> {
+    fn context(&mut self) -> GpuContext<'_> {
+        GpuContext {
+            world: Some(self.app.world_mut()),
+            instance: self.instance,
+            adapter: self.adapter,
+            device: self.device,
+            queue: self.queue,
+            encoder: self.encoder,
+            generation: self.generation,
+            error_handlers: None,
+        }
+    }
+}
+
+// Each fixture frame follows the real host: synchronize views, advance once.
+trait SceneTestFrame {
+    fn render(
+        &mut self,
+        gpu: &mut SceneTestGpu<'_>,
+        target: &RenderTarget,
+        frame: SceneFrame,
+        time: f32,
+        impulse: f32,
+    ) -> Result<(), String>;
+}
+impl SceneTestFrame for renderer::SceneRenderer {
+    fn render(
+        &mut self,
+        gpu: &mut SceneTestGpu<'_>,
+        target: &RenderTarget,
+        frame: SceneFrame,
+        time: f32,
+        impulse: f32,
+    ) -> Result<(), String> {
+        bed_runtime::render::begin_preview_frame(gpu.app.world_mut());
+        self.sync(&mut gpu.context(), target, frame, time, impulse)?;
+        gpu.app.update();
+        Ok(())
+    }
 }

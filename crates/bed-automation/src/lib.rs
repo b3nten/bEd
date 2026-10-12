@@ -1,0 +1,729 @@
+//! Typed, asynchronous editor control through the normal application transitions.
+//! Install after the workbench plugins. No transport or extra app runner is installed.
+use bed_desktop::{
+    DesktopCaptureId, DesktopCaptureRequests, DesktopCaptureResults, DesktopCaptureTarget,
+    DesktopCapturedFrame, DesktopFrameId, DesktopFrameInfo, DesktopInputId, DesktopInputRequests,
+    DesktopInputResults, DesktopInputStep, DesktopSystems,
+};
+use bed_workbench::{
+    WorkbenchLayout, WorkbenchOutcome, WorkbenchRequestId, WorkbenchRequests, WorkbenchSystems,
+};
+use bed_workbench_api::{Action, CommandInvocation, PanelPresentation, Registry};
+use bevy::prelude::*;
+use serde_json::Value;
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
+
+#[cfg(feature = "editor")]
+mod editor;
+#[cfg(feature = "editor")]
+pub use editor::{DocumentHandle, DocumentInfo, DocumentRead, EditorOperation};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct OperationId(pub u64);
+
+/// A live identity, distinct from the panel number persisted in a workspace.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PanelHandle {
+    app: u64,
+    session: u64,
+    entity: Entity,
+}
+impl PanelHandle {
+    pub fn entity(self) -> Entity {
+        self.entity
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureTarget {
+    Window,
+    Panel(PanelHandle),
+}
+
+#[derive(Debug)]
+pub enum Operation {
+    Inspect,
+    OpenPanel {
+        panel_type: String,
+        state: Value,
+        area: Option<u32>,
+    },
+    FocusPanel(PanelHandle),
+    SplitPanel {
+        panel: PanelHandle,
+        axis: usize,
+        high: bool,
+    },
+    ClosePanel(PanelHandle),
+    InvokeCommand {
+        command: String,
+        source: Option<PanelHandle>,
+        arguments: Value,
+    },
+    Input(Vec<DesktopInputStep>),
+    Capture {
+        targets: Vec<CaptureTarget>,
+        after: Option<OperationId>,
+        timeout: Duration,
+    },
+    #[cfg(feature = "editor")]
+    Editor(EditorOperation),
+}
+
+#[derive(Clone, Debug)]
+pub struct PanelInfo {
+    pub handle: PanelHandle,
+    pub persisted_id: u64,
+    pub panel_type: String,
+    pub title: String,
+    pub area: Option<u32>,
+    pub focused: bool,
+    pub available: bool,
+    pub readiness: Readiness,
+    pub visible_content: Option<bed_desktop::DesktopRect>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Readiness {
+    Pending,
+    Ready,
+    Failed(String),
+}
+#[derive(Clone, Debug)]
+pub struct CommandInfo {
+    pub id: String,
+    pub label: String,
+    pub enabled: bool,
+    pub visible: bool,
+}
+#[derive(Clone, Debug)]
+pub struct Snapshot {
+    pub frame: Option<DesktopFrameInfo>,
+    pub panels: Vec<PanelInfo>,
+    pub commands: Vec<CommandInfo>,
+    pub layout: Value,
+    #[cfg(feature = "editor")]
+    pub documents: Vec<DocumentInfo>,
+    #[cfg(feature = "editor")]
+    pub workspace: Option<Value>,
+}
+#[derive(Debug)]
+pub enum OperationValue {
+    Applied,
+    Ignored,
+    Opened(PanelHandle),
+    Closed(Vec<PanelHandle>),
+    Snapshot(Snapshot),
+    Input(bed_desktop::DesktopInputReceipt),
+    Captured(DesktopCapturedFrame),
+    #[cfg(feature = "editor")]
+    Document(DocumentRead),
+    #[cfg(feature = "editor")]
+    Saved(Vec<bed_editor_api::SavedDocument>),
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OperationStatus {
+    Pending,
+    Complete,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorKind {
+    StaleHandle,
+    Unavailable,
+    InvalidRequest,
+    RevisionConflict,
+    Failed,
+    DeadlineExceeded,
+    DependencyFailed,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AutomationError {
+    pub kind: ErrorKind,
+    pub message: String,
+}
+impl std::fmt::Display for AutomationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.message.fmt(f)
+    }
+}
+impl std::error::Error for AutomationError {}
+impl AutomationError {
+    fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+pub type OperationResult = Result<OperationValue, AutomationError>;
+
+#[derive(Resource, Default)]
+pub struct AutomationRequests {
+    next: u64,
+    pending: VecDeque<(OperationId, Operation)>,
+    statuses: Arc<Mutex<HashMap<OperationId, OperationStatus>>>,
+}
+impl AutomationRequests {
+    pub fn submit(&mut self, operation: Operation) -> OperationId {
+        self.next = self
+            .next
+            .checked_add(1)
+            .expect("automation operation ID overflow");
+        let id = OperationId(self.next);
+        self.statuses
+            .lock()
+            .expect("automation status mutex poisoned")
+            .insert(id, OperationStatus::Pending);
+        self.pending.push_back((id, operation));
+        id
+    }
+}
+struct Completion {
+    frame: DesktopFrameId,
+    result: Result<(), AutomationError>,
+    payload: Option<OperationResult>,
+}
+#[derive(Resource, Default)]
+pub struct AutomationResults {
+    statuses: Arc<Mutex<HashMap<OperationId, OperationStatus>>>,
+    complete: HashMap<OperationId, Completion>,
+}
+impl AutomationResults {
+    pub fn status(&self, id: OperationId) -> Option<OperationStatus> {
+        self.statuses
+            .lock()
+            .expect("automation status mutex poisoned")
+            .get(&id)
+            .copied()
+    }
+    /// Release the owned payload. Its small completion receipt remains usable by captures.
+    pub fn take(&mut self, id: OperationId) -> Option<OperationResult> {
+        self.complete.get_mut(&id)?.payload.take()
+    }
+    fn finish(&mut self, id: OperationId, result: OperationResult, frame: DesktopFrameId) {
+        self.statuses
+            .lock()
+            .expect("automation status mutex poisoned")
+            .insert(id, OperationStatus::Complete);
+        self.complete.insert(
+            id,
+            Completion {
+                frame,
+                result: result.as_ref().map(|_| ()).map_err(Clone::clone),
+                payload: Some(result),
+            },
+        );
+    }
+}
+#[derive(Resource)]
+struct AutomationScope(u64);
+#[derive(Resource, Default)]
+struct ActiveOperations(Vec<(OperationId, Pending)>);
+enum Pending {
+    Workbench(WorkbenchRequestId),
+    Inspect,
+    Input(DesktopInputId),
+    Capture {
+        targets: Vec<CaptureTarget>,
+        after: Option<OperationId>,
+        deadline: Instant,
+        capture: Option<DesktopCaptureId>,
+    },
+    #[cfg(feature = "editor")]
+    Editor(editor::PendingEditor),
+}
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AutomationSystems {
+    Ingress,
+    Complete,
+}
+pub struct AutomationPlugin;
+impl Plugin for AutomationPlugin {
+    fn build(&self, app: &mut App) {
+        assert!(
+            app.world().contains_resource::<WorkbenchRequests>(),
+            "install the workbench before AutomationPlugin"
+        );
+        static NEXT_APP: AtomicU64 = AtomicU64::new(1);
+        #[cfg(feature = "editor")]
+        app.configure_sets(
+            PreUpdate,
+            AutomationSystems::Ingress.before(bed_editor_workbench::EditorSystemSet::Services),
+        );
+        #[cfg(feature = "editor")]
+        app.configure_sets(
+            PostUpdate,
+            AutomationSystems::Complete.after(bed_editor_workbench::EditorSystemSet::Requests),
+        );
+        let statuses = Arc::default();
+        app.insert_resource(AutomationRequests {
+            statuses: Arc::clone(&statuses),
+            ..default()
+        })
+        .insert_resource(AutomationResults {
+            statuses,
+            ..default()
+        })
+        .insert_resource(AutomationScope(NEXT_APP.fetch_add(1, Ordering::Relaxed)))
+        .init_resource::<AutomationRequests>()
+        .init_resource::<AutomationResults>()
+        .init_resource::<ActiveOperations>()
+        .add_systems(
+            PreUpdate,
+            ingress
+                .in_set(AutomationSystems::Ingress)
+                .before(WorkbenchSystems::Requests)
+                .before(DesktopSystems::InjectInput),
+        )
+        .add_systems(PostUpdate, complete.in_set(AutomationSystems::Complete))
+        .add_systems(Last, shutdown.after(bevy::app::OnAppExitSystems));
+    }
+}
+fn frame(world: &World) -> DesktopFrameId {
+    world
+        .get_resource::<DesktopFrameInfo>()
+        .map_or(DesktopFrameId(0), |info| info.frame)
+}
+fn session(world: &World) -> u64 {
+    #[cfg(feature = "editor")]
+    if let Some(session) =
+        world.get_non_send::<bed_document_session::editor_session::EditorSession>()
+    {
+        return session.workspace_id().0;
+    }
+    let _ = world;
+    0
+}
+fn handle(world: &World, entity: Entity) -> PanelHandle {
+    PanelHandle {
+        app: world.resource::<AutomationScope>().0,
+        session: session(world),
+        entity,
+    }
+}
+fn resolve(world: &World, panel: PanelHandle) -> Result<Entity, AutomationError> {
+    if panel.app != world.resource::<AutomationScope>().0
+        || panel.session != session(world)
+        || world.get::<PanelPresentation>(panel.entity).is_none()
+    {
+        return Err(AutomationError::new(
+            ErrorKind::StaleHandle,
+            "panel belongs to a retired application/session or has closed",
+        ));
+    }
+    Ok(panel.entity)
+}
+fn ingress(world: &mut World) {
+    let operations = std::mem::take(&mut world.resource_mut::<AutomationRequests>().pending);
+    for (id, operation) in operations {
+        match start(world, operation) {
+            Ok(pending) => world
+                .resource_mut::<ActiveOperations>()
+                .0
+                .push((id, pending)),
+            Err(error) => {
+                let frame = frame(world);
+                world
+                    .resource_mut::<AutomationResults>()
+                    .finish(id, Err(error), frame);
+            }
+        }
+    }
+}
+fn start(world: &mut World, operation: Operation) -> Result<Pending, AutomationError> {
+    let action = match operation {
+        Operation::Inspect => return Ok(Pending::Inspect),
+        Operation::OpenPanel {
+            panel_type,
+            state,
+            area,
+        } => {
+            if world.resource::<Registry>().panel(&panel_type).is_none() {
+                return Err(AutomationError::new(
+                    ErrorKind::Unavailable,
+                    format!("panel feature is unavailable: {panel_type}"),
+                ));
+            }
+            Action::OpenPanel {
+                panel_type,
+                state,
+                area,
+            }
+        }
+        Operation::FocusPanel(panel) => Action::FocusPanel(resolve(world, panel)?),
+        Operation::SplitPanel { panel, axis, high } => {
+            if axis > 1 {
+                return Err(AutomationError::new(
+                    ErrorKind::InvalidRequest,
+                    "split axis must be 0 or 1",
+                ));
+            }
+            Action::SplitPanel {
+                panel: resolve(world, panel)?,
+                axis,
+                high,
+            }
+        }
+        Operation::ClosePanel(panel) => Action::ClosePanel(resolve(world, panel)?),
+        Operation::InvokeCommand {
+            command,
+            source,
+            arguments,
+        } => {
+            if world.resource::<Registry>().command(&command).is_none() {
+                return Err(AutomationError::new(
+                    ErrorKind::Unavailable,
+                    format!("command is unavailable: {command}"),
+                ));
+            }
+            #[cfg(feature = "editor")]
+            if world
+                .get_resource::<bed_editor_api::CommandPresentations>()
+                .and_then(|facts| facts.0.get(&command))
+                .is_some_and(|fact| !fact.enabled || !fact.visible)
+            {
+                return Err(AutomationError::new(
+                    ErrorKind::Unavailable,
+                    format!("command is currently unavailable: {command}"),
+                ));
+            }
+            let source = source
+                .map(|panel| resolve(world, panel))
+                .transpose()?
+                .or_else(|| world.resource::<WorkbenchLayout>().focused);
+            let area = source
+                .and_then(|source| world.get::<PanelPresentation>(source))
+                .and_then(|panel| {
+                    world
+                        .resource::<WorkbenchLayout>()
+                        .tiling
+                        .area_for(panel.id)
+                })
+                .unwrap_or_else(|| world.resource::<WorkbenchLayout>().tiling.layout.areas[0].id);
+            Action::Invoke(CommandInvocation {
+                command,
+                source,
+                area,
+                arguments,
+            })
+        }
+        Operation::Input(steps) => {
+            let mut requests = world
+                .get_resource_mut::<DesktopInputRequests>()
+                .ok_or_else(|| {
+                    AutomationError::new(ErrorKind::Unavailable, "desktop input is not installed")
+                })?;
+            return Ok(Pending::Input(requests.submit(steps)));
+        }
+        Operation::Capture {
+            targets,
+            after,
+            timeout,
+        } => {
+            if targets.is_empty() {
+                return Err(AutomationError::new(
+                    ErrorKind::InvalidRequest,
+                    "capture requires at least one target",
+                ));
+            }
+            for target in &targets {
+                if let CaptureTarget::Panel(panel) = target {
+                    resolve(world, *panel)?;
+                }
+            }
+            let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
+                AutomationError::new(
+                    ErrorKind::InvalidRequest,
+                    "capture timeout exceeds clock range",
+                )
+            })?;
+            return Ok(Pending::Capture {
+                targets,
+                after,
+                deadline,
+                capture: None,
+            });
+        }
+        #[cfg(feature = "editor")]
+        Operation::Editor(operation) => {
+            return editor::start(world, operation).map(Pending::Editor);
+        }
+    };
+    #[cfg(feature = "editor")]
+    if world.contains_resource::<bed_editor_workbench::EditorRequests>() {
+        return Ok(Pending::Editor(editor::start_workbench(world, action)));
+    }
+    Ok(Pending::Workbench(
+        world.resource_mut::<WorkbenchRequests>().submit(action),
+    ))
+}
+fn complete(world: &mut World) {
+    let operations = std::mem::take(&mut world.resource_mut::<ActiveOperations>().0);
+    for (id, mut pending) in operations {
+        let result = poll(world, &mut pending);
+        if let Some(result) = result {
+            let frame = frame(world);
+            world
+                .resource_mut::<AutomationResults>()
+                .finish(id, result, frame);
+        } else {
+            world
+                .resource_mut::<ActiveOperations>()
+                .0
+                .push((id, pending));
+        }
+    }
+}
+fn poll(world: &mut World, pending: &mut Pending) -> Option<OperationResult> {
+    match pending {
+        Pending::Workbench(id) => world
+            .resource_mut::<WorkbenchRequests>()
+            .take_result(*id)
+            .map(|result| {
+                result
+                    .map(|outcome| match outcome {
+                        WorkbenchOutcome::Applied => OperationValue::Applied,
+                        WorkbenchOutcome::Ignored => OperationValue::Ignored,
+                        WorkbenchOutcome::Opened(panel) => {
+                            OperationValue::Opened(handle(world, panel))
+                        }
+                        WorkbenchOutcome::Closed(panel) => {
+                            OperationValue::Closed(vec![handle(world, panel)])
+                        }
+                    })
+                    .map_err(|error| AutomationError::new(ErrorKind::Failed, error))
+            }),
+        Pending::Inspect => Some(inspect(world).map(OperationValue::Snapshot)),
+        Pending::Input(id) => {
+            let Some(mut results) = world.get_resource_mut::<DesktopInputResults>() else {
+                return Some(Err(AutomationError::new(
+                    ErrorKind::Unavailable,
+                    "desktop input stopped",
+                )));
+            };
+            results.take(*id).map(|result| {
+                result
+                    .map(OperationValue::Input)
+                    .map_err(|error| AutomationError::new(ErrorKind::Failed, error.to_string()))
+            })
+        }
+        Pending::Capture {
+            targets,
+            after,
+            deadline,
+            capture,
+        } => {
+            if Instant::now() >= *deadline {
+                return Some(Err(AutomationError::new(
+                    ErrorKind::DeadlineExceeded,
+                    "capture deadline exceeded",
+                )));
+            }
+            if let Some(id) = capture {
+                let Some(mut results) = world.get_resource_mut::<DesktopCaptureResults>() else {
+                    return Some(Err(AutomationError::new(
+                        ErrorKind::Unavailable,
+                        "desktop captures stopped",
+                    )));
+                };
+                return results.take(*id).map(|result| {
+                    result.map(OperationValue::Captured).map_err(|error| {
+                        let kind = match &error {
+                            bed_desktop::DesktopCaptureError::DeadlineExceeded => {
+                                ErrorKind::DeadlineExceeded
+                            }
+                            bed_desktop::DesktopCaptureError::TargetNotVisible(_) => {
+                                ErrorKind::Unavailable
+                            }
+                            _ => ErrorKind::Failed,
+                        };
+                        AutomationError::new(kind, error.to_string())
+                    })
+                });
+            }
+            let after_frame = if let Some(after) = after {
+                let results = world.resource::<AutomationResults>();
+                if let Some(receipt) = results.complete.get(after) {
+                    if let Err(error) = &receipt.result {
+                        return Some(Err(AutomationError::new(
+                            ErrorKind::DependencyFailed,
+                            error.to_string(),
+                        )));
+                    }
+                    Some(receipt.frame)
+                } else if results.status(*after) == Some(OperationStatus::Pending) {
+                    return None;
+                } else {
+                    return Some(Err(AutomationError::new(
+                        ErrorKind::InvalidRequest,
+                        "preceding operation is unknown",
+                    )));
+                }
+            } else {
+                Some(frame(world))
+            };
+            let targets = match targets
+                .iter()
+                .map(|target| match target {
+                    CaptureTarget::Window => Ok(DesktopCaptureTarget::Window),
+                    CaptureTarget::Panel(panel) => {
+                        resolve(world, *panel).map(DesktopCaptureTarget::Panel)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(targets) => targets,
+                Err(error) => return Some(Err(error)),
+            };
+            let Some(mut requests) = world.get_resource_mut::<DesktopCaptureRequests>() else {
+                return Some(Err(AutomationError::new(
+                    ErrorKind::Unavailable,
+                    "desktop captures are not installed",
+                )));
+            };
+            *capture = Some(requests.submit(targets, *deadline, after_frame));
+            None
+        }
+        #[cfg(feature = "editor")]
+        Pending::Editor(pending) => editor::poll(world, pending),
+    }
+}
+fn inspect(world: &mut World) -> Result<Snapshot, AutomationError> {
+    let frame = world.get_resource::<DesktopFrameInfo>().cloned();
+    let records = world
+        .query::<(Entity, &PanelPresentation, &bed_workbench::PanelRecord)>()
+        .iter(world)
+        .map(|(entity, panel, record)| {
+            (
+                entity,
+                panel.id,
+                record.panel_type.clone(),
+                record.unavailable.is_none(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut panels = Vec::new();
+    for (entity, persisted_id, panel_type, available) in records {
+        let title = bed_workbench::panel_title(world, entity)
+            .map_err(|error| AutomationError::new(ErrorKind::Failed, error))?;
+        let layout = world.resource::<WorkbenchLayout>();
+        let readiness = {
+            #[cfg(feature = "editor")]
+            let surface = bed_editor_workbench::panel_presentation(world, entity).unwrap_or(entity);
+            #[cfg(not(feature = "editor"))]
+            let surface = entity;
+            #[cfg(feature = "editor")]
+            let readiness = world
+                .get::<bed_editor_api::EditorPanelReadiness>(surface)
+                .map(|readiness| match readiness {
+                    bed_editor_api::EditorPanelReadiness::Pending => Readiness::Pending,
+                    bed_editor_api::EditorPanelReadiness::Ready => Readiness::Ready,
+                    bed_editor_api::EditorPanelReadiness::Failed(error) => {
+                        Readiness::Failed(error.clone())
+                    }
+                })
+                .unwrap_or(Readiness::Ready);
+            #[cfg(not(feature = "editor"))]
+            let readiness = {
+                let _ = surface;
+                Readiness::Ready
+            };
+            if available {
+                readiness
+            } else {
+                Readiness::Failed("panel feature is unavailable".into())
+            }
+        };
+        panels.push(PanelInfo {
+            readiness,
+            handle: handle(world, entity),
+            persisted_id,
+            panel_type,
+            title,
+            area: layout.tiling.area_for(persisted_id),
+            focused: layout.focused == Some(entity),
+            available,
+            visible_content: frame.as_ref().and_then(|frame| {
+                frame
+                    .panels
+                    .iter()
+                    .find(|geometry| geometry.panel == entity && geometry.visible)
+                    .map(|geometry| geometry.content)
+            }),
+        });
+    }
+    panels.sort_by_key(|panel| panel.persisted_id);
+    let commands = world
+        .resource::<Registry>()
+        .commands()
+        .iter()
+        .map(|command| {
+            #[cfg(feature = "editor")]
+            if let Some(fact) = world
+                .get_resource::<bed_editor_api::CommandPresentations>()
+                .and_then(|facts| facts.0.get(command.id))
+            {
+                return CommandInfo {
+                    id: command.id.into(),
+                    label: fact.label.clone().unwrap_or_else(|| command.label.into()),
+                    enabled: fact.enabled,
+                    visible: fact.visible,
+                };
+            }
+            CommandInfo {
+                id: command.id.into(),
+                label: command.label.into(),
+                enabled: true,
+                visible: true,
+            }
+        })
+        .collect();
+    let layout = world
+        .resource::<WorkbenchLayout>()
+        .tiling
+        .to_value(panels.iter().map(|panel| panel.persisted_id));
+    Ok(Snapshot {
+        frame,
+        panels,
+        commands,
+        layout,
+        #[cfg(feature = "editor")]
+        documents: editor::documents(world)?,
+        #[cfg(feature = "editor")]
+        workspace: editor::workspace(world),
+    })
+}
+
+fn shutdown(world: &mut World) {
+    if !world
+        .get_resource::<Messages<AppExit>>()
+        .is_some_and(|events| !events.is_empty())
+    {
+        return;
+    }
+    let waiting = std::mem::take(&mut world.resource_mut::<AutomationRequests>().pending);
+    let active = std::mem::take(&mut world.resource_mut::<ActiveOperations>().0);
+    let frame = frame(world);
+    for id in waiting
+        .into_iter()
+        .map(|(id, _)| id)
+        .chain(active.into_iter().map(|(id, _)| id))
+    {
+        world.resource_mut::<AutomationResults>().finish(
+            id,
+            Err(AutomationError::new(
+                ErrorKind::Failed,
+                "application stopped before this operation completed",
+            )),
+            frame,
+        );
+    }
+}
+#[cfg(test)]
+mod tests;

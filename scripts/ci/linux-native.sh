@@ -6,7 +6,7 @@ openbox > target/native-window-manager.log 2>&1 &
 bed_window_manager=$!
 trap 'kill "$bed_window_manager" 2>/dev/null || true' EXIT
 sleep 1
-# Dear ImGui's pinned winit viewport backend requires the X11 desktop space.
+# Exercise Bevy's X11 desktop backend under the Xvfb window manager.
 unset WAYLAND_DISPLAY
 target/release/bed --lifecycle-smoke --capture-after-frames 30 \
   --capture-frame target/native-window.ppm --config-dir target/native-config src/main.rs
@@ -16,10 +16,14 @@ target/release/bed --terminal-smoke --capture-after-frames 90 \
 test -s target/native-terminal.ppm
 mkdir -p target/native-project
 cp src/main.rs target/native-project/main.rs
-target/release/bed target/native-project target/native-project/main.rs --viewports-smoke \
-  --capture-after-frames 30 --capture-frame target/native-viewports.ppm \
-  --config-dir target/native-viewport-config
-test -s target/native-viewports-secondary-1.ppm
 target/release/bed --main-only-smoke --capture-after-frames 30 \
   --capture-frame target/native-internal.ppm --config-dir target/native-internal-config
 test -s target/native-internal.ppm
+
+cargo run --locked -p bed-desktop --example native_smoke
+cargo run --locked -p bed-desktop --example canvas_smoke
+cargo run --locked -p bed-desktop --example automation_smoke
+cargo run --locked -p bed-desktop --example window_config_smoke
+cargo run --locked -p bed-layout-app -- --smoke-test --capture-frame target/native-layout.ppm
+test -s target/native-layout.ppm
+bash scripts/ci/desktop-consumer.sh

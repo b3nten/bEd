@@ -2,7 +2,7 @@
 use std::{ffi::OsString, io, path::PathBuf};
 
 pub fn open_from_shell(args: impl IntoIterator<Item = OsString>) -> io::Result<()> {
-    bed_terminal::shell_bridge::open(args.into_iter().map(PathBuf::from).collect())
+    bed_terminal_core::shell_bridge::open(args.into_iter().map(PathBuf::from).collect())
 }
 
 /// Dispatch private shell helpers, or explicit subcommands when enabled.
@@ -33,14 +33,14 @@ pub fn run_shell_command(
                     "usage: +workspace (opens the calling shell's current directory)",
                 ))
             } else {
-                bed_terminal::shell_bridge::workspace()
+                bed_terminal_core::shell_bridge::workspace()
             }
         }
         "ducky" => {
             if args.next().is_some() {
                 Err(io::Error::new(io::ErrorKind::InvalidInput, "usage: +ducky"))
             } else {
-                bed_terminal::shell_bridge::ducky()
+                bed_terminal_core::shell_bridge::ducky()
             }
         }
         _ => unreachable!(),

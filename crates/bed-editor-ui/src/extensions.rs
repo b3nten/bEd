@@ -1,247 +1,173 @@
-//! Concrete text-editor extension contracts. The panel host does not interpret these.
-use crate::{EditorView, SourceDebugAction, SourceDebugPresentation};
-use crate::{SourceGitAction, SourceGitPresentation};
-use bed_document_session::editor_session::{DocumentId, EditorSession};
-use dear_imgui_rs::Ui;
-use std::{
-    cell::RefCell,
-    io,
-    rc::{Rc, Weak},
-};
+//! Immutable source facts supplied by a host; widgets return actions to their owner.
+use crate::{SourceDebugPresentation, SourceGitPresentation};
+use bed_document_session::editor_session::{DocumentId, ViewId};
+use std::collections::HashMap;
 
-/// Source debugging is one editor capability, independent of the panel host.
-/// Providers own their state and can serve every view of a document.
-pub trait SourceDebugExtension {
-    /// Return `None` for documents this provider does not support. The first
-    /// applicable provider owns this view's source actions and hover rendering.
-    fn presentation(
-        &self,
-        session: &EditorSession,
-        document: DocumentId,
-    ) -> io::Result<Option<SourceDebugPresentation>>;
-    fn action(
-        &mut self,
-        session: &EditorSession,
-        document: DocumentId,
-        action: SourceDebugAction,
-    ) -> io::Result<()>;
-    /// Called inside the originating editor child, after its document borrow is
-    /// released. It is skipped when the child is hidden or its text changed
-    /// after collecting the presentation for this frame.
-    fn draw_hover(
-        &mut self,
-        _ui: &Ui,
-        _session: &EditorSession,
-        _view: &EditorView,
-    ) -> io::Result<()> {
-        Ok(())
-    }
+pub type SourceRevision = (u64, u64);
+
+/// A completed debugger evaluation. The debugger owns evaluation and its lifetime.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SourceHoverPresentation {
+    pub row: i32,
+    pub column: i32,
+    pub expression: String,
+    pub value: String,
+    pub anchor: [f32; 2],
 }
 
-type Provider = Rc<RefCell<dyn SourceDebugExtension>>;
-type ProviderRegistration = Weak<RefCell<dyn SourceDebugExtension>>;
-
-/// Git owns conflict choices; the editor only presents revision-bound controls.
-pub trait SourceGitExtension {
-    fn presentation(
-        &self,
-        session: &EditorSession,
-        document: DocumentId,
-    ) -> io::Result<Option<SourceGitPresentation>>;
-    fn action(
-        &mut self,
-        session: &mut EditorSession,
-        document: DocumentId,
-        action: SourceGitAction,
-    ) -> io::Result<()>;
+/// Owned observations from the originating editor child. No Ui borrow escapes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SourceHoverObservation {
+    pub info: crate::views::hover_trigger::Info,
+    pub dismissed: bool,
+    pub key_pressed: bool,
+    pub in_pane: bool,
+    pub over_popup: bool,
+    pub mouse: [f32; 2],
+    pub frame: usize,
+    pub window_size: [f32; 2],
 }
-type GitProvider = Rc<RefCell<dyn SourceGitExtension>>;
-type GitRegistration = Weak<RefCell<dyn SourceGitExtension>>;
 
-/// A workspace owns a registry; registrations are weak so unloading a module
-/// removes its contributions without keeping a debug session alive.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug)]
+struct SourceFact<T> {
+    revision: SourceRevision,
+    presentation: T,
+}
+#[derive(Clone, Debug)]
+struct HoverFact {
+    document: DocumentId,
+    revision: SourceRevision,
+    presentation: SourceHoverPresentation,
+}
+
+/// A frame's source facts. Cloning makes a snapshot, never another controller owner.
+#[derive(Clone, Debug, Default)]
 pub struct EditorExtensions {
-    source_debug: Rc<RefCell<Vec<ProviderRegistration>>>,
-    source_git: Rc<RefCell<Vec<GitRegistration>>>,
+    source_debug: HashMap<DocumentId, SourceFact<SourceDebugPresentation>>,
+    source_git: HashMap<DocumentId, SourceFact<SourceGitPresentation>>,
+    source_hover: HashMap<ViewId, HoverFact>,
 }
-
-impl std::fmt::Debug for EditorExtensions {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EditorExtensions").finish_non_exhaustive()
-    }
-}
-
 impl EditorExtensions {
-    pub fn register_source_git(&self, provider: &GitProvider) {
-        let mut entries = self.source_git.borrow_mut();
-        entries.retain(|entry| entry.strong_count() > 0);
-        let registration = Rc::downgrade(provider);
-        if !entries.iter().any(|entry| entry.ptr_eq(&registration)) {
-            entries.push(registration);
-        }
-    }
-    pub(crate) fn source_git(
-        &self,
-        session: &EditorSession,
+    pub fn set_source_debug(
+        &mut self,
         document: DocumentId,
-    ) -> io::Result<Option<(GitProvider, SourceGitPresentation)>> {
-        let providers: Vec<_> = {
-            let mut entries = self.source_git.borrow_mut();
-            entries.retain(|entry| entry.strong_count() > 0);
-            entries.iter().filter_map(Weak::upgrade).collect()
-        };
-        for provider in providers {
-            let presentation = provider.borrow().presentation(session, document)?;
-            if let Some(presentation) = presentation {
-                return Ok(Some((provider, presentation)));
-            }
-        }
-        Ok(None)
+        revision: SourceRevision,
+        presentation: SourceDebugPresentation,
+    ) {
+        self.source_debug.insert(
+            document,
+            SourceFact {
+                revision,
+                presentation,
+            },
+        );
     }
-    pub fn register_source_debug(&self, provider: &Provider) {
-        let mut entries = self.source_debug.borrow_mut();
-        entries.retain(|entry| entry.strong_count() > 0);
-        let registration = Rc::downgrade(provider);
-        if !entries.iter().any(|entry| entry.ptr_eq(&registration)) {
-            entries.push(registration);
-        }
-    }
-
-    pub(crate) fn source_debug(
-        &self,
-        session: &EditorSession,
+    pub fn set_source_git(
+        &mut self,
         document: DocumentId,
-    ) -> io::Result<Option<(Provider, SourceDebugPresentation)>> {
-        // Clone providers before calling user code; registration never stays borrowed.
-        let providers: Vec<_> = {
-            let mut entries = self.source_debug.borrow_mut();
-            entries.retain(|entry| entry.strong_count() > 0);
-            entries.iter().filter_map(Weak::upgrade).collect()
-        };
-        for provider in providers {
-            let presentation = provider.borrow().presentation(session, document)?;
-            if let Some(presentation) = presentation {
-                return Ok(Some((provider, presentation)));
-            }
-        }
-        Ok(None)
+        revision: SourceRevision,
+        presentation: SourceGitPresentation,
+    ) {
+        self.source_git.insert(
+            document,
+            SourceFact {
+                revision,
+                presentation,
+            },
+        );
+    }
+    pub fn set_source_hover(
+        &mut self,
+        view: ViewId,
+        document: DocumentId,
+        revision: SourceRevision,
+        presentation: SourceHoverPresentation,
+    ) {
+        self.source_hover.insert(
+            view,
+            HoverFact {
+                document,
+                revision,
+                presentation,
+            },
+        );
+    }
+    pub fn source_debug(
+        &self,
+        document: DocumentId,
+        revision: SourceRevision,
+    ) -> Option<&SourceDebugPresentation> {
+        self.source_debug
+            .get(&document)
+            .filter(|fact| fact.revision == revision)
+            .map(|fact| &fact.presentation)
+    }
+    pub fn source_git(
+        &self,
+        document: DocumentId,
+        revision: SourceRevision,
+    ) -> Option<&SourceGitPresentation> {
+        self.source_git
+            .get(&document)
+            .filter(|fact| fact.revision == revision)
+            .map(|fact| &fact.presentation)
+    }
+    pub fn source_hover(
+        &self,
+        view: ViewId,
+        document: DocumentId,
+        revision: SourceRevision,
+    ) -> Option<&SourceHoverPresentation> {
+        self.source_hover
+            .get(&view)
+            .filter(|fact| fact.document == document && fact.revision == revision)
+            .map(|fact| &fact.presentation)
+    }
+    pub fn clear_source_debug(&mut self, document: DocumentId) {
+        self.source_debug.remove(&document);
+        self.source_hover
+            .retain(|_, fact| fact.document != document);
+    }
+    pub fn clear_source_git(&mut self, document: DocumentId) {
+        self.source_git.remove(&document);
+    }
+    pub fn clear_source_hover(&mut self, view: ViewId) {
+        self.source_hover.remove(&view);
+    }
+    pub fn clear_debug(&mut self) {
+        self.source_debug.clear();
+        self.source_hover.clear();
+    }
+    pub fn clear_git(&mut self) {
+        self.source_git.clear();
+    }
+    pub fn clear(&mut self) {
+        self.clear_debug();
+        self.clear_git();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
-
-    struct Applicable {
-        document: DocumentId,
-        calls: Rc<Cell<usize>>,
-    }
-
-    impl SourceDebugExtension for Applicable {
-        fn presentation(
-            &self,
-            _session: &EditorSession,
-            document: DocumentId,
-        ) -> io::Result<Option<SourceDebugPresentation>> {
-            self.calls.set(self.calls.get() + 1);
-            Ok((document == self.document).then(SourceDebugPresentation::default))
-        }
-
-        fn action(
-            &mut self,
-            _session: &EditorSession,
-            _document: DocumentId,
-            _action: SourceDebugAction,
-        ) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
+    use bed_document_session::editor_session::EditorSession;
     #[test]
-    fn shared_registrations_are_weak_unique_and_document_specific() {
-        let mut session = EditorSession::new();
-        let document = session.create_document(b"debuggable").unwrap();
-        let other = session.create_document(b"ordinary").unwrap();
-        let calls = Rc::new(Cell::new(0));
-        let provider: Provider = Rc::new(RefCell::new(Applicable {
-            document,
-            calls: calls.clone(),
-        }));
-        let extensions = EditorExtensions::default();
-        let sibling_view_extensions = extensions.clone();
-        extensions.register_source_debug(&provider);
-        sibling_view_extensions.register_source_debug(&provider);
-        assert_eq!(Rc::strong_count(&provider), 1);
-        assert!(extensions.source_debug(&session, other).unwrap().is_none());
-        assert_eq!(
-            calls.get(),
-            1,
-            "duplicate registration must not query twice"
-        );
-        let (selected, _) = sibling_view_extensions
-            .source_debug(&session, document)
-            .unwrap()
-            .unwrap();
-        assert!(Rc::ptr_eq(&selected, &provider));
-        drop(selected);
-        drop(provider);
-        assert!(
-            extensions
-                .source_debug(&session, document)
-                .unwrap()
-                .is_none()
-        );
-        assert!(extensions.source_debug.borrow().is_empty());
-    }
-
-    #[test]
-    fn presentation_callbacks_can_register_another_provider() {
-        struct RegisterDuringQuery {
-            extensions: EditorExtensions,
-            next: Provider,
-        }
-        impl SourceDebugExtension for RegisterDuringQuery {
-            fn presentation(
-                &self,
-                _session: &EditorSession,
-                _document: DocumentId,
-            ) -> io::Result<Option<SourceDebugPresentation>> {
-                self.extensions.register_source_debug(&self.next);
-                Ok(None)
-            }
-            fn action(
-                &mut self,
-                _session: &EditorSession,
-                _document: DocumentId,
-                _action: SourceDebugAction,
-            ) -> io::Result<()> {
-                Ok(())
-            }
-        }
+    fn snapshots_are_document_specific_revision_bound_and_independent() {
         let mut session = EditorSession::new();
         let document = session.create_document(b"source").unwrap();
-        let extensions = EditorExtensions::default();
-        let next: Provider = Rc::new(RefCell::new(Applicable {
-            document,
-            calls: Rc::new(Cell::new(0)),
-        }));
-        let provider: Provider = Rc::new(RefCell::new(RegisterDuringQuery {
-            extensions: extensions.clone(),
-            next: next.clone(),
-        }));
-        extensions.register_source_debug(&provider);
+        let other = session.create_document(b"other").unwrap();
+        let revision = session.document_revision(document).unwrap();
+        let mut facts = EditorExtensions::default();
+        facts.set_source_debug(document, revision, SourceDebugPresentation::default());
+        let snapshot = facts.clone();
+        assert!(facts.source_debug(other, revision).is_none());
         assert!(
-            extensions
-                .source_debug(&session, document)
-                .unwrap()
+            facts
+                .source_debug(document, (revision.0, revision.1 + 1))
                 .is_none()
         );
-        let (selected, _) = extensions
-            .source_debug(&session, document)
-            .unwrap()
-            .unwrap();
-        assert!(Rc::ptr_eq(&selected, &next));
+        facts.clear_source_debug(document);
+        assert!(facts.source_debug(document, revision).is_none());
+        assert!(snapshot.source_debug(document, revision).is_some());
     }
 }

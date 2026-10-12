@@ -177,7 +177,7 @@ struct HoverColors {
 
 impl HoverColors {
     fn new(ui: &Ui, editor: &Editor) -> Self {
-        use bed_editing::util::color::{blend, relative_luminance};
+        use bed_ui::color::{blend, relative_luminance};
         let mut slots = THEME_SLOTS.map(|slot| {
             bed_ui::presentation::readable_color(ui, editor.highlight.color_for_slot(slot))
         });
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn native_hover_prose_code_and_bold_remain_readable_across_theme_switches() {
-        use bed_editing::util::color::{blend, contrast_ratio};
+        use bed_ui::color::{blend, contrast_ratio};
 
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let mut context = context();

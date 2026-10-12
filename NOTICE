@@ -36,6 +36,8 @@ vendor/dear-imgui-sys. Bed's native binding changes are recorded in BED_PATCHES.
 The original Rust binding MIT/Apache-2.0 notices are retained at the roots of
 vendor/dear-imgui-sys, vendor/dear-imgui-winit and vendor/dear-imgui-wgpu,
 copied unchanged from revision 95f279150e95c728952db3e79226c687167ccf73.
+The pure key and mouse mapping in crates/bed-desktop/src/input_map.rs is adapted
+from dear-imgui-winit 0.18.0 under those retained MIT/Apache-2.0 notices.
 
 Portions of this software are copyright © 2023 The FreeType Project
 (www.freetype.org). All rights reserved. FreeType 2.13.2 is used under the

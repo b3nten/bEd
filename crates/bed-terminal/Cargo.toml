@@ -6,41 +6,26 @@ publish = false
 license.workspace = true
 
 [features]
-default = ["ui"]
-ui = ["dep:dear-imgui-rs", "dear-imgui-rs/multi-viewport", "dep:dear-imgui-sys", "dep:swash", "dep:ttf-parser"]
+default = ["desktop"]
+desktop = ["dep:bed-desktop", "dep:winit"]
 
 [dependencies]
-bed-editing = { workspace = true }
-bed-remote = { workspace = true }
-dear-imgui-rs = { workspace = true, optional = true }
-dear-imgui-sys = { workspace = true, optional = true }
-rio-vt = { workspace = true }
-rio-graphics = { workspace = true }
-swash = { workspace = true, optional = true }
-ttf-parser = { workspace = true, optional = true }
-polling = { workspace = true }
-unicode-width = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+bed-keybindings = { workspace = true }
+bevy = { workspace = true, features = ["std"] }
+bed-workbench-api = { workspace = true }
+bed-terminal-core = { workspace = true, features = ["ui"] }
+bed-ui = { workspace = true, features = ["imgui"] }
+bed-document-session = { workspace = true }
+bed-editor-api = { workspace = true }
+dear-imgui-rs = { workspace = true }
 serde_json = { workspace = true }
 
-[target.'cfg(unix)'.dependencies]
-libc = { workspace = true }
+bed-workbench = { workspace = true }
+bed-desktop = { workspace = true, optional = true }
+winit = { workspace = true, optional = true }
 
-[[test]]
-name = "terminal_pty"
-path = "tests/terminal_pty.rs"
-harness = false
-
-[[test]]
-name = "terminal_input"
-path = "tests/terminal_input.rs"
-harness = false
-
-[[test]]
-name = "terminal_view"
-path = "tests/terminal_view.rs"
-required-features = ["ui"]
-
-[[example]]
-name = "terminal_render_baseline"
-required-features = ["ui"]
+[dev-dependencies]
+bed-remote = { workspace = true }
+bed-config = { workspace = true }
+bed-editor-workbench = { workspace = true }
+bed-editor = { workspace = true }

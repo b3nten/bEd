@@ -5,12 +5,9 @@ use crate::wgpu;
 use wgpu::*;
 
 impl WgpuRenderer {
-    /// Create the render pipeline from initialized device resources.
-    ///
-    /// This corresponds to ImGui_ImplWGPU_CreateDeviceObjects in the C++ implementation
-    pub(super) fn create_render_pipeline(
-        &mut self,
-        backend_data: &mut WgpuBackendData,
+    pub(super) fn create_render_pipeline_static(
+        shader_manager: &crate::ShaderManager,
+        backend_data: &mut crate::WgpuGpuData,
     ) -> RendererResult<()> {
         let device = &backend_data.device;
 
@@ -52,7 +49,7 @@ impl WgpuRenderer {
         });
 
         // Get shader module
-        let shader_module = self.shader_manager.get_shader_module()?;
+        let shader_module = shader_manager.get_shader_module()?;
 
         // Create vertex buffer layout
         let vertex_buffer_layout = crate::shaders::create_vertex_buffer_layout();
@@ -168,7 +165,7 @@ impl WgpuRenderer {
                 conservative: false,
             },
             depth_stencil,
-            multisample: backend_data.init_info.pipeline_multisample_state,
+            multisample: backend_data.pipeline_multisample_state,
             fragment: Some(fragment_state),
             #[cfg(any(feature = "wgpu-28", feature = "wgpu-29", feature = "wgpu-30"))]
             multiview_mask: None,

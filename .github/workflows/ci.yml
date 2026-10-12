@@ -67,29 +67,43 @@ jobs:
       - name: Crate boundaries
         run: python3 scripts/check-crate-boundaries.py
       - name: Lint
-        run: cargo clippy --workspace --locked --all-targets -- -D warnings
+        run: cargo clippy --workspace --locked --all-targets --features bed/automation -- -D warnings
       - name: Native tests and binary build
-        run: cargo test --workspace --locked --all-targets
+        run: cargo test --workspace --locked --all-targets --features bed/automation
+      - name: Minimal desktop composition
+        run: |
+          cargo check --locked -p bed-layout-app
+          cargo check --locked -p bed-ui --no-default-features
+          python3 scripts/check-desktop-consumer.py
+          cargo check --locked -p bed --no-default-features --bins
+          cargo test --locked -p bed-workbench -p bed-workbench-api
+      - name: Independent editor features and automation API
+        shell: bash
+        run: |
+          for feature in editor debug git explorer search terminal projects color settings effects idle structure images models fonts audio csv markdown json sqlite http scenes automation; do
+            cargo check --locked -p bed --no-default-features --features "$feature" --bins
+          done
+          cargo test --locked -p bed-automation --features editor
       - name: Headless services and terminal transport
         run: |
           cargo check --locked -p bed-headless -p bed-document-session
-          cargo test --locked -p bed-terminal --no-default-features
+          cargo test --locked -p bed-terminal-core --no-default-features
       - name: Native LLDB debugging fixtures (Linux, LLVM 18)
         if: runner.os == 'Linux'
         env:
           BED_LLDB_DAP: /usr/bin/lldb-dap-18
         run: |
           "$BED_LLDB_DAP" --version
-          cargo test -p bed-debug --locked --test native_lldb -- --ignored --nocapture
+          cargo test -p bed-debug-core --locked --test native_lldb -- --ignored --nocapture
       - name: Native LLDB debugging fixtures (macOS toolchain discovery)
         if: runner.os == 'macOS'
         shell: bash
         run: |
           xcrun --find lldb-dap
           xcrun lldb-dap --version
-          cargo test -p bed-debug --locked --test native_lldb -- --ignored --nocapture
+          cargo test -p bed-debug-core --locked --test native_lldb -- --ignored --nocapture
       - name: Release binary
-        run: cargo build --locked --release -p bed -p bed-headless --bin bed --bin bed-headless
+        run: cargo build --locked --release -p bed -p bed-headless --features bed/automation --bin bed --bin bed-headless
       - name: Package standalone headless helper and licenses
         run: python3 scripts/lib/remote-helpers.py standalone
       - name: Download bundled remote helpers
@@ -110,8 +124,18 @@ jobs:
         run: cargo test -p bed-effects --locked --lib native_shader_fixtures -- --ignored --nocapture
       - name: Native model renderer and shared GPU fixtures
         run: |
-          cargo test -p bed-workbench-api --locked --features gpu native_shared_target -- --ignored --nocapture
-          cargo test -p bed-plugin-gltf --locked native_ -- --ignored --test-threads=1 --nocapture
+          cargo test -p bed --locked --lib unified_composition_samples_current_scenes_and_recovers_in_the_same_world -- --ignored --test-threads=1 --nocapture
+          cargo test -p bed-ui --locked --features imgui,gpu native_shared_target -- --ignored --nocapture
+          cargo test -p bed-model-viewer --locked native_ -- --ignored --test-threads=1 --nocapture
+      - name: Reusable desktop and layout application (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cargo run --locked -p bed-desktop --example native_smoke
+          cargo run --locked -p bed-desktop --example canvas_smoke
+          cargo run --locked -p bed-desktop --example automation_smoke
+          cargo run --locked -p bed-desktop --example window_config_smoke
+          cargo run --locked -p bed-layout-app -- --smoke-test --capture-frame target/native-layout.ppm
+          bash scripts/ci/desktop-consumer.sh
       - name: Native lifecycle and GPU capture (macOS)
         if: runner.os == 'macOS'
         run: target/release/bed --platform-smoke --lifecycle-smoke --capture-after-frames 30 --capture-frame target/native-window.ppm --config-dir target/native-config src/main.rs
@@ -121,13 +145,17 @@ jobs:
       - name: Terminal glyphs, images and independent sessions (macOS)
         if: runner.os == 'macOS'
         run: target/release/bed --terminal-smoke --capture-after-frames 90 --capture-frame target/native-terminal.ppm
-      - name: Detached native windows and per-window CRT (macOS)
+      - name: Calling shell workspace promotion (macOS)
+        if: runner.os == 'macOS'
+        run: target/release/bed --term-promotion-smoke --capture-after-frames 30 --capture-frame target/native-promotion.png
+      - name: Shared viewer GPU recovery (macOS)
+        if: runner.os == 'macOS'
+        run: target/release/bed --plugin-smoke --capture-after-frames 30 --capture-frame target/native-viewers.png
+      - name: Docked panels and main window composition (macOS)
         if: runner.os == 'macOS'
         run: |
           mkdir -p target/native-project
           cp src/main.rs target/native-project/main.rs
-          target/release/bed target/native-project target/native-project/main.rs --viewports-smoke --capture-after-frames 30 --capture-frame target/native-viewports.ppm --config-dir target/native-viewport-config
-          test -s target/native-viewports-secondary-1.ppm
           target/release/bed --main-only-smoke --capture-after-frames 30 --capture-frame target/native-internal.ppm --config-dir target/native-internal-config
       - name: Native lifecycle and GPU capture (Linux)
         if: runner.os == 'Linux'
@@ -148,7 +176,9 @@ jobs:
             target/dist/*.deb
             target/native-window.ppm
             target/native-menu-undo.ppm
-            target/native-viewports*.ppm
             target/native-internal.ppm
             target/native-terminal.ppm
+            target/native-promotion.png
+            target/native-viewers.png
+            target/native-layout.ppm
           if-no-files-found: error

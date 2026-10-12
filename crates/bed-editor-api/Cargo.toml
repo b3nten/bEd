@@ -1,0 +1,21 @@
+[package]
+name = "bed-editor-api"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+gpu = ["bed-ui/gpu", "dep:wgpu"]
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-document-session = { workspace = true }
+bed-lsp = { workspace = true }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+serde_json = { workspace = true }
+wgpu = { workspace = true, optional = true }
+bevy = { workspace = true, features = ["std"] }
+bed-workbench-api = { workspace = true }
+bed-ui = { workspace = true, features = ["imgui"] }

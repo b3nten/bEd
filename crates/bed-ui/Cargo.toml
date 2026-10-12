@@ -5,8 +5,19 @@ edition = "2024"
 publish = false
 license.workspace = true
 
+[features]
+default = []
+imgui = ["dep:dear-imgui-rs", "dep:dear-imgui-sys", "dep:fontdb", "dep:resvg"]
+gpu = ["dep:bevy", "dep:wgpu"]
+
 [dependencies]
-bed-editing = { workspace = true }
-dear-imgui-rs = { workspace = true }
-dear-imgui-sys = { workspace = true }
-resvg = { workspace = true }
+bevy = { workspace = true, optional = true, features = ["std"] }
+wgpu = { workspace = true, optional = true }
+dear-imgui-rs = { workspace = true, optional = true }
+dear-imgui-sys = { workspace = true, optional = true }
+fontdb = { workspace = true, optional = true }
+resvg = { workspace = true, optional = true }
+
+[[example]]
+name = "flat_dockspace_probe"
+required-features = ["imgui"]

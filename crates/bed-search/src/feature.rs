@@ -1,0 +1,783 @@
+//! Query widgets and replacement workers are retained in typed world state.
+use super::*;
+use bed_document_session::{EditorSession, SessionEvent};
+use bed_editor_api::{
+    EditorDocumentEvent, EditorFeatureReply, EditorFeatureSystems, EditorFrame, EditorIntents,
+    EditorPanelActions, PanelActionInvocation, PanelActionResult,
+};
+use bed_workbench_api::{
+    Action, CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, StatusContext,
+    StatusDrawContext, StatusDrawMode, StatusItem, StatusItems, StatusText, register,
+};
+use bevy::{ecs::system::SystemState, prelude::*};
+
+#[derive(Default)]
+pub struct SearchPanels(pub HashMap<Entity, SearchPanel>);
+impl SearchPanels {
+    pub fn is_searching(&self) -> bool {
+        self.0.values().any(|panel| panel.search.needs_tick())
+    }
+
+    pub fn get(&self, entity: Entity) -> Option<&SearchPanel> {
+        self.0.get(&entity)
+    }
+    pub fn get_mut(&mut self, entity: Entity) -> Option<&mut SearchPanel> {
+        self.0.get_mut(&entity)
+    }
+}
+#[derive(Resource)]
+struct Actions(bed_editor_api::PanelActionSystem);
+
+#[derive(Component, Clone, Default)]
+struct SearchStatus {
+    busy: bool,
+    text: StatusText,
+}
+pub struct SearchPlugin;
+impl Plugin for SearchPlugin {
+    fn build(&self, app: &mut App) {
+        app.world_mut().init_non_send::<SearchState>();
+        app.world_mut().init_non_send::<EditorSession>();
+        app.world_mut().init_non_send::<SearchPanels>();
+        app.init_resource::<EditorFrame>()
+            .init_resource::<EditorIntents>()
+            .init_resource::<bed_editor_api::Registry>()
+            .add_message::<EditorFeatureReply>()
+            .add_message::<EditorDocumentEvent>();
+        app.world_mut()
+            .resource_mut::<bed_editor_api::Registry>()
+            .register_with(MODULE_ID, |registrar| {
+                registrar.command(SHOW_COMMAND, "Find in Project", None);
+                registrar.command(NEW_COMMAND, "New Search Panel", Some("search"));
+                registrar.command(CANCEL_COMMAND, "Cancel Search", Some("search"));
+                registrar.toolbar(NEW_COMMAND);
+                registrar.panel_options(
+                    PANEL_ID,
+                    "Search",
+                    false,
+                    PanelPlacement::Center,
+                    Some("search"),
+                );
+            })
+            .expect("Search metadata is registered once");
+        register(app.world_mut(), MODULE_ID, |registrar| {
+            registrar.panel(PANEL_ID, "Search", create_panel);
+            for action in crate::shortcut_actions() {
+                registrar.shortcut_action(action);
+            }
+            registrar.command(SHOW_COMMAND, "Find in Project", show);
+            registrar.command(NEW_COMMAND, "New Search Panel", open);
+            registrar.command(CANCEL_COMMAND, "Cancel Search", cancel);
+            registrar.global_shortcut(SHOW_COMMAND, &["Primary+Shift+F"]);
+        })
+        .expect("SearchPlugin is installed once");
+        let actions = app.world_mut().register_system(panel_action);
+        app.insert_resource(Actions(actions))
+            .add_systems(
+                PreUpdate,
+                (replies, document_events, prepare)
+                    .chain()
+                    .in_set(EditorFeatureSystems::Prepare),
+            )
+            .add_systems(Last, shutdown.after(bevy::app::OnAppExitSystems));
+    }
+}
+fn show(
+    In(invocation): In<CommandInvocation>,
+    mut intents: ResMut<EditorIntents>,
+) -> CommandResult {
+    intents.push_at(
+        invocation.source,
+        invocation.area,
+        HostRequest::ShowPanel {
+            panel_type: PANEL_ID.into(),
+            document: None,
+            state: Value::Null,
+            action: Some(PanelAction::Find),
+        },
+    );
+    Ok(Vec::new())
+}
+fn open(In(invocation): In<CommandInvocation>) -> CommandResult {
+    Ok(vec![Action::OpenPanel {
+        panel_type: PANEL_ID.into(),
+        state: Value::Null,
+        area: Some(invocation.area),
+    }])
+}
+fn cancel(
+    In(invocation): In<CommandInvocation>,
+    state: NonSend<SearchState>,
+    mut panels: NonSendMut<SearchPanels>,
+    mut intents: ResMut<EditorIntents>,
+) -> CommandResult {
+    let Some(entity) = invocation.source else {
+        return Ok(Vec::new());
+    };
+    if state
+        .replacement
+        .as_ref()
+        .is_some_and(|job| job.owns(entity))
+    {
+        return Ok(Vec::new());
+    }
+    let Some(panel) = panels.0.get_mut(&entity) else {
+        return Ok(Vec::new());
+    };
+    if panel.search.needs_tick() {
+        panel.search.cancel();
+        intents.push(Some(entity), HostRequest::Invalidate);
+    }
+    Ok(Vec::new())
+}
+fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    let remote = world.non_send::<SearchState>().remote.clone();
+    let mut panel = SearchPanel::new(remote, &creation.state);
+    panel.search.root = world.resource::<EditorFrame>().working_directory.clone();
+    world
+        .non_send_mut::<SearchPanels>()
+        .0
+        .insert(creation.entity, panel);
+    let actions = world.resource::<Actions>().0;
+    world.entity_mut(creation.entity).insert((
+        EditorPanelActions(actions),
+        StatusItems(vec![
+            StatusItem {
+                id: "bed.search.activity",
+                label: "Search activity",
+                priority: 150,
+                icon: Some("search"),
+                prefer_icon: false,
+                measure: status_measure,
+                draw: status_draw,
+                tooltip: status_tooltip,
+            },
+            StatusItem {
+                id: "bed.search.results",
+                label: "Search results",
+                priority: 50,
+                icon: Some("search"),
+                prefer_icon: false,
+                measure: status_measure,
+                draw: status_draw,
+                tooltip: status_tooltip,
+            },
+        ]),
+    ));
+    publish_status(world, creation.entity);
+    Ok(Box::new(Frontend(creation.entity)))
+}
+fn panel_action(
+    In(invocation): In<PanelActionInvocation>,
+    mut panels: NonSendMut<SearchPanels>,
+) -> PanelActionResult {
+    let panel = panels
+        .0
+        .get_mut(&invocation.entity)
+        .ok_or("Search panel is closed")?;
+    if invocation.action == PanelAction::Find {
+        panel.open();
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+fn shutdown(
+    mut exit: MessageReader<bevy::app::AppExit>,
+    mut state: NonSendMut<SearchState>,
+    mut panels: NonSendMut<SearchPanels>,
+) {
+    if exit.read().next().is_some() {
+        state.replacement = None;
+        for panel in panels.0.values_mut() {
+            panel.search.cancel();
+        }
+    }
+}
+fn prepare(
+    mut state: NonSendMut<SearchState>,
+    mut panels: NonSendMut<SearchPanels>,
+    alive: Query<Entity>,
+    frame: Res<EditorFrame>,
+    mut documents: NonSendMut<EditorSession>,
+    mut intents: ResMut<EditorIntents>,
+    mut commands: Commands,
+) {
+    panels.0.retain(|entity, _| alive.contains(*entity));
+    let remote = documents.remote_client();
+    let changed = match (&state.remote, &remote) {
+        (Some(old), Some(new)) => !old.same_connection(new),
+        (None, None) => false,
+        _ => true,
+    };
+    if changed {
+        state.replacement = None;
+        state.remote = remote.clone();
+        for panel in panels.0.values_mut() {
+            panel.search.set_remote_client(remote.clone());
+            panel.search.invalidate();
+        }
+    }
+    let mut requests = Vec::new();
+    for (entity, panel) in &mut panels.0 {
+        if state
+            .replacement
+            .as_ref()
+            .is_some_and(|job| job.owns(*entity))
+        {
+            continue;
+        }
+        let root = if frame.project_root.is_empty() {
+            panel.search.root.clone()
+        } else {
+            frame.project_root.clone()
+        };
+        if panel.search.tick(&root, &documents) {
+            requests.push(HostRequest::Invalidate);
+        }
+    }
+    if let Some(job) = &mut state.replacement {
+        let finished = match panels.0.get_mut(&job.owner()) {
+            Some(panel) => job.tick(&mut panel.search, &mut documents, &mut requests),
+            None => true,
+        };
+        if finished {
+            state.replacement = None;
+        }
+        requests.push(HostRequest::Invalidate);
+    }
+    for (entity, panel) in &panels.0 {
+        commands
+            .entity(*entity)
+            .insert(search_status(panel, &state, &frame, *entity));
+    }
+    for request in requests {
+        intents.push(None, request);
+    }
+}
+
+fn search_status(
+    panel: &SearchPanel,
+    state: &SearchState,
+    frame: &EditorFrame,
+    entity: Entity,
+) -> SearchStatus {
+    let root = if frame.project_root.is_empty() {
+        &panel.search.root
+    } else {
+        &frame.project_root
+    };
+    let mut text = panel.search.status_text(root);
+    let replacing = state.replacement.as_ref().filter(|job| job.owns(entity));
+    let busy = replacing.is_some() || panel.search.needs_tick();
+    if let Some(job) = replacing {
+        let (saved, remaining, replaced, failures) = job.progress();
+        text.summary = format!("Replacing… {saved} files saved · {remaining} remaining");
+        text.details.push_str(&format!(
+            "\n{replaced} occurrences replaced\n{failures} failures"
+        ));
+        text.error |= failures != 0;
+    } else if panel.search.needs_tick() {
+        text = text.command("Cancel", CANCEL_COMMAND);
+    }
+    SearchStatus { busy, text }
+}
+fn publish_status(world: &mut World, entity: Entity) {
+    let Some(panel) = world.non_send::<SearchPanels>().0.get(&entity) else {
+        return;
+    };
+    let status = search_status(
+        panel,
+        world.non_send::<SearchState>(),
+        world.resource::<EditorFrame>(),
+        entity,
+    );
+    world.entity_mut(entity).insert(status);
+}
+fn visible_status(world: &World, context: StatusContext) -> Option<&SearchStatus> {
+    let status = world.get::<SearchStatus>(context.publisher)?;
+    match context.item_id {
+        "bed.search.activity" if status.busy => Some(status),
+        "bed.search.results" if !status.busy && context.is_focused() => Some(status),
+        _ => None,
+    }
+}
+fn cancel_width(ui: &Ui) -> f32 {
+    ui.calc_text_size("Cancel")[0] + ui.clone_style().frame_padding()[0] * 2.0
+}
+fn status_measure(world: &World, ui: &Ui, context: StatusContext) -> Option<f32> {
+    visible_status(world, context).map(|status| {
+        status.text.measure(ui)
+            + if status.text.commands.is_empty() {
+                0.0
+            } else {
+                cancel_width(ui) + ui.clone_style().item_spacing()[0]
+            }
+    })
+}
+fn status_draw(world: &mut World, ui: &Ui, context: StatusDrawContext, actions: &mut Vec<Action>) {
+    let Some(status) = visible_status(world, context.context) else {
+        return;
+    };
+    if context.mode == StatusDrawMode::Inline && !status.text.commands.is_empty() {
+        let mut text = status.text.clone();
+        text.commands.clear();
+        text.draw(
+            ui,
+            StatusDrawContext {
+                width: (context.width - cancel_width(ui) - ui.clone_style().item_spacing()[0])
+                    .max(1.0),
+                ..context
+            },
+            actions,
+        );
+        ui.same_line();
+        if ui.small_button("Cancel") {
+            actions.push(context.context.invoke(CANCEL_COMMAND, Value::Null));
+        }
+    } else {
+        status.text.draw(ui, context, actions);
+    }
+}
+fn status_tooltip(world: &World, ui: &Ui, context: StatusContext) {
+    if let Some(status) = visible_status(world, context) {
+        status.text.tooltip(ui);
+    }
+}
+fn replies(mut replies: MessageReader<EditorFeatureReply>, mut state: NonSendMut<SearchState>) {
+    for reply in replies.read() {
+        let Some(job) = &mut state.replacement else {
+            continue;
+        };
+        match reply {
+            EditorFeatureReply::Edit {
+                recipient,
+                token,
+                result,
+            } if recipient == MODULE_ID => job.edit_result(*token, result.clone()),
+            EditorFeatureReply::Save {
+                recipient,
+                token,
+                result,
+            } if recipient == MODULE_ID => job.save_result(*token, result.clone()),
+            _ => {}
+        }
+    }
+}
+fn document_events(
+    mut events: MessageReader<EditorDocumentEvent>,
+    state: NonSend<SearchState>,
+    mut panels: NonSendMut<SearchPanels>,
+) {
+    if events.read().any(|event| {
+        matches!(
+            event.0,
+            SessionEvent::Edited { .. }
+                | SessionEvent::Reloaded { .. }
+                | SessionEvent::Removed { .. }
+                | SessionEvent::PathChanged { .. }
+                | SessionEvent::Closed { .. }
+        )
+    }) {
+        for (entity, panel) in &mut panels.0 {
+            if !state
+                .replacement
+                .as_ref()
+                .is_some_and(|job| job.owns(*entity))
+            {
+                panel.search.invalidate();
+            }
+        }
+    }
+}
+struct Frontend(Entity);
+impl Panel for Frontend {
+    fn title(&self, _: &World) -> String {
+        "Search".into()
+    }
+    fn draw(
+        &mut self,
+        ui: &Ui,
+        world: &mut World,
+        _: &mut Vec<Action>,
+        _shortcuts: &bed_workbench_api::ShortcutInput,
+    ) {
+        let mut requests = Vec::new();
+        let mut state = SystemState::<(
+            NonSendMut<SearchPanels>,
+            NonSendMut<SearchState>,
+            Res<EditorFrame>,
+            Option<NonSend<bed_ui::icons::Icons>>,
+        )>::new(world);
+        let (mut panels, mut search_state, frame, icons) = state
+            .get_mut(world)
+            .expect("Search frontend resources are installed");
+        panels
+            .0
+            .get_mut(&self.0)
+            .expect("Search frontend has widget state")
+            .search
+            .shortcuts = _shortcuts.clone();
+        if let Err(error) = panels
+            .0
+            .get_mut(&self.0)
+            .expect("Search frontend has widget state")
+            .draw_body(
+                self.0,
+                &mut search_state,
+                ui,
+                &frame.project_root,
+                icons.as_deref(),
+                &mut requests,
+            )
+        {
+            requests.push(HostRequest::Notify {
+                message: error.to_string(),
+            });
+        }
+        for request in requests {
+            world
+                .resource_mut::<EditorIntents>()
+                .push(Some(self.0), request);
+        }
+        publish_status(world, self.0);
+    }
+    fn save(&self, world: &World) -> Value {
+        world
+            .non_send::<SearchPanels>()
+            .0
+            .get(&self.0)
+            .expect("Search frontend has widget state")
+            .state()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bed_workbench::{WorkbenchPlugin, WorkbenchRequests, commit_close, panel_state};
+    #[test]
+    fn ambient_search_cancel_captures_its_owner_and_completed_counts_need_focus() {
+        use std::time::{Duration, Instant};
+        let dir = crate::test_support::TempDir::new();
+        dir.write("first.txt", b"alpha beta beta");
+        dir.write("second.txt", b"beta");
+        let root = dir.root().to_string_lossy().into_owned();
+        let mut app = App::new();
+        app.add_plugins((WorkbenchPlugin, SearchPlugin));
+        app.world_mut()
+            .resource_mut::<EditorFrame>()
+            .working_directory = root.clone();
+        app.world_mut().resource_mut::<EditorFrame>().project_root = root;
+        for query in ["alpha", "beta"] {
+            app.world_mut()
+                .resource_mut::<WorkbenchRequests>()
+                .push(Action::OpenPanel {
+                    panel_type: PANEL_ID.into(),
+                    state: json!({"query":query}),
+                    area: None,
+                });
+            app.update();
+        }
+        app.update();
+        let entities = app
+            .world()
+            .non_send::<SearchPanels>()
+            .0
+            .iter()
+            .map(|(entity, panel)| (panel.search.query.clone(), *entity))
+            .collect::<HashMap<_, _>>();
+        let first = entities["alpha"];
+        let second = entities["beta"];
+        let context = |publisher, id, focused| StatusContext {
+            publisher,
+            item_id: id,
+            focused_panel: focused,
+            focused_frontend: focused,
+            source: Some(publisher),
+            area: 1,
+        };
+        let busy = context(first, "bed.search.activity", Some(second));
+        assert!(visible_status(app.world(), busy).is_some());
+        assert_eq!(
+            visible_status(app.world(), busy).unwrap().text.commands[0].command,
+            CANCEL_COMMAND
+        );
+        app.world_mut()
+            .resource_mut::<WorkbenchRequests>()
+            .push(busy.invoke(CANCEL_COMMAND, Value::Null));
+        app.update();
+        assert!(
+            app.world().non_send::<SearchPanels>().0[&first]
+                .search
+                .canceled
+        );
+        assert!(
+            !app.world().non_send::<SearchPanels>().0[&second]
+                .search
+                .canceled
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app.world().non_send::<SearchPanels>().0[&second]
+            .search
+            .needs_tick()
+        {
+            assert!(Instant::now() < deadline, "search did not finish");
+            app.update();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        app.update();
+        assert!(
+            visible_status(app.world(), context(second, "bed.search.activity", None)).is_none()
+        );
+        assert!(
+            visible_status(
+                app.world(),
+                context(second, "bed.search.results", Some(first))
+            )
+            .is_none()
+        );
+        let result = visible_status(
+            app.world(),
+            context(second, "bed.search.results", Some(second)),
+        )
+        .unwrap();
+        assert_eq!(result.text.summary, "3 matches in 2 matching files");
+        assert!(result.text.commands.is_empty());
+        assert!(
+            visible_status(
+                app.world(),
+                context(first, "bed.search.results", Some(first))
+            )
+            .unwrap()
+            .text
+            .summary
+            .starts_with("Canceled")
+        );
+        commit_close(app.world_mut(), first);
+        app.update();
+        assert!(visible_status(app.world(), busy).is_none());
+        app.world_mut()
+            .resource_mut::<WorkbenchRequests>()
+            .push(busy.invoke(CANCEL_COMMAND, Value::Null));
+        app.update();
+        assert!(
+            app.world_mut()
+                .resource_mut::<WorkbenchRequests>()
+                .take_errors()
+                .is_empty()
+        );
+    }
+    #[test]
+    fn registered_search_panels_keep_independent_queries_and_release_only_closed_workers() {
+        let mut app = App::new();
+        app.add_plugins((WorkbenchPlugin, SearchPlugin));
+        app.world_mut()
+            .resource_mut::<EditorFrame>()
+            .working_directory = "/workspace".into();
+        for query in ["first", "second"] {
+            app.world_mut()
+                .resource_mut::<WorkbenchRequests>()
+                .push(Action::OpenPanel {
+                    panel_type: PANEL_ID.into(),
+                    state: json!({"query":query,"regex":true,"replacement":"value"}),
+                    area: None,
+                });
+            app.update();
+        }
+        let panels: Vec<_> = app
+            .world()
+            .non_send::<SearchPanels>()
+            .0
+            .keys()
+            .copied()
+            .collect();
+        assert_eq!(app.world().non_send::<SearchPanels>().0.len(), 2);
+        let original = panel_state(app.world_mut(), panels[1]).unwrap();
+        assert!(commit_close(app.world_mut(), panels[0]));
+        app.update();
+        assert_eq!(app.world().non_send::<SearchPanels>().0.len(), 1);
+        assert_eq!(panel_state(app.world_mut(), panels[1]).unwrap(), original);
+        assert_eq!(
+            app.world().non_send::<SearchPanels>().0[&panels[1]]
+                .search
+                .root,
+            "/workspace"
+        );
+        let action = app.world().get::<EditorPanelActions>(panels[1]).unwrap().0;
+        assert!(
+            app.world_mut()
+                .run_system_with(
+                    action,
+                    PanelActionInvocation {
+                        entity: panels[1],
+                        action: PanelAction::Find
+                    }
+                )
+                .unwrap()
+                .unwrap()
+        );
+    }
+    #[test]
+    fn replacement_system_waits_for_its_own_edit_and_save_messages() {
+        use std::{
+            thread,
+            time::{Duration, Instant},
+        };
+        let directory = crate::test_support::TempDir::new();
+        let path = directory.write("words.txt", b"alpha alpha");
+        let mut documents = EditorSession::new();
+        let document = documents.open_file(&path).unwrap();
+        let mut search = ContentSearch::new_lazy();
+        search.query = "alpha".into();
+        search.replacement = "beta".into();
+        search.open();
+        let root = directory.root().to_str().unwrap();
+        search.tick(root, &documents);
+        thread::sleep(Duration::from_millis(210));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while search.needs_tick() {
+            search.tick(root, &documents);
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(!search.results.is_empty());
+        let mut app = App::new();
+        app.world_mut().insert_non_send(documents);
+        app.add_plugins(SearchPlugin);
+        let entity = app.world_mut().spawn_empty().id();
+        let job = ReplacementJob::new(entity, &search, true).unwrap();
+        app.world_mut()
+            .non_send_mut::<SearchPanels>()
+            .0
+            .insert(entity, SearchPanel { search });
+        app.world_mut().non_send_mut::<SearchState>().replacement = Some(job);
+        app.world_mut().resource_mut::<EditorFrame>().project_root = root.into();
+        app.update();
+        let status = app.world().get::<SearchStatus>(entity).unwrap();
+        assert!(status.busy);
+        assert!(status.text.summary.contains("1 remaining"));
+        assert!(
+            status.text.commands.is_empty(),
+            "replacement acknowledgements cannot be canceled as a search"
+        );
+        let cancel_handler = app
+            .world()
+            .resource::<bed_workbench_api::Registry>()
+            .command(CANCEL_COMMAND)
+            .unwrap()
+            .handler;
+        app.world_mut()
+            .run_system_with(
+                cancel_handler,
+                CommandInvocation {
+                    command: CANCEL_COMMAND.into(),
+                    source: Some(entity),
+                    area: 1,
+                    arguments: Value::Null,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert!(app.world().non_send::<SearchState>().replacement.is_some());
+        assert!(
+            !app.world().non_send::<SearchPanels>().0[&entity]
+                .search
+                .canceled
+        );
+        let requests = app.world_mut().resource_mut::<EditorIntents>().take();
+        let (token, result) = requests
+            .into_iter()
+            .find_map(|intent| {
+                if let HostRequest::ApplyModuleEditsWithResult {
+                    token,
+                    document,
+                    revision,
+                    edits,
+                    ..
+                } = intent.request
+                {
+                    let result = app
+                        .world_mut()
+                        .non_send_mut::<EditorSession>()
+                        .apply_edits(document, revision, &edits)
+                        .and_then(|_| {
+                            app.world()
+                                .non_send::<EditorSession>()
+                                .document_revision(document)
+                        })
+                        .map_err(|error| error.to_string());
+                    Some((token, result))
+                } else {
+                    None
+                }
+            })
+            .expect("replacement requests its first edit");
+        app.world_mut().write_message(EditorFeatureReply::Edit {
+            recipient: "other.feature".into(),
+            token,
+            result: result.clone(),
+        });
+        app.update();
+        assert!(
+            !app.world_mut()
+                .resource_mut::<EditorIntents>()
+                .take()
+                .iter()
+                .any(|intent| matches!(
+                    intent.request,
+                    HostRequest::SaveDocumentsWithResult { .. }
+                )),
+            "another feature cannot acknowledge this edit"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"alpha alpha");
+        app.world_mut().write_message(EditorFeatureReply::Edit {
+            recipient: MODULE_ID.into(),
+            token,
+            result,
+        });
+        app.update();
+        let requests = app.world_mut().resource_mut::<EditorIntents>().take();
+        let save = requests
+            .into_iter()
+            .find_map(|intent| {
+                if let HostRequest::SaveDocumentsWithResult {
+                    token, documents, ..
+                } = intent.request
+                {
+                    Some((token, documents))
+                } else {
+                    None
+                }
+            })
+            .expect("acknowledged edit requests its save barrier");
+        assert_eq!(save.1, [document]);
+        app.world_mut()
+            .non_send_mut::<EditorSession>()
+            .save(document)
+            .unwrap();
+        let revision = app
+            .world()
+            .non_send::<EditorSession>()
+            .document_revision(document)
+            .unwrap();
+        app.world_mut().write_message(EditorFeatureReply::Save {
+            recipient: MODULE_ID.into(),
+            token: save.0,
+            result: Ok(vec![bed_editor_api::SavedDocument { document, revision }]),
+        });
+        for _ in 0..4 {
+            app.update();
+        }
+        assert!(app.world().non_send::<SearchState>().replacement.is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), b"beta beta");
+        assert!(
+            app.world().non_send::<SearchPanels>().0[&entity]
+                .search
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("saved 1 files")
+        );
+    }
+}

@@ -5,7 +5,7 @@ Based on the released `bevy_stl` 0.18.0 source at upstream revision
 <https://github.com/nilclass/bevy_stl/tree/70adf44a1594676b4d7b045bfafbed753752fcfd>.
 The original MIT license is retained in `LICENSE`.
 
-- Pin the runtime and example Bevy dependency to 0.19.1, matching Bed's shared
+- Pin the runtime and example Bevy dependency to 0.20.0, matching Bed's shared
   renderer and avoiding an additional, incompatible Bevy/wgpu dependency tree.
   The original loader and mesh API need no source changes for this release.
 - Expose `StlLoader::load_bytes` using the original `stl_io` parser and triangle

@@ -876,7 +876,9 @@ mod tests {
                     .copied()
                     .collect();
                 let continuation: Vec<_> = selection
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .filter(|rectangle| rectangle[0].pos.y == y)
                     .flatten()
                     .collect();
@@ -1130,7 +1132,7 @@ mod tests {
     #[test]
     fn native_diagnostic_squiggles_keep_all_severities_readable_on_both_surfaces() {
         use bed_editing::diagnostic::DiagnosticItem;
-        use bed_editing::util::color::{blend, contrast_ratio};
+        use bed_ui::color::{blend, contrast_ratio};
 
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let mut context = context();

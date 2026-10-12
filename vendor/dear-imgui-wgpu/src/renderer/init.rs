@@ -166,7 +166,7 @@ impl WgpuRenderer {
         Ok(())
     }
 
-    fn ensure_context_available(imgui_context: &Context) -> RendererResult<()> {
+    pub(super) fn ensure_context_available(imgui_context: &Context) -> RendererResult<()> {
         if !imgui_context.io().backend_renderer_user_data().is_null() {
             return Err(RendererError::ContextAlreadyHasRenderer);
         }
@@ -277,7 +277,7 @@ impl WgpuRenderer {
         Ok((renderer_flags & !previous_flags, renderer_name_ptr))
     }
 
-    fn clear_unbound_imgui_context(
+    pub(super) fn clear_unbound_imgui_context(
         imgui_context: &mut Context,
         renderer_flags_added: BackendFlags,
         renderer_name_ptr: *const std::ffi::c_char,
@@ -308,21 +308,29 @@ impl WgpuRenderer {
         &mut self,
         backend_data: &mut WgpuBackendData,
     ) -> RendererResult<()> {
+        self.default_texture = Some(Self::create_device_objects_static(
+            &mut self.shader_manager,
+            backend_data,
+        )?);
+        Ok(())
+    }
+
+    pub(super) fn create_device_objects_static(
+        shader_manager: &mut ShaderManager,
+        backend_data: &mut crate::WgpuGpuData,
+    ) -> RendererResult<TextureView> {
         backend_data
             .render_resources
             .initialize(&backend_data.device)?;
-        self.shader_manager.initialize(&backend_data.device)?;
-        self.default_texture =
-            Some(self.create_default_texture(&backend_data.device, &backend_data.queue)?);
-        self.create_render_pipeline(backend_data)
+        shader_manager.initialize(&backend_data.device)?;
+        let default_texture =
+            Self::create_default_texture(&backend_data.device, &backend_data.queue)?;
+        Self::create_render_pipeline_static(shader_manager, backend_data)?;
+        Ok(default_texture)
     }
 
     /// Create a default 1x1 white texture
-    fn create_default_texture(
-        &self,
-        device: &Device,
-        queue: &Queue,
-    ) -> RendererResult<TextureView> {
+    fn create_default_texture(device: &Device, queue: &Queue) -> RendererResult<TextureView> {
         let texture = device.create_texture(&TextureDescriptor {
             label: Some("Dear ImGui Default Texture"),
             size: Extent3d {

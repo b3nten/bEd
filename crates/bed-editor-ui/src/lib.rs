@@ -31,3 +31,7 @@ pub(crate) mod test_support;
 
 #[cfg(test)]
 mod theme_tests;
+
+pub mod source_intents;
+
+pub mod shortcuts;

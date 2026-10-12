@@ -9,7 +9,7 @@ use bed_editing::{
     editor_commands::CursorReveal,
     util::utf8::{prev_utf8_char, snap_to_utf8_char_boundary},
 };
-use dear_imgui_rs::{Key, MouseButton, Ui, WindowHoveredFlags, sys};
+use dear_imgui_rs::{MouseButton, Ui, WindowHoveredFlags, sys};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostAction {
@@ -26,14 +26,28 @@ pub struct DefinitionRequest {
     pub column: i32,
 }
 
-#[derive(Default)]
 pub struct EditorInput {
     pub suppress_next_enter: bool,
+    pub(crate) shortcuts: bed_keybindings::ShortcutInput,
     pub(crate) folding_enabled: bool,
     dragging: bool,
     anchor: Option<(i32, i32)>,
     definition_request: Option<DefinitionRequest>,
     visual_navigation: Option<VisualNavigation>,
+}
+
+impl Default for EditorInput {
+    fn default() -> Self {
+        Self {
+            suppress_next_enter: false,
+            shortcuts: crate::shortcuts::default_input(),
+            folding_enabled: false,
+            dragging: false,
+            anchor: None,
+            definition_request: None,
+            visual_navigation: None,
+        }
+    }
 }
 
 /// Pixel preference belongs to the view. Document selections continue to use
@@ -119,177 +133,197 @@ impl EditorInput {
         projection: Option<&RowProjection>,
         read_only: bool,
     ) -> Vec<HostAction> {
-        let primary = ui.io().key_ctrl() || ui.io().key_super();
-        let shift = ui.io().key_shift();
-        let alt = ui.io().key_alt();
         let mut actions = Vec::new();
         let projection = projection.map(|rows| (rows, editor.ops.generation()));
-        if self.folding_enabled && primary && alt {
-            if ui.is_key_pressed_with_repeat(Key::LeftBracket, false) {
-                self.visual_navigation = None;
-                if shift {
-                    editor.commands().fold_all();
-                } else {
+        if !ui.is_window_focused() || self.shortcuts.suppressed(ui) {
+            return actions;
+        }
+        // Navigation applies after queued text (including IME commits). Other
+        // commands suppress text from a printable key remapped to that command.
+        let mut text = ui.with_bound_context(take_input_characters);
+        let mut handled = false;
+        let ids = self
+            .shortcuts
+            .bindings
+            .actions
+            .iter()
+            .filter(|a| a.scope == self.shortcuts.scope)
+            .map(|a| a.id.clone())
+            .collect::<Vec<_>>();
+        for id in ids {
+            let command = id.strip_prefix("bed.editor.").unwrap_or("");
+            if matches!(
+                command,
+                "find"
+                    | "go_to_line"
+                    | "definition"
+                    | "references"
+                    | "completion"
+                    | "symbol_info"
+                    | "zoom_in"
+                    | "zoom_out"
+                    | "reset_zoom"
+                    | "toggle_wrap"
+                    | "toggle_minimap"
+            ) {
+                continue;
+            }
+            let mutating = matches!(
+                command,
+                "newline"
+                    | "indent"
+                    | "outdent"
+                    | "delete_left"
+                    | "delete_right"
+                    | "delete_word_left"
+                    | "delete_word_right"
+                    | "cut"
+                    | "paste"
+                    | "undo"
+                    | "redo"
+            );
+            if !self.shortcuts.take(ui, &id) {
+                continue;
+            }
+            handled = true;
+            if read_only && mutating {
+                continue;
+            }
+            if command.starts_with("move_") || command.starts_with("select_") {
+                if !read_only && !text.is_empty() {
+                    let printable_binding =
+                        self.shortcuts
+                            .bindings
+                            .for_action(&id)
+                            .iter()
+                            .any(|binding| {
+                                let key = binding.shortcut.key;
+                                let printable =
+                                    bed_keybindings::key_name(key).is_some_and(|name| {
+                                        name.len() == 1
+                                            || name.starts_with("Keypad") && name != "KeypadEnter"
+                                    }) || matches!(
+                                        key,
+                                        dear_imgui_rs::Key::Space
+                                            | dear_imgui_rs::Key::Apostrophe
+                                            | dear_imgui_rs::Key::Comma
+                                            | dear_imgui_rs::Key::Minus
+                                            | dear_imgui_rs::Key::Period
+                                            | dear_imgui_rs::Key::Slash
+                                            | dear_imgui_rs::Key::Semicolon
+                                            | dear_imgui_rs::Key::Equal
+                                            | dear_imgui_rs::Key::LeftBracket
+                                            | dear_imgui_rs::Key::Backslash
+                                            | dear_imgui_rs::Key::RightBracket
+                                            | dear_imgui_rs::Key::GraveAccent
+                                    );
+                                printable
+                                    && binding.shortcut.modifiers
+                                        == bed_keybindings::Modifiers::from_ui(ui)
+                                    && ui.is_key_pressed_with_repeat(key, binding.repeat)
+                            });
+                    if !printable_binding {
+                        self.shortcuts.claim_text(ui);
+                        editor.commands().type_text(text.as_bytes());
+                    }
+                    text.clear();
+                }
+                let select = command.starts_with("select_");
+                let motion = command.split_once('_').unwrap().1;
+                match motion {
+                    "up" => self.move_vertical(ui, editor, layout, projection, -1, select, false),
+                    "down" => self.move_vertical(ui, editor, layout, projection, 1, select, false),
+                    "page_up" => {
+                        self.move_vertical(ui, editor, layout, projection, -20, select, false)
+                    }
+                    "page_down" => {
+                        self.move_vertical(ui, editor, layout, projection, 20, select, false)
+                    }
+                    _ => {
+                        self.visual_navigation = None;
+                        match motion {
+                            "left" => editor.commands().move_left(select),
+                            "right" => editor.commands().move_right(select),
+                            "word_left" => editor.commands().move_word_left(select),
+                            "word_right" => editor.commands().move_word_right(select),
+                            "line_start" => editor.commands().move_line_start(select),
+                            "line_end" => editor.commands().move_line_end(select),
+                            "doc_start" => editor.commands().move_doc_start(select),
+                            "doc_end" => editor.commands().move_doc_end(select),
+                            _ => {}
+                        }
+                    }
+                }
+                continue;
+            }
+            match command {
+                "newline" => {
+                    if self.suppress_next_enter {
+                        self.suppress_next_enter = false;
+                    } else {
+                        editor.commands().insert_newline();
+                    }
+                }
+                "delete_left" => editor.commands().delete_left(false),
+                "delete_right" => editor.commands().delete_right(false),
+                "delete_word_left" => editor.commands().delete_left(true),
+                "delete_word_right" => editor.commands().delete_right(true),
+                "indent" => {
+                    editor.commands().indent();
+                    ui.set_keyboard_focus_here_with_offset(-1);
+                }
+                "outdent" => {
+                    editor.commands().outdent();
+                    ui.set_keyboard_focus_here_with_offset(-1);
+                }
+                "select_all" => editor.commands().select_all(),
+                "collapse_selection" => editor.commands().collapse_selection(),
+                "add_cursor_above" => {
+                    self.move_vertical(ui, editor, layout, projection, -1, false, true)
+                }
+                "add_cursor_below" => {
+                    self.move_vertical(ui, editor, layout, projection, 1, false, true)
+                }
+                "copy" => {
+                    let text = editor.commands().copy();
+                    if !text.is_empty() {
+                        set_clipboard(ui, &text);
+                    }
+                }
+                "cut" => {
+                    let text = editor.commands().cut();
+                    if !text.is_empty() {
+                        set_clipboard(ui, &text);
+                    }
+                }
+                "paste" => {
+                    if let Some(text) = get_clipboard(ui) {
+                        editor.commands().paste(text.as_bytes());
+                    }
+                }
+                "undo" => editor.commands().undo(),
+                "redo" => editor.commands().redo(),
+                "save" => actions.push(HostAction::Save),
+                "save_as" => actions.push(HostAction::SaveAs),
+                "open" => actions.push(HostAction::Open),
+                "toggle_fold" if self.folding_enabled => {
                     let row = editor.view.row;
                     editor.commands().toggle_fold(row);
                 }
-                return actions;
-            }
-            if ui.is_key_pressed_with_repeat(Key::RightBracket, false) {
-                self.visual_navigation = None;
-                editor.commands().unfold_all();
-                return actions;
+                "fold_all" if self.folding_enabled => editor.commands().fold_all(),
+                "unfold_all" if self.folding_enabled => editor.commands().unfold_all(),
+                // Presentation/LSP commands are handled by their owners before keyboard editing.
+                _ => {}
             }
         }
-        if alt && !primary {
-            if ui.is_key_pressed(Key::LeftArrow) {
-                self.visual_navigation = None;
-                editor.commands().move_word_left(shift);
-            }
-            if ui.is_key_pressed(Key::RightArrow) {
-                self.visual_navigation = None;
-                editor.commands().move_word_right(shift);
-            }
-            if ui.is_key_pressed(Key::UpArrow) {
-                self.move_vertical(ui, editor, layout, projection, -1, shift, true);
-            }
-            if ui.is_key_pressed(Key::DownArrow) {
-                self.move_vertical(ui, editor, layout, projection, 1, shift, true);
-            }
-        }
-        if ui.is_key_pressed(Key::Escape) {
-            self.visual_navigation = None;
-            editor.commands().collapse_selection();
-        }
-        if ui.is_window_focused() {
-            if !read_only && ui.is_key_pressed(Key::Tab) {
-                if shift {
-                    editor.commands().outdent();
-                } else {
-                    editor.commands().indent();
-                }
-                ui.set_keyboard_focus_here_with_offset(-1);
-            }
-            if primary {
-                if ui.is_key_pressed(Key::A) {
-                    self.visual_navigation = None;
-                    editor.commands().select_all();
-                }
-                if !alt {
-                    if ui.is_key_pressed(Key::LeftArrow) {
-                        self.visual_navigation = None;
-                        editor.commands().move_line_start(shift);
-                    }
-                    if ui.is_key_pressed(Key::RightArrow) {
-                        self.visual_navigation = None;
-                        editor.commands().move_line_end(shift);
-                    }
-                    if ui.is_key_pressed(Key::UpArrow) {
-                        self.move_vertical(ui, editor, layout, projection, -5, shift, false);
-                    }
-                    if ui.is_key_pressed(Key::DownArrow) {
-                        self.move_vertical(ui, editor, layout, projection, 5, shift, false);
-                    }
-                }
-            }
-        }
-
-        // The upstream order is character queue, Enter/Delete, plain arrows,
-        // then primary shortcuts. The queue is consumed even with a modifier.
-        let text = ui.with_bound_context(take_input_characters);
-        if !read_only && !text.is_empty() {
+        if !handled && !read_only && !text.is_empty() {
+            self.shortcuts.claim_text(ui);
             editor.commands().type_text(text.as_bytes());
-        }
-        if ui.is_key_pressed(Key::Enter) {
-            if self.suppress_next_enter {
-                self.suppress_next_enter = false;
-            } else if !read_only {
-                editor.commands().insert_newline();
-            }
-        }
-        if !read_only && ui.is_key_pressed(Key::Backspace) {
-            editor.commands().delete_left(alt);
-        }
-        if !read_only && ui.is_key_pressed(Key::Delete) {
-            editor.commands().delete_right(alt);
-        }
-        if !alt && !primary {
-            if ui.is_key_pressed(Key::UpArrow) {
-                self.move_vertical(ui, editor, layout, projection, -1, shift, false);
-            }
-            if ui.is_key_pressed(Key::DownArrow) {
-                self.move_vertical(ui, editor, layout, projection, 1, shift, false);
-            }
-            if ui.is_key_pressed(Key::LeftArrow) {
-                self.visual_navigation = None;
-                editor.commands().move_left(shift);
-            }
-            if ui.is_key_pressed(Key::RightArrow) {
-                self.visual_navigation = None;
-                editor.commands().move_right(shift);
-            }
-        }
-        // Additional portable navigation bindings retained by Bed.
-        if ui.is_key_pressed(Key::Home) {
-            self.visual_navigation = None;
-            if primary {
-                editor.commands().move_doc_start(shift);
-            } else {
-                editor.commands().move_line_start(shift);
-            }
-        }
-        if ui.is_key_pressed(Key::End) {
-            self.visual_navigation = None;
-            if primary {
-                editor.commands().move_doc_end(shift);
-            } else {
-                editor.commands().move_line_end(shift);
-            }
-        }
-        if ui.is_key_pressed(Key::PageUp) {
-            self.move_vertical(ui, editor, layout, projection, -20, shift, false);
-        }
-        if ui.is_key_pressed(Key::PageDown) {
-            self.move_vertical(ui, editor, layout, projection, 20, shift, false);
-        }
-        if primary {
-            if ui.is_key_pressed_with_repeat(Key::C, false) {
-                let text = editor.commands().copy();
-                if !text.is_empty() {
-                    set_clipboard(ui, &text);
-                }
-            }
-            if !read_only && ui.is_key_pressed_with_repeat(Key::X, false) {
-                let text = editor.commands().cut();
-                set_clipboard(ui, &text);
-            }
-            if !read_only
-                && ui.is_key_pressed_with_repeat(Key::V, false)
-                && let Some(text) = get_clipboard(ui)
-            {
-                editor.commands().paste(text.as_bytes());
-            }
-            if !read_only && ui.is_key_pressed(Key::Z) {
-                if shift {
-                    editor.commands().redo();
-                } else {
-                    editor.commands().undo();
-                }
-            }
-            if !read_only && ui.is_key_pressed_with_repeat(Key::S, false) {
-                actions.push(if shift {
-                    HostAction::SaveAs
-                } else {
-                    HostAction::Save
-                });
-            }
-            if ui.is_key_pressed_with_repeat(Key::O, false) {
-                actions.push(HostAction::Open);
-            }
         }
         actions
     }
 
+    #[allow(clippy::too_many_arguments)] // Keep the selection movement inputs explicit.
     fn move_vertical(
         &mut self,
         ui: &Ui,
@@ -997,7 +1031,7 @@ mod tests {
         let mut context = context();
         let mut editor = Editor::new();
         let mut input = EditorInput::default();
-        editor.set_content(&vec![b'W'; 120]);
+        editor.set_content(&[b'W'; 120]);
         editor
             .commands()
             .set_cursor(0, 1, false, CursorReveal::Ensure);
@@ -1009,7 +1043,7 @@ mod tests {
     }
 
     #[test]
-    fn wrapped_alt_down_adds_a_caret_on_the_next_screen_row() {
+    fn wrapped_primary_alt_down_adds_a_caret_on_the_next_screen_row() {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let mut context = context();
         let mut editor = Editor::new();
@@ -1019,6 +1053,14 @@ mod tests {
             .commands()
             .set_cursor(0, 1, false, CursorReveal::Ensure);
         render_input(&mut context, &mut editor, &mut input, true, false, Some(4));
+        context.io_mut().add_key_event(
+            if cfg!(target_os = "macos") {
+                Key::ModSuper
+            } else {
+                Key::ModCtrl
+            },
+            true,
+        );
         context.io_mut().add_key_event(Key::ModAlt, true);
         press_wrapped(&mut context, &mut editor, &mut input, Key::DownArrow);
         assert_eq!(editor.view.selection_count(), 2);
@@ -1165,6 +1207,81 @@ mod tests {
     }
 
     #[test]
+    fn typing_with_navigation_claims_its_character_key_before_globals() {
+        use bed_keybindings::{Action, Bindings, Overrides, Platform, Scope};
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut editor = Editor::new();
+        let mut input = EditorInput::default();
+        let mut actions = crate::shortcuts::actions();
+        actions.push(Action::new(
+            "fixture.typing",
+            "Typing key",
+            "fixture",
+            Scope::Global,
+            &["A"],
+        ));
+        input.shortcuts.bindings = std::rc::Rc::new(Bindings::new(
+            actions,
+            &Overrides::default(),
+            Platform::current(),
+        ));
+        editor.set_content(b"ab");
+        editor
+            .commands()
+            .set_cursor(0, 1, false, CursorReveal::Ensure);
+        render(&mut context, &mut editor, &mut input, true, false);
+        context.io_mut().add_key_event(Key::A, true);
+        context.io_mut().add_key_event(Key::LeftArrow, true);
+        context.io_mut().add_input_characters_utf8("a");
+        context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], 1.0 / 60.0));
+        let ui = context.frame();
+        ui.window("Input editor").build(|| {
+            ui.set_window_focus(None);
+            input.process(ui, &mut editor.view_context(), &ViewLayout::default());
+            assert!(
+                !input
+                    .shortcuts
+                    .with_scope(Scope::Global)
+                    .take(ui, "fixture.typing")
+            );
+        });
+        assert_eq!(editor.state.join(), b"aab");
+        assert_eq!(editor.view.column, 1);
+        drop(context.render_legacy());
+    }
+
+    #[test]
+    fn a_printable_navigation_binding_moves_without_also_inserting_text() {
+        use bed_keybindings::{Bindings, Overrides, Platform};
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = context();
+        let mut editor = Editor::new();
+        let mut input = EditorInput::default();
+        let actions = crate::shortcuts::actions();
+        let action = actions
+            .iter()
+            .find(|a| a.id == "bed.editor.move_left")
+            .unwrap();
+        let mut overrides = Overrides::default();
+        overrides
+            .replace(action, Some(0), "A".parse().unwrap())
+            .unwrap();
+        input.shortcuts.bindings =
+            std::rc::Rc::new(Bindings::new(actions, &overrides, Platform::current()));
+        editor.set_content(b"ab");
+        editor
+            .commands()
+            .set_cursor(0, 1, false, CursorReveal::Ensure);
+        render(&mut context, &mut editor, &mut input, true, false);
+        context.io_mut().add_key_event(Key::A, true);
+        context.io_mut().add_input_characters_utf8("a");
+        render(&mut context, &mut editor, &mut input, true, false);
+        assert_eq!(editor.state.join(), b"ab");
+        assert_eq!(editor.view.column, 0);
+    }
+
+    #[test]
     fn tab_and_primary_navigation_obey_the_source_window_focus_guard() {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let mut context = context();
@@ -1180,7 +1297,14 @@ mod tests {
         render(&mut context, &mut editor, &mut input, false, false);
         assert_eq!(editor.state.join(), b"abcd");
         context.io_mut().add_key_event(Key::Tab, false);
-        context.io_mut().add_key_event(Key::ModCtrl, true);
+        context.io_mut().add_key_event(
+            if cfg!(target_os = "macos") {
+                Key::ModSuper
+            } else {
+                Key::ModCtrl
+            },
+            true,
+        );
         context.io_mut().add_key_event(Key::LeftArrow, true);
         render(&mut context, &mut editor, &mut input, false, false);
         assert_eq!(editor.view.column, 2);
@@ -1257,3 +1381,6 @@ mod tests {
         assert_eq!(editor.view.column, 0);
     }
 }
+
+#[cfg(test)]
+use dear_imgui_rs::Key;

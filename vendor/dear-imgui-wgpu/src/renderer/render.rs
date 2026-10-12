@@ -129,9 +129,10 @@ impl WgpuRenderer {
         frame: PendingFrame<'frame>,
     ) -> RendererResult<ReconciledFrame<'frame>> {
         let request_epoch = frame.epoch().sequence();
-        let backend_data = self.backend_data.as_mut().ok_or_else(|| {
-            RendererError::InvalidRenderState("Renderer not initialized".to_owned())
-        })?;
+        let backend_data: &mut crate::WgpuGpuData =
+            self.backend_data.as_mut().ok_or_else(|| {
+                RendererError::InvalidRenderState("Renderer not initialized".to_owned())
+            })?;
         let feedback = self.texture_manager.handle_texture_requests(
             frame.texture_requests(),
             request_epoch,

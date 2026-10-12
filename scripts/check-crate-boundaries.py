@@ -7,68 +7,74 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MODULES = {
-    "bed-module-editor", "bed-module-debug", "bed-module-explorer",
-    "bed-module-search", "bed-module-terminal", "bed-module-projects",
-    "bed-module-settings", "bed-module-git", "bed-module-color",
+    "bed-editor", "bed-debug", "bed-explorer",
+    "bed-search", "bed-terminal", "bed-projects",
+    "bed-settings", "bed-git", "bed-color",
 }
 LINKED_FEATURES = {
-    "bed-plugin-structure", "bed-plugin-image", "bed-plugin-gltf",
-    "bed-plugin-font", "bed-plugin-audio", "bed-plugin-csv",
-    "bed-plugin-markdown", "bed-plugin-json", "bed-plugin-sqlite", "bed-plugin-http",
+    "bed-outline", "bed-image", "bed-model-viewer",
+    "bed-font", "bed-audio", "bed-csv",
+    "bed-markdown", "bed-json", "bed-sqlite", "bed-http",
 }
 # These are allowed direct edges, not required implementation dependencies.
 # Removing an unused dependency must not require weakening a boundary check.
 ALLOWED_INTERNAL = {
     "bed": {
-        "bedterm",
-        "bed-workbench", "bed-workbench-api", "bed-editing", "bed-files",
+        "bed-desktop", "bed-automation", "bed-idle", "bed-workbench",
+        "bedterm", "bed-runtime",
+        "bed-editor-workbench", "bed-editor-api", "bed-editing", "bed-files",
         "bed-highlight", "bed-lsp", "bed-document-session", "bed-ui",
-        "bed-editor-ui", "bed-settings", "bed-terminal", "bed-debug",
-        "bed-effects", "bed-effects-config", "bed-remote", "bed-plugin",
+        "bed-editor-ui", "bed-config", "bed-terminal-core", "bed-debug-core",
+        "bed-effects", "bed-effects-config", "bed-remote", "bed-editor-api",
     } | MODULES | LINKED_FEATURES | {"bed-scenes"},
-    "bedterm": {"bed-editing", "bed-workbench-api", "bed-terminal"},
-    "bed-workbench": {
-        "bed-workbench-api", "bed-editing", "bed-files", "bed-highlight",
+    "bedterm": {"bed-editing", "bed-editor-api", "bed-terminal-core"},
+    "bed-runtime": set(),
+    "bed-desktop": {"bed-ui"},
+    "bed-automation": {"bed-desktop", "bed-workbench", "bed-workbench-api", "bed-editor-api", "bed-editor-workbench", "bed-document-session", "bed-editing"},
+    "bed-idle": {"bed-desktop", "bed-scenes", "bed-editor-api", "bed-ui"},
+    "bed-workbench-api": set(),
+    "bed-workbench": {"bed-workbench-api"},
+    "bed-layout-app": {"bed-desktop", "bed-workbench", "bed-workbench-api", "bed-ui"},
+    "bed-editor-workbench": {
+        "bed-workbench", "bed-workbench-api",
+        "bed-editor-api", "bed-editing", "bed-files", "bed-highlight",
         "bed-lsp", "bed-document-session", "bed-ui", "bed-editor-ui",
-        "bed-settings", "bed-terminal", "bed-remote",
-    } | MODULES,
-    "bed-workbench-api": {"bed-editing", "bed-document-session"},
-    "bed-module-editor": {
+        "bed-config", "bed-remote", "bed-runtime",
+    },
+    "bed-editor-api": {"bed-editing", "bed-document-session", "bed-lsp", "bed-workbench-api", "bed-ui"},
+    "bed-editor": {
         "bed-editing", "bed-document-session", "bed-ui", "bed-editor-ui",
-        "bed-lsp", "bed-workbench-api",
+        "bed-lsp", "bed-editor-api",
     },
-    "bed-module-debug": {
-        "bed-editing", "bed-document-session", "bed-editor-ui", "bed-debug", "bed-ui",
-        "bed-workbench-api",
+    "bed-debug": {
+        "bed-editing", "bed-document-session", "bed-editor-ui", "bed-debug-core", "bed-ui",
+        "bed-editor-api", "bed-terminal-core",
     },
-    "bed-module-git": {
-        "bed-git", "bed-editing", "bed-document-session", "bed-editor-ui",
-        "bed-module-editor", "bed-workbench-api", "bed-remote", "bed-ui",
+    "bed-git": {
+        "bed-git-core", "bed-editing", "bed-document-session", "bed-editor-ui",
+        "bed-editor", "bed-editor-api", "bed-remote", "bed-ui",
     },
-    "bed-git": set(),
-    "bed-module-explorer": {
+    "bed-git-core": set(),
+    "bed-explorer": {
         "bed-editing", "bed-files", "bed-remote", "bed-document-session",
-        "bed-ui", "bed-workbench-api",
+        "bed-ui", "bed-editor-api",
     },
-    "bed-module-search": {
+    "bed-search": {
         "bed-editing", "bed-files", "bed-remote", "bed-document-session", "bed-ui",
-        "bed-workbench-api",
+        "bed-editor-api",
     },
-    "bed-module-terminal": {"bed-document-session", "bed-workbench-api"},
-    "bed-module-projects": {
-        "bed-document-session", "bed-ui", "bed-workbench-api", "bed-scenes",
+    "bed-terminal": {"bed-document-session", "bed-editor-api", "bed-terminal-core", "bed-ui", "bed-workbench", "bed-desktop"},
+    "bed-projects": {
+        "bed-document-session", "bed-ui", "bed-editor-api", "bed-scenes",
     },
-    "bed-scenes": {"bed-workbench-api", "bed-document-session"},
-    "bed-module-color": {"bed-workbench-api", "bed-editing", "bed-ui"},
-    "bed-module-settings": {
-        "bed-editing", "bed-document-session", "bed-settings", "bed-ui",
-        "bed-workbench-api",
-    },
+    "bed-scenes": {"bed-editor-api", "bed-document-session", "bed-runtime", "bed-ui"},
+    "bed-color": {"bed-editor-api", "bed-editing", "bed-ui"},
     "bed-settings": {
-        "bed-editing", "bed-document-session", "bed-highlight", "bed-ui",
-        "bed-effects-config",
+        "bed-editing", "bed-document-session", "bed-config", "bed-ui",
+        "bed-editor-api",
     },
-    "bed-debug": set(),
+    "bed-config": {"bed-highlight", "bed-ui", "bed-effects-config"},
+    "bed-debug-core": set(),
     "bed-editing": set(),
     "bed-files": {"bed-editing", "bed-remote"},
     "bed-highlight": {"bed-editing"},
@@ -76,36 +82,45 @@ ALLOWED_INTERNAL = {
     "bed-document-session": {
         "bed-editing", "bed-files", "bed-highlight", "bed-lsp", "bed-remote",
     },
-    "bed-ui": {"bed-editing"},
+    "bed-ui": set(),
     "bed-editor-ui": {
         "bed-editing", "bed-document-session", "bed-highlight", "bed-ui",
     },
-    "bed-terminal": {"bed-editing", "bed-remote"},
-    "bed-effects": {"bed-effects-config"},
+    "bed-terminal-core": {"bed-editing", "bed-remote", "bed-ui"},
+    "bed-effects": {"bed-effects-config", "bed-desktop"},
     "bed-effects-config": set(),
-    "bed-remote": {"bed-git", "bed-editing"},
+    "bed-remote": {"bed-git-core", "bed-editing"},
     "bed-headless": {"bed-remote", "bed-files"},
-    "bed-plugin": {"bed-workbench-api"},
-    "bed-plugin-structure": {
-        "bed-editing", "bed-highlight", "bed-plugin", "bed-ui",
+    "bed-outline": {
+        "bed-editing", "bed-highlight", "bed-editor-api", "bed-ui",
     },
-    "bed-plugin-image": {"bed-editing", "bed-plugin", "bed-ui"},
-    "bed-plugin-gltf": {"bed-editing", "bed-plugin", "bed-ui"},
-    "bed-plugin-font": {"bed-editing", "bed-plugin", "bed-ui"},
-    "bed-plugin-audio": {"bed-editing", "bed-plugin", "bed-ui"},
-    "bed-plugin-csv": {"bed-editing", "bed-plugin", "bed-document-session", "bed-ui"},
-    "bed-plugin-markdown": {
-        "bed-editing", "bed-plugin", "bed-workbench-api", "bed-plugin-image",
-        "bed-remote", "bed-ui",
+    "bed-image": {"bed-editing", "bed-editor-api", "bed-ui"},
+    "bed-model-viewer": {"bed-editing", "bed-editor-api", "bed-ui", "bed-runtime"},
+    "bed-font": {"bed-editing", "bed-editor-api", "bed-ui"},
+    "bed-audio": {"bed-editing", "bed-editor-api", "bed-ui"},
+    "bed-csv": {"bed-editing", "bed-editor-api", "bed-document-session", "bed-ui"},
+    "bed-markdown": {
+        "bed-editing", "bed-editor-api", "bed-editor-api", "bed-image",
+        "bed-remote", "bed-ui", "bed-document-session",
     },
-    "bed-plugin-json": {"bed-editing", "bed-plugin"},
-    "bed-plugin-sqlite": {"bed-editing", "bed-workbench-api"},
-    "bed-plugin-http": {"bed-editing", "bed-workbench-api"},
+    "bed-json": {"bed-editing", "bed-editor-api"},
+    "bed-sqlite": {"bed-editing", "bed-editor-api"},
+    "bed-http": {"bed-editing", "bed-editor-api", "bed-ui"},
 }
+# Portable shortcut data and scoped input are shared by hosts and frontends.
+ALLOWED_INTERNAL["bed-keybindings"] = set()
+for consumer in MODULES | LINKED_FEATURES | {
+    "bed", "bed-config", "bed-editor-ui", "bed-editor-workbench",
+    "bed-workbench", "bed-workbench-api", "bed-scenes",
+}:
+    ALLOWED_INTERNAL[consumer].add("bed-keybindings")
+# Feature plugins register actual panel factories and command systems here.
+for feature in MODULES | LINKED_FEATURES | {"bed-scenes"}:
+    ALLOWED_INTERNAL[feature].add("bed-workbench-api")
 HEADLESS = {
     "bed-editing", "bed-files", "bed-highlight", "bed-lsp",
-    "bed-document-session", "bed-remote", "bed-headless", "bed-debug",
-    "bed-effects-config", "bed-git",
+    "bed-document-session", "bed-remote", "bed-headless", "bed-debug-core",
+    "bed-effects-config", "bed-git-core",
 }
 GUI = {
     "dear-imgui-rs", "dear-imgui-sys", "dear-imgui-winit", "dear-imgui-wgpu",
@@ -116,7 +131,7 @@ NATIVE_BACKENDS = {
     "dear-imgui-winit", "dear-imgui-wgpu",
 }
 PORTABLE_UI = {
-    "bed-ui", "bed-editor-ui", "bed-settings", "bed-workbench-api", "bed-plugin",
+    "bed-ui", "bed-editor-ui", "bed-config", "bed-editor-api",
 } | MODULES | LINKED_FEATURES | {"bed-scenes"}
 
 
@@ -137,55 +152,65 @@ def check(offline=False):
         directory = Path(package["manifest_path"]).parent
         assert directory.is_relative_to(ROOT / "vendor"), f"Unexpected local dependency: {directory}"
         assert (directory / "BED_PATCHES.md").is_file(), f"Undocumented dependency fork: {directory}"
-    nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
-
-    def production_dependencies(pid):
-        # Dev dependencies bring linked feature fixtures into the shell tests.
-        return {
-            dep["pkg"] for dep in nodes[pid]["deps"]
-            if any(kind["kind"] != "dev" for kind in dep["dep_kinds"])
-        }
-
     for name, package in members.items():
         direct = {
-            packages[pid]["name"] for pid in production_dependencies(package["id"])
+            dependency["name"] for dependency in package["dependencies"]
+            if dependency["kind"] != "dev"
         }
         internal = direct & members.keys()
         unexpected = internal - ALLOWED_INTERNAL[name]
         assert not unexpected, f"{name}: forbidden direct dependencies: {sorted(unexpected)}"
-        seen = set()
-        pending = list(production_dependencies(package["id"]))
-        while pending:
-            pid = pending.pop()
-            if pid in seen:
-                continue
-            seen.add(pid)
-            pending.extend(production_dependencies(pid) - seen)
-        names = {packages[pid]["name"] for pid in seen}
+        # Resolve each consumer separately. Workspace-wide feature unification
+        # would incorrectly attribute the desktop's Bevy window/PBR features to
+        # graphics-free services and the layout-only example.
+        tree = ["cargo", "tree", "--locked", "-p", name, "--no-default-features",
+                "--edges", "normal,build", "--prefix", "none", "--format", "{p}"]
+        if offline:
+            tree.append("--offline")
+        output = subprocess.check_output(tree, cwd=ROOT, text=True)
+        names = {line.split()[0] for line in output.splitlines() if line.strip()} - {name}
         forbidden = set()
-        if name in HEADLESS:
+        if name in {"bed-workbench", "bed-workbench-api", "bed-layout-app", "bed-desktop"}:
+            forbidden = {
+                "bed", "bed-config", "bed-files", "bed-remote",
+                "bed-editor-api", "bed-editor-workbench", "bed-editing",
+                "bed-document-session", "bed-lsp", "bed-git-core", "bed-terminal-core",
+                "bed-scenes", "bevy_pbr", "bevy_gltf", "rodio",
+            } | MODULES | LINKED_FEATURES
+            if name in {"bed-workbench", "bed-workbench-api"}:
+                forbidden |= NATIVE_BACKENDS | {"bed-desktop", "bed-effects"}
+        elif name in HEADLESS:
             forbidden = GUI
         elif name in PORTABLE_UI:
             forbidden = NATIVE_BACKENDS | {
-                "bed", "bed-workbench", "bed-terminal", "bed-effects",
+                "bed", "bed-editor-workbench", "bed-terminal-core", "bed-effects",
             }
+            if name in {"bed-terminal", "bed-debug"}:
+                # These systems consume the canonical terminal backend as typed
+                # world state; window and clipboard adapters remain forbidden.
+                forbidden.remove("bed-terminal-core")
             if name == "bed-ui":
                 forbidden |= {
                     "bed-document-session", "bed-editor-ui", "bed-highlight",
-                    "bed-lsp", "bed-workbench-api", "wgpu",
+                    "bed-lsp", "bed-editor-api", "wgpu",
                 } | MODULES | LINKED_FEATURES | {"bed-scenes"}
             elif name == "bed-editor-ui":
                 # Document services may use LSP; the widget has no direct LSP or
                 # workbench dependency and only consumes neutral presentation data.
                 assert "bed-lsp" not in direct, "Editor widgets must not depend directly on LSP"
-                forbidden |= {"bed-workbench-api"} | MODULES | LINKED_FEATURES | {"bed-scenes"}
-        elif name == "bed-workbench":
-            # Dialogs/Trash are shell services. Native windows, clipboard and the
+                forbidden |= {"bed-editor-api"} | MODULES | LINKED_FEATURES | {"bed-scenes"}
+        elif name == "bed-runtime":
+            forbidden = NATIVE_BACKENDS | {
+                "bed", "bed-editor-workbench", "bed-editor-api", "dear-imgui-rs",
+                "dear-imgui-sys", "bed-editor-ui", "bed-config", "bed-effects",
+            } | MODULES | LINKED_FEATURES
+        elif name == "bed-editor-workbench":
+            # Dialogs/Trash belong to editor transitions. Native windows, clipboard and the
             # ImGui platform/renderer backends remain with the desktop host.
             forbidden = {
                 "bed", "winit", "arboard", "muda", "dear-imgui-winit",
                 "dear-imgui-wgpu", "bed-effects",
-            } | LINKED_FEATURES
+            } | LINKED_FEATURES | MODULES | {"bed-terminal-core"}
             # rfd can itself use AppKit; the shell must not import AppKit directly.
             assert not direct & (NATIVE_BACKENDS - {"rfd"}), (
                 f"Workbench imports native host APIs: {sorted(direct & (NATIVE_BACKENDS - {'rfd'}))}"

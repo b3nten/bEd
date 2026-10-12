@@ -722,19 +722,47 @@ fn gutter_and_keyboard_controls_toggle_folds_without_editing_text() {
         .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
     fixture.render(1.0 / 60.0);
     assert!(fixture.editor.view.folds.is_hidden(1));
-    fixture.context.io_mut().add_key_event(Key::ModCtrl, true);
-    fixture.context.io_mut().add_key_event(Key::ModAlt, true);
+    fixture.context.io_mut().add_key_event(
+        if cfg!(target_os = "macos") {
+            Key::ModSuper
+        } else {
+            Key::ModCtrl
+        },
+        true,
+    );
+    fixture.context.io_mut().add_key_event(
+        if cfg!(target_os = "macos") {
+            Key::ModAlt
+        } else {
+            Key::ModShift
+        },
+        true,
+    );
     fixture
         .context
         .io_mut()
-        .add_key_event(Key::RightBracket, true);
+        .add_key_event(Key::LeftBracket, true);
     fixture.render(1.0 / 60.0);
     fixture
         .context
         .io_mut()
-        .add_key_event(Key::RightBracket, false);
-    fixture.context.io_mut().add_key_event(Key::ModCtrl, false);
-    fixture.context.io_mut().add_key_event(Key::ModAlt, false);
+        .add_key_event(Key::LeftBracket, false);
+    fixture.context.io_mut().add_key_event(
+        if cfg!(target_os = "macos") {
+            Key::ModSuper
+        } else {
+            Key::ModCtrl
+        },
+        false,
+    );
+    fixture.context.io_mut().add_key_event(
+        if cfg!(target_os = "macos") {
+            Key::ModAlt
+        } else {
+            Key::ModShift
+        },
+        false,
+    );
     fixture.render(1.0 / 60.0);
     assert!(fixture.editor.view.folds.collapsed_ranges().is_empty());
     assert_eq!(fixture.editor.state.join(), original);
@@ -962,6 +990,35 @@ fn wrapped_navigation_centers_and_reveals_positions_within_one_document_line() {
     assert!(cursor_y >= 0.0 && cursor_y + revealed.line_height <= revealed.viewport[1] + 1.0);
     assert_eq!(revealed.position[0], 0.0);
     fixture.assert_stays_at(revealed.position);
+}
+
+#[test]
+fn wrapping_reflow_retargets_active_navigation_to_the_same_document_position() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut fixture = ScrollFixture::new(200, 200);
+    fixture.frame.soft_wrap = true;
+    fixture.render(1.0 / 60.0);
+    fixture.editor.view.request_cursor_center(150, 120);
+    let mut during = ScrollSample::default();
+    for _ in 0..4 {
+        during = fixture.render(1.0 / 60.0);
+    }
+    assert!(during.position[1] > 0.0);
+    assert!(fixture.frame.smooth_scroll.is_some());
+    fixture.pane_size[0] = 360.0;
+    let resized = fixture.render(1.0 / 60.0);
+    assert!(resized.position[1] >= during.position[1]);
+    assert!(
+        fixture.frame.smooth_scroll.is_some(),
+        "reflow cancelled navigation"
+    );
+    let settled = fixture.settle_navigation();
+    let visual = fixture.frame.projection.visual_position(150, 120);
+    let expected = (fixture.frame.projection.row_top(visual) * settled.line_height
+        - (settled.viewport[1] - settled.line_height) * 0.5)
+        .clamp(0.0, settled.maximum[1]);
+    assert!((settled.position[1] - expected).abs() <= 1.0);
+    fixture.assert_stays_at(settled.position);
 }
 
 #[test]

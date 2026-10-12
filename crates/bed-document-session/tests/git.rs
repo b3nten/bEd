@@ -296,7 +296,7 @@ fn real_editor_events_update_git_cache_for_multiple_actions_and_undo_immediately
     assert!(editor.git.borrow().current_git_changes.is_empty());
 }
 #[test]
-fn disabled_edit_keeps_old_markers_until_document_open_and_non_repo_has_all_added() {
+fn disabled_edit_keeps_old_markers_until_open_and_standalone_paths_discover_their_repository() {
     let fixture = TempRepo::dirty();
     let path = fixture.path("README");
     let mut document = state(b"line1\nchanged\n", &path);
@@ -313,9 +313,23 @@ fn disabled_edit_keeps_old_markers_until_document_open_and_non_repo_has_all_adde
     assert!(git.current_git_changes.is_empty());
     git.init(&document, "", true);
     git.on_document_opened(&document, true);
-    assert_eq!(git.current_git_changes, "+2-0");
-    assert!(git.is_line_edited(&document.path, 1));
-    assert!(git.is_line_edited(&document.path, 2));
+    assert!(git.current_git_changes.is_empty());
+    assert!(!git.is_line_edited(&document.path, 1));
+    assert!(!git.is_line_edited(&document.path, 2));
+
+    // A standalone document outside a repository has no Git baseline or gutter.
+    document.path = fixture
+        .root
+        .parent()
+        .unwrap()
+        .join("bed-outside-git.txt")
+        .to_string_lossy()
+        .into_owned();
+    git.init(&document, "", true);
+    git.on_document_opened(&document, true);
+    assert!(git.current_git_changes.is_empty());
+    assert!(!git.is_line_edited(&document.path, 1));
+    assert!(!git.is_line_edited(&document.path, 2));
 }
 #[test]
 fn status_path_queries_preserve_deleted_files_and_new_missing_parents() {

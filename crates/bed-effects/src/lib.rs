@@ -2,4 +2,8 @@
 pub mod shader;
 pub mod shader_manager;
 pub mod shader_types;
-pub mod viewport_effects;
+
+#[cfg(feature = "desktop")]
+pub mod desktop;
+#[cfg(feature = "desktop")]
+pub use desktop::EffectsPlugin;

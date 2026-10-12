@@ -14,7 +14,7 @@ use bed_files::{
     file_monitor::{FileChangeKind, FileMonitor},
     files::{read_file_bytes, read_file_raw},
 };
-use bed_lsp::workspace_lsp::{WorkspaceLsp, WorkspaceLspEvent};
+use bed_lsp::workspace_lsp::{LspRequestOrigin, WorkspaceLsp, WorkspaceLspEvent};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, VecDeque},
@@ -67,7 +67,7 @@ pub enum LspConfigMode {
 }
 /// No service, settings seeding, GUI, clipboard or global directory is touched
 /// by defaults. Disk/process services require explicit host configuration.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SessionOptions {
     pub project_root: Option<PathBuf>,
     pub autosave: Option<Duration>,
@@ -325,6 +325,9 @@ impl EditorSession {
             })
     }
     pub fn set_highlight_theme(&mut self, theme: bed_highlight::tree_sitter::ThemeColors) {
+        if self.theme == theme {
+            return;
+        }
         self.theme = theme;
         for entry in self.documents.values_mut() {
             entry.editor.highlight.set_theme_colors(self.theme.clone());
@@ -447,7 +450,7 @@ impl EditorSession {
         }
         editor.set_history_key(Some(format!("bed:untitled:{}", id.0)));
         editor.set_content_with_kind(bytes, kind);
-        self.install_entry(id, editor, FileMonitor::new());
+        self.install_entry(id, editor, FileMonitor::new(), None);
         Ok(id)
     }
     pub fn document_kind(&self, document: DocumentId) -> io::Result<DocumentKind> {
@@ -466,7 +469,7 @@ impl EditorSession {
         editor.state.language_id = language_id.to_owned();
         editor.state.read_only = true;
         editor.state.mark_saved();
-        self.install_entry(id, editor, FileMonitor::new());
+        self.install_entry(id, editor, FileMonitor::new(), None);
         self.entry_mut(id)?.autosave_paused = true;
         Ok(id)
     }
@@ -510,10 +513,33 @@ impl EditorSession {
         path: &Path,
         kind: DocumentKind,
     ) -> io::Result<DocumentId> {
+        self.open_file_in_context(path, kind, None)
+    }
+    /// Open a definition target using the requesting server's analysis context
+    /// when the target is a new compatible file outside this workspace.
+    pub fn open_file_from_lsp(
+        &mut self,
+        path: &Path,
+        origin: LspRequestOrigin,
+    ) -> io::Result<DocumentId> {
+        if !self.accepts_lsp_origin(&origin) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Stale LSP request origin",
+            ));
+        }
+        self.open_file_in_context(path, DocumentKind::Text, Some(origin))
+    }
+    fn open_file_in_context(
+        &mut self,
+        path: &Path,
+        kind: DocumentKind,
+        origin: Option<LspRequestOrigin>,
+    ) -> io::Result<DocumentId> {
         self.ensure_running()?;
         if self.remote.is_some() {
             return self
-                .request_open_file_with_kind(path, kind)?
+                .request_open_mode(path, Some(kind), origin)?
                 .ok_or_else(|| {
                     io::Error::new(
                         io::ErrorKind::WouldBlock,
@@ -534,7 +560,7 @@ impl EditorSession {
         } else {
             read_file_bytes(&path)?
         };
-        self.install_local_file(path, kind, raw.raw)
+        self.install_local_file(path, kind, raw.raw, origin)
     }
     /// Open using the host's default text/bytes classifier.
     pub fn open_file_auto(&mut self, path: &Path) -> io::Result<DocumentId> {
@@ -550,13 +576,19 @@ impl EditorSession {
             return Ok(id);
         }
         let raw = read_file_bytes(&path)?;
-        self.install_local_file(path, bed_files::files::classify_bytes(&raw.raw), raw.raw)
+        self.install_local_file(
+            path,
+            bed_files::files::classify_bytes(&raw.raw),
+            raw.raw,
+            None,
+        )
     }
     fn install_local_file(
         &mut self,
         path: PathBuf,
         kind: DocumentKind,
         bytes: Vec<u8>,
+        origin: Option<LspRequestOrigin>,
     ) -> io::Result<DocumentId> {
         let mut monitor = FileMonitor::new();
         monitor.watch_bytes(&path, &bytes)?;
@@ -570,10 +602,16 @@ impl EditorSession {
             .api()
             .open_document_with_kind(path_string(&path)?, &bytes, kind);
         self.paths.insert(path, id);
-        self.install_entry(id, editor, monitor);
+        self.install_entry(id, editor, monitor, origin);
         Ok(id)
     }
-    fn install_entry(&mut self, id: DocumentId, mut editor: Editor, monitor: FileMonitor) {
+    fn install_entry(
+        &mut self,
+        id: DocumentId,
+        mut editor: Editor,
+        monitor: FileMonitor,
+        origin: Option<LspRequestOrigin>,
+    ) {
         let text = editor.state.kind == DocumentKind::Text;
         editor.highlight.enabled = self.options.highlighting && text;
         editor.set_git_changed_lines(self.options.git && text);
@@ -619,7 +657,7 @@ impl EditorSession {
                 git_initialized: self.options.git && text,
             },
         );
-        self.attach_lsp(id);
+        self.attach_lsp(id, origin);
         self.queued.push(SessionEvent::Opened { document: id });
     }
     pub fn create_view(&mut self, document: DocumentId) -> io::Result<ViewId> {
@@ -629,6 +667,22 @@ impl EditorSession {
         let token = Rc::new(());
         let id = self.create_view_entry(document, Some(Rc::downgrade(&token)))?;
         Ok((id, token))
+    }
+    /// Retain an existing managed view while its presentation owner changes.
+    /// This never creates a view or revives a released owner.
+    pub fn retain_managed_view(&self, view: ViewId) -> io::Result<Rc<()>> {
+        let document = self.document_for_view(view).ok_or_else(missing_view)?;
+        self.entry(document)?
+            .views
+            .get(&view)
+            .and_then(|entry| entry.lifetime.as_ref())
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Existing view has no live managed presentation",
+                )
+            })
     }
     fn create_view_entry(
         &mut self,
@@ -1328,7 +1382,7 @@ impl EditorSession {
         self.paths.retain(|_, id| *id != document);
         self.paths.insert(target, document);
         self.forget_remote_document(document, false);
-        self.attach_lsp(document);
+        self.attach_lsp(document, None);
         if remote {
             self.queue_remote_git(document);
         }
@@ -1480,10 +1534,7 @@ impl EditorSession {
         if invalidate_text_history {
             self.history.borrow_mut().forget_existing_file(&key);
         }
-        if let Some(pool) = &mut self.lsp {
-            let _ = pool.unregister_document(document);
-        }
-        self.attach_lsp(document);
+        self.reopen_lsp(document);
         self.queued.push(SessionEvent::Reloaded {
             document,
             generation,
@@ -1518,10 +1569,7 @@ impl EditorSession {
         if invalidate_text_history {
             self.history.borrow_mut().forget_existing_file(&key);
         }
-        if let Some(pool) = &mut self.lsp {
-            let _ = pool.unregister_document(document);
-        }
-        self.attach_lsp(document);
+        self.reopen_lsp(document);
         self.queued.push(SessionEvent::Reloaded {
             document,
             generation,
@@ -1801,7 +1849,7 @@ impl EditorSession {
                 entry.git_initialized = true;
             }
             if lsp_changed {
-                self.attach_lsp(id);
+                self.attach_lsp(id, None);
             }
         }
         Ok(())
@@ -1977,7 +2025,7 @@ impl EditorSession {
             pool.set_file_observations_available(self.options.lsp_file_observations);
         }
     }
-    fn attach_lsp(&mut self, document: DocumentId) {
+    fn attach_lsp(&mut self, document: DocumentId, origin: Option<LspRequestOrigin>) {
         let Some(pool) = &mut self.lsp else {
             return;
         };
@@ -1986,14 +2034,49 @@ impl EditorSession {
             return;
         }
         let state = &entry.editor.state;
-        let result = pool.register_document(
+        let result = if let Some(origin) = origin {
+            pool.register_document_from_origin(
+                document,
+                &state.path,
+                &state.join(),
+                state.version,
+                &state.language_id,
+                &origin,
+            )
+        } else {
+            pool.register_document(
+                document,
+                &state.path,
+                &state.join(),
+                state.version,
+                &state.language_id,
+            )
+        };
+        entry
+            .editor
+            .bind_lsp_client(pool.client_for_document(document));
+        if let Err(error) = result {
+            self.record_error(Some(document), "lsp", &error);
+        }
+    }
+    fn reopen_lsp(&mut self, document: DocumentId) {
+        let Some(pool) = &mut self.lsp else {
+            return;
+        };
+        let state = &self.documents[&document].editor.state;
+        if state.kind == DocumentKind::Bytes || state.path.is_empty() {
+            return;
+        }
+        let result = pool.reopen_document(
             document,
             &state.path,
             &state.join(),
             state.version,
             &state.language_id,
         );
-        entry
+        self.documents
+            .get_mut(&document)
+            .unwrap()
             .editor
             .bind_lsp_client(pool.client_for_document(document));
         if let Err(error) = result {

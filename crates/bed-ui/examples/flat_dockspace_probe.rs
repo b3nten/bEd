@@ -1,6 +1,6 @@
 //! Headless experiment for application-owned rectangles with native ImGui tabs.
 //!
-//! Run: cargo run --offline -p bed-ui --example flat_dockspace_probe
+//! Run: cargo run --offline -p bed-ui --features imgui --example flat_dockspace_probe
 //! The mouse tests submit real events over complete ImGui frames. The split/join
 //! tests deliberately use DockBuilder only to move contents, never to split.
 

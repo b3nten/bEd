@@ -1,0 +1,16 @@
+[package]
+name = "bed-runtime"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = []
+render = ["dep:wgpu", "bevy/reflect_auto_register", "bevy/bevy_asset", "bevy/bevy_render", "bevy/bevy_core_pipeline", "bevy/bevy_anti_alias", "bevy/bevy_log", "bevy/png", "bevy/jpeg", "bevy/webp"]
+# Keep exact component metadata names in release for Bevy 0.20 GPU recovery.
+scene = ["render", "bevy/debug", "bevy/bevy_pbr", "bevy/bevy_mikktspace", "bevy/bevy_gltf"]
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "keyboard", "mouse"] }
+wgpu = { workspace = true, optional = true }

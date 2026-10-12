@@ -23,7 +23,7 @@ impl Default for EditorOverlayStyle {
 }
 impl EditorOverlayStyle {
     pub(crate) fn dimmed_background(&self, ui: &Ui) -> [f32; 4] {
-        let mut color = bed_editing::util::color::blend(
+        let mut color = bed_ui::color::blend(
             ui.style_color(StyleColor::Text),
             self.background_color,
             0.055,

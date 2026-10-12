@@ -18,3 +18,8 @@ serde_json = { workspace = true }
 name = "remote_io"
 path = "tests/remote_io.rs"
 harness = false
+
+[[test]]
+name = "lsp_navigation"
+path = "tests/lsp_navigation.rs"
+harness = false

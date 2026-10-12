@@ -1,11 +1,11 @@
 //! Git controls contributed to every text view of a working document.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ConflictChoice {
     Current,
     Incoming,
     Both,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SourceGitAction {
     ResolveConflict { id: u64, choice: ConflictChoice },
 }

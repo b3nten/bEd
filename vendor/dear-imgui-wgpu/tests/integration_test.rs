@@ -2,6 +2,8 @@
 //!
 //! This test verifies that our improvements maintain compatibility with the C++ implementation
 
+mod snapshot_test;
+
 use dear_imgui_rs::{
     BackendFlags, Condition, Context, FramePrepareOptions, ManagedTextureId, TextureId,
     texture::{OwnedTextureData, TextureFormat as ImGuiTextureFormat},

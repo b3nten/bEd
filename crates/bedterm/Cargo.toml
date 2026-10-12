@@ -8,4 +8,4 @@ description = "Shell helper dispatch for bEd terminal panels"
 license.workspace = true
 
 [dependencies]
-bed-terminal = { workspace = true }
+bed-terminal-core = { workspace = true }

@@ -733,10 +733,14 @@ impl LspClient {
                 analyzer.remove("checkOnSave");
             }
             drop(configuration);
-            let _ = self.send_notification(
-                "workspace/didChangeConfiguration",
-                Some(json!({"settings":self.server_configuration.borrow().clone()})),
-            );
+            // The handshake publishes the latest settings after initialized.
+            // Sending them while initialize is pending makes strict servers exit.
+            if self.is_initialized() {
+                let _ = self.send_notification(
+                    "workspace/didChangeConfiguration",
+                    Some(json!({"settings":self.server_configuration.borrow().clone()})),
+                );
+            }
         }
     }
     pub fn refresh_workspace_diagnostics(&mut self) {
@@ -760,6 +764,22 @@ impl LspClient {
             .as_mut()
             .ok_or_else(not_connected)?
             .send_request(method, Some(params), callback)
+    }
+
+    pub fn request_timeout(&self) -> Duration {
+        Duration::from_secs(
+            self.config
+                .language_servers
+                .get(&self.current_server)
+                .map_or(20, |server| server.timeout_secs),
+        )
+    }
+
+    pub fn cancel_request(&mut self, id: &RpcId) -> io::Result<()> {
+        self.session
+            .as_mut()
+            .ok_or_else(not_connected)?
+            .cancel_request(id)
     }
 
     pub fn send_notification(&self, method: &str, params: Option<Value>) -> io::Result<()> {
@@ -986,6 +1006,8 @@ fn initialize_params(workspace: &str, remote: bool) -> io::Result<Value> {
     )
 }
 
+// Keep the initialization transition's borrowed state explicit.
+#[allow(clippy::too_many_arguments)]
 fn consume_initialize_result(
     receiver: &mut Option<mpsc::Receiver<Result<Value, ResponseError>>>,
     sync: &mut LspDocumentSync,
@@ -1046,6 +1068,8 @@ fn consume_initialize_result(
     }
 }
 
+// The registered protocol handlers capture these independent session inputs.
+#[allow(clippy::too_many_arguments)]
 fn register_server_handlers(
     session: &mut RpcSession,
     workspace: &str,

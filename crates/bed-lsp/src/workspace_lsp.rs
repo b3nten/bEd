@@ -88,6 +88,7 @@ struct RegisteredDocument {
     language: String,
     language_id: String,
     instance: Option<ServerInstanceId>,
+    inherited_instance: Option<ServerInstanceId>,
     registration: u64,
     resolve_pending: bool,
     resolve_queued: bool,
@@ -362,6 +363,12 @@ impl WorkspaceLsp {
             &self.config
         }
     }
+    fn config_for_context(&self, path: &str, instance: Option<&ServerInstanceId>) -> &LspConfig {
+        match instance {
+            Some(instance) => self.config_for_path(&instance.root.to_string_lossy()),
+            None => self.config_for_path(path),
+        }
+    }
     pub fn set_server_arguments(&mut self, language: &str, arguments: Vec<String>) {
         let id = self
             .config
@@ -408,10 +415,49 @@ impl WorkspaceLsp {
         version: i32,
         language_id: &str,
     ) -> io::Result<()> {
+        self.register_document_with_context(id, path, bytes, version, language_id, None)
+    }
+    /// Definition targets outside this workspace belong to the requesting
+    /// server's analysis context. Ordinary file opens still discover their root.
+    pub fn register_document_from_origin(
+        &mut self,
+        id: DocumentId,
+        path: &str,
+        bytes: &[u8],
+        version: i32,
+        language_id: &str,
+        origin: &LspRequestOrigin,
+    ) -> io::Result<()> {
+        if !self.origin_is_current(origin) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Stale LSP request origin",
+            ));
+        }
+        let context = self.documents[&origin.document_id].instance.clone();
+        self.register_document_with_context(id, path, bytes, version, language_id, context)
+    }
+    fn register_document_with_context(
+        &mut self,
+        id: DocumentId,
+        path: &str,
+        bytes: &[u8],
+        version: i32,
+        language_id: &str,
+        context: Option<ServerInstanceId>,
+    ) -> io::Result<()> {
         if self.documents.contains_key(&id) {
             return self.update_document_snapshot(id, path, bytes, version, language_id);
         }
         let path = self.document_key(path);
+        let inherited_instance = context.filter(|instance| {
+            !Path::new(&path).starts_with(&self.root)
+                && self
+                    .config_for_context(&path, Some(instance))
+                    .detect_language_with_content(&path, bytes)
+                    .and_then(|language| language.language_server.as_deref())
+                    == Some(instance.server.as_str())
+        });
         if self
             .documents
             .values()
@@ -431,6 +477,7 @@ impl WorkspaceLsp {
                 language: String::new(),
                 language_id: language_id.to_owned(),
                 instance: None,
+                inherited_instance,
                 registration: next_server_generation(),
                 resolve_pending: false,
                 resolve_queued: false,
@@ -444,17 +491,30 @@ impl WorkspaceLsp {
     }
     fn prepare_document(&mut self, id: DocumentId) -> io::Result<()> {
         let document = &self.documents[&id];
+        let inherited_instance = document.inherited_instance.clone().filter(|instance| {
+            !Path::new(&document.path).starts_with(&self.root)
+                && self
+                    .config_for_context(&document.path, Some(instance))
+                    .detect_language_with_content(&document.path, &document.bytes)
+                    .and_then(|language| language.language_server.as_deref())
+                    == Some(instance.server.as_str())
+        });
         let language = self
-            .config_for_path(&document.path)
+            .config_for_context(&document.path, inherited_instance.as_ref())
             .detect_language_with_content(&document.path, &document.bytes)
             .cloned();
         let Some(language) = language else {
+            self.documents.get_mut(&id).unwrap().inherited_instance = None;
             return Ok(());
         };
         let server = language.language_server.clone();
         let document = self.documents.get_mut(&id).unwrap();
         document.language = language.name;
         document.language_id = language.language_id;
+        document.inherited_instance = inherited_instance;
+        if let Some(instance) = document.inherited_instance.clone() {
+            return self.bind_document(id, instance);
+        }
         if let Some(server) = server {
             if self.discovery.is_some() {
                 document.resolve_pending = true;
@@ -476,17 +536,17 @@ impl WorkspaceLsp {
         if document.instance.as_ref() == Some(&instance) {
             return Ok(());
         }
-        if let Some(previous) = document.instance.take() {
-            if let Some(slot) = self.servers.get(&previous) {
-                slot.client.borrow_mut().did_close(&document.path)?;
-            }
+        if let Some(previous) = document.instance.take()
+            && let Some(slot) = self.servers.get(&previous)
+        {
+            slot.client.borrow_mut().did_close(&document.path)?;
         }
         document.instance = Some(instance.clone());
         let path = document.path.clone();
         let bytes = document.bytes.clone();
         let version = document.version;
         let language_id = document.language_id.clone();
-        let outside = self.discovery.is_some() && !Path::new(&path).starts_with(&self.root);
+        let outside = self.discovery.is_some() && !instance.root.starts_with(&self.root);
         let result = {
             let mut client = self.ensure_slot(&instance, outside).client.borrow_mut();
             client
@@ -518,38 +578,69 @@ impl WorkspaceLsp {
         language_id: &str,
     ) -> io::Result<()> {
         let path = self.document_key(path);
+        let Some(document) = self.documents.get(&id) else {
+            return self.register_document(id, &path, bytes, version, language_id);
+        };
         let language = self
-            .config_for_path(&path)
+            .config_for_context(&path, document.inherited_instance.as_ref())
             .detect_language_with_content(&path, bytes)
             .map(|language| language.name.clone())
             .unwrap_or_default();
-        let Some(document) = self.documents.get_mut(&id) else {
-            return self.register_document(id, &path, bytes, version, language_id);
-        };
         if document.path != path || (self.config_ready && document.language != language) {
             self.unregister_document(id)?;
             return self.register_document(id, &path, bytes, version, language_id);
         }
+        let document = self.documents.get_mut(&id).unwrap();
         document.bytes.clear();
         document.bytes.extend_from_slice(bytes);
         document.version = version;
         Ok(())
     }
     pub fn unregister_document(&mut self, id: DocumentId) -> io::Result<()> {
-        if let Some(document) = self.documents.remove(&id) {
-            if let Some(instance) = document.instance {
-                if let Some(slot) = self.servers.get(&instance) {
-                    slot.client.borrow_mut().did_close(&document.path)?;
-                }
-            }
+        if let Some(document) = self.documents.remove(&id)
+            && let Some(instance) = document.instance
+            && let Some(slot) = self.servers.get(&instance)
+        {
+            slot.client.borrow_mut().did_close(&document.path)?;
         }
         Ok(())
+    }
+    /// A content reload closes/reopens synchronization without discarding the
+    /// external document's inherited analysis context. Renames rediscover it.
+    pub fn reopen_document(
+        &mut self,
+        id: DocumentId,
+        path: &str,
+        bytes: &[u8],
+        version: i32,
+        language_id: &str,
+    ) -> io::Result<()> {
+        let key = self.document_key(path);
+        let context = self
+            .documents
+            .get(&id)
+            .filter(|document| {
+                document.path == key
+                    && self
+                        .config_for_context(&key, document.inherited_instance.as_ref())
+                        .detect_language_with_content(&key, bytes)
+                        .map(|language| language.name.as_str())
+                        == Some(document.language.as_str())
+            })
+            .and_then(|document| document.inherited_instance.clone());
+        self.unregister_document(id)?;
+        self.register_document_with_context(id, &key, bytes, version, language_id, context)
     }
     pub fn client_for_document(&self, id: DocumentId) -> Option<SharedLspClient> {
         self.client_for_instance(self.documents.get(&id)?.instance.as_ref()?)
     }
     pub fn client_for_instance(&self, id: &ServerInstanceId) -> Option<SharedLspClient> {
         self.servers.get(id).map(|slot| slot.client.clone())
+    }
+    /// Existing server clients, including servers whose last document closed.
+    /// Activity displays can inspect these without discovering executable paths.
+    pub fn server_clients(&self) -> impl Iterator<Item = SharedLspClient> + '_ {
+        self.servers.values().map(|slot| slot.client.clone())
     }
     pub fn client_for_path(&self, path: &str) -> Option<SharedLspClient> {
         let path = self.document_key(path);
@@ -852,15 +943,14 @@ impl WorkspaceLsp {
                                 .config_for_path(&doc.path)
                                 .server_id(&doc.language)
                                 .map(str::to_owned);
-                            if let Some(server) = server {
-                                if let Err(error) =
+                            if let Some(server) = server
+                                && let Err(error) =
                                     self.bind_document(document, ServerInstanceId { server, root })
-                                {
-                                    self.events.push(WorkspaceLspEvent::DocumentError {
-                                        document_id: document,
-                                        message: error.to_string(),
-                                    });
-                                }
+                            {
+                                self.events.push(WorkspaceLspEvent::DocumentError {
+                                    document_id: document,
+                                    message: error.to_string(),
+                                });
                             }
                         }
                         Err(error) => {

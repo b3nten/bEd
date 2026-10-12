@@ -26,7 +26,7 @@ use bed_editing::{
 };
 #[cfg(test)]
 use dear_imgui_rs::{Condition, StyleColor};
-use dear_imgui_rs::{FocusedFlags, Key, StyleVar, Ui, WindowFlags, sys};
+use dear_imgui_rs::{FocusedFlags, StyleVar, Ui, WindowFlags, sys};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -135,7 +135,7 @@ pub struct EditorFrame {
     pub navigation_animations: bool,
     was_focused: bool,
     pub rainbow_mode: bool,
-    pub line_jump_key: Option<Key>,
+    pub shortcuts: bed_keybindings::ShortcutInput,
     pub external_overlay: bool,
     pub background_color: [f32; 4],
     pub minimap_enabled: bool,
@@ -218,7 +218,7 @@ impl EditorFrame {
             navigation_animations: true,
             was_focused: false,
             rainbow_mode: true,
-            line_jump_key: Some(Key::Semicolon),
+            shortcuts: crate::shortcuts::default_input(),
             external_overlay: false,
             background_color: [0.0, 0.0, 0.0, 1.0],
             minimap_enabled: false,
@@ -366,27 +366,18 @@ impl EditorFrame {
         self.reveal_fold_targets(editor);
         self.sync_fold_animation(ui, editor);
         self.refresh_projection(editor);
-        let primary = ui.io().key_ctrl() || ui.io().key_super();
         if let Some(keep) = self.exclusive_overlay.get() {
             self.close_internal_overlays_except(keep);
         }
         let pane_focused = ui.is_window_focused_with_flags(FocusedFlags::CHILD_WINDOWS);
-        if !self.external_overlay
-            && pane_focused
-            && primary
-            && !ui.io().key_shift()
-            && ui.is_key_pressed_with_repeat(Key::F, false)
-        {
+        if !self.external_overlay && pane_focused && self.shortcuts.take(ui, "bed.editor.find") {
             self.line_jump.dismiss();
             self.finder.open(editor);
             editor.api().request_exclusive_overlay(Overlay::Find);
         }
         if !self.external_overlay
             && pane_focused
-            && primary
-            && self
-                .line_jump_key
-                .is_some_and(|key| ui.is_key_pressed_with_repeat(key, false))
+            && self.shortcuts.take(ui, "bed.editor.go_to_line")
         {
             self.finder.dismiss();
             if self.line_jump.active {
@@ -626,12 +617,11 @@ impl EditorFrame {
                 self.sync_fold_animation(ui, editor);
                 let previous_projection = self.projection_key;
                 self.refresh_projection(editor);
-                if previous_projection != self.projection_key {
-                    if let Some(y) =
+                if previous_projection != self.projection_key
+                    && let Some(y) =
                         self.refresh_wrap(ui, editor, wrap_width, self.layout.line_height)
-                    {
-                        ui.set_scroll_y(y);
-                    }
+                {
+                    ui.set_scroll_y(y);
                 }
                 self.layout.total_height = self.projection.total_rows() * self.layout.line_height;
                 let (state, view) = editor.state_and_view();
@@ -983,7 +973,7 @@ impl EditorFrame {
     fn refresh_wrap(
         &mut self,
         ui: &Ui,
-        editor: &Editor,
+        editor: &mut ViewContext<'_>,
         width: f32,
         previous_height: f32,
     ) -> Option<f32> {
@@ -1019,6 +1009,17 @@ impl EditorFrame {
         }
         self.projection.crop_folds(&self.fold_visuals);
         self.wrap_key = Some(key);
+        if self.smooth_scroll.is_some()
+            && editor.view.requested_scroll.is_none()
+            && !editor.view.ensure_cursor_visible.horizontal
+            && !editor.view.ensure_cursor_visible.vertical
+        {
+            // Syntax folds can arrive while a newly opened definition is still
+            // scrolling into view. Retarget navigation using the new geometry;
+            // restoring the old viewport anchor would cancel the jump.
+            editor.view_mut().center_cursor_vertical = true;
+            return None;
+        }
         self.smooth_scroll = None;
         anchor.map(|anchor| {
             let visual = match anchor.location {
@@ -1700,3 +1701,6 @@ mod tests {
 #[cfg(test)]
 #[path = "navigation_scroll_tests.rs"]
 mod navigation_scroll_tests;
+
+#[cfg(test)]
+use dear_imgui_rs::Key;

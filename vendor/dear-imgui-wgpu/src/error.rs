@@ -133,6 +133,10 @@ pub enum RendererError {
     #[error(transparent)]
     FrameCapture(#[from] dear_imgui_rs::render::SnapshotError),
 
+    /// Detached frame feedback was rejected or its Context has already closed.
+    #[error(transparent)]
+    SnapshotCommit(#[from] dear_imgui_rs::render::SnapshotCommitError),
+
     /// Context attachment registration rejected the renderer's deferred-drop cleanup hook.
     #[error(transparent)]
     ContextAttachment(#[from] dear_imgui_rs::ContextAttachmentError),

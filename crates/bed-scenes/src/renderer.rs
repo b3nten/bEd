@@ -1,35 +1,21 @@
 use crate::{SceneFrame, SceneKind};
-use bed_workbench_api::gpu::{GpuContext, RenderTarget, wgpu};
+use bed_editor_api::gpu::GpuContext;
+use bed_ui::gpu::{RenderTarget, wgpu};
 use bevy::{
-    app::{PanicHandlerPlugin, TerminalCtrlCHandlerPlugin},
     asset::RenderAssetUsages,
     camera::{Exposure, ManualTextureViewHandle, RenderTarget as BevyTarget},
-    core_pipeline::tonemapping::Tonemapping,
     image::{CompressedImageFormats, ImageSampler, ImageType},
     light::NotShadowCaster,
-    log::LogPlugin,
     mesh::{Indices, PrimitiveTopology},
     prelude::*,
+    render::view::Tonemapping,
     render::{
-        RenderPlugin,
-        error_handler::{ErrorType, RenderErrorHandler, RenderErrorPolicy},
-        pipelined_rendering::PipelinedRenderingPlugin,
         render_resource::{TextureFormat, TextureViewDescriptor},
-        renderer::{
-            RenderAdapter, RenderAdapterInfo, RenderDevice, RenderInstance, RenderQueue,
-            WgpuWrapper,
-        },
-        settings::RenderCreation,
         texture::{ManualTextureView, ManualTextureViews},
     },
-    window::{ExitCondition, WindowPlugin},
 };
-use std::sync::Arc;
 
-const OUTPUT: ManualTextureViewHandle = ManualTextureViewHandle(1);
-
-#[derive(Default, Resource)]
-struct Failure(Option<(bool, String)>);
+use bed_runtime::render::{PreviewView, preview_layers, preview_target};
 
 #[derive(Clone, Copy)]
 enum Motion {
@@ -43,7 +29,9 @@ enum Motion {
 
 pub(crate) struct SceneRenderer {
     pub generation: u64,
-    app: App,
+    view: u64,
+    output: ManualTextureViewHandle,
+    layers: bevy::camera::visibility::RenderLayers,
     kind: SceneKind,
     camera: Entity,
     accent_light: Entity,
@@ -57,80 +45,59 @@ pub(crate) struct SceneRenderer {
 }
 
 impl SceneRenderer {
-    pub fn new(gpu: &GpuContext<'_>, kind: SceneKind) -> Result<Self, String> {
+    pub fn new(gpu: &mut GpuContext<'_>, kind: SceneKind, view: u64) -> Result<Self, String> {
         if gpu.device.limits().max_storage_buffers_per_shader_stage < 6 {
             return Err(
                 "Decorative scenes require six GPU storage buffers per shader stage".into(),
             );
         }
         let scopes = error_scopes(gpu.device);
-        let resources = RenderCreation::manual(
-            RenderDevice::from(gpu.device.clone()),
-            RenderQueue(Arc::new(WgpuWrapper::new(gpu.queue.clone()))),
-            RenderAdapterInfo(WgpuWrapper::new(gpu.adapter.get_info())),
-            RenderAdapter(Arc::new(WgpuWrapper::new(gpu.adapter.clone()))),
-            RenderInstance(Arc::new(WgpuWrapper::new(gpu.instance.clone()))),
-        );
-        let mut app = App::new();
-        app.add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: None,
-                    exit_condition: ExitCondition::DontExit,
-                    ..default()
-                })
-                .set(RenderPlugin {
-                    render_creation: resources,
-                    synchronous_pipeline_compilation: true,
-                    ..default()
-                })
-                .disable::<PipelinedRenderingPlugin>()
-                .disable::<PanicHandlerPlugin>()
-                .disable::<TerminalCtrlCHandlerPlugin>()
-                .disable::<LogPlugin>(),
-        );
-        app.init_resource::<Failure>();
-        app.insert_resource(RenderErrorHandler(|error, world, _| {
-            world.resource_mut::<Failure>().0 = Some((
-                error.ty == ErrorType::DeviceLost,
-                format!(
-                    "Scene rendering error: {:?}: {}",
-                    error.ty, error.description
-                ),
-            ));
-            RenderErrorPolicy::StopRendering
-        }));
-        app.finish();
-        gpu.restore_host_handlers();
-        app.cleanup();
-        app.insert_resource(GlobalAmbientLight {
-            brightness: if kind != SceneKind::Bedtime {
-                1800.0
-            } else {
-                550.0
-            },
-            color: if kind != SceneKind::Bedtime {
-                Color::WHITE
-            } else {
-                Color::srgb(0.65, 0.72, 0.9)
-            },
-            ..default()
-        });
-        let camera = app
-            .world_mut()
+        let world = gpu
+            .world
+            .as_deref_mut()
+            .ok_or("Decorative scenes require Bed's shared Bevy world")?;
+        let old: Vec<_> = world
+            .query::<(Entity, &PreviewView)>()
+            .iter(world)
+            .filter(|(_, owner)| owner.0 == view)
+            .map(|(entity, _)| entity)
+            .collect();
+        for entity in old {
+            world.despawn(entity);
+        }
+        let layers = preview_layers(world, view);
+        let output = preview_target(world, view);
+        let camera = world
             .spawn((
                 Camera3d::default(),
-                BevyTarget::TextureView(OUTPUT),
+                bevy::pbr::ScreenSpaceTransmission::default(),
+                BevyTarget::TextureView(output),
                 Camera::default(),
+                AmbientLight {
+                    brightness: if kind != SceneKind::Bedtime {
+                        1800.0
+                    } else {
+                        550.0
+                    },
+                    color: if kind != SceneKind::Bedtime {
+                        Color::WHITE
+                    } else {
+                        Color::srgb(0.65, 0.72, 0.9)
+                    },
+                    ..default()
+                },
+                PreviewView(view),
+                layers.clone(),
                 Msaa::Sample4,
                 Tonemapping::AcesFitted,
                 Exposure { ev100: 10.0 },
                 Transform::IDENTITY,
             ))
             .id();
-        let directional_light = app
-            .world_mut()
+        let directional_light = world
             .spawn((
+                PreviewView(view),
+                layers.clone(),
                 DirectionalLight {
                     illuminance: match kind {
                         SceneKind::Bed | SceneKind::WelcomeBed | SceneKind::Duck => 2500.0,
@@ -147,9 +114,10 @@ impl SceneRenderer {
                 Transform::from_xyz(3.0, 5.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
             ))
             .id();
-        let accent_light = app
-            .world_mut()
+        let accent_light = world
             .spawn((
+                PreviewView(view),
+                layers.clone(),
                 PointLight {
                     intensity: 300_000.0,
                     range: 8.0,
@@ -165,7 +133,9 @@ impl SceneRenderer {
             .id();
         let mut renderer = Self {
             generation: gpu.generation,
-            app,
+            view,
+            output,
+            layers,
             kind,
             camera,
             accent_light,
@@ -178,15 +148,15 @@ impl SceneRenderer {
             bed_bounds: None,
         };
         match kind {
-            SceneKind::Bed | SceneKind::WelcomeBed => renderer.bed()?,
-            SceneKind::Duck => renderer.duck(),
-            SceneKind::Bedtime => renderer.bedtime()?,
+            SceneKind::Bed | SceneKind::WelcomeBed => renderer.bed(world)?,
+            SceneKind::Duck => renderer.duck(world),
+            SceneKind::Bedtime => renderer.bedtime(world)?,
         }
         check_scopes(scopes)?;
         Ok(renderer)
     }
 
-    fn bed(&mut self) -> Result<(), String> {
+    fn bed(&mut self, world: &mut World) -> Result<(), String> {
         // This bundled, static GLB has PBR materials and embedded PNGs. Load
         // it directly so the mascot is ready on the first frame and GPU recovery
         // never depends on a filesystem path or an asynchronous asset lifecycle.
@@ -213,15 +183,10 @@ impl SceneRenderer {
                 CompressedImageFormats::NONE,
                 is_color,
                 ImageSampler::default(),
-                RenderAssetUsages::RENDER_WORLD,
+                RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
             )
             .map_err(|error| format!("Invalid bed texture: {error}"))?;
-            textures.push(
-                self.app
-                    .world_mut()
-                    .resource_mut::<Assets<Image>>()
-                    .add(image),
-            );
+            textures.push(world.resource_mut::<Assets<Image>>().add(image));
         }
         let mut materials = Vec::new();
         for source in gltf.materials() {
@@ -251,9 +216,7 @@ impl SceneRenderer {
             if tinted {
                 // Both materials share the atlas. Neutralize only Tinted's
                 // copy, keeping its pattern and the original Untinted colors.
-                let mut cover_texture = self
-                    .app
-                    .world()
+                let mut cover_texture = world
                     .resource::<Assets<Image>>()
                     .get(
                         material
@@ -269,16 +232,10 @@ impl SceneRenderer {
                     let shade = (f32::from(pixel[1]) / 204.0 * 255.0).min(255.0).round() as u8;
                     pixel[..3].fill(shade);
                 }
-                material.base_color_texture = Some(
-                    self.app
-                        .world_mut()
-                        .resource_mut::<Assets<Image>>()
-                        .add(cover_texture),
-                );
+                material.base_color_texture =
+                    Some(world.resource_mut::<Assets<Image>>().add(cover_texture));
             }
-            let handle = self
-                .app
-                .world_mut()
+            let handle = world
                 .resource_mut::<Assets<StandardMaterial>>()
                 .add(material);
             if tinted {
@@ -364,7 +321,9 @@ impl SceneRenderer {
             self.bed_bounds = Some(bounds);
             Transform::IDENTITY
         };
-        let root = self.app.world_mut().spawn(pose).id();
+        let root = world
+            .spawn((PreviewView(self.view), self.layers.clone(), pose))
+            .id();
         if self.kind != SceneKind::Bedtime {
             self.motions.push((root, pose, Motion::Bed));
         }
@@ -375,7 +334,7 @@ impl SceneRenderer {
                 .collect();
             let mut mesh = Mesh::new(
                 PrimitiveTopology::TriangleList,
-                RenderAssetUsages::RENDER_WORLD,
+                RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
             )
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
             .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
@@ -389,24 +348,20 @@ impl SceneRenderer {
                 mesh.generate_tangents()
                     .map_err(|error| format!("Invalid bed mesh tangents: {error}"))?;
             }
-            let entity = self.mesh(mesh, material, Transform::IDENTITY, None);
-            self.app
-                .world_mut()
-                .entity_mut(entity)
-                .insert(ChildOf(root));
+            let entity = self.mesh(world, mesh, material, Transform::IDENTITY, None);
+            world.entity_mut(entity).insert(ChildOf(root));
         }
         Ok(())
     }
 
     fn material(
         &mut self,
+        world: &mut World,
         color: [f32; 3],
         accent: bool,
         emissive: f32,
     ) -> Handle<StandardMaterial> {
-        let material = self
-            .app
-            .world_mut()
+        let material = world
             .resource_mut::<Assets<StandardMaterial>>()
             .add(StandardMaterial {
                 base_color: Color::srgb(color[0], color[1], color[2]),
@@ -425,20 +380,21 @@ impl SceneRenderer {
     }
     fn mesh(
         &mut self,
+        world: &mut World,
         mesh: Mesh,
         material: Handle<StandardMaterial>,
         transform: Transform,
         motion: Option<Motion>,
     ) -> Entity {
-        let mesh = self
-            .app
-            .world_mut()
-            .resource_mut::<Assets<Mesh>>()
-            .add(mesh);
-        let entity = self
-            .app
-            .world_mut()
-            .spawn((Mesh3d(mesh), MeshMaterial3d(material), transform))
+        let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
+        let entity = world
+            .spawn((
+                PreviewView(self.view),
+                self.layers.clone(),
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+                transform,
+            ))
             .id();
         if let Some(motion) = motion {
             self.motions.push((entity, transform, motion));
@@ -447,12 +403,14 @@ impl SceneRenderer {
     }
     fn cube(
         &mut self,
+        world: &mut World,
         size: [f32; 3],
         pos: [f32; 3],
         mat: Handle<StandardMaterial>,
         motion: Option<Motion>,
     ) -> Entity {
         self.mesh(
+            world,
             Cuboid::new(size[0], size[1], size[2]).into(),
             mat,
             Transform::from_translation(Vec3::from_array(pos)),
@@ -461,12 +419,14 @@ impl SceneRenderer {
     }
     fn ball(
         &mut self,
+        world: &mut World,
         scale: [f32; 3],
         pos: [f32; 3],
         mat: Handle<StandardMaterial>,
         motion: Option<Motion>,
     ) -> Entity {
         self.mesh(
+            world,
             Sphere::new(1.0).mesh().uv(24, 16),
             mat,
             Transform::from_translation(Vec3::from_array(pos)).with_scale(Vec3::from_array(scale)),
@@ -474,90 +434,125 @@ impl SceneRenderer {
         )
     }
 
-    fn duck(&mut self) {
+    fn duck(&mut self, world: &mut World) {
         // Two joints are enough for this rigid rubber duck: the body owns the
         // bob and squash, while the neck turns the entire face together.
         let body_pose = Transform::IDENTITY;
-        let body = self
-            .app
-            .world_mut()
-            .spawn((body_pose, Visibility::Inherited))
+        let body = world
+            .spawn((
+                PreviewView(self.view),
+                self.layers.clone(),
+                body_pose,
+                Visibility::Inherited,
+            ))
             .id();
         self.motions.push((body, body_pose, Motion::DuckBody));
         let neck_pose = Transform::from_xyz(0.0, 0.28, 0.12);
-        let neck = self
-            .app
-            .world_mut()
-            .spawn((neck_pose, Visibility::Inherited, ChildOf(body)))
+        let neck = world
+            .spawn((
+                PreviewView(self.view),
+                self.layers.clone(),
+                neck_pose,
+                Visibility::Inherited,
+                ChildOf(body),
+            ))
             .id();
         self.motions.push((neck, neck_pose, Motion::DuckNeck));
-        let yellow = self.material([1.0, 0.78, 0.055], false, 0.0);
-        let orange = self.material([1.0, 0.38, 0.035], false, 0.0);
-        let eye = self.material([0.015, 0.015, 0.022], false, 0.0);
-        let shine = self.material([1.0; 3], false, 0.0);
-        let torso = self.ball([0.85, 0.65, 0.72], [0.0, -0.03, 0.0], yellow.clone(), None);
-        self.app.world_mut().entity_mut(torso).insert(ChildOf(body));
-        let head = self.ball([0.53; 3], [0.0, 0.34, 0.11], yellow.clone(), None);
-        self.app.world_mut().entity_mut(head).insert(ChildOf(neck));
-        let beak = self.ball([0.36, 0.105, 0.35], [0.0, 0.2, 0.6], orange, None);
-        self.app.world_mut().entity_mut(beak).insert(ChildOf(neck));
+        let yellow = self.material(world, [1.0, 0.78, 0.055], false, 0.0);
+        let orange = self.material(world, [1.0, 0.38, 0.035], false, 0.0);
+        let eye = self.material(world, [0.015, 0.015, 0.022], false, 0.0);
+        let shine = self.material(world, [1.0; 3], false, 0.0);
+        let torso = self.ball(
+            world,
+            [0.85, 0.65, 0.72],
+            [0.0, -0.03, 0.0],
+            yellow.clone(),
+            None,
+        );
+        world.entity_mut(torso).insert(ChildOf(body));
+        let head = self.ball(world, [0.53; 3], [0.0, 0.34, 0.11], yellow.clone(), None);
+        world.entity_mut(head).insert(ChildOf(neck));
+        let beak = self.ball(world, [0.36, 0.105, 0.35], [0.0, 0.2, 0.6], orange, None);
+        world.entity_mut(beak).insert(ChildOf(neck));
         for sign in [-1.0, 1.0] {
             let eye = self.ball(
+                world,
                 [0.11, 0.12, 0.055],
                 [sign * 0.23, 0.45, 0.545],
                 eye.clone(),
                 None,
             );
-            self.app.world_mut().entity_mut(eye).insert(ChildOf(neck));
+            world.entity_mut(eye).insert(ChildOf(neck));
             let glint = self.ball(
+                world,
                 [0.027; 3],
                 [sign * 0.23 - 0.027, 0.49, 0.59],
                 shine.clone(),
                 None,
             );
-            self.app.world_mut().entity_mut(glint).insert(ChildOf(neck));
+            world.entity_mut(glint).insert(ChildOf(neck));
             let wing = self.ball(
+                world,
                 [0.23, 0.35, 0.48],
                 [sign * 0.66, 0.03, -0.08],
                 yellow.clone(),
                 None,
             );
-            self.app.world_mut().entity_mut(wing).insert(ChildOf(body));
+            world.entity_mut(wing).insert(ChildOf(body));
         }
-        let tail = self.ball([0.28, 0.24, 0.37], [0.0, 0.12, -0.59], yellow, None);
-        self.app.world_mut().entity_mut(tail).insert(ChildOf(body));
+        let tail = self.ball(world, [0.28, 0.24, 0.37], [0.0, 0.12, -0.59], yellow, None);
+        world.entity_mut(tail).insert(ChildOf(body));
     }
 
-    fn bedtime(&mut self) -> Result<(), String> {
-        self.bed()?;
-        let oak = self.material([0.31, 0.19, 0.12], false, 0.0);
-        let edge = self.material([0.16, 0.10, 0.08], false, 0.0);
-        let plaster = self.material([0.30, 0.38, 0.43], false, 0.0);
+    fn bedtime(&mut self, world: &mut World) -> Result<(), String> {
+        self.bed(world)?;
+        let oak = self.material(world, [0.31, 0.19, 0.12], false, 0.0);
+        let edge = self.material(world, [0.16, 0.10, 0.08], false, 0.0);
+        let plaster = self.material(world, [0.30, 0.38, 0.43], false, 0.0);
         self.room_plaster = Some(plaster.clone());
-        let trim = self.material([0.62, 0.57, 0.45], false, 0.0);
-        let brass = self.material([0.48, 0.31, 0.12], false, 0.0);
-        let rug = self.material([0.24, 0.36, 0.35], true, 0.0);
-        let thread = self.material([0.52, 0.56, 0.45], false, 0.0);
+        let trim = self.material(world, [0.62, 0.57, 0.45], false, 0.0);
+        let brass = self.material(world, [0.48, 0.31, 0.12], false, 0.0);
+        let rug = self.material(world, [0.24, 0.36, 0.35], true, 0.0);
+        let thread = self.material(world, [0.52, 0.56, 0.45], false, 0.0);
 
         // An open-front diorama: plank seams, a woven rug and two plaster walls.
-        self.cube([5.4, 0.18, 4.8], [0.0, -0.12, 0.0], edge.clone(), None);
+        self.cube(
+            world,
+            [5.4, 0.18, 4.8],
+            [0.0, -0.12, 0.0],
+            edge.clone(),
+            None,
+        );
         for i in 0..18 {
             let shade = 0.86 + (i % 4) as f32 * 0.055;
-            let plank = self.material([0.30 * shade, 0.20 * shade, 0.14 * shade], false, 0.0);
+            let plank = self.material(
+                world,
+                [0.30 * shade, 0.20 * shade, 0.14 * shade],
+                false,
+                0.0,
+            );
             self.cube(
+                world,
                 [0.294, 0.06, 4.78],
                 [-2.55 + i as f32 * 0.3, 0.0, 0.0],
                 plank,
                 None,
             );
         }
-        self.cube([2.6, 0.025, 3.3], [-0.35, 0.042, 0.15], rug, None);
+        self.cube(world, [2.6, 0.025, 3.3], [-0.35, 0.042, 0.15], rug, None);
         for z in [-1.42, -1.33, 1.63, 1.72] {
-            self.cube([2.5, 0.006, 0.028], [-0.35, 0.059, z], thread.clone(), None);
+            self.cube(
+                world,
+                [2.5, 0.006, 0.028],
+                [-0.35, 0.059, z],
+                thread.clone(),
+                None,
+            );
         }
         for i in 0..34 {
             for z in [-1.55, 1.85] {
                 self.cube(
+                    world,
                     [0.014, 0.009, 0.13],
                     [-1.57 + i as f32 * 0.074, 0.045, z],
                     thread.clone(),
@@ -565,45 +560,105 @@ impl SceneRenderer {
                 );
             }
         }
-        self.cube([0.12, 3.1, 4.8], [-2.7, 1.5, 0.0], plaster.clone(), None);
+        self.cube(
+            world,
+            [0.12, 3.1, 4.8],
+            [-2.7, 1.5, 0.0],
+            plaster.clone(),
+            None,
+        );
         // The back wall surrounds a real opening rather than covering the sky.
         self.cube(
+            world,
             [3.25, 3.1, 0.12],
             [-1.075, 1.5, -2.4],
             plaster.clone(),
             None,
         );
-        self.cube([0.35, 3.1, 0.12], [2.525, 1.5, -2.4], plaster.clone(), None);
-        self.cube([1.8, 1.1, 0.12], [1.45, 0.5, -2.4], plaster.clone(), None);
-        self.cube([1.8, 0.45, 0.12], [1.45, 2.825, -2.4], plaster, None);
-        self.cube([5.25, 0.14, 0.08], [0.0, 0.12, -2.31], trim.clone(), None);
-        self.cube([0.08, 0.14, 4.7], [-2.61, 0.12, 0.0], trim.clone(), None);
+        self.cube(
+            world,
+            [0.35, 3.1, 0.12],
+            [2.525, 1.5, -2.4],
+            plaster.clone(),
+            None,
+        );
+        self.cube(
+            world,
+            [1.8, 1.1, 0.12],
+            [1.45, 0.5, -2.4],
+            plaster.clone(),
+            None,
+        );
+        self.cube(world, [1.8, 0.45, 0.12], [1.45, 2.825, -2.4], plaster, None);
+        self.cube(
+            world,
+            [5.25, 0.14, 0.08],
+            [0.0, 0.12, -2.31],
+            trim.clone(),
+            None,
+        );
+        self.cube(
+            world,
+            [0.08, 0.14, 4.7],
+            [-2.61, 0.12, 0.0],
+            trim.clone(),
+            None,
+        );
         for x in [0.53, 1.45, 2.37] {
-            self.cube([0.065, 1.65, 0.16], [x, 1.825, -2.36], trim.clone(), None);
+            self.cube(
+                world,
+                [0.065, 1.65, 0.16],
+                [x, 1.825, -2.36],
+                trim.clone(),
+                None,
+            );
         }
         for y in [1.0, 1.825, 2.65] {
-            self.cube([1.9, 0.065, 0.16], [1.45, y, -2.36], trim.clone(), None);
+            self.cube(
+                world,
+                [1.9, 0.065, 0.16],
+                [1.45, y, -2.36],
+                trim.clone(),
+                None,
+            );
         }
-        self.cube([2.05, 0.08, 0.36], [1.45, 0.96, -2.24], oak.clone(), None);
+        self.cube(
+            world,
+            [2.05, 0.08, 0.36],
+            [1.45, 0.96, -2.24],
+            oak.clone(),
+            None,
+        );
 
-        let sky = self
-            .app
-            .world_mut()
+        let sky = world
             .resource_mut::<Assets<StandardMaterial>>()
             .add(StandardMaterial {
                 base_color: Color::srgb(0.018, 0.035, 0.085),
                 unlit: true,
                 ..default()
             });
-        self.cube([1.83, 1.7, 0.04], [1.45, 1.825, -2.53], sky.clone(), None);
+        self.cube(
+            world,
+            [1.83, 1.7, 0.04],
+            [1.45, 1.825, -2.53],
+            sky.clone(),
+            None,
+        );
         self.night_sky = Some(sky.clone());
-        let moon = self.material([0.74, 0.85, 1.0], false, 4.0);
-        self.ball([0.19, 0.19, 0.025], [1.95, 2.30, -2.48], moon.clone(), None);
-        self.ball([0.17, 0.17, 0.03], [2.02, 2.35, -2.44], sky, None);
+        let moon = self.material(world, [0.74, 0.85, 1.0], false, 4.0);
+        self.ball(
+            world,
+            [0.19, 0.19, 0.025],
+            [1.95, 2.30, -2.48],
+            moon.clone(),
+            None,
+        );
+        self.ball(world, [0.17, 0.17, 0.03], [2.02, 2.35, -2.44], sky, None);
         for i in 0..22 {
             let x = 0.66 + (i as f32 * 2.399).sin().abs() * 1.55;
             let y = 1.13 + (i as f32 * 1.713).sin().abs() * 1.36;
             self.ball(
+                world,
                 [0.006 + (i % 3) as f32 * 0.002; 3],
                 [x, y, -2.48],
                 moon.clone(),
@@ -612,26 +667,53 @@ impl SceneRenderer {
         }
 
         // Bedside reading light, drawers, stacked books and a ceramic cup.
-        self.cube([0.72, 0.64, 0.64], [1.03, 0.37, -0.96], oak.clone(), None);
-        self.cube([0.79, 0.055, 0.71], [1.03, 0.72, -0.96], edge.clone(), None);
+        self.cube(
+            world,
+            [0.72, 0.64, 0.64],
+            [1.03, 0.37, -0.96],
+            oak.clone(),
+            None,
+        );
+        self.cube(
+            world,
+            [0.79, 0.055, 0.71],
+            [1.03, 0.72, -0.96],
+            edge.clone(),
+            None,
+        );
         for y in [0.27, 0.52] {
-            self.cube([0.65, 0.21, 0.025], [1.03, y, -0.625], oak.clone(), None);
-            self.cube([0.14, 0.022, 0.035], [1.03, y, -0.594], brass.clone(), None);
+            self.cube(
+                world,
+                [0.65, 0.21, 0.025],
+                [1.03, y, -0.625],
+                oak.clone(),
+                None,
+            );
+            self.cube(
+                world,
+                [0.14, 0.022, 0.035],
+                [1.03, y, -0.594],
+                brass.clone(),
+                None,
+            );
         }
         self.mesh(
+            world,
             Cylinder::new(0.13, 0.035).into(),
             brass.clone(),
             Transform::from_xyz(1.03, 0.77, -1.05),
             None,
         );
         self.mesh(
+            world,
             Cylinder::new(0.025, 0.44).into(),
             brass,
             Transform::from_xyz(1.03, 1.0, -1.05),
             None,
         );
-        let linen = self.material([1.0, 0.73, 0.40], false, 1.6);
+        let linen = self.material(world, [1.0, 0.73, 0.40], false, 1.6);
         let shade = self.mesh(
+            world,
             ConicalFrustum {
                 radius_top: 0.13,
                 radius_bottom: 0.25,
@@ -644,24 +726,23 @@ impl SceneRenderer {
         );
         // Linen glows and transmits the bulb's light instead of enclosing it
         // in an opaque shadow volume.
-        self.app
-            .world_mut()
-            .entity_mut(shade)
-            .insert(NotShadowCaster);
+        world.entity_mut(shade).insert(NotShadowCaster);
         for (i, color) in [[0.20, 0.33, 0.36], [0.55, 0.26, 0.16], [0.58, 0.51, 0.35]]
             .into_iter()
             .enumerate()
         {
-            let cover = self.material(color, true, 0.0);
+            let cover = self.material(world, color, true, 0.0);
             self.cube(
+                world,
                 [0.27, 0.045, 0.19],
                 [1.2, 0.79 + i as f32 * 0.05, -0.77],
                 cover,
                 None,
             );
         }
-        let ceramic = self.material([0.65, 0.58, 0.42], false, 0.0);
+        let ceramic = self.material(world, [0.65, 0.58, 0.42], false, 0.0);
         self.mesh(
+            world,
             Cylinder::new(0.065, 0.09).into(),
             ceramic.clone(),
             Transform::from_xyz(0.81, 0.80, -0.78),
@@ -670,6 +751,7 @@ impl SceneRenderer {
 
         // A sleepy corner plant and slippers at the foot of the rug.
         self.mesh(
+            world,
             ConicalFrustum {
                 radius_top: 0.20,
                 radius_bottom: 0.14,
@@ -680,17 +762,19 @@ impl SceneRenderer {
             Transform::from_xyz(-1.85, 0.20, -1.65),
             None,
         );
-        let stem = self.material([0.14, 0.23, 0.12], false, 0.0);
+        let stem = self.material(world, [0.14, 0.23, 0.12], false, 0.0);
         self.mesh(
+            world,
             Cylinder::new(0.016, 0.67).into(),
             stem,
             Transform::from_xyz(-1.85, 0.67, -1.65),
             None,
         );
-        let leaf = self.material([0.19, 0.37, 0.24], false, 0.0);
+        let leaf = self.material(world, [0.19, 0.37, 0.24], false, 0.0);
         for i in 0..7 {
             let angle = i as f32 * 2.4;
             self.mesh(
+                world,
                 Sphere::new(1.0).mesh().uv(16, 8),
                 leaf.clone(),
                 Transform::from_xyz(
@@ -703,9 +787,10 @@ impl SceneRenderer {
                 Some(Motion::Leaf),
             );
         }
-        let slippers = self.material([0.62, 0.40, 0.26], false, 0.0);
+        let slippers = self.material(world, [0.62, 0.40, 0.26], false, 0.0);
         for x in [0.93, 1.20] {
             self.ball(
+                world,
                 [0.10, 0.065, 0.21],
                 [x, 0.095, 1.25],
                 slippers.clone(),
@@ -714,26 +799,34 @@ impl SceneRenderer {
         }
 
         // Small framed print above the bed: a quiet mountain silhouette.
-        self.cube([1.06, 0.76, 0.07], [-1.15, 1.99, -2.30], oak, None);
-        let paper = self.material([0.64, 0.65, 0.55], false, 0.0);
-        self.cube([0.92, 0.62, 0.025], [-1.15, 1.99, -2.25], paper, None);
-        let mountains = self.material([0.20, 0.33, 0.34], false, 0.0);
+        self.cube(world, [1.06, 0.76, 0.07], [-1.15, 1.99, -2.30], oak, None);
+        let paper = self.material(world, [0.64, 0.65, 0.55], false, 0.0);
+        self.cube(
+            world,
+            [0.92, 0.62, 0.025],
+            [-1.15, 1.99, -2.25],
+            paper,
+            None,
+        );
+        let mountains = self.material(world, [0.20, 0.33, 0.34], false, 0.0);
         for (x, y, radius) in [
             (-1.37, 1.90, 0.22),
             (-1.08, 1.93, 0.27),
             (-0.87, 1.88, 0.18),
         ] {
             self.mesh(
+                world,
                 Cone::new(radius, 0.35).into(),
                 mountains.clone(),
                 Transform::from_xyz(x, y, -2.22).with_scale(Vec3::new(1.0, 1.0, 0.08)),
                 None,
             );
         }
-        let dust = self.material([0.72, 0.57, 0.33], false, 0.8);
+        let dust = self.material(world, [0.72, 0.57, 0.33], false, 0.8);
         for i in 0..16 {
             let angle = i as f32 * 2.399;
             self.ball(
+                world,
                 [0.006; 3],
                 [
                     angle.sin() * 1.6,
@@ -747,7 +840,7 @@ impl SceneRenderer {
         Ok(())
     }
 
-    pub fn render(
+    pub fn sync(
         &mut self,
         gpu: &mut GpuContext<'_>,
         target: &RenderTarget,
@@ -757,21 +850,25 @@ impl SceneRenderer {
     ) -> Result<(), String> {
         let time = if frame.animations { time } else { 0.0 };
         let scopes = error_scopes(gpu.device);
+        let world = gpu
+            .world
+            .as_deref_mut()
+            .ok_or("Decorative scenes require Bed's shared Bevy world")?;
         let view = target.texture.create_view(&TextureViewDescriptor {
             format: Some(TextureFormat::Rgba8UnormSrgb),
             ..default()
         });
-        self.app
-            .world_mut()
-            .resource_mut::<ManualTextureViews>()
-            .insert(
-                OUTPUT,
-                ManualTextureView {
-                    texture_view: view.into(),
-                    size: UVec2::from_array(target.size),
-                    view_format: TextureFormat::Rgba8UnormSrgb,
-                },
-            );
+        world.resource_mut::<ManualTextureViews>().insert(
+            self.output,
+            ManualTextureView {
+                texture_view: view.into(),
+                size: UVec2::from_array(target.size),
+                view_format: TextureFormat::Rgba8UnormSrgb,
+            },
+        );
+        world
+            .entity_mut(self.camera)
+            .insert(BevyTarget::TextureView(self.output));
         let pointer = if frame.animations {
             frame.mouse
         } else {
@@ -859,8 +956,9 @@ impl SceneRenderer {
             }
         }
         {
-            let mut camera = self.app.world_mut().entity_mut(self.camera);
+            let mut camera = world.entity_mut(self.camera);
             *camera.get_mut::<Transform>().unwrap() = camera_transform;
+            camera.get_mut::<Camera>().unwrap().is_active = true;
             camera.get_mut::<Camera>().unwrap().clear_color = if self.kind == SceneKind::Bedtime {
                 Color::srgba(
                     frame.background[0],
@@ -874,10 +972,7 @@ impl SceneRenderer {
             .into();
         }
         {
-            let mut materials = self
-                .app
-                .world_mut()
-                .resource_mut::<Assets<StandardMaterial>>();
+            let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
             if let Some(handle) = &self.bed_cover_material {
                 materials.get_mut(handle).unwrap().base_color =
                     Color::srgb(frame.accent[0], frame.accent[1], frame.accent[2]);
@@ -907,15 +1002,14 @@ impl SceneRenderer {
         if self.kind == SceneKind::Bedtime {
             let tint: [f32; 3] =
                 std::array::from_fn(|i| [0.52, 0.66, 1.0][i] * 0.55 + frame.accent[i] * 0.45);
-            self.app
-                .world_mut()
+            world
                 .entity_mut(self.directional_light)
                 .get_mut::<DirectionalLight>()
                 .unwrap()
                 .color = Color::srgb(tint[0], tint[1], tint[2]);
         }
         {
-            let mut light = self.app.world_mut().entity_mut(self.accent_light);
+            let mut light = world.entity_mut(self.accent_light);
             match self.kind {
                 SceneKind::Bed | SceneKind::WelcomeBed | SceneKind::Duck => {
                     // A fixed, neutral fill keeps the mascots evenly lit as
@@ -980,15 +1074,8 @@ impl SceneRenderer {
                         * Quat::from_rotation_x(pointer[1] * 0.32);
                 }
             }
-            let mut object = self.app.world_mut().entity_mut(*entity);
+            let mut object = world.entity_mut(*entity);
             *object.get_mut::<Transform>().unwrap() = transform;
-        }
-        self.app.update();
-        if let Some((lost, message)) = self.app.world_mut().resource_mut::<Failure>().0.take() {
-            if lost {
-                gpu.report_device_lost(message.clone());
-            }
-            return Err(message);
         }
         check_scopes(scopes)
     }

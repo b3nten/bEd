@@ -179,7 +179,7 @@ fn remap_reference(
 
 /// Keep this workspace's panel windows and remove unused docking branches.
 /// Validate references before pruning: ImGui's parser asserts on invalid trees.
-pub(crate) fn prepare(
+pub fn prepare(
     ini: &str,
     panel_ids: impl IntoIterator<Item = u64>,
 ) -> Result<String, &'static str> {
@@ -408,7 +408,7 @@ pub(crate) fn prepare(
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/unit/workbench/workspace_layout_tests.rs"]
+#[path = "layout_tests.rs"]
 mod tests;
 
 #[cfg(test)]

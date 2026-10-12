@@ -411,6 +411,10 @@ impl<'a> EditorCommands<'a> {
             self.view.folds.reveal(selection.head_row);
         }
         if reveal == CursorReveal::Center {
+            // An explicit location jump supersedes an older saved viewport or
+            // deferred cursor jump that has not reached the renderer yet.
+            self.view.requested_scroll = None;
+            self.view.pending_cursor_center = None;
             self.view.center_cursor_vertical = true;
             self.view.ensure_cursor_visible.horizontal = true;
         } else {

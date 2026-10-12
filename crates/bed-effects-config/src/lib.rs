@@ -17,10 +17,9 @@ pub struct ShaderSettings {
 }
 impl Default for ShaderSettings {
     fn default() -> Self {
-        Self {
-            enabled: false,
-            ..Self::subtle()
-        }
+        let mut settings = Self::subtle();
+        settings.enabled = false;
+        settings
     }
 }
 impl ShaderSettings {

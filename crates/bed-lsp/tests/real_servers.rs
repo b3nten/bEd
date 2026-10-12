@@ -79,10 +79,11 @@ fn semantic_reply(client: &mut LspClient, method: &str, params: &Value) -> Value
             .unwrap();
         wait(client, |_| result.borrow().is_some(), method, deadline);
         let reply = result.borrow_mut().take().unwrap();
-        if let Ok(value) = &reply {
-            if !value.is_null() && !matches!(value, Value::Array(values) if values.is_empty()) {
-                return value.clone();
-            }
+        if let Ok(value) = &reply
+            && !value.is_null()
+            && !matches!(value, Value::Array(values) if values.is_empty())
+        {
+            return value.clone();
         }
         assert!(
             Instant::now() < deadline,
@@ -113,11 +114,14 @@ fn exercise(
     );
     let mut client = LspClient::with_config(project.0.join("no-user-config.json"), config);
     client.set_workspace(project.0.to_str().unwrap());
-    client.set_project_check_owner(true);
     assert!(client.start_server(server, "").unwrap());
     client
         .did_open(path, source.as_bytes(), 0, language_id)
         .unwrap();
+    // Restored documents can start rust-analyzer before the first session tick
+    // enables Bed's project checks. Configuration must wait for initialized.
+    assert!(!client.is_initialized());
+    client.set_project_check_owner(true);
     wait(
         &mut client,
         LspClient::is_initialized,

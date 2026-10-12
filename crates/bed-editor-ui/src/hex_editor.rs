@@ -1,9 +1,10 @@
 //! First-class exact-byte editing over the same session lifecycle as text.
 use bed_document_session::{ByteEdit, DocumentId, DocumentKind, EditorSession};
-use dear_imgui_rs::{FocusedFlags, Key, ListClipper, Ui, WindowFlags};
+use dear_imgui_rs::{FocusedFlags, ListClipper, Ui, WindowFlags};
 use std::{io, ops::Range};
 
 pub struct HexEditor {
+    pub shortcuts: bed_keybindings::ShortcutInput,
     document: DocumentId,
     cursor: usize,
     anchor: usize,
@@ -17,6 +18,7 @@ pub struct HexEditor {
 impl HexEditor {
     pub fn new(document: DocumentId) -> Self {
         Self {
+            shortcuts: crate::shortcuts::hex_default_input(),
             document,
             cursor: 0,
             anchor: 0,
@@ -93,40 +95,50 @@ impl HexEditor {
         self.reveal_cursor = true;
         Ok(())
     }
-    pub fn copy(&mut self, ui: &Ui, session: &EditorSession) -> io::Result<()> {
+    pub fn copy_text(&mut self, session: &EditorSession) -> io::Result<String> {
         self.synchronize(session)?;
         let snapshot = session.snapshot(self.document)?;
-        let text = snapshot.bytes[self.selection(snapshot.bytes.len())]
+        Ok(snapshot.bytes[self.selection(snapshot.bytes.len())]
             .iter()
             .map(|byte| format!("{byte:02X}"))
             .collect::<Vec<_>>()
-            .join(" ");
-        set_clipboard(ui, &text);
+            .join(" "))
+    }
+    pub fn paste_text(&mut self, session: &mut EditorSession, text: &str) -> io::Result<()> {
+        self.synchronize(session)?;
+        let bytes = parse_hex(text)?;
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let len = session.with_document(self.document, |state| state.byte_size())?;
+        let range = if self.insert {
+            self.cursor.min(len)..self.cursor.min(len)
+        } else if self.anchor != self.cursor {
+            self.selection(len)
+        } else {
+            self.cursor.min(len)..(self.cursor + bytes.len()).min(len)
+        };
+        self.replace(session, range, bytes)
+    }
+    pub fn cut_text(&mut self, session: &mut EditorSession) -> io::Result<String> {
+        let text = self.copy_text(session)?;
+        let len = session.with_document(self.document, |state| state.byte_size())?;
+        self.replace(session, self.selection(len), Vec::new())?;
+        Ok(text)
+    }
+    pub fn copy(&mut self, ui: &Ui, session: &EditorSession) -> io::Result<()> {
+        set_clipboard(ui, &self.copy_text(session)?);
         Ok(())
     }
     pub fn paste(&mut self, ui: &Ui, session: &mut EditorSession) -> io::Result<()> {
-        self.synchronize(session)?;
         if let Some(text) = clipboard(ui) {
-            let bytes = parse_hex(&text)?;
-            if bytes.is_empty() {
-                return Ok(());
-            }
-            let len = session.with_document(self.document, |state| state.byte_size())?;
-            let range = if self.insert {
-                self.cursor.min(len)..self.cursor.min(len)
-            } else if self.anchor != self.cursor {
-                self.selection(len)
-            } else {
-                self.cursor.min(len)..(self.cursor + bytes.len()).min(len)
-            };
-            self.replace(session, range, bytes)?;
+            self.paste_text(session, &text)?;
         }
         Ok(())
     }
     pub fn cut(&mut self, ui: &Ui, session: &mut EditorSession) -> io::Result<()> {
-        self.copy(ui, session)?;
-        let len = session.with_document(self.document, |state| state.byte_size())?;
-        self.replace(session, self.selection(len), Vec::new())
+        set_clipboard(ui, &self.cut_text(session)?);
+        Ok(())
     }
     pub fn select_all(&mut self, session: &EditorSession) -> io::Result<()> {
         let len = session.with_document(self.document, |state| state.byte_size())?;
@@ -282,61 +294,74 @@ impl HexEditor {
         Ok(())
     }
     fn keyboard(&mut self, ui: &Ui, session: &mut EditorSession, len: usize) -> io::Result<()> {
-        let primary = ui.io().key_ctrl() || ui.io().key_super();
-        let shift = ui.io().key_shift();
-        if primary {
-            if ui.is_key_pressed(Key::A) {
-                self.select_all(session)?;
-            }
-            if ui.is_key_pressed(Key::C) {
-                self.copy(ui, session)?;
-            }
-            if ui.is_key_pressed(Key::V) {
-                self.paste(ui, session)?;
-            }
-            if ui.is_key_pressed(Key::X) {
-                self.cut(ui, session)?;
-            }
-            if ui.is_key_pressed(Key::Z) {
-                if shift {
-                    session.redo_document(self.document)?;
-                } else {
-                    session.undo_document(self.document)?;
-                }
-                self.synchronize(session)?;
-                self.pending_nibble = None;
-            }
-            if ui.is_key_pressed(Key::Y) {
-                session.redo_document(self.document)?;
-                self.synchronize(session)?;
-            }
+        if self.shortcuts.suppressed(ui) {
             return Ok(());
         }
-        if ui.is_key_pressed(Key::LeftArrow) {
-            self.move_cursor(self.cursor.saturating_sub(1), shift, len);
+        let input = self.shortcuts.clone();
+        let mut handled = false;
+        let mut take = |id: &str| {
+            let pressed = input.take(ui, id);
+            handled |= pressed;
+            pressed
+        };
+        if take("bed.editor.select_all") {
+            self.select_all(session)?;
         }
-        if ui.is_key_pressed(Key::RightArrow) {
-            self.move_cursor(self.cursor + 1, shift, len);
+        if take("bed.editor.copy") {
+            self.copy(ui, session)?;
         }
-        if ui.is_key_pressed(Key::UpArrow) {
-            self.move_cursor(self.cursor.saturating_sub(16), shift, len);
+        if take("bed.editor.cut") {
+            self.cut(ui, session)?;
         }
-        if ui.is_key_pressed(Key::DownArrow) {
-            self.move_cursor(self.cursor + 16, shift, len);
+        if take("bed.editor.paste") {
+            self.paste(ui, session)?;
         }
-        if ui.is_key_pressed(Key::Home) {
-            self.move_cursor(self.cursor / 16 * 16, shift, len);
+        if take("bed.editor.undo") {
+            session.undo_document(self.document)?;
+            self.synchronize(session)?;
+            self.pending_nibble = None;
         }
-        if ui.is_key_pressed(Key::End) {
-            self.move_cursor((self.cursor / 16 * 16 + 15).min(len), shift, len);
+        if take("bed.editor.redo") {
+            session.redo_document(self.document)?;
+            self.synchronize(session)?;
+            self.pending_nibble = None;
         }
-        if ui.is_key_pressed(Key::Insert) {
+        for motion in [
+            "left",
+            "right",
+            "up",
+            "down",
+            "line_start",
+            "line_end",
+            "doc_start",
+            "doc_end",
+        ] {
+            let select = take(&format!("bed.editor.select_{motion}"));
+            if select || take(&format!("bed.editor.move_{motion}")) {
+                let next = match motion {
+                    "left" => self.cursor.saturating_sub(1),
+                    "right" => self.cursor + 1,
+                    "up" => self.cursor.saturating_sub(16),
+                    "down" => self.cursor + 16,
+                    "line_start" => self.cursor / 16 * 16,
+                    "line_end" => (self.cursor / 16 * 16 + 15).min(len),
+                    "doc_start" => 0,
+                    "doc_end" => len,
+                    _ => unreachable!(),
+                };
+                self.move_cursor(next, select, len);
+            }
+        }
+        let toggled = input
+            .with_scope(bed_keybindings::Scope::panel("bed.editor.hex-panel"))
+            .take(ui, "bed.editor.hex_insert");
+        if toggled {
             self.insert = !self.insert;
         }
-        if ui.is_key_pressed(Key::Delete) {
+        if take("bed.editor.delete_right") {
             self.replace(session, self.selection(len), Vec::new())?;
         }
-        if ui.is_key_pressed(Key::Backspace) {
+        if take("bed.editor.delete_left") {
             let range = if self.anchor != self.cursor {
                 self.selection(len)
             } else {
@@ -344,7 +369,14 @@ impl HexEditor {
             };
             self.replace(session, range, Vec::new())?;
         }
+        handled |= toggled;
         let input = ui.with_bound_context(crate::editor_input::take_input_characters);
+        if !input.is_empty() {
+            self.shortcuts.claim_text(ui);
+        }
+        if handled {
+            return Ok(());
+        }
         for ch in input.chars() {
             if let Some(nibble) = ch.to_digit(16).map(|n| n as u8) {
                 if let Some(high) = self.pending_nibble.take() {
@@ -472,7 +504,14 @@ mod tests {
         );
         context.io_mut().add_key_event(Key::Delete, false);
         frame(&mut context, &mut editor, &mut session);
-        context.io_mut().add_key_event(Key::ModCtrl, true);
+        context.io_mut().add_key_event(
+            if cfg!(target_os = "macos") {
+                Key::ModSuper
+            } else {
+                Key::ModCtrl
+            },
+            true,
+        );
         context.io_mut().add_key_event(Key::Z, true);
         frame(&mut context, &mut editor, &mut session);
         assert_eq!(
@@ -537,3 +576,6 @@ mod tests {
         assert_eq!(editor.state()["insert"], true);
     }
 }
+
+#[cfg(test)]
+use dear_imgui_rs::Key;

@@ -238,7 +238,7 @@ pub enum Request {
     GitStart {
         root: String,
         #[serde(rename = "git_operation")]
-        operation: bed_git::Operation,
+        operation: bed_git_core::Operation,
     },
     GitPoll {
         job_id: u64,
@@ -282,7 +282,7 @@ pub enum Response {
     /// Completion remains available until explicitly released.
     GitJob {
         #[serde(rename = "completion")]
-        result: Option<std::result::Result<bed_git::Output, bed_git::Error>>,
+        result: Option<std::result::Result<bed_git_core::Output, bed_git_core::Error>>,
     },
     Hello {
         version: u32,

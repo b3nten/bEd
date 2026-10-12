@@ -1,0 +1,26 @@
+[package]
+name = "desktop-consumer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Deliberately isolated: workspace feature unification cannot hide coupling.
+[workspace]
+
+[features]
+default = []
+layout = ["dep:bed-workbench", "dep:serde_json"]
+effects = ["dep:bed-effects"]
+
+[dependencies]
+bevy = { version = "=0.20.0", default-features = false, features = ["std"] }
+bed-desktop = { path = "../../../crates/bed-desktop" }
+bed-workbench = { path = "../../../crates/bed-workbench", optional = true }
+bed-effects = { path = "../../../crates/bed-effects", features = ["desktop"], optional = true }
+serde_json = { version = "1", optional = true }
+
+# These integration patches are currently required by the desktop renderer.
+[patch.crates-io]
+arboard = { path = "../../../vendor/arboard" }
+dear-imgui-sys = { path = "../../../vendor/dear-imgui-sys" }
+dear-imgui-wgpu = { path = "../../../vendor/dear-imgui-wgpu" }

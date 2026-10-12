@@ -4,14 +4,14 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AreaTabs {
+pub struct AreaTabs {
     pub area: u32,
     pub tabs: Vec<u64>,
     pub selected: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TilingState {
+pub struct TilingState {
     pub layout: Layout,
     pub areas: Vec<AreaTabs>,
 }

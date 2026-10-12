@@ -39,13 +39,13 @@ cargo test --locked -p bed-editor-ui --test views
 
 ## Terminals
 
-Terminal protocol scenarios are authored directly in `crates/bed-terminal/tests`.
+Terminal protocol scenarios are authored directly in `crates/bed-terminal-core/tests`.
 The presentation suite covers text, styles, colors, Unicode and cursor shapes;
 PTY and input regressions exercise live shells, process cleanup and negotiated
 keyboard/paste behavior. Imported terminal adapter fixtures are no longer used.
 
 ```sh
-cargo test --locked -p bed-terminal
+cargo test --locked -p bed-terminal-core
 ```
 
 ## Model viewers
@@ -56,13 +56,13 @@ Their small generator remains available:
 
 ```sh
 python3 tests/fixtures/gltf/generate.py
-cargo test --locked -p bed-plugin-gltf
+cargo test --locked -p bed-model-viewer
 ```
 
-Draco tests also use `assets/LittlestTokyo.glb`, including its 71
+Draco tests also use the checked-in `assets/LittlestTokyo.glb`, including its 71
 compressed primitives, eight skinned meshes and four textures. Malformed-stream
 tests isolate a small primitive from that asset. Attribution remains in
-[assets/README.md](../../assets/README.md). Opt-in native
+[assets/README.md](../../assets/README.md), together with its pinned source and checksum. Opt-in native
 GPU tests and the application's `--plugin-smoke` check rendering and lifecycle
 behavior separately from these loader fixtures.
 

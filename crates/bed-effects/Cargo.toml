@@ -5,8 +5,15 @@ edition = "2024"
 publish = false
 license.workspace = true
 
+[features]
+default = []
+desktop = ["dep:bevy", "dep:bed-desktop", "dep:dear-imgui-rs", "dep:dear-imgui-wgpu"]
+
 [dependencies]
+bevy = { workspace = true, features = ["std"], optional = true }
+bed-desktop = { workspace = true, optional = true }
+dear-imgui-rs = { workspace = true, optional = true }
+dear-imgui-wgpu = { workspace = true, optional = true }
 bed-effects-config = { workspace = true }
 wgpu = { workspace = true }
-dear-imgui-wgpu = { workspace = true }
 serde_json = { workspace = true }

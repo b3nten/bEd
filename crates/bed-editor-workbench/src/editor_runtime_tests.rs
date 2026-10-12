@@ -1,0 +1,1707 @@
+use super::*;
+use crate::test_support::TempDir;
+fn app(dir: &TempDir) -> App {
+    let mut app = App::new();
+    install_test_infrastructure(&mut app, &dir.root().join("config"));
+    app.add_plugins((
+        bed_runtime::BedRuntimePlugin,
+        EditorWorkbenchPlugin {
+            options: EditorWorkbenchOptions {
+                working_directory: Some(dir.root().to_owned()),
+                ..Default::default()
+            },
+        },
+        bed_editor::EditorPlugin,
+        bed_color::ColorPlugin,
+        bed_json::JsonPlugin,
+    ));
+    app.update();
+    app
+}
+fn submit(world: &mut World, action: EditorAction, source: Option<Entity>) -> EditorRequestId {
+    let request = capture_editor_request_from(world, action, PanelTarget::LastFocused, source);
+    submit_editor_request(world, request)
+}
+fn apply(world: &mut World, action: EditorAction, source: Option<Entity>) -> EditorRequestOutcome {
+    let id = submit(world, action, source);
+    process_editor_requests(world).unwrap();
+    poll_editor_request(world, id).unwrap().unwrap()
+}
+
+fn navigation_context() -> dear_imgui_rs::Context {
+    let mut imgui = dear_imgui_rs::Context::create();
+    imgui.set_ini_filename(None::<PathBuf>).unwrap();
+    imgui
+        .io_mut()
+        .set_config_flags(dear_imgui_rs::ConfigFlags::DOCKING_ENABLE);
+    imgui.io_mut().set_display_size([800., 600.]);
+    imgui.io_mut().set_delta_time(1. / 60.);
+    imgui
+        .font_atlas()
+        .try_claim_legacy_renderer()
+        .unwrap()
+        .build();
+    imgui
+}
+
+#[test]
+fn syntax_spans_use_the_selected_theme_and_update_existing_documents() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let path = dir.root().join("syntax.rs");
+    std::fs::write(
+        &path,
+        "fn main() { let count = 42; println!(\"hello\"); }\n",
+    )
+    .unwrap();
+    let panel = open_file(app.world_mut(), &path, None, false, None).unwrap();
+    let view = app
+        .world()
+        .get::<EditorPanelBinding>(panel)
+        .unwrap()
+        .view
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        app.update();
+        let ready = app
+            .world_mut()
+            .non_send_mut::<EditorSession>()
+            .with_view(view, |view| !view.highlight.spans_for_line(0).is_empty())
+            .unwrap();
+        if ready {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "syntax parser never delivered spans"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    for theme in ["tokyo", "catppuccin-latte"] {
+        app.world_mut()
+            .non_send_mut::<Settings>()
+            .select_theme(theme)
+            .unwrap();
+        app.update();
+        let palette = app.world().non_send::<Settings>().highlight_colors();
+        app.world_mut()
+            .non_send_mut::<EditorSession>()
+            .with_view(view, |view| {
+                let spans = view.highlight.spans_for_line(0);
+                assert!(spans.len() > 3);
+                for span in spans {
+                    assert_eq!(
+                        view.highlight.color_for_slot(span.slot),
+                        palette.slots[span.slot as usize]
+                    );
+                }
+                let colors: std::collections::HashSet<_> = spans
+                    .iter()
+                    .map(|span| view.highlight.color_for_slot(span.slot).map(f32::to_bits))
+                    .collect();
+                assert!(
+                    colors.len() >= 3,
+                    "keywords, strings and numbers lost their syntax colors"
+                );
+            })
+            .unwrap();
+    }
+}
+
+#[test]
+fn structure_navigation_animates_to_the_item_and_respects_disabled_animations() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let path = dir.root().join("outline.rs");
+    std::fs::write(&path, vec!["// padding"; 300].join("\n")).unwrap();
+    let panel = open_file(app.world_mut(), &path, None, false, None).unwrap();
+    let binding = app
+        .world()
+        .get::<EditorPanelBinding>(panel)
+        .unwrap()
+        .clone();
+    let view = binding.view.unwrap();
+    let document = binding.document.unwrap();
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut imgui = navigation_context();
+    for _ in 0..6 {
+        app.update();
+        crate::draw_ui(app.world_mut(), imgui.frame()).unwrap();
+        drop(imgui.render_legacy());
+    }
+    let navigate = |app: &mut App, row| {
+        let (byte_offset, revision) = {
+            let session = app.world().non_send::<EditorSession>();
+            (
+                session
+                    .with_document(document, |state| state.offset_from_row_col(row, 0))
+                    .unwrap(),
+                session.document_revision(document).unwrap(),
+            )
+        };
+        apply(
+            app.world_mut(),
+            EditorAction::HostRequest(HostRequest::Navigate {
+                document,
+                byte_offset,
+                revision,
+            }),
+            Some(panel),
+        );
+    };
+    navigate(&mut app, 220);
+    let mut samples = Vec::new();
+    for _ in 0..40 {
+        app.update();
+        crate::draw_ui(app.world_mut(), imgui.frame()).unwrap();
+        drop(imgui.render_legacy());
+        samples.push(
+            app.world()
+                .non_send::<EditorSession>()
+                .view_snapshot(view)
+                .unwrap()
+                .scroll_position[1],
+        );
+    }
+    let settled = *samples.last().unwrap();
+    assert!(settled > 2000.);
+    assert!(
+        samples[4] > 0. && samples[4] < settled - 1.,
+        "jump did not animate: {samples:?}"
+    );
+    assert!(samples.windows(2).all(|pair| pair[1] >= pair[0] - 1.));
+    assert_eq!(
+        app.world()
+            .non_send::<EditorSession>()
+            .view_snapshot(view)
+            .unwrap()
+            .row,
+        220
+    );
+
+    app.world_mut()
+        .non_send_mut::<bed_editor::EditorConfig>()
+        .navigation_animations = false;
+    navigate(&mut app, 0);
+    for _ in 0..2 {
+        app.update();
+        crate::draw_ui(app.world_mut(), imgui.frame()).unwrap();
+        drop(imgui.render_legacy());
+    }
+    assert_eq!(
+        app.world()
+            .non_send::<EditorSession>()
+            .view_snapshot(view)
+            .unwrap()
+            .scroll_position[1],
+        0.
+    );
+}
+
+#[test]
+fn location_navigation_reveals_the_target_in_a_new_and_existing_view() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let path = dir.root().join("definition.rs");
+    let mut lines = vec!["// padding"; 300];
+    lines[0] = "pub struct Definition {";
+    lines[200] = "// 🦀 definition";
+    lines[299] = "}";
+    std::fs::write(&path, lines.join("\n")).unwrap();
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut imgui = navigation_context();
+    apply(
+        app.world_mut(),
+        EditorAction::HostRequest(HostRequest::NavigateLocation {
+            path: path.to_string_lossy().into_owned(),
+            row: 200,
+            utf16_column: 6,
+            origin: None,
+        }),
+        None,
+    );
+    let panel = app.world().resource::<WorkbenchLayout>().focused.unwrap();
+    let binding = app
+        .world()
+        .get::<EditorPanelBinding>(panel)
+        .unwrap()
+        .clone();
+    let view = binding.view.unwrap();
+    assert_eq!(
+        app.world()
+            .non_send::<EditorSession>()
+            .view_snapshot(view)
+            .unwrap()
+            .row,
+        200
+    );
+    assert_eq!(
+        app.world()
+            .non_send::<EditorSession>()
+            .view_snapshot(view)
+            .unwrap()
+            .column,
+        8
+    );
+    for _ in 0..40 {
+        app.update();
+        crate::draw_ui(app.world_mut(), imgui.frame()).unwrap();
+        drop(imgui.render_legacy());
+        process_editor_requests(app.world_mut()).unwrap();
+    }
+    let snapshot = app
+        .world()
+        .non_send::<EditorSession>()
+        .view_snapshot(view)
+        .unwrap();
+    assert_eq!(snapshot.row, 200);
+    assert!(
+        snapshot.scroll_position[1] > 2000.,
+        "target never became visible: {snapshot:?}"
+    );
+    let assert_target_visible = |world: &World| {
+        let views = world.non_send::<bed_editor::EditorViews>();
+        let surface = panel_presentation(world, panel).unwrap();
+        let presentation = views.text(surface).unwrap().presentation();
+        let geometry = world
+            .get::<bed_workbench_api::PanelGeometry>(panel)
+            .unwrap();
+        assert!(
+            presentation.caret_position[1] > geometry.content_min[1]
+                && presentation.caret_position[1] < geometry.content_max[1],
+            "definition caret is outside the rendered viewport"
+        );
+    };
+    assert_target_visible(app.world());
+
+    // A saved viewport waiting for the first draw must yield to newer navigation.
+    app.world_mut()
+        .non_send_mut::<EditorSession>()
+        .set_scroll(view, 0., 0.)
+        .unwrap();
+    apply(
+        app.world_mut(),
+        EditorAction::HostRequest(HostRequest::NavigateLocation {
+            path: path.to_string_lossy().into_owned(),
+            row: 180,
+            utf16_column: 3,
+            origin: None,
+        }),
+        Some(panel),
+    );
+    for _ in 0..40 {
+        app.update();
+        crate::draw_ui(app.world_mut(), imgui.frame()).unwrap();
+        drop(imgui.render_legacy());
+        process_editor_requests(app.world_mut()).unwrap();
+    }
+    let snapshot = app
+        .world()
+        .non_send::<EditorSession>()
+        .view_snapshot(view)
+        .unwrap();
+    assert_eq!(snapshot.row, 180);
+    assert!(
+        snapshot.scroll_position[1] > 2000.,
+        "saved viewport swallowed navigation: {snapshot:?}"
+    );
+    assert_target_visible(app.world());
+}
+#[test]
+fn the_ui_and_registered_handlers_borrow_permanent_domain_resources() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let panel = match apply(
+        app.world_mut(),
+        EditorAction::Command(WindowCommand::NewDocument),
+        None,
+    ) {
+        EditorRequestOutcome::Opened { panel, .. } => panel,
+        _ => panic!(),
+    };
+    let child = panel_presentation(app.world(), panel).unwrap();
+    let view = app
+        .world()
+        .get::<EditorPanelBinding>(child)
+        .unwrap()
+        .view
+        .unwrap();
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut imgui = dear_imgui_rs::Context::create();
+    imgui
+        .io_mut()
+        .set_config_flags(dear_imgui_rs::ConfigFlags::DOCKING_ENABLE);
+    imgui.io_mut().set_display_size([800., 600.]);
+    imgui.io_mut().set_delta_time(1. / 60.);
+    imgui
+        .font_atlas()
+        .try_claim_legacy_renderer()
+        .unwrap()
+        .build();
+    crate::draw_ui(app.world_mut(), imgui.frame()).unwrap();
+    drop(imgui.render_legacy());
+    assert!(app.world().contains_non_send::<EditorSession>());
+    assert!(app.world().contains_non_send::<bed_editor::EditorViews>());
+    assert_eq!(
+        app.world()
+            .non_send::<EditorSession>()
+            .document_for_view(view),
+        app.world()
+            .get::<EditorPanelBinding>(panel)
+            .unwrap()
+            .document
+    );
+    assert!(
+        app.world()
+            .get::<bed_workbench_api::PanelGeometry>(panel)
+            .unwrap()
+            .visible
+    );
+}
+#[test]
+fn saving_a_captured_panel_never_redirects_to_newer_focus() {
+    for from_widget in [false, true] {
+        let dir = TempDir::new();
+        let mut app = app(&dir);
+        let first = dir.root().join("first.txt");
+        let second = dir.root().join("second.txt");
+        std::fs::write(&first, b"first").unwrap();
+        std::fs::write(&second, b"second").unwrap();
+        let a = open_file(app.world_mut(), &first, None, false, None).unwrap();
+        let document = app
+            .world()
+            .get::<EditorPanelBinding>(a)
+            .unwrap()
+            .document
+            .unwrap();
+        let revision = app
+            .world()
+            .non_send::<EditorSession>()
+            .document_revision(document)
+            .unwrap();
+        apply(
+            app.world_mut(),
+            EditorAction::ApplyEdits {
+                document,
+                revision,
+                edits: vec![ByteEdit {
+                    range: 0..5,
+                    bytes: b"changed".to_vec(),
+                }],
+            },
+            Some(a),
+        );
+        let request = capture_editor_request(
+            app.world(),
+            if from_widget {
+                EditorAction::HostRequest(HostRequest::Save { document })
+            } else {
+                EditorAction::Command(WindowCommand::Save)
+            },
+            PanelTarget::LastFocused,
+        );
+        let b = open_file(app.world_mut(), &second, None, false, None).unwrap();
+        let id = submit_editor_request(app.world_mut(), request);
+        process_editor_requests(app.world_mut()).unwrap();
+        assert!(matches!(
+            poll_editor_request(app.world_mut(), id),
+            Some(Ok(EditorRequestOutcome::Saved { .. }))
+        ));
+        assert_eq!(std::fs::read(&first).unwrap(), b"changed");
+        assert_eq!(std::fs::read(&second).unwrap(), b"second");
+        assert_eq!(app.world().resource::<WorkbenchLayout>().focused, Some(b));
+    }
+}
+#[test]
+fn inactive_viewers_remain_owned_until_the_layout_panel_closes() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let path = dir.root().join("values.json");
+    std::fs::write(&path, b"{\"value\":1}").unwrap();
+    let panel = open_file(app.world_mut(), &path, Some("bed.editor.text"), false, None).unwrap();
+    let text = panel_presentation(app.world(), panel).unwrap();
+    switch_viewer(app.world_mut(), panel, "bed.json.viewer").unwrap();
+    let json = panel_presentation(app.world(), panel).unwrap();
+    assert_ne!(text, json);
+    switch_viewer(app.world_mut(), panel, "bed.editor.text").unwrap();
+    assert_eq!(panel_presentation(app.world(), panel), Some(text));
+    assert!(app.world().entities().contains(json));
+    apply(
+        app.world_mut(),
+        EditorAction::ClosePanel(panel),
+        Some(panel),
+    );
+    assert!(!app.world().entities().contains(text));
+    assert!(!app.world().entities().contains(json));
+}
+
+#[test]
+fn a_registered_viewer_factory_failure_retains_the_active_presentation_and_document() {
+    #[derive(Component)]
+    struct FailedAllocation;
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    bed_workbench::register(app.world_mut(), "fixture", |registrar| {
+        registrar.panel(
+            "fixture.panel",
+            "Rejected viewer",
+            |In(creation): In<PanelCreation>,
+             world: &mut World|
+             -> bed_workbench_api::PanelResult {
+                world.entity_mut(creation.entity).insert(FailedAllocation);
+                Err("Factory rejected the input".into())
+            },
+        );
+    })
+    .unwrap();
+    app.world_mut()
+        .resource_mut::<bed_editor_api::Registry>()
+        .register_with("fixture", |registrar| {
+            registrar.panel("fixture.panel", "Rejected viewer");
+            registrar.viewer(
+                "fixture.viewer",
+                "Rejected viewer",
+                "fixture.panel",
+                &[],
+                bed_document_session::DocumentKind::Text,
+            );
+        })
+        .unwrap();
+    let path = dir.write("document.txt", b"original");
+    let tab = open_file(app.world_mut(), &path, None, false, None).unwrap();
+    let surface = panel_presentation(app.world(), tab).unwrap();
+    let binding = app.world().get::<EditorPanelBinding>(tab).unwrap().clone();
+    let document = binding.document.unwrap();
+    let view = binding.view.unwrap();
+    app.world_mut()
+        .non_send_mut::<EditorSession>()
+        .with_commands(view, |commands| commands.type_text(b"unsaved "))
+        .unwrap();
+    let before = app
+        .world()
+        .non_send::<EditorSession>()
+        .snapshot(document)
+        .unwrap();
+    let selections = app
+        .world()
+        .non_send::<EditorSession>()
+        .view_snapshot(view)
+        .unwrap()
+        .selections;
+    let id = submit(
+        app.world_mut(),
+        EditorAction::SwitchViewer {
+            panel: tab,
+            viewer: "fixture.viewer".into(),
+        },
+        Some(tab),
+    );
+    app.update();
+    assert!(
+        poll_editor_request_result(app.world_mut(), id)
+            .unwrap()
+            .unwrap_err()
+            .message
+            .contains("Factory rejected")
+    );
+    assert_eq!(panel_presentation(app.world(), tab), Some(surface));
+    assert_eq!(
+        app.world().get::<EditorPanelBinding>(tab).unwrap(),
+        &binding
+    );
+    assert!(
+        app.world()
+            .get::<PanelRecord>(tab)
+            .unwrap()
+            .unavailable
+            .is_none()
+    );
+    assert_eq!(
+        app.world()
+            .non_send::<EditorSession>()
+            .snapshot(document)
+            .unwrap()
+            .bytes,
+        before.bytes
+    );
+    assert_eq!(
+        app.world()
+            .non_send::<EditorSession>()
+            .view_snapshot(view)
+            .unwrap()
+            .selections,
+        selections
+    );
+    assert_eq!(
+        app.world().non_send::<EditorSession>().view_count(document),
+        1
+    );
+    assert_eq!(
+        app.world_mut()
+            .query::<&FailedAllocation>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+    assert_eq!(std::fs::read(path).unwrap(), b"original");
+}
+#[test]
+fn missing_feature_records_roundtrip_without_discarding_opaque_data() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let record = json!({"id":37,"panel_type":"missing.feature.panel","viewer":"missing.feature.viewer","state":{"draft":"keep"},"extension":{"future":[1,2,3]}});
+    let value = json!({"version":2,"panels":[record.clone()],"focused":37});
+    restore_layout(app.world_mut(), &value, false).unwrap();
+    let panel = panel_entities(app.world_mut())[0];
+    assert_eq!(app.world().get::<PanelPresentation>(panel).unwrap().id, 37);
+    persist_workspace(app.world_mut()).unwrap();
+    let saved = app
+        .world()
+        .non_send::<WorkspacePersistence>()
+        .store
+        .standalone_layout()
+        .unwrap();
+    assert_eq!(saved["panels"][0]["extension"], record["extension"]);
+    assert_eq!(saved["panels"][0]["state"], record["state"]);
+}
+#[test]
+fn attachment_preserves_the_session_and_dirty_panel_entities_across_saved_id_collisions() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let root = dir.root().join("project");
+    std::fs::create_dir(&root).unwrap();
+    let saved = root.join("saved.txt");
+    std::fs::write(&saved, b"saved").unwrap();
+    let carried = match apply(
+        app.world_mut(),
+        EditorAction::Command(WindowCommand::NewDocument),
+        None,
+    ) {
+        EditorRequestOutcome::Opened { panel, .. } => panel,
+        _ => panic!(),
+    };
+    let document = app
+        .world()
+        .get::<EditorPanelBinding>(carried)
+        .unwrap()
+        .document
+        .unwrap();
+    let revision = app
+        .world()
+        .non_send::<EditorSession>()
+        .document_revision(document)
+        .unwrap();
+    apply(
+        app.world_mut(),
+        EditorAction::ApplyEdits {
+            document,
+            revision,
+            edits: vec![ByteEdit {
+                range: 0..0,
+                bytes: b"unsaved".to_vec(),
+            }],
+        },
+        Some(carried),
+    );
+    let session = app.world().non_send::<EditorSession>().workspace_id();
+    let id = app.world().get::<PanelPresentation>(carried).unwrap().id;
+    let spec = WorkspaceSpec::local(root.to_string_lossy());
+    app.world_mut().non_send_mut::<WorkspacePersistence>().store.set_layout(&spec,json!({"version":2,"panels":[{"id":id,"panel_type":"bed.editor.text-panel","viewer":"bed.editor.text","path":saved,"state":{}}],"focused":id})).unwrap();
+    attach_workspace(app.world_mut(), &root).unwrap();
+    assert_eq!(
+        app.world().non_send::<EditorSession>().workspace_id(),
+        session
+    );
+    assert!(app.world().entities().contains(carried));
+    assert_eq!(
+        app.world()
+            .non_send::<EditorSession>()
+            .snapshot(document)
+            .unwrap()
+            .bytes,
+        b"unsaved"
+    );
+    let panels = panel_entities(app.world_mut());
+    let ids = panels
+        .iter()
+        .map(|entity| app.world().get::<PanelPresentation>(*entity).unwrap().id)
+        .collect::<HashSet<_>>();
+    assert_eq!(ids.len(), panels.len());
+}
+
+fn target_fixture(app: &mut App) -> (Entity, Entity, Entity, u32, u32) {
+    let first = open_panel(
+        app.world_mut(),
+        bed_editor::TEXT_PANEL_TYPE,
+        PanelInput::None,
+        Value::Null,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+    let last = open_panel(
+        app.world_mut(),
+        bed_editor::TEXT_PANEL_TYPE,
+        PanelInput::None,
+        Value::Null,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+    let singleton = open_panel(
+        app.world_mut(),
+        "bed.color.panel",
+        PanelInput::None,
+        Value::Null,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+    let mut layout = bed_workbench::workspace::tiling::Layout::default();
+    let largest = layout.split(1, 0, 3000, 100).unwrap();
+    let last_area = layout.split(1, 1, 5000, 100).unwrap();
+    let mut tiling = bed_workbench::workspace::tiling_state::TilingState::new(layout);
+    for (panel, area) in [(first, 1), (last, last_area), (singleton, 1)] {
+        tiling.assign(
+            app.world().get::<PanelPresentation>(panel).unwrap().id,
+            area,
+        );
+    }
+    app.world_mut().resource_mut::<WorkbenchLayout>().tiling = tiling;
+    focus_panel(app.world_mut(), first, true).unwrap();
+    focus_panel(app.world_mut(), last, true).unwrap();
+    (first, last, singleton, largest, last_area)
+}
+
+#[test]
+fn default_opening_uses_geometry_while_explicit_areas_override_it() {
+    for explicit in [false, true] {
+        let dir = TempDir::new();
+        let mut app = app(&dir);
+        let (first, last, _, largest, last_area) = target_fixture(&mut app);
+        let invocation = bed_workbench::capture_command(app.world(), "bed.color.new", Value::Null);
+        assert_eq!(invocation.source, Some(last));
+        assert_eq!(invocation.area, largest);
+        app.world_mut().resource_mut::<EditorIntents>().push(
+            Some(last),
+            HostRequest::OpenFile {
+                path: dir
+                    .write("default.txt", b"default")
+                    .to_string_lossy()
+                    .into_owned(),
+                viewer: None,
+            },
+        );
+        // Intent capture uses the default destination, even when its source is
+        // the focused sidebar. A drop's explicit area takes precedence.
+        if explicit {
+            let intents = app.world_mut().resource_mut::<EditorIntents>().take();
+            for intent in intents {
+                app.world_mut().resource_mut::<EditorIntents>().push_at(
+                    intent.source,
+                    last_area,
+                    intent.request,
+                );
+            }
+        }
+        drain_feature_intents(app.world_mut());
+        focus_panel(app.world_mut(), first, true).unwrap();
+        process_editor_requests(app.world_mut()).unwrap();
+        let opened = app.world().resource::<WorkbenchLayout>().focused.unwrap();
+        assert_ne!(opened, first);
+        let id = app.world().get::<PanelPresentation>(opened).unwrap().id;
+        assert_eq!(
+            app.world()
+                .resource::<WorkbenchLayout>()
+                .tiling
+                .area_for(id),
+            Some(if explicit { last_area } else { largest })
+        );
+    }
+}
+
+#[test]
+fn explicit_open_file_targets_are_captured_before_later_focus_changes() {
+    for target in [PanelTarget::LastFocused, PanelTarget::LargestArea] {
+        let dir = TempDir::new();
+        let mut app = app(&dir);
+        let (first, last, _, largest, last_area) = target_fixture(&mut app);
+        let path = dir.write("target.txt", b"target");
+        let request = capture_editor_request_from(
+            app.world(),
+            EditorAction::HostRequest(HostRequest::OpenFileIn {
+                path: path.to_string_lossy().into_owned(),
+                viewer: None,
+                target,
+            }),
+            PanelTarget::LargestArea,
+            Some(last),
+        );
+        let expected = match target {
+            PanelTarget::LastFocused => last_area,
+            PanelTarget::LargestArea => largest,
+        };
+        assert_eq!(request.area, expected);
+        focus_panel(app.world_mut(), first, true).unwrap();
+        let id = submit_editor_request(app.world_mut(), request);
+        process_editor_requests(app.world_mut()).unwrap();
+        let panel = match poll_editor_request_result(app.world_mut(), id)
+            .unwrap()
+            .unwrap()
+        {
+            EditorRequestOutcome::Opened { panel, .. } => panel,
+            _ => panic!(),
+        };
+        assert_eq!(
+            app.world()
+                .resource::<WorkbenchLayout>()
+                .tiling
+                .area_for(app.world().get::<PanelPresentation>(panel).unwrap().id),
+            Some(expected)
+        );
+    }
+}
+
+#[test]
+fn registered_explicit_show_moves_the_existing_panel_and_plain_show_preserves_its_area() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let (_, last, singleton, largest, last_area) = target_fixture(&mut app);
+    let geometry = app
+        .world()
+        .resource::<WorkbenchLayout>()
+        .tiling
+        .layout
+        .clone();
+    let child = panel_presentation(app.world(), singleton).unwrap();
+    bed_workbench_api::register(app.world_mut(), "bed.test-target", |registrar| {
+        registrar.command(
+            "bed.test-target.show",
+            "Show",
+            |In(invocation): In<CommandInvocation>,
+             mut intents: ResMut<EditorIntents>|
+             -> bed_workbench_api::CommandResult {
+                intents.push(
+                    invocation.source,
+                    HostRequest::ShowPanelIn {
+                        panel_type: "bed.color.panel".into(),
+                        document: None,
+                        state: Value::Null,
+                        action: None,
+                        target: PanelTarget::LargestArea,
+                    },
+                );
+                Ok(Vec::new())
+            },
+        );
+    })
+    .unwrap();
+    let outcome = apply(
+        app.world_mut(),
+        EditorAction::PluginCommand("bed.test-target.show".into()),
+        Some(last),
+    );
+    assert!(matches!(outcome, EditorRequestOutcome::Opened{panel,..} if panel == singleton));
+    assert_eq!(
+        app.world()
+            .resource::<WorkbenchLayout>()
+            .tiling
+            .area_for(app.world().get::<PanelPresentation>(singleton).unwrap().id),
+        Some(largest)
+    );
+    assert_eq!(panel_presentation(app.world(), singleton), Some(child));
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().tiling.layout,
+        geometry
+    );
+    assert_eq!(panel_entities(app.world_mut()).len(), 3);
+    apply(
+        app.world_mut(),
+        EditorAction::HostRequest(HostRequest::ShowPanel {
+            panel_type: "bed.color.panel".into(),
+            document: None,
+            state: Value::Null,
+            action: None,
+        }),
+        Some(last),
+    );
+    assert_eq!(
+        app.world()
+            .resource::<WorkbenchLayout>()
+            .tiling
+            .area_for(app.world().get::<PanelPresentation>(singleton).unwrap().id),
+        Some(largest)
+    );
+    app.world_mut().resource_mut::<EditorIntents>().push_at(
+        Some(last),
+        last_area,
+        HostRequest::ShowPanelIn {
+            panel_type: "bed.color.panel".into(),
+            document: None,
+            state: Value::Null,
+            action: None,
+            target: PanelTarget::LargestArea,
+        },
+    );
+    process_editor_requests(app.world_mut()).unwrap();
+    assert_eq!(
+        app.world()
+            .resource::<WorkbenchLayout>()
+            .tiling
+            .area_for(app.world().get::<PanelPresentation>(singleton).unwrap().id),
+        Some(last_area)
+    );
+}
+
+#[test]
+fn feature_intent_largest_area_is_captured_before_the_next_transition() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let (first, last, singleton, largest, _) = target_fixture(&mut app);
+    app.world_mut().resource_mut::<EditorIntents>().push(
+        Some(last),
+        HostRequest::ShowPanelIn {
+            panel_type: "bed.color.panel".into(),
+            document: None,
+            state: Value::Null,
+            action: None,
+            target: PanelTarget::LargestArea,
+        },
+    );
+    drain_feature_intents(app.world_mut());
+    focus_panel(app.world_mut(), first, true).unwrap();
+    process_editor_requests(app.world_mut()).unwrap();
+    assert_eq!(
+        app.world()
+            .resource::<WorkbenchLayout>()
+            .tiling
+            .area_for(app.world().get::<PanelPresentation>(singleton).unwrap().id),
+        Some(largest)
+    );
+}
+
+#[test]
+fn plugin_only_apps_drive_requests_and_keep_revision_errors_typed() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let path = dir.write("revision.txt", b"original");
+    let request = capture_editor_request(
+        app.world(),
+        EditorAction::OpenFile(path),
+        PanelTarget::LargestArea,
+    );
+    let id = submit_editor_request(app.world_mut(), request);
+    app.update();
+    let panel = match poll_editor_request_result(app.world_mut(), id)
+        .unwrap()
+        .unwrap()
+    {
+        EditorRequestOutcome::Opened { panel, .. } => panel,
+        _ => panic!(),
+    };
+    let document = app
+        .world()
+        .get::<EditorPanelBinding>(panel)
+        .unwrap()
+        .document
+        .unwrap();
+    let revision = app
+        .world()
+        .non_send::<EditorSession>()
+        .document_revision(document)
+        .unwrap();
+    let stale = capture_editor_request_from(
+        app.world(),
+        EditorAction::ApplyEdits {
+            document,
+            revision,
+            edits: vec![ByteEdit {
+                range: 0..1,
+                bytes: b"x".to_vec(),
+            }],
+        },
+        PanelTarget::LastFocused,
+        Some(panel),
+    );
+    app.world_mut()
+        .non_send_mut::<EditorSession>()
+        .apply_edits(
+            document,
+            revision,
+            &[ByteEdit {
+                range: 0..1,
+                bytes: b"y".to_vec(),
+            }],
+        )
+        .unwrap();
+    let id = submit_editor_request(app.world_mut(), stale);
+    app.update();
+    assert_eq!(
+        poll_editor_request_result(app.world_mut(), id)
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        io::ErrorKind::WouldBlock
+    );
+    assert_eq!(
+        app.world()
+            .non_send::<EditorSession>()
+            .snapshot(document)
+            .unwrap()
+            .bytes,
+        b"yriginal"
+    );
+}
+
+#[test]
+fn opening_a_file_reuses_only_a_pristine_scratch_and_keeps_its_identity_and_order() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let first = match apply(
+        app.world_mut(),
+        EditorAction::Command(WindowCommand::NewDocument),
+        None,
+    ) {
+        EditorRequestOutcome::Opened { panel, .. } => panel,
+        _ => panic!(),
+    };
+    let scratch = app
+        .world()
+        .get::<EditorPanelBinding>(first)
+        .unwrap()
+        .document
+        .unwrap();
+    let second = match apply(
+        app.world_mut(),
+        EditorAction::Command(WindowCommand::NewDocument),
+        None,
+    ) {
+        EditorRequestOutcome::Opened { panel, .. } => panel,
+        _ => panic!(),
+    };
+    focus_panel(app.world_mut(), first, true).unwrap();
+    let layout = app.world().resource::<WorkbenchLayout>().tiling.clone();
+    let file = dir.write("file.txt", b"file contents");
+    assert_eq!(
+        open_file(app.world_mut(), &file, None, false, None).unwrap(),
+        first
+    );
+    assert_eq!(app.world().resource::<WorkbenchLayout>().tiling, layout);
+    assert!(
+        !app.world()
+            .non_send::<EditorSession>()
+            .document_ids()
+            .contains(&scratch)
+    );
+    let document = app
+        .world()
+        .get::<EditorPanelBinding>(second)
+        .unwrap()
+        .document
+        .unwrap();
+    let view = app
+        .world()
+        .get::<EditorPanelBinding>(second)
+        .unwrap()
+        .view
+        .unwrap();
+    app.world_mut()
+        .non_send_mut::<EditorSession>()
+        .with_commands(view, |commands| commands.type_text(b"x"))
+        .unwrap();
+    app.world_mut()
+        .non_send_mut::<EditorSession>()
+        .undo_document(document)
+        .unwrap();
+    focus_panel(app.world_mut(), second, true).unwrap();
+    let count = panel_entities(app.world_mut()).len();
+    let other = dir.write("other.txt", b"other");
+    let opened = open_file(app.world_mut(), &other, None, false, None).unwrap();
+    assert_ne!(opened, second);
+    assert_eq!(panel_entities(app.world_mut()).len(), count + 1);
+    assert!(
+        app.world()
+            .non_send::<EditorSession>()
+            .document_ids()
+            .contains(&document)
+    );
+}
+
+#[test]
+fn a_failed_batch_retains_panels_and_never_applies_later_intentions() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let path = dir.write("batch.txt", b"before");
+    let panel = open_file(app.world_mut(), &path, None, false, None).unwrap();
+    let document = app
+        .world()
+        .get::<EditorPanelBinding>(panel)
+        .unwrap()
+        .document
+        .unwrap();
+    let revision = app
+        .world()
+        .non_send::<EditorSession>()
+        .document_revision(document)
+        .unwrap();
+    app.world_mut()
+        .non_send_mut::<EditorSession>()
+        .apply_edits(
+            document,
+            revision,
+            &[ByteEdit {
+                range: 0..6,
+                bytes: b"after".to_vec(),
+            }],
+        )
+        .unwrap();
+    let id = submit(
+        app.world_mut(),
+        EditorAction::HostRequests {
+            requests: vec![
+                HostRequest::ApplyEdits {
+                    document,
+                    revision,
+                    edits: vec![],
+                },
+                HostRequest::Save { document },
+            ],
+        },
+        Some(panel),
+    );
+    app.update();
+    assert_eq!(
+        poll_editor_request_result(app.world_mut(), id)
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        io::ErrorKind::WouldBlock
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"before");
+    assert!(app.world().entities().contains(panel));
+}
+
+fn registered_close(In(invocation): In<CommandInvocation>) -> bed_workbench_api::CommandResult {
+    Ok(vec![Action::ClosePanel(invocation.source.unwrap())])
+}
+#[test]
+fn registered_command_receipts_follow_actual_save_and_close_effects() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let path = dir.write("close.txt", b"before");
+    bed_workbench_api::register(app.world_mut(), "receipt", |registrar| {
+        registrar.command("receipt.close", "Close", registered_close)
+    })
+    .unwrap();
+    let panel = open_file(app.world_mut(), &path, None, false, None).unwrap();
+    let document = app
+        .world()
+        .get::<EditorPanelBinding>(panel)
+        .unwrap()
+        .document
+        .unwrap();
+    let revision = app
+        .world()
+        .non_send::<EditorSession>()
+        .document_revision(document)
+        .unwrap();
+    app.world_mut()
+        .non_send_mut::<EditorSession>()
+        .apply_edits(
+            document,
+            revision,
+            &[ByteEdit {
+                range: 0..6,
+                bytes: b"after".to_vec(),
+            }],
+        )
+        .unwrap();
+    let id = submit(
+        app.world_mut(),
+        EditorAction::PluginCommand("receipt.close".into()),
+        Some(panel),
+    );
+    app.update();
+    assert!(
+        matches!(poll_editor_request_result(app.world_mut(),id),Some(Ok(EditorRequestOutcome::Closed{panels})) if panels==vec![panel])
+    );
+    assert!(!app.world().entities().contains(panel));
+    assert_eq!(std::fs::read(&path).unwrap(), b"after");
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().tiling.areas.len(),
+        1,
+        "closing content preserves an empty destination area"
+    );
+}
+
+#[test]
+fn saving_a_failed_destination_preserves_the_old_binding_history_and_dirty_buffer() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let path = dir.write("before.txt", b"before");
+    let panel = open_file(app.world_mut(), &path, None, false, None).unwrap();
+    let document = app
+        .world()
+        .get::<EditorPanelBinding>(panel)
+        .unwrap()
+        .document
+        .unwrap();
+    let view = app
+        .world()
+        .get::<EditorPanelBinding>(panel)
+        .unwrap()
+        .view
+        .unwrap();
+    app.world_mut()
+        .non_send_mut::<EditorSession>()
+        .with_commands(view, |commands| commands.type_text(b"x"))
+        .unwrap();
+    let revision = app
+        .world()
+        .non_send::<EditorSession>()
+        .document_revision(document)
+        .unwrap();
+    let bytes = app
+        .world()
+        .non_send::<EditorSession>()
+        .snapshot(document)
+        .unwrap()
+        .bytes;
+    let id = submit(
+        app.world_mut(),
+        EditorAction::SaveAs {
+            document,
+            path: dir.root().join("missing-parent/after.txt"),
+        },
+        Some(panel),
+    );
+    app.update();
+    assert!(
+        poll_editor_request_result(app.world_mut(), id)
+            .unwrap()
+            .is_err()
+    );
+    let session = app.world().non_send::<EditorSession>();
+    assert_eq!(session.document_revision(document).unwrap(), revision);
+    let snapshot = session.snapshot(document).unwrap();
+    assert_eq!(
+        snapshot.path,
+        path.canonicalize().unwrap().to_string_lossy()
+    );
+    assert_eq!(snapshot.bytes, bytes);
+    assert!(snapshot.dirty);
+    assert_eq!(std::fs::read(path).unwrap(), b"before");
+    app.world_mut()
+        .non_send_mut::<EditorSession>()
+        .undo_document(document)
+        .unwrap();
+    assert_eq!(
+        app.world()
+            .non_send::<EditorSession>()
+            .snapshot(document)
+            .unwrap()
+            .bytes,
+        b"before"
+    );
+}
+
+#[test]
+fn generic_and_editor_ingress_use_one_submission_order_without_redirecting_sources() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let a = open_file(
+        app.world_mut(),
+        &dir.write("a.txt", b"a"),
+        None,
+        false,
+        None,
+    )
+    .unwrap();
+    let b = open_file(
+        app.world_mut(),
+        &dir.write("b.txt", b"b"),
+        None,
+        false,
+        None,
+    )
+    .unwrap();
+    let first = submit(app.world_mut(), EditorAction::FocusPanel(a), None);
+    let second = app
+        .world_mut()
+        .resource_mut::<WorkbenchRequests>()
+        .submit(Action::FocusPanel(b));
+    let third = submit(app.world_mut(), EditorAction::ObserveFocus(a), None);
+    app.update();
+    assert!(
+        poll_editor_request_result(app.world_mut(), first)
+            .unwrap()
+            .is_ok()
+    );
+    assert!(
+        app.world_mut()
+            .resource_mut::<WorkbenchRequests>()
+            .take_result(second)
+            .unwrap()
+            .is_ok()
+    );
+    assert!(
+        poll_editor_request_result(app.world_mut(), third)
+            .unwrap()
+            .is_ok()
+    );
+    assert_eq!(app.world().resource::<WorkbenchLayout>().focused, Some(a));
+}
+
+#[test]
+fn explicitly_refocusing_the_selected_panel_requests_widget_focus_again() {
+    #[derive(Resource, Default)]
+    struct Focuses(usize);
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let panel = open_file(
+        app.world_mut(),
+        &dir.write("focus.txt", b"focus"),
+        None,
+        false,
+        None,
+    )
+    .unwrap();
+    let surface = panel_presentation(app.world(), panel).unwrap();
+    app.init_resource::<Focuses>();
+    let hook = app.world_mut().register_system(
+        |_: In<Entity>, mut focuses: ResMut<Focuses>| -> Result<(), String> {
+            focuses.0 += 1;
+            Ok(())
+        },
+    );
+    app.world_mut()
+        .entity_mut(surface)
+        .insert(EditorPanelFocus(hook));
+    apply(
+        app.world_mut(),
+        EditorAction::FocusPanel(panel),
+        Some(panel),
+    );
+    apply(
+        app.world_mut(),
+        EditorAction::ObserveFocus(panel),
+        Some(panel),
+    );
+    assert_eq!(
+        app.world().resource::<Focuses>().0,
+        1,
+        "observing the current panel cannot repeatedly steal native focus"
+    );
+    apply(
+        app.world_mut(),
+        EditorAction::FocusPanel(panel),
+        Some(panel),
+    );
+    assert_eq!(
+        app.world().resource::<Focuses>().0,
+        2,
+        "explicit focus restores a widget after native focus was stolen"
+    );
+}
+
+#[test]
+fn accepted_file_drop_finishes_its_editor_effects_before_acknowledging_and_later_requests() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let path = dir.write("drop.txt", b"before");
+    let panel = open_file(app.world_mut(), &path, None, false, None).unwrap();
+    let surface = panel_presentation(app.world(), panel).unwrap();
+    let document = app
+        .world()
+        .get::<EditorPanelBinding>(panel)
+        .unwrap()
+        .document
+        .unwrap();
+    let revision = app
+        .world()
+        .non_send::<EditorSession>()
+        .document_revision(document)
+        .unwrap();
+    let handler = app.world_mut().register_system(
+        move |In(invocation): In<bed_editor_api::PanelExternalFilesInvocation>,
+              mut intents: ResMut<EditorIntents>|
+              -> Result<bed_editor_api::ExternalFileDropResponse, String> {
+            intents.push(
+                Some(invocation.entity),
+                HostRequest::ApplyEdits {
+                    document,
+                    revision,
+                    edits: vec![ByteEdit {
+                        range: 0..6,
+                        bytes: b"dropped".to_vec(),
+                    }],
+                },
+            );
+            intents.push(Some(invocation.entity), HostRequest::Save { document });
+            Ok(bed_editor_api::ExternalFileDropResponse::Accepted)
+        },
+    );
+    app.world_mut()
+        .entity_mut(surface)
+        .insert(bed_editor_api::EditorPanelExternalFiles(handler));
+    let event = bed_editor_api::ExternalFileDrag {
+        paths: vec![dir.root().join("handler-owns-this-path")],
+        position: [0., 0.],
+        viewport: 0,
+        phase: bed_editor_api::ExternalFileDragPhase::Drop,
+        modifiers: Default::default(),
+    };
+    let drop = submit(
+        app.world_mut(),
+        EditorAction::ExternalFiles {
+            panel: Some(panel),
+            event,
+        },
+        Some(panel),
+    );
+    let later = submit(
+        app.world_mut(),
+        EditorAction::ApplyEdits {
+            document,
+            revision,
+            edits: vec![ByteEdit {
+                range: 0..0,
+                bytes: b"stale".to_vec(),
+            }],
+        },
+        Some(panel),
+    );
+    app.update();
+    assert!(matches!(
+        poll_editor_request_result(app.world_mut(), drop),
+        Some(Ok(EditorRequestOutcome::Saved { .. }))
+    ));
+    assert_eq!(
+        poll_editor_request_result(app.world_mut(), later)
+            .unwrap()
+            .unwrap_err()
+            .kind,
+        io::ErrorKind::WouldBlock
+    );
+    assert_eq!(std::fs::read(path).unwrap(), b"dropped");
+}
+
+#[test]
+fn dropping_a_directory_adopts_the_workspace_without_replacing_carried_documents() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let path = dir.write("carried.txt", b"carried");
+    let panel = open_file(app.world_mut(), &path, None, false, None).unwrap();
+    let document = app
+        .world()
+        .get::<EditorPanelBinding>(panel)
+        .unwrap()
+        .document
+        .unwrap();
+    let view = app
+        .world()
+        .get::<EditorPanelBinding>(panel)
+        .unwrap()
+        .view
+        .unwrap();
+    app.world_mut()
+        .non_send_mut::<EditorSession>()
+        .with_commands(view, |commands| commands.type_text(b"dirty "))
+        .unwrap();
+    let session = app.world().non_send::<EditorSession>().workspace_id();
+    let project = dir.root().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let event = bed_editor_api::ExternalFileDrag {
+        paths: vec![project.clone()],
+        position: [0., 0.],
+        viewport: 0,
+        phase: bed_editor_api::ExternalFileDragPhase::Drop,
+        modifiers: Default::default(),
+    };
+    apply(
+        app.world_mut(),
+        EditorAction::ExternalFiles { panel: None, event },
+        Some(panel),
+    );
+    assert_eq!(
+        app.world().non_send::<EditorSession>().workspace_id(),
+        session
+    );
+    assert_eq!(
+        app.world()
+            .resource::<EditorWorkspace>()
+            .spec
+            .as_ref()
+            .unwrap()
+            .root,
+        project.canonicalize().unwrap().to_string_lossy()
+    );
+    assert!(app.world().entities().contains(panel));
+    assert!(
+        app.world()
+            .non_send::<EditorSession>()
+            .snapshot(document)
+            .unwrap()
+            .dirty
+    );
+    assert_eq!(std::fs::read(path).unwrap(), b"carried");
+}
+
+#[test]
+fn unavailable_viewers_and_missing_files_keep_their_original_records() {
+    for missing_file in [false, true] {
+        let dir = TempDir::new();
+        let mut app = app(&dir);
+        let path = if missing_file {
+            dir.root().join("missing.txt")
+        } else {
+            dir.write("exists.txt", b"retained")
+        };
+        let viewer = if missing_file {
+            bed_editor::TEXT_VIEWER
+        } else {
+            "missing.viewer"
+        };
+        let record = json!({"id":41,"panel_type":bed_editor::TEXT_PANEL_TYPE,"viewer":viewer,"path":path,"state":{"position":17},"future":{"keep":[1,2,3]}});
+        restore_layout(
+            app.world_mut(),
+            &json!({"version":2,"panels":[record.clone()],"focused":41}),
+            false,
+        )
+        .unwrap();
+        let panel = panel_entities(app.world_mut())[0];
+        let surface = panel_presentation(app.world(), panel).unwrap();
+        assert!(
+            app.world()
+                .get::<PanelRecord>(surface)
+                .unwrap()
+                .unavailable
+                .is_some()
+        );
+        assert!(
+            app.world()
+                .get::<bed_editor::EditorPanelState>(surface)
+                .is_none(),
+            "unavailable content cannot silently create an unrelated scratch editor"
+        );
+        persist_workspace(app.world_mut()).unwrap();
+        let saved = app
+            .world()
+            .non_send::<WorkspacePersistence>()
+            .store
+            .standalone_layout()
+            .unwrap();
+        assert_eq!(saved["panels"][0], record);
+        assert_eq!(
+            bed_workbench::panel_state(app.world_mut(), panel).unwrap(),
+            record["state"]
+        );
+    }
+}
+
+#[test]
+fn invalid_saved_identities_and_membership_recover_all_file_contents() {
+    for identities in [[1, 1], [0, 2], [1, 2]] {
+        let dir = TempDir::new();
+        let mut app = app(&dir);
+        let files = [
+            dir.write("first.txt", b"first"),
+            dir.write("second.txt", b"second"),
+        ];
+        let records=files.iter().zip(identities).map(|(path,id)|json!({"id":id,"panel_type":bed_editor::TEXT_PANEL_TYPE,"viewer":bed_editor::TEXT_VIEWER,"path":path,"state":{}})).collect::<Vec<_>>();
+        restore_layout(
+            app.world_mut(),
+            &json!({"version":2,"panels":records,"tiling":{"version":1,"layout":{},"areas":[]}}),
+            false,
+        )
+        .unwrap();
+        let panels = panel_entities(app.world_mut());
+        assert_eq!(panels.len(), 2);
+        let ids = panels
+            .iter()
+            .map(|panel| app.world().get::<PanelPresentation>(*panel).unwrap().id)
+            .collect::<HashSet<_>>();
+        assert_eq!(ids.len(), 2);
+        assert!(!ids.contains(&0));
+        for (panel, expected) in panels
+            .iter()
+            .zip([b"first".as_slice(), b"second".as_slice()])
+        {
+            let document = app
+                .world()
+                .get::<EditorPanelBinding>(*panel)
+                .unwrap()
+                .document
+                .unwrap();
+            assert_eq!(
+                app.world()
+                    .non_send::<EditorSession>()
+                    .snapshot(document)
+                    .unwrap()
+                    .bytes,
+                expected
+            );
+        }
+        assert!(app.world().resource::<EditorWorkspace>().error.is_some());
+        persist_workspace(app.world_mut()).unwrap();
+        let saved = app
+            .world()
+            .non_send::<WorkspacePersistence>()
+            .store
+            .standalone_layout()
+            .unwrap()
+            .clone();
+        let fresh = TempDir::new();
+        let mut restored = self::app(&fresh);
+        restore_layout(restored.world_mut(), &saved, false).unwrap();
+        assert_eq!(panel_entities(restored.world_mut()).len(), 2);
+    }
+}
+
+#[test]
+fn saving_without_a_ui_frame_restores_geometry_order_shared_views_and_last_document() {
+    let dir = TempDir::new();
+    let mut original = app(&dir);
+    let path = dir.write("shared.txt", b"shared");
+    let first = open_file(original.world_mut(), &path, None, false, None).unwrap();
+    let second = match apply(
+        original.world_mut(),
+        EditorAction::Command(WindowCommand::DuplicateView),
+        Some(first),
+    ) {
+        EditorRequestOutcome::Opened { panel, .. } => panel,
+        _ => panic!(),
+    };
+    let color = open_panel(
+        original.world_mut(),
+        "bed.color.panel",
+        PanelInput::None,
+        Value::Null,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+    let mut layout = bed_workbench::workspace::tiling::Layout::default();
+    let right = layout.split(1, 0, 7000, 1).unwrap();
+    let mut tiling = bed_workbench::workspace::tiling_state::TilingState::new(layout);
+    tiling.assign(
+        original
+            .world()
+            .get::<PanelPresentation>(second)
+            .unwrap()
+            .id,
+        1,
+    );
+    tiling.assign(
+        original.world().get::<PanelPresentation>(first).unwrap().id,
+        1,
+    );
+    tiling.assign(
+        original.world().get::<PanelPresentation>(color).unwrap().id,
+        right,
+    );
+    original
+        .world_mut()
+        .resource_mut::<WorkbenchLayout>()
+        .tiling = tiling.clone();
+    focus_panel(original.world_mut(), second, true).unwrap();
+    focus_panel(original.world_mut(), color, true).unwrap();
+    persist_workspace(original.world_mut()).unwrap();
+    let saved = original
+        .world()
+        .non_send::<WorkspacePersistence>()
+        .store
+        .standalone_layout()
+        .unwrap()
+        .clone();
+    let fresh = TempDir::new();
+    let mut restored = app(&fresh);
+    restore_layout(restored.world_mut(), &saved, false).unwrap();
+    assert_eq!(
+        restored.world().resource::<WorkbenchLayout>().tiling,
+        tiling
+    );
+    let document = restored
+        .world()
+        .resource::<EditorNavigation>()
+        .active_document
+        .unwrap();
+    assert_eq!(
+        restored
+            .world()
+            .non_send::<EditorSession>()
+            .view_count(document),
+        2
+    );
+    assert_eq!(
+        restored
+            .world()
+            .get::<PanelRecord>(
+                restored
+                    .world()
+                    .resource::<WorkbenchLayout>()
+                    .focused
+                    .unwrap()
+            )
+            .unwrap()
+            .panel_type,
+        "bed.color.panel"
+    );
+    assert_eq!(
+        restored
+            .world()
+            .non_send::<EditorSession>()
+            .snapshot(document)
+            .unwrap()
+            .bytes,
+        b"shared"
+    );
+}
+
+#[test]
+fn restored_empty_areas_and_failed_splits_never_create_or_discard_content() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let mut layout = bed_workbench::workspace::tiling::Layout::default();
+    let empty = layout.split(1, 0, 100, 1).unwrap();
+    let tiling = bed_workbench::workspace::tiling_state::TilingState::new(layout);
+    restore_layout(
+        app.world_mut(),
+        &json!({"version":2,"panels":[],"tiling":tiling.to_value([]),"focused_area":empty}),
+        false,
+    )
+    .unwrap();
+    assert!(panel_entities(app.world_mut()).is_empty());
+    assert_eq!(app.world().resource::<WorkbenchLayout>().tiling, tiling);
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().focused_area,
+        Some(empty)
+    );
+    let panel = open_file(
+        app.world_mut(),
+        &dir.write("narrow.txt", b"narrow"),
+        None,
+        false,
+        Some(1),
+    )
+    .unwrap();
+    let document = app
+        .world()
+        .get::<EditorPanelBinding>(panel)
+        .unwrap()
+        .document
+        .unwrap();
+    let before = app.world().resource::<WorkbenchLayout>().tiling.clone();
+    assert!(split_panel(app.world_mut(), panel, 0, true).is_err());
+    assert_eq!(panel_entities(app.world_mut()), vec![panel]);
+    assert_eq!(app.world().resource::<WorkbenchLayout>().tiling, before);
+    assert_eq!(
+        app.world().non_send::<EditorSession>().view_count(document),
+        1
+    );
+}

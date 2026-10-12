@@ -14,6 +14,7 @@ mod core;
 mod init;
 mod lifecycle;
 mod render;
+mod snapshot;
 
 mod draw;
 mod external_textures;
@@ -31,10 +32,11 @@ mod pipeline;
 #[cfg(feature = "multi-viewport-sdl3")]
 mod sdl3_raw_window_handle;
 
-use crate::{RendererError, RendererResult, Uniforms, WgpuBackendData, WgpuTextureManager};
+use crate::{RendererError, RendererResult, Uniforms, WgpuTextureManager};
 pub use core::WgpuRenderer;
 use dear_imgui_rs::render::{RendererRenderStateGuard, RendererRenderStateGuardError};
 pub use draw::FramebufferExtent;
+pub use snapshot::{WgpuSnapshotContext, WgpuSnapshotRenderer};
 
 pub(super) fn map_renderer_render_state_error(
     error: RendererRenderStateGuardError,

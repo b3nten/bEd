@@ -7,6 +7,7 @@ enum Operation {
     Open {
         requested: String,
         kind: Option<DocumentKind>,
+        origin: Option<LspRequestOrigin>,
     },
     Save {
         document: DocumentId,
@@ -244,7 +245,7 @@ impl EditorSession {
         self.lsp = None;
         self.initialize_lsp();
         for id in self.document_ids() {
-            self.attach_lsp(id);
+            self.attach_lsp(id, None);
         }
         for id in self.document_ids() {
             if let Err(error) = self.queue_read(id, ReadMode::Monitor)
@@ -265,20 +266,21 @@ impl EditorSession {
         path: &Path,
         kind: DocumentKind,
     ) -> io::Result<Option<DocumentId>> {
-        self.request_open_mode(path, Some(kind))
+        self.request_open_mode(path, Some(kind), None)
     }
     pub fn request_open_file_auto(&mut self, path: &Path) -> io::Result<Option<DocumentId>> {
-        self.request_open_mode(path, None)
+        self.request_open_mode(path, None, None)
     }
-    fn request_open_mode(
+    pub(super) fn request_open_mode(
         &mut self,
         path: &Path,
         kind: Option<DocumentKind>,
+        origin: Option<LspRequestOrigin>,
     ) -> io::Result<Option<DocumentId>> {
         self.ensure_running()?;
         if self.remote.is_none() {
             return match kind {
-                Some(kind) => self.open_file_with_kind(path, kind),
+                Some(kind) => self.open_file_in_context(path, kind, origin),
                 None => self.open_file_auto(path),
             }
             .map(Some);
@@ -298,6 +300,7 @@ impl EditorSession {
             Operation::Open {
                 requested: path.clone(),
                 kind,
+                origin,
             },
             Request::ReadFile {
                 root: remote.root.clone(),
@@ -522,7 +525,7 @@ impl EditorSession {
                 entry.editor.save_service.cancel_pending();
             }
             if lsp_changed {
-                self.attach_lsp(id);
+                self.attach_lsp(id, None);
             }
         }
         Ok(())
@@ -557,6 +560,16 @@ impl EditorSession {
                 Operation::Git { document, .. } => Some(*document),
                 Operation::GitStatus => None,
             };
+            if let Operation::Open {
+                origin: Some(origin),
+                ..
+            } = &operation
+                && !self.accepts_lsp_origin(origin)
+            {
+                // The request was valid when queued; an edit, view close
+                // or server restart makes its delayed result obsolete.
+                continue;
+            }
             if result.is_err() {
                 let origin = match &operation {
                     Operation::Read {
@@ -651,7 +664,11 @@ impl EditorSession {
             };
             match (operation, response) {
                 (
-                    Operation::Open { requested, kind },
+                    Operation::Open {
+                        requested,
+                        kind,
+                        origin,
+                    },
                     Response::File {
                         path,
                         bytes,
@@ -684,7 +701,7 @@ impl EditorSession {
                     self.paths.insert(PathBuf::from(path), id);
                     self.remote.as_mut().unwrap().baselines.insert(id, baseline);
                     self.remote.as_mut().unwrap().aliases.insert(requested, id);
-                    self.install_entry(id, editor, FileMonitor::new());
+                    self.install_entry(id, editor, FileMonitor::new(), origin);
                     self.queue_remote_git(id);
                 }
                 (
@@ -764,10 +781,7 @@ impl EditorSession {
                     }
                     self.collect_notifications(id, None);
                     if self.documents[&id].editor.document_generation() != generation {
-                        if let Some(pool) = &mut self.lsp {
-                            let _ = pool.unregister_document(id);
-                        }
-                        self.attach_lsp(id);
+                        self.reopen_lsp(id);
                     } else {
                         self.update_lsp_snapshot(id);
                     }
@@ -854,10 +868,7 @@ impl EditorSession {
                                 view.state.clamp_all(&entry.editor.state);
                             }
                             let generation = entry.editor.document_generation();
-                            if let Some(pool) = &mut self.lsp {
-                                let _ = pool.unregister_document(id);
-                            }
-                            self.attach_lsp(id);
+                            self.reopen_lsp(id);
                             self.queued.push(SessionEvent::Reloaded {
                                 document: id,
                                 generation,
