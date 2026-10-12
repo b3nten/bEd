@@ -3439,7 +3439,7 @@ fn apply_host_request(
                     false,
                     Some(request.area),
                     origin,
-                    FileOpenMode::Keep,
+                    FileOpenMode::Preview,
                 ) {
                     Ok(panel) => panel,
                     Err(error)
@@ -3467,7 +3467,7 @@ fn apply_host_request(
                                 path,
                                 viewer: Some("bed.editor.text".into()),
                                 additional: false,
-                                mode: FileOpenMode::Keep,
+                                mode: FileOpenMode::Preview,
                                 layout_slot: request.layout_slot,
                                 move_existing: false,
                                 area: Some(request.area),
@@ -4922,7 +4922,7 @@ fn poll_remote_operations(
         }
     }
     let opens = std::mem::take(&mut world.non_send_mut::<RemoteOperations>().opens);
-    for pending in opens {
+    for mut pending in opens {
         if pending.session != world.non_send::<EditorSession>().workspace_id().0 {
             complete(
                 world,
@@ -4969,6 +4969,16 @@ fn poll_remote_operations(
             .find(|error| error.service == "remote" && error.document.is_none())
         {
             complete(world, pending.id, Err(error.message.clone().into()));
+            continue;
+        }
+        if let Some(follow_up) = pending.follow_up.take() {
+            // Resume navigation before opening its destination: replacing a
+            // preview can retire the source that validates the request.
+            match apply_request(world, follow_up, pending.id) {
+                Ok(Some(outcome)) => complete(world, pending.id, Ok(outcome)),
+                Ok(None) => {}
+                Err(error) => complete(world, pending.id, Err(error.into())),
+            }
             continue;
         }
         let result = if let Some(panel) = pending.restore {
@@ -5028,22 +5038,13 @@ fn poll_remote_operations(
                 Ok(panel)
             })
         } else {
-            let origin = pending
-                .follow_up
-                .as_ref()
-                .and_then(|request| match &request.action {
-                    EditorAction::HostRequest(HostRequest::NavigateLocation { origin, .. }) => {
-                        *origin
-                    }
-                    _ => None,
-                });
             open_file_with_origin(
                 world,
                 &pending.path,
                 pending.viewer.as_deref(),
                 pending.additional,
                 pending.area,
-                origin,
+                None,
                 pending.mode,
             )
         };
@@ -5056,25 +5057,16 @@ fn poll_remote_operations(
                     pending.move_existing,
                     pending.tab_index,
                 )?;
-                if let Some(follow_up) = pending.follow_up {
-                    let result = apply_request(world, follow_up, pending.id);
-                    match result {
-                        Ok(Some(outcome)) => complete(world, pending.id, Ok(outcome)),
-                        Ok(None) => {}
-                        Err(error) => complete(world, pending.id, Err(error.into())),
-                    }
-                } else {
-                    complete(
-                        world,
-                        pending.id,
-                        Ok(EditorRequestOutcome::Opened {
-                            panel,
-                            document: world
-                                .get::<EditorPanelBinding>(panel)
-                                .and_then(|binding| binding.document),
-                        }),
-                    )
-                }
+                complete(
+                    world,
+                    pending.id,
+                    Ok(EditorRequestOutcome::Opened {
+                        panel,
+                        document: world
+                            .get::<EditorPanelBinding>(panel)
+                            .and_then(|binding| binding.document),
+                    }),
+                )
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 world.non_send_mut::<RemoteOperations>().opens.push(pending)

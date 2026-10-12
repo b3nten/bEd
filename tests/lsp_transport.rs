@@ -181,6 +181,10 @@ fn main() {
             workbench_single_definition_returns_to_requesting_view_without_references,
         ),
         (
+            "workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs",
+            workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs,
+        ),
+        (
             "workbench_multiple_and_stale_definitions_use_guarded_routes",
             workbench_multiple_and_stale_definitions_use_guarded_routes,
         ),
@@ -2014,16 +2018,9 @@ impl NavigationWorkbench {
     fn shortcut(&mut self) {
         use dear_imgui_rs::Key;
         self.focus(self.request_tab);
-        let modifier = if cfg!(target_os = "macos") {
-            Key::ModSuper
-        } else {
-            Key::ModCtrl
-        };
-        self.context.io_mut().add_key_event(modifier, true);
-        self.context.io_mut().add_key_event(Key::D, true);
+        self.context.io_mut().add_key_event(Key::F12, true);
         self.frame();
-        self.context.io_mut().add_key_event(Key::D, false);
-        self.context.io_mut().add_key_event(modifier, false);
+        self.context.io_mut().add_key_event(Key::F12, false);
         self.frame();
         assert_eq!(self.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
         assert!(
@@ -2032,7 +2029,7 @@ impl NavigationWorkbench {
                 .unwrap()
                 .iter()
                 .any(|message| message["method"] == "textDocument/definition"),
-            "native Cmd/Ctrl+D must send the request"
+            "native F12 must send the request"
         );
     }
     fn release(&self) {
@@ -2079,6 +2076,82 @@ fn workbench_single_definition_returns_to_requesting_view_without_references() {
     assert_eq!(
         fixture.session().snapshot(fixture.document).unwrap().bytes,
         bytes
+    );
+}
+
+fn workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs() {
+    let mut fixture = NavigationWorkbench::new();
+    let path = fixture.fixture.root.join("definition.rs");
+    fs::write(&path, "// target\nfn definition() {}\n").unwrap();
+    fixture.configure(json!({
+        "uri": LspUri::file_uri_from_path(path.to_str().unwrap()).unwrap().to_string(),
+        "range": {"start": {"line": 1, "character": 3}, "end": {"line": 1, "character": 13}}
+    }));
+    fixture.shortcut();
+    fixture.focus(fixture.sibling_tab);
+    fixture.release();
+    wait_until(|| {
+        fixture.frame();
+        fixture.active_view().is_some_and(|view| {
+            let document = fixture.session().document_for_view(view).unwrap();
+            fixture.session().snapshot(document).unwrap().path
+                == fs::canonicalize(&path).unwrap().to_string_lossy()
+        })
+    });
+    let panel = fixture
+        .app
+        .world()
+        .resource::<bed_editor_workbench::WorkbenchLayout>()
+        .focused
+        .unwrap();
+    let id = fixture
+        .app
+        .world()
+        .get::<bed_editor_workbench::EditorPanel>(panel)
+        .unwrap()
+        .id;
+    assert!(
+        fixture
+            .app
+            .world()
+            .resource::<bed_editor_workbench::WorkbenchLayout>()
+            .tiling
+            .areas
+            .iter()
+            .any(|group| group.preview == Some(id))
+    );
+    assert!(fixture.app.world().entities().contains(fixture.request_tab));
+    assert!(fixture.app.world().entities().contains(fixture.sibling_tab));
+    let view = fixture
+        .app
+        .world()
+        .get::<bed_editor_api::EditorPanelBinding>(panel)
+        .unwrap()
+        .view
+        .unwrap();
+    let snapshot = fixture.session().view_snapshot(view).unwrap();
+    assert_eq!((snapshot.row, snapshot.column), (1, 3));
+    assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+
+    fixture.configure(fixture.location(1, 2));
+    fixture.shortcut();
+    fixture.release();
+    wait_until(|| {
+        fixture.frame();
+        let snapshot = fixture.session().view_snapshot(fixture.requesting).unwrap();
+        (snapshot.row, snapshot.column) == (1, 2)
+    });
+    assert_eq!(fixture.active_view(), Some(fixture.requesting));
+    assert!(
+        fixture
+            .app
+            .world()
+            .resource::<bed_editor_workbench::WorkbenchLayout>()
+            .tiling
+            .areas
+            .iter()
+            .any(|group| group.preview == Some(id)),
+        "same-file definition jumps must leave the source kept and preserve the other preview"
     );
 }
 
@@ -2400,7 +2473,7 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
                 };
                 context
                     .io_mut()
-                    .add_key_event(modifier, action != "context menu");
+                    .add_key_event(modifier, action == "primary click");
                 if action != "shortcut" {
                     context.io_mut().add_mouse_pos_event(point);
                     context.io_mut().add_mouse_button_event(
@@ -2412,7 +2485,7 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
                         true,
                     );
                 } else {
-                    context.io_mut().add_key_event(Key::D, true);
+                    context.io_mut().add_key_event(Key::F12, true);
                 }
                 context.prepare_frame(FramePrepareOptions::new([1600.0, 1000.0], 1.0 / 60.0));
                 bed_editor_workbench::draw_ui(app.world_mut(), context.frame()).unwrap();
@@ -2423,7 +2496,7 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
                 context
                     .io_mut()
                     .add_mouse_button_event(MouseButton::Right, false);
-                context.io_mut().add_key_event(Key::D, false);
+                context.io_mut().add_key_event(Key::F12, false);
                 context.io_mut().add_key_event(modifier, false);
                 context.prepare_frame(FramePrepareOptions::new([1600.0, 1000.0], 1.0 / 60.0));
                 let ui = context.frame();

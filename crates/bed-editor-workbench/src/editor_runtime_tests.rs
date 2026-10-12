@@ -456,6 +456,83 @@ fn structure_navigation_animates_to_the_item_and_respects_disabled_animations() 
 }
 
 #[test]
+fn location_navigation_previews_new_files_and_preserves_existing_tab_modes() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let source_path = dir.write("source.rs", b"fn source() {}\nfn local_definition() {}\n");
+    let source = open_file(app.world_mut(), &source_path, None, false, Some(1)).unwrap();
+    let old_preview = preview(&mut app, &dir.write("old.rs", b"old"), 1);
+    let old_id = app
+        .world()
+        .get::<PanelPresentation>(old_preview)
+        .unwrap()
+        .id;
+    let navigate = |app: &mut App, path: &Path, source, row| {
+        assert_eq!(
+            apply(
+                app.world_mut(),
+                EditorAction::HostRequest(HostRequest::NavigateLocation {
+                    path: path.to_string_lossy().into_owned(),
+                    row,
+                    utf16_column: 3,
+                    origin: None,
+                }),
+                Some(source),
+            ),
+            EditorRequestOutcome::Applied
+        );
+        app.world().resource::<WorkbenchLayout>().focused.unwrap()
+    };
+    assert_eq!(navigate(&mut app, &source_path, source, 1), source);
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().tiling.areas[0].preview,
+        Some(old_id),
+        "same-file navigation must leave the kept source and other preview alone"
+    );
+    let first_path = dir.write("first.rs", b"// first\nfn definition() {}\n");
+    let first = navigate(&mut app, &first_path, source, 1);
+    let first_id = app.world().get::<PanelPresentation>(first).unwrap().id;
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().tiling.areas[0].preview,
+        Some(first_id)
+    );
+    assert!(!app.world().entities().contains(old_preview));
+    assert!(app.world().entities().contains(source));
+    assert_eq!(navigate(&mut app, &first_path, first, 0), first);
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().tiling.areas[0].preview,
+        Some(first_id),
+        "same-file navigation must also preserve an existing preview"
+    );
+    let second_path = dir.write("second.rs", b"// second\nfn definition() {}\n");
+    let second = navigate(&mut app, &second_path, first, 1);
+    let second_id = app.world().get::<PanelPresentation>(second).unwrap().id;
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().tiling.areas[0].preview,
+        Some(second_id)
+    );
+    assert!(!app.world().entities().contains(first));
+    let view = app
+        .world()
+        .get::<EditorPanelBinding>(second)
+        .unwrap()
+        .view
+        .unwrap();
+    let snapshot = app
+        .world()
+        .non_send::<EditorSession>()
+        .view_snapshot(view)
+        .unwrap();
+    assert_eq!((snapshot.row, snapshot.column), (1, 3));
+    assert_eq!(navigate(&mut app, &source_path, second, 1), source);
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().tiling.areas[0].preview,
+        Some(second_id),
+        "cross-file navigation must preserve an already-kept destination"
+    );
+}
+
+#[test]
 fn location_navigation_reveals_the_target_in_a_new_and_existing_view() {
     let dir = TempDir::new();
     let mut app = app(&dir);

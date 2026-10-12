@@ -81,7 +81,9 @@ pub(crate) fn keyboard(
     }
     let zoom_in = shortcuts.held(ui, bed_keybindings::ZOOM_IN) || shortcuts.held(ui, ZOOM_IN);
     let zoom_out = shortcuts.held(ui, bed_keybindings::ZOOM_OUT) || shortcuts.held(ui, ZOOM_OUT);
-    if zoom_in || zoom_out {
+    let reset_zoom =
+        shortcuts.held(ui, bed_keybindings::RESET_ZOOM) || shortcuts.held(ui, RESET_ZOOM);
+    if zoom_in || zoom_out || reset_zoom {
         ui.with_bound_context(|| unsafe {
             let queue = &mut (*sys::igGetIO_Nil()).InputQueueCharacters;
             if queue.Size > 0 {
@@ -91,6 +93,7 @@ pub(crate) fn keyboard(
                     let codepoint = characters[index];
                     if (zoom_in && (codepoint == '=' as u32 || codepoint == '+' as u32))
                         || (zoom_out && codepoint == '-' as u32)
+                        || (reset_zoom && codepoint == '0' as u32)
                     {
                         continue;
                     }
@@ -397,6 +400,39 @@ mod tests {
             context.io_mut().add_key_event(modifier, false);
             draw(&mut app, &mut context, &[entity]);
         }
+        app.world_mut()
+            .non_send_mut::<EditorViews>()
+            .text_mut(entity)
+            .unwrap()
+            .zoom_by(10.0);
+        context.io_mut().add_key_event(modifier, true);
+        context.io_mut().add_key_event(Key::Key0, true);
+        for _ in 0..45 {
+            context.io_mut().add_input_character('0');
+            draw(&mut app, &mut context, &[entity]);
+            assert!(
+                app.world()
+                    .non_send::<EditorSession>()
+                    .snapshot(document)
+                    .unwrap()
+                    .bytes
+                    .is_empty()
+            );
+        }
+        assert_eq!(zoom(&app, entity), 1.0);
+        context.io_mut().add_input_characters_utf8("é0雪0🙂");
+        draw(&mut app, &mut context, &[entity]);
+        assert_eq!(
+            app.world()
+                .non_send::<EditorSession>()
+                .snapshot(document)
+                .unwrap()
+                .bytes,
+            "é雪🙂".as_bytes()
+        );
+        context.io_mut().add_key_event(Key::Key0, false);
+        context.io_mut().add_key_event(modifier, false);
+        draw(&mut app, &mut context, &[entity]);
         context.io_mut().add_key_event(modifier, true);
         context.io_mut().add_input_characters_utf8("é=雪+🙂-");
         context.io_mut().add_key_event(Key::Equal, true);
@@ -407,13 +443,14 @@ mod tests {
                 .snapshot(document)
                 .unwrap()
                 .bytes,
-            "é雪🙂-".as_bytes()
+            "é雪🙂é雪🙂-".as_bytes()
         );
         context.io_mut().add_key_event(Key::Equal, false);
         context.io_mut().add_key_event(modifier, false);
         draw(&mut app, &mut context, &[entity]);
-        context.io_mut().add_input_characters_utf8("=+-");
+        context.io_mut().add_input_characters_utf8("=+-0");
         context.io_mut().add_key_event(Key::Equal, true);
+        context.io_mut().add_key_event(Key::Key0, true);
         draw(&mut app, &mut context, &[entity]);
         assert_eq!(
             app.world()
@@ -421,7 +458,7 @@ mod tests {
                 .snapshot(document)
                 .unwrap()
                 .bytes,
-            "é雪🙂-=+-".as_bytes()
+            "é雪🙂é雪🙂-=+-0".as_bytes()
         );
     }
 

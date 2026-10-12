@@ -447,6 +447,62 @@ fn preview_selections_and_double_clicks_supersede_pending_remote_opens() {
     shutdown(&mut app);
 }
 
+fn location_navigation_replaces_a_remote_preview_and_finishes_the_jump() {
+    let directory = TempDir::new();
+    let source_path = directory.write("source.rs", b"// source\nfn source() {}\n");
+    let target_path = directory.write("target.rs", "// target\n// 🦀 definition\n".as_bytes());
+    let mut app = remote_app(&directory, false);
+    let id = submit(
+        &mut app,
+        EditorAction::HostRequest(bed_editor_api::HostRequest::PreviewFileIn {
+            path: source_path.to_string_lossy().into_owned(),
+            viewer: None,
+            target: PanelTarget::LargestArea,
+        }),
+        None,
+    );
+    let source = match outcome(&mut app, id) {
+        EditorRequestOutcome::Opened { panel, .. } => panel,
+        other => panic!("{other:?}"),
+    };
+    let source_surface = panel_presentation(app.world(), source).unwrap();
+    let id = submit(
+        &mut app,
+        EditorAction::HostRequest(bed_editor_api::HostRequest::NavigateLocation {
+            path: target_path.to_string_lossy().into_owned(),
+            row: 1,
+            utf16_column: 6,
+            origin: None,
+        }),
+        Some(source_surface),
+    );
+    process_editor_requests(app.world_mut()).unwrap();
+    assert!(poll_editor_request_result(app.world_mut(), id).is_none());
+    assert!(app.world().entities().contains(source));
+    assert_eq!(outcome(&mut app, id), EditorRequestOutcome::Applied);
+    let target = app.world().resource::<WorkbenchLayout>().focused.unwrap();
+    assert_ne!(target, source);
+    assert!(!app.world().entities().contains(source));
+    let target_id = app.world().get::<EditorPanel>(target).unwrap().id;
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().tiling.areas[0].preview,
+        Some(target_id)
+    );
+    let view = app
+        .world()
+        .get::<EditorPanelBinding>(target)
+        .unwrap()
+        .view
+        .unwrap();
+    let snapshot = app
+        .world()
+        .non_send::<EditorSession>()
+        .view_snapshot(view)
+        .unwrap();
+    assert_eq!((snapshot.row, snapshot.column), (1, 8));
+    shutdown(&mut app);
+}
+
 fn main() {
     if std::env::args().any(|arg| arg == "--stdio") {
         serve_with(
@@ -472,7 +528,8 @@ fn main() {
     restoration_keeps_reserved_identity_and_group_selection();
     save_and_close_receipts_wait_for_acknowledged_bytes();
     preview_selections_and_double_clicks_supersede_pending_remote_opens();
+    location_navigation_replaces_a_remote_preview_and_finishes_the_jump();
     println!(
-        "remote editor: captured destinations, cancellation, shared restoration, delayed save and close receipts, preview supersession passed"
+        "remote editor: captured destinations, cancellation, shared restoration, delayed save and close receipts, preview supersession and location navigation passed"
     );
 }

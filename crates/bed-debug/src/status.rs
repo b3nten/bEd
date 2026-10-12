@@ -216,6 +216,69 @@ mod tests {
     }
 
     #[test]
+    fn queued_hover_from_a_closed_document_or_previous_workspace_has_no_error_status() {
+        use bed_document_session::editor_session::{ClosePolicy, EditorSession};
+        use bed_editor_ui::{
+            extensions::SourceHoverObservation,
+            source_intents::{SourceHoverRequest, SourceRequests},
+            views::hover_trigger::{Info, Zone},
+        };
+
+        for replace_workspace in [false, true] {
+            let mut app = App::new();
+            app.add_plugins(DebugPlugin);
+            let publisher = app
+                .world_mut()
+                .query::<(Entity, &StatusItems)>()
+                .single(app.world())
+                .unwrap()
+                .0;
+            let (document, view, revision) = {
+                let mut documents = app.world_mut().non_send_mut::<EditorSession>();
+                let document = documents.create_document(b"let value = 1;").unwrap();
+                let view = documents.create_view(document).unwrap();
+                let revision = documents.document_revision(document).unwrap();
+                (document, view, revision)
+            };
+            app.world_mut()
+                .non_send_mut::<SourceRequests>()
+                .hover
+                .push(SourceHoverRequest {
+                    document,
+                    view,
+                    revision,
+                    observation: SourceHoverObservation {
+                        info: Info {
+                            active: true,
+                            zone: Zone::Text,
+                            row: 0,
+                            column: 4,
+                        },
+                        dismissed: false,
+                        key_pressed: false,
+                        in_pane: true,
+                        over_popup: false,
+                        mouse: [20.0, 20.0],
+                        frame: 1,
+                        window_size: [600.0, 400.0],
+                    },
+                });
+            if replace_workspace {
+                app.world_mut().insert_non_send(EditorSession::new());
+            } else {
+                app.world_mut()
+                    .non_send_mut::<EditorSession>()
+                    .close_document(document, ClosePolicy::Discard)
+                    .unwrap();
+            }
+            app.update();
+
+            assert!(app.world().non_send::<SourceRequests>().hover.is_empty());
+            assert!(presentation(app.world(), context(publisher, ACTIVE, None)).is_none());
+        }
+    }
+
+    #[test]
     fn launch_save_barrier_has_ambient_feedback_and_its_existing_stop_command_cancels_it() {
         let mut app = App::new();
         app.add_plugins(DebugPlugin);

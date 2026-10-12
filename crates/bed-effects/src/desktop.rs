@@ -18,6 +18,7 @@ use dear_imgui_wgpu::{FramebufferExtent, WgpuSnapshotRenderer};
 #[extract_app(RenderApp)]
 pub struct EffectsState {
     pub settings: ShaderSettings,
+    /// Wall-clock seconds, independent of gameplay pausing or time scaling.
     pub time: f32,
     pub scene_generation: u64,
 }
@@ -43,6 +44,12 @@ struct EditorEffectsRenderer {
 pub fn install(app: &mut App) {
     app.init_resource::<EffectsState>()
         .insert_resource(bed_desktop::DesktopComposition(compose_editor))
+        .add_systems(
+            Update,
+            |time: Res<Time<Real>>, mut effects: ResMut<EffectsState>| {
+                effects.time = time.elapsed_secs();
+            },
+        )
         .add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
             EffectsState,
         >::default());
@@ -124,5 +131,51 @@ pub struct EffectsPlugin;
 impl Plugin for EffectsPlugin {
     fn build(&self, app: &mut App) {
         install(app);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::{
+        ecs::schedule::{ScheduleLabel, SystemSet},
+        extract::ExtractPlugin,
+        render::{Render, RenderSystems},
+        time::{TimePlugin, TimeUpdateStrategy},
+    };
+    use std::time::Duration;
+
+    #[test]
+    fn desktop_effects_extract_current_real_time_even_when_gameplay_is_paused() {
+        let mut app = App::new();
+        app.add_plugins(TimePlugin)
+            .add_plugins(ExtractPlugin::<RenderApp>::new(
+                |_, _| {},
+                Render::base_schedule,
+                Render.intern(),
+                RenderSystems::ExtractCommands.intern(),
+                RenderSystems::PostCleanup.intern(),
+            ))
+            .add_plugins(EffectsPlugin);
+        app.sub_app_mut(RenderApp).update_schedule = Some(Render.intern());
+        app.world_mut().resource_mut::<Time<Virtual>>().pause();
+        app.update(); // The real clock starts at zero on its first update.
+
+        let mut elapsed = Duration::ZERO;
+        for (seconds, enabled) in [(1.0 / 60.0, true), (0.04, false), (0.01, true)] {
+            let delta = Duration::from_secs_f64(seconds);
+            elapsed += delta;
+            app.insert_resource(TimeUpdateStrategy::ManualDuration(delta));
+            app.world_mut()
+                .resource_mut::<EffectsState>()
+                .settings
+                .enabled = enabled;
+            app.update();
+
+            let rendered = app.sub_app(RenderApp).world().resource::<EffectsState>();
+            assert_eq!(rendered.time, elapsed.as_secs_f32());
+            assert_eq!(rendered.settings.enabled, enabled);
+            assert_eq!(app.world().resource::<Time>().elapsed(), Duration::ZERO);
+        }
     }
 }

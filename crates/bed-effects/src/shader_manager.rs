@@ -655,6 +655,80 @@ mod tests {
         assert_pixels_close(&pixels, &pattern, 1);
         assert!(manager.temporal.as_ref().is_none_or(|t| !t.accum.swap));
 
+        // Each time-driven effect must change pixels on an otherwise unchanged
+        // frame. Isolate them so one working effect cannot hide a frozen one.
+        let animated_input: Vec<u8> = (0..32)
+            .flat_map(|y| {
+                (0..64).flat_map(move |x| {
+                    [
+                        (20 + (x * 71 + y * 37) % 120) as u8,
+                        (20 + (x * 3 + y * 59) % 120) as u8,
+                        if (x + y) % 3 == 0 { 140 } else { 20 },
+                        255,
+                    ]
+                })
+            })
+            .collect();
+        upload(&queue, &manager.fb.texture, &animated_input);
+        for (name, settings) in [
+            (
+                "static",
+                ShaderSettings {
+                    static_intensity: 0.5,
+                    ..neutral(true)
+                },
+            ),
+            (
+                "scanline",
+                ShaderSettings {
+                    scanline_intensity: 1.0,
+                    ..neutral(true)
+                },
+            ),
+            (
+                "RGB shift",
+                ShaderSettings {
+                    colorshift_intensity: 10.0,
+                    ..neutral(true)
+                },
+            ),
+            (
+                "jitter",
+                ShaderSettings {
+                    jitter_intensity: 10.0,
+                    ..neutral(true)
+                },
+            ),
+            (
+                "pulse",
+                ShaderSettings {
+                    pulse_intensity: 0.1,
+                    ..neutral(true)
+                },
+            ),
+        ] {
+            let first = render_readback(
+                &device,
+                &queue,
+                &mut manager,
+                &output.texture,
+                &settings,
+                0.0,
+            );
+            // Jitter is intermittent; sample a complete eight-second scan cycle.
+            let changes = (1..=240).any(|frame| {
+                render_readback(
+                    &device,
+                    &queue,
+                    &mut manager,
+                    &output.texture,
+                    &settings,
+                    frame as f32 / 30.0,
+                ) != first
+            });
+            assert!(changes, "{name} did not animate on unchanged content");
+        }
+
         // Background coverage must survive effects, while foreground coverage
         // remains opaque at every opacity level, including temporal burn-in.
         for alpha in [0u8, 128, 255] {

@@ -252,16 +252,23 @@ impl Debugger {
         request: &bed_editor_ui::source_intents::SourceHoverRequest,
         documents: &EditorSession,
     ) -> io::Result<()> {
-        if documents.document_revision(request.document)? != request.revision {
+        let owns_hover = self
+            .hover
+            .as_ref()
+            .is_some_and(|h| h.key.view == request.view);
+        // Drawing queues observations for the next tick; the view or document
+        // can close (or the workspace can change) before they are consumed.
+        if documents.document_for_view(request.view) != Some(request.document)
+            || documents.document_revision(request.document)? != request.revision
+        {
+            if owns_hover {
+                self.hover = None;
+            }
             return Ok(());
         }
         let observation = &request.observation;
         let info = observation.info;
         let mouse = observation.mouse;
-        let owns_hover = self
-            .hover
-            .as_ref()
-            .is_some_and(|h| h.key.view == request.view);
         let over_popup = observation.over_popup;
         let in_pane = observation.in_pane;
         // Sibling editor views must not dismiss or render another view's popup.
