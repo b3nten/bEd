@@ -954,110 +954,131 @@ impl Completion {
                         dear_imgui_rs::sys::igGetCurrentWindow(),
                     );
                 });
-                let selected_row =
-                    active
-                        .selection_motion
-                        .sample(active.selected as f32, ui.time(), animations);
+                let selected_row = active
+                    .selection_motion
+                    .sample(active.selected as f32, ui.time(), animations)
+                    .clamp(0.0, (active.filtered.len() - 1) as f32);
                 let pos = ui.cursor_screen_pos();
-                let top = pos[1] + selected_row * ui.text_line_height_with_spacing();
-                if active.scroll_selection || (selected_row - active.selected as f32).abs() > 0.001
-                {
-                    let viewport_height = ui.with_bound_context(|| unsafe {
-                        let window = &*dear_imgui_rs::sys::igGetCurrentWindowRead();
-                        window.InnerRect.Max.y
-                            - window.InnerRect.Min.y
-                            - window.WindowPadding.y * 2.0
-                    });
-                    let row_top = selected_row * ui.text_line_height_with_spacing();
-                    let row_bottom = row_top + ui.text_line_height();
-                    let scroll = ui.scroll_y();
-                    let target = if row_top < scroll {
-                        row_top
-                    } else if row_bottom > scroll + viewport_height {
-                        row_bottom - viewport_height
-                    } else {
-                        scroll
-                    };
-                    if target != scroll {
-                        ui.set_scroll_y(target.max(0.0));
-                    }
-                }
-                ui.get_window_draw_list()
-                    .add_rect(
-                        [pos[0], top],
-                        [
-                            pos[0] + ui.content_region_avail()[0],
-                            top + ui.text_line_height(),
-                        ],
-                        selected_background,
-                    )
-                    .rounding(3.0)
-                    .filled(true)
-                    .build();
-                for (row, index) in active.filtered.iter().copied().enumerate() {
-                    let item = &active.items[index];
-                    let pos = ui.cursor_screen_pos();
-                    let row_width = ui.content_region_avail()[0];
-                    let activated = ui
-                        .selectable_config(format!("##completion_item_{index}"))
-                        .selected(row == active.selected)
-                        .size([0.0, ui.text_line_height()])
-                        .build();
-                    // Returning focus to the editor on mouse-down can clear
-                    // ImGui's active row before its default release activation.
-                    if activated || (ui.is_item_hovered() && ui.is_mouse_clicked(MouseButton::Left))
-                    {
-                        active.selected = row;
-                        active.accept_pending = true;
-                    }
-                    let row_background = if ui.is_item_hovered() {
-                        if ui.is_item_active() {
+                let lower = selected_row.floor() as usize;
+                let upper = selected_row.ceil() as usize;
+                let mut lower_rect = None;
+                let mut upper_rect = None;
+                let draw = ui.get_window_draw_list();
+                // Measure native selectable bounds, including pixel alignment
+                // and half-spacing padding, then paint the moving highlight
+                // behind the rows. Font spacing alone drifts down the list.
+                draw.channels_split(2, |channels| {
+                    channels.set_current(1);
+                    for (row, index) in active.filtered.iter().copied().enumerate() {
+                        let item = &active.items[index];
+                        let pos = ui.cursor_screen_pos();
+                        let row_width = ui.content_region_avail()[0];
+                        let activated = ui
+                            .selectable_config(format!("##completion_item_{index}"))
+                            .selected(row == active.selected)
+                            .size([0.0, ui.text_line_height()])
+                            .build();
+                        if row == lower {
+                            lower_rect = Some((ui.item_rect_min(), ui.item_rect_max()));
+                        }
+                        if row == upper {
+                            upper_rect = Some((ui.item_rect_min(), ui.item_rect_max()));
+                        }
+                        // Returning focus to the editor on mouse-down can clear
+                        // ImGui's active row before its default release activation.
+                        if activated
+                            || (ui.is_item_hovered() && ui.is_mouse_clicked(MouseButton::Left))
+                        {
+                            active.selected = row;
+                            active.accept_pending = true;
+                        }
+                        let row_background = if ui.is_item_hovered() {
+                            if ui.is_item_active() {
+                                selected_background
+                            } else {
+                                hovered_background
+                            }
+                        } else if row == active.selected {
                             selected_background
                         } else {
-                            hovered_background
+                            background
+                        };
+                        let readable = |color| {
+                            bed_ui::color::ensure_contrast(
+                                bed_ui::color::ensure_contrast(color, selected_background, 4.5),
+                                row_background,
+                                4.5,
+                            )
+                        };
+                        let (kind, slot) = kind_presentation(item.kind);
+                        let kind_width = fs * 4.0;
+                        let name_pos = [pos[0] + kind_width, pos[1]];
+                        let name = bed_ui::presentation::fit_text(
+                            ui,
+                            &item.label,
+                            (row_width - kind_width).max(1.0),
+                        );
+                        draw.add_text(pos, readable(kind_colors[slot as usize]), kind);
+                        draw.add_text(name_pos, readable(text), &name);
+                        let detail_pos =
+                            [name_pos[0] + ui.calc_text_size(&name)[0] + fs * 0.4, pos[1]];
+                        let label_detail =
+                            item.raw["labelDetails"]["detail"].as_str().unwrap_or("");
+                        let description = item.raw["labelDetails"]["description"]
+                            .as_str()
+                            .unwrap_or("");
+                        let detail = if label_detail.is_empty() {
+                            description.to_owned()
+                        } else if description.is_empty() {
+                            label_detail.to_owned()
+                        } else {
+                            format!("{label_detail} · {description}")
+                        };
+                        let detail = bed_ui::presentation::fit_text(
+                            ui,
+                            &detail,
+                            (pos[0] + row_width - detail_pos[0]).max(0.0),
+                        );
+                        draw.add_text(detail_pos, readable(detail_color), &detail);
+                    }
+                    let (lower_min, lower_max) = lower_rect.unwrap();
+                    let (upper_min, upper_max) = upper_rect.unwrap();
+                    let fraction = selected_row.fract();
+                    let min = std::array::from_fn(|axis| {
+                        lower_min[axis] + (upper_min[axis] - lower_min[axis]) * fraction
+                    });
+                    let max = std::array::from_fn(|axis| {
+                        lower_max[axis] + (upper_max[axis] - lower_max[axis]) * fraction
+                    });
+                    channels.set_current(0);
+                    draw.add_rect(min, max, selected_background)
+                        .rounding(3.0)
+                        .filled(true)
+                        .build();
+                    if active.scroll_selection
+                        || (selected_row - active.selected as f32).abs() > 0.001
+                    {
+                        let viewport_height = ui.with_bound_context(|| unsafe {
+                            let window = &*dear_imgui_rs::sys::igGetCurrentWindowRead();
+                            window.InnerRect.Max.y
+                                - window.InnerRect.Min.y
+                                - window.WindowPadding.y * 2.0
+                        });
+                        let row_top = min[1] - pos[1];
+                        let row_bottom = max[1] - pos[1];
+                        let scroll = ui.scroll_y();
+                        let target = if row_top < scroll {
+                            row_top
+                        } else if row_bottom > scroll + viewport_height {
+                            row_bottom - viewport_height
+                        } else {
+                            scroll
+                        };
+                        if target != scroll {
+                            ui.set_scroll_y(target.max(0.0));
                         }
-                    } else if row == active.selected {
-                        selected_background
-                    } else {
-                        background
-                    };
-                    let readable = |color| {
-                        bed_ui::color::ensure_contrast(
-                            bed_ui::color::ensure_contrast(color, selected_background, 4.5),
-                            row_background,
-                            4.5,
-                        )
-                    };
-                    let (kind, slot) = kind_presentation(item.kind);
-                    let kind_width = fs * 4.0;
-                    let name_pos = [pos[0] + kind_width, pos[1]];
-                    let name = bed_ui::presentation::fit_text(
-                        ui,
-                        &item.label,
-                        (row_width - kind_width).max(1.0),
-                    );
-                    let draw = ui.get_window_draw_list();
-                    draw.add_text(pos, readable(kind_colors[slot as usize]), kind);
-                    draw.add_text(name_pos, readable(text), &name);
-                    let detail_pos = [name_pos[0] + ui.calc_text_size(&name)[0] + fs * 0.4, pos[1]];
-                    let label_detail = item.raw["labelDetails"]["detail"].as_str().unwrap_or("");
-                    let description = item.raw["labelDetails"]["description"]
-                        .as_str()
-                        .unwrap_or("");
-                    let detail = if label_detail.is_empty() {
-                        description.to_owned()
-                    } else if description.is_empty() {
-                        label_detail.to_owned()
-                    } else {
-                        format!("{label_detail} · {description}")
-                    };
-                    let detail = bed_ui::presentation::fit_text(
-                        ui,
-                        &detail,
-                        (pos[0] + row_width - detail_pos[0]).max(0.0),
-                    );
-                    draw.add_text(detail_pos, readable(detail_color), &detail);
-                }
+                    }
+                });
                 active.scroll_selection = false;
             });
         active.popup_rect = Some(([x, y], [x + width, y + height]));
@@ -1420,6 +1441,125 @@ mod tests {
         }
     }
     #[test]
+    fn native_completion_keyboard_highlight_matches_hovered_row_bounds() {
+        use dear_imgui_rs::sys;
+
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        for size in [13.0, 20.0, 21.5] {
+            let (_dir, mut session, document) = super::super::test_fixture::session();
+            let mut view = EditorView::new(&mut session, document).unwrap();
+            session
+                .with_commands(view.id(), |commands| {
+                    commands.set_cursor(0, 14, false, CursorReveal::Ensure)
+                })
+                .unwrap();
+            let mut runtime = crate::EditorRuntime::default();
+            let mut config = crate::EditorConfig::default();
+            config.lsp.autocomplete = false;
+            let mut context = native_context();
+            let mut fonts = bed_ui::font::UiFonts::default();
+            fonts
+                .apply(
+                    &mut context,
+                    &bed_ui::appearance::UiFontOptions {
+                        size,
+                        ..Default::default()
+                    },
+                    false,
+                )
+                .unwrap();
+            config.options.font = fonts.main;
+            context
+                .font_atlas()
+                .try_claim_legacy_renderer()
+                .unwrap()
+                .build();
+            native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+            runtime.request_completion(&mut session, view.id()).unwrap();
+            wait_completion(&mut context, &mut runtime, &mut session, &mut view, &config);
+            let active = runtime.completion.active.as_mut().unwrap();
+            let item = active.items[active.filtered[active.selected]].clone();
+            active.items = vec![item; 24];
+            active.filtered = (0..24).collect();
+            let name = std::ffi::CString::new(format!("##completion_{}", view.id().0)).unwrap();
+            let background = [0.04, 0.05, 0.08, 1.0];
+            let accent = [0.15, 0.40, 0.70, 1.0];
+            context
+                .style_mut()
+                .set_color(StyleColor::PopupBg, background);
+            context.style_mut().set_color(StyleColor::CheckMark, accent);
+            let bounds = |context: &dear_imgui_rs::Context, amount| {
+                context.binding().with_bound_context(|| unsafe {
+                    let color = bed_ui::color::blend(accent, background, amount);
+                    let color = sys::igColorConvertFloat4ToU32(color.into());
+                    let window = &*sys::igFindWindowByName(name.as_ptr());
+                    let white = (*(*sys::igGetIO_Nil()).Fonts).TexUvWhitePixel;
+                    let vertices = &(*window.DrawList).VtxBuffer;
+                    let mut min = [f32::INFINITY; 2];
+                    let mut max = [f32::NEG_INFINITY; 2];
+                    for index in 0..vertices.Size {
+                        let vertex = &*vertices.Data.add(index as usize);
+                        let same_color = (0..4).all(|channel| {
+                            let shift = channel * 8;
+                            ((vertex.col >> shift) & 255).abs_diff((color >> shift) & 255) <= 1
+                        });
+                        if same_color && vertex.uv.x == white.x && vertex.uv.y == white.y {
+                            min[0] = min[0].min(vertex.pos.x);
+                            min[1] = min[1].min(vertex.pos.y);
+                            max[0] = max[0].max(vertex.pos.x);
+                            max[1] = max[1].max(vertex.pos.y);
+                        }
+                    }
+                    assert!(
+                        min.into_iter().chain(max).all(f32::is_finite),
+                        "missing rectangle: font={size}, blend={amount}, color={color:#x}"
+                    );
+                    (min, max)
+                })
+            };
+            for animations in [false, true] {
+                config.navigation_animations = animations;
+                for selected in [0, 6, 20] {
+                    context.io_mut().add_mouse_pos_event([-100.0; 2]);
+                    let active = runtime.completion.active.as_mut().unwrap();
+                    active.selected = selected;
+                    active.scroll_selection = true;
+                    for _ in 0..14 {
+                        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+                    }
+                    let keyboard = bounds(&context, 0.24);
+                    // Use the actual native layout stride, including its pixel
+                    // alignment, to place the pointer on the selected row.
+                    let mouse = context.binding().with_bound_context(|| unsafe {
+                        let window = &*sys::igFindWindowByName(name.as_ptr());
+                        let start = window.DC.CursorStartPos;
+                        let stride = (window.DC.CursorPosPrevLine.y - start.y) / 23.0;
+                        [
+                            start.x + 5.0,
+                            start.y + selected as f32 * stride + size * 0.5,
+                        ]
+                    });
+                    context.io_mut().add_mouse_pos_event(mouse);
+                    for _ in 0..2 {
+                        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+                    }
+                    let hovered = bounds(&context, 0.16);
+                    for (keyboard, hovered) in keyboard
+                        .0
+                        .into_iter()
+                        .chain(keyboard.1)
+                        .zip(hovered.0.into_iter().chain(hovered.1))
+                    {
+                        assert!(
+                            (keyboard - hovered).abs() <= 0.6,
+                            "font={size}, row={selected}, animations={animations}: keyboard={keyboard}, hover={hovered}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    #[test]
     fn native_completion_selection_eases_highlight_and_scroll_together() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let (_dir, mut session, document) = super::super::test_fixture::session();
@@ -1580,9 +1720,37 @@ mod tests {
             context
                 .io_mut()
                 .set_config_flags(dear_imgui_rs::ConfigFlags::DOCKING_ENABLE);
+            let published_revision = std::cell::Cell::new(
+                app.world()
+                    .non_send::<EditorSession>()
+                    .document_revision(document)
+                    .unwrap(),
+            );
             let draw = |context: &mut dear_imgui_rs::Context, app: &mut App| {
                 app.world_mut().non_send_mut::<EditorSession>().tick();
                 app.update();
+                // Debugger facts are published at frame entry and may lag edits
+                // by a frame. Keyboard acceptance edits before drawing; mouse
+                // acceptance edits after drawing. Exercise both stale snapshots.
+                let revision = app
+                    .world()
+                    .non_send::<EditorSession>()
+                    .document_revision(document)
+                    .unwrap();
+                app.world_mut()
+                    .non_send_mut::<bed_editor_ui::extensions::EditorExtensions>()
+                    .set_source_debug(
+                        document,
+                        published_revision.replace(revision),
+                        bed_editor_ui::SourceDebugPresentation {
+                            breakpoints: vec![bed_editor_ui::SourceBreakpoint {
+                                row: 0,
+                                enabled: true,
+                                status: bed_editor_ui::BreakpointStatus::Pending,
+                            }],
+                            execution_row: None,
+                        },
+                    );
                 context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
                     [1001.0, 701.0],
                     1.0 / 60.0,
@@ -1672,12 +1840,20 @@ mod tests {
                 context
                     .io_mut()
                     .add_mouse_button_event(MouseButton::Left, false);
-                let scroll = app
+                let position = app
                     .world()
                     .non_send::<EditorSession>()
                     .view_snapshot(view_id)
-                    .unwrap()
-                    .scroll_position[0];
+                    .unwrap();
+                assert_eq!(
+                    (position.row, position.column),
+                    (
+                        1,
+                        (source.len() - 2 + "LongRustCompletionIdentifier".len() * 180) as i32
+                    ),
+                    "completion caret, frame {frame}, click={click}, wrap={wrap}",
+                );
+                let scroll = position.scroll_position[0];
                 let origin = app
                     .world()
                     .non_send::<crate::feature::EditorViews>()
@@ -1689,7 +1865,7 @@ mod tests {
                     + scroll;
                 assert!(
                     (origin - baseline).abs() < 1.0,
-                    "frame {frame}, wrap={wrap}: {baseline} -> {origin}"
+                    "frame {frame}, click={click}, wrap={wrap}: {baseline} -> {origin}"
                 );
                 context.binding().with_bound_context(|| unsafe {
                     let context = &*sys::igGetCurrentContext();

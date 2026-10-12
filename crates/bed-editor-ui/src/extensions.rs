@@ -102,6 +102,13 @@ impl EditorExtensions {
             .filter(|fact| fact.revision == revision)
             .map(|fact| &fact.presentation)
     }
+    /// Debugging remains available across edits while its row decorations await
+    /// a fresh snapshot. A document replacement or explicit removal ends it.
+    pub fn source_debug_available(&self, document: DocumentId, revision: SourceRevision) -> bool {
+        self.source_debug
+            .get(&document)
+            .is_some_and(|fact| fact.revision.0 == revision.0)
+    }
     pub fn source_git(
         &self,
         document: DocumentId,
@@ -161,6 +168,9 @@ mod tests {
         facts.set_source_debug(document, revision, SourceDebugPresentation::default());
         let snapshot = facts.clone();
         assert!(facts.source_debug(other, revision).is_none());
+        assert!(!facts.source_debug_available(other, revision));
+        assert!(facts.source_debug_available(document, (revision.0, revision.1 + 1)));
+        assert!(!facts.source_debug_available(document, (revision.0 + 1, revision.1)));
         assert!(
             facts
                 .source_debug(document, (revision.0, revision.1 + 1))
@@ -168,6 +178,7 @@ mod tests {
         );
         facts.clear_source_debug(document);
         assert!(facts.source_debug(document, revision).is_none());
+        assert!(!facts.source_debug_available(document, revision));
         assert!(snapshot.source_debug(document, revision).is_some());
     }
 }

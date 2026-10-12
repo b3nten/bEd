@@ -277,7 +277,17 @@ impl EditorView {
             self.frame.source_git = git_extension.cloned();
             self.frame.source_debug = source_extension
                 .cloned()
-                .or_else(|| options.source_debug.clone());
+                .or_else(|| options.source_debug.clone())
+                .or_else(|| {
+                    // Row decorations are revision-bound; gutter availability
+                    // belongs to the document. Completion may edit between the
+                    // host's publication and this draw, so retain an empty column
+                    // until refreshed facts arrive without painting stale rows.
+                    options
+                        .extensions
+                        .source_debug_available(self.document, source_revision)
+                        .then(SourceDebugPresentation::default)
+                });
             let mut response = None;
             ui.child_window(format!("##bed_view_{}", self.id.0))
                 .size(options.size)
@@ -691,6 +701,112 @@ mod tests {
         assert!(right.frame.source_debug.is_none());
     }
 
+    #[test]
+    fn debug_gutter_stays_stable_while_edited_source_facts_await_refresh() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        for wrap in [false, true] {
+            let mut context = extension_context();
+            let mut session = EditorSession::new();
+            let source = b"fn main() {\n    let args = std::env::var_os(\"BEDTERM_SOCKET\").is_some();\n    String::\n    return;\n}";
+            let document = session.create_document(source).unwrap();
+            let mut view = EditorView::new(&mut session, document).unwrap();
+            view.set_soft_wrap(wrap);
+            view.set_minimap_enabled(false);
+            session
+                .with_commands(view.id(), |commands| {
+                    commands.set_cursor(2, 12, false, CursorReveal::Ensure)
+                })
+                .unwrap();
+            session.request_focus(view.id()).unwrap();
+            let revision = session.document_revision(document).unwrap();
+            let mut facts = EditorExtensions::default();
+            facts.set_source_debug(
+                document,
+                revision,
+                SourceDebugPresentation {
+                    breakpoints: vec![SourceBreakpoint {
+                        row: 0,
+                        enabled: true,
+                        status: BreakpointStatus::Pending,
+                    }],
+                    execution_row: Some(1),
+                },
+            );
+            for _ in 0..3 {
+                extension_frame(&mut context, &mut session, &mut [&mut view], &facts, false);
+            }
+            let origin = view.frame.layout.text_pos[0];
+            let caret_y = view.frame.caret_position[1];
+            let offset = session
+                .with_document(document, |state| state.offset_from_row_col(2, 12))
+                .unwrap();
+            session
+                .apply_edits(
+                    document,
+                    revision,
+                    &[bed_document_session::ByteEdit {
+                        range: offset..offset,
+                        bytes: b"new".to_vec(),
+                    }],
+                )
+                .unwrap();
+            session
+                .with_commands(view.id(), |commands| {
+                    commands.set_cursor(2, 15, false, CursorReveal::Ensure)
+                })
+                .unwrap();
+            let (responses, _) =
+                extension_frame(&mut context, &mut session, &mut [&mut view], &facts, false);
+            assert_eq!(
+                view.frame.layout.text_pos[0], origin,
+                "stale facts shifted gutter, wrap={wrap}"
+            );
+            assert_eq!(
+                view.frame.caret_position[1], caret_y,
+                "completion changed caret row, wrap={wrap}"
+            );
+            let debug = view
+                .frame
+                .source_debug
+                .as_ref()
+                .expect("debug column stays available");
+            assert!(
+                debug.breakpoints.is_empty(),
+                "stale breakpoint rows cannot be painted"
+            );
+            assert_eq!(debug.execution_row, None);
+            assert!(responses[0].source_hover.is_none());
+
+            let revision = session.document_revision(document).unwrap();
+            facts.set_source_debug(
+                document,
+                revision,
+                SourceDebugPresentation {
+                    breakpoints: vec![SourceBreakpoint {
+                        row: 0,
+                        enabled: true,
+                        status: BreakpointStatus::Pending,
+                    }],
+                    execution_row: None,
+                },
+            );
+            extension_frame(&mut context, &mut session, &mut [&mut view], &facts, false);
+            assert_eq!(view.frame.layout.text_pos[0], origin);
+            assert_eq!(view.frame.caret_position[1], caret_y);
+            assert_eq!(
+                view.frame.source_debug.as_ref().unwrap().breakpoints.len(),
+                1
+            );
+
+            facts.clear_source_debug(document);
+            extension_frame(&mut context, &mut session, &mut [&mut view], &facts, false);
+            assert!(
+                view.frame.source_debug.is_none(),
+                "explicit removal hides the column"
+            );
+            assert!(view.frame.layout.text_pos[0] < origin);
+        }
+    }
     #[test]
     fn source_observations_do_not_escape_changed_or_hidden_views() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
