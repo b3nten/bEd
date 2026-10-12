@@ -3,7 +3,9 @@ use bed_document_session::{
     ByteEdit, ClosePolicy, DocumentKind, EditorSession, SessionEvent, SessionOptions,
 };
 use bed_editing::editor_commands::CursorReveal;
+use bed_lsp::lsp_uri::LspUri;
 use bed_remote::{LocalBackend, RemoteClient, Request, SshTarget, serve_with};
+use serde_json::json;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -85,6 +87,11 @@ fn main() {
             std::io::stdin().lock(),
             std::io::stdout().lock(),
             |request| {
+                if std::env::var_os("BED_TEST_FAIL_WORKSPACE_WRITE").is_some()
+                    && matches!(&request, Request::WriteFile { path, bytes, .. } if path.ends_with("workspace-failing.rs") && bytes == b"new")
+                {
+                    return Err(bed_remote::RemoteError::new(bed_remote::ErrorKind::PermissionDenied, "fixture workspace write denied"));
+                }
                 if std::env::var_os("BED_TEST_DELAY_WRITE").is_some()
                     && matches!(request, Request::WriteFile { .. })
                 {
@@ -428,6 +435,132 @@ fn main() {
     binary.undo_document(doc).unwrap();
     assert_eq!(binary.snapshot(doc).unwrap().bytes, second);
     binary.shutdown(ClosePolicy::Discard).unwrap();
+
+    // A server workspace edit waits for unopened targets and disk preflight;
+    // delayed commit locks only participants and finishes once before retry.
+    let a = root.join("workspace-a.rs");
+    let b = root.join("workspace-b.rs");
+    fs::write(&a, b"old").unwrap();
+    fs::write(&b, b"old").unwrap();
+    let mut workspace = self::session(root, configured_client(true, true), false);
+    let first = open(&mut workspace, &a);
+    let view = workspace.create_view(first).unwrap();
+    let text_edit = |path: &Path| json!({"textDocument":{"uri":LspUri::file_uri_from_path(path.to_str().unwrap()).unwrap().to_string(),"version":null},"edits":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":3}},"newText":"new"}]});
+    let edit = json!({"documentChanges":[text_edit(&a),text_edit(&b)]});
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut locked = false;
+    loop {
+        workspace.tick();
+        match workspace.apply_lsp_workspace_edit(&edit, None) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => panic!("workspace edit failed: {error}"),
+        }
+        if workspace.snapshot(first).unwrap().bytes == b"new" {
+            locked = true;
+            assert!(
+                workspace
+                    .with_document(first, |state| state.read_only)
+                    .unwrap()
+            );
+            workspace
+                .with_commands(view, |commands| commands.type_text(b"must not race commit"))
+                .unwrap();
+            assert_eq!(workspace.snapshot(first).unwrap().bytes, b"new");
+            assert!(workspace.undo_document(first).is_err());
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        locked,
+        "delayed remote save must expose the transaction lock"
+    );
+    let second = workspace.document_for_path(&b).unwrap();
+    assert!(
+        !workspace
+            .with_document(first, |state| state.read_only)
+            .unwrap()
+    );
+    assert_eq!(fs::read(&a).unwrap(), b"old");
+    assert_eq!(fs::read(&b).unwrap(), b"new");
+    workspace.undo_document(first).unwrap();
+    wait(&mut workspace, |session| {
+        session.snapshot(first).unwrap().bytes == b"old" && !session.save_pending(second)
+    });
+    assert_eq!(fs::read(&b).unwrap(), b"old");
+    workspace.redo_document(first).unwrap();
+    wait(&mut workspace, |session| {
+        session.snapshot(first).unwrap().bytes == b"new" && !session.save_pending(second)
+    });
+    assert_eq!(fs::read(&b).unwrap(), b"new");
+    // A fresh target read rejects external changes before undo mutates any file.
+    fs::write(&b, b"external").unwrap();
+    workspace.undo_document(first).unwrap();
+    pump_for(&mut workspace, Duration::from_millis(700));
+    assert_eq!(workspace.snapshot(first).unwrap().bytes, b"new");
+    assert_eq!(fs::read(&b).unwrap(), b"external");
+    workspace.shutdown(ClosePolicy::Discard).unwrap();
+
+    // A denied later participant write restores earlier files and buffers.
+    let c = root.join("workspace-failing.rs");
+    fs::write(&a, b"old").unwrap();
+    fs::write(&b, b"old").unwrap();
+    fs::write(&c, b"old").unwrap();
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .arg("--stdio")
+        .env("BED_TEST_DELAY_WRITE", "1")
+        .env("BED_TEST_FAIL_WORKSPACE_WRITE", "1");
+    let mut failing = self::session(root, RemoteClient::launch_command(command).unwrap(), false);
+    let first = open(&mut failing, &a);
+    let d = root.join("unrelated.rs");
+    fs::write(&d, b"base").unwrap();
+    let unrelated = open(&mut failing, &d);
+    let unrelated_view = failing.create_view(unrelated).unwrap();
+    let mut typed_unrelated = false;
+    let edit = json!({"documentChanges":[text_edit(&a),text_edit(&b),text_edit(&c)]});
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        failing.tick();
+        match failing.apply_lsp_workspace_edit(&edit, None) {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => {
+                assert!(error.to_string().contains("workspace-failing.rs"));
+                break;
+            }
+            Ok(_) => panic!("denied workspace write unexpectedly succeeded"),
+        }
+        if !typed_unrelated && failing.snapshot(first).unwrap().bytes == b"new" {
+            failing
+                .with_commands(unrelated_view, |commands| commands.type_text(b"!"))
+                .unwrap();
+            typed_unrelated = true;
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(2));
+    }
+    wait(&mut failing, |session| {
+        session
+            .document_ids()
+            .iter()
+            .all(|document| !session.save_pending(*document))
+    });
+    assert_eq!(failing.snapshot(first).unwrap().bytes, b"old");
+    assert_eq!(fs::read(&b).unwrap(), b"old");
+    assert_eq!(fs::read(&c).unwrap(), b"old");
+    assert!(typed_unrelated);
+    assert_eq!(failing.snapshot(unrelated).unwrap().bytes, b"!base");
+    failing.undo_document(unrelated).unwrap();
+    assert_eq!(failing.snapshot(unrelated).unwrap().bytes, b"base");
+    assert!(
+        !failing
+            .with_document(first, |state| state.read_only)
+            .unwrap()
+    );
+    failing.undo_document(first).unwrap();
+    assert_eq!(failing.snapshot(first).unwrap().bytes, b"old");
+    failing.shutdown(ClosePolicy::Discard).unwrap();
 
     println!(
         "remote session: delayed saves/reads, generation races, metadata, conflicts, reload, Save As, reconnect, undo and aliases passed"

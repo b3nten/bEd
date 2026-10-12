@@ -10,7 +10,7 @@ pub fn register(world: &mut World) {
         registrar.command("bed.app.NewTerminal", "New Terminal", command);
         registrar.command("bed.app.NewExplorer", "New Explorer", command);
         registrar.command("bed.app.NewSettings", "New Settings", command);
-        registrar.command("bed.app.NewProjects", "New Projects", command);
+        registrar.command("bed.app.NewProjects", "New Workspaces Panel", command);
         registrar.command("bed.app.NewDiagnostics", "New Diagnostics", command);
         registrar.command("bed.app.NewStructure", "New Structure", command);
         registrar.command("bed.app.NewLspDashboard", "New Lsp Dashboard", command);
@@ -19,7 +19,7 @@ pub fn register(world: &mut World) {
         registrar.command("bed.app.DuplicateView", "Duplicate View", command);
         registrar.command("bed.app.SplitRight", "Split Right", command);
         registrar.command("bed.app.SplitDown", "Split Down", command);
-        registrar.command("bed.app.Projects", "Projects", command);
+        registrar.command("bed.app.Projects", "Workspaces", command);
         registrar.command("bed.app.Diagnostics", "Diagnostics", command);
         registrar.command("bed.app.Structure", "Structure", command);
         registrar.command("bed.app.OpenFolder", "Open Folder", command);
@@ -41,6 +41,12 @@ pub fn register(world: &mut World) {
         registrar.global_shortcut("bed.app.Close", &["Primary+W"]);
         registrar.global_shortcut("bed.app.SplitRight", &["Primary+Backslash"]);
         registrar.global_shortcut("bed.app.Quit", &["Primary+Q"]);
+        registrar.command("bed.app.SetCurrentLayout", "Set Current Layout", command);
+        registrar.command(
+            "bed.app.layout_startup",
+            "Switch to Startup Layout",
+            command,
+        );
         registrar.command("bed.app.layout_1", "Switch to Layout 1", command);
         registrar.global_shortcut("bed.app.layout_1", &["Primary+1"]);
         registrar.command("bed.app.layout_2", "Switch to Layout 2", command);
@@ -96,6 +102,7 @@ fn command(In(invocation): In<CommandInvocation>, world: &mut World) -> CommandR
         "bed.app.DuplicateView" => WindowCommand::DuplicateView,
         "bed.app.SplitRight" => WindowCommand::SplitRight,
         "bed.app.SplitDown" => WindowCommand::SplitDown,
+        "bed.app.SetCurrentLayout" => WindowCommand::SetCurrentLayout,
         "bed.app.ResetLayout" => WindowCommand::ResetLayout,
         "bed.app.SaveDefaultLayout" => WindowCommand::SaveDefaultLayout,
         "bed.app.ResetDefaultLayout" => WindowCommand::ResetDefaultLayout,
@@ -115,7 +122,7 @@ fn command(In(invocation): In<CommandInvocation>, world: &mut World) -> CommandR
         "bed.app.FindFile" => WindowCommand::FindFile,
         "bed.app.FindProject" => WindowCommand::FindProject,
         id if id.starts_with("bed.app.layout_") => {
-            WindowCommand::UseLayout(id[15..].parse().map_err(|_| "Invalid layout number")?)
+            WindowCommand::UseLayout(LayoutSlot::from_key(&id[15..]).ok_or("Invalid layout slot")?)
         }
         _ => return Err("Unknown application command".into()),
     };

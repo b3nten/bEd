@@ -27,6 +27,11 @@ use std::{
 #[path = "remote_session.rs"]
 mod remote_session;
 use remote_session::RemoteSession;
+#[path = "workspace_edits.rs"]
+mod workspace_edits;
+use workspace_edits::{
+    DeferredWorkspaceEdit, PendingWorkspaceEdit, PendingWorkspaceHistory, WorkspaceEditReceipt,
+};
 
 pub use bed_editing::editor_state::DocumentKind;
 pub use bed_editing::identity::{DocumentId, ViewId, WorkspaceId};
@@ -186,6 +191,7 @@ struct DocumentEntry {
     allow_recreate: bool,
     autosave_paused: bool,
     git_initialized: bool,
+    workspace_edit_locked: bool,
 }
 /// Main-thread, GUI-independent document registry. Public mutation uses commands
 /// rather than mutable Editor/state references, preserving service/view updates.
@@ -200,12 +206,20 @@ pub struct EditorSession {
     history: SharedProjectUndo,
     lsp: Option<WorkspaceLsp>,
     project_diagnostics: crate::project_diagnostics::ProjectDiagnostics,
+    document_diagnostics: bed_lsp::diagnostics::LspDiagnostics,
     queued: Vec<SessionEvent>,
     errors: Vec<ServiceError>,
     last_monitor: Option<Instant>,
     last_history: Option<Instant>,
     stopped: bool,
     theme: bed_highlight::tree_sitter::ThemeColors,
+    pending_workspace_edits: Vec<PendingWorkspaceEdit>,
+    deferred_workspace_edits: Vec<DeferredWorkspaceEdit>,
+    active_lsp_commands: BTreeMap<u64, Option<bed_editing::project_undo::WorkspaceHistoryGroup>>,
+    workspace_edit_receipts: Vec<WorkspaceEditReceipt>,
+    pending_workspace_history: Option<PendingWorkspaceHistory>,
+    workspace_request_revisions: Vec<(LspRequestOrigin, BTreeMap<DocumentId, (u64, u64)>)>,
+    active_lsp_command_revisions: BTreeMap<u64, BTreeMap<DocumentId, (u64, u64)>>,
 }
 impl Default for EditorSession {
     fn default() -> Self {
@@ -220,12 +234,20 @@ impl Default for EditorSession {
             history: Rc::new(RefCell::new(ProjectUndo::default())),
             lsp: None,
             project_diagnostics: Default::default(),
+            document_diagnostics: Default::default(),
             queued: Vec::new(),
             errors: Vec::new(),
             last_monitor: None,
             last_history: None,
             stopped: false,
             theme: Default::default(),
+            pending_workspace_edits: Vec::new(),
+            deferred_workspace_edits: Vec::new(),
+            active_lsp_commands: BTreeMap::new(),
+            workspace_edit_receipts: Vec::new(),
+            pending_workspace_history: None,
+            workspace_request_revisions: Vec::new(),
+            active_lsp_command_revisions: BTreeMap::new(),
         }
     }
 }
@@ -368,6 +390,9 @@ impl EditorSession {
         self.entry_mut(document)?.autosave_paused = paused;
         Ok(())
     }
+    pub fn autosave_paused(&self, document: DocumentId) -> io::Result<bool> {
+        Ok(self.entry(document)?.autosave_paused)
+    }
     pub fn document_ids(&self) -> Vec<DocumentId> {
         self.documents.keys().copied().collect()
     }
@@ -476,7 +501,7 @@ impl EditorSession {
     pub fn is_snapshot_document(&self, document: DocumentId) -> bool {
         self.documents
             .get(&document)
-            .is_some_and(|entry| entry.editor.state.read_only)
+            .is_some_and(|entry| entry.editor.state.read_only && !entry.workspace_edit_locked)
     }
     pub fn replace_snapshot_document(
         &mut self,
@@ -655,6 +680,7 @@ impl EditorSession {
                 allow_recreate: false,
                 autosave_paused: false,
                 git_initialized: self.options.git && text,
+                workspace_edit_locked: false,
             },
         );
         self.attach_lsp(id, origin);
@@ -849,6 +875,12 @@ impl EditorSession {
             ));
         }
         let state = &self.entry(document)?.editor.state;
+        if state.read_only {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Document is read-only while a workspace edit is saving",
+            ));
+        }
         let mut ordered = edits.to_vec();
         ordered.sort_by_key(|edit| (edit.range.start, edit.range.end));
         let mut previous_end = None;
@@ -1046,12 +1078,30 @@ impl EditorSession {
     }
     fn history_document(&mut self, document: DocumentId, undo: bool) -> io::Result<()> {
         self.ensure_running()?;
+        if self.entry(document)?.workspace_edit_locked {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Wait for the workspace edit to finish saving before undo",
+            ));
+        }
         if self.is_snapshot_document(document) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "Comparison documents are read-only",
             ));
         }
+        let key = self.entry(document)?.editor.history_key().to_owned();
+        let group = self.history.borrow_mut().workspace_group(&key, undo);
+        if let Some(group) = group {
+            return self.apply_workspace_history(&group, undo);
+        }
+        self.history_document_ungrouped(document, undo)
+    }
+    pub(super) fn history_document_ungrouped(
+        &mut self,
+        document: DocumentId,
+        undo: bool,
+    ) -> io::Result<()> {
         if self.document_kind(document)? == DocumentKind::Bytes {
             let history = &mut self.entry_mut(document)?.byte_history;
             let transaction = if undo {
@@ -1154,6 +1204,12 @@ impl EditorSession {
         if policy == ClosePolicy::Cancel || !self.documents.contains_key(&document) {
             return Ok(false);
         }
+        if self.entry(document)?.workspace_edit_locked {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Wait for the workspace edit to finish saving before closing",
+            ));
+        }
         if policy == ClosePolicy::Save && self.save_pending(document) {
             return Ok(false);
         }
@@ -1168,6 +1224,16 @@ impl EditorSession {
             if self.entry(document)?.editor.state.dirty {
                 return Ok(false);
             }
+        }
+        let key = self.entry(document)?.editor.history_key().to_owned();
+        if self.history.borrow().has_workspace_history(&key)
+            && self.entry(document)?.editor.state.dirty
+        {
+            for view in self.view_ids(document) {
+                self.detach_view(view);
+            }
+            self.queued.push(SessionEvent::Closed { document });
+            return Ok(true);
         }
         if let Some(pool) = &mut self.lsp
             && let Err(error) = pool.unregister_document(document)
@@ -1235,6 +1301,12 @@ impl EditorSession {
     /// view state and dirty flag. Successful writes then commit the new binding.
     pub fn save_as(&mut self, document: DocumentId, destination: &Path) -> io::Result<bool> {
         self.ensure_running()?;
+        if self.entry(document)?.workspace_edit_locked {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Workspace edit is saving",
+            ));
+        }
         if self.is_snapshot_document(document) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -1317,6 +1389,12 @@ impl EditorSession {
         Ok(target)
     }
     pub fn rebind_path(&mut self, document: DocumentId, destination: &Path) -> io::Result<()> {
+        if self.entry(document)?.workspace_edit_locked {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Workspace edit is saving",
+            ));
+        }
         self.ensure_running()?;
         if self.save_pending(document) {
             return Err(io::Error::new(
@@ -1419,6 +1497,12 @@ impl EditorSession {
     /// Preserve a deleted document and its views/history as a Save As buffer.
     /// The host calls this after attempting to commit every attached panel draft.
     pub fn detach_removed_document(&mut self, document: DocumentId) -> io::Result<()> {
+        if self.entry(document)?.workspace_edit_locked {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Workspace edit is saving",
+            ));
+        }
         self.ensure_running()?;
         let previous = self.entry(document)?.editor.state.path.clone();
         if previous.is_empty() {
@@ -1466,6 +1550,12 @@ impl EditorSession {
         Ok(self.entry(document)?.original_path.as_deref())
     }
     pub fn keep_buffer(&mut self, document: DocumentId) -> io::Result<()> {
+        if self.entry(document)?.workspace_edit_locked {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Workspace edit is saving",
+            ));
+        }
         if self.entry(document)?.removed {
             return self.detach_removed_document(document);
         }
@@ -1485,6 +1575,12 @@ impl EditorSession {
         Ok(())
     }
     pub fn reload_from_disk(&mut self, document: DocumentId) -> io::Result<()> {
+        if self.entry(document)?.workspace_edit_locked {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Workspace edit is saving",
+            ));
+        }
         if self.remote.is_some() {
             return self.queue_remote_reload(document);
         }
@@ -1544,6 +1640,12 @@ impl EditorSession {
     /// A content replacement invalidates position-based undo and pending jobs;
     /// every view keeps its own scroll and clamps its own carets.
     pub fn replace_content(&mut self, document: DocumentId, bytes: &[u8]) -> io::Result<()> {
+        if self.entry(document)?.workspace_edit_locked {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Workspace edit is saving",
+            ));
+        }
         if self.is_snapshot_document(document) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -1596,6 +1698,7 @@ impl EditorSession {
             report.lsp_events = pool.poll();
         }
         self.refresh_lsp_bindings();
+        self.poll_workspace_edits(&mut report);
         let monitor = self.options.monitoring
             && self
                 .last_monitor
@@ -1604,6 +1707,9 @@ impl EditorSession {
             self.last_monitor = Some(Instant::now());
         }
         for id in self.document_ids() {
+            if self.documents[&id].workspace_edit_locked {
+                continue;
+            }
             let confirm_removal = self.documents[&id]
                 .removal_pending_since
                 .is_some_and(|since| since.elapsed() >= Duration::from_millis(250));
@@ -1675,6 +1781,7 @@ impl EditorSession {
                 Err(error) => self.record_error(None, "history", &error),
             }
         }
+        self.refresh_document_diagnostics();
         self.drain_report(report)
     }
     pub fn take_events(&mut self) -> Vec<SessionEvent> {
@@ -1869,6 +1976,21 @@ impl EditorSession {
             .as_ref()
             .is_some_and(WorkspaceLsp::diagnostic_coverage_complete);
         self.project_diagnostics.snapshot(lsp, unsaved, complete)
+    }
+    fn refresh_document_diagnostics(&mut self) {
+        // Bed owns Cargo checks, so rust-analyzer does not publish their
+        // semantic errors. Inline views and the diagnostics panel must consume
+        // the same merged results while server payloads remain intact for fixes.
+        self.document_diagnostics
+            .replace_snapshot(self.project_diagnostics().by_path, self.is_remote());
+        let enabled = self.options.project_root.is_some() || self.lsp.is_some();
+        for entry in self.documents.values_mut() {
+            entry.editor.diagnostics = (enabled
+                && entry.editor.state.kind == DocumentKind::Text
+                && !entry.editor.state.path.is_empty()
+                && (!entry.editor.state.read_only || entry.workspace_edit_locked))
+                .then(|| self.document_diagnostics.clone());
+        }
     }
     /// Index notifications include unopened files. Build outputs are excluded
     /// so a check cannot schedule itself by writing its target directory.

@@ -3,7 +3,6 @@
     "agent_model": "anthropic/claude-3-5-haiku-20241022",
     "ai_autocomplete": false,
     "autosave": true,
-    "startup_mode": "startup",
     "bedtime_enabled": true,
     "bedtime_delay_seconds": 60,
     "autosave_delay_ms": 1000,
@@ -19,7 +18,9 @@
     "fps_toggle": true,
     "git_changed_lines": true,
     "jitter_intensity": 2.7200000286102295,
-    "lsp_autocomplete": false,
+    "lsp_autocomplete": true,
+    "lsp_completion_delay_ms": 150,
+    "lsp_format_on_save": true,
     "mac_blur_enabled": true,
     "minimap": true,
     "word_wrap": true,
@@ -40,6 +41,10 @@
     "ui_animations": true,
     "tab_bar_add_button": false,
     "plugins": {
+        "bed.explorer": {
+            "hide_hidden": true,
+            "hide_gitignored": true
+        },
         "bed.mascot": {
             "squeaks_enabled": true
         },

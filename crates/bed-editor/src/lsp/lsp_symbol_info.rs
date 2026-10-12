@@ -5,7 +5,7 @@ use bed_editing::util::utf8::utf8_byte_offset_to_utf16;
 use bed_editor_ui::views::{
     hover_tooltip::{
         HoverRect, hover_key_pressed, hover_rect_contains, render_hover_markdown,
-        render_hover_popup,
+        render_hover_plaintext, render_hover_popup,
     },
     hover_trigger::Zone,
     view_layout::line_column_x,
@@ -42,18 +42,14 @@ fn marked_string_text(value: &Value) -> io::Result<String> {
         .ok_or_else(invalid_hover)?;
     Ok(fence_wrap(language, text))
 }
-pub fn format_hover_contents(contents: &Value, fallback_language: &str) -> io::Result<String> {
+pub fn format_hover_contents(contents: &Value, _fallback_language: &str) -> io::Result<String> {
     if let Some(kind) = contents.get("kind") {
-        let kind = kind.as_str().ok_or_else(invalid_hover)?;
+        kind.as_str().ok_or_else(invalid_hover)?;
         let text = contents
             .get("value")
             .and_then(Value::as_str)
             .ok_or_else(invalid_hover)?;
-        return Ok(if kind == "plaintext" {
-            fence_wrap(fallback_language, text)
-        } else {
-            text.to_owned()
-        });
+        return Ok(text.to_owned());
     }
     if let Some(parts) = contents.as_array() {
         let parts = parts
@@ -69,11 +65,36 @@ pub fn format_hover_contents(contents: &Value, fallback_language: &str) -> io::R
     marked_string_text(contents)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum HoverContents {
+    Markdown(String),
+    Plaintext(String),
+}
+
+impl HoverContents {
+    fn decode(contents: &Value, fallback_language: &str) -> io::Result<Self> {
+        let text = format_hover_contents(contents, fallback_language)?;
+        Ok(
+            if contents.get("kind").and_then(Value::as_str) == Some("plaintext") {
+                Self::Plaintext(text)
+            } else {
+                Self::Markdown(text)
+            },
+        )
+    }
+
+    fn text(&self) -> &str {
+        match self {
+            Self::Markdown(text) | Self::Plaintext(text) => text,
+        }
+    }
+}
+
 pub struct LspSymbolInfo {
     at_caret: bool,
     fresh_caret_request: bool,
     requested_for_cell: bool,
-    hover_state: Arc<LspRequestState<String>>,
+    hover_state: Arc<LspRequestState<HoverContents>>,
     hover_row: i32,
     hover_column: i32,
     popup_rect: Option<HoverRect>,
@@ -186,7 +207,7 @@ impl LspSymbolInfo {
         let state = self.hover_state.clone();
         let result = LspUri::file_uri_from_path(&editor.state.path).and_then(|uri| {
             client.send_request("textDocument/hover",json!({"textDocument":{"uri":uri.to_string()},"position":{"line":row as u32,"character":utf16 as u32}}),move |result| {
-                let text = result.ok().and_then(|result| result.get("contents").and_then(|contents| format_hover_contents(contents, &language).ok())).filter(|text| !text.is_empty());
+                let text = result.ok().and_then(|result| result.get("contents").and_then(|contents| HoverContents::decode(contents, &language).ok())).filter(|text| !text.text().is_empty());
                 if let Some(origin) = origin { state.deliver_for(origin, text); } else { state.deliver(ticket, text); }
             }).map(|_| ())
         });
@@ -254,7 +275,11 @@ impl LspSymbolInfo {
     }
     pub fn render(&mut self, ui: &Ui, client: &mut LspClient, editor: &Editor, view: &LspView<'_>) {
         self.update_mouse_hover(ui, client, editor, view);
-        let Some(markdown) = self.hover_state.snapshot().filter(|text| !text.is_empty()) else {
+        let Some(contents) = self
+            .hover_state
+            .snapshot()
+            .filter(|text| !text.text().is_empty())
+        else {
             return;
         };
         if !view.tooltip_arbiter.claim(ui) {
@@ -284,10 +309,18 @@ impl LspSymbolInfo {
                 [mouse[0] + 8.0, mouse[1] + 12.0]
             })
         };
-        self.popup_rect =
-            render_hover_popup(ui, "##bed_lsp_hover", anchor, self.popup_rect, || {
-                render_hover_markdown(ui, &markdown, editor, &editor.state.language_id);
-            });
+        self.popup_rect = render_hover_popup(
+            ui,
+            "##bed_lsp_hover",
+            anchor,
+            self.popup_rect,
+            || match &contents {
+                HoverContents::Markdown(markdown) => {
+                    render_hover_markdown(ui, markdown, editor, &editor.state.language_id);
+                }
+                HoverContents::Plaintext(text) => render_hover_plaintext(ui, text, editor),
+            },
+        );
     }
 }
 
@@ -327,18 +360,17 @@ mod tests {
         drop(context.render_legacy());
     }
     #[test]
-    fn original_hover_shapes_preserve_plaintext_fences_and_single_array_boundaries() {
+    fn hover_shapes_preserve_literal_plaintext_and_single_array_boundaries() {
         assert_eq!(
             format_hover_contents(&json!({"kind":"plaintext","value":"int foo();"}), "cpp")
                 .unwrap(),
-            "```cpp\nint foo();\n```"
+            "int foo();"
         );
         assert_eq!(
             format_hover_contents(&json!({"kind":"markdown","value":"**hi**"}), "rust").unwrap(),
             "**hi**"
         );
-        // Pinned Enumeration<string> retains custom values. The original
-        // formatter fences only PlainText; all other kinds use raw markdown.
+        // Pinned Enumeration<string> retains custom values as raw markdown.
         assert_eq!(
             format_hover_contents(&json!({"kind":"custom","value":"**hi**"}), "rust").unwrap(),
             "**hi**"
@@ -360,6 +392,66 @@ mod tests {
             format_hover_contents(&json!({"kind":"plaintext","value":""}), "rust").unwrap(),
             ""
         );
+        let literal = "**bold** `code` [link](https://example.org) ```rust";
+        assert_eq!(
+            HoverContents::decode(&json!({"kind":"plaintext","value":literal}), "rust").unwrap(),
+            HoverContents::Plaintext(literal.into())
+        );
+    }
+
+    #[test]
+    fn native_rust_analyzer_plaintext_hover_wraps_its_signature_and_prose() {
+        let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let editor = Editor::new();
+        let mut client = LspClient::new("/bed-no-lsp-config.json");
+        let mut symbol = LspSymbolInfo::default();
+        // Captured before Markdown negotiation was enabled. Plaintext must not
+        // become an unwrapped Rust fence or interpret literal markup.
+        let contents = json!({"kind":"plaintext","value":"bed_hover_payload\n\npub fn documented_function_with_a_long_signature(name: &str, result: Result<Option<Vec<String>>, std::io::Error>, count: usize) -> usize\n\n\nA documented function with a long paragraph explaining how it handles a result, a collection of strings, and a caller supplied name while preserving all of the input data for later inspection."});
+        let ticket = symbol.hover_state.begin();
+        symbol.hover_state.deliver(
+            ticket,
+            Some(HoverContents::decode(&contents, "rust").unwrap()),
+        );
+        for _ in 0..4 {
+            context.prepare_frame(FramePrepareOptions::new([240.0, 180.0], 1.0 / 60.0));
+            let ui = context.frame();
+            ui.window("plaintext hover fixture")
+                .size([240.0, 180.0], Condition::Always)
+                .build(|| {
+                    symbol.render(
+                        ui,
+                        &mut client,
+                        &editor,
+                        &LspView {
+                            layout: &ViewLayout::default(),
+                            hover_info: Info::default(),
+                            hover_dismissed: false,
+                            tooltip_arbiter: &TooltipArbiter::default(),
+                            caret_position: None,
+                        },
+                    );
+                    ui.with_bound_context(|| unsafe {
+                        let window =
+                            dear_imgui_rs::sys::igFindWindowByName(c"##bed_lsp_hover".as_ptr());
+                        assert!(!window.is_null());
+                        assert_eq!((*window).ScrollMax.x, 0.0);
+                    });
+                    let (minimum, maximum) = symbol.popup_rect.unwrap();
+                    assert!(minimum[0] >= 0.0 && minimum[1] >= 0.0);
+                    assert!(maximum[0] <= 240.0 && maximum[1] <= 180.0);
+                });
+            drop(context.render_legacy());
+        }
     }
     #[test]
     fn typed_hover_changes_document_identity_at_the_same_cell_and_rejects_old_replies() {
@@ -379,9 +471,10 @@ mod tests {
         symbol.hover_row = 0;
         symbol.hover_column = 0;
         let first = symbol.hover_state.begin_for(first);
-        symbol
-            .hover_state
-            .deliver_for(first, Some("first document".into()));
+        symbol.hover_state.deliver_for(
+            first,
+            Some(HoverContents::Markdown("first document".into())),
+        );
         let second = LspRequestOrigin {
             document_id: DocumentId(7),
             view_id: ViewId(8),
@@ -391,17 +484,19 @@ mod tests {
         assert!(!symbol.requested_for_cell);
         assert!(symbol.hover_state.snapshot().is_none());
         let second = symbol.hover_state.begin_for(second);
-        symbol
-            .hover_state
-            .deliver_for(first, Some("late first document".into()));
+        symbol.hover_state.deliver_for(
+            first,
+            Some(HoverContents::Markdown("late first document".into())),
+        );
         assert!(symbol.hover_state.is_pending());
-        symbol
-            .hover_state
-            .deliver_for(second, Some("second document".into()));
+        symbol.hover_state.deliver_for(
+            second,
+            Some(HoverContents::Markdown("second document".into())),
+        );
         assert_eq!(symbol.origin(), Some(second));
         assert_eq!(
-            symbol.hover_state.snapshot().as_deref(),
-            Some("second document")
+            symbol.hover_state.snapshot(),
+            Some(HoverContents::Markdown("second document".into()))
         );
         symbol.retain_request(&mut |origin| origin.document_id == DocumentId(2));
         assert!(symbol.origin().is_none());
@@ -425,7 +520,7 @@ mod tests {
         let ticket = symbol.hover_state.begin();
         symbol
             .hover_state
-            .deliver(ticket, Some("a **symbol**".into()));
+            .deliver(ticket, Some(HoverContents::Markdown("a **symbol**".into())));
         let layout = ViewLayout {
             text_pos: [30.0, 40.0],
             line_height: 13.0,
@@ -455,7 +550,9 @@ mod tests {
         }
         assert!(symbol.popup_rect.is_some());
         symbol.cancel();
-        symbol.hover_state.deliver(ticket, Some("late".into()));
+        symbol
+            .hover_state
+            .deliver(ticket, Some(HoverContents::Markdown("late".into())));
         assert!(symbol.hover_state.snapshot().is_none());
         assert!(symbol.popup_rect.is_none());
         assert!(!symbol.hover_state.is_pending());
@@ -481,9 +578,12 @@ mod tests {
             ..Default::default()
         };
         let ticket = symbol.hover_state.begin();
-        symbol
-            .hover_state
-            .deliver(ticket, Some("Symbol documentation.\n".repeat(50)));
+        symbol.hover_state.deliver(
+            ticket,
+            Some(HoverContents::Markdown(
+                "Symbol documentation.\n".repeat(50),
+            )),
+        );
         context.io_mut().add_key_event(Key::K, true);
         symbol_frame(&mut context, &mut symbol, &editor, &mut client, true);
         assert!(symbol.at_caret());

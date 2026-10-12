@@ -20,6 +20,7 @@ fn main() {
         }
         return;
     }
+
     if let Err(error) = bed::bed::run() {
         eprintln!("bEd: {error}");
         std::process::exit(1);

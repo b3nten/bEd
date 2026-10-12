@@ -51,9 +51,28 @@ pub struct HistoryEdit {
     pub selections_after: Vec<SelectionSnapshot>,
     pub primary_before: usize,
     pub primary_after: usize,
+    pub workspace_group: Option<WorkspaceHistoryGroup>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceHistoryParticipant {
+    pub path: String,
+    pub persisted: bool,
+    pub before: u64,
+    pub after: u64,
+}
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceHistoryGroup {
+    pub id: u64,
+    pub participants: Vec<WorkspaceHistoryParticipant>,
+}
+pub fn history_fingerprint(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    })
+}
+
+#[derive(Clone, Default)]
 struct FileStack {
     undo_stack: Vec<HistoryEdit>,
     redo_stack: Vec<HistoryEdit>,
@@ -67,6 +86,8 @@ impl FileStack {
             return false;
         };
         if pending.steps.len() != 1
+            || pending.workspace_group.is_some()
+            || edit.workspace_group.is_some()
             || edit.steps.len() != 1
             || pending.selections_after.len() != 1
             || edit.selections_after.len() != 1
@@ -164,7 +185,7 @@ impl FileStack {
             .iter()
             .map(edit_to_json)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(json!({ "version": 3, "undoStack": undo, "redoStack": redo }))
+        Ok(json!({ "version": 4, "undoStack": undo, "redoStack": redo }))
     }
 
     fn from_json(value: &Value) -> Self {
@@ -201,16 +222,37 @@ impl FileStack {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ProjectUndo {
     pub project_root: String,
     stacks: BTreeMap<String, FileStack>,
     reset_paths: BTreeSet<String>,
     dirty: bool,
     last_disk_save: Option<Instant>,
+    workspace_history_owner: Option<u64>,
 }
 
 impl ProjectUndo {
+    /// Rollback touches only transaction participants; unrelated files may have
+    /// received new edits while remote writes were in flight.
+    pub fn restore_files_from(&mut self, snapshot: &Self, paths: &[String]) {
+        for path in paths {
+            match snapshot.stacks.get(path) {
+                Some(stack) => {
+                    self.stacks.insert(path.clone(), stack.clone());
+                }
+                None => {
+                    self.stacks.remove(path);
+                }
+            }
+            if snapshot.reset_paths.contains(path) {
+                self.reset_paths.insert(path.clone());
+            } else {
+                self.reset_paths.remove(path);
+            }
+        }
+        self.dirty = true;
+    }
     pub fn new(project_root: String) -> Self {
         Self {
             project_root,
@@ -253,6 +295,22 @@ impl ProjectUndo {
             self.stacks.insert(new.to_owned(), stack);
             self.reset_paths.insert(old.to_owned());
             self.dirty = true;
+            for stack in self.stacks.values_mut() {
+                for edit in stack
+                    .undo_stack
+                    .iter_mut()
+                    .chain(&mut stack.redo_stack)
+                    .chain(stack.pending.iter_mut())
+                {
+                    if let Some(group) = &mut edit.workspace_group {
+                        for participant in &mut group.participants {
+                            if participant.path == old {
+                                participant.path = new.to_owned();
+                            }
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -262,6 +320,36 @@ impl ProjectUndo {
     pub fn forget_file(&mut self, path: &str) {
         if path.is_empty() {
             return;
+        }
+        // A transaction cannot remain undoable in only some participants.
+        let invalid: BTreeSet<u64> = self
+            .stacks
+            .get(path)
+            .into_iter()
+            .flat_map(|stack| {
+                stack
+                    .undo_stack
+                    .iter()
+                    .chain(&stack.redo_stack)
+                    .chain(stack.pending.iter())
+            })
+            .filter_map(|edit| edit.workspace_group.as_ref().map(|group| group.id))
+            .collect();
+        for (other, stack) in &mut self.stacks {
+            if stack
+                .undo_stack
+                .iter()
+                .chain(&stack.redo_stack)
+                .chain(stack.pending.iter())
+                .any(|edit| {
+                    edit.workspace_group
+                        .as_ref()
+                        .is_some_and(|group| invalid.contains(&group.id))
+                })
+            {
+                *stack = FileStack::default();
+                self.reset_paths.insert(other.clone());
+            }
         }
         self.stacks.insert(path.to_owned(), FileStack::default());
         self.reset_paths.insert(path.to_owned());
@@ -290,6 +378,24 @@ impl ProjectUndo {
         if edit.selections_after.is_empty() {
             edit.selections_after.push(SelectionSnapshot::default());
         }
+        let invalid: BTreeSet<_> = self
+            .stacks
+            .get(path)
+            .into_iter()
+            .flat_map(|stack| &stack.redo_stack)
+            .filter_map(|edit| edit.workspace_group.as_ref().map(|group| group.id))
+            .collect();
+        if !invalid.is_empty() {
+            for stack in self.stacks.values_mut() {
+                if stack.redo_stack.iter().any(|edit| {
+                    edit.workspace_group
+                        .as_ref()
+                        .is_some_and(|group| invalid.contains(&group.id))
+                }) {
+                    stack.redo_stack.clear();
+                }
+            }
+        }
         self.stack_for(path).unwrap().record(edit, Instant::now());
         self.dirty = true;
         self.maybe_save_to_disk();
@@ -300,8 +406,145 @@ impl ProjectUndo {
             stack.update_pending_final_cursor(row, column);
         }
     }
+    /// Tag already-recorded document transactions after the session commits all
+    /// participants. Group membership constrains undo to a session operation.
+    pub fn group_latest(&mut self, group: WorkspaceHistoryGroup) -> std::io::Result<()> {
+        for participant in &group.participants {
+            self.seal_file(&participant.path);
+            if self
+                .stacks
+                .get(&participant.path)
+                .is_none_or(|stack| stack.undo_stack.is_empty())
+            {
+                return Err(std::io::Error::other(
+                    "Workspace transaction has no document history",
+                ));
+            }
+        }
+        for participant in &group.participants {
+            self.stacks
+                .get_mut(&participant.path)
+                .unwrap()
+                .undo_stack
+                .last_mut()
+                .unwrap()
+                .workspace_group = Some(group.clone());
+        }
+        self.dirty = true;
+        Ok(())
+    }
+    pub fn workspace_group(&mut self, path: &str, undo: bool) -> Option<WorkspaceHistoryGroup> {
+        let stack = self.stack_for(path)?;
+        stack.commit_pending();
+        (if undo {
+            stack.undo_stack.last()
+        } else {
+            stack.redo_stack.last()
+        })?
+        .workspace_group
+        .clone()
+    }
+    pub fn latest_undo_edit(&mut self, path: &str) -> Option<HistoryEdit> {
+        let stack = self.stack_for(path)?;
+        stack.commit_pending();
+        stack.undo_stack.last().cloned()
+    }
+    pub fn validate_workspace_group(
+        &mut self,
+        group: &WorkspaceHistoryGroup,
+        undo: bool,
+    ) -> std::io::Result<()> {
+        for participant in &group.participants {
+            if self
+                .workspace_group(&participant.path, undo)
+                .is_none_or(|current| current.id != group.id)
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    format!(
+                        "Undo newer edits in {} before this workspace action",
+                        participant.path
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+    pub fn has_workspace_history(&self, path: &str) -> bool {
+        self.stacks.get(path).is_some_and(|stack| {
+            stack
+                .undo_stack
+                .iter()
+                .chain(&stack.redo_stack)
+                .chain(stack.pending.iter())
+                .any(|edit| edit.workspace_group.is_some())
+        })
+    }
+    /// Only the session may consume grouped operations, after preflighting all
+    /// participants. Ordinary document commands cannot partially undo a group.
+    pub fn allow_workspace_history(&mut self, id: Option<u64>) {
+        self.workspace_history_owner = id;
+    }
+    pub fn merge_workspace_groups(
+        &mut self,
+        original: &WorkspaceHistoryGroup,
+        next: &WorkspaceHistoryGroup,
+    ) -> std::io::Result<WorkspaceHistoryGroup> {
+        self.validate_workspace_group(next, true)?;
+        for participant in &original.participants {
+            let stack = self
+                .stacks
+                .get(&participant.path)
+                .ok_or_else(|| std::io::Error::other("Workspace group participant disappeared"))?;
+            let overlaps = next
+                .participants
+                .iter()
+                .any(|next| next.path == participant.path);
+            let index = stack
+                .undo_stack
+                .len()
+                .checked_sub(if overlaps { 2 } else { 1 });
+            if index
+                .and_then(|index| stack.undo_stack.get(index))
+                .and_then(|edit| edit.workspace_group.as_ref())
+                .is_none_or(|group| group.id != original.id)
+            {
+                return Err(std::io::Error::other(format!(
+                    "{} changed during LSP command",
+                    participant.path
+                )));
+            }
+        }
+        let mut merged = original.clone();
+        for participant in &next.participants {
+            if let Some(previous) = merged
+                .participants
+                .iter_mut()
+                .find(|previous| previous.path == participant.path)
+            {
+                let stack = self.stacks.get_mut(&participant.path).unwrap();
+                let last = stack.undo_stack.pop().unwrap();
+                let prior = stack.undo_stack.last_mut().unwrap();
+                prior.steps.extend(last.steps);
+                prior.selections_after = last.selections_after;
+                prior.primary_after = last.primary_after;
+                previous.after = participant.after;
+                previous.persisted |= participant.persisted;
+            } else {
+                merged.participants.push(participant.clone());
+            }
+        }
+        self.group_latest(merged.clone())?;
+        Ok(merged)
+    }
 
     pub fn undo(&mut self, path: &str) -> Option<HistoryEdit> {
+        if self
+            .workspace_group(path, true)
+            .is_some_and(|group| self.workspace_history_owner != Some(group.id))
+        {
+            return None;
+        }
         let edit = self.stack_for(path)?.undo()?;
         self.dirty = true;
         self.maybe_save_to_disk();
@@ -309,6 +552,12 @@ impl ProjectUndo {
     }
 
     pub fn redo(&mut self, path: &str) -> Option<HistoryEdit> {
+        if self
+            .workspace_group(path, false)
+            .is_some_and(|group| self.workspace_history_owner != Some(group.id))
+        {
+            return None;
+        }
         let edit = self.stack_for(path)?.redo()?;
         self.dirty = true;
         self.maybe_save_to_disk();
@@ -462,6 +711,29 @@ fn valid_stack_fields(value: &Value, version: i64) -> bool {
             .and_then(Value::as_array)
             .is_none_or(|items| {
                 items.iter().filter(|v| v.is_object()).all(|item| {
+                    let group_ok = item
+                        .get("workspaceGroup")
+                        .filter(|group| !group.is_null())
+                        .is_none_or(|group| {
+                            serde_json::from_value::<WorkspaceHistoryGroup>(group.clone())
+                                .is_ok_and(|group| {
+                                    !group.participants.is_empty()
+                                        && group
+                                            .participants
+                                            .iter()
+                                            .all(|participant| !participant.path.is_empty())
+                                        && group
+                                            .participants
+                                            .iter()
+                                            .map(|participant| &participant.path)
+                                            .collect::<BTreeSet<_>>()
+                                            .len()
+                                            == group.participants.len()
+                                })
+                        });
+                    if !group_ok {
+                        return false;
+                    }
                     if version >= 3 && item.get("steps").is_some() {
                         let steps_ok = match item.get("steps").and_then(Value::as_array) {
                             Some(steps) => steps
@@ -566,7 +838,8 @@ fn edit_to_json(edit: &HistoryEdit) -> Result<Value, std::str::Utf8Error> {
     Ok(json!({ "steps": steps,
         "selectionsBefore": edit.selections_before.iter().map(snap_to_json).collect::<Vec<_>>(),
         "selectionsAfter": edit.selections_after.iter().map(snap_to_json).collect::<Vec<_>>(),
-        "primaryBefore": edit.primary_before, "primaryAfter": edit.primary_after }))
+        "primaryBefore": edit.primary_before, "primaryAfter": edit.primary_after,
+        "workspaceGroup": edit.workspace_group }))
 }
 
 fn edit_from_json(value: &Value, version: i64) -> HistoryEdit {
@@ -603,6 +876,10 @@ fn edit_from_json(value: &Value, version: i64) -> HistoryEdit {
             selections_after: snaps("selectionsAfter"),
             primary_before: int(value, "primaryBefore", 0).max(0) as usize,
             primary_after: int(value, "primaryAfter", 0).max(0) as usize,
+            workspace_group: value
+                .get("workspaceGroup")
+                .filter(|value| !value.is_null())
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
         }
     } else {
         HistoryEdit {

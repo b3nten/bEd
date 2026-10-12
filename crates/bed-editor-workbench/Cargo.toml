@@ -17,6 +17,7 @@ bed-ui = { workspace = true, features = ["imgui", "gpu"] }
 bed-editing = { workspace = true }
 bed-files = { workspace = true }
 bed-document-session = { workspace = true }
+bed-lsp = { workspace = true }
 bed-remote = { workspace = true }
 dear-imgui-rs = { workspace = true }
 dear-imgui-sys = { workspace = true }

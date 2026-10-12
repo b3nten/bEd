@@ -175,6 +175,7 @@ struct Reply {
 struct Cached {
     id: Option<String>,
     items: Vec<DiagnosticItem>,
+    raw: Vec<Value>,
     revision: Option<u64>,
     sequence: u64,
     origin: String,
@@ -394,7 +395,13 @@ impl DocumentDiagnosticPull {
             .get(uri)
             .map(|document| document.version)
             .unwrap_or(-1);
-        store.replace(&path, items, version);
+        let raw = self
+            .cache
+            .iter()
+            .filter(|((_, cached_uri), report)| cached_uri == uri && report.revision == revision)
+            .flat_map(|(_, report)| report.raw.iter().cloned())
+            .collect();
+        store.replace_raw(&path, items, raw, version);
     }
     /// While a document pull owns an open buffer, workspace reports cannot
     /// describe its unsaved contents reliably (including null-version reports).
@@ -497,8 +504,8 @@ impl DocumentDiagnosticPull {
                 // buffer version. The older primary cannot replace its report.
                 continue;
             }
-            let items = match items {
-                Some(items) => items,
+            let (items, raw) = match items {
+                Some(items) => (items, report["items"].as_array().unwrap().clone()),
                 None => {
                     let cached = self.cache.get(&cache_key).filter(|cached| {
                         cached.id.is_some() && cached.id.as_ref() == pending.cache_ids.get(&uri)
@@ -508,7 +515,7 @@ impl DocumentDiagnosticPull {
                             "Unchanged diagnostic report has no matching cached content",
                         ));
                     };
-                    cached.items.clone()
+                    (cached.items.clone(), cached.raw.clone())
                 }
             };
             let origin = if self.jobs.contains_key(&cache_key) {
@@ -523,6 +530,7 @@ impl DocumentDiagnosticPull {
                 Cached {
                     id,
                     items,
+                    raw,
                     revision: current,
                     sequence: pending.sequence,
                     origin,

@@ -1,6 +1,6 @@
 //! Settings controls and the legacy floating settings window.
 use bed_config::theme::ThemeDraft;
-use bed_config::{EffectPreset, Settings, StartupMode};
+use bed_config::{EffectPreset, Settings};
 use bed_document_session::editor::Editor;
 use bed_ui::color::{blend, ensure_contrast};
 use bed_ui::icons::Icons;
@@ -424,25 +424,8 @@ impl SettingsView<'_> {
                 SettingsCategory::General => {
                     ui.text("General");
                     ui.separator();
-                    let mode = self.startup_mode();
-                    let modes = [
-                        (StartupMode::Startup, "Startup screen"),
-                        (StartupMode::Terminal, "Terminal"),
-                        (StartupMode::LastProject, "Last project"),
-                    ];
-                    let label = modes.iter().find(|entry| entry.0 == mode).unwrap().1;
-                    if let Some(_combo) = ui.begin_combo("Startup", label) {
-                        for (value, label) in modes {
-                            if ui.selectable_config(label).selected(mode == value).build() {
-                                self.settings["startup_mode"] = json!(value.name());
-                                self.persist_ui();
-                            }
-                        }
-                    }
-                    ui.text_disabled("New Window always opens the Startup screen.");
-                    ui.text_disabled(
-                        "Window → Set Layout saves an arrangement for a numbered layout.",
-                    );
+                    ui.text_disabled("New windows without a workspace open the Startup layout.");
+                    ui.text_disabled("Window → Set Current Layout saves the current arrangement.");
                     if ui.button("Open Settings JSON") {
                         self.request_config_file = Some(self.settings_path.clone());
                     }
@@ -465,6 +448,7 @@ impl SettingsView<'_> {
                     self.draw_boolean(ui, "Word Wrap", "word_wrap", true);
                     self.draw_boolean(ui, "Syntax highlighting", "treesitter", true);
                     self.draw_boolean(ui, "Git changed lines", "git_changed_lines", true);
+                    self.draw_lsp_settings(ui);
                     if editor.lsp_client().is_some() && ui.button("LSP Dashboard") {
                         self.request_lsp_dashboard = true;
                     }
@@ -792,6 +776,39 @@ impl SettingsView<'_> {
             if ui.is_item_deactivated_after_edit() {
                 self.persist_ui();
             }
+        }
+    }
+    fn draw_lsp_settings(&mut self, ui: &Ui) {
+        self.draw_boolean(ui, "Automatic LSP completions", "lsp_autocomplete", true);
+        if ui.is_item_hovered() {
+            tooltip_text(
+                ui,
+                "Show completions while typing. The completion shortcut also works with automatic completions disabled.",
+            );
+        }
+        {
+            let _disabled = ui.begin_disabled_with_cond(!self.lsp_autocomplete_enabled());
+            let mut delay = self.lsp_completion_delay().as_millis() as i32;
+            if ui
+                .slider_config("Completion delay", 0, 5_000)
+                .flags(dear_imgui_rs::SliderFlags::ALWAYS_CLAMP)
+                .try_display_format("%d ms")
+                .expect("constant valid format")
+                .build(&mut delay)
+            {
+                self.settings["lsp_completion_delay_ms"] = json!(delay);
+                self.request_apply();
+            }
+            if ui.is_item_deactivated_after_edit() {
+                self.persist_ui();
+            }
+        }
+        self.draw_boolean(ui, "Format on explicit save", "lsp_format_on_save", true);
+        if ui.is_item_hovered() {
+            tooltip_text(
+                ui,
+                "Use the language server formatter before saving. Background autosave does not format files.",
+            );
         }
     }
     fn draw_mac_settings(&mut self, ui: &Ui) {
@@ -1167,6 +1184,63 @@ mod tests {
             PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")),
         )
         .unwrap()
+    }
+    #[test]
+    fn lsp_completion_and_explicit_save_controls_persist_their_preferences() {
+        use dear_imgui_rs::FramePrepareOptions;
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let temp = TempDir::new();
+        let mut current = settings(&temp);
+        let mut state = SettingsWindowState::default();
+        let mut context = settings_context();
+        let draw =
+            |context: &mut Context, current: &mut Settings, state: &mut SettingsWindowState| {
+                context.prepare_frame(FramePrepareOptions::new([600.0, 320.0], 1.0 / 60.0));
+                let ui = context.frame();
+                let mut targets = [[0.0; 2]; 2];
+                ui.window("LSP preferences")
+                    .position([0.0; 2], Condition::Always)
+                    .size([600.0, 320.0], Condition::Always)
+                    .build(|| {
+                        let start = ui.cursor_screen_pos();
+                        targets[0] = [
+                            start[0] + ui.frame_height() * 0.5,
+                            start[1] + ui.frame_height() * 0.5,
+                        ];
+                        SettingsView::new(current, state).draw_lsp_settings(ui);
+                        let minimum = ui.item_rect_min();
+                        let maximum = ui.item_rect_max();
+                        targets[1] = [
+                            (minimum[0] + maximum[0]) * 0.5,
+                            (minimum[1] + maximum[1]) * 0.5,
+                        ];
+                    });
+                drop(context.render_legacy());
+                targets
+            };
+        draw(&mut context, &mut current, &mut state);
+        let targets = draw(&mut context, &mut current, &mut state);
+        for target in targets {
+            context.io_mut().add_mouse_pos_event(target);
+            draw(&mut context, &mut current, &mut state);
+            context
+                .io_mut()
+                .add_mouse_button_event(MouseButton::Left, true);
+            draw(&mut context, &mut current, &mut state);
+            context
+                .io_mut()
+                .add_mouse_button_event(MouseButton::Left, false);
+            draw(&mut context, &mut current, &mut state);
+        }
+        assert!(!current.lsp_autocomplete_enabled());
+        assert!(!current.lsp_format_on_save_enabled());
+        let restarted = settings(&temp);
+        assert!(!restarted.lsp_autocomplete_enabled());
+        assert!(!restarted.lsp_format_on_save_enabled());
+        assert_eq!(
+            restarted.lsp_completion_delay(),
+            std::time::Duration::from_millis(150)
+        );
     }
     #[test]
     fn effects_cursor_smear_defaults_on_and_persists_when_shaders_are_unavailable() {

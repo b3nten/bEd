@@ -131,6 +131,9 @@ impl Plugin for EditorPlugin {
             ] {
                 registrar.command(id, label, crate::zoom::command);
             }
+            for (id, label) in crate::lsp::editor_actions::COMMANDS {
+                registrar.command(id, label, language_command);
+            }
             for action in bed_editor_ui::shortcuts::actions()
                 .into_iter()
                 .chain(bed_editor_ui::shortcuts::hex_actions())
@@ -165,6 +168,25 @@ fn open_diagnostics(
         state: Value::Null,
         area: Some(invocation.area),
     }])
+}
+fn language_command(
+    In(invocation): In<bed_workbench_api::CommandInvocation>,
+    world: &mut World,
+) -> bed_workbench_api::CommandResult {
+    let entity = invocation
+        .source
+        .ok_or("Language actions require a captured text presentation")?;
+    let entity = world
+        .get::<bed_workbench_api::PanelFrontend>(entity)
+        .map_or(entity, |front| front.0);
+    with_editor(world, |views, runtime, session| {
+        let view = views
+            .text(entity)
+            .ok_or_else(|| io::Error::other("Language actions require a text presentation"))?;
+        runtime.request_lsp_command(session, view.id(), &invocation.command)
+    })
+    .map_err(|error| error.to_string())?;
+    Ok(Vec::new())
 }
 
 /// Attach a text presentation owned by another feature, such as a Git diff.
@@ -673,12 +695,8 @@ fn panel_action(In(invocation): In<PanelActionInvocation>, world: &mut World) ->
                     }
                     PanelAction::Undo if view.read_only() => {}
                     PanelAction::Redo if view.read_only() => {}
-                    PanelAction::Undo => {
-                        session.with_commands(view.id(), |commands| commands.undo())?
-                    }
-                    PanelAction::Redo => {
-                        session.with_commands(view.id(), |commands| commands.redo())?
-                    }
+                    PanelAction::Undo => session.undo_document(view.document_id())?,
+                    PanelAction::Redo => session.redo_document(view.document_id())?,
                     PanelAction::CommitEdit => {}
                 }
                 runtime.record_overlay(view);
@@ -879,6 +897,9 @@ pub(crate) fn register_metadata(registrar: &mut Registrar<'_>) {
     ] {
         registrar.command(id, label, None);
     }
+    for (id, label) in crate::lsp::editor_actions::COMMANDS {
+        registrar.command(id, label, None);
+    }
     registrar.panel_options(
         TEXT_PANEL_TYPE,
         "Text editor",
@@ -924,6 +945,7 @@ pub(crate) fn draw_text_view(
     config: &EditorConfig,
     requests: &mut Vec<HostRequest>,
 ) -> io::Result<bed_editor_ui::ViewResponse> {
+    runtime.before_draw(ui, view, session, config)?;
     view.set_navigation_animations(config.navigation_animations);
     if let Some(command) = crate::zoom::keyboard(
         ui,
@@ -953,7 +975,14 @@ pub(crate) fn draw_text_view(
             view.set_minimap_enabled(!view.minimap_enabled(config.options.minimap_enabled));
         }
     }
-    let response = view.draw(ui, session, &config.options)?;
+    let mut options = config.options.clone();
+    options.block_input |= runtime.language_action_blocks_view(view.id());
+    if runtime.completion_visible_for(view.id()) {
+        // Reserve the shared tooltip before the view can paint diagnostics or
+        // extension hovers beneath the completion documentation window.
+        view.presentation().tooltip_arbiter.claim(ui);
+    }
+    let response = view.draw(ui, session, &options)?;
     runtime.after_draw(ui, view, response.clone(), session, config, requests)?;
     runtime.record_overlay(view);
     Ok(response)

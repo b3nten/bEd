@@ -1,8 +1,11 @@
 //! Canonical editor resources and one ordered application transition boundary.
+#[path = "lsp_format_save.rs"]
+mod format_save;
 mod layouts;
 pub use layouts::LayoutSlots;
 
 use crate::workspace::store::{WorkspaceSpec, WorkspaceStore, WorkspaceTarget};
+pub use bed_config::LayoutSlot;
 use bed_config::Settings;
 use bed_document_session::editor_session::{
     ByteEdit, ClosePolicy, DocumentId, EditorSession, SessionOptions, ViewId,
@@ -49,10 +52,11 @@ pub enum WindowCommand {
     DuplicateView,
     SplitRight,
     SplitDown,
+    SetCurrentLayout,
     ResetLayout,
-    UseLayout(u8),
-    SetLayoutDefault(u8),
-    RestoreBuiltinLayout(u8),
+    UseLayout(LayoutSlot),
+    SetLayoutDefault(LayoutSlot),
+    RestoreBuiltinLayout(LayoutSlot),
     SaveDefaultLayout,
     ResetDefaultLayout,
     Projects,
@@ -88,6 +92,8 @@ pub struct EditorWorkbenchOptions {
     pub files: Vec<OpenFileOptions>,
     /// Restore the last standalone session only when explicitly requested.
     pub restore_standalone: bool,
+    /// Initial arrangement for a fresh standalone host.
+    pub initial_layout: Option<LayoutSlot>,
     /// Initial tool, opened before file arguments so those files retain focus.
     pub startup_panel: Option<String>,
     pub host_mode: WorkbenchHostMode,
@@ -199,7 +205,7 @@ pub enum EditorAction {
 pub struct EditorRequest {
     pub action: EditorAction,
     pub session: u64,
-    pub layout_slot: u8,
+    pub layout_slot: LayoutSlot,
     pub source: Option<Entity>,
     pub panel: Option<Entity>,
     pub area: u32,
@@ -552,6 +558,8 @@ fn initialize_editor(world: &mut World) {
             replace_workspace(world, spec)?;
         } else if options.restore_standalone {
             restore_workspace(world)?;
+        } else if let Some(slot) = options.initial_layout {
+            layouts::initialize(world, slot)?;
         }
         if let Some(startup) = options.startup_panel.as_deref()
             && panel_entities(world).is_empty()
@@ -656,6 +664,7 @@ struct PendingSave {
 #[derive(Resource, Default)]
 struct PendingOperations {
     saves: Vec<PendingSave>,
+    formats: Vec<format_save::PendingFormatSave>,
     batches: Vec<PendingBatch>,
 }
 
@@ -2626,6 +2635,7 @@ fn update_editor_services(world: &mut World) {
     }
 
     let report = world.non_send_mut::<EditorSession>().tick();
+    format_save::poll(world);
     let pending = std::mem::take(&mut world.resource_mut::<PendingOperations>().saves);
     for save in pending {
         let failure = report.errors.iter().find(|error| {
@@ -2893,7 +2903,7 @@ fn window_command(
             {
                 return window_command(world, WindowCommand::SaveAs, request, id);
             }
-            return begin_save(world, vec![document], None, None, id);
+            return format_save::begin(world, document, id);
         }
         WindowCommand::SaveAs => {
             let Some(document) = request.context.document else {
@@ -3013,6 +3023,10 @@ fn window_command(
             );
         }
         WindowCommand::UseLayout(slot) => return layouts::request_switch(world, slot, id),
+        WindowCommand::SetCurrentLayout => {
+            layouts::save_default(world, world.resource::<LayoutSlots>().active())?;
+            EditorRequestOutcome::Applied
+        }
         WindowCommand::SetLayoutDefault(slot) => {
             layouts::save_default(world, slot)?;
             EditorRequestOutcome::Applied
@@ -3030,7 +3044,7 @@ fn window_command(
         WindowCommand::ResetDefaultLayout => {
             world
                 .non_send_mut::<Settings>()
-                .set_layout_default(1, None)?;
+                .set_layout_default(LayoutSlot::Layout1, None)?;
             EditorRequestOutcome::Applied
         }
         WindowCommand::ResetLayout => {
@@ -4196,7 +4210,7 @@ fn compose_default_layout_with_terminal(
 
 /// Compatibility helper: save the current arrangement into slot 1.
 pub fn save_default_layout(world: &mut World) -> io::Result<()> {
-    layouts::save_default(world, 1)
+    layouts::save_default(world, LayoutSlot::Layout1)
 }
 
 pub fn reset_layout(world: &mut World) -> io::Result<()> {
@@ -4471,6 +4485,7 @@ fn attach_workspace_with_terminal(
         .into_iter()
         .collect();
     commit_documents(world, &documents)?;
+    persist_workspace(world)?;
     let spec = world
         .non_send_mut::<WorkspacePersistence>()
         .store
@@ -4493,18 +4508,7 @@ fn attach_workspace_with_terminal(
         })
         .collect::<Vec<_>>();
     retire_panels(world, &launchers)?;
-    let value = {
-        let persistence = world.non_send::<WorkspacePersistence>();
-        persistence
-            .store
-            .layout(world.resource::<EditorWorkspace>().spec.as_ref().unwrap())
-            .cloned()
-    };
-    if let Some(value) = value {
-        restore_layout_with_terminal(world, &value, true, terminal)?;
-    } else {
-        compose_default_layout_with_terminal(world, terminal)?;
-    }
+    layouts::attach(world, terminal)?;
     publish_editor_frame(world);
     Ok(())
 }
@@ -4547,6 +4551,7 @@ pub fn replace_workspace(world: &mut World, spec: WorkspaceSpec) -> io::Result<(
 }
 
 fn cancel_foreign_pending(world: &mut World) {
+    format_save::cancel(world);
     let pending = std::mem::take(&mut world.resource_mut::<PendingOperations>().saves);
     for save in pending {
         let error = "The workspace changed before this operation completed".to_owned();
@@ -4627,7 +4632,7 @@ struct RemoteOpen {
     viewer: Option<String>,
     additional: bool,
     mode: FileOpenMode,
-    layout_slot: u8,
+    layout_slot: LayoutSlot,
     move_existing: bool,
     area: Option<u32>,
     tab_index: Option<usize>,

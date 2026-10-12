@@ -1186,6 +1186,26 @@ impl WorkspaceLsp {
                 callback(RoutedLspResponse { origin, result });
             })
     }
+    pub fn reply_workspace_edit(
+        &mut self,
+        generation: u64,
+        id: RpcId,
+        result: Result<Value, ResponseError>,
+    ) -> io::Result<()> {
+        let slot = self
+            .servers
+            .values()
+            .find(|slot| slot.generation.get() == generation)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotConnected, "Language server restarted")
+            })?;
+        slot.client.borrow_mut().reply_workspace_edit(id, result)
+    }
+    pub fn server_generation_is_current(&self, generation: u64) -> bool {
+        self.servers
+            .values()
+            .any(|slot| slot.generation.get() == generation)
+    }
     pub fn shutdown(&mut self) {
         for slot in self.servers.values() {
             slot.generation.set(next_server_generation());

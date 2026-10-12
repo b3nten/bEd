@@ -1,4 +1,4 @@
-//! Numbered layout ownership belongs to the application, not feature plugins.
+//! Application layout ownership belongs to the application, not feature plugins.
 use super::*;
 use bed_workbench::workspace::{tiling::Layout, tiling_state::TilingState};
 use bed_workbench_api::PanelSuspended;
@@ -12,15 +12,15 @@ struct LiveLayout {
 
 #[derive(Resource, Clone)]
 pub struct LayoutSlots {
-    active: u8,
-    live: HashMap<u8, LiveLayout>,
+    active: LayoutSlot,
+    live: HashMap<LayoutSlot, LiveLayout>,
     saved: serde_json::Map<String, Value>,
-    pending: VecDeque<(u8, Option<EditorRequestId>)>,
+    pending: VecDeque<(LayoutSlot, Option<EditorRequestId>)>,
 }
 impl Default for LayoutSlots {
     fn default() -> Self {
         Self {
-            active: 1,
+            active: LayoutSlot::Layout1,
             live: Default::default(),
             saved: Default::default(),
             pending: Default::default(),
@@ -28,19 +28,8 @@ impl Default for LayoutSlots {
     }
 }
 impl LayoutSlots {
-    pub fn active(&self) -> u8 {
+    pub fn active(&self) -> LayoutSlot {
         self.active
-    }
-}
-
-fn validate_slot(slot: u8) -> io::Result<()> {
-    if (1..=9).contains(&slot) {
-        Ok(())
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Layout slots are 1–9",
-        ))
     }
 }
 
@@ -51,10 +40,14 @@ pub(super) fn migrate_default(world: &mut World) -> io::Result<()> {
         .default_layout()
         .cloned();
     if let Some(legacy) = legacy {
-        if world.non_send::<Settings>().layout_default(1).is_none() {
+        if world
+            .non_send::<Settings>()
+            .layout_default(LayoutSlot::Layout1)
+            .is_none()
+        {
             world
                 .non_send_mut::<Settings>()
-                .set_layout_default(1, Some(legacy))?;
+                .set_layout_default(LayoutSlot::Layout1, Some(legacy))?;
         }
         world
             .non_send_mut::<WorkspacePersistence>()
@@ -92,6 +85,78 @@ pub(super) fn load(world: &mut World) -> Option<Value> {
     value
 }
 
+/// A fresh window uses the global template, never a previous standalone session.
+pub(super) fn initialize(world: &mut World, slot: LayoutSlot) -> io::Result<()> {
+    world.insert_resource(LayoutSlots {
+        active: slot,
+        ..Default::default()
+    });
+    restore_layout(world, &template(world, slot), false)
+}
+
+/// Attachment keeps standalone panels and processes, but adopts workspace slots.
+pub(super) fn attach(world: &mut World, terminal: Option<Entity>) -> io::Result<()> {
+    let mut live = world.resource::<LayoutSlots>().live.clone();
+    for layout in live.values_mut() {
+        layout
+            .panels
+            .retain(|panel| world.entities().contains(*panel));
+        layout.layout.tiling.retain_panels(
+            layout
+                .panels
+                .iter()
+                .map(|panel| world.get::<PanelPresentation>(*panel).unwrap().id),
+        );
+        layout.layout.focused = layout
+            .layout
+            .focused
+            .filter(|panel| world.entities().contains(*panel));
+    }
+    // A suspended Startup layout may also contain documents and terminals.
+    // Carry these into the workspace rather than leaving a second Startup session.
+    if let Some(startup) = live.remove(&LayoutSlot::Startup) {
+        for panel in startup.panels {
+            world.entity_mut(panel).remove::<PanelSuspended>();
+        }
+    }
+    clear(world);
+    load(world);
+    let mut slot = world.resource::<LayoutSlots>().active;
+    if slot == LayoutSlot::Startup {
+        slot = LayoutSlot::Layout1;
+        world.resource_mut::<LayoutSlots>().active = slot;
+    }
+    // Live numbered layouts take precedence over saved versions on attachment.
+    // Merge the active standalone panels into the destination's arrangement.
+    if let Some(target) = live.remove(&slot) {
+        activate(world, &target);
+        let ids = active_panel_entities(world)
+            .into_iter()
+            .map(|panel| world.get::<PanelPresentation>(panel).unwrap().id)
+            .collect::<Vec<_>>();
+        let mut tiling = world.resource::<WorkbenchLayout>().tiling.clone();
+        let destination = tiling.layout.largest_area();
+        for &id in &ids {
+            if tiling.area_for(id).is_none() {
+                tiling.assign(id, destination);
+            }
+        }
+        let layout = tiling.to_value(ids);
+        bed_workbench::apply_layout(world, &layout).map_err(io::Error::other)?;
+    } else {
+        let value = world
+            .resource::<LayoutSlots>()
+            .saved
+            .get(slot.key())
+            .cloned()
+            .unwrap_or_else(|| template(world, slot));
+        restore_layout_with_terminal(world, &value, true, terminal)?;
+    }
+    world.resource_mut::<LayoutSlots>().live = live;
+    bed_workbench::invalidate_layout_frontend(world);
+    Ok(())
+}
+
 pub(super) fn snapshot(world: &mut World) -> io::Result<Value> {
     let slots = world.resource::<LayoutSlots>().clone();
     let mut saved = slots.saved;
@@ -113,7 +178,7 @@ pub(super) fn snapshot(world: &mut World) -> io::Result<Value> {
         slots.active.to_string(),
         snapshot_layout(world, panels, &layout, &navigation)?,
     );
-    Ok(json!({"active_layout_slot": slots.active, "layouts": saved}))
+    Ok(json!({"active_layout_slot": slots.active.to_value(), "layouts": saved}))
 }
 
 pub(super) fn blocked(world: &World) -> bool {
@@ -126,10 +191,9 @@ pub(super) fn blocked(world: &World) -> bool {
 
 pub(super) fn request_switch(
     world: &mut World,
-    slot: u8,
+    slot: LayoutSlot,
     id: Option<EditorRequestId>,
 ) -> io::Result<Option<EditorRequestOutcome>> {
-    validate_slot(slot)?;
     if blocked(world) {
         world
             .resource_mut::<LayoutSlots>()
@@ -187,7 +251,7 @@ fn activate(world: &mut World, live: &LiveLayout) {
     }
 }
 
-fn switch(world: &mut World, slot: u8) -> io::Result<()> {
+fn switch(world: &mut World, slot: LayoutSlot) -> io::Result<()> {
     let previous = world.resource::<LayoutSlots>().clone();
     if previous.active == slot {
         return Ok(());
@@ -249,8 +313,7 @@ fn switch(world: &mut World, slot: u8) -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn save_default(world: &mut World, slot: u8) -> io::Result<()> {
-    validate_slot(slot)?;
+pub(super) fn save_default(world: &mut World, slot: LayoutSlot) -> io::Result<()> {
     let panels = active_panel_entities(world).into_iter().filter(|panel| {
         !panel_presentation(world, *panel).and_then(|surface| world.get::<bed_workbench_api::PanelPersistence>(surface)).is_some_and(|policy| !policy.0)
     }).map(|panel| {
@@ -353,7 +416,7 @@ pub(super) fn reset(world: &mut World) -> io::Result<()> {
     persist_workspace(world)
 }
 
-pub(super) fn template(world: &World, slot: u8) -> Value {
+pub(super) fn template(world: &World, slot: LayoutSlot) -> Value {
     let mut value = world
         .non_send::<Settings>()
         .layout_default(slot)
@@ -368,10 +431,10 @@ pub(super) fn template(world: &World, slot: u8) -> Value {
     value
 }
 
-fn builtin(slot: u8) -> Value {
+fn builtin(slot: LayoutSlot) -> Value {
     let mut layout = Layout::default();
     let placements: Vec<(&str, u32, Option<&str>)> = match slot {
-        1 => {
+        LayoutSlot::Layout1 => {
             let docs = layout.split(1, 0, 8200, 1).unwrap();
             let editor = layout.split(1, 0, 1438, 1).unwrap();
             let bottom = layout.split(editor, 1, 7255, 1).unwrap();
@@ -385,7 +448,7 @@ fn builtin(slot: u8) -> Value {
                 ("bed.docs.panel", docs, None),
             ]
         }
-        2 => {
+        LayoutSlot::Layout2 => {
             let diff = layout.split(1, 0, 2500, 1).unwrap();
             let bottom = layout.split(diff, 1, 7500, 1).unwrap();
             vec![
@@ -394,7 +457,7 @@ fn builtin(slot: u8) -> Value {
                 ("bed.terminal.panel", bottom, None),
             ]
         }
-        3 => {
+        LayoutSlot::Layout3 => {
             let right = layout.split(1, 0, 5000, 1).unwrap();
             let left_bottom = layout.split(1, 1, 5000, 1).unwrap();
             let right_bottom = layout.split(right, 1, 5000, 1).unwrap();
@@ -405,6 +468,7 @@ fn builtin(slot: u8) -> Value {
                 ("bed.terminal.panel", right_bottom, None),
             ]
         }
+        LayoutSlot::Startup => vec![("bed.projects.panel", 1, None)],
         _ => vec![("bed.editor.text-panel", 1, Some("bed.editor.text"))],
     };
     let panels = placements
@@ -434,7 +498,7 @@ mod tests {
 
     #[test]
     fn builtin_layout_one_reserves_a_full_height_docs_column() {
-        let value = builtin(1);
+        let value = builtin(LayoutSlot::Layout1);
         let panels = value["panels"].as_array().unwrap();
         let docs = panels
             .iter()
@@ -459,7 +523,7 @@ mod tests {
                 .tabs,
             vec![docs]
         );
-        for slot in 2..=9 {
+        for slot in LayoutSlot::ALL.into_iter().take(9).skip(1) {
             assert!(
                 !builtin(slot)["panels"]
                     .as_array()
@@ -581,7 +645,7 @@ mod tests {
         let id = submit_editor_request(app.world_mut(), request);
         process_editor_requests(app.world_mut()).unwrap();
         poll_editor_request(app.world_mut(), id).unwrap().unwrap();
-        switch(app.world_mut(), 4).unwrap();
+        switch(app.world_mut(), LayoutSlot::Layout4).unwrap();
         assert!(!bed_workbench_api::panel_active(app.world(), original));
         assert!(!bed_workbench_api::panel_active(app.world(), editor));
         assert!(
@@ -634,7 +698,7 @@ mod tests {
         assert_ne!(editor, second);
         assert_eq!(second_binding.document, Some(document));
         assert_ne!(original_binding.view, second_binding.view);
-        switch(app.world_mut(), 1).unwrap();
+        switch(app.world_mut(), LayoutSlot::Layout1).unwrap();
         assert_eq!(
             app.world().resource::<WorkbenchLayout>().focused,
             Some(editor)
@@ -656,8 +720,8 @@ mod tests {
         let dir = TempDir::new();
         let mut original = app(&dir, false);
         fixture(original.world_mut());
-        save_default(original.world_mut(), 4).unwrap();
-        switch(original.world_mut(), 4).unwrap();
+        save_default(original.world_mut(), LayoutSlot::Layout4).unwrap();
+        switch(original.world_mut(), LayoutSlot::Layout4).unwrap();
         let slot4 = active_panel_entities(original.world_mut())[0];
         assert_eq!(
             original
@@ -670,12 +734,15 @@ mod tests {
         original
             .world_mut()
             .non_send_mut::<Settings>()
-            .set_layout_default(4, None)
+            .set_layout_default(LayoutSlot::Layout4, None)
             .unwrap();
         persist_workspace(original.world_mut()).unwrap();
         drop(original);
         let mut restored = app(&dir, true);
-        assert_eq!(restored.world().resource::<LayoutSlots>().active(), 4);
+        assert_eq!(
+            restored.world().resource::<LayoutSlots>().active(),
+            bed_config::LayoutSlot::Layout4
+        );
         assert_eq!(active_panel_entities(restored.world_mut()).len(), 1);
         let restored_fixture = active_panel_entities(restored.world_mut())[0];
         assert_eq!(
@@ -690,7 +757,7 @@ mod tests {
         assert!(active_panel_entities(restored.world_mut()).contains(&restored_fixture));
         assert_eq!(active_panel_entities(restored.world_mut()).len(), 2);
         assert_eq!(restored.world().resource::<Closed>().0, 0);
-        switch(restored.world_mut(), 1).unwrap();
+        switch(restored.world_mut(), LayoutSlot::Layout1).unwrap();
         let panel = active_panel_entities(restored.world_mut())[0];
         assert_eq!(
             restored
@@ -703,11 +770,43 @@ mod tests {
     }
 
     #[test]
+    fn suspended_startup_terminals_survive_attachment_without_restarting() {
+        let dir = TempDir::new();
+        let mut app = app(&dir, false);
+        fixture(app.world_mut());
+        save_default(app.world_mut(), LayoutSlot::Startup).unwrap();
+        switch(app.world_mut(), LayoutSlot::Startup).unwrap();
+        let terminal = crate::editor_runtime::terminal_tests::open_terminal(app.world_mut());
+        let surface = panel_presentation(app.world(), terminal).unwrap();
+        switch(app.world_mut(), LayoutSlot::Layout4).unwrap();
+        assert!(!bed_workbench_api::panel_active(app.world(), terminal));
+        let root = dir.path("project");
+        std::fs::create_dir(&root).unwrap();
+        attach_workspace(app.world_mut(), &root).unwrap();
+        assert_eq!(
+            app.world().resource::<LayoutSlots>().active(),
+            LayoutSlot::Layout1
+        );
+        assert!(bed_workbench_api::panel_active(app.world(), terminal));
+        assert_eq!(panel_presentation(app.world(), terminal), Some(surface));
+        switch(app.world_mut(), LayoutSlot::Layout4).unwrap();
+        switch(app.world_mut(), LayoutSlot::Layout1).unwrap();
+        assert!(bed_workbench_api::panel_active(app.world(), terminal));
+        assert_eq!(panel_presentation(app.world(), terminal), Some(surface));
+        assert!(
+            !app.world()
+                .resource::<LayoutSlots>()
+                .live
+                .contains_key(&LayoutSlot::Startup)
+        );
+    }
+
+    #[test]
     fn terminal_grid_reuses_four_live_sessions_when_reset_and_switched() {
         let dir = TempDir::new();
         let mut app = app(&dir, false);
         let terminal = super::super::terminal_tests::open_terminal(app.world_mut());
-        switch(app.world_mut(), 3).unwrap();
+        switch(app.world_mut(), LayoutSlot::Layout3).unwrap();
         let panels = active_panel_entities(app.world_mut());
         assert_eq!(panels.len(), 4);
         let sessions = panels
@@ -732,9 +831,9 @@ mod tests {
                 .len(),
             4
         );
-        switch(app.world_mut(), 1).unwrap();
+        switch(app.world_mut(), LayoutSlot::Layout1).unwrap();
         assert!(active_panel_entities(app.world_mut()).contains(&terminal));
-        switch(app.world_mut(), 3).unwrap();
+        switch(app.world_mut(), LayoutSlot::Layout3).unwrap();
         assert_eq!(active_panel_entities(app.world_mut()), panels);
         for panel in panels {
             assert!(
@@ -753,7 +852,7 @@ mod tests {
     fn legacy_default_migrates_to_settings_without_overwriting_slot_one() {
         let dir = TempDir::new();
         let mut first = app(&dir, false);
-        let legacy = builtin(3);
+        let legacy = builtin(LayoutSlot::Layout3);
         first
             .world_mut()
             .non_send_mut::<WorkspacePersistence>()
@@ -763,7 +862,10 @@ mod tests {
         drop(first);
         let mut migrated = app(&dir, false);
         assert_eq!(
-            migrated.world().non_send::<Settings>().layout_default(1),
+            migrated
+                .world()
+                .non_send::<Settings>()
+                .layout_default(LayoutSlot::Layout1),
             Some(&legacy)
         );
         assert!(
@@ -778,11 +880,14 @@ mod tests {
             .world_mut()
             .non_send_mut::<WorkspacePersistence>()
             .store
-            .set_default_layout(builtin(4))
+            .set_default_layout(builtin(LayoutSlot::Layout4))
             .unwrap();
         migrate_default(migrated.world_mut()).unwrap();
         assert_eq!(
-            migrated.world().non_send::<Settings>().layout_default(1),
+            migrated
+                .world()
+                .non_send::<Settings>()
+                .layout_default(LayoutSlot::Layout1),
             Some(&legacy)
         );
     }
@@ -797,12 +902,15 @@ mod tests {
         app.world_mut()
             .entity_mut(surface)
             .insert(bed_workbench_api::PanelPersistence(false));
-        save_default(app.world_mut(), 8).unwrap();
-        assert_eq!(app.world().resource::<LayoutSlots>().active(), 1);
+        save_default(app.world_mut(), LayoutSlot::Layout8).unwrap();
+        assert_eq!(
+            app.world().resource::<LayoutSlots>().active(),
+            bed_config::LayoutSlot::Layout1
+        );
         let saved = app
             .world()
             .non_send::<Settings>()
-            .layout_default(8)
+            .layout_default(LayoutSlot::Layout8)
             .unwrap();
         assert_eq!(saved["panels"].as_array().unwrap().len(), 1);
         assert_eq!(
@@ -823,8 +931,11 @@ mod tests {
         let path = dir.path("config/workspaces.json");
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir(&path).unwrap();
-        assert!(switch(app.world_mut(), 4).is_err());
-        assert_eq!(app.world().resource::<LayoutSlots>().active(), 1);
+        assert!(switch(app.world_mut(), LayoutSlot::Layout4).is_err());
+        assert_eq!(
+            app.world().resource::<LayoutSlots>().active(),
+            bed_config::LayoutSlot::Layout1
+        );
         assert!(bed_workbench_api::panel_active(app.world(), panel));
         assert_eq!(active_panel_entities(app.world_mut()), vec![panel]);
     }
@@ -841,7 +952,7 @@ mod tests {
             area
         };
         assert!(bed_workbench::focus_area(app.world_mut(), area));
-        save_default(app.world_mut(), 1).unwrap();
+        save_default(app.world_mut(), LayoutSlot::Layout1).unwrap();
         focus_panel(app.world_mut(), panel, true).unwrap();
         reset(app.world_mut()).unwrap();
         assert_eq!(app.world().resource::<WorkbenchLayout>().focused, None);
@@ -852,7 +963,7 @@ mod tests {
     }
 
     #[test]
-    fn only_nine_switch_actions_are_added_and_focus_bindings_move() {
+    fn numbered_switch_shortcuts_remain_and_startup_is_unbound() {
         let dir = TempDir::new();
         let app = app(&dir, false);
         let actions = app
@@ -864,13 +975,15 @@ mod tests {
                 .iter()
                 .filter(|action| action.id.starts_with("bed.app.layout_"))
                 .count(),
-            9
+            10
         );
         let bindings = bed_keybindings::Bindings::new(
             actions.to_vec(),
             &Default::default(),
             bed_keybindings::Platform::Mac,
         );
+        assert!(bindings.for_action("bed.app.layout_startup").is_empty());
+        assert!(bindings.for_action("bed.app.SetCurrentLayout").is_empty());
         for slot in 1..=9 {
             assert_eq!(
                 bindings.for_action(&format!("bed.app.layout_{slot}"))[0]
@@ -914,7 +1027,7 @@ mod tests {
                 viewer: None,
                 additional: true,
                 mode: FileOpenMode::Keep,
-                layout_slot: 1,
+                layout_slot: LayoutSlot::Layout1,
                 move_existing: false,
                 area: Some(1),
                 tab_index: None,
@@ -923,11 +1036,14 @@ mod tests {
             });
         let id = internal_request_id(app.world_mut());
         assert!(
-            request_switch(app.world_mut(), 4, Some(id))
+            request_switch(app.world_mut(), LayoutSlot::Layout4, Some(id))
                 .unwrap()
                 .is_none()
         );
-        assert_eq!(app.world().resource::<LayoutSlots>().active(), 1);
+        assert_eq!(
+            app.world().resource::<LayoutSlots>().active(),
+            bed_config::LayoutSlot::Layout1
+        );
         assert!(poll_editor_request(app.world_mut(), id).is_none());
         app.world_mut()
             .non_send_mut::<RemoteOperations>()
@@ -938,7 +1054,10 @@ mod tests {
             poll_editor_request(app.world_mut(), id).unwrap().unwrap(),
             EditorRequestOutcome::Applied
         );
-        assert_eq!(app.world().resource::<LayoutSlots>().active(), 4);
+        assert_eq!(
+            app.world().resource::<LayoutSlots>().active(),
+            bed_config::LayoutSlot::Layout4
+        );
         let active = active_panel_entities(app.world_mut());
         let id = submit_editor_request(app.world_mut(), stale);
         process_editor_requests(app.world_mut()).unwrap();
@@ -956,7 +1075,7 @@ mod tests {
         let dir = TempDir::new();
         let mut app = app(&dir, false);
         fixture(app.world_mut());
-        switch(app.world_mut(), 4).unwrap();
+        switch(app.world_mut(), LayoutSlot::Layout4).unwrap();
         app.init_resource::<Saves>();
         let save = app.world_mut().register_system(|mut saves: ResMut<Saves>| {
             saves.0 += 1;
@@ -986,11 +1105,11 @@ mod tests {
         let dir = TempDir::new();
         let mut app = app(&dir, false);
         let retained = fixture(app.world_mut());
-        switch(app.world_mut(), 4).unwrap();
+        switch(app.world_mut(), LayoutSlot::Layout4).unwrap();
         let root = dir.path("project");
         std::fs::create_dir(&root).unwrap();
         attach_workspace(app.world_mut(), &root).unwrap();
-        switch(app.world_mut(), 1).unwrap();
+        switch(app.world_mut(), LayoutSlot::Layout1).unwrap();
         assert!(active_panel_entities(app.world_mut()).contains(&retained));
         let other = dir.path("other");
         std::fs::create_dir(&other).unwrap();
@@ -1006,7 +1125,10 @@ mod tests {
             WorkspaceSpec::local(root.to_string_lossy()),
         )
         .unwrap();
-        assert_eq!(app.world().resource::<LayoutSlots>().active(), 1);
+        assert_eq!(
+            app.world().resource::<LayoutSlots>().active(),
+            bed_config::LayoutSlot::Layout1
+        );
         assert!(
             active_panel_entities(app.world_mut())
                 .into_iter()

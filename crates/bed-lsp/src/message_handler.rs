@@ -14,7 +14,7 @@ use crate::{
 };
 use serde_json::Value;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     io::{BufReader, Read, Write},
     path::Path,
     sync::{
@@ -44,6 +44,10 @@ type NotificationHandler = Box<dyn FnMut(Option<Value>) -> Result<(), ResponseEr
 
 #[derive(Debug)]
 pub enum RpcEvent {
+    WorkspaceEditRequest {
+        id: RpcId,
+        params: Option<Value>,
+    },
     Notification {
         method: String,
         params: Option<Value>,
@@ -89,6 +93,8 @@ pub struct RpcSession {
     notification_handlers: HashMap<String, NotificationHandler>,
     connected: bool,
     shutdown_complete: bool,
+    defer_workspace_edits: bool,
+    deferred_requests: HashSet<RpcId>,
 }
 
 impl RpcSession {
@@ -215,6 +221,8 @@ impl RpcSession {
             notification_handlers: HashMap::new(),
             connected: true,
             shutdown_complete: false,
+            defer_workspace_edits: false,
+            deferred_requests: HashSet::new(),
         })
     }
 
@@ -230,6 +238,26 @@ impl RpcSession {
 
     pub fn set_request_timeout(&mut self, timeout: Duration) {
         self.request_timeout = timeout;
+    }
+    /// The document session owns mutation and replies after edits are committed.
+    pub fn defer_workspace_edits(&mut self) {
+        self.defer_workspace_edits = true;
+    }
+    pub fn reply_workspace_edit(
+        &mut self,
+        id: RpcId,
+        result: Result<Value, ResponseError>,
+    ) -> io::Result<()> {
+        if !self.deferred_requests.remove(&id) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Unknown deferred LSP request",
+            ));
+        }
+        self.queue(
+            &Packet::Single(Message::Response(Response { id, result })),
+            None,
+        )
     }
 
     pub fn register_request_handler(
@@ -426,7 +454,29 @@ impl RpcSession {
                     }
                 }
                 Message::Request(request) => {
-                    if let Some(handler) = self.notification_handlers.get_mut(&request.method) {
+                    if self.defer_workspace_edits
+                        && request.method == "workspace/applyEdit"
+                        && request.id.is_some()
+                    {
+                        let id = request.id.unwrap();
+                        if self.deferred_requests.len() >= MAX_PENDING_REQUESTS
+                            || !self.deferred_requests.insert(id.clone())
+                        {
+                            responses.push(Message::Response(Response {
+                                id,
+                                result: Err(ResponseError::invalid_params(
+                                    "Too many or duplicate deferred edit requests",
+                                )),
+                            }));
+                        } else {
+                            events.push(RpcEvent::WorkspaceEditRequest {
+                                id,
+                                params: request.params,
+                            });
+                        }
+                    } else if let Some(handler) =
+                        self.notification_handlers.get_mut(&request.method)
+                    {
                         if let Err(error) = handler(request.params) {
                             events.push(RpcEvent::ProtocolError(error));
                         }
@@ -583,6 +633,33 @@ impl Drop for RpcSession {
 mod tests {
     use super::*;
     use std::{cell::RefCell, rc::Rc};
+
+    #[test]
+    fn workspace_edits_wait_for_session_commit_before_replying() {
+        let mut session = RpcSession::start(Path::new("/bin/cat"), &[]).unwrap();
+        session.defer_workspace_edits();
+        let id = RpcId::String("server-edit".into());
+        let params = serde_json::json!({"edit":{"changes":{}}});
+        let mut events = Vec::new();
+        session.dispatch(
+            Packet::Single(Message::Request(Request {
+                id: Some(id.clone()),
+                method: "workspace/applyEdit".into(),
+                params: Some(params.clone()),
+            })),
+            &mut events,
+            &mut |_| {},
+        );
+        assert!(
+            matches!(&events[0], RpcEvent::WorkspaceEditRequest { id: received, params: Some(received_params) } if received == &id && received_params == &params)
+        );
+        assert!(session.deferred_requests.contains(&id));
+        session
+            .reply_workspace_edit(id.clone(), Ok(serde_json::json!({"applied":true})))
+            .unwrap();
+        assert!(!session.deferred_requests.contains(&id));
+        assert!(session.reply_workspace_edit(id, Ok(Value::Null)).is_err());
+    }
 
     #[test]
     fn deadlines_complete_once_and_late_responses_cannot_revive_requests() {

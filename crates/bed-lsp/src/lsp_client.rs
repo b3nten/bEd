@@ -358,8 +358,32 @@ impl LspClient {
     pub fn server_capabilities(&self) -> &Value {
         &self.server_capabilities
     }
+    pub fn reply_workspace_edit(
+        &mut self,
+        id: RpcId,
+        result: Result<Value, ResponseError>,
+    ) -> io::Result<()> {
+        self.session
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "LSP disconnected"))?
+            .reply_workspace_edit(id, result)
+    }
     pub fn supports_method(&self, method: &str) -> bool {
         let capability = match method {
+            "textDocument/completion" => "completionProvider",
+            "completionItem/resolve" => {
+                return self.server_capabilities["completionProvider"]["resolveProvider"] == true;
+            }
+            "textDocument/formatting" => "documentFormattingProvider",
+            "textDocument/rename" => "renameProvider",
+            "textDocument/prepareRename" => {
+                return self.server_capabilities["renameProvider"]["prepareProvider"] == true;
+            }
+            "textDocument/codeAction" => "codeActionProvider",
+            "codeAction/resolve" => {
+                return self.server_capabilities["codeActionProvider"]["resolveProvider"] == true;
+            }
+            "workspace/executeCommand" => "executeCommandProvider",
             "textDocument/hover" => "hoverProvider",
             "textDocument/definition" => "definitionProvider",
             "textDocument/references" => "referencesProvider",
@@ -606,6 +630,7 @@ impl LspClient {
         self.stderr_pending.borrow_mut().clear();
         *self.progress.borrow_mut() = ProgressState::default();
         let mut session = RpcSession::start_with_options(&program, &arguments, &options)?;
+        session.defer_workspace_edits();
         session.set_request_timeout(Duration::from_secs(server.timeout_secs));
         self.watched_files = Rc::new(RefCell::new(BTreeMap::new()));
         self.server_capabilities = json!({});
@@ -1000,8 +1025,8 @@ fn initialize_params(workspace: &str, remote: bool) -> io::Result<Value> {
     Ok(
         json!({"processId":if remote { None } else { Some(std::process::id()) },"rootUri":workspace_uri(workspace, remote)?.to_string(),"rootPath":workspace,
         "clientInfo":{"name":"bed"},"workspaceFolders":workspace_folders(workspace, remote)?,
-        "capabilities":{"window":{"workDoneProgress":true},"workspace":{"workspaceFolders":true,"configuration":true,"diagnostics":{"refreshSupport":true}},
-            "textDocument":{"synchronization":{"didSave":true},"hover":{},"definition":{"linkSupport":true},"references":{},"publishDiagnostics":{"relatedInformation":true},"diagnostic":{"dynamicRegistration":true,"relatedDocumentSupport":true}},
+        "capabilities":{"window":{"workDoneProgress":true},"workspace":{"workspaceFolders":true,"configuration":true,"applyEdit":true,"workspaceEdit":{"documentChanges":true,"failureHandling":"undo"},"diagnostics":{"refreshSupport":true}},
+            "textDocument":{"synchronization":{"didSave":true},"hover":{"contentFormat":["markdown","plaintext"]},"definition":{"linkSupport":true},"references":{},"completion":{"contextSupport":true,"completionList":{"itemDefaults":["data","editRange","insertTextFormat"]},"completionItem":{"snippetSupport":false,"documentationFormat":["markdown","plaintext"],"resolveSupport":{"properties":["documentation","detail","additionalTextEdits"]},"insertReplaceSupport":true,"labelDetailsSupport":true}},"formatting":{},"rename":{"prepareSupport":true},"codeAction":{"codeActionLiteralSupport":{"codeActionKind":{"valueSet":["quickfix"]}},"isPreferredSupport":true,"disabledSupport":true,"dataSupport":true,"resolveSupport":{"properties":["edit","command"]}},"publishDiagnostics":{"relatedInformation":true},"diagnostic":{"dynamicRegistration":true,"relatedDocumentSupport":true}},
             "general":{"positionEncodings":["utf-16"]}}}),
     )
 }
@@ -1291,7 +1316,12 @@ fn register_server_handlers(
 
 fn apply_diagnostics(store: &LspDiagnostics, params: Option<&Value>) -> Result<(), ResponseError> {
     let (path, items, version) = decode_diagnostics(store, params)?;
-    store.replace(&path, items, version);
+    store.replace_raw(
+        &path,
+        items,
+        params.unwrap()["diagnostics"].as_array().unwrap().clone(),
+        version,
+    );
     Ok(())
 }
 pub(crate) fn decode_diagnostics(

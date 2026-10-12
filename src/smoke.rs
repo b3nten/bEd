@@ -1216,7 +1216,11 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                     }
                 }
                 if done {
-                    crate::bed::smoke_native_menu(world, MenuAction::SetLayoutDefault(1))?;
+                    crate::bed::smoke_native_menu(world, MenuAction::SetCurrentLayout)?;
+                    crate::bed::smoke_native_menu(
+                        world,
+                        MenuAction::SetLayoutDefault(bed_config::LayoutSlot::Startup),
+                    )?;
                     smoke.next(world);
                 }
             }
@@ -1231,6 +1235,10 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 )?)?;
                 let default = &settings["layout_defaults"]["1"];
                 ensure(
+                    settings["layout_defaults"]["startup"] == *default,
+                    "Set Other Layout did not save the Startup template",
+                )?;
+                ensure(
                     default["version"] == 1
                         && default["panels"].as_array().is_some_and(|panels| {
                             !panels.is_empty()
@@ -1240,7 +1248,14 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                         }),
                     "Save Default Layout did not persist a fresh arrangement",
                 )?;
-                crate::bed::smoke_native_menu(world, MenuAction::RestoreBuiltinLayout(1))?;
+                crate::bed::smoke_native_menu(
+                    world,
+                    MenuAction::RestoreBuiltinLayout(bed_config::LayoutSlot::Layout1),
+                )?;
+                crate::bed::smoke_native_menu(
+                    world,
+                    MenuAction::RestoreBuiltinLayout(bed_config::LayoutSlot::Startup),
+                )?;
                 smoke.next(world);
             }
         }
@@ -1249,8 +1264,12 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 ensure(
                     world
                         .non_send::<bed_config::Settings>()
-                        .layout_default(1)
-                        .is_none(),
+                        .layout_default(bed_config::LayoutSlot::Layout1)
+                        .is_none()
+                        && world
+                            .non_send::<bed_config::Settings>()
+                            .layout_default(bed_config::LayoutSlot::Startup)
+                            .is_none(),
                     "Reset Default Layout did not clear template",
                 )?;
                 ensure(
@@ -1277,7 +1296,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                     world
                         .resource::<bed_editor_workbench::LayoutSlots>()
                         .active()
-                        == 3
+                        == bed_config::LayoutSlot::Layout3
                         && panels.len() == 4,
                     "terminal layout did not create four panels",
                 )?;
@@ -1327,7 +1346,10 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                     bed_editor_workbench::active_panel_entities(world) == smoke.entities,
                     "reset replaced live terminals",
                 )?;
-                crate::bed::smoke_native_menu(world, MenuAction::UseLayout(1))?;
+                crate::bed::smoke_native_menu(
+                    world,
+                    MenuAction::UseLayout(bed_config::LayoutSlot::Layout1),
+                )?;
                 smoke.next(world);
             }
         }
@@ -1337,7 +1359,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                     world
                         .resource::<bed_editor_workbench::LayoutSlots>()
                         .active()
-                        == 1,
+                        == bed_config::LayoutSlot::Layout1,
                     "layout 1 was not restored",
                 )?;
                 ensure(
@@ -1345,7 +1367,10 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                         == b"NATIVE_EDIT_native menu baseline\n",
                     "slot switching changed the document",
                 )?;
-                crate::bed::smoke_native_menu(world, MenuAction::UseLayout(3))?;
+                crate::bed::smoke_native_menu(
+                    world,
+                    MenuAction::UseLayout(bed_config::LayoutSlot::Layout3),
+                )?;
                 smoke.next(world);
             }
         }
@@ -1354,6 +1379,43 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 ensure(
                     bed_editor_workbench::active_panel_entities(world) == smoke.entities,
                     "switching recreated terminal sessions",
+                )?;
+                crate::bed::smoke_native_menu(
+                    world,
+                    MenuAction::UseLayout(bed_config::LayoutSlot::Startup),
+                )?;
+                smoke.next(world);
+            }
+        }
+        21 => {
+            if smoke.elapsed_frames(world) >= 3 {
+                ensure(
+                    world
+                        .resource::<bed_editor_workbench::LayoutSlots>()
+                        .active()
+                        == bed_config::LayoutSlot::Startup,
+                    "Startup layout was not selected",
+                )?;
+                let panels = bed_editor_workbench::active_panel_entities(world);
+                ensure(
+                    panels.len() == 1
+                        && world
+                            .get::<bed_workbench::PanelRecord>(panels[0])
+                            .is_some_and(|panel| panel.panel_type == "bed.projects.panel"),
+                    "Startup did not restore the built-in Workspaces panel",
+                )?;
+                crate::bed::smoke_native_menu(
+                    world,
+                    MenuAction::UseLayout(bed_config::LayoutSlot::Layout3),
+                )?;
+                smoke.next(world);
+            }
+        }
+        22 => {
+            if smoke.elapsed_frames(world) >= 8 {
+                ensure(
+                    bed_editor_workbench::active_panel_entities(world) == smoke.entities,
+                    "Startup switching recreated terminal sessions",
                 )?;
                 return basic(world, smoke);
             }

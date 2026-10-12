@@ -1,4 +1,5 @@
 //! Standalone recent projects and layout persistence. Embedding owns its layout.
+use bed_config::LayoutSlot;
 use serde_json::{Value, json};
 use std::io;
 use std::{
@@ -63,15 +64,11 @@ impl WorkspaceStore {
                 state.get("standalone_active_layout_slot"),
             )))
         {
-            if active
-                .is_some_and(|active| !active.as_u64().is_some_and(|slot| (1..=9).contains(&slot)))
+            if active.is_some_and(|active| LayoutSlot::from_value(active).is_none())
                 || layouts.is_some_and(|layouts| {
                     !layouts.as_object().is_some_and(|layouts| {
                         layouts.iter().all(|(slot, layout)| {
-                            matches!(
-                                slot.as_str(),
-                                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
-                            ) && layout["panels"].is_array()
+                            LayoutSlot::from_key(slot).is_some() && layout["panels"].is_array()
                         })
                     })
                 })
@@ -279,15 +276,12 @@ impl WorkspaceStore {
             None => self.state.get("standalone_layouts"),
         }
     }
-    pub fn active_layout_slot(&self, spec: Option<&WorkspaceSpec>) -> u8 {
+    pub fn active_layout_slot(&self, spec: Option<&WorkspaceSpec>) -> LayoutSlot {
         let value = match spec {
             Some(spec) => &self.state["workspaces"][spec.identity()]["active_layout_slot"],
             None => &self.state["standalone_active_layout_slot"],
         };
-        value
-            .as_u64()
-            .filter(|slot| (1..=9).contains(slot))
-            .unwrap_or(1) as u8
+        LayoutSlot::from_value(value).unwrap_or_default()
     }
     pub fn save_session_layout(
         &mut self,
@@ -296,19 +290,15 @@ impl WorkspaceStore {
     ) -> io::Result<()> {
         let _lock = self.reload_for_write()?;
         if let Some(layouts) = layout.get("layouts") {
-            let slot = layout["active_layout_slot"]
-                .as_u64()
-                .filter(|slot| (1..=9).contains(slot))
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "Invalid layout slot")
-                })?;
+            let slot = LayoutSlot::from_value(&layout["active_layout_slot"]).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "Invalid layout slot")
+            })?;
             if !layouts.is_object()
-                || layouts.as_object().unwrap().keys().any(|key| {
-                    key.parse::<u8>()
-                        .ok()
-                        .filter(|slot| (1..=9).contains(slot))
-                        .is_none()
-                })
+                || layouts
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .any(|key| LayoutSlot::from_key(key).is_none())
             {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -320,12 +310,12 @@ impl WorkspaceStore {
                 let id = spec.identity();
                 let workspace = &mut self.state["workspaces"][&id];
                 workspace["layouts"] = layouts.clone();
-                workspace["active_layout_slot"] = json!(slot);
+                workspace["active_layout_slot"] = slot.to_value();
                 workspace.as_object_mut().unwrap().remove("layout");
                 self.state["last_workspace"] = json!(id);
             } else {
                 self.state["standalone_layouts"] = layouts.clone();
-                self.state["standalone_active_layout_slot"] = json!(slot);
+                self.state["standalone_active_layout_slot"] = slot.to_value();
                 self.state
                     .as_object_mut()
                     .unwrap()

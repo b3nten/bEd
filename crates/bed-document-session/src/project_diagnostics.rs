@@ -1,9 +1,16 @@
 //! Workspace diagnostic collection and serialized disk-based checks.
-use bed_lsp::{diagnostics::DiagnosticItem, lsp_config::LspConfig};
+use bed_lsp::{
+    diagnostics::DiagnosticItem,
+    lsp_config::{
+        LspConfig, ServerDiscoveryEnvironment, resolve_server_paths_with_environment,
+        server_child_path_with_environment,
+    },
+};
 use bed_remote::{CheckJob, CheckOutput, RemoteClient, Request, Response};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
+    ffi::OsString,
     path::{Path, PathBuf},
     sync::{
         Arc, OnceLock,
@@ -134,6 +141,7 @@ pub(crate) struct ProjectDiagnostics {
     pub config: ProjectCheckConfig,
     configured: bool,
     available: bool,
+    check_available: bool,
     check_covers_project: bool,
     discovery_complete: bool,
     discovery: Option<Discovery>,
@@ -163,6 +171,7 @@ impl ProjectDiagnostics {
         self.complete = false;
         self.stale = false;
         self.available = false;
+        self.check_available = false;
         self.discovery_complete = false;
         self.discovered_paths = None;
         self.status = if root.is_some() {
@@ -209,6 +218,7 @@ impl ProjectDiagnostics {
         self.worker = None;
         self.config = config;
         self.configured = explicit;
+        self.check_available = false;
         self.complete = false;
         self.stale = true;
         if self.config.automatic {
@@ -272,6 +282,7 @@ impl ProjectDiagnostics {
     }
     pub fn owns_cargo_check(&self) -> bool {
         self.available
+            && self.check_available
             && self.config.automatic
             && self.config.program == "cargo"
             && self.config.format == CheckFormat::CargoJson
@@ -313,6 +324,7 @@ impl ProjectDiagnostics {
             self.worker = None;
             match result {
                 Ok((diagnostics, successful)) => {
+                    self.check_available = true;
                     self.diagnostics = diagnostics;
                     self.complete = true;
                     self.stale = self.pending.is_some();
@@ -323,6 +335,7 @@ impl ProjectDiagnostics {
                     };
                 }
                 Err(error) => {
+                    self.check_available = false;
                     self.stale = true;
                     self.status = format!("Project check failed: {error}");
                 }
@@ -346,8 +359,21 @@ impl ProjectDiagnostics {
                 let output = if let Some(client) = remote {
                     run_remote(&client, root, &config, stop)
                 } else {
-                    let mut job =
-                        CheckJob::start(root, config.program, config.arguments, config.directory);
+                    let command =
+                        local_check_command(&config, &ServerDiscoveryEnvironment::current());
+                    let mut job = match command {
+                        Ok((program, path)) => CheckJob::start_with_path(
+                            root,
+                            program,
+                            config.arguments,
+                            config.directory,
+                            path,
+                        ),
+                        Err(error) => {
+                            let _ = sender.send(Err(error));
+                            return;
+                        }
+                    };
                     loop {
                         if stop.load(Ordering::Acquire) {
                             job.cancel();
@@ -406,6 +432,27 @@ impl ProjectDiagnostics {
         }
         result
     }
+}
+fn local_check_command(
+    config: &ProjectCheckConfig,
+    environment: &ServerDiscoveryEnvironment,
+) -> Result<(String, Option<OsString>), String> {
+    if config.program != "cargo" || config.format != CheckFormat::CargoJson {
+        return Ok((config.program.clone(), None));
+    }
+    let mut candidates = vec!["cargo".into()];
+    if let Some(bin) = environment.cargo_bin() {
+        candidates.push(
+            bin.join(format!("cargo{}", std::env::consts::EXE_SUFFIX))
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+    let program = resolve_server_paths_with_environment(&candidates, environment)
+        .ok_or("Cargo was not found in PATH or the Cargo installation directory")?;
+    let path = server_child_path_with_environment(&program, environment)
+        .map_err(|error| error.to_string())?;
+    Ok((program.to_string_lossy().into_owned(), Some(path)))
 }
 fn discover_files(root: &Path) -> (Vec<String>, bool) {
     let mut complete = true;
@@ -506,7 +553,7 @@ fn parse_output(
                 }
                 let message = &value["message"];
                 let severity = match message["level"].as_str() {
-                    Some("error" | "failure-note") => 1,
+                    Some("error") => 1,
                     Some("warning") => 2,
                     _ => continue,
                 };
@@ -619,6 +666,73 @@ fn diagnostic_path(path: PathBuf, remote: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn gui_cargo_check_finds_cargo_and_rustc_without_changing_host_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::test_support::TempDir::new();
+        let cargo = dir.write("home/.cargo/bin/cargo", b"#!/bin/sh\nrustc\n");
+        let rustc = dir.write(
+            "home/.cargo/bin/rustc",
+            b"#!/bin/sh\nprintf '%s\\n' '{\"reason\":\"build-finished\",\"success\":true}'\n",
+        );
+        for program in [&cargo, &rustc] {
+            std::fs::set_permissions(program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let environment = ServerDiscoveryEnvironment {
+            path: Some(OsString::new()),
+            cargo_home: None,
+            home: Some(dir.path("home")),
+            current_directory: dir.root().to_owned(),
+        };
+        let host_path = std::env::var_os("PATH");
+        let (program, path) =
+            local_check_command(&ProjectCheckConfig::default(), &environment).unwrap();
+        assert_eq!(Path::new(&program), cargo);
+        let mut job =
+            CheckJob::start_with_path(dir.root().into(), program, vec![], ".".into(), path);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(output) = job.try_result() {
+                let output = output.unwrap();
+                assert_eq!(output.exit_code, Some(0));
+                assert!(
+                    parse_output(dir.root(), CheckFormat::CargoJson, &output, false)
+                        .unwrap()
+                        .1
+                );
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(std::env::var_os("PATH"), host_path);
+    }
+    #[test]
+    fn cargo_check_ownership_requires_a_working_checker() {
+        let mut service = ProjectDiagnostics {
+            available: true,
+            ..Default::default()
+        };
+        assert!(!service.owns_cargo_check());
+        let (sender, result) = mpsc::channel();
+        sender.send(Ok((BTreeMap::new(), false))).unwrap();
+        service.worker = Some(Worker {
+            canceled: Arc::new(AtomicBool::new(false)),
+            result,
+        });
+        service.tick();
+        assert!(service.owns_cargo_check());
+        let (sender, result) = mpsc::channel();
+        sender.send(Err("compiler could not start".into())).unwrap();
+        service.worker = Some(Worker {
+            canceled: Arc::new(AtomicBool::new(false)),
+            result,
+        });
+        service.tick();
+        assert!(!service.owns_cargo_check());
+        assert!(service.status.contains("compiler could not start"));
+    }
     #[test]
     fn cargo_reports_closed_files_and_success_clears_previous_errors() {
         let root = Path::new("/project");
@@ -637,6 +751,58 @@ mod tests {
                 .0
                 .is_empty()
         );
+    }
+    #[test]
+    fn rustc_explanation_footers_do_not_create_manifest_errors() {
+        let root = Path::new("/project");
+        let messages = [
+            json!({"reason":"compiler-message","message":{"level":"error","message":"unknown name","spans":[{"file_name":"src/lib.rs","line_start":1,"line_end":1,"column_start":2,"column_end":6,"is_primary":true}]}}),
+            json!({"reason":"compiler-message","message":{"level":"error","message":"unknown method","spans":[{"file_name":"src/lib.rs","line_start":2,"line_end":2,"column_start":4,"column_end":7,"is_primary":true}]}}),
+            json!({"reason":"compiler-message","message":{"level":"failure-note","message":"Some errors have detailed explanations: E0425, E0599.","spans":[]}}),
+            json!({"reason":"compiler-message","message":{"level":"failure-note","message":"For more information about an error, try `rustc --explain E0425`.","spans":[]}}),
+            json!({"reason":"build-finished","success":false}),
+        ];
+        let output = CheckOutput {
+            exit_code: Some(1),
+            stdout: messages
+                .iter()
+                .map(|message| format!("{message}\n"))
+                .collect::<String>()
+                .into_bytes(),
+            stderr: vec![],
+        };
+        let (items, successful) =
+            parse_output(root, CheckFormat::CargoJson, &output, false).unwrap();
+        assert!(!successful);
+        assert_eq!(items["/project/src/lib.rs"].len(), 2);
+        assert_eq!(items.len(), 1);
+    }
+    #[test]
+    fn spanless_compiler_errors_and_source_warnings_remain_reported() {
+        let root = Path::new("/project");
+        let messages = [
+            json!({"reason":"compiler-message","message":{"level":"error","message":"compiler setup failed","spans":[]}}),
+            json!({"reason":"compiler-message","message":{"level":"warning","message":"unused variable","spans":[{"file_name":"src/lib.rs","line_start":1,"line_end":1,"column_start":2,"column_end":6,"is_primary":true}]}}),
+            json!({"reason":"build-finished","success":false}),
+        ];
+        let output = CheckOutput {
+            exit_code: Some(1),
+            stdout: messages
+                .iter()
+                .map(|message| format!("{message}\n"))
+                .collect::<String>()
+                .into_bytes(),
+            stderr: vec![],
+        };
+        let (items, successful) =
+            parse_output(root, CheckFormat::CargoJson, &output, false).unwrap();
+        assert!(!successful);
+        assert_eq!(
+            items["/project/Cargo.toml"][0].message,
+            "compiler setup failed"
+        );
+        assert_eq!(items["/project/Cargo.toml"][0].severity, 1);
+        assert_eq!(items["/project/src/lib.rs"][0].severity, 2);
     }
     #[test]
     fn jsonl_requires_valid_ranges_and_latest_file_report_replaces() {

@@ -57,10 +57,13 @@ pub struct EditorConfig {
 }
 impl Default for EditorConfig {
     fn default() -> Self {
+        let options = EditorViewOptions::default();
+        let mut lsp = crate::presentation::LspPresentationOptions::default();
+        lsp.shortcuts = options.shortcuts.clone();
         Self {
-            options: EditorViewOptions::default(),
+            options,
             navigation_animations: true,
-            lsp: Default::default(),
+            lsp,
         }
     }
 }

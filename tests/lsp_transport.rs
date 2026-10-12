@@ -340,7 +340,36 @@ fn initialize_and_latest_queued_open() {
     assert_eq!(params["rootPath"], fixture.root.to_str().unwrap());
     assert_eq!(
         params["capabilities"],
-        json!({"window":{"workDoneProgress":true},"workspace":{"workspaceFolders":true,"configuration":true,"diagnostics":{"refreshSupport":true}},"textDocument":{"diagnostic":{"dynamicRegistration":true,"relatedDocumentSupport":true},"synchronization":{"didSave":true},"hover":{},"definition":{"linkSupport":true},"references":{},"publishDiagnostics":{"relatedInformation":true}},"general":{"positionEncodings":["utf-16"]}})
+        json!({
+            "window":{"workDoneProgress":true},
+            "workspace":{
+                "workspaceFolders":true,"configuration":true,"applyEdit":true,
+                "workspaceEdit":{"documentChanges":true,"failureHandling":"undo"},
+                "diagnostics":{"refreshSupport":true}
+            },
+            "textDocument":{
+                "diagnostic":{"dynamicRegistration":true,"relatedDocumentSupport":true},
+                "synchronization":{"didSave":true},"hover":{"contentFormat":["markdown","plaintext"]},
+                "definition":{"linkSupport":true},"references":{},
+                "publishDiagnostics":{"relatedInformation":true},
+                "completion":{
+                    "contextSupport":true,
+                    "completionList":{"itemDefaults":["data","editRange","insertTextFormat"]},
+                    "completionItem":{
+                        "snippetSupport":false,"documentationFormat":["markdown","plaintext"],
+                        "resolveSupport":{"properties":["documentation","detail","additionalTextEdits"]},
+                        "insertReplaceSupport":true,"labelDetailsSupport":true
+                    }
+                },
+                "formatting":{},"rename":{"prepareSupport":true},
+                "codeAction":{
+                    "codeActionLiteralSupport":{"codeActionKind":{"valueSet":["quickfix"]}},
+                    "isPreferredSupport":true,"disabledSupport":true,"dataSupport":true,
+                    "resolveSupport":{"properties":["edit","command"]}
+                }
+            },
+            "general":{"positionEncodings":["utf-16"]}
+        })
     );
     assert_eq!(messages[1]["method"], "initialized");
     assert_eq!(messages[2]["method"], "workspace/didChangeConfiguration");

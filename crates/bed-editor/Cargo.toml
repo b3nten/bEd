@@ -10,6 +10,7 @@ bed-keybindings = { workspace = true }
 bevy = { workspace = true, features = ["std"] }
 bed-workbench-api = { workspace = true }
 bed-editing = { workspace = true }
+bed-highlight = { workspace = true }
 bed-lsp = { workspace = true }
 bed-editor-api = { workspace = true }
 bed-document-session = { workspace = true }

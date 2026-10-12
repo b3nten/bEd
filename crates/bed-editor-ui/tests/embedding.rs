@@ -105,11 +105,16 @@ fn shortcut(
     right: &mut EditorView,
     key: Key,
 ) -> Vec<(u64, Vec<HostAction>)> {
-    context.io_mut().add_key_event(Key::ModCtrl, true);
+    let primary = if cfg!(target_os = "macos") {
+        Key::ModSuper
+    } else {
+        Key::ModCtrl
+    };
+    context.io_mut().add_key_event(primary, true);
     context.io_mut().add_key_event(key, true);
     let actions = frame(context, session, left, right);
     context.io_mut().add_key_event(key, false);
-    context.io_mut().add_key_event(Key::ModCtrl, false);
+    context.io_mut().add_key_event(primary, false);
     frame(context, session, left, right);
     actions
 }

@@ -61,15 +61,24 @@ with the usual arrangement and a narrow Docs column, slot 2 with Git changes,
 diff, and a terminal, slot 3 with four terminals in a grid, and slots 4–9 with
 one editor area.
 
-**Window → Set Layout → Layout 1–9** saves the current arrangement as that slot's
-global template in settings. Existing workspace versions keep their changes.
-**Reset Current Layout** restores the global arrangement, reusing live panels
-and retaining extra documents and terminals as tabs. **Restore Built-in Layout**
-removes a slot's global override; reset the workspace slot to apply it.
+**Startup** appears below Layout 9 without a default shortcut. Every new window
+without an explicitly selected workspace opens its Startup template, which
+contains the **Workspaces** picker by default. File arguments open afterward.
+The previous Startup/Terminal/Last project preference is no longer used.
 
-Workspace sessions remember the last active slot and all initialized layouts.
+**Window → Set Current Layout** saves the current arrangement as the active
+layout's global template. **Set Other Layout → Layout 1–9 / Startup** saves it
+for the selected layout. Existing workspace versions keep their changes.
+**Reset Current Layout** restores the global arrangement, reusing live panels
+and retaining extra documents and terminals as tabs. **Reset Other Layout**
+removes a layout's global override; reset its current session to apply the
+built-in arrangement. Both submenus include every layout, with Startup last.
+
+Workspace sessions remember the last active layout and all initialized layouts.
 They use the existing configuration-directory workspace store. Restarting launches
 fresh terminal processes; the existing unsaved-scratch persistence rules apply.
+Standalone launches start from the global Startup template rather than their
+previous session. Embedding can still request standalone-session restoration.
 
 Tools opens utility panels, including Terminal, Git Changes, and HTTP Client.
 Window contains layout selection and native window controls. Document view
@@ -336,6 +345,27 @@ default). Snapshot files do not inherit the bundled catalog. Hosts can select
 `Layered` to use desktop precedence and project
 root discovery. The LSP dashboard exposes server discovery, resolved roots,
 startup errors, stderr and restart controls.
+
+Completion opens while typing or with **Ctrl+Space**. Use Up/Down to choose an
+item, Tab or Enter to accept, and Escape to dismiss. The compact list shows
+documentation beside the selected item when the server provides it. Accepting
+a symbol also applies its import edits. Completion currently requires one
+collapsed caret; function-argument snippets are not supported.
+
+**Primary+Shift+I** formats the document, **F2** renames a symbol, and
+**Primary+Period** opens quick fixes. These shortcuts can be remapped in
+Settings. Rename and quick fixes apply immediately. Changes across files form
+one undo/redo action; newer edits in affected files must be undone first.
+Previously unopened files are saved immediately, including when the action is
+undone or redone. Open files keep their ordinary save behavior.
+
+The General settings panel exposes automatic LSP completion, its delay, and
+formatting before explicit saves. Their JSON settings are `lsp_autocomplete`
+(default `true`), `lsp_completion_delay_ms` (default `150`), and
+`lsp_format_on_save` (default `true`). Existing explicit preferences are
+preserved. Background autosave does not format. These actions also work in SSH
+workspaces. Hover and completion documentation wrap prose, signatures, and
+fenced code to the popup width while preserving code indentation and highlighting.
 
 ### Helix provenance
 

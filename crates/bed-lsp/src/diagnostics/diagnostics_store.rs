@@ -11,6 +11,7 @@ pub use bed_editing::diagnostic::{DiagnosticItem, diagnostic_contains};
 struct Store {
     remote_paths: bool,
     by_path: HashMap<String, Vec<DiagnosticItem>>,
+    raw_by_path: HashMap<String, Vec<serde_json::Value>>,
     versions: HashMap<String, i32>,
     key_cache: HashMap<String, String>,
 }
@@ -51,6 +52,15 @@ impl LspDiagnostics {
             .clone()
     }
     pub fn replace(&self, path: &str, items: Vec<DiagnosticItem>, version: i32) {
+        self.replace_raw(path, items, Vec::new(), version);
+    }
+    pub(crate) fn replace_raw(
+        &self,
+        path: &str,
+        items: Vec<DiagnosticItem>,
+        raw: Vec<serde_json::Value>,
+        version: i32,
+    ) {
         let mut store = self.inner.lock().unwrap();
         let key = Self::key_for(&mut store, path);
         if key.is_empty() {
@@ -65,6 +75,7 @@ impl LspDiagnostics {
             return;
         }
         store.versions.insert(key.clone(), version);
+        store.raw_by_path.insert(key.clone(), raw);
         store.by_path.insert(key, items);
     }
     pub fn clear(&self, path: &str) {
@@ -74,6 +85,7 @@ impl LspDiagnostics {
             return;
         }
         store.by_path.remove(&key);
+        store.raw_by_path.remove(&key);
         store.versions.remove(&key);
     }
     pub fn clear_all(&self) {
@@ -82,6 +94,25 @@ impl LspDiagnostics {
             remote_paths: store.remote_paths,
             ..Default::default()
         };
+    }
+    /// Publish a complete presentation snapshot without changing server-owned
+    /// versions or raw diagnostic payloads in the source stores.
+    pub fn replace_snapshot(
+        &self,
+        items: std::collections::BTreeMap<String, Vec<DiagnosticItem>>,
+        remote_paths: bool,
+    ) {
+        let mut next = Store {
+            remote_paths,
+            ..Default::default()
+        };
+        for (path, items) in items {
+            let key = Self::key_for(&mut next, &path);
+            if !key.is_empty() && !items.is_empty() {
+                next.by_path.entry(key).or_default().extend(items);
+            }
+        }
+        *self.inner.lock().unwrap() = next;
     }
     /// One consistent snapshot, including files that have never been opened.
     pub fn snapshot(&self) -> std::collections::BTreeMap<String, Vec<DiagnosticItem>> {
@@ -104,6 +135,12 @@ impl LspDiagnostics {
         let mut store = self.inner.lock().unwrap();
         let key = Self::key_for(&mut store, path);
         store.by_path.get(&key).cloned().unwrap_or_default()
+    }
+    /// Preserve server-specific diagnostic code/data when requesting quick fixes.
+    pub fn raw_for_document(&self, path: &str) -> Vec<serde_json::Value> {
+        let mut store = self.inner.lock().unwrap();
+        let key = Self::key_for(&mut store, path);
+        store.raw_by_path.get(&key).cloned().unwrap_or_default()
     }
     pub fn for_line(&self, path: &str, line: i32) -> Vec<DiagnosticItem> {
         if line < 0 {
@@ -141,6 +178,36 @@ impl LspDiagnostics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn presentation_snapshots_replace_all_paths_and_keep_remote_identity() {
+        let store = LspDiagnostics::new();
+        let diagnostic = DiagnosticItem {
+            message: "saved semantic error".into(),
+            ..Default::default()
+        };
+        let path = "/remote/alias/../file.rs";
+        store.replace_snapshot([(path.into(), vec![diagnostic.clone()])].into(), true);
+        assert_eq!(store.for_document(path), vec![diagnostic]);
+        assert!(store.for_document("/remote/file.rs").is_empty());
+        store.replace_snapshot(Default::default(), true);
+        assert!(store.for_document(path).is_empty());
+        assert!(store.snapshot().is_empty());
+    }
+    #[test]
+    fn raw_diagnostics_preserve_quick_fix_data_and_follow_version_rejection() {
+        let store = LspDiagnostics::new();
+        let raw = serde_json::json!({"code":"missing-import","data":{"symbol":"HashMap"}});
+        store.replace_raw(
+            "/tmp/action.rs",
+            vec![DiagnosticItem::default()],
+            vec![raw.clone()],
+            2,
+        );
+        store.replace_raw("/tmp/action.rs", vec![], vec![], 1);
+        assert_eq!(store.raw_for_document("/tmp/action.rs"), vec![raw]);
+        store.clear("/tmp/action.rs");
+        assert!(store.raw_for_document("/tmp/action.rs").is_empty());
+    }
     #[test]
     fn remote_diagnostic_keys_do_not_use_local_path_normalization_after_clear() {
         let store = LspDiagnostics::new();

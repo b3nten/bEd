@@ -67,6 +67,9 @@ pub struct ViewResponse {
     pub source_hover: Option<crate::extensions::SourceHoverObservation>,
     pub diff_actions: Vec<crate::DiffAction>,
     pub definition_request: Option<DefinitionRequest>,
+    /// Ordinary committed text, excluding paste, commands and programmatic edits.
+    pub typed_text: Option<String>,
+    pub prefix_backspace: bool,
 }
 /// Geometry and hover data for host menus and LSP presentation. Frame internals stay private.
 pub struct ViewPresentation<'a> {
@@ -300,8 +303,31 @@ impl EditorView {
                                 source_hover: None,
                                 diff_actions: self.frame.take_diff_actions(),
                                 definition_request: self.input.take_definition_request(),
+                                typed_text: self.input.take_typed_text(),
+                                prefix_backspace: self.input.prefix_backspace(),
                             }
                         })?;
+                        // History owns workspace-wide transactions; keyboard input
+                        // cannot safely undo only the focused buffer in isolation.
+                        let history_action = response
+                            .actions
+                            .iter()
+                            .any(|action| matches!(action, HostAction::Undo | HostAction::Redo));
+                        for action in &response.actions {
+                            match action {
+                                HostAction::Undo => session.undo_document(self.document)?,
+                                HostAction::Redo => session.redo_document(self.document)?,
+                                _ => {}
+                            }
+                        }
+                        if history_action {
+                            response.version =
+                                session.with_document(self.document, |state| state.version)?;
+                            response.generation = session.document_revision(self.document)?.0;
+                        }
+                        response.actions.retain(|action| {
+                            !matches!(action, HostAction::Undo | HostAction::Redo)
+                        });
                         for action in &mut response.diff_actions {
                             action.revision = source_revision;
                         }
@@ -388,6 +414,8 @@ impl EditorView {
                         source_hover: None,
                         diff_actions: Vec::new(),
                         definition_request: None,
+                        typed_text: None,
+                        prefix_backspace: false,
                     })
                 }
             };

@@ -626,7 +626,12 @@ fn executable_file(path: &Path) -> bool {
 /// Ensure Cargo/rustc remain discoverable for a GUI-launched rust-analyzer.
 /// Only the child receives this PATH; host environment and cwd are untouched.
 pub fn server_child_path(program: &Path) -> io::Result<OsString> {
-    let environment = ServerDiscoveryEnvironment::current();
+    server_child_path_with_environment(program, &ServerDiscoveryEnvironment::current())
+}
+pub fn server_child_path_with_environment(
+    program: &Path,
+    environment: &ServerDiscoveryEnvironment,
+) -> io::Result<OsString> {
     let mut directories = Vec::new();
     if let Some(parent) = program.parent() {
         directories.push(parent.to_owned());
@@ -708,7 +713,7 @@ mod tests {
         );
         assert_eq!(
             server.settings["rust-analyzer"]["files"]["watcher"],
-            "server"
+            "client"
         );
         assert!(config.language("lua").is_some());
     }

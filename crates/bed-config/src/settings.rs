@@ -1,6 +1,7 @@
 //! Desktop preferences and appearance. Embedded consumers provide their
 //! configuration explicitly through the reusable session and view APIs.
 use crate::{
+    LayoutSlot,
     keybinds::KeybindsManager,
     theme::{BUILTIN_THEMES, DEFAULT_THEME, Theme, ThemeDraft},
 };
@@ -15,23 +16,6 @@ use std::{
 };
 
 pub const SETTINGS_FILE: &str = "settings.json";
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum StartupMode {
-    #[default]
-    Startup,
-    Terminal,
-    LastProject,
-}
-impl StartupMode {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Startup => "startup",
-            Self::Terminal => "terminal",
-            Self::LastProject => "last_project",
-        }
-    }
-}
 
 pub fn bundled_default_viewers() -> Value {
     let defaults: Value =
@@ -103,18 +87,16 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn layout_default(&self, slot: u8) -> Option<&Value> {
-        self.settings.get("layout_defaults")?.get(slot.to_string())
+    pub fn layout_default(&self, slot: LayoutSlot) -> Option<&Value> {
+        self.settings.get("layout_defaults")?.get(slot.key())
     }
 
     /// Persist an arrangement override. `None` restores the bundled template.
-    pub fn set_layout_default(&mut self, slot: u8, layout: Option<Value>) -> io::Result<()> {
-        if !(1..=9).contains(&slot) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Layout slots are 1–9",
-            ));
-        }
+    pub fn set_layout_default(
+        &mut self,
+        slot: LayoutSlot,
+        layout: Option<Value>,
+    ) -> io::Result<()> {
         // Refresh first so another window's unrelated preferences are retained.
         self.check_settings_file();
         if let Some(error) = &self.reload_error {
@@ -127,10 +109,10 @@ impl Settings {
         let defaults = self.settings["layout_defaults"].as_object_mut().unwrap();
         match layout {
             Some(layout) => {
-                defaults.insert(slot.to_string(), layout);
+                defaults.insert(slot.key().into(), layout);
             }
             None => {
-                defaults.remove(&slot.to_string());
+                defaults.remove(slot.key());
             }
         }
         if let Err(error) = self.save_settings() {
@@ -138,14 +120,6 @@ impl Settings {
             return Err(error);
         }
         Ok(())
-    }
-
-    pub fn startup_mode(&self) -> StartupMode {
-        match self.settings["startup_mode"].as_str() {
-            Some("terminal") => StartupMode::Terminal,
-            Some("last_project") => StartupMode::LastProject,
-            _ => StartupMode::Startup,
-        }
     }
 
     pub fn new() -> io::Result<Self> {
@@ -220,10 +194,8 @@ impl Settings {
             let valid = defaults.as_object().is_some_and(|defaults| {
                 defaults.iter().all(|(slot, layout)| {
                     let mut ids = std::collections::HashSet::new();
-                    matches!(
-                        slot.as_str(),
-                        "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
-                    ) && layout.is_object()
+                    LayoutSlot::from_key(slot).is_some()
+                        && layout.is_object()
                         && layout["tiling"].is_object()
                         && layout["panels"].as_array().is_some_and(|panels| {
                             panels.iter().all(|panel| {
@@ -242,7 +214,7 @@ impl Settings {
             if !valid {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "layout_defaults must contain arrangement templates keyed by slots 1–9",
+                    "layout_defaults must contain arrangement templates keyed by slots 1–9 or startup",
                 ));
             }
         }
@@ -536,6 +508,18 @@ impl Settings {
                 .clamp(100.0, 60_000.0) as u64,
         )
     }
+    pub fn lsp_autocomplete_enabled(&self) -> bool {
+        self.bool("lsp_autocomplete", true)
+    }
+    pub fn lsp_completion_delay(&self) -> Duration {
+        Duration::from_millis(
+            self.number("lsp_completion_delay_ms", 150.0)
+                .clamp(0.0, 5_000.0) as u64,
+        )
+    }
+    pub fn lsp_format_on_save_enabled(&self) -> bool {
+        self.bool("lsp_format_on_save", true)
+    }
     pub fn shader_settings(&self) -> bed_effects_config::ShaderSettings {
         use bed_effects_config::ShaderSettings;
         match self.effect_preset {
@@ -681,29 +665,36 @@ mod tests {
         assert_eq!(fs::read(path).unwrap(), custom);
     }
     #[test]
-    fn startup_preferences_persist_and_missing_or_unknown_values_use_startup() {
+    fn lsp_action_defaults_preserve_existing_explicit_preferences() {
         let temp = TempDir::new();
         let mut current = settings(&temp);
-        assert_eq!(current.startup_mode(), StartupMode::Startup);
-        for mode in [
-            StartupMode::Terminal,
-            StartupMode::LastProject,
-            StartupMode::Startup,
+        assert!(current.lsp_autocomplete_enabled());
+        assert_eq!(current.lsp_completion_delay(), Duration::from_millis(150));
+        assert!(current.lsp_format_on_save_enabled());
+        current.settings["lsp_autocomplete"] = json!(false);
+        current.settings["lsp_format_on_save"] = json!(false);
+        current.settings["lsp_completion_delay_ms"] = json!(350);
+        current.save_settings().unwrap();
+        let saved = settings(&temp);
+        assert!(!saved.lsp_autocomplete_enabled());
+        assert!(!saved.lsp_format_on_save_enabled());
+        assert_eq!(saved.lsp_completion_delay(), Duration::from_millis(350));
+        for key in [
+            "lsp_autocomplete",
+            "lsp_completion_delay_ms",
+            "lsp_format_on_save",
         ] {
-            current.settings["startup_mode"] = json!(mode.name());
-            current.save_settings().unwrap();
-            assert_eq!(settings(&temp).startup_mode(), mode);
+            current.settings.as_object_mut().unwrap().remove(key);
         }
-        current
-            .settings
-            .as_object_mut()
-            .unwrap()
-            .remove("startup_mode");
         current.save_settings().unwrap();
-        assert_eq!(settings(&temp).startup_mode(), StartupMode::Startup);
-        current.settings["startup_mode"] = json!("unknown");
-        current.save_settings().unwrap();
-        assert_eq!(settings(&temp).startup_mode(), StartupMode::Startup);
+        let legacy = settings(&temp);
+        assert!(legacy.lsp_autocomplete_enabled());
+        assert!(legacy.lsp_format_on_save_enabled());
+        assert_eq!(legacy.lsp_completion_delay(), Duration::from_millis(150));
+        current.settings["lsp_completion_delay_ms"] = json!(-100);
+        assert_eq!(current.lsp_completion_delay(), Duration::ZERO);
+        current.settings["lsp_completion_delay_ms"] = json!(60_000);
+        assert_eq!(current.lsp_completion_delay(), Duration::from_millis(5_000));
     }
 }
 
@@ -890,6 +881,30 @@ mod desktop_tests {
         assert_eq!(current.effect_preset, EffectPreset::Sharp);
         current.save_settings().unwrap();
         assert_eq!(settings(&dir).font_size(), 25.0);
+    }
+
+    #[test]
+    fn startup_layout_overrides_persist_and_reset_without_changing_numbered_templates() {
+        let dir = TempDir::new();
+        let mut current = settings(&dir);
+        let template = json!({"panels":[{"id":1,"panel_type":"bed.projects.panel"}],"tiling":{}});
+        current
+            .set_layout_default(LayoutSlot::Layout1, Some(template.clone()))
+            .unwrap();
+        current
+            .set_layout_default(LayoutSlot::Startup, Some(template.clone()))
+            .unwrap();
+        let loaded = settings(&dir);
+        assert_eq!(loaded.layout_default(LayoutSlot::Startup), Some(&template));
+        assert_eq!(loaded.layout_default(LayoutSlot::Layout1), Some(&template));
+        current
+            .set_layout_default(LayoutSlot::Startup, None)
+            .unwrap();
+        let loaded = settings(&dir);
+        assert!(loaded.layout_default(LayoutSlot::Startup).is_none());
+        assert_eq!(loaded.layout_default(LayoutSlot::Layout1), Some(&template));
+        let invalid = json!({"layout_defaults":{"0":template}});
+        assert!(Settings::read_preferences(&serde_json::to_vec(&invalid).unwrap()).is_err());
     }
     #[test]
     fn refresh_reloads_keybindings_without_changing_font_options() {

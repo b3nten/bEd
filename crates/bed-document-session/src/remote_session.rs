@@ -4,6 +4,10 @@ use bed_remote::{FileBaseline, RemoteClient, Request, Response, SshTarget};
 use std::{collections::BTreeSet, sync::mpsc, thread};
 
 enum Operation {
+    WorkspaceCheck {
+        document: DocumentId,
+        baseline: FileBaseline,
+    },
     Open {
         requested: String,
         kind: Option<DocumentKind>,
@@ -54,6 +58,7 @@ pub(super) struct RemoteSession {
     last_git: Option<Instant>,
     pub(super) comparison_epoch: u64,
     connected: bool,
+    workspace_checks: BTreeMap<DocumentId, Option<Result<(), String>>>,
 }
 impl RemoteSession {
     fn new(target: SshTarget, client: RemoteClient, root: String) -> Self {
@@ -63,6 +68,29 @@ impl RemoteSession {
         thread::spawn(move || {
             while let Ok((mut operation, mut request)) = pending.recv() {
                 let result = (|| {
+                    if let (Operation::WorkspaceCheck { .. }, Request::ReadFile { root, path }) =
+                        (&operation, &request)
+                    {
+                        match transport.call(Request::FileInfo {
+                            root: root.clone(),
+                            path: path.clone(),
+                        })? {
+                            Response::FileInfo { info } if !info.readonly && !info.is_directory => {
+                            }
+                            Response::FileInfo { .. } => {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::PermissionDenied,
+                                    format!("{} is not a writable text file", path),
+                                ));
+                            }
+                            _ => {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    "Unexpected workspace permission response",
+                                ));
+                            }
+                        }
+                    }
                     if let (
                         Operation::Save { path, .. },
                         Request::WriteFile {
@@ -112,6 +140,7 @@ impl RemoteSession {
             last_git: None,
             comparison_epoch: 0,
             connected: true,
+            workspace_checks: BTreeMap::new(),
         }
     }
     fn queue(&self, operation: Operation, request: Request) -> io::Result<()> {
@@ -134,6 +163,41 @@ impl RemoteSession {
     }
 }
 impl EditorSession {
+    pub(super) fn remote_workspace_check(&mut self, document: DocumentId) -> io::Result<bool> {
+        let path = self.entry(document)?.editor.state.path.clone();
+        let remote = self.remote.as_mut().unwrap();
+        if let Some(result) = remote.workspace_checks.get(&document) {
+            return match result {
+                None => Ok(false),
+                Some(Ok(())) => {
+                    remote.workspace_checks.remove(&document);
+                    Ok(true)
+                }
+                Some(Err(message)) => {
+                    let message = message.clone();
+                    remote.workspace_checks.remove(&document);
+                    Err(io::Error::new(io::ErrorKind::InvalidInput, message))
+                }
+            };
+        }
+        if remote.saving.contains(&document) || remote.exclusive_reads.contains(&document) {
+            return Ok(false);
+        }
+        let baseline = remote
+            .baselines
+            .get(&document)
+            .cloned()
+            .ok_or_else(|| io::Error::other("Remote document has no disk baseline"))?;
+        remote.queue(
+            Operation::WorkspaceCheck { document, baseline },
+            Request::ReadFile {
+                root: remote.root.clone(),
+                path,
+            },
+        )?;
+        remote.workspace_checks.insert(document, None);
+        Ok(false)
+    }
     /// The caller validates the root through the remote agent before construction.
     /// Remote history stays in memory; this never reads/writes a local project path.
     pub fn with_remote_options(
@@ -537,7 +601,39 @@ impl EditorSession {
             .map(|r| r.completed.try_iter().collect())
             .unwrap_or_default();
         for Completion { operation, result } in completions {
+            if let Operation::WorkspaceCheck {
+                document,
+                baseline: before,
+            } = &operation
+            {
+                let result = match result {
+                    Ok(Response::File { baseline, .. })
+                        if baseline.fingerprint == before.fingerprint
+                            && baseline.len == before.len =>
+                    {
+                        self.remote
+                            .as_mut()
+                            .unwrap()
+                            .baselines
+                            .insert(*document, baseline);
+                        Ok(())
+                    }
+                    Ok(Response::File { path, .. }) => Err(format!(
+                        "{} changed remotely; request the LSP action again",
+                        path
+                    )),
+                    Ok(_) => Err("Unexpected workspace preflight response".to_owned()),
+                    Err(error) => Err(error.to_string()),
+                };
+                self.remote
+                    .as_mut()
+                    .unwrap()
+                    .workspace_checks
+                    .insert(*document, Some(result));
+                continue;
+            }
             let document = match &operation {
+                Operation::WorkspaceCheck { .. } => unreachable!(),
                 Operation::Open { requested, .. } => {
                     self.remote.as_mut().unwrap().opening.remove(requested);
                     None

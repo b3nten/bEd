@@ -4,9 +4,11 @@ This crate dispatches the private shell helpers used by ordinary bEd terminal
 panels. Terminal rendering, shells, and workspace promotion belong to bEd's
 terminal plugin and editor request reducer. There is one application binary, `bed`.
 
-Choose **General → Startup → Terminal** to start a standalone shell. New Window
-opens Startup. **Window → Set Layout → Layout 1–9** saves an arrangement for a
-numbered slot. Each workspace retains its own version of every used slot. Bare launches use `$HOME`. A folder argument opens its workspace only if
+To start new windows with a standalone shell, arrange a Terminal panel and use
+**Window → Set Other Layout → Startup**. New windows without a workspace open
+that Startup template. It contains **Workspaces** by default.
+**Window → Set Current Layout** saves the active layout's arrangement; **Set Other
+Layout → Layout 1–9 / Startup** saves it for the selected layout. Each workspace retains its own version of every used slot. Bare launches use `$HOME`. A folder argument opens its workspace only if
 that exact root is already saved; other folders stay standalone. Files open
 afterward. Use `--cwd` to choose the initial working directory without opening a
 workspace. Explicit directories, including `/`, are used as supplied.
@@ -40,7 +42,7 @@ workspace. It takes no arguments. `bed workspace` and
 `"$BEDTERM_EXE" workspace` also work from these shells. The former `+upgrade` and
 `+u` names have been removed.
 
-**Open Folder** and the Projects panel also open or create local workspaces
+**Open Folder** and the Workspaces panel also open or create local workspaces
 through an explicit selection. There is no terminal-directory toolbar button.
 An attached local workspace opens other workspaces in new windows, creating a
 workspace with layout 1 when necessary; selecting its current root
@@ -51,8 +53,8 @@ the calling shell's process, jobs, scrollback and panel entity. Other panels clo
 through the normal draft and save barriers; a rejected draft or failed save
 aborts promotion. Other terminal processes stop when their panels retire.
 
-- bEd restores a saved workspace layout, or uses the global arrangement for layout 1 for a
-  new workspace. Without a default it uses the built-in workspace arrangement.
+- bEd restores the workspace's saved active layout, or uses the global arrangement
+  for Layout 1 for a new workspace. Without a default it uses the built-in workspace arrangement.
 - The calling shell fills the first terminal slot. If the arrangement has no
   terminal slot, that shell joins the largest tiled area.
 

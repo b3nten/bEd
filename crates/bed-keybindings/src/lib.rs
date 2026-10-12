@@ -596,6 +596,21 @@ impl ShortcutInput {
         }
         false
     }
+    /// Owners which run before text input may already have consumed its key.
+    /// Reading consumption does not dispatch the action a second time.
+    pub fn consumed(&self, ui: &Ui, action: &str) -> bool {
+        self.begin_frame(ui);
+        let frame = self.frame.borrow();
+        self.bindings.for_action(action).iter().any(|binding| {
+            (binding.scope == self.scope
+                || binding.scope == Scope::Focused && self.scope != Scope::Global)
+                && frame.consumed.contains(&binding.shortcut)
+                && self
+                    .bindings
+                    .active_winner(&self.scope, binding.shortcut)
+                    .is_some_and(|winner| winner.action == action)
+        })
+    }
     /// Modified application shortcuts must not turn into text in custom widgets.
     pub fn global_pending(&self, ui: &Ui) -> bool {
         let modifiers = Modifiers::from_ui(ui);

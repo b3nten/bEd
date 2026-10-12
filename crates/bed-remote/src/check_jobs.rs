@@ -3,6 +3,7 @@ use crate::{ErrorKind, RemoteError, Request, Response};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
+    ffi::OsString,
     io::{self, Read},
     path::PathBuf,
     process::{Command, Stdio},
@@ -36,12 +37,24 @@ impl CheckJob {
         arguments: Vec<String>,
         directory: String,
     ) -> Self {
+        Self::start_with_path(root, program, arguments, directory, None)
+    }
+    /// Supply a child-only PATH for checks started by a GUI host. Remote
+    /// helpers and ordinary callers retain their inherited PATH with `None`.
+    pub fn start_with_path(
+        root: PathBuf,
+        program: String,
+        arguments: Vec<String>,
+        directory: String,
+        path: Option<OsString>,
+    ) -> Self {
         let canceled = Arc::new(AtomicBool::new(false));
         let stop = canceled.clone();
         let (sender, completed) = mpsc::sync_channel(1);
         thread::spawn(move || {
-            let _ = sender
-                .send(run(root, program, arguments, directory, stop).map_err(|e| e.to_string()));
+            let _ = sender.send(
+                run(root, program, arguments, directory, path, stop).map_err(|e| e.to_string()),
+            );
         });
         Self {
             canceled,
@@ -91,6 +104,7 @@ fn run(
     program: String,
     arguments: Vec<String>,
     directory: String,
+    path: Option<OsString>,
     canceled: Arc<AtomicBool>,
 ) -> io::Result<CheckOutput> {
     if program.is_empty() {
@@ -115,6 +129,9 @@ fn run(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env("NO_COLOR", "1");
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

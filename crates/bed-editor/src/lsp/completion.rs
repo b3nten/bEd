@@ -1,0 +1,1691 @@
+//! Completion owns one caret session. Server ranges are decoded once against
+//! the request snapshot and transformed only through observed prefix typing.
+use crate::presentation::LspPresentationOptions;
+use bed_document_session::{ByteEdit, DocumentId, EditorSession, ViewId};
+use bed_editing::editor_commands::CursorReveal;
+use bed_editor_ui::views::hover_tooltip::{
+    hover_popup_style, render_hover_markdown, render_hover_plaintext,
+};
+use bed_editor_ui::{EditorView, ViewResponse};
+use bed_highlight::capture_map::{THEME_SLOTS, ThemeSlot};
+use bed_lsp::{
+    jsonrpc::RpcId, lsp_client::LspClient, lsp_request::LspRequestState, lsp_uri::LspUri,
+    workspace_lsp::LspRequestOrigin,
+};
+use dear_imgui_rs::{Condition, FocusedFlags, MouseButton, StyleColor, Ui, WindowFlags};
+use serde_json::{Value, json};
+use std::{
+    cell::RefCell,
+    io,
+    ops::Range,
+    rc::Rc,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+#[derive(Clone, Debug)]
+struct Item {
+    label: String,
+    detail: String,
+    filter: String,
+    sort: String,
+    kind: u32,
+    documentation: String,
+    markdown: bool,
+    edit: ByteEdit,
+    additional: Vec<ByteEdit>,
+    raw: Value,
+    resolved: bool,
+    resolve_error: Option<String>,
+}
+#[derive(Clone, Debug, Default)]
+struct List {
+    items: Vec<Item>,
+    incomplete: bool,
+}
+
+fn invalid() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "Invalid completion response")
+}
+fn identifier(c: char) -> bool {
+    c == '_' || c.is_alphanumeric()
+}
+fn prefix_start(bytes: &[u8], caret: usize) -> usize {
+    let Ok(prefix) = std::str::from_utf8(&bytes[..caret]) else {
+        return caret;
+    };
+    prefix
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !identifier(*c))
+        .map_or(0, |(i, c)| i + c.len_utf8())
+}
+fn position_offset(bytes: &[u8], position: &Value) -> io::Result<usize> {
+    let line = position["line"]
+        .as_u64()
+        .and_then(|n| usize::try_from(n).ok())
+        .ok_or_else(invalid)?;
+    let character = position["character"]
+        .as_u64()
+        .and_then(|n| usize::try_from(n).ok())
+        .ok_or_else(invalid)?;
+    bed_lsp::workspace_edit::position_offset(
+        bytes,
+        bed_lsp::workspace_edit::Position { line, character },
+    )
+}
+fn decode_edit(value: &Value, bytes: &[u8]) -> io::Result<ByteEdit> {
+    let range = &value["range"];
+    let start = position_offset(bytes, &range["start"])?;
+    let end = position_offset(bytes, &range["end"])?;
+    if end < start {
+        return Err(invalid());
+    }
+    Ok(ByteEdit {
+        range: start..end,
+        bytes: value["newText"]
+            .as_str()
+            .ok_or_else(invalid)?
+            .as_bytes()
+            .to_vec(),
+    })
+}
+fn parse_item(
+    mut raw: Value,
+    defaults: Option<&Value>,
+    bytes: &[u8],
+    caret: usize,
+    resolved: bool,
+) -> io::Result<Option<Item>> {
+    // Do not advertise snippets, and reject a server that sends them anyway.
+    let format = raw
+        .get("insertTextFormat")
+        .or_else(|| defaults.and_then(|d| d.get("insertTextFormat")));
+    if format.and_then(Value::as_u64) == Some(2) {
+        return Ok(None);
+    }
+    let label = raw["label"].as_str().ok_or_else(invalid)?.to_owned();
+    let filter = raw["filterText"].as_str().unwrap_or(&label).to_owned();
+    let sort = raw["sortText"].as_str().unwrap_or(&label).to_owned();
+    let label_details = raw.get("labelDetails");
+    let detail = raw["detail"]
+        .as_str()
+        .or_else(|| label_details.and_then(|v| v["description"].as_str()))
+        .unwrap_or("")
+        .to_owned();
+    let text = raw["textEditText"]
+        .as_str()
+        .or_else(|| raw["insertText"].as_str())
+        .unwrap_or(&label)
+        .to_owned();
+    // Defaults are protocol data, not presentation metadata: resolution must
+    // retain the same insertion range as the original list.
+    if raw.get("textEdit").is_none()
+        && let Some(range) = defaults.and_then(|d| d.get("editRange"))
+    {
+        raw["textEdit"] = if range.get("insert").is_some() {
+            json!({"insert":range["insert"],"replace":range["replace"],"newText":text})
+        } else {
+            json!({"range":range,"newText":text})
+        };
+    }
+    if raw.get("insertTextFormat").is_none()
+        && let Some(format) = defaults.and_then(|d| d.get("insertTextFormat"))
+    {
+        raw["insertTextFormat"] = format.clone();
+    }
+    let edit = if let Some(edit) = raw.get("textEdit") {
+        if edit.get("range").is_some() {
+            decode_edit(edit, bytes)?
+        } else {
+            decode_edit(
+                &json!({"range":edit["replace"],"newText":edit["newText"]}),
+                bytes,
+            )?
+        }
+    } else if let Some(range) = defaults.and_then(|d| d.get("editRange")) {
+        let range = range.get("replace").unwrap_or(range);
+        decode_edit(&json!({"range":range,"newText":text}), bytes)?
+    } else {
+        ByteEdit {
+            range: prefix_start(bytes, caret)..caret,
+            bytes: text.as_bytes().to_vec(),
+        }
+    };
+    if edit.range.start > caret || edit.range.end < caret {
+        return Err(invalid());
+    }
+    let additional = raw
+        .get("additionalTextEdits")
+        .and_then(Value::as_array)
+        .map(|edits| {
+            edits
+                .iter()
+                .map(|edit| decode_edit(edit, bytes))
+                .collect::<io::Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let doc = &raw["documentation"];
+    let documentation = doc
+        .as_str()
+        .or_else(|| doc["value"].as_str())
+        .unwrap_or("")
+        .to_owned();
+    let markdown = doc["kind"].as_str() == Some("markdown");
+    if raw.get("data").is_none()
+        && let Some(data) = defaults.and_then(|d| d.get("data"))
+    {
+        raw["data"] = data.clone();
+    }
+    Ok(Some(Item {
+        label,
+        detail,
+        filter,
+        sort,
+        kind: raw["kind"].as_u64().unwrap_or(0) as u32,
+        documentation,
+        markdown,
+        edit,
+        additional,
+        raw,
+        resolved,
+        resolve_error: None,
+    }))
+}
+fn parse_list(value: Value, bytes: &[u8], caret: usize) -> io::Result<List> {
+    if value.is_null() {
+        return Ok(List::default());
+    }
+    let incomplete = value["isIncomplete"].as_bool().unwrap_or(false);
+    let defaults = value.get("itemDefaults");
+    let items = value
+        .as_array()
+        .or_else(|| value["items"].as_array())
+        .ok_or_else(invalid)?;
+    let mut parsed = Vec::new();
+    for item in items {
+        // An unsupported or malformed individual item must not hide good results.
+        if let Ok(Some(item)) = parse_item(item.clone(), defaults, bytes, caret, false) {
+            parsed.push(item);
+        }
+    }
+    parsed.sort_by(|a, b| a.sort.cmp(&b.sort));
+    Ok(List {
+        items: parsed,
+        incomplete,
+    })
+}
+fn matches(filter: &str, prefix: &str) -> bool {
+    let mut remaining = filter.chars().flat_map(char::to_lowercase);
+    prefix
+        .chars()
+        .flat_map(char::to_lowercase)
+        .all(|c| remaining.by_ref().any(|candidate| c == candidate))
+}
+fn transform_range(range: &mut Range<usize>, change: Range<usize>, length: usize) {
+    let transform = |offset: usize, end: bool| {
+        if offset < change.start || offset == change.start && !end {
+            offset
+        } else if offset >= change.end {
+            offset - change.len() + length
+        } else {
+            change.start + if end { length } else { 0 }
+        }
+    };
+    *range = transform(range.start, false)..transform(range.end, true);
+}
+fn transform_item(item: &mut Item, changes: &[(Range<usize>, usize)]) {
+    for (change, length) in changes {
+        transform_range(&mut item.edit.range, change.clone(), *length);
+        for edit in &mut item.additional {
+            transform_range(&mut edit.range, change.clone(), *length);
+        }
+    }
+}
+
+struct Active {
+    view: ViewId,
+    document: DocumentId,
+    origin: LspRequestOrigin,
+    revision: (u64, u64),
+    bytes: Vec<u8>,
+    baseline: Vec<u8>,
+    baseline_caret: usize,
+    caret: usize,
+    prefix_start: usize,
+    changes: Vec<(Range<usize>, usize)>,
+    items: Vec<Item>,
+    filtered: Vec<usize>,
+    selected: usize,
+    incomplete: bool,
+    client: Rc<RefCell<LspClient>>,
+    rpc: Option<RpcId>,
+    resolve_rpc: Option<RpcId>,
+    request: Arc<LspRequestState<Result<List, String>>>,
+    resolve: Arc<LspRequestState<Result<Option<Item>, String>>>,
+    resolving: Option<usize>,
+    accept_pending: bool,
+    received: bool,
+    popup_rect: Option<([f32; 2], [f32; 2])>,
+    docs_rect: Option<([f32; 2], [f32; 2])>,
+    scroll_selection: bool,
+    docs_item: Option<usize>,
+}
+impl Active {
+    fn filter(&mut self) {
+        let previous = self.filtered.get(self.selected).copied();
+        let prefix = String::from_utf8_lossy(&self.bytes[self.prefix_start..self.caret]);
+        self.filtered = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| matches(&item.filter, &prefix))
+            .map(|(i, _)| i)
+            .collect();
+        self.selected = previous
+            .and_then(|previous| self.filtered.iter().position(|i| *i == previous))
+            .unwrap_or(0);
+    }
+    fn current(&self, session: &EditorSession) -> bool {
+        session.document_for_view(self.view) == Some(self.document)
+            && session.document_revision(self.document).ok() == Some(self.revision)
+            && session
+                .lsp()
+                .and_then(|pool| pool.request_origin(self.document, self.view, self.revision.0, 0))
+                .is_some_and(|origin| {
+                    origin.workspace_id == self.origin.workspace_id
+                        && origin.server_generation == self.origin.server_generation
+                })
+    }
+    fn cancel(&mut self) {
+        self.request.cancel();
+        self.resolve.cancel();
+        for id in [self.rpc.take(), self.resolve_rpc.take()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = self.client.borrow_mut().cancel_request(&id);
+        }
+    }
+    fn receive(&mut self) {
+        if !self.received && !self.request.is_pending() {
+            self.received = true;
+            self.rpc = None;
+            if let Some(Ok(list)) = self.request.snapshot() {
+                self.items = list.items;
+                self.incomplete = list.incomplete;
+                for item in &mut self.items {
+                    transform_item(item, &self.changes);
+                }
+                self.filter();
+            }
+        }
+        if self.resolving.is_some() && !self.resolve.is_pending() {
+            self.resolve_rpc = None;
+            let index = self.resolving.take().unwrap();
+            match self.resolve.snapshot() {
+                Some(Ok(Some(mut item))) => {
+                    transform_item(&mut item, &self.changes);
+                    self.items[index] = item;
+                }
+                result => {
+                    self.items[index].resolved = true;
+                    self.items[index].resolve_error = Some(match result {
+                        Some(Err(error)) => error,
+                        _ => "Completion resolution failed".into(),
+                    });
+                }
+            }
+        }
+    }
+    fn resolve_selected(&mut self) {
+        let Some(index) = self.filtered.get(self.selected).copied() else {
+            return;
+        };
+        if self.items[index].resolved {
+            return;
+        }
+        let supported =
+            self.client.borrow().server_capabilities()["completionProvider"]["resolveProvider"]
+                .as_bool()
+                == Some(true);
+        if !supported {
+            self.items[index].resolved = true;
+            return;
+        }
+        if self.resolving == Some(index) {
+            return;
+        }
+        self.resolve.cancel();
+        if let Some(id) = self.resolve_rpc.take() {
+            let _ = self.client.borrow_mut().cancel_request(&id);
+        }
+        let ticket = self.resolve.begin();
+        let state = self.resolve.clone();
+        let bytes = self.baseline.clone();
+        let caret = self.baseline_caret;
+        let original = self.items[index].raw.clone();
+        self.resolving = Some(index);
+        let result = self.client.borrow_mut().send_request(
+            "completionItem/resolve",
+            original.clone(),
+            move |result| {
+                let item = result
+                    .map_err(|error| io::Error::other(error.message))
+                    .and_then(|resolved| {
+                        // Resolve may return only newly supplied fields; retain original values.
+                        let mut merged = original;
+                        if let (Some(target), Some(source)) =
+                            (merged.as_object_mut(), resolved.as_object())
+                        {
+                            target.extend(source.clone());
+                        }
+                        parse_item(merged, None, &bytes, caret, true)
+                    });
+                state.deliver(ticket, Some(item.map_err(|error| error.to_string())));
+            },
+        );
+        match result {
+            Ok(id) => self.resolve_rpc = Some(id),
+            Err(error) => {
+                self.items[index].resolved = true;
+                self.items[index].resolve_error = Some(error.to_string());
+                self.resolving = None;
+                self.resolve.cancel();
+            }
+        }
+    }
+}
+// io::Error is not Clone, so request results use strings at the async boundary.
+
+#[derive(Default)]
+pub(crate) struct Completion {
+    active: Option<Active>,
+    scheduled: Option<(ViewId, Instant, (u64, u64), (i32, i32))>,
+    commands: Vec<(ViewId, Value)>,
+    error: Option<String>,
+}
+impl Completion {
+    pub fn visible_for(&self, view: ViewId) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.view == view)
+    }
+    pub fn take_error(&mut self) -> Option<String> {
+        self.error.take()
+    }
+    pub fn take_commands(&mut self) -> Vec<(ViewId, Value)> {
+        std::mem::take(&mut self.commands)
+    }
+    pub fn cancel(&mut self) {
+        if let Some(mut active) = self.active.take() {
+            active.cancel();
+        }
+        self.scheduled = None;
+    }
+    pub fn forget_view(&mut self, view: ViewId) {
+        if self.visible_for(view) || self.scheduled.is_some_and(|(v, _, _, _)| v == view) {
+            self.cancel();
+        }
+    }
+    pub fn retain(&mut self, session: &EditorSession) {
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| !active.current(session))
+        {
+            self.cancel();
+        }
+    }
+    pub fn request(
+        &mut self,
+        session: &mut EditorSession,
+        view: ViewId,
+        trigger: Option<String>,
+        incomplete: bool,
+    ) -> io::Result<()> {
+        self.cancel();
+        let document = session
+            .document_for_view(view)
+            .ok_or_else(|| io::Error::other("Completion view is detached"))?;
+        let snapshot = session.snapshot(document)?;
+        let position = session.view_snapshot(view)?;
+        let allowed = position.selections.len() == 1
+            && position.selections[0].empty()
+            && !session.with_document(document, |state| state.read_only)?;
+        if !allowed {
+            return Ok(());
+        }
+        let client = session
+            .lsp()
+            .and_then(|pool| pool.client_for_document(document))
+            .filter(|client| client.borrow().is_initialized())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "Completion requires an initialized language server",
+                )
+            })?;
+        if !client.borrow().supports_method("textDocument/completion") {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Language server does not support completion",
+            ));
+        }
+        let caret = session.with_document(document, |state| {
+            state.offset_from_row_col(position.row, position.column)
+        })?;
+        let revision = session.document_revision(document)?;
+        let origin = session
+            .lsp()
+            .and_then(|pool| pool.request_origin(document, view, revision.0, 0))
+            .ok_or_else(|| io::Error::other("Completion origin unavailable"))?;
+        let uri = (if session
+            .lsp()
+            .is_some_and(|pool| pool.ssh_target().is_some())
+        {
+            LspUri::file_uri_from_remote_path(&snapshot.path)
+        } else {
+            LspUri::file_uri_from_path(&snapshot.path)
+        })?
+        .to_string();
+        let line = session.with_document(document, |state| state.line(position.row))?;
+        let utf16 = bed_editing::util::utf8::utf8_byte_offset_to_utf16(&line, position.column);
+        let context = if incomplete {
+            json!({"triggerKind":3})
+        } else if let Some(character) = trigger {
+            json!({"triggerKind":2,"triggerCharacter":character})
+        } else {
+            json!({"triggerKind":1})
+        };
+        let request = Arc::new(LspRequestState::new());
+        let ticket = request.begin_for(origin);
+        let state = request.clone();
+        let prefix = prefix_start(&snapshot.bytes, caret);
+        let bytes = snapshot.bytes.clone();
+        let rpc = client.borrow_mut().send_request("textDocument/completion", json!({
+            "textDocument":{"uri":uri}, "position":{"line":position.row,"character":utf16}, "context":context
+        }), move |result| {
+            let list = result.map_err(|error| error.message)
+                .and_then(|result| parse_list(result, &bytes, caret).map_err(|error| error.to_string()));
+            state.deliver_for(ticket, Some(list));
+        })?;
+        self.active = Some(Active {
+            view,
+            document,
+            origin,
+            revision,
+            bytes: snapshot.bytes.clone(),
+            baseline: snapshot.bytes,
+            baseline_caret: caret,
+            caret,
+            prefix_start: prefix,
+            changes: Vec::new(),
+            items: Vec::new(),
+            filtered: Vec::new(),
+            selected: 0,
+            incomplete: false,
+            client,
+            rpc: Some(rpc),
+            resolve_rpc: None,
+            request,
+            resolve: Arc::new(LspRequestState::new()),
+            resolving: None,
+            accept_pending: false,
+            received: false,
+            popup_rect: None,
+            docs_rect: None,
+            scroll_selection: true,
+            docs_item: None,
+        });
+        Ok(())
+    }
+    /// Called before document input so Tab/Enter and list navigation never reach
+    /// indentation, newline or caret commands while completion owns them.
+    pub fn before_draw(
+        &mut self,
+        ui: &Ui,
+        view: &mut EditorView,
+        session: &mut EditorSession,
+        settings: &LspPresentationOptions,
+        blocked: bool,
+    ) -> io::Result<()> {
+        self.retain(session);
+        if !settings.autocomplete {
+            self.scheduled = None;
+        }
+        if ui.is_window_focused_with_flags(FocusedFlags::CHILD_WINDOWS)
+            && self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.view != view.id())
+        {
+            self.cancel();
+        }
+        if !ui.is_window_focused_with_flags(FocusedFlags::CHILD_WINDOWS) {
+            // Mouse interaction with our windows may temporarily take ImGui
+            // focus. Only retain the originating view when the pointer is there.
+            let over = self.active.as_ref().is_some_and(|a| {
+                a.view == view.id()
+                    && [a.popup_rect, a.docs_rect]
+                        .into_iter()
+                        .flatten()
+                        .any(|(min, max)| {
+                            let mouse = ui.io().mouse_pos();
+                            mouse[0] >= min[0]
+                                && mouse[0] <= max[0]
+                                && mouse[1] >= min[1]
+                                && mouse[1] <= max[1]
+                        })
+            });
+            if !over {
+                self.forget_view(view.id());
+            }
+            return Ok(());
+        }
+        if blocked || view.find_visible() || view.line_jump_visible() || view.read_only() {
+            self.forget_view(view.id());
+            return Ok(());
+        }
+        if settings.shortcuts.take(ui, "bed.editor.completion") {
+            if let Err(error) = self.request(session, view.id(), None, false) {
+                self.error = Some(error.to_string());
+            }
+        }
+        if let Some((id, _, revision, position)) = self.scheduled
+            && id == view.id()
+        {
+            let state = session.view_snapshot(id)?;
+            if session.document_revision(view.document_id())? != revision
+                || (state.row, state.column) != position
+            {
+                self.scheduled = None;
+            }
+        }
+        if self
+            .scheduled
+            .is_some_and(|(id, at, _, _)| id == view.id() && Instant::now() >= at)
+        {
+            let _ = self.request(session, view.id(), None, false);
+        }
+        let Some(active) = &mut self.active else {
+            return Ok(());
+        };
+        if active.view != view.id() {
+            return Ok(());
+        }
+        let selection = session.view_snapshot(view.id())?;
+        let caret = session.with_document(active.document, |state| {
+            state.offset_from_row_col(selection.row, selection.column)
+        })?;
+        if selection.selections.len() != 1
+            || !selection.selections[0].empty()
+            || caret != active.caret
+        {
+            self.cancel();
+            return Ok(());
+        }
+        active.receive();
+        if settings.shortcuts.take(ui, "bed.editor.collapse_selection") {
+            self.cancel();
+            return Ok(());
+        }
+        if !active.filtered.is_empty() {
+            if settings.shortcuts.take(ui, "bed.navigation.move_up") {
+                active.selected =
+                    (active.selected + active.filtered.len() - 1) % active.filtered.len();
+                active.scroll_selection = true;
+                active.accept_pending = false;
+            }
+            if settings.shortcuts.take(ui, "bed.navigation.move_down") {
+                active.selected = (active.selected + 1) % active.filtered.len();
+                active.scroll_selection = true;
+                active.accept_pending = false;
+            }
+            if settings.shortcuts.take(ui, "bed.editor.indent")
+                || settings.shortcuts.take(ui, "bed.editor.newline")
+            {
+                active.accept_pending = true;
+            }
+        }
+        active.resolve_selected();
+        self.accept_if_ready(session)?;
+        Ok(())
+    }
+    pub fn observe(
+        &mut self,
+        response: &ViewResponse,
+        session: &mut EditorSession,
+        settings: &LspPresentationOptions,
+    ) -> io::Result<()> {
+        let mut refresh = false;
+        if let Some(active) = &mut self.active
+            && active.view == response.view
+        {
+            let revision = session.document_revision(active.document)?;
+            let selection = session.view_snapshot(active.view)?;
+            let caret = session.with_document(active.document, |state| {
+                state.offset_from_row_col(selection.row, selection.column)
+            })?;
+            if revision != active.revision {
+                let bytes = session.snapshot(active.document)?.bytes;
+                let insertion = response
+                    .typed_text
+                    .as_ref()
+                    .is_some_and(|text| text.chars().all(identifier));
+                let insertion = insertion
+                    && caret >= active.caret
+                    && bytes[..active.caret.min(bytes.len())] == active.bytes[..active.caret]
+                    && bytes.get(caret..) == active.bytes.get(active.caret..);
+                let deletion = response.prefix_backspace
+                    && caret >= active.prefix_start
+                    && caret < active.caret
+                    && bytes.get(..caret) == active.bytes.get(..caret)
+                    && bytes.get(caret..) == active.bytes.get(active.caret..);
+                if revision.0 != active.revision.0
+                    || selection.selections.len() != 1
+                    || !selection.selections[0].empty()
+                    || !(insertion || deletion)
+                {
+                    self.cancel();
+                } else {
+                    let (change, length) = if insertion {
+                        (active.caret..active.caret, caret - active.caret)
+                    } else {
+                        (caret..active.caret, 0)
+                    };
+                    for item in &mut active.items {
+                        transform_item(item, &[(change.clone(), length)]);
+                    }
+                    active.changes.push((change, length));
+                    active.bytes = bytes;
+                    active.caret = caret;
+                    active.revision = revision;
+                    active.filter();
+                    refresh = active.incomplete;
+                }
+            } else if caret != active.caret
+                || selection.selections.len() != 1
+                || !selection.selections[0].empty()
+            {
+                self.cancel();
+            }
+        }
+        if !response.focused {
+            return Ok(());
+        }
+        if refresh {
+            let _ = self.request(session, response.view, None, true);
+            return Ok(());
+        }
+        if let Some(text) = response.typed_text.as_ref()
+            && settings.autocomplete
+        {
+            let last = text
+                .chars()
+                .last()
+                .map(|c| c.to_string())
+                .unwrap_or_default();
+            let triggered = session
+                .lsp()
+                .and_then(|pool| pool.client_for_document(response.document))
+                .is_some_and(|client| {
+                    client.borrow().server_capabilities()["completionProvider"]["triggerCharacters"]
+                        .as_array()
+                        .is_some_and(|triggers| {
+                            triggers
+                                .iter()
+                                .any(|trigger| trigger.as_str() == Some(&last))
+                        })
+                });
+            if triggered {
+                let _ = self.request(session, response.view, Some(last), false);
+            } else if text.chars().all(identifier) && self.active.is_none() {
+                let state = session.view_snapshot(response.view)?;
+                self.scheduled = Some((
+                    response.view,
+                    Instant::now() + Duration::from_millis(settings.completion_delay_ms),
+                    session.document_revision(response.document)?,
+                    (state.row, state.column),
+                ));
+            } else if !text.chars().all(identifier) {
+                self.scheduled = None;
+            }
+        }
+        Ok(())
+    }
+    fn accept_if_ready(&mut self, session: &mut EditorSession) -> io::Result<()> {
+        let Some(active) = &mut self.active else {
+            return Ok(());
+        };
+        if !active.accept_pending {
+            return Ok(());
+        }
+        let Some(index) = active.filtered.get(active.selected).copied() else {
+            return Ok(());
+        };
+        if !active.items[index].resolved {
+            return Ok(());
+        }
+        if !active.current(session) {
+            self.cancel();
+            return Ok(());
+        }
+        let item = &active.items[index];
+        if let Some(error) = &item.resolve_error {
+            self.error = Some(error.clone());
+            self.cancel();
+            return Ok(());
+        }
+        let command = item
+            .raw
+            .get("command")
+            .filter(|command| command.is_object())
+            .cloned();
+        let mut caret = item.edit.range.start + item.edit.bytes.len();
+        for edit in &item.additional {
+            if edit.range.end <= item.edit.range.start {
+                caret = caret - edit.range.len() + edit.bytes.len();
+            }
+        }
+        let mut edits = item.additional.clone();
+        edits.push(item.edit.clone());
+        let result = session.apply_edits(active.document, active.revision, &edits);
+        if result.is_ok() {
+            let (row, column) =
+                session.with_document(active.document, |state| state.row_col_from_offset(caret))?;
+            session.with_commands(active.view, |commands| {
+                commands.set_cursor(row, column, false, CursorReveal::Ensure)
+            })?;
+            if let Some(command) = command {
+                self.commands.push((active.view, command));
+            }
+        }
+        self.cancel();
+        if let Err(error) = result {
+            self.error = Some(error.to_string());
+        }
+        Ok(())
+    }
+    pub fn render(
+        &mut self,
+        ui: &Ui,
+        view: &EditorView,
+        session: &mut EditorSession,
+    ) -> io::Result<()> {
+        let Some(active) = &mut self.active else {
+            return Ok(());
+        };
+        if active.view != view.id() || !active.current(session) {
+            return Ok(());
+        }
+        active.receive();
+        if active.filtered.is_empty() {
+            active.popup_rect = None;
+            active.docs_rect = None;
+            active.docs_item = None;
+            return Ok(());
+        }
+        active.resolve_selected();
+        let frame = view.presentation();
+        frame.tooltip_arbiter.claim(ui);
+        let _tooltip_style = hover_popup_style(ui);
+        let fs = ui.current_font_size();
+        let viewport = ui.window_viewport();
+        let vp = viewport.work_pos();
+        let vs = viewport.work_size();
+        let width = (fs * 26.0).min(vs[0] - 12.0).max(1.0);
+        let height = (active.filtered.len().min(8) as f32 * ui.text_line_height_with_spacing()
+            + ui.clone_style().window_padding()[1] * 2.0)
+            .ceil()
+            .min(vs[1] - 12.0)
+            .max(1.0);
+        let caret = frame.caret_position;
+        let x = caret[0].clamp(vp[0] + 4.0, (vp[0] + vs[0] - width - 4.0).max(vp[0] + 4.0));
+        let below = caret[1] + frame.layout.line_height;
+        let y = if below + height < vp[1] + vs[1] {
+            below
+        } else {
+            caret[1] - height
+        };
+        let y = y.clamp(vp[1] + 4.0, (vp[1] + vs[1] - height - 4.0).max(vp[1] + 4.0));
+        let flags = WindowFlags::NO_TITLE_BAR
+            | WindowFlags::NO_MOVE
+            | WindowFlags::NO_RESIZE
+            | WindowFlags::NO_COLLAPSE
+            | WindowFlags::NO_SAVED_SETTINGS
+            | WindowFlags::NO_FOCUS_ON_APPEARING
+            | WindowFlags::NO_NAV
+            | WindowFlags::NO_DOCKING;
+        let kind_colors = session.with_view(active.view, |editor| {
+            THEME_SLOTS.map(|slot| editor.highlight.color_for_slot(slot))
+        })?;
+        let background = ui.style_color(StyleColor::WindowBg);
+        let accent = ui.style_color(StyleColor::CheckMark);
+        let selected_background = bed_ui::color::blend(accent, background, 0.24);
+        let hovered_background = bed_ui::color::blend(accent, background, 0.16);
+        let text = bed_ui::presentation::readable_color(ui, ui.style_color(StyleColor::Text));
+        let detail_color = bed_ui::presentation::muted_text_color(ui);
+        let _selected = ui.push_style_color(StyleColor::Header, selected_background);
+        let _hovered = ui.push_style_color(StyleColor::HeaderHovered, hovered_background);
+        let _pressed = ui.push_style_color(StyleColor::HeaderActive, selected_background);
+        ui.set_next_window_viewport(viewport.id());
+        ui.window(format!("##completion_{}", active.view.0))
+            .position([x, y], Condition::Always)
+            .size([width, height], Condition::Always)
+            .flags(flags)
+            .build(|| {
+                for (row, index) in active.filtered.iter().copied().enumerate() {
+                    let item = &active.items[index];
+                    let pos = ui.cursor_screen_pos();
+                    let row_width = ui.content_region_avail()[0];
+                    if ui
+                        .selectable_config(format!("##completion_item_{index}"))
+                        .selected(row == active.selected)
+                        .size([0.0, ui.text_line_height()])
+                        .build()
+                    {
+                        active.selected = row;
+                        active.accept_pending = true;
+                    }
+                    let row_background = if ui.is_item_hovered() {
+                        if ui.is_item_active() {
+                            selected_background
+                        } else {
+                            hovered_background
+                        }
+                    } else if row == active.selected {
+                        selected_background
+                    } else {
+                        background
+                    };
+                    let readable =
+                        |color| bed_ui::color::ensure_contrast(color, row_background, 4.5);
+                    let (kind, slot) = kind_presentation(item.kind);
+                    let kind_width = fs * 4.0;
+                    let name_pos = [pos[0] + kind_width, pos[1]];
+                    let name = bed_ui::presentation::fit_text(
+                        ui,
+                        &item.label,
+                        (row_width - kind_width).max(1.0),
+                    );
+                    let draw = ui.get_window_draw_list();
+                    draw.add_text(pos, readable(kind_colors[slot as usize]), kind);
+                    draw.add_text(name_pos, readable(text), &name);
+                    let detail_pos = [name_pos[0] + ui.calc_text_size(&name)[0] + fs * 0.4, pos[1]];
+                    let label_detail = item.raw["labelDetails"]["detail"].as_str().unwrap_or("");
+                    let description = item.raw["labelDetails"]["description"]
+                        .as_str()
+                        .unwrap_or("");
+                    let detail = if label_detail.is_empty() {
+                        description.to_owned()
+                    } else if description.is_empty() {
+                        label_detail.to_owned()
+                    } else {
+                        format!("{label_detail} · {description}")
+                    };
+                    let detail = bed_ui::presentation::fit_text(
+                        ui,
+                        &detail,
+                        (pos[0] + row_width - detail_pos[0]).max(0.0),
+                    );
+                    draw.add_text(detail_pos, readable(detail_color), &detail);
+                    if row == active.selected && active.scroll_selection {
+                        ui.set_scroll_here_y(0.5);
+                    }
+                }
+                active.scroll_selection = false;
+            });
+        active.popup_rect = Some(([x, y], [x + width, y + height]));
+        let selected_index = active.filtered[active.selected];
+        let reset_docs_scroll = active.docs_item != Some(selected_index);
+        let item = &active.items[selected_index];
+        if !item.documentation.is_empty() || !item.detail.is_empty() {
+            active.docs_item = Some(selected_index);
+            let doc_width = (fs * 30.0).min((vs[0] - 12.0).max(1.0));
+            let mut doc_height = (fs * 18.0).min((vs[1] - 12.0).max(1.0));
+            let (doc_x, doc_y) = if x + width + doc_width + 8.0 <= vp[0] + vs[0] {
+                (x + width + 4.0, y)
+            } else if x - doc_width - 4.0 >= vp[0] {
+                (x - doc_width - 4.0, y)
+            } else {
+                let above = (y - vp[1] - 8.0).max(1.0);
+                let below = (vp[1] + vs[1] - y - height - 8.0).max(1.0);
+                doc_height = doc_height.min(above.max(below));
+                (
+                    x.clamp(
+                        vp[0] + 4.0,
+                        (vp[0] + vs[0] - doc_width - 4.0).max(vp[0] + 4.0),
+                    ),
+                    if below >= above {
+                        y + height + 4.0
+                    } else {
+                        y - doc_height - 4.0
+                    },
+                )
+            };
+            let doc_y = doc_y.clamp(
+                vp[1] + 4.0,
+                (vp[1] + vs[1] - doc_height - 4.0).max(vp[1] + 4.0),
+            );
+            let documentation = item.documentation.clone();
+            let detail = item.detail.clone();
+            let markdown = item.markdown;
+            ui.set_next_window_viewport(viewport.id());
+            let mut docs_window = ui
+                .window(format!("##completion_docs_{}", active.view.0))
+                .position([doc_x, doc_y], Condition::Always)
+                .size([doc_width, doc_height], Condition::Always)
+                .flags(flags | WindowFlags::HORIZONTAL_SCROLLBAR);
+            if reset_docs_scroll {
+                docs_window = docs_window.scroll([0.0; 2]);
+            }
+            docs_window.build(|| {
+                let _ = session.with_view(active.view, |editor| {
+                    if !detail.is_empty() {
+                        render_hover_plaintext(ui, &detail, editor);
+                    }
+                    if !documentation.is_empty() {
+                        if !detail.is_empty() {
+                            ui.separator();
+                        }
+                        if markdown {
+                            render_hover_markdown(
+                                ui,
+                                &documentation,
+                                editor,
+                                &editor.state.language_id,
+                            );
+                        } else {
+                            render_hover_plaintext(ui, &documentation, editor);
+                        }
+                    }
+                });
+            });
+            active.docs_rect = Some(([doc_x, doc_y], [doc_x + doc_width, doc_y + doc_height]));
+        } else {
+            active.docs_item = None;
+            active.docs_rect = None;
+        }
+        if ui.is_mouse_clicked(MouseButton::Left) {
+            let mouse = ui.io().mouse_pos();
+            let over = [active.popup_rect, active.docs_rect]
+                .into_iter()
+                .flatten()
+                .any(|(min, max)| {
+                    mouse[0] >= min[0]
+                        && mouse[0] <= max[0]
+                        && mouse[1] >= min[1]
+                        && mouse[1] <= max[1]
+                });
+            if over {
+                session.request_focus(active.view)?;
+            } else {
+                self.cancel();
+                return Ok(());
+            }
+        }
+        self.accept_if_ready(session)
+    }
+}
+fn kind_presentation(kind: u32) -> (&'static str, ThemeSlot) {
+    match kind {
+        2 | 3 => ("fn", ThemeSlot::Function),
+        4 => ("ctor", ThemeSlot::Type),
+        5 => ("field", ThemeSlot::Property),
+        6 => ("var", ThemeSlot::Variable),
+        7 => ("type", ThemeSlot::Type),
+        8 => ("trait", ThemeSlot::Type),
+        9 => ("mod", ThemeSlot::Type),
+        10 => ("prop", ThemeSlot::Property),
+        11 => ("unit", ThemeSlot::Number),
+        12 => ("value", ThemeSlot::Constant),
+        13 => ("enum", ThemeSlot::Type),
+        14 => ("kw", ThemeSlot::Keyword),
+        17 => ("file", ThemeSlot::String),
+        18 => ("ref", ThemeSlot::Variable),
+        19 => ("dir", ThemeSlot::String),
+        20 => ("enum", ThemeSlot::Constant),
+        21 => ("const", ThemeSlot::Constant),
+        22 => ("struct", ThemeSlot::Type),
+        23 => ("event", ThemeSlot::Function),
+        24 => ("op", ThemeSlot::Operator),
+        25 => ("T", ThemeSlot::Type),
+        _ => ("·", ThemeSlot::Text),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn lists_decode_ranges_and_defaults_and_reject_snippets() {
+        let bytes = "let café😀 = Str".as_bytes();
+        let list = parse_list(json!({"isIncomplete":true,"itemDefaults":{"editRange":{"start":{"line":0,"character":13},"end":{"line":0,"character":16}}},"items":[
+            {"label":"String","textEditText":"String","sortText":"1","additionalTextEdits":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"use String;\n"}]},
+            {"label":"snippet","insertTextFormat":2,"insertText":"f(${1:x})"},
+            {"label":"invalid","textEdit":{"range":{"start":{"line":0,"character":9},"end":{"line":0,"character":16}},"newText":"x"}}
+        ]}), bytes, bytes.len()).unwrap();
+        assert!(list.incomplete);
+        assert_eq!(list.items.len(), 1);
+        assert_eq!(&bytes[list.items[0].edit.range.clone()], b"Str");
+        assert_eq!(list.items[0].additional[0].bytes, b"use String;\n");
+    }
+    #[test]
+    fn prefix_transforms_extend_replacement_and_shift_import_ranges() {
+        let mut list = parse_list(json!([{"label":"String","textEdit":{"newText":"String","insert":{"start":{"line":0,"character":0},"end":{"line":0,"character":2}},"replace":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}}}}]), b"Stxx", 2).unwrap();
+        transform_item(&mut list.items[0], &[(2..2, 1)]);
+        assert_eq!(list.items[0].edit.range, 0..5);
+        let mut range = 3..6;
+        transform_range(&mut range, 1..2, 0);
+        assert_eq!(range, 2..5);
+        assert!(matches("StringBuilder", "sbd"));
+        assert!(!matches("String", "zz"));
+    }
+    #[test]
+    fn utf16_ranges_reject_surrogate_splits_and_bad_lines() {
+        let bytes = "a😀\r\nbé".as_bytes();
+        assert_eq!(
+            position_offset(bytes, &json!({"line":0,"character":3})).unwrap(),
+            5
+        );
+        assert!(position_offset(bytes, &json!({"line":0,"character":2})).is_err());
+        assert_eq!(
+            position_offset(bytes, &json!({"line":1,"character":2})).unwrap(),
+            10
+        );
+        assert!(position_offset(bytes, &json!({"line":2,"character":0})).is_err());
+    }
+    #[test]
+    fn completion_consumes_tab_enter_and_arrows_and_imports_are_one_undo() {
+        use crate::{EditorConfig, EditorRuntime};
+        use dear_imgui_rs::{Context, FramePrepareOptions, Key};
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let (_dir, mut session, document) = super::super::test_fixture::session();
+        let mut view = EditorView::new(&mut session, document).unwrap();
+        session
+            .with_commands(view.id(), |commands| {
+                commands.set_cursor(0, 14, false, CursorReveal::Ensure)
+            })
+            .unwrap();
+        let mut runtime = EditorRuntime::default();
+        let mut config = EditorConfig::default();
+        config.lsp.autocomplete = false;
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let draw = |context: &mut Context,
+                    runtime: &mut EditorRuntime,
+                    session: &mut EditorSession,
+                    view: &mut EditorView| {
+            session.tick();
+            runtime.tick(session, &mut Vec::new()).unwrap();
+            session.request_focus(view.id()).unwrap();
+            context.prepare_frame(FramePrepareOptions::new([1000.0, 700.0], 1.0 / 60.0));
+            let ui = context.frame();
+            ui.window("completion_host")
+                .size([850.0, 550.0], Condition::Always)
+                .build(|| {
+                    crate::feature::draw_text_view(
+                        ui,
+                        view,
+                        runtime,
+                        session,
+                        &config,
+                        &mut Vec::new(),
+                    )
+                    .unwrap();
+                });
+            assert!(context.render_legacy().draw_data().total_vtx_count() > 0);
+        };
+        draw(&mut context, &mut runtime, &mut session, &mut view);
+        for key in [Key::Tab, Key::Enter] {
+            runtime.request_completion(&mut session, view.id()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                draw(&mut context, &mut runtime, &mut session, &mut view);
+                if runtime.completion.active.as_ref().is_some_and(|active| {
+                    !active.filtered.is_empty()
+                        && active.items[active.filtered[active.selected]].resolved
+                }) {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "Completion/resolve response timed out"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            context.io_mut().add_key_event(Key::DownArrow, true);
+            draw(&mut context, &mut runtime, &mut session, &mut view);
+            assert_eq!(session.view_snapshot(view.id()).unwrap().column, 14);
+            assert_eq!(runtime.completion.active.as_ref().unwrap().selected, 1);
+            context.io_mut().add_key_event(Key::DownArrow, false);
+            context.io_mut().add_key_event(Key::UpArrow, true);
+            draw(&mut context, &mut runtime, &mut session, &mut view);
+            context.io_mut().add_key_event(Key::UpArrow, false);
+            draw(&mut context, &mut runtime, &mut session, &mut view);
+            context.io_mut().add_key_event(key, true);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                draw(&mut context, &mut runtime, &mut session, &mut view);
+                if runtime.completion.active.is_none() {
+                    break;
+                }
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            context.io_mut().add_key_event(key, false);
+            assert_eq!(
+                session.snapshot(document).unwrap().bytes,
+                b"use String;\nlet value = String"
+            );
+            session.undo_document(document).unwrap();
+            assert_eq!(session.snapshot(document).unwrap().bytes, b"let value = St");
+            session
+                .with_commands(view.id(), |commands| {
+                    commands.set_cursor(0, 14, false, CursorReveal::Ensure)
+                })
+                .unwrap();
+            draw(&mut context, &mut runtime, &mut session, &mut view);
+        }
+    }
+    fn native_context() -> dear_imgui_rs::Context {
+        let mut context = dear_imgui_rs::Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        context
+    }
+    fn native_frame(
+        context: &mut dear_imgui_rs::Context,
+        runtime: &mut crate::EditorRuntime,
+        session: &mut EditorSession,
+        view: &mut EditorView,
+        config: &crate::EditorConfig,
+    ) {
+        session.tick();
+        let mut requests = Vec::new();
+        runtime.tick(session, &mut requests).unwrap();
+        session.request_focus(view.id()).unwrap();
+        context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
+            [1000.0, 700.0],
+            1.0 / 60.0,
+        ));
+        let ui = context.frame();
+        ui.window("completion_host")
+            .size([850.0, 550.0], Condition::Always)
+            .build(|| {
+                crate::feature::draw_text_view(ui, view, runtime, session, config, &mut requests)
+                    .unwrap();
+            });
+        drop(context.render_legacy());
+        assert!(
+            requests.is_empty(),
+            "Unexpected language action notification: {requests:?}"
+        );
+    }
+    fn wait_completion(
+        context: &mut dear_imgui_rs::Context,
+        runtime: &mut crate::EditorRuntime,
+        session: &mut EditorSession,
+        view: &mut EditorView,
+        config: &crate::EditorConfig,
+    ) {
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
+            native_frame(context, runtime, session, view, config);
+            if runtime.completion.active.as_ref().is_some_and(|a| {
+                a.received && !a.filtered.is_empty() && a.items[a.filtered[a.selected]].resolved
+            }) {
+                return;
+            }
+            assert!(Instant::now() < until, "Completion fixture timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    #[test]
+    fn native_completion_tooltips_keep_shared_style_and_reset_late_documentation_scroll() {
+        use dear_imgui_rs::sys;
+
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let (_dir, mut session, document) = super::super::test_fixture::session();
+        let mut view = EditorView::new(&mut session, document).unwrap();
+        session
+            .with_commands(view.id(), |commands| {
+                commands.set_cursor(0, 14, false, CursorReveal::Ensure)
+            })
+            .unwrap();
+        let mut runtime = crate::EditorRuntime::default();
+        let mut config = crate::EditorConfig::default();
+        config.lsp.autocomplete = false;
+        let mut context = native_context();
+        context.style_mut().set_window_padding([0.0; 2]);
+        context.style_mut().set_window_rounding(0.0);
+        context.style_mut().set_window_border_size(0.0);
+        context.style_mut().set_item_spacing([17.0, 19.0]);
+        context.style_mut().set_scrollbar_size(23.0);
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        runtime.request_completion(&mut session, view.id()).unwrap();
+        wait_completion(&mut context, &mut runtime, &mut session, &mut view, &config);
+        let active = runtime.completion.active.as_mut().unwrap();
+        let selected = active.filtered[active.selected];
+        active.items[selected].documentation = active.items[selected].documentation.repeat(3);
+        for _ in 0..3 {
+            native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        }
+        let list_name = std::ffi::CString::new(format!("##completion_{}", view.id().0)).unwrap();
+        let docs_name =
+            std::ffi::CString::new(format!("##completion_docs_{}", view.id().0)).unwrap();
+        context.binding().with_bound_context(|| unsafe {
+            let list = sys::igFindWindowByName(list_name.as_ptr());
+            let docs = sys::igFindWindowByName(docs_name.as_ptr());
+            assert!(!list.is_null() && !docs.is_null());
+            let list = &*list;
+            let docs = &*docs;
+            assert!(list.Active && docs.Active);
+            assert_eq!(
+                list.WindowRounding,
+                bed_ui::util::popup_style::POPUP_ROUNDING
+            );
+            assert_eq!(docs.WindowRounding, list.WindowRounding);
+            assert_eq!(
+                list.WindowBorderSize,
+                bed_ui::util::popup_style::POPUP_BORDER_SIZE
+            );
+            assert_eq!(docs.WindowBorderSize, list.WindowBorderSize);
+            assert!(list.WindowPadding.x > 0.0 && list.WindowPadding.y > 0.0);
+            assert_eq!(docs.WindowPadding.x, list.WindowPadding.x);
+            assert_eq!(docs.WindowPadding.y, list.WindowPadding.y);
+            assert_eq!(docs.ScrollMax.x, 0.0);
+            assert!(docs.ScrollMax.y > 50.0);
+            sys::igSetScrollY_WindowPtr(sys::igFindWindowByName(docs_name.as_ptr()), 80.0);
+        });
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        context.binding().with_bound_context(|| unsafe {
+            assert!((*sys::igFindWindowByName(docs_name.as_ptr())).Scroll.y > 0.0);
+        });
+        // A newly selected item can have no docs until its resolve finishes.
+        // Showing its eventual content must start at the top of the sidecar.
+        let active = runtime.completion.active.as_mut().unwrap();
+        active.selected = 1;
+        let selected = active.filtered[active.selected];
+        active.items[selected].resolved = true;
+        active.items[selected].documentation.clear();
+        active.items[selected].detail.clear();
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        let active = runtime.completion.active.as_mut().unwrap();
+        assert!(active.docs_rect.is_none());
+        active.items[selected].documentation =
+            "Late documentation for the newly selected item. ".repeat(50);
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        context.binding().with_bound_context(|| unsafe {
+            assert_eq!((*sys::igFindWindowByName(docs_name.as_ptr())).Scroll.y, 0.0);
+        });
+        assert_eq!(context.style().window_padding(), [0.0; 2]);
+        assert_eq!(context.style().window_rounding(), 0.0);
+        assert_eq!(context.style().window_border_size(), 0.0);
+        assert_eq!(context.style().item_spacing(), [17.0, 19.0]);
+        assert_eq!(context.style().scrollbar_size(), 23.0);
+    }
+    #[test]
+    fn native_completion_kind_name_and_details_remain_readable_on_light_and_dark_rows() {
+        use bed_highlight::tree_sitter::ThemeColors;
+        use dear_imgui_rs::sys;
+
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let (_dir, mut session, document) = super::super::test_fixture::session();
+        let mut view = EditorView::new(&mut session, document).unwrap();
+        session
+            .with_commands(view.id(), |commands| {
+                commands.set_cursor(0, 14, false, CursorReveal::Ensure)
+            })
+            .unwrap();
+        let mut palette = ThemeColors::default();
+        palette.slots[ThemeSlot::Function as usize] = [0.48, 0.18, 0.58, 1.0];
+        palette.slots[ThemeSlot::Type as usize] = [0.12, 0.48, 0.36, 1.0];
+        session.set_highlight_theme(palette);
+        let mut runtime = crate::EditorRuntime::default();
+        let mut config = crate::EditorConfig::default();
+        config.lsp.autocomplete = false;
+        let mut context = native_context();
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        runtime.request_completion(&mut session, view.id()).unwrap();
+        wait_completion(&mut context, &mut runtime, &mut session, &mut view, &config);
+        let active = runtime.completion.active.as_mut().unwrap();
+        active.items[active.filtered[0]].kind = 3;
+        active.items[active.filtered[1]].kind = 7;
+        active.items[active.filtered[0]].raw["labelDetails"] =
+            json!({"detail":"(参数)\nextra","description":"module"});
+        let name = std::ffi::CString::new(format!("##completion_{}", view.id().0)).unwrap();
+        let accent = [0.15, 0.40, 0.70, 1.0];
+        for background in [[0.97, 0.95, 0.92, 1.0], [0.04, 0.05, 0.08, 1.0]] {
+            context
+                .style_mut()
+                .set_color(StyleColor::PopupBg, background);
+            context
+                .style_mut()
+                .set_color(StyleColor::Text, [0.52, 0.52, 0.52, 1.0]);
+            context.style_mut().set_color(StyleColor::CheckMark, accent);
+            context.io_mut().add_mouse_pos_event([-100.0; 2]);
+            for _ in 0..3 {
+                native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+            }
+            context.binding().with_bound_context(|| unsafe {
+                let window = sys::igFindWindowByName(name.as_ptr());
+                assert!(!window.is_null());
+                let window = &*window;
+                let white = (*(*sys::igGetIO_Nil()).Fonts).TexUvWhitePixel;
+                let vertices = &(*window.DrawList).VtxBuffer;
+                let mut text_colors = std::collections::HashSet::new();
+                for index in 0..vertices.Size {
+                    let vertex = &*vertices.Data.add(index as usize);
+                    // Native borders can also use textured antialiasing. Limit
+                    // this check to the row contents before selecting glyph UVs.
+                    if vertex.pos.x < window.DC.CursorStartPos.x
+                        || vertex.pos.y < window.DC.CursorStartPos.y
+                        || vertex.pos.x > window.Pos.x + window.Size.x - window.WindowPadding.x
+                        || vertex.pos.y > window.Pos.y + window.Size.y - window.WindowPadding.y
+                        || (vertex.uv.x == white.x && vertex.uv.y == white.y)
+                    {
+                        continue;
+                    }
+                    let color: [f32; 4] = std::array::from_fn(|channel| {
+                        ((vertex.col >> (channel * 8)) & 255) as f32 / 255.0
+                    });
+                    let selected =
+                        vertex.pos.y < window.DC.CursorStartPos.y + window.FontRefSize + 1.0;
+                    let row_background = if selected {
+                        bed_ui::color::blend(accent, background, 0.24)
+                    } else {
+                        background
+                    };
+                    assert!(
+                        bed_ui::color::contrast_ratio(
+                            bed_ui::color::blend(color, row_background, color[3]),
+                            row_background
+                        ) >= 4.4,
+                        "{color:?} on {row_background:?}"
+                    );
+                    text_colors.insert(vertex.col);
+                }
+                assert!(
+                    text_colors.len() >= 3,
+                    "kind, name, and detail use distinct readable colors"
+                );
+                assert_eq!(window.ScrollMax.x, 0.0);
+            });
+        }
+    }
+    #[test]
+    fn manual_completion_consumes_native_shortcut_text_with_autocomplete_disabled() {
+        use bed_keybindings::{Bindings, Overrides, Platform};
+        use dear_imgui_rs::Key;
+
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        for (mac_mode, shortcut, key, text) in [
+            (false, "Ctrl+Space", Key::Space, " "),
+            (true, "Ctrl+Space", Key::Space, " "),
+            (true, "Ctrl+J", Key::J, "j"),
+        ] {
+            let (_dir, mut session, document) = super::super::test_fixture::session();
+            let mut view = EditorView::new(&mut session, document).unwrap();
+            session
+                .with_commands(view.id(), |c| {
+                    c.set_cursor(0, 14, false, CursorReveal::Ensure)
+                })
+                .unwrap();
+            let mut runtime = crate::EditorRuntime::default();
+            let mut config = crate::EditorConfig::default();
+            config.lsp.autocomplete = false;
+            let actions = bed_editor_ui::shortcuts::actions();
+            let mut overrides = Overrides::default();
+            overrides
+                .replace(
+                    actions
+                        .iter()
+                        .find(|a| a.id == "bed.editor.completion")
+                        .unwrap(),
+                    Some(0),
+                    shortcut.parse().unwrap(),
+                )
+                .unwrap();
+            config.options.shortcuts.bindings =
+                Rc::new(Bindings::new(actions, &overrides, Platform::current()));
+            let mut context = native_context();
+            context.io_mut().set_config_macosx_behaviors(mac_mode);
+            native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+            context.io_mut().add_key_event(Key::ModCtrl, true);
+            context.io_mut().add_key_event(key, true);
+            context.io_mut().add_input_characters_utf8(text);
+            native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+            assert_eq!(session.snapshot(document).unwrap().bytes, b"let value = St");
+            // Holding a non-repeating command may still emit native text on
+            // later frames. It must neither type nor cancel the pending list.
+            for _ in 0..3 {
+                context.io_mut().add_key_event(key, true);
+                context.io_mut().add_input_characters_utf8(text);
+                native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+                assert_eq!(session.snapshot(document).unwrap().bytes, b"let value = St");
+                assert!(runtime.completion.active.is_some());
+            }
+            context.io_mut().add_key_event(key, false);
+            context.io_mut().add_key_event(Key::ModCtrl, false);
+            wait_completion(&mut context, &mut runtime, &mut session, &mut view, &config);
+            assert!(runtime.completion.visible_for(view.id()));
+            context.io_mut().add_key_event(Key::Tab, true);
+            native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+            assert_eq!(
+                session.snapshot(document).unwrap().bytes,
+                b"use String;\nlet value = String"
+            );
+            assert!(runtime.completion.active.is_none());
+        }
+    }
+    #[test]
+    fn unavailable_manual_completion_consumes_its_space_but_ordinary_space_types() {
+        use dear_imgui_rs::{FramePrepareOptions, Key};
+
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut session = EditorSession::new();
+        let document = session.create_document(b"unchanged").unwrap();
+        let mut view = EditorView::new(&mut session, document).unwrap();
+        session
+            .with_commands(view.id(), |c| {
+                c.set_cursor(0, 9, false, CursorReveal::Ensure)
+            })
+            .unwrap();
+        let mut runtime = crate::EditorRuntime::default();
+        let mut config = crate::EditorConfig::default();
+        config.lsp.autocomplete = false;
+        let mut context = native_context();
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        context.io_mut().add_key_event(Key::ModCtrl, true);
+        context.io_mut().add_key_event(Key::Space, true);
+        context.io_mut().add_input_characters_utf8(" ");
+        context.prepare_frame(FramePrepareOptions::new([1000.0, 700.0], 1.0 / 60.0));
+        let ui = context.frame();
+        let mut requests = Vec::new();
+        ui.window("completion_host")
+            .size([850.0, 550.0], Condition::Always)
+            .build(|| {
+                crate::feature::draw_text_view(
+                    ui,
+                    &mut view,
+                    &mut runtime,
+                    &mut session,
+                    &config,
+                    &mut requests,
+                )
+                .unwrap();
+            });
+        drop(context.render_legacy());
+        assert_eq!(session.snapshot(document).unwrap().bytes, b"unchanged");
+        assert!(runtime.completion.active.is_none());
+        assert!(
+            matches!(requests.as_slice(), [bed_editor_api::HostRequest::Notify { message }]
+            if message.contains("initialized language server"))
+        );
+        context.io_mut().add_key_event(Key::Space, false);
+        context.io_mut().add_key_event(Key::ModCtrl, false);
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        context.io_mut().add_key_event(Key::Space, true);
+        context.io_mut().add_input_characters_utf8(" ");
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        assert_eq!(session.snapshot(document).unwrap().bytes, b"unchanged ");
+    }
+    #[test]
+    fn automatic_delay_setting_and_incomplete_refresh_use_actual_input() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let (dir, mut session, document) = super::super::test_fixture::session_mode("incomplete");
+        let mut view = EditorView::new(&mut session, document).unwrap();
+        session
+            .apply_edits(
+                document,
+                session.document_revision(document).unwrap(),
+                &[ByteEdit {
+                    range: 12..14,
+                    bytes: Vec::new(),
+                }],
+            )
+            .unwrap();
+        session
+            .with_commands(view.id(), |c| {
+                c.set_cursor(0, 12, false, CursorReveal::Ensure)
+            })
+            .unwrap();
+        let mut runtime = crate::EditorRuntime::default();
+        let mut config = crate::EditorConfig::default();
+        config.lsp.completion_delay_ms = 50;
+        let mut context = native_context();
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        context.io_mut().add_input_characters_utf8("S");
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        assert!(runtime.completion.scheduled.is_some());
+        assert!(runtime.completion.active.is_none());
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        assert!(
+            runtime.completion.active.is_none(),
+            "Must honor debounce delay"
+        );
+        config.lsp.autocomplete = false;
+        std::thread::sleep(Duration::from_millis(60));
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        assert!(runtime.completion.scheduled.is_none());
+        assert!(runtime.completion.active.is_none());
+        // Manual Ctrl+Space remains available with the automatic setting disabled.
+        context
+            .io_mut()
+            .add_key_event(dear_imgui_rs::Key::ModCtrl, true);
+        context
+            .io_mut()
+            .add_key_event(dear_imgui_rs::Key::Space, true);
+        // Native keyboard events carry both the key and its printable text.
+        context.io_mut().add_input_characters_utf8(" ");
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        assert_eq!(session.snapshot(document).unwrap().bytes, b"let value = S");
+        context
+            .io_mut()
+            .add_key_event(dear_imgui_rs::Key::Space, false);
+        context
+            .io_mut()
+            .add_key_event(dear_imgui_rs::Key::ModCtrl, false);
+        wait_completion(&mut context, &mut runtime, &mut session, &mut view, &config);
+        assert!(runtime.completion.active.as_ref().unwrap().incomplete);
+        context.io_mut().add_input_characters_utf8("t");
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        wait_completion(&mut context, &mut runtime, &mut session, &mut view, &config);
+        assert!(!runtime.completion.active.as_ref().unwrap().incomplete);
+        assert!(
+            std::fs::read_to_string(dir.path("trace"))
+                .unwrap()
+                .contains("completion:3")
+        );
+        assert_eq!(session.snapshot(document).unwrap().bytes, b"let value = St");
+    }
+    #[test]
+    fn delayed_completion_reply_is_discarded_after_caret_movement() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let (_dir, mut session, document) = super::super::test_fixture::session_mode("delayed");
+        let mut view = EditorView::new(&mut session, document).unwrap();
+        session
+            .with_commands(view.id(), |c| {
+                c.set_cursor(0, 14, false, CursorReveal::Ensure)
+            })
+            .unwrap();
+        let mut runtime = crate::EditorRuntime::default();
+        let config = crate::EditorConfig::default();
+        let mut context = native_context();
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        runtime.request_completion(&mut session, view.id()).unwrap();
+        session
+            .with_commands(view.id(), |c| {
+                c.set_cursor(0, 0, false, CursorReveal::Ensure)
+            })
+            .unwrap();
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        assert!(runtime.completion.active.is_none());
+        std::thread::sleep(Duration::from_millis(140));
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        assert!(runtime.completion.active.is_none());
+        assert_eq!(session.snapshot(document).unwrap().bytes, b"let value = St");
+    }
+    #[test]
+    fn completion_command_server_edit_joins_the_insertion_undo_group() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let (dir, mut session, document) = super::super::test_fixture::session_mode("commands");
+        let mut view = EditorView::new(&mut session, document).unwrap();
+        session
+            .with_commands(view.id(), |c| {
+                c.set_cursor(0, 14, false, CursorReveal::Ensure)
+            })
+            .unwrap();
+        let mut runtime = crate::EditorRuntime::default();
+        let config = crate::EditorConfig::default();
+        let mut context = native_context();
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        runtime.request_completion(&mut session, view.id()).unwrap();
+        wait_completion(&mut context, &mut runtime, &mut session, &mut view, &config);
+        context
+            .io_mut()
+            .add_key_event(dear_imgui_rs::Key::Tab, true);
+        native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+        context
+            .io_mut()
+            .add_key_event(dear_imgui_rs::Key::Tab, false);
+        let until = Instant::now() + Duration::from_secs(5);
+        while !session
+            .snapshot(document)
+            .unwrap()
+            .bytes
+            .ends_with(b"String!")
+        {
+            native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
+            assert!(
+                Instant::now() < until,
+                "Server command did not apply its edit: {:?}; trace={:?}",
+                String::from_utf8_lossy(&session.snapshot(document).unwrap().bytes),
+                std::fs::read_to_string(dir.path("trace"))
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            session.snapshot(document).unwrap().bytes,
+            b"use String;\nlet value = String!"
+        );
+        session.undo_document(document).unwrap();
+        assert_eq!(session.snapshot(document).unwrap().bytes, b"let value = St");
+    }
+}

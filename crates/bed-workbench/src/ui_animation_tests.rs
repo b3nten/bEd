@@ -276,6 +276,203 @@ fn text_input_settles_popup_growth_immediately() {
     }
 }
 
+fn completion_and_hover_frame(
+    context: &mut Context,
+    animations: &mut UiAnimations,
+    enabled: bool,
+    show_completion: bool,
+    caret: [f32; 2],
+    selected: usize,
+) -> FrameGeometry {
+    let binding = context.binding();
+    context.prepare_frame(FramePrepareOptions::new([1000.0, 700.0], 1.0 / 60.0));
+    let ui = context.frame();
+    animations.begin(ui, enabled);
+    let mut ids = Vec::new();
+    let mut popup = 0;
+    ui.window("Editor popover host")
+        .size([900.0, 600.0], Condition::Always)
+        .build(|| {
+            animations.exclude_current(ui);
+            for (index, name, position) in [
+                (0, "##completion_7", caret),
+                (1, "##completion_docs_7", [caret[0] + 250.0, caret[1]]),
+                (2, "##bed_diagnostic_hover_fixture", [120.0, 350.0]),
+            ] {
+                if index < 2 && !show_completion {
+                    continue;
+                }
+                // These input-capable editor popovers are ordinary windows,
+                // rather than native ImGui tooltips or popup-stack entries.
+                ui.window(name)
+                    .position(position, Condition::Always)
+                    .size([230.0, 160.0], Condition::Always)
+                    .flags(
+                        WindowFlags::NO_TITLE_BAR
+                            | WindowFlags::NO_MOVE
+                            | WindowFlags::NO_RESIZE
+                            | WindowFlags::NO_COLLAPSE
+                            | WindowFlags::NO_SAVED_SETTINGS
+                            | WindowFlags::NO_FOCUS_ON_APPEARING
+                            | WindowFlags::NO_NAV
+                            | WindowFlags::NO_DOCKING,
+                    )
+                    .build(|| {
+                        let id = ui
+                            .with_bound_context(|| unsafe { (*sys::igGetCurrentWindowRead()).ID });
+                        if index == 0 {
+                            popup = id;
+                        }
+                        ids.push(id);
+                        marker(ui);
+                        if index == 0 {
+                            ui.selectable_config("String")
+                                .selected(selected == 0)
+                                .build();
+                            ui.selectable_config("Strange")
+                                .selected(selected == 1)
+                                .build();
+                        } else {
+                            ui.text(format!("Documentation for item {selected}"));
+                        }
+                    });
+            }
+        });
+    animations.end(ui, enabled);
+    let before = geometry(&binding, &ids);
+    drop(context.render_legacy());
+    let after = geometry(&binding, &ids);
+    FrameGeometry {
+        popup,
+        before,
+        after,
+    }
+}
+
+#[test]
+fn completion_and_documentation_share_hover_motion_and_settings() {
+    let _lock = crate::tests::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut context = context();
+    let mut animations = UiAnimations::new(context.binding());
+    let mut frame =
+        completion_and_hover_frame(&mut context, &mut animations, true, true, [120.0, 100.0], 0);
+    for _ in 0..4 {
+        if frame.before.len() == 3 {
+            break;
+        }
+        frame = completion_and_hover_frame(
+            &mut context,
+            &mut animations,
+            true,
+            true,
+            [120.0, 100.0],
+            0,
+        );
+    }
+    assert_eq!(frame.before.len(), 3);
+    let alphas = marker_alphas(&frame);
+    assert!(!alphas.is_empty());
+    assert!(
+        alphas
+            .iter()
+            .all(|&alpha| alpha == alphas[0] && alpha < 255)
+    );
+    for (before, after) in frame.before.iter().zip(&frame.after) {
+        assert_eq!(
+            before.pos, after.pos,
+            "hit testing must stay in native coordinates"
+        );
+        assert_eq!(before.size, after.size);
+        assert!(
+            before
+                .vertices
+                .iter()
+                .zip(&after.vertices)
+                .any(|(old, new)| old.pos != new.pos)
+        );
+    }
+
+    // Tracking the caret and changing the selected item must continue the same
+    // opening fade. Keyboard interaction settles growth in final coordinates.
+    context
+        .io_mut()
+        .add_key_event(dear_imgui_rs::Key::DownArrow, true);
+    let moved =
+        completion_and_hover_frame(&mut context, &mut animations, true, true, [135.0, 120.0], 1);
+    assert!(marker_alphas(&moved).iter().all(|&alpha| alpha > alphas[0]));
+    assert_eq!(moved.before[0].pos, [135.0, 120.0]);
+    for (before, after) in moved.before.iter().zip(&moved.after) {
+        assert!(
+            before
+                .vertices
+                .iter()
+                .zip(&after.vertices)
+                .all(|(old, new)| old.pos == new.pos)
+        );
+        assert_eq!(before.clips, after.clips);
+    }
+
+    context
+        .io_mut()
+        .add_key_event(dear_imgui_rs::Key::DownArrow, false);
+    for _ in 0..12 {
+        frame = completion_and_hover_frame(
+            &mut context,
+            &mut animations,
+            true,
+            true,
+            [135.0, 120.0],
+            1,
+        );
+    }
+    assert!(marker_alphas(&frame).iter().all(|&alpha| alpha == 255));
+    let hidden = completion_and_hover_frame(
+        &mut context,
+        &mut animations,
+        true,
+        false,
+        [135.0, 120.0],
+        1,
+    );
+    assert_eq!(
+        hidden.before.len(),
+        1,
+        "closing completion removes both windows immediately"
+    );
+    frame =
+        completion_and_hover_frame(&mut context, &mut animations, true, true, [150.0, 140.0], 0);
+    assert!(
+        frame.after[..2]
+            .iter()
+            .flat_map(|window| &window.vertices)
+            .filter(|vertex| vertex.col & 0x00ff_ffff == MARKER & 0x00ff_ffff)
+            .all(|vertex| vertex.col >> 24 < 255)
+    );
+    assert!(
+        frame.after[2]
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.col & 0x00ff_ffff == MARKER & 0x00ff_ffff)
+            .all(|vertex| vertex.col >> 24 == 255)
+    );
+
+    let disabled = completion_and_hover_frame(
+        &mut context,
+        &mut animations,
+        false,
+        true,
+        [150.0, 140.0],
+        0,
+    );
+    for (before, after) in disabled.before.iter().zip(&disabled.after) {
+        assert_eq!(
+            before.vertices, after.vertices,
+            "animations=false must snap every popover"
+        );
+        assert_eq!(before.clips, after.clips);
+    }
+}
+
 #[test]
 fn animation_hook_is_context_local_and_can_drop_before_or_after_its_context() {
     let _lock = crate::tests::IMGUI_TEST_LOCK.lock().unwrap();

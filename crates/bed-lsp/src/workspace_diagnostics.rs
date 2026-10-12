@@ -66,6 +66,7 @@ pub(crate) type Inputs = Rc<RefCell<VecDeque<Input>>>;
 struct Cached {
     id: Option<String>,
     items: Vec<DiagnosticItem>,
+    raw: Vec<Value>,
     version: i32,
     sequence: u64,
 }
@@ -200,6 +201,11 @@ impl WorkspaceDiagnosticPull {
             .map(|cached| cached.version)
             .max()
             .unwrap_or(-1);
+        let raw = reports
+            .iter()
+            .filter(|cached| cached.version == version)
+            .flat_map(|cached| cached.raw.iter().cloned())
+            .collect();
         let items = reports
             .into_iter()
             .filter(|cached| cached.version == version)
@@ -210,7 +216,7 @@ impl WorkspaceDiagnosticPull {
         if reset_version {
             store.forget_version(&path);
         }
-        store.replace(&path, items, version);
+        store.replace_raw(&path, items, raw, version);
     }
     fn apply(
         &mut self,
@@ -268,7 +274,12 @@ impl WorkspaceDiagnosticPull {
                     ));
                 }
             };
-            decoded.push((uri, id, version, items));
+            decoded.push((
+                uri,
+                id,
+                version,
+                items.map(|items| (items, value["items"].as_array().unwrap().clone())),
+            ));
         }
         // A chunk can repeat a URI; each report observes preceding valid reports
         // in that chunk, without exposing a partially validated external value.
@@ -287,7 +298,7 @@ impl WorkspaceDiagnosticPull {
             if version >= 0 && newest >= 0 && version < newest {
                 continue;
             }
-            let items = match items {
+            let (items, raw) = match items {
                 Some(items) => items,
                 None => {
                     let cached = staged
@@ -307,7 +318,7 @@ impl WorkspaceDiagnosticPull {
                                 "Unchanged workspace report has no matching cached content",
                             )
                         })?;
-                    cached.items.clone()
+                    (cached.items.clone(), cached.raw.clone())
                 }
             };
             staged.insert(
@@ -315,6 +326,7 @@ impl WorkspaceDiagnosticPull {
                 Cached {
                     id,
                     items,
+                    raw,
                     version,
                     sequence: pending.sequence,
                 },

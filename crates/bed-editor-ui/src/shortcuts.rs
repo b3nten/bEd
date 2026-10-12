@@ -37,6 +37,14 @@ pub fn actions() -> Vec<Action> {
         ("definition", "Go to Definition", vec!["F12"]),
         ("references", "Find References", vec!["Shift+F12"]),
         ("symbol_info", "Show Symbol Information", vec![]),
+        ("completion", "Complete", vec!["Ctrl+Space"]),
+        (
+            "format_document",
+            "Format Document",
+            vec!["Primary+Shift+I"],
+        ),
+        ("rename", "Rename Symbol", vec!["F2"]),
+        ("quick_fix", "Quick Fix", vec!["Primary+Period"]),
         (
             "toggle_fold",
             "Toggle Fold",

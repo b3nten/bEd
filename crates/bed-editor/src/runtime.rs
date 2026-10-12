@@ -129,6 +129,9 @@ impl ToolKind {
 }
 
 pub struct EditorRuntime {
+    pub(crate) completion: crate::lsp::completion::Completion,
+    language_actions: crate::lsp::editor_actions::EditorActions,
+    language_errors: Vec<String>,
     lsp_ui: LspUi,
     navigation_kind: ContextLspAction,
     pending_navigation: Option<NavigationIntent>,
@@ -152,6 +155,9 @@ pub struct EditorRuntime {
 impl Default for EditorRuntime {
     fn default() -> Self {
         Self {
+            completion: Default::default(),
+            language_actions: Default::default(),
+            language_errors: Vec::new(),
             lsp_ui: LspUi::default(),
             navigation_kind: ContextLspAction::References,
             pending_navigation: None,
@@ -175,6 +181,62 @@ impl Default for EditorRuntime {
     }
 }
 impl EditorRuntime {
+    pub fn request_lsp_command(
+        &mut self,
+        session: &mut EditorSession,
+        view: ViewId,
+        command: &str,
+    ) -> io::Result<()> {
+        if command == "bed.editor.completion" {
+            self.request_completion(session, view)
+        } else {
+            self.completion.cancel();
+            self.language_actions.request(session, view, command)
+        }
+    }
+    pub(crate) fn language_action_blocks_view(&self, view: ViewId) -> bool {
+        self.language_actions.blocks_view(view)
+    }
+    pub(crate) fn completion_visible_for(&self, view: ViewId) -> bool {
+        self.completion.visible_for(view)
+    }
+    pub fn request_completion(
+        &mut self,
+        session: &mut EditorSession,
+        view: ViewId,
+    ) -> io::Result<()> {
+        self.completion.request(session, view, None, false)
+    }
+    pub(crate) fn before_draw(
+        &mut self,
+        ui: &Ui,
+        view: &mut EditorView,
+        session: &mut EditorSession,
+        config: &EditorConfig,
+    ) -> io::Result<()> {
+        let mut settings = config.lsp.clone();
+        settings.shortcuts = config.options.shortcuts.clone();
+        let mut blocked =
+            config.options.block_input || self.language_actions.blocks_view(view.id());
+        if ui.is_window_focused_with_flags(dear_imgui_rs::FocusedFlags::CHILD_WINDOWS)
+            && !blocked
+            && !ui.io().want_text_input()
+            && !view.find_visible()
+            && !view.line_jump_visible()
+        {
+            for (command, _) in crate::lsp::editor_actions::COMMANDS.into_iter().skip(1) {
+                if settings.shortcuts.take(ui, command) {
+                    self.completion.cancel();
+                    if let Err(error) = self.language_actions.request(session, view.id(), command) {
+                        self.language_errors.push(error.to_string());
+                    }
+                }
+            }
+            blocked |= self.language_actions.blocks_view(view.id());
+        }
+        self.completion
+            .before_draw(ui, view, session, &settings, blocked)
+    }
     pub fn navigation_activity(&self) -> Option<NavigationActivity> {
         self.pending_navigation
             .as_ref()
@@ -222,6 +284,12 @@ impl EditorRuntime {
                                 document: session.document_for_view(view)?,
                             },
                             HostAction::SaveAs => HostRequest::SaveAsDialog {
+                                document: session.document_for_view(view)?,
+                            },
+                            HostAction::Undo => HostRequest::Undo {
+                                document: session.document_for_view(view)?,
+                            },
+                            HostAction::Redo => HostRequest::Redo {
                                 document: session.document_for_view(view)?,
                             },
                         };
@@ -281,6 +349,8 @@ impl EditorRuntime {
         self.contexts.insert(view, context);
     }
     pub fn forget_view(&mut self, view: ViewId) {
+        self.language_actions.forget_view(view);
+        self.completion.forget_view(view);
         if self
             .pending_navigation
             .as_ref()
@@ -296,6 +366,8 @@ impl EditorRuntime {
         self.historical_contexts.remove(&view);
     }
     pub fn cancel_requests(&mut self) {
+        self.language_actions.cancel();
+        self.completion.cancel();
         if let Some(intent) = self.pending_navigation.take() {
             self.finish_navigation(intent, NavigationOutcomeKind::Cancelled);
         }
@@ -303,6 +375,7 @@ impl EditorRuntime {
         self.actions.clear();
     }
     pub fn retain_requests(&mut self, session: &EditorSession) {
+        self.completion.retain(session);
         if self
             .pending_navigation
             .as_ref()
@@ -343,6 +416,25 @@ impl EditorRuntime {
         config: &EditorConfig,
         requests: &mut Vec<HostRequest>,
     ) -> io::Result<()> {
+        for message in std::mem::take(&mut self.language_errors) {
+            requests.push(HostRequest::Notify { message });
+        }
+        self.language_actions.render(ui, view, session, requests)?;
+        self.completion.observe(&response, session, &config.lsp)?;
+        self.completion.render(ui, view, session)?;
+        for (view, command) in self.completion.take_commands() {
+            if let Err(error) = self
+                .language_actions
+                .execute_completion_command(session, view, command)
+            {
+                requests.push(HostRequest::Notify {
+                    message: error.to_string(),
+                });
+            }
+        }
+        if let Some(message) = self.completion.take_error() {
+            requests.push(HostRequest::Notify { message });
+        }
         if let Some(request) = response.definition_request {
             self.request_lsp(
                 session,
@@ -407,9 +499,11 @@ impl EditorRuntime {
                     .lsp_ui
                     .symbol_origin()
                     .is_some_and(|request| request.view_id == view_id);
-            if caret_here
-                || (!self.lsp_ui.symbol_at_caret()
-                    && (popup_here || (hover_here && !over_symbol_popup)))
+            if !self.completion.visible_for(view_id)
+                && !self.language_actions.blocks_view(view_id)
+                && (caret_here
+                    || (!self.lsp_ui.symbol_at_caret()
+                        && (popup_here || (hover_here && !over_symbol_popup))))
             {
                 self.lsp_ui.set_mouse_origin(origin);
                 session.with_view(view_id, |editor| {
@@ -520,6 +614,17 @@ impl EditorRuntime {
             if let Some(action) = text_lsp_actions(ui, session.lsp().is_some(), ready) {
                 self.request_lsp(session, view.id(), action, None)?;
             }
+            if ready {
+                for (command, label) in crate::lsp::editor_actions::COMMANDS {
+                    if ui.menu_item_enabled_selected_no_shortcut(label, false, !view.read_only()) {
+                        if let Err(error) = self.request_lsp_command(session, view.id(), command) {
+                            requests.push(HostRequest::Notify {
+                                message: error.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
             if !ready && ui.menu_item("Language Servers…") {
                 requests.push(HostRequest::ShowPanelIn {
                     panel_type: LSP_DASHBOARD_PANEL_TYPE.into(),
@@ -564,10 +669,10 @@ impl EditorRuntime {
             ui.separator();
             let mutation_scope = ui.begin_disabled_with_cond(view.read_only());
             if ui.menu_item("Undo") && !view.read_only() {
-                session.with_commands(view.id(), |commands| commands.undo())?;
+                session.undo_document(view.document_id())?;
             }
             if ui.menu_item("Redo") && !view.read_only() {
-                session.with_commands(view.id(), |commands| commands.redo())?;
+                session.redo_document(view.document_id())?;
             }
             ui.separator();
             if ui.menu_item("Cut") && !view.read_only() {
@@ -680,6 +785,7 @@ impl EditorRuntime {
             self.check_error = None;
         }
         self.retain_requests(session);
+        self.language_actions.tick(session, requests)?;
         self.advance_navigation(session, requests, Instant::now())
     }
     fn advance_navigation(
@@ -917,7 +1023,7 @@ impl EditorRuntime {
         let status = if snapshot.checking {
             "Checking…"
         } else if snapshot.stale {
-            "Unsaved changes"
+            "Results may be stale"
         } else if snapshot.complete {
             "Check complete"
         } else {
@@ -925,7 +1031,7 @@ impl EditorRuntime {
         };
         ui.text_disabled(fit_text(
             ui,
-            if snapshot.checking || snapshot.stale || snapshot.status.is_empty() {
+            if snapshot.checking || snapshot.status.is_empty() {
                 status
             } else {
                 &snapshot.status

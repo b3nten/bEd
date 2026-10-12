@@ -74,6 +74,7 @@ impl Plugin for ExplorerPlugin {
                     Some("explorer"),
                 );
                 registrar.panel_open_placement(PANEL_ID, PanelPlacement::Center);
+                registrar.settings_ui("bed.explorer.settings", "Files", files_settings);
             })
             .expect("Explorer metadata is registered once");
         register(app.world_mut(), MODULE_ID, |registrar| {
@@ -102,6 +103,20 @@ impl Plugin for ExplorerPlugin {
         app.add_systems(PreUpdate, prepare.in_set(EditorFeatureSystems::Prepare))
             .add_systems(Last, shutdown.after(bevy::app::OnAppExitSystems));
     }
+}
+fn files_settings(ui: &Ui, settings: &mut Value) -> bool {
+    let mut changed = false;
+    for (key, label) in [
+        ("hide_hidden", "Hide hidden files by default"),
+        ("hide_gitignored", "Hide gitignored files by default"),
+    ] {
+        let mut value = settings[key].as_bool().unwrap_or(true);
+        if ui.checkbox(label, &mut value) {
+            settings[key] = Value::Bool(value);
+            changed = true;
+        }
+    }
+    changed
 }
 fn shutdown(
     mut exit: MessageReader<bevy::app::AppExit>,
@@ -187,6 +202,19 @@ fn prepare(world: &mut World) {
         presentation.finder,
         documents.workspace_id().0.to_string(),
     );
+    if explorer
+        .file_explorer
+        .file_tree
+        .preferences
+        .apply_defaults(&frame.settings["plugins"][MODULE_ID])
+    {
+        let directories = explorer.file_explorer.file_tree.open_directories();
+        explorer
+            .file_explorer
+            .file_finder
+            .refresh_directories(directories);
+        requests.push(HostRequest::Invalidate);
+    }
     explorer.update_menu_model(&registry, &frame.context(), |command, _| {
         commands
             .0
@@ -265,7 +293,7 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
     world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
         ("Files", "Expand folders and open files from the tree. Use Shift to extend a selection, or Cmd/Ctrl to toggle individual items."),
         ("Operations", "Right-click files or folders for rename, duplicate, copy, paste, and delete. Drag files onto a tab area to open them there."),
-        ("Visibility", "Hidden and gitignored files are hidden by default. Use View Options to change these workspace preferences or temporarily show all files."),
+        ("Visibility", "Choose whether hidden and gitignored files are hidden by default in Settings > Extensions > Files. Right-click the tree to change workspace visibility or temporarily show all files."),
     ]).shortcut_actions(&["bed.navigation.move_left", "bed.navigation.move_right", "bed.navigation.move_up", "bed.navigation.move_down", "bed.navigation.select_up", "bed.navigation.select_down", "bed.edit.copy", "bed.edit.cut", "bed.edit.paste", "bed.edit.select_all"]));
     world
         .non_send_mut::<ExplorerPanels>()
@@ -415,6 +443,7 @@ fn restore_workspace(
     In(restore): In<EditorWorkspaceRestore>,
     mut handle: NonSendMut<ExplorerState>,
     documents: NonSend<EditorSession>,
+    frame: Res<EditorFrame>,
 ) -> Result<(), String> {
     handle.file_content.reset();
     handle.actions.clear();
@@ -426,11 +455,12 @@ fn restore_workspace(
         .file_finder
         .set_remote_client(documents.remote_client());
     state.file_finder.set_directory_label(None);
-    let preferences = restore
+    let mut preferences = restore
         .state
         .as_ref()
         .map(FileTreePreferences::from_value)
         .unwrap_or_default();
+    preferences.apply_defaults(&frame.settings["plugins"][MODULE_ID]);
     state.file_tree = file_tree::FileTree {
         root_node: FileNode {
             name: bed_editor_api::workspace::default_name(&state.project_root),
@@ -644,7 +674,13 @@ mod tests {
             .single(app.world())
             .unwrap();
         // New workspaces and snapshots predating these filters use the defaults.
-        for state in [None, Some(serde_json::json!({"include_ignored":true}))] {
+        for state in [
+            None,
+            Some(serde_json::json!({"include_ignored":true})),
+            Some(
+                serde_json::json!({"include_ignored":true,"hide_hidden":true,"hide_gitignored":true}),
+            ),
+        ] {
             app.world_mut()
                 .run_system_with(
                     contribution.restore,
@@ -657,8 +693,11 @@ mod tests {
                 .unwrap()
                 .unwrap();
             let saved = app.world_mut().run_system(contribution.save).unwrap();
-            assert_eq!(saved["hide_hidden"], true);
-            assert_eq!(saved["hide_gitignored"], true);
+            let tree = &app.world().non_send::<ExplorerState>().explorer().file_tree;
+            assert!(tree.preferences.hide_hidden);
+            assert!(tree.preferences.hide_gitignored);
+            assert!(saved.get("hide_hidden").is_none());
+            assert!(saved.get("hide_gitignored").is_none());
         }
         app.world_mut()
             .non_send_mut::<ExplorerState>()
@@ -686,7 +725,14 @@ mod tests {
         assert_eq!(saved["include_ignored"], true);
         assert!(saved.get("show_hidden").is_none());
         // Switching workspaces resets the temporary reveal and restores defaults.
-        for (root, state) in [("/other-project", None), ("/new-project", Some(saved))] {
+        for (root, state) in [
+            ("/other-project", None),
+            (
+                "/legacy-project",
+                Some(serde_json::json!({"hide_hidden":false,"hide_gitignored":false})),
+            ),
+            ("/new-project", Some(saved)),
+        ] {
             let expected_hide = state.is_none();
             app.world_mut()
                 .run_system_with(
@@ -714,6 +760,139 @@ mod tests {
                 .project_root,
             "/new-project"
         );
+    }
+    #[test]
+    fn registered_file_settings_update_defaults_without_overwriting_workspace_choices() {
+        use dear_imgui_rs::{Condition, Context, FramePrepareOptions, MouseButton};
+
+        fn frame(
+            context: &mut Context,
+            draw: fn(&Ui, &mut Value) -> bool,
+            values: &mut Value,
+        ) -> ([[f32; 2]; 2], bool) {
+            context.prepare_frame(FramePrepareOptions::new([400.0, 300.0], 1.0 / 60.0));
+            let ui = context.frame();
+            let mut points = [[0.0; 2]; 2];
+            let mut changed = false;
+            ui.window("Files settings")
+                .position([0.0; 2], Condition::Always)
+                .size([400.0, 300.0], Condition::Always)
+                .build(|| {
+                    let origin = ui.cursor_screen_pos();
+                    let height = ui.frame_height();
+                    let spacing = ui.clone_style().item_spacing()[1];
+                    points = std::array::from_fn(|row| {
+                        [
+                            origin[0] + 5.0,
+                            origin[1] + row as f32 * (height + spacing) + height * 0.5,
+                        ]
+                    });
+                    changed = draw(ui, values);
+                });
+            drop(context.render_legacy());
+            (points, changed)
+        }
+
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut app = App::new();
+        app.add_plugins(ExplorerPlugin);
+        let section = app.world().resource::<Registry>().settings()[0].clone();
+        assert_eq!(section.plugin, MODULE_ID);
+        let draw = section.draw.expect("Files settings have visible controls");
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut values = serde_json::json!({});
+        frame(&mut context, draw, &mut values);
+        let (points, changed) = frame(&mut context, draw, &mut values);
+        assert!(!changed);
+        for (row, key) in ["hide_hidden", "hide_gitignored"].into_iter().enumerate() {
+            context.io_mut().add_mouse_pos_event(points[row]);
+            frame(&mut context, draw, &mut values);
+            context
+                .io_mut()
+                .add_mouse_button_event(MouseButton::Left, true);
+            assert!(!frame(&mut context, draw, &mut values).1);
+            context
+                .io_mut()
+                .add_mouse_button_event(MouseButton::Left, false);
+            assert!(frame(&mut context, draw, &mut values).1);
+            assert_eq!(values[key], false, "both settings start enabled");
+        }
+        let contribution = *app
+            .world_mut()
+            .query::<&EditorWorkspaceContribution>()
+            .single(app.world())
+            .unwrap();
+        app.world_mut().resource_mut::<EditorFrame>().settings =
+            serde_json::json!({"plugins": {MODULE_ID: values}});
+        app.world_mut()
+            .run_system_with(
+                contribution.restore,
+                EditorWorkspaceRestore {
+                    workspace: 1,
+                    root: "/project".into(),
+                    state: Some(
+                        serde_json::json!({"include_ignored": true, "hidden_paths": ["private"], "hide_hidden": true, "hide_gitignored": true}),
+                    ),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        {
+            let tree = &app.world().non_send::<ExplorerState>().explorer().file_tree;
+            assert!(!tree.preferences.hide_hidden);
+            assert!(!tree.preferences.hide_gitignored);
+        }
+        let inherited = app.world_mut().run_system(contribution.save).unwrap();
+        assert!(inherited.get("hide_hidden").is_none());
+        assert!(inherited.get("hide_gitignored").is_none());
+        assert_eq!(inherited["hidden_paths"], serde_json::json!(["private"]));
+        // A live settings change updates inherited filters, including after restore.
+        app.world_mut().resource_mut::<EditorFrame>().settings["plugins"][MODULE_ID] =
+            serde_json::json!({"hide_hidden": true, "hide_gitignored": true});
+        prepare(app.world_mut());
+        {
+            let tree = &app.world().non_send::<ExplorerState>().explorer().file_tree;
+            assert!(tree.preferences.hide_hidden);
+            assert!(tree.preferences.hide_gitignored);
+        }
+        // An explicit choice overrides its default; the other filter still inherits.
+        app.world_mut().resource_mut::<EditorFrame>().settings["plugins"][MODULE_ID] =
+            serde_json::json!({"hide_hidden": false, "hide_gitignored": false});
+        prepare(app.world_mut());
+        app.world_mut()
+            .non_send_mut::<ExplorerState>()
+            .submit(
+                vec![FileTreeAction::SetHideHidden(true)],
+                false,
+                &mut Vec::new(),
+            )
+            .unwrap();
+        let explicit = app.world_mut().run_system(contribution.save).unwrap();
+        assert_eq!(explicit["hide_hidden"], true);
+        assert!(explicit.get("hide_gitignored").is_none());
+        app.world_mut()
+            .run_system_with(
+                contribution.restore,
+                EditorWorkspaceRestore {
+                    workspace: 1,
+                    root: "/project".into(),
+                    state: Some(explicit),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        prepare(app.world_mut());
+        let tree = &app.world().non_send::<ExplorerState>().explorer().file_tree;
+        assert!(tree.preferences.hide_hidden);
+        assert!(!tree.preferences.hide_gitignored);
     }
     #[test]
     fn registered_native_drop_uses_this_presentation_bounds_and_rejects_stale_workspace() {

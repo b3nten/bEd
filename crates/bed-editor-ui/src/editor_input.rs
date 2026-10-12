@@ -16,6 +16,8 @@ pub enum HostAction {
     Open,
     Save,
     SaveAs,
+    Undo,
+    Redo,
 }
 
 /// Navigation at a clicked text position. Columns use the document's UTF-8
@@ -34,6 +36,8 @@ pub struct EditorInput {
     anchor: Option<(i32, i32)>,
     definition_request: Option<DefinitionRequest>,
     visual_navigation: Option<VisualNavigation>,
+    typed_text: Option<String>,
+    prefix_backspace: bool,
 }
 
 impl Default for EditorInput {
@@ -46,6 +50,8 @@ impl Default for EditorInput {
             anchor: None,
             definition_request: None,
             visual_navigation: None,
+            typed_text: None,
+            prefix_backspace: false,
         }
     }
 }
@@ -112,6 +118,8 @@ impl EditorInput {
         read_only: bool,
     ) -> Vec<HostAction> {
         self.definition_request = None;
+        self.typed_text = None;
+        self.prefix_backspace = false;
         if ui.is_window_hovered_with_flags(WindowHoveredFlags::ALLOW_WHEN_BLOCKED_BY_ACTIVE_ITEM) {
             self.process_mouse(ui, editor, layout, allow_navigation, projection);
         }
@@ -123,6 +131,12 @@ impl EditorInput {
 
     pub fn take_definition_request(&mut self) -> Option<DefinitionRequest> {
         self.definition_request.take()
+    }
+    pub fn take_typed_text(&mut self) -> Option<String> {
+        self.typed_text.take()
+    }
+    pub fn prefix_backspace(&self) -> bool {
+        self.prefix_backspace
     }
 
     fn process_keyboard(
@@ -141,10 +155,20 @@ impl EditorInput {
         // Navigation applies after queued text (including IME commits). Other
         // commands suppress text from a printable key remapped to that command.
         let mut text = ui.with_bound_context(take_input_characters);
-        if self.shortcuts.global_pending(ui) {
+        // LSP owners run before this input pass. Native events can include
+        // printable shortcut text, including repeat events while the chord is
+        // held, even when the requested action fails.
+        let mut handled = [
+            "bed.editor.completion",
+            "bed.editor.format_document",
+            "bed.editor.rename",
+            "bed.editor.quick_fix",
+        ]
+        .into_iter()
+        .any(|id| self.shortcuts.consumed(ui, id) || self.shortcuts.held(ui, id));
+        if handled || self.shortcuts.global_pending(ui) {
             text.clear();
         }
-        let mut handled = false;
         let ids = self
             .shortcuts
             .bindings
@@ -174,6 +198,9 @@ impl EditorInput {
                     | "definition"
                     | "references"
                     | "completion"
+                    | "format_document"
+                    | "rename"
+                    | "quick_fix"
                     | "symbol_info"
                     | "zoom_in"
                     | "zoom_out"
@@ -281,7 +308,10 @@ impl EditorInput {
                         editor.commands().insert_newline();
                     }
                 }
-                "delete_left" => editor.commands().delete_left(false),
+                "delete_left" => {
+                    self.prefix_backspace = true;
+                    editor.commands().delete_left(false);
+                }
                 "delete_right" => editor.commands().delete_right(false),
                 "delete_word_left" => editor.commands().delete_left(true),
                 "delete_word_right" => editor.commands().delete_right(true),
@@ -318,8 +348,8 @@ impl EditorInput {
                         editor.commands().paste(text.as_bytes());
                     }
                 }
-                "undo" => editor.commands().undo(),
-                "redo" => editor.commands().redo(),
+                "undo" => actions.push(HostAction::Undo),
+                "redo" => actions.push(HostAction::Redo),
                 "save" => actions.push(HostAction::Save),
                 "save_as" => actions.push(HostAction::SaveAs),
                 "open" => actions.push(HostAction::Open),
@@ -336,6 +366,7 @@ impl EditorInput {
         if !handled && !read_only && !text.is_empty() {
             self.shortcuts.claim_text(ui);
             editor.commands().type_text(text.as_bytes());
+            self.typed_text = Some(text);
         }
         actions
     }

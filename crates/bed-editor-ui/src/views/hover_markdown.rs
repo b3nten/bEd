@@ -7,6 +7,80 @@ pub struct HoverMdBlock {
     pub text: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HoverProseStyle {
+    Text,
+    InlineCode,
+    Bold,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HoverProseRun {
+    pub range: std::ops::Range<usize>,
+    pub style: HoverProseStyle,
+}
+
+/// Remove the supported inline markup before wrapping, so a word and its
+/// position on the line do not depend on how many styled runs it contains.
+pub(crate) fn parse_hover_prose(source: &str) -> (String, Vec<HoverProseRun>) {
+    let mut text = String::new();
+    let mut runs: Vec<HoverProseRun> = Vec::new();
+    let mut emit = |piece: &str, style: HoverProseStyle| {
+        if piece.is_empty() {
+            return;
+        }
+        let start = text.len();
+        text.push_str(piece);
+        if let Some(last) = runs.last_mut()
+            && last.style == style
+        {
+            last.range.end = text.len();
+        } else {
+            runs.push(HoverProseRun {
+                range: start..text.len(),
+                style,
+            });
+        }
+    };
+    let bytes = source.as_bytes();
+    let mut offset = 0;
+    while offset < bytes.len() {
+        if bytes[offset] == b'`'
+            && let Some(end) = source[offset + 1..].find('`').map(|n| n + offset + 1)
+        {
+            emit(&source[offset + 1..end], HoverProseStyle::InlineCode);
+            offset = end + 1;
+            continue;
+        }
+        if source[offset..].starts_with("**")
+            && let Some(end) = source[offset + 2..].find("**").map(|n| n + offset + 2)
+        {
+            emit(&source[offset + 2..end], HoverProseStyle::Bold);
+            offset = end + 2;
+            continue;
+        }
+        if bytes[offset] == b'['
+            && let Some(close) = source[offset + 1..].find(']').map(|n| n + offset + 1)
+            && bytes.get(close + 1) == Some(&b'(')
+            && let Some(end) = source[close + 2..].find(')').map(|n| n + close + 2)
+        {
+            emit(&source[offset + 1..close], HoverProseStyle::Text);
+            offset = end + 1;
+            continue;
+        }
+        let next = (offset + 1..bytes.len())
+            .find(|&n| {
+                bytes[n] == b'`'
+                    || bytes[n] == b'['
+                    || (bytes[n] == b'*' && bytes.get(n + 1) == Some(&b'*'))
+            })
+            .unwrap_or(bytes.len());
+        emit(&source[offset..next], HoverProseStyle::Text);
+        offset = next;
+    }
+    (text, runs)
+}
+
 pub fn split_hover_lines(source: &str) -> Vec<String> {
     source
         .split('\n')
@@ -97,6 +171,32 @@ pub fn parse_hover_markdown(source: &str) -> Vec<HoverMdBlock> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn inline_styling_preserves_words_unicode_and_explicit_breaks() {
+        let (text, runs) = parse_hover_prose(
+            "Con**cat**enate `变量` and [résumé](https://example.org).\n\nNext line.",
+        );
+        assert_eq!(text, "Concatenate 变量 and résumé.\n\nNext line.");
+        assert_eq!(
+            runs.iter()
+                .map(|run| &text[run.range.clone()])
+                .collect::<String>(),
+            text
+        );
+        assert!(
+            runs.iter()
+                .any(|run| run.style == HoverProseStyle::Bold && &text[run.range.clone()] == "cat")
+        );
+        assert!(
+            runs.iter()
+                .any(|run| run.style == HoverProseStyle::InlineCode
+                    && &text[run.range.clone()] == "变量")
+        );
+        assert_eq!(
+            parse_hover_prose("Unclosed **bold and `literal").0,
+            "Unclosed **bold and `literal"
+        );
+    }
     #[test]
     fn upstream_fenced_code_and_prose() {
         let blocks = parse_hover_markdown("hello `int`\n```cpp\nint x;\n```\nworld");

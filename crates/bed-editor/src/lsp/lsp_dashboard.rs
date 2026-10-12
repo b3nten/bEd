@@ -212,6 +212,9 @@ impl LspDashboard {
         if ui.button("Refresh") {
             self.server_infos = client.dashboard_servers();
         }
+        if ui.is_item_hovered() {
+            tooltip_text(ui, "Refresh language server status");
+        }
         same_line_if_fits(ui, button_width(ui, "Reload"));
         if ui.button("Reload") {
             match client.reload_dashboard_config() {
@@ -244,6 +247,9 @@ impl LspDashboard {
                     8.0,
                 ));
             }
+        }
+        if ui.is_item_hovered() {
+            tooltip_text(ui, "Open the language server configuration file");
         }
         ui.spacing();
         // One scroll region keeps long diagnostics and configuration details
@@ -346,6 +352,9 @@ impl LspDashboard {
                         } else {
                             RestartRequest::Server(info.server.clone())
                         });
+                    }
+                    if ui.is_item_hovered() {
+                        tooltip_text(ui, "Restart this language server");
                     }
                     ui.spacing();
                     let label_width = ui.calc_text_size("Executable")[0];
@@ -556,8 +565,9 @@ fn path_text(ui: &Ui, path: &str) {
     ui.text(display_path(ui, path, ui.content_region_avail()[0]));
     if ui.is_item_hovered() {
         tooltip(ui, || {
-            let _wrap = ui.push_text_wrap_pos(ui.current_font_size() * 36.0);
-            ui.text_wrapped(path);
+            let _wrap = ui.push_text_wrap_pos(ui.cursor_pos()[0] + ui.current_font_size() * 36.0);
+            // text_wrapped overrides this width with the tooltip's initial right edge.
+            ui.text(path);
         });
     }
 }

@@ -186,6 +186,7 @@ impl<'a> EditorCommands<'a> {
             primary_before: self.undo_primary_before,
             selections_after: self.snapshot_selections(),
             primary_after: self.view.primary_index,
+            workspace_group: None,
         };
         self.project_undo.record(&self.history_key, edit);
         self.undo_has_before = false;

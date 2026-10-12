@@ -1,4 +1,5 @@
 //! bEd menu policy. Native construction and activation live in bed-desktop.
+use bed_config::LayoutSlot;
 use bed_desktop::{
     DesktopMenu, DesktopMenuCommand, DesktopMenuItem, DesktopModifiers, DesktopShortcut,
 };
@@ -21,10 +22,11 @@ pub enum MenuAction {
     DuplicateView,
     SplitRight,
     SplitDown,
+    SetCurrentLayout,
     ResetLayout,
-    UseLayout(u8),
-    SetLayoutDefault(u8),
-    RestoreBuiltinLayout(u8),
+    UseLayout(LayoutSlot),
+    SetLayoutDefault(LayoutSlot),
+    RestoreBuiltinLayout(LayoutSlot),
     SaveDefaultLayout,
     ResetDefaultLayout,
     Projects,
@@ -90,16 +92,12 @@ impl MenuAction {
     pub fn from_command(id: &str) -> Option<Self> {
         use MenuAction::*;
         for (prefix, action) in [
-            ("bed.app.layout_", UseLayout as fn(u8) -> Self),
+            ("bed.app.layout_", UseLayout as fn(LayoutSlot) -> Self),
             ("bed.app.set_layout_", SetLayoutDefault),
             ("bed.app.restore_layout_", RestoreBuiltinLayout),
         ] {
             if let Some(slot) = id.strip_prefix(prefix) {
-                return slot
-                    .parse::<u8>()
-                    .ok()
-                    .filter(|slot| (1..=9).contains(slot))
-                    .map(action);
+                return LayoutSlot::from_key(slot).map(action);
             }
         }
         [
@@ -118,6 +116,7 @@ impl MenuAction {
             DuplicateView,
             SplitRight,
             SplitDown,
+            SetCurrentLayout,
             ResetLayout,
             SaveDefaultLayout,
             ResetDefaultLayout,
@@ -215,7 +214,7 @@ pub fn menus(
     text_input: bool,
     editor_focused: bool,
     commands: &[bed_editor_workbench::commands::CommandItem],
-    active_layout: u8,
+    active_layout: LayoutSlot,
 ) -> Vec<DesktopMenu> {
     use DesktopMenuItem::*;
     use MenuAction as A;
@@ -307,8 +306,8 @@ pub fn menus(
         (A::GoToLine, "Go to Line…"),
     ]);
     let mut window = Vec::new();
-    for slot in 1..=9 {
-        let item = command(A::UseLayout(slot), &format!("Layout {slot}"));
+    for slot in LayoutSlot::ALL {
+        let item = command(A::UseLayout(slot), slot.label());
         window.push(if slot == active_layout {
             match item {
                 Command(command) => SelectedCommand(command),
@@ -318,17 +317,20 @@ pub fn menus(
             item
         });
     }
+    window.push(command(A::SetCurrentLayout, "Set Current Layout"));
     window.push(command(A::ResetLayout, "Reset Current Layout"));
     window.push(Submenu {
-        label: "Set Layout".into(),
-        items: (1..=9)
-            .map(|slot| command(A::SetLayoutDefault(slot), &format!("Layout {slot}")))
+        label: "Set Other Layout".into(),
+        items: LayoutSlot::ALL
+            .into_iter()
+            .map(|slot| command(A::SetLayoutDefault(slot), slot.label()))
             .collect(),
     });
     window.push(Submenu {
-        label: "Restore Built-in Layout".into(),
-        items: (1..=9)
-            .map(|slot| command(A::RestoreBuiltinLayout(slot), &format!("Layout {slot}")))
+        label: "Reset Other Layout".into(),
+        items: LayoutSlot::ALL
+            .into_iter()
+            .map(|slot| command(A::RestoreBuiltinLayout(slot), slot.label()))
             .collect(),
     });
     window.extend([Separator, Minimize, Maximize, Separator, BringAllToFront]);
@@ -336,7 +338,7 @@ pub fn menus(
         (A::NewExplorer, "File Explorer"),
         (A::NewTerminal, "Terminal"),
         (A::NewSettings, "Settings"),
-        (A::NewProjects, "Startup"),
+        (A::NewProjects, "Workspaces"),
         (A::NewContentSearch, "Project Search"),
         (A::NewDiagnostics, "Diagnostics"),
         (A::NewReferences, "References"),
@@ -403,7 +405,16 @@ mod tests {
             icon: None,
             enabled: true,
         }];
-        let menus = menus(&bindings, true, true, false, false, true, &commands, 1);
+        let menus = menus(
+            &bindings,
+            true,
+            true,
+            false,
+            false,
+            true,
+            &commands,
+            LayoutSlot::Layout1,
+        );
         assert!(!menus.iter().any(|menu| menu.label == "View"));
         let window = menus.iter().find(|menu| menu.label == "Window").unwrap();
         for item in &window.items {
@@ -412,7 +423,11 @@ mod tests {
             {
                 assert!(matches!(
                     MenuAction::from_command(&command.id),
-                    Some(MenuAction::UseLayout(_) | MenuAction::ResetLayout)
+                    Some(
+                        MenuAction::UseLayout(_)
+                            | MenuAction::SetCurrentLayout
+                            | MenuAction::ResetLayout
+                    )
                 ));
             }
         }
@@ -447,7 +462,16 @@ mod tests {
             })
             .collect();
         let bindings = Bindings::new(actions, &Overrides::default(), Platform::Mac);
-        let menus = menus(&bindings, true, true, false, false, true, &[], 3);
+        let menus = menus(
+            &bindings,
+            true,
+            true,
+            false,
+            false,
+            true,
+            &[],
+            LayoutSlot::Layout3,
+        );
         let window = menus.iter().find(|menu| menu.label == "Window").unwrap();
         let selected = window
             .items
@@ -459,13 +483,46 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].id, "bed.app.layout_3");
+        let labels = window
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                DesktopMenuItem::Command(command) | DesktopMenuItem::SelectedCommand(command) => {
+                    Some(command.label.as_str())
+                }
+                DesktopMenuItem::Submenu { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &labels[..14],
+            &[
+                "Layout 1",
+                "Layout 2",
+                "Layout 3",
+                "Layout 4",
+                "Layout 5",
+                "Layout 6",
+                "Layout 7",
+                "Layout 8",
+                "Layout 9",
+                "Startup",
+                "Set Current Layout",
+                "Reset Current Layout",
+                "Set Other Layout",
+                "Reset Other Layout",
+            ]
+        );
         for item in &window.items {
             if let DesktopMenuItem::Submenu { label, items } = item {
                 assert!(matches!(
                     label.as_str(),
-                    "Set Layout" | "Restore Built-in Layout"
+                    "Set Other Layout" | "Reset Other Layout"
                 ));
-                assert_eq!(items.len(), 9);
+                assert_eq!(items.len(), 10);
+                assert!(
+                    matches!(items.last().unwrap(), DesktopMenuItem::Command(command) if command.label == "Startup")
+                );
                 for item in items {
                     let DesktopMenuItem::Command(command) = item else {
                         panic!("expected a menu command")
@@ -477,6 +534,31 @@ mod tests {
         }
         assert!(MenuAction::from_command("bed.app.layout_0").is_none());
         assert!(MenuAction::from_command("bed.app.layout_10").is_none());
+        for action in [
+            MenuAction::UseLayout(LayoutSlot::Startup),
+            MenuAction::SetLayoutDefault(LayoutSlot::Startup),
+            MenuAction::RestoreBuiltinLayout(LayoutSlot::Startup),
+            MenuAction::SetCurrentLayout,
+        ] {
+            assert_eq!(MenuAction::from_command(&action.command_id()), Some(action));
+        }
+        let startup_menus = self::menus(
+            &bindings,
+            true,
+            false,
+            false,
+            false,
+            false,
+            &[],
+            LayoutSlot::Startup,
+        );
+        let startup_window = startup_menus
+            .iter()
+            .find(|menu| menu.label == "Window")
+            .unwrap();
+        assert!(
+            matches!(&startup_window.items[9], DesktopMenuItem::SelectedCommand(command) if command.label == "Startup" && command.shortcut.is_none())
+        );
     }
     #[test]
     fn native_accelerators_preserve_all_modifiers_and_skip_shadowed_or_cleared_bindings() {

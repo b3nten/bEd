@@ -3,3 +3,6 @@
 - keybindings
 	- vim mode
 	- comment line out 
+	
+flamegraph and profiling support
+

@@ -995,7 +995,7 @@
       "settings": {
         "rust-analyzer": {
           "files": {
-            "watcher": "server"
+            "watcher": "client"
           }
         }
       }

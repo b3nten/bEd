@@ -19,3 +19,4 @@ pub mod workspace_lsp;
 #[allow(dead_code)]
 #[path = "../../../tests/support/temp_dir.rs"]
 pub(crate) mod test_support;
+pub mod workspace_edit;

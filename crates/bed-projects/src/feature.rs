@@ -2,8 +2,7 @@
 use super::{MODULE_ID, NEW_COMMAND, PANEL_ID, ProjectsState, project_requests, welcome::Welcome};
 use bed_editor_api::{EditorFrame, EditorIntents, HostRequest, ProjectRequest};
 use bed_workbench_api::{
-    Action, CommandInvocation, CommandResult, Panel, PanelCreation, PanelPersistence, PanelResult,
-    register,
+    Action, CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, register,
 };
 use bevy::prelude::*;
 use dear_imgui_rs::Ui;
@@ -18,12 +17,12 @@ impl Plugin for ProjectsPlugin {
             .register_with(MODULE_ID, |registrar| {
                 registrar.panel_options(
                     PANEL_ID,
-                    "Startup",
+                    "Workspaces",
                     false,
                     bed_editor_api::PanelPlacement::Center,
                     Some("projects"),
                 );
-                registrar.command(NEW_COMMAND, "New Startup Panel", Some("folder"));
+                registrar.command(NEW_COMMAND, "New Workspaces Panel", Some("folder"));
             })
             .expect("feature metadata is installed once");
         app.init_resource::<ProjectsState>()
@@ -33,8 +32,8 @@ impl Plugin for ProjectsPlugin {
                 observe_workspace.in_set(bed_editor_api::EditorFeatureSystems::Prepare),
             );
         register(app.world_mut(), MODULE_ID, |registrar| {
-            registrar.panel(PANEL_ID, "Startup", create_panel);
-            registrar.command(NEW_COMMAND, "New Startup Panel", open_panel);
+            registrar.panel(PANEL_ID, "Workspaces", create_panel);
+            registrar.command(NEW_COMMAND, "New Workspaces Panel", open_panel);
         })
         .expect("ProjectsPlugin must be installed once");
     }
@@ -67,12 +66,10 @@ fn open_panel(In(invocation): In<CommandInvocation>) -> CommandResult {
 
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
-        ("Projects", "Open a folder or choose a recent project to begin working. Remote projects use their saved SSH connection."),
+        ("Workspaces", "Open a folder or choose a recent project to begin working. Remote projects use their saved SSH connection."),
         ("Recent entries", "Right-click a recent project to open it in a new window, rename its label, or remove the entry."),
     ]));
-    world
-        .entity_mut(creation.entity)
-        .insert((ProjectsPanelState, PanelPersistence(false)));
+    world.entity_mut(creation.entity).insert(ProjectsPanelState);
     #[cfg(feature = "scenes")]
     {
         // A panic must retire only this preview's registered system. The
@@ -96,7 +93,7 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
 
 impl Panel for ProjectsFrontend {
     fn title(&self, _: &World) -> String {
-        "Startup".into()
+        "Workspaces".into()
     }
 
     fn draw(
@@ -166,9 +163,9 @@ fn render_scene(
     // its component, restoring it even if a backend panic unwinds this call.
     let mut scene = world
         .get_entity_mut(invocation.entity)
-        .map_err(|_| "Startup preview is no longer open")?
+        .map_err(|_| "Workspaces preview is no longer open")?
         .take::<ProjectsPreview>()
-        .ok_or("Startup preview is no longer open")?;
+        .ok_or("Workspaces preview is no longer open")?;
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut encoder = invocation
             .device
@@ -224,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn launchers_share_world_observations_and_are_omitted_from_sessions() {
+    fn launchers_share_world_observations_and_persist_as_panels() {
         let mut app = app();
         let first = open(&mut app);
         let second = open(&mut app);
@@ -235,11 +232,14 @@ mod tests {
             .resource_mut::<ProjectsState>()
             .recent_workspaces
             .push(WorkspaceSpec::local("/example/project"));
+        let saved = bed_workbench::save(app.world_mut());
+        assert_eq!(saved["panels"].as_array().unwrap().len(), 2);
         assert!(
-            bed_workbench::save(app.world_mut())["panels"]
+            saved["panels"]
                 .as_array()
                 .unwrap()
-                .is_empty()
+                .iter()
+                .all(|panel| panel["panel_type"] == PANEL_ID)
         );
         #[cfg(feature = "scenes")]
         {

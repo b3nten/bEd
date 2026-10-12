@@ -210,6 +210,23 @@ fn promotion_uses_default_terminal_placement_and_opens_later_roots_in_another_wi
     std::fs::create_dir(dir.path("second")).unwrap();
     let mut app = app(&dir);
     let caller = open_terminal(app.world_mut());
+    let template = layouts::template(app.world(), LayoutSlot::Layout1);
+    let panels = template["panels"].as_array().unwrap();
+    let terminal = panels
+        .iter()
+        .find(|panel| panel["panel_type"] == "bed.terminal.panel")
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let default_tiling = bed_workbench::workspace::tiling_state::TilingState::from_value(
+        &template["tiling"],
+        panels.iter().map(|panel| panel["id"].as_u64().unwrap()),
+    )
+    .unwrap();
+    let terminal_rect = default_tiling
+        .layout
+        .area(default_tiling.area_for(terminal).unwrap())
+        .rect;
     let session = app.world().non_send::<EditorSession>().workspace_id();
     request(
         app.world_mut(),
@@ -223,7 +240,7 @@ fn promotion_uses_default_terminal_placement_and_opens_later_roots_in_another_wi
         .tiling
         .area_for(app.world().get::<PanelPresentation>(caller).unwrap().id)
         .unwrap();
-    assert_eq!(state.tiling.layout.area(area).rect.min, [1754, 7255]);
+    assert_eq!(state.tiling.layout.area(area).rect, terminal_rect);
     let layout = state.tiling.clone();
     request(
         app.world_mut(),

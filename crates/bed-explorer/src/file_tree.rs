@@ -13,6 +13,9 @@ pub struct FileTreePreferences {
     pub hide_gitignored: bool,
     pub hide_hidden: bool,
     pub hidden_paths: BTreeSet<String>,
+    // Only explicit workspace choices are saved; inherited defaults stay live.
+    hide_gitignored_override: Option<bool>,
+    hide_hidden_override: Option<bool>,
 }
 impl Default for FileTreePreferences {
     fn default() -> Self {
@@ -21,12 +24,24 @@ impl Default for FileTreePreferences {
             hide_gitignored: true,
             hide_hidden: true,
             hidden_paths: BTreeSet::new(),
+            hide_gitignored_override: None,
+            hide_hidden_override: None,
         }
     }
 }
 impl FileTreePreferences {
     pub fn from_value(value: &Value) -> Self {
         let defaults = Self::default();
+        let visibility_override = |key| {
+            let preference = value[key].as_bool();
+            // Older snapshots saved the enabled defaults even without a choice.
+            // Keep their opt-outs, and let their defaults inherit Settings.
+            if value["visibility_version"].as_u64() == Some(1) {
+                preference
+            } else {
+                preference.filter(|hidden| !hidden)
+            }
+        };
         Self {
             include_ignored: value["include_ignored"]
                 .as_bool()
@@ -45,11 +60,29 @@ impl FileTreePreferences {
                 .filter(|path| valid_relative_path(path))
                 .map(str::to_owned)
                 .collect(),
+            hide_gitignored_override: visibility_override("hide_gitignored"),
+            hide_hidden_override: visibility_override("hide_hidden"),
         }
     }
     pub fn to_value(&self) -> Value {
-        json!({"include_ignored":self.include_ignored,"hide_gitignored":self.hide_gitignored,"hide_hidden":self.hide_hidden,
-            "hidden_paths":self.hidden_paths})
+        let mut value = json!({"visibility_version":1,"include_ignored":self.include_ignored,"hidden_paths":self.hidden_paths});
+        if let Some(hidden) = self.hide_hidden_override {
+            value["hide_hidden"] = json!(hidden);
+        }
+        if let Some(ignored) = self.hide_gitignored_override {
+            value["hide_gitignored"] = json!(ignored);
+        }
+        value
+    }
+    pub(crate) fn apply_defaults(&mut self, settings: &Value) -> bool {
+        let previous = (self.hide_hidden, self.hide_gitignored);
+        self.hide_hidden = self
+            .hide_hidden_override
+            .unwrap_or_else(|| settings["hide_hidden"].as_bool().unwrap_or(true));
+        self.hide_gitignored = self
+            .hide_gitignored_override
+            .unwrap_or_else(|| settings["hide_gitignored"].as_bool().unwrap_or(true));
+        previous != (self.hide_hidden, self.hide_gitignored)
     }
     fn manually_hidden(&self, path: &str) -> bool {
         self.hidden_paths.iter().any(|hidden| {
@@ -548,8 +581,14 @@ impl FileTree {
     /// Returns whether this is a visibility action; callers explicitly persist preferences.
     pub fn apply_visibility_action(&mut self, action: &FileTreeAction, remote: bool) -> bool {
         match action {
-            FileTreeAction::SetHideGitignored(value) => self.preferences.hide_gitignored = *value,
-            FileTreeAction::SetHideHidden(value) => self.preferences.hide_hidden = *value,
+            FileTreeAction::SetHideGitignored(value) => {
+                self.preferences.hide_gitignored = *value;
+                self.preferences.hide_gitignored_override = Some(*value);
+            }
+            FileTreeAction::SetHideHidden(value) => {
+                self.preferences.hide_hidden = *value;
+                self.preferences.hide_hidden_override = Some(*value);
+            }
             FileTreeAction::SetShowHidden(value) => self.show_hidden = *value,
             FileTreeAction::SetPathHidden { path, hidden } => {
                 if let Some(relative) = relative_path(&self.root_node.full_path, path, remote) {

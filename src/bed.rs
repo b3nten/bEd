@@ -246,6 +246,11 @@ fn configure(world: &mut World) {
     let navigation_animations = settings.bool("ui_animations", true);
     #[cfg(feature = "editor")]
     let cursor_smear = settings.bool("cursor_smear", true);
+    #[cfg(feature = "editor")]
+    let lsp_options = (
+        settings.lsp_autocomplete_enabled(),
+        settings.lsp_completion_delay().as_millis() as u64,
+    );
     world.resource_mut::<bed_desktop::DesktopAppearance>().0 = appearance;
     *world.resource_mut::<bed_workbench::WorkbenchAppearance>() = workbench_appearance;
     #[cfg(feature = "editor")]
@@ -253,6 +258,8 @@ fn configure(world: &mut World) {
         let mut config = world.non_send_mut::<bed_editor::EditorConfig>();
         config.navigation_animations = navigation_animations;
         config.options.cursor_smear = cursor_smear;
+        config.lsp.autocomplete = lsp_options.0;
+        config.lsp.completion_delay_ms = lsp_options.1;
     }
     #[cfg(feature = "terminal")]
     {
@@ -930,16 +937,8 @@ pub fn run() -> HostResult<()> {
     let startup = launch
         .startup
         .resolve(launch.paths, std::env::current_dir().ok().as_deref())?;
-    let (options, error) = startup.into_options(&settings)?;
+    let options = startup.into_options(&settings)?;
     let mut app = build_app(options, settings)?;
-    if let Some(error) = error {
-        app.add_systems(
-            PostStartup,
-            move |mut workspace: ResMut<EditorWorkspace>| {
-                workspace.error = Some(error.clone());
-            },
-        );
-    }
     #[cfg(feature = "automation")]
     app.add_plugins(crate::smoke::SmokePlugin(launch.smoke));
     let native_failure = app.world().resource::<NativeFailure>().0.clone();
@@ -1039,6 +1038,7 @@ fn native_menu_command(
         MenuAction::UseLayout(slot) => WindowCommand::UseLayout(slot),
         MenuAction::SetLayoutDefault(slot) => WindowCommand::SetLayoutDefault(slot),
         MenuAction::RestoreBuiltinLayout(slot) => WindowCommand::RestoreBuiltinLayout(slot),
+        MenuAction::SetCurrentLayout => WindowCommand::SetCurrentLayout,
         MenuAction::ResetLayout => WindowCommand::ResetLayout,
         MenuAction::SaveDefaultLayout => WindowCommand::SaveDefaultLayout,
         MenuAction::ResetDefaultLayout => WindowCommand::ResetDefaultLayout,

@@ -19,7 +19,10 @@ fn numbered_sessions_keep_active_selection_and_legacy_accessors() {
         .save_session_layout(None, json!({"active_layout_slot":1,"layouts":{"1":first}}))
         .unwrap();
     let mut reloaded = WorkspaceStore::load(&config).unwrap();
-    assert_eq!(reloaded.active_layout_slot(Some(&spec)), 3);
+    assert_eq!(
+        reloaded.active_layout_slot(Some(&spec)),
+        bed_config::LayoutSlot::Layout3
+    );
     assert_eq!(reloaded.layout(&spec), Some(&third));
     assert_eq!(reloaded.standalone_layout(), Some(&first));
     reloaded
@@ -27,6 +30,37 @@ fn numbered_sessions_keep_active_selection_and_legacy_accessors() {
         .unwrap();
     assert_eq!(reloaded.layout(&spec).unwrap()["state"], "updated");
     assert_eq!(reloaded.session_layouts(Some(&spec)).unwrap()["1"], first);
+}
+
+#[test]
+fn startup_sessions_roundtrip_alongside_numbered_slots() {
+    let temp = TempDir::new();
+    let config = temp.path("config");
+    let mut store = WorkspaceStore::load(&config).unwrap();
+    let startup = json!({"panels":[{"id":1,"panel_type":"bed.projects.panel"}]});
+    let numbered = json!({"panels":[]});
+    store
+        .save_session_layout(
+            None,
+            json!({
+                "active_layout_slot":"startup", "layouts":{"startup":startup,"1":numbered}
+            }),
+        )
+        .unwrap();
+    let loaded = WorkspaceStore::load(&config).unwrap();
+    assert_eq!(loaded.active_layout_slot(None), LayoutSlot::Startup);
+    assert_eq!(loaded.standalone_layout(), Some(&startup));
+    assert_eq!(loaded.session_layouts(None).unwrap()["1"], numbered);
+    assert!(
+        store
+            .save_session_layout(
+                None,
+                json!({
+                    "active_layout_slot":0, "layouts":{"0":numbered}
+                })
+            )
+            .is_err()
+    );
 }
 #[test]
 fn independent_instances_preserve_other_projects_and_fields() {
