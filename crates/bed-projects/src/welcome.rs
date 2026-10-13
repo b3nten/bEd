@@ -23,6 +23,7 @@ pub struct WelcomeAction {
     pub rename_workspace: Option<(WorkspaceSpec, String)>,
     pub error: Option<String>,
 }
+
 pub struct Welcome {
     #[cfg(feature = "scenes")]
     pub(crate) scene: Option<SceneView>,
@@ -36,6 +37,7 @@ pub struct Welcome {
     #[cfg(test)]
     drawn_items: Vec<DrawnItem>,
 }
+
 impl Default for Welcome {
     fn default() -> Self {
         Self {
@@ -53,10 +55,12 @@ impl Default for Welcome {
         }
     }
 }
+
 impl Welcome {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub(crate) fn frontend() -> Self {
         Self {
             #[cfg(feature = "scenes")]
@@ -64,6 +68,7 @@ impl Welcome {
             ..Self::default()
         }
     }
+
     #[cfg(test)]
     pub(crate) fn item_center(&self, name: &str) -> [f32; 2] {
         let item = self
@@ -76,6 +81,7 @@ impl Welcome {
             (item.min[1] + item.max[1]) * 0.5,
         ]
     }
+
     pub fn set_recent_projects(&mut self, projects: impl IntoIterator<Item = PathBuf>) {
         self.workspace_actions = false;
         self.recent_workspaces = projects
@@ -83,10 +89,12 @@ impl Welcome {
             .filter_map(|path| path.to_str().map(WorkspaceSpec::local))
             .collect();
     }
+
     pub fn set_recent_workspaces(&mut self, workspaces: impl IntoIterator<Item = WorkspaceSpec>) {
         self.workspace_actions = true;
         self.recent_workspaces = workspaces.into_iter().collect();
     }
+
     fn ssh_workspace(&self) -> Result<WorkspaceSpec, String> {
         let host = self.ssh_host.trim();
         if host.is_empty()
@@ -112,6 +120,7 @@ impl Welcome {
             target: WorkspaceTarget::Ssh { host: host.into() },
         })
     }
+
     /// Draw inside a caller-owned dockable Projects tab.
     pub fn draw_body(&mut self, ui: &Ui, _host: &HostContext<'_>) -> WelcomeAction {
         #[cfg(feature = "scenes")]
@@ -124,6 +133,7 @@ impl Welcome {
         #[cfg(not(feature = "scenes"))]
         self.draw_body_with_scene(ui, _host)
     }
+
     pub(crate) fn draw_body_with_scene(
         &mut self,
         ui: &Ui,
@@ -453,6 +463,7 @@ struct DrawnItem {
     min: [f32; 2],
     max: [f32; 2],
 }
+
 #[cfg(test)]
 fn record_item(items: &mut Vec<DrawnItem>, ui: &Ui, name: &'static str) {
     items.push(DrawnItem {
@@ -583,6 +594,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn ssh_form_rejects_invalid_hosts_relative_paths_and_other_users_homes() {
         let mut welcome = Welcome::default();
@@ -612,6 +624,7 @@ mod tests {
         max: [f32; 2],
         font: f32,
     }
+
     fn frame(context: &mut Context, welcome: &mut Welcome, size: [f32; 2]) -> Frame {
         context.prepare_frame(FramePrepareOptions::new(
             [size[0] + 80.0, size[1] + 80.0],
@@ -650,6 +663,7 @@ mod tests {
         assert!(context.render_legacy().draw_data().total_vtx_count() > 0);
         result
     }
+
     fn item(welcome: &Welcome, name: &str) -> DrawnItem {
         *welcome
             .drawn_items
@@ -657,6 +671,7 @@ mod tests {
             .find(|item| item.name == name)
             .unwrap_or_else(|| panic!("native item {name} must be drawn"))
     }
+
     fn click(
         context: &mut Context,
         welcome: &mut Welcome,
@@ -675,6 +690,7 @@ mod tests {
         context.io_mut().add_mouse_button_event(button, false);
         frame(context, welcome, size).action
     }
+
     #[test]
     fn welcome_buttons_remote_dialog_and_recent_menu_work_at_wide_and_narrow_sizes() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();

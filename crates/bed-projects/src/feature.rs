@@ -9,6 +9,7 @@ use dear_imgui_rs::Ui;
 use serde_json::Value;
 
 pub struct ProjectsPlugin;
+
 impl Plugin for ProjectsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<bed_editor_api::Registry>();
