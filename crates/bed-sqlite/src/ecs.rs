@@ -19,10 +19,12 @@ pub struct SqliteFile(pub PathBuf);
 
 #[derive(Default)]
 pub struct SqliteStates(HashMap<Entity, SqlitePanel>);
+
 impl SqliteStates {
     pub fn get(&self, entity: Entity) -> Option<&SqlitePanel> {
         self.0.get(&entity)
     }
+
     #[cfg(test)]
     pub(crate) fn get_mut(&mut self, entity: Entity) -> Option<&mut SqlitePanel> {
         self.0.get_mut(&entity)
@@ -35,6 +37,7 @@ pub enum SqliteSystems {
 }
 
 pub struct SqlitePlugin;
+
 impl Plugin for SqlitePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<EditorFrame>()
@@ -232,6 +235,7 @@ fn status_command(
 struct SqliteFrontend {
     entity: Entity,
 }
+
 impl Panel for SqliteFrontend {
     fn title(&self, world: &World) -> String {
         world
@@ -296,6 +300,7 @@ mod tests {
     };
 
     struct Database(PathBuf);
+
     impl Database {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -313,6 +318,7 @@ mod tests {
             Self(path)
         }
     }
+
     impl Drop for Database {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);

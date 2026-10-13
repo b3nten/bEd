@@ -161,6 +161,7 @@ impl SqlitePanel {
         text.error = self.error.is_some();
         text
     }
+
     pub fn new(path: PathBuf, saved: &Value) -> Self {
         let mut state: ViewState = serde_json::from_value(saved.clone()).unwrap_or_default();
         match state.tab {
@@ -1002,6 +1003,7 @@ impl SqlitePanel {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "SQLite Viewer".into())
     }
+
     pub(crate) fn draw_prepared(
         &mut self,
         ui: &Ui,
@@ -1035,6 +1037,7 @@ impl SqlitePanel {
             requests.push(HostRequest::Invalidate);
         }
     }
+
     pub(crate) fn saved_state(&self) -> Value {
         serde_json::to_value(&self.state).expect("SQLite view state is serializable")
     }
@@ -1127,6 +1130,7 @@ mod tests {
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     struct Database(PathBuf);
+
     impl Database {
         fn new(sql: &str) -> Self {
             let path = std::env::temp_dir().join(format!(
@@ -1138,6 +1142,7 @@ mod tests {
             Self(path)
         }
     }
+
     impl Drop for Database {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
@@ -1145,10 +1150,12 @@ mod tests {
     }
 
     struct Clipboard(Rc<RefCell<String>>);
+
     impl dear_imgui_rs::ClipboardBackend for Clipboard {
         fn get(&mut self) -> Option<String> {
             Some(self.0.borrow().clone())
         }
+
         fn set(&mut self, value: &str) {
             *self.0.borrow_mut() = value.into();
         }
@@ -1175,6 +1182,7 @@ mod tests {
         Control(&'static CStr),
         Page(&'static CStr),
     }
+
     impl Harness {
         fn new(database: &Database, state: Value) -> Self {
             let mut context = Context::create();

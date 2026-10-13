@@ -32,6 +32,7 @@ fn register_metadata(registrar: &mut Registrar<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn remote_sqlite_requests_fail_before_opening_a_connection() {
         let mut app = bevy::app::App::new();
@@ -88,6 +89,7 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
         ),
     ]
 }
+
 pub(crate) fn default_shortcuts() -> bed_keybindings::ShortcutInput {
     bed_keybindings::ShortcutInput::new(bed_keybindings::Bindings::new(
         bed_keybindings::common_actions()
