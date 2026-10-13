@@ -28,6 +28,7 @@ struct Parameters {
 @group(0) @binding(3) var frame_sampler: sampler;
 
 fn texture_uv(gl_uv: vec2<f32>) -> vec2<f32> { return vec2(gl_uv.x, 1.0 - gl_uv.y); }
+
 fn sample_current(uv: vec2<f32>) -> vec4<f32> {
     return textureSampleLevel(current_frame, frame_sampler, texture_uv(uv), 0.0);
 }

@@ -12,6 +12,7 @@ struct TemporalBuffers {
     burn_inputs: [wgpu::BindGroup; 2],
     crt_inputs: [wgpu::BindGroup; 2],
 }
+
 pub struct ShaderManager {
     pub fb: FramebufferState,
     device: wgpu::Device,
@@ -26,6 +27,7 @@ pub struct ShaderManager {
     last_settings: Option<ShaderSettings>,
     frame_timestamps: Option<(wgpu::QuerySet, u32)>,
 }
+
 impl ShaderManager {
     pub fn new(
         device: &wgpu::Device,
@@ -109,6 +111,7 @@ impl ShaderManager {
             frame_timestamps: None,
         }
     }
+
     fn bind_group(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
@@ -140,10 +143,12 @@ impl ShaderManager {
             ],
         })
     }
+
     /// Discard persistence after a scene change; unrelated native viewports retain their own state.
     pub fn invalidate_history(&mut self) {
         self.temporal = None;
     }
+
     pub fn initialize_framebuffers(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         if width == 0
             || height == 0
@@ -162,6 +167,7 @@ impl ShaderManager {
         );
         self.invalidate_history();
     }
+
     fn ensure_temporal(&mut self) {
         if self.temporal.is_some() {
             return;
@@ -192,12 +198,14 @@ impl ShaderManager {
             crt_inputs,
         });
     }
+
     /// Time the next postprocessing frame with two consecutive timestamp queries.
     /// The device must have `TIMESTAMP_QUERY` enabled. Both the optional burn-in
     /// pass and CRT presentation are included; subsequent frames are untimed.
     pub fn timestamp_next_frame(&mut self, queries: &wgpu::QuerySet, first_query: u32) {
         self.frame_timestamps = Some((queries.clone(), first_query));
     }
+
     pub fn render_with_effects(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -263,6 +271,7 @@ impl ShaderManager {
             );
         }
     }
+
     fn render_pass(
         encoder: &mut wgpu::CommandEncoder,
         output: &wgpu::TextureView,
@@ -294,8 +303,10 @@ impl ShaderManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
         struct ThreadWake(std::thread::Thread);
+
         impl std::task::Wake for ThreadWake {
             fn wake(self: std::sync::Arc<Self>) {
                 self.0.unpark();

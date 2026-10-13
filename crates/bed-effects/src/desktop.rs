@@ -128,6 +128,7 @@ fn compose_editor(
 
 /// Final desktop composition with the editor visual effects.
 pub struct EffectsPlugin;
+
 impl Plugin for EffectsPlugin {
     fn build(&self, app: &mut App) {
         install(app);

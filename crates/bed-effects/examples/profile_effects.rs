@@ -7,6 +7,7 @@ use std::{error::Error, future::Future, sync::Arc, task::Wake, time::Duration};
 
 fn block_on<T>(future: impl Future<Output = T>) -> T {
     struct ThreadWake(std::thread::Thread);
+
     impl Wake for ThreadWake {
         fn wake(self: Arc<Self>) {
             self.0.unpark();

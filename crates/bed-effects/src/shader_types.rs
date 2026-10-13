@@ -56,6 +56,7 @@ impl AccumulationBuffers {
 }
 
 pub struct ShaderQuad;
+
 impl ShaderQuad {
     pub fn draw(pass: &mut wgpu::RenderPass<'_>) {
         pass.draw(0..6, 0..1);

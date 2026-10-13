@@ -13,6 +13,7 @@ fn sample_bloom(uv: vec2<f32>, offset: f32) -> vec3<f32> {
     }
     return bloom / total;
 }
+
 fn apply_curvature(uv: vec2<f32>, intensity: f32) -> vec2<f32> {
     if intensity == 0.0 { return uv; }
     let center = uv - vec2(0.5);
