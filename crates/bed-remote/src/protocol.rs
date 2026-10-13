@@ -275,6 +275,8 @@ pub enum Response {
     CheckJob {
         #[serde(rename = "completion")]
         result: Option<std::result::Result<crate::CheckOutput, String>>,
+        #[serde(default)]
+        stdout: Vec<u8>,
     },
     GitStarted {
         job_id: u64,

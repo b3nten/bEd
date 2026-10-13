@@ -20,6 +20,7 @@ pub(super) struct Analysis {
     pub minimum_hz: f32,
     pub maximum_hz: f32,
 }
+
 impl Analysis {
     pub fn spectrum(&self, fraction: f64) -> &[u8] {
         let column =
@@ -42,6 +43,7 @@ pub(super) struct SpectrumComputer {
     scratch: Vec<Complex<f32>>,
     power: Vec<f32>,
 }
+
 impl SpectrumComputer {
     pub fn new(audio: &Audio) -> Self {
         let maximum_hz = audio.sample_rate as f32 * 0.5;
@@ -79,6 +81,7 @@ impl SpectrumComputer {
             power: vec![0.0; WINDOW / 2 + 1],
         }
     }
+
     pub fn compute(
         &mut self,
         audio: &Audio,
@@ -154,7 +157,6 @@ pub(super) fn analyze(audio: &Audio, cancelled: impl Fn() -> bool) -> Result<Ana
     })
 }
 
-/// Dark indigo → purple → coral → warm yellow; silence remains distinguishable.
 pub(super) fn heat_color(level: u8) -> [u8; 4] {
     const STOPS: [[f32; 3]; 5] = [
         [10.0, 12.0, 28.0],

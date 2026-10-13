@@ -7,6 +7,7 @@ pub(super) struct SpectrogramGpu {
     pipeline: wgpu::RenderPipeline,
     bindings: wgpu::BindGroup,
 }
+
 impl SpectrogramGpu {
     pub fn new(gpu: &GpuContext<'_>, analysis: &Analysis) -> Result<Self, String> {
         let texture = gpu.upload_rgba(
@@ -75,6 +76,7 @@ impl SpectrogramGpu {
             bindings,
         })
     }
+
     pub fn render(&self, gpu: &mut GpuContext<'_>, target: &RenderTarget) {
         let mut pass = gpu.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Audio spectrogram output"),

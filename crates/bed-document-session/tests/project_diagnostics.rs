@@ -73,6 +73,90 @@ fn cargo_checks_unopened_files_and_success_atomically_clears_results() {
     assert_eq!(snapshot.errors, 0);
     assert!(snapshot.by_path.is_empty());
 }
+
+#[cfg(unix)]
+#[test]
+fn compiler_diagnostics_reach_the_editor_before_the_workspace_check_finishes() {
+    use bed_document_session::{CheckFormat, ProjectCheckConfig};
+    let fixture = Fixture::new();
+    let source = fixture.0.join("src/lib.rs");
+    fs::write(&source, "pub fn broken() {}\n").unwrap();
+    let report = format!(
+        "{}\n",
+        json!({"reason":"compiler-message","message":{"level":"error","message":"unknown café","spans":[{"file_name":"src/lib.rs","line_start":1,"line_end":1,"column_start":8,"column_end":14,"is_primary":true}]}})
+    );
+    // Split inside a UTF-8 character and hold the process at each stage so
+    // publication is tested independently of check completion.
+    let split = report.find('é').unwrap() + 1;
+    fs::write(fixture.0.join("first"), &report.as_bytes()[..split]).unwrap();
+    fs::write(fixture.0.join("rest"), &report.as_bytes()[split..]).unwrap();
+    fs::write(
+        fixture.0.join("finished"),
+        b"{\"reason\":\"build-finished\",\"success\":false}\n",
+    )
+    .unwrap();
+    let mut session = EditorSession::with_options(SessionOptions {
+        project_root: Some(fixture.0.clone()),
+        ..Default::default()
+    })
+    .unwrap();
+    let document = session.open_file(&source).unwrap();
+    let view = session.create_view(document).unwrap();
+    session.configure_project_check(ProjectCheckConfig {
+        program: "/bin/sh".into(),
+        arguments: vec![
+            "-c".into(),
+            "cat first; touch partial; while [ ! -f continue ]; do sleep 0.01; done; cat rest; while [ ! -f finish ]; do sleep 0.01; done; cat finished; exit 1".into(),
+        ],
+        directory: ".".into(),
+        format: CheckFormat::CargoJson,
+        automatic: false,
+    });
+    session.tick();
+    session.request_project_check();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !fixture.0.join("partial").exists() {
+        session.tick();
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(5));
+    }
+    session.tick();
+    assert_eq!(session.project_diagnostics().errors, 0);
+    assert!(session.project_diagnostics().checking);
+    fs::write(fixture.0.join("continue"), b"").unwrap();
+    while session.project_diagnostics().errors == 0 {
+        session.tick();
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(5));
+    }
+    let snapshot = session.project_diagnostics();
+    assert!(snapshot.checking, "The checker is still waiting for finish");
+    assert_eq!(snapshot.errors, 1);
+    let inline = session
+        .with_view(view, |editor| {
+            editor
+                .diagnostics
+                .as_ref()
+                .unwrap()
+                .for_document(&editor.state.path)
+        })
+        .unwrap();
+    assert_eq!(inline[0].message, "unknown café");
+    fs::write(fixture.0.join("finish"), b"").unwrap();
+    let completed = checked(&mut session);
+    assert_eq!(completed.by_path, snapshot.by_path);
+    assert!(!completed.stale);
+
+    // A successful following check removes the previously streamed error.
+    let mut config = session.project_check_config().clone();
+    config.arguments = vec![
+        "-c".into(),
+        "printf '%s\\n' '{\"reason\":\"build-finished\",\"success\":true}'".into(),
+    ];
+    session.configure_project_check(config);
+    session.request_project_check();
+    assert_eq!(checked(&mut session).errors, 0);
+}
 #[test]
 fn rust_check_does_not_claim_complete_coverage_for_other_project_languages() {
     let fixture = Fixture::new();

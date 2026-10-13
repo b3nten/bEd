@@ -399,6 +399,7 @@ fn context(documents: &[PluginDocument]) -> HostContext<'_> {
         diagnostics: &SETTINGS,
     }
 }
+
 #[test]
 fn revisions_discard_old_decode_and_restored_state_never_autoplays() {
     let id = DocumentId::next();

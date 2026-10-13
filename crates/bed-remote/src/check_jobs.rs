@@ -8,7 +8,7 @@ use std::{
     path::PathBuf,
     process::{Command, Stdio},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -29,6 +29,7 @@ pub struct CheckOutput {
 pub struct CheckJob {
     canceled: Arc<AtomicBool>,
     completed: mpsc::Receiver<Result<CheckOutput, String>>,
+    stdout: Arc<Mutex<Vec<u8>>>,
 }
 impl CheckJob {
     pub fn start(
@@ -51,18 +52,27 @@ impl CheckJob {
         let canceled = Arc::new(AtomicBool::new(false));
         let stop = canceled.clone();
         let (sender, completed) = mpsc::sync_channel(1);
+        let stdout = Arc::new(Mutex::new(Vec::new()));
+        let progress = stdout.clone();
         thread::spawn(move || {
             let _ = sender.send(
-                run(root, program, arguments, directory, path, stop).map_err(|e| e.to_string()),
+                run(root, program, arguments, directory, path, stop, progress)
+                    .map_err(|e| e.to_string()),
             );
         });
         Self {
             canceled,
             completed,
+            stdout,
         }
     }
     pub fn cancel(&self) {
         self.canceled.store(true, Ordering::Release);
+    }
+    /// Drain newly read stdout without waiting for the check to finish. The
+    /// complete bounded output is still returned by `try_result`.
+    pub fn take_stdout(&self) -> Vec<u8> {
+        std::mem::take(&mut *self.stdout.lock().unwrap())
     }
     pub fn try_result(&mut self) -> Option<Result<CheckOutput, String>> {
         match self.completed.try_recv() {
@@ -80,7 +90,10 @@ impl Drop for CheckJob {
     }
 }
 
-fn read_bounded(mut reader: impl Read) -> io::Result<Vec<u8>> {
+fn read_bounded(
+    mut reader: impl Read,
+    progress: Option<Arc<Mutex<Vec<u8>>>>,
+) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     let mut buffer = [0; 8192];
     let mut exceeded = false;
@@ -92,6 +105,12 @@ fn read_bounded(mut reader: impl Read) -> io::Result<Vec<u8>> {
         let remaining = MAX_OUTPUT.saturating_sub(bytes.len());
         exceeded |= count > remaining;
         bytes.extend_from_slice(&buffer[..count.min(remaining)]);
+        if let Some(progress) = &progress {
+            progress
+                .lock()
+                .unwrap()
+                .extend_from_slice(&buffer[..count.min(remaining)]);
+        }
     }
     if exceeded {
         Err(io::Error::other("Project check output exceeds 16 MiB"))
@@ -106,6 +125,7 @@ fn run(
     directory: String,
     path: Option<OsString>,
     canceled: Arc<AtomicBool>,
+    progress: Arc<Mutex<Vec<u8>>>,
 ) -> io::Result<CheckOutput> {
     if program.is_empty() {
         return Err(io::Error::new(
@@ -140,8 +160,8 @@ fn run(
     let mut child = command.spawn()?;
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-    let out = thread::spawn(move || read_bounded(stdout));
-    let err = thread::spawn(move || read_bounded(stderr));
+    let out = thread::spawn(move || read_bounded(stdout, Some(progress)));
+    let err = thread::spawn(move || read_bounded(stderr, None));
     let start = Instant::now();
     let stop = |child: &mut std::process::Child| {
         #[cfg(unix)]
@@ -240,6 +260,7 @@ impl CheckJobs {
                 }
                 Ok(Response::CheckJob {
                     result: entry.result.clone(),
+                    stdout: entry.job.take_stdout(),
                 })
             }
             Request::CheckCancel { job_id } => {

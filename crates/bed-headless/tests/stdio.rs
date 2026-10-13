@@ -477,7 +477,10 @@ fn project_checks_do_not_block_file_requests_and_cancel_over_protocol() {
         .call(Request::CheckStart {
             root: temp.root(),
             program: "sh".into(),
-            arguments: vec!["-c".into(), "touch ready; sleep 30 & wait".into()],
+            arguments: vec![
+                "-c".into(),
+                "printf 'first diagnostic\\n'; touch ready; sleep 30 & wait".into(),
+            ],
             directory: ".".into(),
         })
         .unwrap()
@@ -489,6 +492,23 @@ fn project_checks_do_not_block_file_requests_and_cancel_over_protocol() {
         assert!(Instant::now() < deadline);
         thread::sleep(Duration::from_millis(5));
     }
+    let mut streamed = Vec::new();
+    while streamed.is_empty() {
+        match client.call(Request::CheckPoll { job_id }).unwrap() {
+            Response::CheckJob {
+                result: None,
+                stdout,
+            } => streamed.extend(stdout),
+            other => panic!("Check must still be running: {other:?}"),
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(streamed, b"first diagnostic\n");
+    assert!(matches!(
+        client.call(Request::CheckPoll { job_id }).unwrap(),
+        Response::CheckJob { result: None, stdout } if stdout.is_empty()
+    ));
     assert!(matches!(
         client
             .call(Request::ReadFile {
@@ -503,11 +523,12 @@ fn project_checks_do_not_block_file_requests_and_cancel_over_protocol() {
         match client.call(Request::CheckPoll { job_id }).unwrap() {
             Response::CheckJob {
                 result: Some(result),
+                ..
             } => {
                 assert!(result.unwrap_err().contains("canceled"));
                 break;
             }
-            Response::CheckJob { result: None } => {
+            Response::CheckJob { result: None, .. } => {
                 assert!(Instant::now() < deadline);
                 thread::sleep(Duration::from_millis(5));
             }

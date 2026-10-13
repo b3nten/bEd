@@ -41,6 +41,7 @@ pub enum AudioSystems {
 }
 
 pub struct AudioPlugin;
+
 impl Plugin for AudioPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<EditorFrame>()
@@ -288,6 +289,7 @@ fn publish_output(world: &mut World, entity: Entity, output: Option<RenderOutput
 struct AudioFrontend {
     entity: Entity,
 }
+
 impl Panel for AudioFrontend {
     fn title(&self, world: &World) -> String {
         world
@@ -369,6 +371,7 @@ mod ecs_tests {
             text: None,
         }
     }
+
     fn create(app: &mut App, state: Value) -> (Entity, Box<dyn Panel>) {
         let entity = app
             .world_mut()
@@ -392,6 +395,7 @@ mod ecs_tests {
             .unwrap();
         (entity, panel)
     }
+
     fn wait(app: &mut App, entity: Entity, ready: impl Fn(&AudioPanel) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -406,6 +410,7 @@ mod ecs_tests {
             thread::sleep(Duration::from_millis(1));
         }
     }
+
     #[test]
     fn commands_keep_the_origin_path_and_area() {
         let mut app = App::new();

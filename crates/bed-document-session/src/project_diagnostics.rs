@@ -119,6 +119,9 @@ fn is_non_rust_source(path: &str) -> bool {
 struct Worker {
     canceled: Arc<AtomicBool>,
     result: mpsc::Receiver<Result<ParsedCheck, String>>,
+    output: mpsc::Receiver<Vec<u8>>,
+    unread: Vec<u8>,
+    diagnostics: BTreeMap<String, Vec<DiagnosticItem>>,
 }
 impl Drop for Worker {
     fn drop(&mut self) {
@@ -236,7 +239,9 @@ impl ProjectDiagnostics {
     pub fn saved(&mut self) {
         self.stale = true;
         if self.config.automatic && (self.available || self.configured) {
-            self.pending = Some(Instant::now() + Duration::from_secs(1));
+            // Autosave already waits for idle typing. Only coalesce nearby
+            // saves and filesystem notifications here.
+            self.pending = Some(Instant::now() + Duration::from_millis(150));
         }
     }
     pub fn edited(&mut self) {
@@ -318,6 +323,40 @@ impl ProjectDiagnostics {
                 Err(error) => self.status = format!("Project discovery failed: {error}"),
             }
         }
+        if let Some(worker) = &mut self.worker {
+            let mut complete_lines_end = None;
+            while let Ok(bytes) = worker.output.try_recv() {
+                if let Some(end) = bytes.iter().rposition(|byte| *byte == b'\n') {
+                    complete_lines_end = Some(worker.unread.len() + end + 1);
+                }
+                worker.unread.extend(bytes);
+            }
+            if let Some(end) = complete_lines_end {
+                let remainder = worker.unread.split_off(end);
+                let lines = std::mem::replace(&mut worker.unread, remainder);
+                let directory = self.root.as_ref().unwrap().join(&self.config.directory);
+                // Partial reads may split JSON or UTF-8. Decode complete lines
+                // only; the final report validates completion and replaces all
+                // previous results, including files with no remaining errors.
+                if let Ok((items, _)) = parse_reports(
+                    &directory,
+                    self.config.format,
+                    &lines,
+                    self.remote.is_some(),
+                ) {
+                    for (path, items) in items {
+                        match self.config.format {
+                            CheckFormat::CargoJson => {
+                                worker.diagnostics.entry(path).or_default().extend(items);
+                            }
+                            CheckFormat::LspJsonLines => {
+                                worker.diagnostics.insert(path, items);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if let Some(worker) = &self.worker
             && let Ok(result) = worker.result.try_recv()
         {
@@ -352,12 +391,13 @@ impl ProjectDiagnostics {
             let canceled = Arc::new(AtomicBool::new(false));
             let stop = canceled.clone();
             let (sender, result) = mpsc::sync_channel(1);
+            let (progress, output) = mpsc::channel();
             thread::spawn(move || {
                 let directory = root.join(&config.directory);
                 let format = config.format;
                 let remote_paths = remote.is_some();
                 let output = if let Some(client) = remote {
-                    run_remote(&client, root, &config, stop)
+                    run_remote(&client, root, &config, stop, &progress)
                 } else {
                     let command =
                         local_check_command(&config, &ServerDiscoveryEnvironment::current());
@@ -378,6 +418,10 @@ impl ProjectDiagnostics {
                         if stop.load(Ordering::Acquire) {
                             job.cancel();
                         }
+                        let bytes = job.take_stdout();
+                        if !bytes.is_empty() {
+                            let _ = progress.send(bytes);
+                        }
                         if let Some(result) = job.try_result() {
                             break result;
                         }
@@ -389,7 +433,13 @@ impl ProjectDiagnostics {
                         parse_output(&directory, format, &output, remote_paths)
                     }));
             });
-            self.worker = Some(Worker { canceled, result });
+            self.worker = Some(Worker {
+                canceled,
+                result,
+                output,
+                unread: Vec::new(),
+                diagnostics: BTreeMap::new(),
+            });
         }
     }
     pub fn snapshot(
@@ -409,7 +459,13 @@ impl ProjectDiagnostics {
             status: self.status.clone(),
             ..Default::default()
         };
-        for (path, items) in &self.diagnostics {
+        let mut checked = self.diagnostics.clone();
+        if let Some(worker) = &self.worker {
+            // Each freshly reported path supersedes its previous check's
+            // diagnostics. Untouched paths remain until a complete check.
+            checked.extend(worker.diagnostics.clone());
+        }
+        for (path, items) in &checked {
             let entries = result.by_path.entry(path.clone()).or_default();
             for item in items {
                 if !entries.iter().any(|old| {
@@ -494,6 +550,7 @@ fn run_remote(
     root: PathBuf,
     config: &ProjectCheckConfig,
     stop: Arc<AtomicBool>,
+    progress: &mpsc::Sender<Vec<u8>>,
 ) -> Result<CheckOutput, String> {
     let Response::CheckStarted { job_id } = client
         .call(Request::CheckStart {
@@ -512,10 +569,15 @@ fn run_remote(
             break Err("Project check canceled".into());
         }
         match client.call(Request::CheckPoll { job_id }) {
-            Ok(Response::CheckJob {
-                result: Some(result),
-            }) => break result,
-            Ok(Response::CheckJob { result: None }) => thread::sleep(Duration::from_millis(100)),
+            Ok(Response::CheckJob { result, stdout }) => {
+                if !stdout.is_empty() {
+                    let _ = progress.send(stdout);
+                }
+                if let Some(result) = result {
+                    break result;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
             Ok(_) => break Err("Unexpected check poll response".into()),
             Err(error) => break Err(error.to_string()),
         }
@@ -529,10 +591,29 @@ fn parse_output(
     output: &CheckOutput,
     remote_paths: bool,
 ) -> Result<ParsedCheck, String> {
+    let (diagnostics, build_finished) = parse_reports(root, format, &output.stdout, remote_paths)?;
+    let successful = output.exit_code == Some(0);
+    if !successful && diagnostics.is_empty() {
+        return Err(String::from_utf8_lossy(&output.stderr)
+            .chars()
+            .take(4096)
+            .collect::<String>());
+    }
+    if format == CheckFormat::CargoJson && !build_finished {
+        return Err("Cargo did not finish reporting diagnostics".into());
+    }
+    Ok((diagnostics, successful))
+}
+
+fn parse_reports(
+    root: &Path,
+    format: CheckFormat,
+    stdout: &[u8],
+    remote_paths: bool,
+) -> Result<ParsedCheck, String> {
     let mut diagnostics = BTreeMap::<String, Vec<DiagnosticItem>>::new();
     let mut build_finished = false;
-    for line in output
-        .stdout
+    for line in stdout
         .split(|byte| *byte == b'\n')
         .filter(|line| !line.is_empty())
     {
@@ -638,17 +719,7 @@ fn parse_output(
             }
         }
     }
-    let successful = output.exit_code == Some(0);
-    if !successful && diagnostics.is_empty() {
-        return Err(String::from_utf8_lossy(&output.stderr)
-            .chars()
-            .take(4096)
-            .collect::<String>());
-    }
-    if format == CheckFormat::CargoJson && !build_finished {
-        return Err("Cargo did not finish reporting diagnostics".into());
-    }
-    Ok((diagnostics, successful))
+    Ok((diagnostics, build_finished))
 }
 
 fn diagnostic_path(path: PathBuf, remote: bool) -> String {
@@ -720,6 +791,9 @@ mod tests {
         service.worker = Some(Worker {
             canceled: Arc::new(AtomicBool::new(false)),
             result,
+            output: mpsc::channel().1,
+            unread: Vec::new(),
+            diagnostics: BTreeMap::new(),
         });
         service.tick();
         assert!(service.owns_cargo_check());
@@ -728,10 +802,52 @@ mod tests {
         service.worker = Some(Worker {
             canceled: Arc::new(AtomicBool::new(false)),
             result,
+            output: mpsc::channel().1,
+            unread: Vec::new(),
+            diagnostics: BTreeMap::new(),
         });
         service.tick();
         assert!(!service.owns_cargo_check());
         assert!(service.status.contains("compiler could not start"));
+    }
+    #[test]
+    fn failed_streaming_check_preserves_the_last_completed_results() {
+        let path = "/project/src/lib.rs".to_owned();
+        let previous = DiagnosticItem {
+            message: "previous compiler error".into(),
+            source: "cargo".into(),
+            ..Default::default()
+        };
+        let mut service = ProjectDiagnostics {
+            root: Some(PathBuf::from("/project")),
+            diagnostics: [(path.clone(), vec![previous.clone()])].into(),
+            complete: true,
+            ..Default::default()
+        };
+        let (sender, result) = mpsc::channel();
+        let (progress, output) = mpsc::channel();
+        service.worker = Some(Worker {
+            canceled: Arc::new(AtomicBool::new(false)),
+            result,
+            output,
+            unread: Vec::new(),
+            diagnostics: BTreeMap::new(),
+        });
+        progress.send(format!("{}\n", json!({"reason":"compiler-message","message":{"level":"error","message":"new compiler error","spans":[{"file_name":"src/lib.rs","line_start":1,"line_end":1,"column_start":1,"column_end":1,"is_primary":true}]}})).into_bytes()).unwrap();
+        service.tick();
+        let snapshot = service.snapshot(BTreeMap::new(), false, false);
+        assert!(snapshot.checking);
+        assert_eq!(snapshot.by_path[&path].len(), 1);
+        assert_eq!(snapshot.by_path[&path][0].message, "new compiler error");
+
+        sender
+            .send(Err("Cargo did not finish reporting diagnostics".into()))
+            .unwrap();
+        service.tick();
+        let snapshot = service.snapshot(BTreeMap::new(), false, false);
+        assert!(!snapshot.checking);
+        assert!(snapshot.stale);
+        assert_eq!(snapshot.by_path[&path], vec![previous]);
     }
     #[test]
     fn cargo_reports_closed_files_and_success_clears_previous_errors() {

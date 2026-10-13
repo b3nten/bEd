@@ -35,6 +35,7 @@ pub const PANEL_ID: &str = "bed.audio.panel";
 pub const VIEWER_ID: &str = "bed.audio.viewer";
 pub const OPEN_COMMAND: &str = "bed.audio.open";
 pub const OPEN_FILE_COMMAND: &str = "bed.audio.open-file";
+
 const EXTENSIONS: &[&str] = &[
     "wav", "wave", "mp3", "flac", "ogg", "oga", "aac", "m4a", "mp4", "aif", "aiff", "aifc", "caf",
 ];
@@ -65,6 +66,7 @@ struct Job {
     serial: u64,
     bytes: Arc<[u8]>,
 }
+
 struct Worker {
     sender: Option<mpsc::SyncSender<Job>>,
     receiver: mpsc::Receiver<(Revision, WorkerResult)>,
@@ -72,16 +74,19 @@ struct Worker {
     spectrum_sender: Option<mpsc::SyncSender<SpectrumJob>>,
     spectrum_receiver: mpsc::Receiver<(Revision, usize, [u8; analysis::BANDS])>,
 }
+
 struct SpectrumJob {
     revision: Revision,
     serial: u64,
     center: usize,
     audio: Arc<Audio>,
 }
+
 enum WorkerResult {
     Decoded(Result<Arc<Audio>, String>),
     Analyzed(Result<analysis::Analysis, String>),
 }
+
 impl Worker {
     fn new() -> Self {
         let (sender, jobs) = mpsc::sync_channel::<Job>(1);
@@ -90,8 +95,6 @@ impl Worker {
         let (spectrum_sender, spectrum_jobs) = mpsc::sync_channel::<SpectrumJob>(1);
         let (spectrum_results, spectrum_receiver) = mpsc::channel();
         let active = Arc::clone(&serial);
-        // Live spectrum stays responsive while whole-file analysis is running.
-        // One pending request bounds memory and coalesces rapid playback/seeks.
         thread::spawn(move || {
             let mut computer: Option<(u64, analysis::SpectrumComputer)> = None;
             while let Ok(mut job) = spectrum_jobs.recv() {
@@ -163,6 +166,7 @@ impl Worker {
         }
     }
 }
+
 impl Drop for Worker {
     fn drop(&mut self) {
         self.serial.fetch_add(1, Ordering::Relaxed);
@@ -170,11 +174,13 @@ impl Drop for Worker {
         self.spectrum_sender.take();
     }
 }
+
 struct Playback {
-    // Drop the sink before the stream that services it.
+    // drop the sink before the stream that services it
     sink: Sink,
     _stream: OutputStream,
 }
+
 pub struct AudioPanel {
     pub(crate) shortcuts: bed_keybindings::ShortcutInput,
     document: DocumentId,
@@ -198,6 +204,7 @@ pub struct AudioPanel {
     spectrum_submitted: Option<usize>,
     spectrum_ready: Option<usize>,
 }
+
 impl AudioPanel {
     fn new(document: DocumentId, state: &Value) -> Self {
         Self {
@@ -233,6 +240,7 @@ impl AudioPanel {
             spectrum_ready: None,
         }
     }
+
     fn sync(&mut self, host: &HostContext<'_>) {
         let Some(document) = host.document(self.document) else {
             self.playback = None;
@@ -298,6 +306,7 @@ impl AudioPanel {
         }
         self.request_spectrum();
     }
+
     fn request_spectrum(&mut self) {
         let Some(audio) = &self.audio else {
             return;
@@ -329,14 +338,17 @@ impl AudioPanel {
             self.spectrum_submitted = Some(center);
         }
     }
+
     fn spectrum_center(&self) -> Option<usize> {
         self.audio.as_ref().map(|audio| {
             (self.position * audio.sample_rate as f64) as usize / analysis::HOP * analysis::HOP
         })
     }
+
     fn spectrum_pending(&self) -> bool {
         self.sections[1] && self.audio.is_some() && self.spectrum_center() != self.spectrum_ready
     }
+
     fn current_position(&self) -> f64 {
         self.playback.as_ref().map_or(self.position, |p| {
             let duration = self.audio.as_ref().map_or(0.0, |a| a.duration());
@@ -347,11 +359,13 @@ impl AudioPanel {
             }
         })
     }
+
     fn playing(&self) -> bool {
         self.playback
             .as_ref()
             .is_some_and(|p| !p.sink.is_paused() && !p.sink.empty())
     }
+
     fn toggle(&mut self) {
         let Some(audio) = &self.audio else {
             return;
@@ -391,6 +405,7 @@ impl AudioPanel {
         p.sink.play();
         self.error = None;
     }
+
     fn seek(&mut self, position: f64) {
         let Some(audio) = &self.audio else {
             return;
@@ -407,6 +422,7 @@ impl AudioPanel {
         }
         self.request_spectrum();
     }
+
     fn waveform(&mut self, ui: &Ui, audio: &Audio) {
         let min = ui.cursor_screen_pos();
         let size = [
@@ -475,11 +491,13 @@ impl AudioPanel {
         .thickness(2.0)
         .build();
     }
+
     fn section(&mut self, ui: &Ui, index: usize, label: &str) -> bool {
         ui.set_next_item_open_with_cond(self.sections[index], Condition::Always);
         self.sections[index] = ui.collapsing_header(label, TreeNodeFlags::empty());
         self.sections[index]
     }
+
     fn spectrum(&self, ui: &Ui, audio: &Audio) {
         let levels = self
             .spectrum
@@ -562,6 +580,7 @@ impl AudioPanel {
             tooltip_text(ui, "Logarithmic frequency · dBFS · mean channel power");
         }
     }
+
     fn spectrogram(&mut self, ui: &Ui, host: &HostContext<'_>, audio: &Audio) {
         if self.analysis.is_none() {
             ui.text_disabled(
@@ -647,6 +666,7 @@ impl AudioPanel {
         }
     }
 }
+
 fn frequency_label(hz: f32) -> String {
     if hz >= 1000.0 {
         format!("{:.1} kHz", hz / 1000.0)
@@ -654,17 +674,21 @@ fn frequency_label(hz: f32) -> String {
         format!("{hz:.0} Hz")
     }
 }
+
 impl AudioPanel {
     pub fn title(&self, host: &HostContext<'_>) -> String {
         self.panel_title(host)
     }
+
     pub fn draw(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         self.sync(host);
         self.draw_prepared(ui, host, requests);
     }
+
     pub fn render_output(&self) -> Option<RenderOutput> {
         self.canvas_output()
     }
+
     pub fn render(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -672,12 +696,15 @@ impl AudioPanel {
     ) -> Result<(), String> {
         self.record_render(gpu, target)
     }
+
     pub fn save_state(&self) -> Value {
         self.saved_state()
     }
+
     pub fn attached_document(&self) -> Option<DocumentId> {
         Some(self.document)
     }
+
     pub fn close(&mut self, _: &mut Vec<HostRequest>) {
         self.playback = None;
         self.worker.serial.fetch_add(1, Ordering::Relaxed);
@@ -700,10 +727,12 @@ impl AudioPanel {
             })
             .unwrap_or_else(|| "Audio Viewer".into())
     }
+
     fn saved_state(&self) -> Value {
         json!({"position":self.current_position(),"volume":self.volume,
             "waveform":self.sections[0],"spectrum":self.sections[1],"spectrogram":self.sections[2]})
     }
+
     fn canvas_output(&self) -> Option<RenderOutput> {
         if !self.spectrogram_visible {
             return None;
@@ -716,6 +745,7 @@ impl AudioPanel {
             revision: self.output_revision,
         })
     }
+
     fn record_render(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -744,6 +774,7 @@ impl AudioPanel {
         self.gpu.as_ref().unwrap().render(gpu, target);
         Ok(())
     }
+
     fn draw_prepared(&mut self, ui: &Ui, host: &HostContext<'_>, _: &mut Vec<HostRequest>) {
         self.spectrogram_visible = false;
         let Some(audio) = self.audio.clone() else {
@@ -814,6 +845,7 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
         ),
     ]
 }
+
 pub(crate) fn default_shortcuts() -> bed_keybindings::ShortcutInput {
     bed_keybindings::ShortcutInput::new(bed_keybindings::Bindings::new(
         shortcut_actions(),

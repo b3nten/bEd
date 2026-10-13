@@ -3,7 +3,7 @@ name = "bed"
 default-run = "bed"
 version = "0.1.0"
 edition = "2024"
-description = "A desktop text editor with dockable tools, SSH projects and embeddable document views"
+description = "A desktop application platform and IDE"
 publish = false
 license.workspace = true
 
@@ -125,7 +125,6 @@ trash = "=5.2.9"
 rodio = { version = "=0.21.1", default-features = false, features = ["playback", "symphonia-all"] }
 object = { version = "=0.37.3", default-features = false, features = ["read", "std"] }
 chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
-
 libc = "=0.2.190"
 muda = { version = "=0.21.0", default-features = false }
 objc2 = "=0.6.5"
@@ -248,7 +247,6 @@ bed-files = { workspace = true }
 bed-lsp = { workspace = true }
 bed-document-session = { workspace = true }
 bed-debug = { workspace = true, features = ["test-support"] }
-
 bed-outline = { workspace = true }
 bed-image = { workspace = true }
 bed-model-viewer = { workspace = true }

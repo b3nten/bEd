@@ -1626,7 +1626,7 @@ mod tests {
     fn docked_completion_insertion_keeps_editor_origin_and_ancestor_scroll_fixed() {
         use bed_editor_api::{EditorPanelBinding, PanelInput};
         use bed_workbench_api::{PanelCreation, Registry};
-        use bevy::prelude::*;
+        use bevy::prelude::App;
         use dear_imgui_rs::sys;
 
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
