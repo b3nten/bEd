@@ -91,6 +91,7 @@ pub(super) fn bake(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn static_skin_blends_joint_transforms_and_rejects_bad_influences() {
         let palette = [

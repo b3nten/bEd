@@ -7,9 +7,11 @@ use std::{
 
 const CUBE_GLB: &[u8] = include_bytes!("../../../tests/fixtures/gltf/cube.glb");
 const CUBE_GLTF: &[u8] = include_bytes!("../../../tests/fixtures/gltf/cube.gltf");
+
 fn asset() -> Value {
     serde_json::from_slice(CUBE_GLTF).unwrap()
 }
+
 fn load(value: &Value) -> Result<Scene, String> {
     model::load(&serde_json::to_vec(value).unwrap())
 }

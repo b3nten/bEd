@@ -180,12 +180,14 @@ fn array<'a>(root: &'a Value, key: &str) -> Result<&'a [Value], String> {
             .ok_or_else(|| format!("Invalid glTF {key} array")),
     }
 }
+
 fn integer(value: &Value, key: &str) -> Result<usize, String> {
     value[key]
         .as_u64()
         .and_then(|value| usize::try_from(value).ok())
         .ok_or_else(|| format!("Invalid glTF {key}"))
 }
+
 fn remove_declaration(root: &mut Value, extension: &str) {
     for key in ["extensionsUsed", "extensionsRequired"] {
         if let Some(list) = root.get_mut(key).and_then(Value::as_array_mut) {
@@ -193,6 +195,7 @@ fn remove_declaration(root: &mut Value, extension: &str) {
         }
     }
 }
+
 fn data_uri(uri: &str) -> Result<Vec<u8>, String> {
     let data = uri.strip_prefix("data:").ok_or_else(|| format!("External resource '{uri}' is not supported yet. Export a self-contained GLB or embed buffers and images in the glTF file."))?;
     let (header, encoded) = data.split_once(',').ok_or("Invalid glTF data URI")?;
@@ -485,6 +488,7 @@ fn texture_slots(material: &Value) -> Vec<&Value> {
     .flatten()
     .collect()
 }
+
 fn effective_uv(info: &Value) -> Result<u32, String> {
     let tex_coord = info
         .pointer("/extensions/KHR_texture_transform/texCoord")
@@ -535,6 +539,7 @@ fn validate_materials(root: &Value, warnings: &mut Vec<String>) -> Result<(), St
                 warnings.push(format!("Material {index}: Bevy's {extension} textures are not enabled; only the material factors are displayed."));
             }
         }
+
         // Validate numeric material data, including extension factors, at the
         // boundary. serde's f32 conversion can overflow finite JSON numbers.
         fn finite(value: &Value) -> bool {
@@ -859,14 +864,17 @@ fn pack_glb(mut root: Value, buffers: &[Cow<'_, [u8]>]) -> Result<Vec<u8>, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn cube() -> Value {
         serde_json::from_slice(include_bytes!("../../../tests/fixtures/gltf/cube.gltf")).unwrap()
     }
+
     fn prepared(root: &Value) -> (PreparedGltf, gltf::Gltf) {
         let prepared = load(&serde_json::to_vec(root).unwrap()).unwrap();
         let document = gltf::Gltf::from_slice_without_validation(&prepared.bytes).unwrap();
         (prepared, document)
     }
+
     #[test]
     fn ordinary_assets_reach_bevy_byte_for_byte_without_mesh_preparation() {
         for bytes in [
@@ -880,6 +888,7 @@ mod tests {
             assert_eq!(scene.triangles(), 12);
         }
     }
+
     #[test]
     fn empty_secondary_scene_survives_preparation_and_bevy_loading() {
         let mut source = cube();
@@ -901,14 +910,17 @@ mod tests {
             12
         );
     }
+
     fn buffer(root: &mut Value, bytes: &[u8]) -> usize {
         let index = root["buffers"].as_array().unwrap().len();
         root["buffers"].as_array_mut().unwrap().push(value!({"byteLength":bytes.len(), "uri":format!("data:application/octet-stream;base64,{}", STANDARD.encode(bytes))}));
         index
     }
+
     fn triangle(bytes: &[u8]) -> Value {
         value!({"asset":{"version":"2.0"}, "scene":0, "scenes":[{"nodes":[0]}], "nodes":[{"mesh":0}], "meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}], "accessors":[{"bufferView":0, "componentType":5126, "count":3, "type":"VEC3", "min":[0,0,0], "max":[1,1,0]}], "bufferViews":[{"buffer":0,"byteLength":bytes.len()}], "buffers":[{"byteLength":bytes.len(), "uri":format!("data:application/octet-stream;base64,{}", STANDARD.encode(bytes))}]})
     }
+
     #[test]
     fn meshopt_variants_replace_missing_fallback_views_with_identical_accessors() {
         let positions = [[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
@@ -959,6 +971,7 @@ mod tests {
             assert_eq!(actual, positions);
         }
     }
+
     #[test]
     fn quantization_converts_sparse_interleaved_signed_values_without_baking_transforms() {
         let source: Vec<_> = [0_i16, 0, 0, 99, 100, 0, 0, 99, 0, 100, 0, 99]
@@ -1011,6 +1024,7 @@ mod tests {
         assert_eq!(scene.triangles(), 1);
         assert_eq!(scene.maximum, glam::Vec3::new(2.0, 2.0, 0.0));
     }
+
     #[test]
     fn webp_without_core_source_selects_webp_and_leaves_fallback_unloaded() {
         use image::ImageEncoder;
@@ -1035,6 +1049,7 @@ mod tests {
         ));
         assert!(!doc.extensions_required().any(|ext| ext == WEBP));
     }
+
     #[test]
     fn colorspace_is_preserved_and_unsupported_material_factors_warn_without_rebaking() {
         let mut root = cube();
@@ -1060,6 +1075,7 @@ mod tests {
         assert!(prepared.warnings[0].contains("normalTexture scale"));
         assert!(prepared.warnings[1].contains("occlusionTexture strength"));
     }
+
     #[test]
     fn texture_transform_uv_override_is_written_to_all_slots_and_warns_about_slot_mappings() {
         let mut root = cube();
@@ -1089,6 +1105,7 @@ mod tests {
         assert_eq!(material.normal_texture().unwrap().tex_coord(), 1);
         assert_eq!(prepared.warnings.len(), 1);
     }
+
     #[test]
     fn offset_only_texture_transform_preserves_the_default_core_uv_set() {
         let mut root = cube();
@@ -1114,6 +1131,7 @@ mod tests {
                 .contains("Invalid texture coordinate set")
         );
     }
+
     #[test]
     fn malformed_meshopt_and_unsupported_required_extensions_fail_at_the_boundary() {
         let mut root = cube();
@@ -1128,6 +1146,7 @@ mod tests {
         root["bufferViews"][0]["extensions"] = value!({"EXT_meshopt_compression":{"buffer":0,"byteLength":usize::MAX,"byteStride":12,"count":3,"mode":"ATTRIBUTES"}});
         assert!(load(&serde_json::to_vec(&root).unwrap()).is_err());
     }
+
     #[test]
     fn excessive_hierarchy_depth_is_rejected_even_when_unreachable_from_the_scene() {
         let mut root = cube();

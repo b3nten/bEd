@@ -255,6 +255,7 @@ fn integer(value: &Value, key: &str) -> Result<usize, String> {
         .and_then(|n| usize::try_from(n).ok())
         .ok_or_else(|| format!("Invalid meshopt {key}"))
 }
+
 fn optional_integer(value: &Value, key: &str, default: usize) -> Result<usize, String> {
     if value.get(key).is_none() {
         Ok(default)
@@ -266,6 +267,7 @@ fn optional_integer(value: &Value, key: &str, default: usize) -> Result<usize, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn roundtrips_attributes_and_triangle_indices() {
         let vertices = [[1.0_f32, 2.0, 3.0], [2.0, 3.0, 4.0], [4.0, 3.0, 2.0]];
@@ -278,6 +280,7 @@ mod tests {
             bytemuck::cast_slice::<_, u8>(&[0_u16, 1, 2])
         );
     }
+
     #[test]
     fn roundtrips_index_sequences() {
         let indices = [2_u32, 7, 4, 9, 0];
@@ -297,6 +300,7 @@ mod tests {
             bytemuck::cast_slice::<_, u8>(&indices)
         );
     }
+
     #[test]
     fn decodes_every_attribute_filter_and_both_bitstream_versions() {
         for version in [0, 1] {
@@ -382,6 +386,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn invalid_layouts_never_reach_the_native_decoder() {
         for (count, stride, mode, filter) in [
@@ -395,6 +400,7 @@ mod tests {
         }
         assert!(decode(&[0xa0], usize::MAX, 256, "ATTRIBUTES", "NONE", true).is_err());
     }
+
     #[test]
     fn recognizes_missing_required_fallback_without_allocating_it() {
         let root = json!({"extensionsRequired": [EXTENSIONS[0]], "buffers": [{"byteLength": 40, "uri":"data:a"}, {"byteLength": 1_000_000_000}], "bufferViews": [{"buffer":1, "byteLength":12, "extensions": {EXTENSIONS[0]: {"buffer":0}}}]});

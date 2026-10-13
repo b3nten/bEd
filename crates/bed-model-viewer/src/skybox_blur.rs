@@ -28,10 +28,12 @@ struct SkyboxBlur {
 
 /// Register once before the app is finalized; rendering exists by finish().
 pub(super) struct SkyboxBlurPlugin;
+
 impl Plugin for SkyboxBlurPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, update_source.after(generate_environment_map_light));
     }
+
     fn finish(&self, app: &mut App) {
         app.add_plugins(ExtractComponentPlugin::<SkyboxBlur, RenderApp>::default());
         app.sub_app_mut(RenderApp).add_systems(

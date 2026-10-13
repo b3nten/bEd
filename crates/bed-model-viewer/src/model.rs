@@ -29,12 +29,14 @@ pub(super) struct Vertex {
     #[cfg(test)]
     pub color: [f32; 4],
 }
+
 #[cfg(test)]
 #[derive(Clone)]
 pub(super) struct Image {
     pub size: [u32; 2],
     pub rgba: Arc<[u8]>,
 }
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 pub(super) struct TextureSampler {
@@ -42,6 +44,7 @@ pub(super) struct TextureSampler {
     pub mag_filter: Option<gltf::texture::MagFilter>,
     pub min_filter: Option<gltf::texture::MinFilter>,
 }
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 pub(super) struct TextureInfo {
@@ -49,6 +52,7 @@ pub(super) struct TextureInfo {
     pub tex_coord: u32,
     pub sampler: TextureSampler,
 }
+
 #[cfg(test)]
 #[derive(Clone)]
 pub(super) struct Material {
@@ -68,6 +72,7 @@ pub(super) struct Material {
     pub double_sided: bool,
     pub unlit: bool,
 }
+
 #[derive(Clone)]
 pub(super) struct Primitive {
     pub vertices: Vec<Vertex>,
@@ -77,6 +82,7 @@ pub(super) struct Primitive {
     #[cfg(test)]
     pub has_tangents: bool,
 }
+
 #[derive(Clone)]
 pub(super) struct Scene {
     pub primitives: Vec<Primitive>,
@@ -93,13 +99,16 @@ pub(super) struct Scene {
     pub source_bytes: Option<Arc<[u8]>>,
     pub posed_meshes: usize,
 }
+
 impl Scene {
     pub fn center(&self) -> Vec3 {
         (self.minimum + self.maximum) * 0.5
     }
+
     pub fn radius(&self) -> f32 {
         ((self.maximum - self.minimum).length() * 0.5).max(0.001)
     }
+
     pub fn triangles(&self) -> usize {
         self.primitives.iter().map(|p| p.indices.len() / 3).sum()
     }

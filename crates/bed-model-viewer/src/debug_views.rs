@@ -17,11 +17,14 @@ pub(super) enum DisplayMode {
     WireframeOverlay,
     Normals,
 }
+
 impl DisplayMode {
     pub const NAMES: [&'static str; 4] = ["Shaded", "Wireframe", "Wireframe overlay", "Normals"];
+
     pub fn index(self) -> usize {
         self as usize
     }
+
     pub fn from_index(index: usize) -> Self {
         match index {
             1 => Self::Wireframe,
@@ -41,6 +44,7 @@ pub(super) struct DebugViews {
     normal_length: f32,
     normalization: Transform,
 }
+
 impl DebugViews {
     pub fn new(
         world: &mut World,

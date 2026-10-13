@@ -25,10 +25,12 @@ pub struct GltfDocument(pub DocumentId);
 
 #[derive(Default)]
 pub struct GltfStates(HashMap<Entity, GltfPanel>);
+
 impl GltfStates {
     pub fn get(&self, entity: Entity) -> Option<&GltfPanel> {
         self.0.get(&entity)
     }
+
     #[cfg(test)]
     pub(crate) fn get_mut(&mut self, entity: Entity) -> Option<&mut GltfPanel> {
         self.0.get_mut(&entity)
@@ -43,6 +45,7 @@ pub enum GltfSystems {
 /// Register the in-memory model source before Bevy's AssetPlugin builds readers.
 /// Desktop applications compose this plugin before their graphics plugin group.
 pub struct ModelAssetsPlugin;
+
 impl Plugin for ModelAssetsPlugin {
     fn build(&self, app: &mut App) {
         assert!(
@@ -54,6 +57,7 @@ impl Plugin for ModelAssetsPlugin {
 }
 
 pub struct ModelViewerPlugin;
+
 impl Plugin for ModelViewerPlugin {
     fn build(&self, app: &mut App) {
         if !app.is_plugin_added::<ModelAssetsPlugin>() {
@@ -265,6 +269,7 @@ fn publish_output(world: &mut World, entity: Entity, output: Option<RenderOutput
 struct GltfFrontend {
     entity: Entity,
 }
+
 impl Panel for GltfFrontend {
     fn title(&self, world: &World) -> String {
         world.non_send::<GltfStates>().get(self.entity).map_or_else(
@@ -351,6 +356,7 @@ mod ecs_tests {
             text: None,
         }
     }
+
     fn create(app: &mut App, state: Value) -> (Entity, Box<dyn Panel>) {
         let entity = app
             .world_mut()
@@ -374,6 +380,7 @@ mod ecs_tests {
             .unwrap();
         (entity, panel)
     }
+
     fn wait(app: &mut App, entity: Entity, ready: impl Fn(&GltfPanel) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -385,6 +392,7 @@ mod ecs_tests {
             thread::sleep(Duration::from_millis(1));
         }
     }
+
     #[test]
     fn commands_keep_the_origin_path_and_area() {
         let mut app = App::new();

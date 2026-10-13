@@ -79,14 +79,17 @@ struct LoadJob {
     bytes: Arc<[u8]>,
     stl: bool,
 }
+
 struct LoadResult {
     revision: Revision,
     prepared: Result<PreparedModel, String>,
 }
+
 struct Loader {
     sender: Option<mpsc::SyncSender<LoadJob>>,
     receiver: mpsc::Receiver<LoadResult>,
 }
+
 impl Loader {
     fn new() -> Self {
         let (sender, jobs) = mpsc::sync_channel::<LoadJob>(1);
@@ -116,6 +119,7 @@ impl Loader {
         }
     }
 }
+
 #[derive(Clone, Copy, PartialEq)]
 struct CanvasState {
     pixels: [u32; 2],
@@ -142,6 +146,7 @@ pub struct GltfPanel {
     settle_frames: u8,
     failed_generation: Option<u64>,
 }
+
 /// The rendering transition owns only GPU work, while documents and workers stay in World.
 struct ModelRenderWork {
     prepared: Option<Arc<PreparedModel>>,
@@ -154,6 +159,7 @@ struct ModelRenderWork {
     settle_frames: u8,
     failed_generation: Option<u64>,
 }
+
 impl ModelRenderWork {
     fn record_render(
         &mut self,
@@ -208,6 +214,7 @@ impl ModelRenderWork {
         result
     }
 }
+
 impl GltfPanel {
     fn new(document: DocumentId, state: &Value) -> Self {
         let (camera, fitted) = Camera::restore(state);
@@ -235,6 +242,7 @@ impl GltfPanel {
             failed_generation: None,
         }
     }
+
     fn update(&mut self, host: &HostContext<'_>) {
         let Some(document) = host.document(self.document) else {
             self.prepared = None;
@@ -290,16 +298,20 @@ impl GltfPanel {
         }
     }
 }
+
 impl GltfPanel {
     pub fn title(&self, host: &HostContext<'_>) -> String {
         self.panel_title(host)
     }
+
     pub fn attached_document(&self) -> Option<DocumentId> {
         Some(self.document)
     }
+
     pub fn save_state(&self) -> Value {
         self.saved_state()
     }
+
     pub fn close(&mut self, _: &mut Vec<HostRequest>) {
         self.loader.sender = None;
         // Disconnect results too: an in-flight worker must not stay blocked
@@ -309,9 +321,11 @@ impl GltfPanel {
         self.scene = None;
         self.gpu = None;
     }
+
     pub fn render_output(&self) -> Option<RenderOutput> {
         self.canvas_output()
     }
+
     pub fn render(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -319,6 +333,7 @@ impl GltfPanel {
     ) -> Result<(), String> {
         self.record_render(gpu, target)
     }
+
     pub fn draw(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         self.update(host);
         self.draw_prepared(ui, host, requests);
@@ -332,11 +347,13 @@ impl GltfPanel {
             .unwrap_or("Model Viewer")
             .to_owned()
     }
+
     fn saved_state(&self) -> Value {
         let mut state = self.camera.save();
         state["render"] = self.settings.save();
         state
     }
+
     fn canvas_output(&self) -> Option<RenderOutput> {
         self.prepared.as_ref()?;
         Some(RenderOutput {
@@ -346,6 +363,7 @@ impl GltfPanel {
             revision: self.output_revision,
         })
     }
+
     fn take_render_work(&mut self) -> ModelRenderWork {
         ModelRenderWork {
             prepared: self.prepared.clone(),
@@ -359,6 +377,7 @@ impl GltfPanel {
             failed_generation: self.failed_generation,
         }
     }
+
     fn finish_render_work(&mut self, work: ModelRenderWork) {
         self.gpu = work.gpu;
         self.scene = work.scene;
@@ -367,6 +386,7 @@ impl GltfPanel {
         self.settle_frames = work.settle_frames;
         self.failed_generation = work.failed_generation;
     }
+
     fn record_render(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -377,6 +397,7 @@ impl GltfPanel {
         self.finish_render_work(work);
         result
     }
+
     fn draw_prepared(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         let _controls = bed_ui::util::popup_style::controls_style(ui);
         let frame_all = ui.button("Frame All");

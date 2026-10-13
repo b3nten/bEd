@@ -18,6 +18,7 @@ use std::{
 
 fn block_on<T>(future: impl Future<Output = T>) -> T {
     struct ThreadWake(std::thread::Thread);
+
     impl Wake for ThreadWake {
         fn wake(self: Arc<Self>) {
             self.0.unpark();
@@ -33,6 +34,7 @@ fn block_on<T>(future: impl Future<Output = T>) -> T {
         }
     }
 }
+
 struct TestGpu {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
@@ -40,6 +42,7 @@ struct TestGpu {
     queue: wgpu::Queue,
     generation: u64,
 }
+
 impl TestGpu {
     fn context<'a>(&'a self, encoder: &'a mut wgpu::CommandEncoder) -> GpuContext<'a> {
         GpuContext {
@@ -103,14 +106,17 @@ impl TestGpu {
         assert!(error.is_none(), "Bevy GPU validation error: {error:?}");
     }
 }
+
 struct SceneGpu {
     state: SceneState,
     app: bevy::app::App,
 }
+
 impl SceneGpu {
     fn pending(&self) -> bool {
         self.state.pending()
     }
+
     pub fn render(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -137,6 +143,7 @@ impl SceneGpu {
         Ok(())
     }
 }
+
 fn device() -> TestGpu {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter =
@@ -151,10 +158,12 @@ fn device() -> TestGpu {
         generation: 1,
     }
 }
+
 fn pixels(gpu: &TestGpu, scene: &Scene, camera: Camera, size: [u32; 2]) -> Vec<u8> {
     let mut renderer = gpu.renderer(scene);
     render_pixels(gpu, &mut renderer, scene, camera, size, Settings::default())
 }
+
 fn render_pixels(
     gpu: &TestGpu,
     renderer: &mut SceneGpu,
@@ -267,6 +276,7 @@ fn native_registered_model_renderer_shares_game_world_and_retires_its_view() {
     use bed_editor_api::{EditorFrame, EditorPanelBinding, PanelInput, PluginDocument};
     use bed_ui::gpu::{CanvasRenderInvocation, CanvasRenderer};
     use bevy::prelude::*;
+
     #[derive(Component)]
     struct GameState(u32);
 
@@ -1787,11 +1797,13 @@ fn native_model_environment_recovers_twice_in_the_same_world() {
             settings::RenderCreation,
         },
     };
+
     #[derive(Resource, Default)]
     struct Recovery {
         lost: bool,
         replacement: Option<RenderCreation>,
     }
+
     #[derive(Component)]
     struct GameplayState;
 

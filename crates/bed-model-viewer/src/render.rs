@@ -36,6 +36,7 @@ fn error_scopes(device: &wgpu::Device) -> [wgpu::ErrorScopeGuard; 3] {
     // panic unwinding close the scopes in the same order as check_scopes.
     [validation, internal, out_of_memory]
 }
+
 fn check_scopes(scopes: [wgpu::ErrorScopeGuard; 3]) -> Result<(), String> {
     let mut failure = None;
     for scope in scopes {
@@ -55,6 +56,7 @@ pub(super) enum Lighting {
     StudioSmall08,
     KiaraDawn,
 }
+
 impl Lighting {
     pub const NAMES: [&'static str; 5] = [
         "Studio",
@@ -63,9 +65,11 @@ impl Lighting {
         "Studio Small 08 (HDRI)",
         "Kiara Dawn (HDRI)",
     ];
+
     pub fn index(self) -> usize {
         self as usize
     }
+
     pub fn from_index(index: usize) -> Self {
         match index {
             1 => Self::Outdoor,
@@ -90,6 +94,7 @@ pub(super) struct Settings {
     pub ao: bool,
     pub exposure: f32,
 }
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -106,6 +111,7 @@ impl Default for Settings {
         }
     }
 }
+
 impl Settings {
     pub fn restore(state: &Value) -> Self {
         let mut result = Self::default();
@@ -138,6 +144,7 @@ impl Settings {
             .clamp(-4.0, 4.0) as f32;
         result
     }
+
     pub fn save(self) -> Value {
         json!({ "lighting": self.lighting.index(), "display": self.display.index(),
             "normals": self.normals, "normal_length": self.normal_length,
@@ -166,6 +173,7 @@ pub(super) struct SceneGpu {
     radius: f32,
     settings: Option<Settings>,
 }
+
 impl SceneGpu {
     pub fn ready(&self) -> bool {
         !self.loading.pending() && !self.pipelines_pending
@@ -337,6 +345,7 @@ impl SceneGpu {
             settings: None,
         })
     }
+
     pub fn sync(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -449,6 +458,7 @@ impl SceneGpu {
         );
         self.check_render(world, scopes)
     }
+
     fn check_render(
         &mut self,
         world: &mut World,
@@ -462,12 +472,15 @@ impl SceneGpu {
         self.pipelines_pending = status.pending;
         Ok(())
     }
+
     pub fn take_snapshot(&mut self) -> Option<Scene> {
         self.snapshot.take()
     }
+
     pub fn pending(&self) -> bool {
         self.loading.pending() || self.pipelines_pending
     }
+
     fn configure(&mut self, world: &mut World, settings: Settings) {
         if let Some(debug) = &mut self.debug {
             debug.apply(
@@ -618,6 +631,7 @@ fn environment(lighting: Lighting) -> Image {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     #[ignore = "requires a native GPU adapter"]
     fn native_error_scope_unwind_preserves_device() {
@@ -633,6 +647,7 @@ mod tests {
         check_scopes(error_scopes(&device)).unwrap();
         assert!(bevy::tasks::block_on(outer.pop()).is_none());
     }
+
     #[test]
     fn render_settings_restore_old_sessions_and_bound_exposure() {
         assert_eq!(Settings::restore(&Value::Null), Settings::default());
