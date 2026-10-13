@@ -18,16 +18,19 @@ pub enum Endpoint {
     Local { root: PathBuf },
     Remote { root: String, client: RemoteClient },
 }
+
 impl Endpoint {
     pub fn local(root: impl Into<PathBuf>) -> Self {
         Self::Local { root: root.into() }
     }
+
     fn root(&self) -> String {
         match self {
             Self::Local { root } => root.to_string_lossy().into_owned(),
             Self::Remote { root, .. } => root.clone(),
         }
     }
+
     fn call(&self, request: Request) -> io::Result<Response> {
         match self {
             Self::Local { .. } => bed_remote::LocalBackend
@@ -36,6 +39,7 @@ impl Endpoint {
             Self::Remote { client, .. } => client.call(request),
         }
     }
+
     fn stat(&self, path: &str) -> io::Result<TransferEntry> {
         match self.call(Request::TransferStat {
             root: self.root(),
@@ -45,6 +49,7 @@ impl Endpoint {
             _ => Err(unexpected()),
         }
     }
+
     fn children(&self, path: &str) -> io::Result<Vec<String>> {
         match self.call(Request::ReadDirectory {
             root: self.root(),
@@ -57,6 +62,7 @@ impl Endpoint {
             _ => Err(unexpected()),
         }
     }
+
     fn remove(&self, path: &str, directory: bool) -> io::Result<()> {
         self.call(Request::Remove {
             root: self.root(),
@@ -65,6 +71,7 @@ impl Endpoint {
         })?;
         Ok(())
     }
+
     fn same_storage(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Local { root: a }, Self::Local { root: b }) => a == b,
@@ -89,6 +96,7 @@ pub enum OperationKind {
     Move,
     Delete,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConflictChoice {
     Skip,
@@ -96,11 +104,13 @@ pub enum ConflictChoice {
     Replace,
     Merge,
 }
+
 #[derive(Clone, Copy, Debug)]
 pub struct ConflictDecision {
     pub choice: ConflictChoice,
     pub apply_to_all: bool,
 }
+
 #[derive(Debug)]
 pub struct Conflict {
     pub source: String,
@@ -109,6 +119,7 @@ pub struct Conflict {
     pub destination_directory: bool,
     pub reply: mpsc::SyncSender<ConflictDecision>,
 }
+
 #[derive(Debug)]
 pub enum OperationEvent {
     Progress {
@@ -137,6 +148,7 @@ pub enum OperationEvent {
     },
     Finished(OperationSummary),
 }
+
 #[derive(Clone, Debug, Default)]
 pub struct OperationSummary {
     pub completed: usize,
@@ -146,7 +158,9 @@ pub struct OperationSummary {
     pub canceled: bool,
     pub destinations: Vec<String>,
 }
+
 pub type Trash = Arc<dyn Fn(&Path) -> io::Result<()> + Send + Sync>;
+
 pub struct OperationRequest {
     pub kind: OperationKind,
     pub source: Endpoint,
@@ -156,10 +170,12 @@ pub struct OperationRequest {
     pub duplicate: bool,
     pub trash: Option<Trash>,
 }
+
 pub struct OperationJob {
     pub events: mpsc::Receiver<OperationEvent>,
     canceled: Arc<AtomicBool>,
 }
+
 impl OperationJob {
     pub fn start(request: OperationRequest) -> Self {
         let (sender, events) = mpsc::sync_channel(64);
@@ -180,13 +196,16 @@ impl OperationJob {
         });
         Self { events, canceled }
     }
+
     pub fn cancel(&self) {
         self.canceled.store(true, Ordering::Release);
     }
+
     pub fn is_canceled(&self) -> bool {
         self.canceled.load(Ordering::Acquire)
     }
 }
+
 impl Drop for OperationJob {
     fn drop(&mut self) {
         self.cancel();
@@ -202,6 +221,7 @@ struct Worker {
     folder_choice: Option<ConflictChoice>,
     copied_paths: std::collections::BTreeMap<String, String>,
 }
+
 impl Worker {
     fn check(&self) -> io::Result<()> {
         if self.canceled.load(Ordering::Acquire) {
@@ -213,11 +233,13 @@ impl Worker {
             Ok(())
         }
     }
+
     fn send(&self, event: OperationEvent) -> io::Result<()> {
         self.sender
             .send(event)
             .map_err(|_| io::Error::new(io::ErrorKind::Interrupted, "File operation host closed"))
     }
+
     fn await_reply<T>(&self, receiver: mpsc::Receiver<T>) -> io::Result<T> {
         loop {
             self.check()?;
@@ -236,6 +258,7 @@ impl Worker {
             }
         }
     }
+
     fn run(&mut self) {
         let paths = top_level_paths(&self.request.paths);
         for source in paths {
@@ -301,6 +324,7 @@ impl Worker {
             }
         }
     }
+
     fn delete(&mut self, source: &str) -> io::Result<()> {
         let entry = self.request.source.stat(source)?;
         if let (Endpoint::Local { root }, Some(trash)) = (&self.request.source, &self.request.trash)
@@ -316,6 +340,7 @@ impl Worker {
         })?;
         self.progress(source)
     }
+
     fn unique(&self, path: &str) -> io::Result<String> {
         let name = filename(path)?;
         let parent = parent(path);
@@ -346,6 +371,7 @@ impl Worker {
             "Cannot choose a unique filename",
         ))
     }
+
     fn resolve(
         &mut self,
         source: &str,
@@ -388,6 +414,7 @@ impl Worker {
         }
         Ok(decision.choice)
     }
+
     fn acknowledge(
         &self,
         event: impl FnOnce(mpsc::SyncSender<Result<(), String>>) -> OperationEvent,
@@ -396,6 +423,7 @@ impl Worker {
         self.send(event(reply))?;
         self.await_reply(receiver)?.map_err(io::Error::other)
     }
+
     fn transfer(
         &mut self,
         source: &str,
@@ -612,6 +640,7 @@ impl Worker {
         self.progress(source)?;
         Ok(Some(destination))
     }
+
     fn capture_manifest(
         &self,
         path: &str,
@@ -628,6 +657,7 @@ impl Worker {
         }
         Ok(())
     }
+
     fn moved(&self, source: &str, destination: &str) -> io::Result<()> {
         self.acknowledge(|reply| OperationEvent::Moved {
             source: source.into(),
@@ -635,6 +665,7 @@ impl Worker {
             reply,
         })
     }
+
     fn progress(&self, path: &str) -> io::Result<()> {
         self.send(OperationEvent::Progress {
             path: path.into(),
@@ -656,12 +687,14 @@ pub fn top_level_paths(paths: &[String]) -> Vec<String> {
     }
     result
 }
+
 fn contains(parent: &str, child: &str) -> bool {
     child == parent
         || child
             .strip_prefix(parent.trim_end_matches('/'))
             .is_some_and(|suffix| suffix.starts_with('/'))
 }
+
 fn filename(path: &str) -> io::Result<&str> {
     path.trim_end_matches('/')
         .rsplit('/')
@@ -669,6 +702,7 @@ fn filename(path: &str) -> io::Result<&str> {
         .filter(|name| !name.is_empty() && *name != "." && *name != "..")
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Missing filename"))
 }
+
 fn parent(path: &str) -> String {
     path.rsplit_once('/').map_or_else(
         || ".".into(),
@@ -681,15 +715,18 @@ fn parent(path: &str) -> String {
         },
     )
 }
+
 fn join(directory: &str, name: &str) -> String {
     format!("{}/{name}", directory.trim_end_matches('/'))
 }
+
 fn unexpected() -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
         "Unexpected file transfer response",
     )
 }
+
 fn temporary_sibling(path: &str) -> String {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     join(
@@ -712,6 +749,7 @@ mod tests {
     use std::io::{Seek, SeekFrom, Write};
 
     struct Fixture(PathBuf);
+
     impl Fixture {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -723,19 +761,23 @@ mod tests {
             fs::create_dir_all(&root).unwrap();
             Self(root.canonicalize().unwrap())
         }
+
         fn path(&self, path: &str) -> String {
             self.0.join(path).to_str().unwrap().into()
         }
+
         fn file(&self, path: &str, bytes: &[u8]) -> String {
             let path = self.0.join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, bytes).unwrap();
             path.to_str().unwrap().into()
         }
+
         fn directory(&self, path: &str) -> String {
             fs::create_dir_all(self.0.join(path)).unwrap();
             self.path(path)
         }
+
         fn request(
             &self,
             kind: OperationKind,
@@ -753,6 +795,7 @@ mod tests {
             }
         }
     }
+
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
@@ -774,6 +817,7 @@ mod tests {
             }
         }
     }
+
     fn finish(request: OperationRequest, choices: &[ConflictChoice]) -> OperationSummary {
         let job = OperationJob::start(request);
         let mut choices = choices.iter();
@@ -793,6 +837,7 @@ mod tests {
         assert!(choices.next().is_none(), "unused conflict choice");
         summary
     }
+
     fn no_temporaries(path: &Path) {
         for entry in fs::read_dir(path).unwrap() {
             let entry = entry.unwrap();

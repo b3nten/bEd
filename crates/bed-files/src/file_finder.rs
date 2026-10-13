@@ -7,6 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc::Receiver,
 };
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FileEntry {
     pub full_path: String,
@@ -14,6 +15,7 @@ pub struct FileEntry {
     pub relative_path_lower: String,
     pub filename_lower: String,
 }
+
 impl FileEntry {
     /// Build a target-native entry without probing the local filesystem.
     pub fn from_remote_path(path: &str, root: &str) -> io::Result<Self> {
@@ -35,6 +37,7 @@ impl FileEntry {
                 .to_ascii_lowercase(),
         })
     }
+
     pub fn from_path(path: &Path, root: &Path) -> io::Result<Self> {
         let full_path = path
             .to_str()
@@ -58,6 +61,7 @@ impl FileEntry {
         })
     }
 }
+
 fn relative_path(path: &Path, root: &Path) -> io::Result<PathBuf> {
     // Discovery already canonicalized the workspace root. Keep entry paths
     // lexical: per-file canonicalization is expensive and destroys link names.
@@ -65,17 +69,20 @@ fn relative_path(path: &Path, root: &Path) -> io::Result<PathBuf> {
         .map(Path::to_path_buf)
         .map_err(io::Error::other)
 }
+
 /// One-shot discovery for callers that explicitly need a fresh snapshot.
 /// Finder background updates use WorkspaceFilesystem instead of this walk.
 pub fn scan_file_list(project_dir: &Path) -> io::Result<Vec<FileEntry>> {
     scan_file_list_cancellable(project_dir, || false).map(Option::unwrap_or_default)
 }
+
 fn scan_file_list_cancellable(
     project_dir: &Path,
     canceled: impl FnMut() -> bool,
 ) -> io::Result<Option<Vec<FileEntry>>> {
     crate::search_files::discover(project_dir, false, canceled, |_, _| true)
 }
+
 /// Substring filter and path-length ranking, preserving the upstream dotfile exception.
 pub fn filter_file_list(files: &[FileEntry], query: &str) -> Vec<FileEntry> {
     let query = query.to_ascii_lowercase();
@@ -90,6 +97,7 @@ pub fn filter_file_list(files: &[FileEntry], query: &str) -> Vec<FileEntry> {
     out.sort_by_key(|file| file.relative_path.len());
     out
 }
+
 fn merge_entries(files: &mut Vec<FileEntry>, mut additions: Vec<FileEntry>) {
     additions.sort_by(|a, b| a.full_path.cmp(&b.full_path));
     additions.dedup_by(|a, b| a.full_path == b.full_path);
@@ -110,6 +118,7 @@ fn merge_entries(files: &mut Vec<FileEntry>, mut additions: Vec<FileEntry>) {
     merged.extend(added);
     *files = merged;
 }
+
 #[derive(Default)]
 pub struct FileFinder {
     remote_client: Option<bed_remote::RemoteClient>,
@@ -131,10 +140,12 @@ pub struct FileFinder {
     last_generation: u64,
     pub discovery_status: Option<String>,
 }
+
 impl FileFinder {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn set_remote_client(&mut self, client: Option<bed_remote::RemoteClient>) {
         self.stop_worker();
         self.remote_client = client;
@@ -142,6 +153,7 @@ impl FileFinder {
         self.filtered_list.clear();
         self.start_service();
     }
+
     fn stop_worker(&mut self) {
         self.updates.take();
         self.filesystem.take();
@@ -150,10 +162,12 @@ impl FileFinder {
         self.requested_directories.clear();
         self.last_generation = 0;
     }
+
     pub fn start_background_thread(&mut self) {
         self.started = true;
         self.start_service();
     }
+
     fn start_service(&mut self) {
         if !self.started || self.filesystem.is_some() || self.current_project_dir.is_empty() {
             return;
@@ -170,6 +184,7 @@ impl FileFinder {
         self.updates = Some(filesystem.subscribe());
         self.filesystem = Some(filesystem);
     }
+
     pub fn set_project_dir(&mut self, root: &str) {
         if self.current_project_dir == root {
             self.request_refresh();
@@ -185,14 +200,17 @@ impl FileFinder {
         self.current_project_dir = root.to_owned();
         self.start_service();
     }
+
     pub fn workspace_filesystem(&self) -> Option<WorkspaceFilesystem> {
         self.filesystem.clone()
     }
+
     pub fn request_refresh(&self) {
         if let Some(filesystem) = &self.filesystem {
             filesystem.refresh();
         }
     }
+
     pub fn refresh_directories(&self, directories: impl IntoIterator<Item = String>) {
         if let Some(filesystem) = &self.filesystem {
             for directory in directories {
@@ -200,6 +218,7 @@ impl FileFinder {
             }
         }
     }
+
     pub fn request_directories(&mut self, directories: impl IntoIterator<Item = String>) {
         if let Some(filesystem) = &self.filesystem {
             for path in directories {
@@ -209,9 +228,11 @@ impl FileFinder {
             }
         }
     }
+
     pub fn include_ignored(&self) -> bool {
         self.include_ignored
     }
+
     pub fn set_include_ignored(&mut self, include: bool) {
         if self.include_ignored == include {
             return;
@@ -221,13 +242,16 @@ impl FileFinder {
             filesystem.set_include_ignored(include);
         }
     }
+
     /// Host document handling receives the same generations as finder/tree.
     pub fn take_workspace_updates(&mut self) -> Vec<WorkspaceUpdate> {
         std::mem::take(&mut self.workspace_updates)
     }
+
     pub fn take_directory_updates(&mut self) -> Vec<DirectoryListing> {
         std::mem::take(&mut self.directory_updates)
     }
+
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
         if let Some(receiver) = &self.updates {
@@ -272,6 +296,7 @@ impl FileFinder {
         }
         changed
     }
+
     pub fn update_filtered_list(&mut self) {
         self.filter_dirty = false;
         let query = self.search_buffer.to_ascii_lowercase();
@@ -281,6 +306,7 @@ impl FileFinder {
         }
         self.filtered_list = filter_file_list(&self.file_list, &self.search_buffer);
     }
+
     pub fn toggle_window(&mut self) {
         self.show_ff_window = !self.show_ff_window;
         if self.show_ff_window {
@@ -290,15 +316,18 @@ impl FileFinder {
             self.update_filtered_list();
         }
     }
+
     pub fn cancel_and_close(&mut self) {
         self.show_ff_window = false;
     }
+
     pub fn commit_selection(&mut self) -> Option<String> {
         self.show_ff_window = false;
         self.filtered_list
             .get(self.selected_index)
             .map(|f| f.full_path.clone())
     }
+
     pub fn move_selection(&mut self, delta: i32) {
         if delta < 0 {
             self.selected_index = self
@@ -311,6 +340,7 @@ impl FileFinder {
                 .min(self.filtered_list.len() - 1);
         }
     }
+
     pub fn set_query(&mut self, query: &str) {
         let mut end = query.len().min(255);
         while !query.is_char_boundary(end) {
@@ -322,6 +352,7 @@ impl FileFinder {
         }
     }
 }
+
 impl Drop for FileFinder {
     fn drop(&mut self) {
         self.stop_worker();
@@ -336,6 +367,7 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
     #[test]
     fn remote_entries_use_target_slashes_without_local_canonicalization() {
         let file =
@@ -351,6 +383,7 @@ mod tests {
         );
         assert!(FileEntry::from_remote_path("/remote/project-two/a", "/remote/project").is_err());
     }
+
     fn entry(path: &str) -> FileEntry {
         FileEntry {
             full_path: path.to_owned(),
@@ -364,6 +397,7 @@ mod tests {
                 .to_ascii_lowercase(),
         }
     }
+
     #[test]
     fn substring_case_insensitive_ranking_is_path_byte_length() {
         let files = vec![
@@ -384,6 +418,7 @@ mod tests {
         );
         assert!(filter_file_list(&files, "dlrs").is_empty());
     }
+
     #[test]
     fn hides_dotfiles_only_when_query_has_no_dot_and_includes_hidden_directories() {
         let files = vec![entry(".env"), entry(".git/config"), entry("src/main.rs")];
@@ -394,6 +429,7 @@ mod tests {
         assert!(filter_file_list(&files, "env").is_empty());
         assert_eq!(filter_file_list(&files, ".env")[0].relative_path, ".env");
     }
+
     #[test]
     fn scanner_excludes_git_and_gitignored_entries() {
         let temp = TempDir::new();
@@ -406,6 +442,7 @@ mod tests {
         assert!(!files.iter().any(|f| f.relative_path == "ignored/file.txt"));
         assert!(!files.iter().any(|f| f.relative_path.starts_with(".git/")));
     }
+
     #[test]
     fn canceled_recursive_scan_discards_partial_results() {
         let temp = TempDir::new();
@@ -420,6 +457,7 @@ mod tests {
         assert!(files.is_none());
         assert_eq!(checks, 3);
     }
+
     #[test]
     fn query_changes_reset_selection_and_commit_is_only_open_signal() {
         let mut finder = FileFinder::new();
@@ -437,6 +475,7 @@ mod tests {
         finder.cancel_and_close();
         assert!(!finder.show_ff_window);
     }
+
     #[test]
     fn closed_finder_defers_filtering_and_merges_incremental_results_when_opened() {
         let mut finder = FileFinder::new();
@@ -479,6 +518,7 @@ mod tests {
             ["a", "c", "z"]
         );
     }
+
     #[test]
     fn scanner_delivers_results_to_main_thread_and_shutdown_joins() {
         let _watcher_guard = native_watcher_test_guard();
@@ -500,6 +540,7 @@ mod tests {
         assert_eq!(finder.filtered_list[0].relative_path, "main.rs");
         finder.start_background_thread();
     }
+
     #[cfg(unix)]
     #[test]
     fn recursive_scan_does_not_follow_directory_symlinks_and_preserves_file_link_names() {
@@ -535,6 +576,7 @@ mod generation_tests {
         thread,
         time::{Duration, Instant},
     };
+
     #[test]
     fn a_previous_workspace_cannot_restore_old_entries() {
         let _watcher_guard = native_watcher_test_guard();
@@ -561,6 +603,7 @@ mod generation_tests {
             ["new"]
         );
     }
+
     #[test]
     fn same_root_action_requests_an_immediate_scan() {
         let _watcher_guard = native_watcher_test_guard();

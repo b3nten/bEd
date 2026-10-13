@@ -4,10 +4,12 @@ use std::io;
 use std::{fs, io::Read, path::Path};
 pub const MAX_FILE_SIZE: usize = bed_remote::MAX_FILE_BYTES;
 pub const BINARY_ERROR: &str = "Error: File appears to be binary and cannot be displayed.";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadFile {
     pub raw: Vec<u8>,
 }
+
 /// Existing text-only read, including the bounded binary probe.
 pub fn read_file_raw(path: &Path) -> io::Result<ReadFile> {
     read_file(path, true)
@@ -95,11 +97,13 @@ fn read_text_bytes(mut file: impl Read, expected_size: usize) -> io::Result<Vec<
 mod tests {
     use super::*;
     use crate::test_support::TempDir;
+
     #[test]
     fn binary_probe_rejects_before_reading_or_allocating_the_file_body() {
         struct BinaryProbe {
             read: usize,
         }
+
         impl Read for BinaryProbe {
             fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
                 assert!(self.read < 1024, "binary body must not be read");
@@ -112,6 +116,7 @@ mod tests {
         let error = read_text_bytes(BinaryProbe { read: 0 }, MAX_FILE_SIZE).unwrap_err();
         assert_eq!(error.to_string(), BINARY_ERROR);
     }
+
     #[test]
     fn binary_detection_checks_first_1024_with_strict_threshold() {
         let temp = TempDir::new();
@@ -131,6 +136,7 @@ mod tests {
             b"\xef\xbb\xbfabc\n\r\t\xff"
         );
     }
+
     #[test]
     fn a_sparse_nul_in_a_binary_header_is_not_misclassified_as_text() {
         let mut bytes = vec![b'a'; 2048];
@@ -140,6 +146,7 @@ mod tests {
             bed_editing::editor_state::DocumentKind::Bytes
         );
     }
+
     #[test]
     fn reads_beyond_the_old_limit_without_inserting_text_and_accepts_the_boundary() {
         let temp = TempDir::new();
@@ -151,6 +158,7 @@ mod tests {
         let read = read_file_raw(&path).unwrap();
         assert_eq!(read.raw.len(), MAX_FILE_SIZE);
     }
+
     #[test]
     fn oversized_file_fails_with_path_actual_size_and_actionable_limit() {
         let temp = TempDir::new();
@@ -169,11 +177,13 @@ mod tests {
         assert!(message.contains("128 MiB"));
         assert!(message.contains("another editor"));
     }
+
     #[test]
     fn growing_reader_is_bounded_even_when_initial_metadata_is_small() {
         let bytes = read_text_bytes(io::repeat(b'a'), 1).unwrap();
         assert_eq!(bytes.len(), MAX_FILE_SIZE + 1);
     }
+
     #[test]
     fn empty_files_read_and_directories_fail() {
         let temp = TempDir::new();

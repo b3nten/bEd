@@ -20,6 +20,7 @@ pub fn validate_name(name: &str) -> io::Result<()> {
     }
     Ok(())
 }
+
 pub fn create_file(directory: &Path, name: &str) -> io::Result<PathBuf> {
     validate_name(name)?;
     let path = directory.join(name);
@@ -29,12 +30,14 @@ pub fn create_file(directory: &Path, name: &str) -> io::Result<PathBuf> {
         .open(&path)?;
     Ok(path)
 }
+
 pub fn create_folder(directory: &Path, name: &str) -> io::Result<PathBuf> {
     validate_name(name)?;
     let path = directory.join(name);
     fs::create_dir(&path)?;
     Ok(path)
 }
+
 /// Resolve the parent only: destructive operations must affect a symlink entry, not its target.
 pub fn validate_project_entry(root: &Path, path: &Path) -> io::Result<PathBuf> {
     let root = fs::canonicalize(root)?;
@@ -58,6 +61,7 @@ pub fn validate_project_entry(root: &Path, path: &Path) -> io::Result<PathBuf> {
     fs::symlink_metadata(&entry)?;
     Ok(entry)
 }
+
 pub fn rename_entry(source: &Path, name: &str) -> io::Result<PathBuf> {
     validate_name(name)?;
     let target = source.with_file_name(name);
@@ -91,6 +95,7 @@ pub fn rename_entry(source: &Path, name: &str) -> io::Result<PathBuf> {
     }
     Ok(target)
 }
+
 fn case_alias(source: &Path, target: &Path) -> bool {
     let (Some(from), Some(to)) = (
         source.file_name().and_then(|s| s.to_str()),
@@ -116,6 +121,7 @@ fn case_alias(source: &Path, target: &Path) -> bool {
         _ => false,
     }
 }
+
 pub fn rename_no_replace(source: &Path, target: &Path) -> io::Result<()> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
     let from = CString::new(source.as_os_str().as_bytes())
@@ -148,6 +154,7 @@ pub fn rename_no_replace(source: &Path, target: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::test_support::TempDir;
+
     #[test]
     fn create_and_rename_never_replace_existing_entries() {
         let temp = TempDir::new();
@@ -161,6 +168,7 @@ mod tests {
         assert!(create_folder(temp.root(), "folder").is_err());
         assert!(rename_entry(&source, "renamed.rs").unwrap().is_file());
     }
+
     #[test]
     fn rejects_traversal_and_root_mutations() {
         for name in ["", " ", ".", "..", "../outside", "a/b", "a\\b"] {
@@ -170,6 +178,7 @@ mod tests {
         let temp = TempDir::new();
         assert!(validate_project_entry(temp.root(), temp.root()).is_err());
     }
+
     #[test]
     fn case_only_rename_keeps_contents_and_requested_directory_spelling() {
         let temp = TempDir::new();
@@ -183,6 +192,7 @@ mod tests {
                 .any(|entry| entry.file_name() == "mixed.rs")
         );
     }
+
     #[cfg(unix)]
     #[test]
     fn differently_cased_distinct_hard_link_is_never_replaced() {
@@ -195,6 +205,7 @@ mod tests {
             assert!(target.exists());
         }
     }
+
     #[cfg(unix)]
     #[test]
     fn symlink_entry_validation_keeps_the_target_untouched() {

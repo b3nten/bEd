@@ -37,6 +37,7 @@ struct Fingerprint {
     #[cfg(unix)]
     identity: (u64, u64),
 }
+
 impl Fingerprint {
     fn from_metadata(metadata: &Metadata) -> Self {
         #[cfg(unix)]
@@ -192,6 +193,7 @@ fn read_current(path: &Path) -> io::Result<(DiskState, Option<Vec<u8>>)> {
         Some(raw),
     ))
 }
+
 fn changed_during_read() -> io::Error {
     io::Error::new(
         io::ErrorKind::WouldBlock,
@@ -208,6 +210,7 @@ mod tests {
     };
 
     struct Fixture(PathBuf);
+
     impl Fixture {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -219,9 +222,11 @@ mod tests {
             fs::create_dir(&root).unwrap();
             Self(root)
         }
+
         fn path(&self) -> PathBuf {
             self.0.join("file")
         }
+
         fn write(&self, bytes: &[u8], tick: u64) {
             fs::write(self.path(), bytes).unwrap();
             File::open(self.path())
@@ -230,11 +235,13 @@ mod tests {
                 .unwrap();
         }
     }
+
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+
     #[test]
     fn detects_same_size_content_change_with_new_timestamp() {
         let fixture = Fixture::new();
@@ -248,6 +255,7 @@ mod tests {
         assert_eq!(change.raw, Some(b"after!".to_vec()));
         assert!(monitor.poll(&fixture.path()).unwrap().is_none());
     }
+
     #[test]
     fn watch_bytes_rejects_changed_contents_without_accepting_the_baseline() {
         let fixture = Fixture::new();
@@ -280,6 +288,7 @@ mod tests {
             FileChangeKind::Removed
         );
     }
+
     #[test]
     fn detects_size_change_and_preserves_bom_and_invalid_bytes() {
         let fixture = Fixture::new();
@@ -290,6 +299,7 @@ mod tests {
         let change = monitor.poll(&fixture.path()).unwrap().unwrap();
         assert_eq!(change.raw, Some(b"\xef\xbb\xbf\xff\r\ny".to_vec()));
     }
+
     #[test]
     fn detects_replaced_file() {
         let fixture = Fixture::new();
@@ -304,6 +314,7 @@ mod tests {
             Some(b"replacement".to_vec())
         );
     }
+
     #[test]
     fn accepts_successful_self_save_and_ignores_metadata_only_changes() {
         let fixture = Fixture::new();
@@ -316,6 +327,7 @@ mod tests {
         fixture.write(b"saved", 3);
         assert!(monitor.poll(&fixture.path()).unwrap().is_none());
     }
+
     #[test]
     fn reports_removal_once_and_identical_recreation() {
         let fixture = Fixture::new();
@@ -332,6 +344,7 @@ mod tests {
         assert_eq!(change.kind, FileChangeKind::Modified);
         assert_eq!(change.raw, Some(b"same".to_vec()));
     }
+
     #[test]
     fn switching_path_and_reset_establish_new_baselines() {
         let fixture = Fixture::new();
@@ -344,6 +357,7 @@ mod tests {
         monitor.reset();
         assert!(monitor.poll(&fixture.path()).unwrap().is_none());
     }
+
     #[test]
     fn files_beyond_one_mib_keep_a_monitoring_baseline_and_report_external_changes() {
         let fixture = Fixture::new();

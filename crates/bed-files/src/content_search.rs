@@ -51,6 +51,7 @@ enum WorkerMessage {
     },
     Stop,
 }
+
 struct SearchResult {
     generation: u64,
     matches: Vec<ContentMatch>,
@@ -64,6 +65,7 @@ struct SearchResult {
 
 /// Stop collecting before a broad query consumes unbounded UI memory.
 pub const MAX_SEARCH_RESULTS: usize = 100_000;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SearchProgress {
     pub discovered_files: usize,
@@ -138,6 +140,7 @@ impl ContentSearch {
             worker: None,
         }
     }
+
     fn start_worker(&mut self) {
         if self.worker.is_some() {
             return;
@@ -193,27 +196,33 @@ impl ContentSearch {
         self.completed = completed;
         self.worker = Some(worker);
     }
+
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn set_remote_client(&mut self, client: Option<bed_remote::RemoteClient>) {
         self.cancel();
         self.results.clear();
         self.remote_client = client;
     }
+
     pub fn open(&mut self) {
         self.active = true;
     }
+
     pub fn dismiss(&mut self) {
         self.active = false;
         self.cancel();
     }
+
     pub fn cancel(&mut self) {
         self.generation.fetch_add(1, Ordering::Relaxed);
         self.canceled = self.searching;
         self.searching = false;
         self.progress.discovering = false;
     }
+
     pub fn options(&self) -> SearchOptions {
         SearchOptions {
             case_sensitive: self.case_sensitive,
@@ -224,10 +233,12 @@ impl ContentSearch {
             exclude: self.exclude.clone(),
         }
     }
+
     pub fn start(&mut self, root: &str, query: &str, case_sensitive: bool) {
         self.case_sensitive = case_sensitive;
         self.start_with_buffers(root, query, Vec::new());
     }
+
     pub fn start_with_buffers(&mut self, root: &str, query: &str, buffers: Vec<SearchBuffer>) {
         if !query.is_empty() {
             self.start_worker();
@@ -263,6 +274,7 @@ impl ContentSearch {
             self.error = Some("Content-search worker stopped".to_owned());
         }
     }
+
     /// Accept only the latest request. Canceled and previous-project results never reach the UI.
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
@@ -410,6 +422,7 @@ pub struct SearchSnapshot {
     pub limit_reached: bool,
     pub eligible_buffer_paths: Vec<String>,
 }
+
 pub fn search_project_snapshot(
     root: &str,
     query: &[u8],
@@ -429,6 +442,7 @@ pub fn search_project_snapshot(
         max_results,
     )
 }
+
 pub fn search_project_snapshot_with_options(
     root: &str,
     query: &[u8],
@@ -791,6 +805,7 @@ mod tests {
         )
         .unwrap()
     }
+
     #[test]
     fn byte_columns_nonoverlap_ascii_case_and_file_order_are_stable() {
         let temp = TempDir::new();
@@ -822,6 +837,7 @@ mod tests {
             &result.matches[1].line
         ));
     }
+
     #[test]
     fn bom_binary_hidden_and_oversized_files_keep_source_positions() {
         let temp = TempDir::new();
@@ -845,6 +861,7 @@ mod tests {
         assert_eq!((hidden.row, hidden.column), (0, 0));
         assert!(search(&temp, b"File truncated", false).matches.is_empty());
     }
+
     #[test]
     fn canceled_generation_is_discarded_and_missing_project_is_reported() {
         let temp = TempDir::new();
@@ -870,6 +887,7 @@ mod tests {
         assert!(result.error.is_some());
         assert!(result.matches.is_empty());
     }
+
     #[test]
     fn replacement_and_cancel_do_not_publish_stale_results() {
         let temp = TempDir::new();
@@ -891,6 +909,7 @@ mod tests {
         assert!(!search.searching);
         assert!(search.results.is_empty());
     }
+
     #[test]
     fn literal_byte_matching_agrees_with_document_lines_and_ascii_windows() {
         let temp = TempDir::new();
@@ -939,6 +958,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn files_beyond_the_old_limit_keep_bom_and_mixed_newline_source_positions() {
         let temp = TempDir::new();
@@ -955,6 +975,7 @@ mod tests {
             vec![(0, 0, 0), (1, 1, 0), (2, 2, 0)]
         );
     }
+
     #[test]
     fn include_ignored_worker_option_reveals_files_but_never_git_metadata() {
         let temp = TempDir::new();
@@ -987,6 +1008,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn broad_queries_publish_partial_batches_and_stop_at_visible_limit() {
         let temp = TempDir::new();
@@ -1026,6 +1048,7 @@ mod tests {
             &found[MAX_SEARCH_RESULTS - 1].line
         ));
     }
+
     #[test]
     fn a_full_output_channel_can_be_canceled_without_a_polling_consumer() {
         let (sender, _receiver) = mpsc::sync_channel(0);
@@ -1066,6 +1089,7 @@ mod tests {
 mod options_tests {
     use super::*;
     use crate::test_support::TempDir;
+
     #[test]
     fn filtered_buffer_overlays_replace_disk_results_and_obey_ignore_rules() {
         let temp = TempDir::new();

@@ -89,6 +89,7 @@ mod tests {
         paths.sort();
         paths
     }
+
     #[test]
     fn git_rules_negation_nested_rules_and_parent_worktree_are_respected() {
         let temp = TempDir::new();
@@ -131,6 +132,7 @@ mod tests {
         assert!(included.contains(&"src/parent-skip".into()));
         assert!(included.iter().all(|path| !path.starts_with(".git/")));
     }
+
     #[test]
     fn non_git_folders_keep_hidden_files_and_all_user_directory_names() {
         let temp = TempDir::new();
@@ -151,6 +153,7 @@ mod tests {
         temp.write(".git/metadata", b"needle");
         assert_eq!(paths(temp.root(), true).len(), 5);
     }
+
     #[test]
     fn discovery_checks_cancellation_between_entries() {
         let temp = TempDir::new();
@@ -173,6 +176,7 @@ mod tests {
         assert!(result.is_none());
         assert_eq!(visits.get(), 1);
     }
+
     #[cfg(unix)]
     #[test]
     fn directory_links_are_not_walked_and_file_links_keep_source_relative_paths() {

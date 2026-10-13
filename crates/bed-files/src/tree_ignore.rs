@@ -78,6 +78,7 @@ impl TreeIgnore {
             .map(|(name, path)| ignored.contains(name) && !self.tracked.contains(path))
             .collect())
     }
+
     #[cfg(test)]
     fn is_ignored(&self, path: &Path) -> io::Result<bool> {
         self.classify(&[path.to_owned()]).map(|ignored| ignored[0])
