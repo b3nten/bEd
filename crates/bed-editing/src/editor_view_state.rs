@@ -21,19 +21,23 @@ pub struct Selection {
     pub anchor_column: i32,
     pub preferred_column: i32,
 }
+
 impl Selection {
     pub fn empty(&self) -> bool {
         (self.head_row, self.head_column) == (self.anchor_row, self.anchor_column)
     }
+
     pub fn collapse_to_head(&mut self) {
         self.anchor_row = self.head_row;
         self.anchor_column = self.head_column;
     }
+
     pub fn set_both(&mut self, row: i32, column: i32) {
         self.head_row = row;
         self.head_column = column;
         self.collapse_to_head();
     }
+
     pub fn ordered(&self) -> (i32, i32, i32, i32) {
         if (self.anchor_row, self.anchor_column) <= (self.head_row, self.head_column) {
             (
@@ -71,6 +75,7 @@ pub struct EditorViewState {
     pub requested_scroll: Option<[f32; 2]>,
     pub pending_cursor_center: Option<(i32, i32)>,
 }
+
 impl Default for EditorViewState {
     fn default() -> Self {
         Self {
@@ -91,32 +96,41 @@ impl Default for EditorViewState {
         }
     }
 }
+
 impl EditorViewState {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn primary(&self) -> &Selection {
         &self.selections[self.primary_index.min(self.selections.len() - 1)]
     }
+
     pub fn primary_mut(&mut self) -> &mut Selection {
         self.ensure_selections();
         &mut self.selections[self.primary_index]
     }
+
     pub fn selection_count(&self) -> usize {
         self.selections.len()
     }
+
     pub fn has_selection(&self) -> bool {
         self.selections.iter().any(|s| !s.empty())
     }
+
     pub fn selection_empty(&self) -> bool {
         self.primary().empty()
     }
+
     pub fn get_ordered(&self) -> (i32, i32, i32, i32) {
         self.primary().ordered()
     }
+
     pub fn is_input_blocked(&self) -> bool {
         self.block_input
     }
+
     pub fn ensure_selections(&mut self) {
         if self.selections.is_empty() {
             self.selections.push(Selection::default());
@@ -125,17 +139,20 @@ impl EditorViewState {
             self.primary_index = 0;
         }
     }
+
     pub fn set_both(&mut self, row: i32, column: i32) {
         self.primary_mut().set_both(row, column);
         self.collapse_to_primary();
         self.sync_primary_mirrors();
     }
+
     pub fn collapse_selection(&mut self) {
         for s in &mut self.selections {
             s.collapse_to_head();
         }
         self.collapse_to_primary();
     }
+
     pub fn collapse_to_primary(&mut self) {
         self.ensure_selections();
         let keep = *self.primary();
@@ -143,6 +160,7 @@ impl EditorViewState {
         self.primary_index = 0;
         self.sync_primary_mirrors();
     }
+
     pub fn select_all(&mut self, state: &EditorState) {
         let last = state.line_count() - 1;
         self.selections = vec![Selection {
@@ -153,6 +171,7 @@ impl EditorViewState {
         self.primary_index = 0;
         self.sync_primary_mirrors();
     }
+
     pub fn sync_primary_mirrors(&mut self) {
         self.ensure_selections();
         let p = *self.primary();
@@ -160,6 +179,7 @@ impl EditorViewState {
         self.column = p.head_column;
         self.cursor_column_preferred = p.preferred_column;
     }
+
     pub fn apply_mirrors_to_primary(&mut self) {
         self.ensure_selections();
         let empty = self.primary().empty();
@@ -172,6 +192,7 @@ impl EditorViewState {
             p.collapse_to_head();
         }
     }
+
     pub fn clamp_selection(state: &EditorState, s: &mut Selection) {
         let last = (state.line_count() - 1).max(0);
         s.head_row = s.head_row.clamp(0, last);
@@ -183,6 +204,7 @@ impl EditorViewState {
         s.anchor_column =
             snap_to_utf8_char_boundary(&anchor, s.anchor_column.clamp(0, anchor.len() as i32));
     }
+
     pub fn clamp_all(&mut self, state: &EditorState) {
         self.ensure_selections();
         for s in &mut self.selections {
@@ -191,9 +213,11 @@ impl EditorViewState {
         self.merge_selections();
         self.sync_primary_mirrors();
     }
+
     pub fn clamp(&mut self, state: &EditorState) {
         self.clamp_all(state);
     }
+
     pub fn merge_selections(&mut self) {
         self.ensure_selections();
         if self.selections.len() <= 1 {
@@ -234,6 +258,7 @@ impl EditorViewState {
             .position(|s| (s.head_row, s.head_column) == (primary.head_row, primary.head_column))
             .unwrap_or(0);
     }
+
     pub fn set_selections(
         &mut self,
         state: &EditorState,
@@ -247,6 +272,7 @@ impl EditorViewState {
         self.selections = selections;
         self.clamp_all(state);
     }
+
     pub fn is_position_selected(&self, row: i32, col: i32) -> bool {
         self.selections.iter().any(|s| {
             if s.empty() {
@@ -266,6 +292,7 @@ impl EditorViewState {
             }
         })
     }
+
     pub fn selection_line_span(&self) -> (i32, i32) {
         let mut span: Option<(i32, i32)> = None;
         for s in &self.selections {
@@ -281,6 +308,7 @@ impl EditorViewState {
         }
         span.unwrap_or((0, 0))
     }
+
     pub fn calculate_visual_column(state: &EditorState, s: &mut Selection) {
         let line = state.line(s.head_row);
         let mut visual = 0;
@@ -294,10 +322,12 @@ impl EditorViewState {
         }
         s.preferred_column = visual;
     }
+
     pub fn calculate_primary_visual_column(&mut self, state: &EditorState) {
         Self::calculate_visual_column(state, self.primary_mut());
         self.sync_primary_mirrors();
     }
+
     fn find_column_from_visual_column(state: &EditorState, s: &mut Selection, row: i32) {
         let text = state.line(row);
         let mut visual = 0;
@@ -317,6 +347,7 @@ impl EditorViewState {
         s.head_row = row;
         s.head_column = pos as i32;
     }
+
     pub fn cursor_left(state: &EditorState, s: &mut Selection) {
         if s.head_column > 0 {
             s.head_column = prev_utf8_char(&state.line(s.head_row), s.head_column);
@@ -326,6 +357,7 @@ impl EditorViewState {
         }
         Self::calculate_visual_column(state, s);
     }
+
     pub fn cursor_right(state: &EditorState, s: &mut Selection) {
         let line = state.line(s.head_row);
         if s.head_column < line.len() as i32 {
@@ -336,6 +368,7 @@ impl EditorViewState {
         }
         Self::calculate_visual_column(state, s);
     }
+
     fn move_cursor_vertically(state: &EditorState, s: &mut Selection, delta: i32) -> bool {
         if state.line_count() <= 0 {
             return false;
@@ -350,14 +383,17 @@ impl EditorViewState {
         Self::find_column_from_visual_column(state, s, target);
         true
     }
+
     pub fn cursor_up(state: &EditorState, s: &mut Selection) {
         Self::move_cursor_vertically(state, s, -1);
         Self::clamp_selection(state, s);
     }
+
     pub fn cursor_down(state: &EditorState, s: &mut Selection) {
         Self::move_cursor_vertically(state, s, 1);
         Self::clamp_selection(state, s);
     }
+
     pub fn move_word_forward(state: &EditorState, s: &mut Selection) {
         let line = state.line(s.head_row);
         let len = line.len() as i32;
@@ -380,6 +416,7 @@ impl EditorViewState {
             s.preferred_column = pos;
         }
     }
+
     pub fn move_word_backward(state: &EditorState, s: &mut Selection) {
         let line = state.line(s.head_row);
         let mut pos = s.head_column;
@@ -401,18 +438,23 @@ impl EditorViewState {
             s.preferred_column = pos;
         }
     }
+
     pub fn update_blink_time(&mut self, delta_time: f32) {
         self.cursor_blink_time += delta_time;
     }
+
     pub fn get_scroll_position(&self) -> [f32; 2] {
         self.scroll_position
     }
+
     pub fn set_scroll_position(&mut self, position: [f32; 2]) {
         self.scroll_position = position;
     }
+
     pub fn request_scroll(&mut self, x: f32, y: f32) {
         self.requested_scroll = Some([x, y]);
     }
+
     pub fn request_cursor_center(&mut self, line: i32, character: i32) {
         self.folds.reveal(line);
         self.requested_scroll = None;
@@ -423,6 +465,7 @@ impl EditorViewState {
 pub(crate) fn is_word_char(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
+
 pub fn find_word_boundaries(line: &[u8], pos: i32) -> (i32, i32) {
     let len = line.len() as i32;
     let pos = pos.clamp(0, len);

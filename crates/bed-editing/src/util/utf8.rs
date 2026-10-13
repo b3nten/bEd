@@ -151,30 +151,35 @@ mod tests {
         assert_eq!(append_utf8_codepoint(&mut out, b'A' as u32), 1);
         assert_eq!(out, b"A");
     }
+
     #[test]
     fn append_two_bytes() {
         let mut out = Vec::new();
         assert_eq!(append_utf8_codepoint(&mut out, 0xe9), 2);
         assert_eq!(out, [0xc3, 0xa9]);
     }
+
     #[test]
     fn append_three_bytes() {
         let mut out = Vec::new();
         assert_eq!(append_utf8_codepoint(&mut out, 0x20ac), 3);
         assert_eq!(out, [0xe2, 0x82, 0xac]);
     }
+
     #[test]
     fn append_four_bytes() {
         let mut out = Vec::new();
         assert_eq!(append_utf8_codepoint(&mut out, 0x1f4da), 4);
         assert_eq!(out, [0xf0, 0x9f, 0x93, 0x9a]);
     }
+
     #[test]
     fn append_rejects_invalid() {
         let mut out = Vec::new();
         assert_eq!(append_utf8_codepoint(&mut out, 0x110000), 0);
         assert!(out.is_empty());
     }
+
     #[test]
     fn snap_mid_sequence() {
         let s = b"a\xf0\x9f\x93\x9ab";
@@ -182,12 +187,14 @@ mod tests {
             assert_eq!(snap_to_utf8_char_boundary(s, idx), expected);
         }
     }
+
     #[test]
     fn ascii_utf16_columns() {
         assert_eq!(utf8_byte_offset_to_utf16(b"hello", 0), 0);
         assert_eq!(utf8_byte_offset_to_utf16(b"hello", 5), 5);
         assert_eq!(utf16_to_utf8_byte_offset(b"hello", 3), 3);
     }
+
     #[test]
     fn bmp_utf16_columns() {
         let s = b"caf\xc3\xa9";
@@ -197,6 +204,7 @@ mod tests {
         assert_eq!(utf16_to_utf8_byte_offset(s, 4), 5);
         assert_eq!(utf16_to_utf8_byte_offset(s, 3), 3);
     }
+
     #[test]
     fn supplementary_utf16_columns() {
         let s = b"a\xf0\x9f\x93\x9ab";
@@ -207,6 +215,7 @@ mod tests {
         assert_eq!(utf16_to_utf8_byte_offset(s, 3), 5);
         assert_eq!(utf16_to_utf8_byte_offset(s, 4), 6);
     }
+
     #[test]
     fn invalid_sequences_consume_one_byte() {
         for s in [
@@ -221,6 +230,7 @@ mod tests {
         assert_eq!(decode_utf8(b"", 0), (0, 0));
         assert_eq!(decode_utf8(b"a", -1), (0, 0));
     }
+
     #[test]
     fn upstream_surrogate_behavior_is_preserved() {
         let mut out = Vec::new();
@@ -228,6 +238,7 @@ mod tests {
         assert_eq!(out, [0xed, 0xa0, 0x80]);
         assert_eq!(decode_utf8(&out, 0), (3, 0xd800));
     }
+
     #[test]
     fn utf16_mid_character_offsets_match_upstream() {
         let s = b"a\xf0\x9f\x93\x9ab";

@@ -69,19 +69,24 @@ impl EditorOperations {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn generation(&self) -> u64 {
         self.generation
     }
+
     pub fn bump_generation(&mut self) {
         self.generation += 1;
     }
+
     pub fn pending_edits(&self) -> &[PendingEdit] {
         &self.pending
     }
+
     pub fn take_pending(&mut self) -> Vec<PendingEdit> {
         self.event_cursor = 0;
         std::mem::take(&mut self.pending)
     }
+
     pub fn clear_pending(&mut self) {
         self.pending.clear();
         self.event_cursor = 0;
@@ -93,6 +98,7 @@ impl EditorOperations {
         self.event_cursor = edits.len();
         self.pending = edits;
     }
+
     /// Events and highlighting share the same ordered edits without consuming
     /// one another's input. A user action publishes each change exactly once.
     pub fn take_document_changes(&mut self) -> Vec<DocumentChange> {
@@ -291,6 +297,7 @@ impl EditorOperations {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn insert_delete_invert_round_trip() {
         let mut state = EditorState::new();
@@ -311,6 +318,7 @@ mod tests {
         );
         assert_eq!(state.join(), b"hello world");
     }
+
     #[test]
     fn multiline_insert_and_utf16_ranges() {
         let mut state = EditorState::new();
@@ -351,6 +359,7 @@ mod tests {
         );
         assert_eq!(edit.op.text, b"y");
     }
+
     #[test]
     fn delete_spans_utf16_range() {
         let mut state = EditorState::new();
@@ -379,6 +388,7 @@ mod tests {
             (0, 1, 0, 4)
         );
     }
+
     #[test]
     fn offset_row_col_round_trip() {
         let mut state = EditorState::new();
@@ -388,6 +398,7 @@ mod tests {
             assert_eq!(state.offset_from_row_col(row, col), off);
         }
     }
+
     #[test]
     fn event_changes_publish_once_while_highlight_retains_all_edits() {
         let mut state = EditorState::new();

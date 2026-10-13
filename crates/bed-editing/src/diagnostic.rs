@@ -8,6 +8,7 @@ pub struct DiagnosticItem {
     pub message: String,
     pub source: String,
 }
+
 impl Default for DiagnosticItem {
     fn default() -> Self {
         Self {

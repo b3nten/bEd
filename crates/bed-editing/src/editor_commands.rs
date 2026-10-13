@@ -19,6 +19,7 @@ pub enum ProjectUndoGuard<'a> {
     Borrowed(&'a mut ProjectUndo),
     Shared(RefMut<'a, ProjectUndo>),
 }
+
 impl Deref for ProjectUndoGuard<'_> {
     type Target = ProjectUndo;
 
@@ -29,6 +30,7 @@ impl Deref for ProjectUndoGuard<'_> {
         }
     }
 }
+
 impl DerefMut for ProjectUndoGuard<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
@@ -44,6 +46,7 @@ pub enum CursorReveal {
     Ensure,
     Center,
 }
+
 #[derive(Clone, Copy, Default)]
 enum CaretAfter {
     #[default]
@@ -51,12 +54,14 @@ enum CaretAfter {
     Leave,
     AtPosition(i32, i32),
 }
+
 #[derive(Clone, Copy)]
 struct ApplyOptions {
     caret: CaretAfter,
     collapse_selection: bool,
     selection_index: Option<usize>,
 }
+
 impl Default for ApplyOptions {
     fn default() -> Self {
         Self {
@@ -66,6 +71,7 @@ impl Default for ApplyOptions {
         }
     }
 }
+
 impl ApplyOptions {
     fn at(index: usize) -> Self {
         Self {
@@ -92,6 +98,7 @@ pub struct EditorCommands<'a> {
     undo_primary_before: usize,
     undo_has_before: bool,
 }
+
 impl<'a> EditorCommands<'a> {
     pub fn new(
         state: &'a mut EditorState,
@@ -139,6 +146,7 @@ impl<'a> EditorCommands<'a> {
         self.history_key = key;
         self
     }
+
     fn snapshot_selections(&self) -> Vec<SelectionSnapshot> {
         self.view
             .selections
@@ -152,6 +160,7 @@ impl<'a> EditorCommands<'a> {
             })
             .collect()
     }
+
     fn restore_selections(&mut self, snaps: &[SelectionSnapshot], primary: usize) {
         let next = snaps
             .iter()
@@ -165,6 +174,7 @@ impl<'a> EditorCommands<'a> {
             .collect();
         self.view.set_selections(self.state, next, primary);
     }
+
     fn capture_selections_before_if_needed(&mut self) {
         if self.undo_has_before {
             return;
@@ -173,6 +183,7 @@ impl<'a> EditorCommands<'a> {
         self.undo_primary_before = self.view.primary_index;
         self.undo_has_before = true;
     }
+
     fn commit_undo_group(&mut self) {
         if !self.undo_has_before || self.undo_steps.is_empty() {
             self.undo_steps.clear();
@@ -191,6 +202,7 @@ impl<'a> EditorCommands<'a> {
         self.project_undo.record(&self.history_key, edit);
         self.undo_has_before = false;
     }
+
     fn apply_user_edit(&mut self, op: TextOp, opt: ApplyOptions) -> bool {
         if self.state.read_only {
             return false;
@@ -232,6 +244,7 @@ impl<'a> EditorCommands<'a> {
         self.finish_user_edit();
         true
     }
+
     fn note_dirty(&mut self, a: i32, b: i32) {
         let (lo, hi) = (a.min(b), a.max(b));
         if self.edit_dirty_hi < self.edit_dirty_lo {
@@ -242,9 +255,11 @@ impl<'a> EditorCommands<'a> {
             self.edit_dirty_hi = self.edit_dirty_hi.max(hi);
         }
     }
+
     fn begin_batch(&mut self) {
         self.edit_batch_depth += 1;
     }
+
     fn end_batch(&mut self) {
         self.edit_batch_depth = self.edit_batch_depth.saturating_sub(1);
         if self.edit_batch_depth == 0 && self.edit_batch_pending {
@@ -252,6 +267,7 @@ impl<'a> EditorCommands<'a> {
             self.finish_user_edit();
         }
     }
+
     fn emit_did_edit(&mut self, first_row: i32, last_row: i32) {
         let changes = self.ops.take_document_changes();
         self.view.folds.apply_changes(&changes);
@@ -265,6 +281,7 @@ impl<'a> EditorCommands<'a> {
             self.state,
         );
     }
+
     fn finish_user_edit(&mut self) {
         if self.edit_batch_depth > 0 {
             self.edit_batch_pending = true;
@@ -281,6 +298,7 @@ impl<'a> EditorCommands<'a> {
         self.emit_did_edit(lo, hi);
         self.request_ensure_visible();
     }
+
     /// Apply validated operations as one undo unit, separated from adjacent
     /// typing. Session-level transactions provide range/revision validation.
     pub fn apply_transaction(&mut self, operations: &[TextOp]) {
@@ -341,6 +359,7 @@ impl<'a> EditorCommands<'a> {
         });
         order
     }
+
     fn adjust_selections_after_edit(&mut self, index: usize, op: &TextOp, result: &ApplyResult) {
         for (i, s) in self.view.selections.iter_mut().enumerate() {
             if i == index {
@@ -383,6 +402,7 @@ impl<'a> EditorCommands<'a> {
             }
         }
     }
+
     fn begin_select_gesture(&mut self, select: bool) {
         if !select {
             for s in &mut self.view.selections {
@@ -390,6 +410,7 @@ impl<'a> EditorCommands<'a> {
             }
         }
     }
+
     fn end_select_gesture(&mut self, select: bool) {
         if !select {
             for s in &mut self.view.selections {
@@ -400,6 +421,7 @@ impl<'a> EditorCommands<'a> {
         self.view.clamp_all(self.state);
         self.request_ensure_visible();
     }
+
     pub fn request_ensure_visible(&mut self) {
         for selection in &self.view.selections {
             self.view.folds.reveal(selection.head_row);
@@ -407,6 +429,7 @@ impl<'a> EditorCommands<'a> {
         self.view.ensure_cursor_visible.vertical = true;
         self.view.ensure_cursor_visible.horizontal = true;
     }
+
     fn apply_reveal(&mut self, reveal: CursorReveal) {
         for selection in &self.view.selections {
             self.view.folds.reveal(selection.head_row);
@@ -422,6 +445,7 @@ impl<'a> EditorCommands<'a> {
             self.request_ensure_visible();
         }
     }
+
     fn nav_move(&mut self, select: bool, movement: fn(&EditorState, &mut Selection)) {
         self.begin_select_gesture(select);
         for s in &mut self.view.selections {
@@ -429,24 +453,31 @@ impl<'a> EditorCommands<'a> {
         }
         self.end_select_gesture(select);
     }
+
     pub fn move_left(&mut self, select: bool) {
         self.nav_move(select, EditorViewState::cursor_left);
     }
+
     pub fn move_right(&mut self, select: bool) {
         self.nav_move(select, EditorViewState::cursor_right);
     }
+
     pub fn move_up(&mut self, select: bool) {
         self.nav_move(select, EditorViewState::cursor_up);
     }
+
     pub fn move_down(&mut self, select: bool) {
         self.nav_move(select, EditorViewState::cursor_down);
     }
+
     pub fn move_word_left(&mut self, select: bool) {
         self.nav_move(select, EditorViewState::move_word_backward);
     }
+
     pub fn move_word_right(&mut self, select: bool) {
         self.nav_move(select, EditorViewState::move_word_forward);
     }
+
     pub fn move_line_start(&mut self, select: bool) {
         self.begin_select_gesture(select);
         for s in &mut self.view.selections {
@@ -460,6 +491,7 @@ impl<'a> EditorCommands<'a> {
         }
         self.end_select_gesture(select);
     }
+
     pub fn move_line_end(&mut self, select: bool) {
         self.begin_select_gesture(select);
         for s in &mut self.view.selections {
@@ -468,6 +500,7 @@ impl<'a> EditorCommands<'a> {
         }
         self.end_select_gesture(select);
     }
+
     pub fn move_doc_start(&mut self, select: bool) {
         self.begin_select_gesture(select);
         for s in &mut self.view.selections {
@@ -477,6 +510,7 @@ impl<'a> EditorCommands<'a> {
         }
         self.end_select_gesture(select);
     }
+
     pub fn move_doc_end(&mut self, select: bool) {
         self.begin_select_gesture(select);
         let last = self.state.line_count() - 1;
@@ -487,6 +521,7 @@ impl<'a> EditorCommands<'a> {
         }
         self.end_select_gesture(select);
     }
+
     pub fn move_lines(&mut self, delta: i32, select: bool) {
         if delta == 0 {
             return;
@@ -503,6 +538,7 @@ impl<'a> EditorCommands<'a> {
         }
         self.end_select_gesture(select);
     }
+
     /// Apply view-computed navigation destinations in selection order. The view
     /// can navigate screen rows while this command owns anchors and merging.
     pub fn move_carets_to(&mut self, positions: &[(i32, i32)], select: bool) {
@@ -516,6 +552,7 @@ impl<'a> EditorCommands<'a> {
         }
         self.end_select_gesture(select);
     }
+
     pub fn set_cursor(&mut self, row: i32, column: i32, select: bool, reveal: CursorReveal) {
         if self.state.line_count() <= 0 {
             return;
@@ -538,6 +575,7 @@ impl<'a> EditorCommands<'a> {
         self.view.calculate_primary_visual_column(self.state);
         self.apply_reveal(reveal);
     }
+
     pub fn set_selection(
         &mut self,
         anchor_row: i32,
@@ -571,6 +609,7 @@ impl<'a> EditorCommands<'a> {
         self.view.calculate_primary_visual_column(self.state);
         self.apply_reveal(reveal);
     }
+
     pub fn set_selections(
         &mut self,
         selections: Vec<Selection>,
@@ -584,9 +623,11 @@ impl<'a> EditorCommands<'a> {
         self.view.sync_primary_mirrors();
         self.apply_reveal(reveal);
     }
+
     pub fn go_to_line(&mut self, line: i32) {
         self.set_cursor(line, 0, false, CursorReveal::Center);
     }
+
     pub fn toggle_fold(&mut self, row: i32) -> bool {
         if !self.view.folds.toggle(row) {
             return false;
@@ -596,15 +637,18 @@ impl<'a> EditorCommands<'a> {
         }
         true
     }
+
     pub fn fold_all(&mut self) {
         self.view.folds.fold_all();
         if self.move_hidden_endpoints_to_fold_headers() {
             self.request_ensure_visible();
         }
     }
+
     pub fn unfold_all(&mut self) {
         self.view.folds.unfold_all();
     }
+
     /// Only moved carets require scrolling; an adjusted anchor may be offscreen.
     fn move_hidden_endpoints_to_fold_headers(&mut self) -> bool {
         let mut moved_head = false;
@@ -631,13 +675,16 @@ impl<'a> EditorCommands<'a> {
         self.view.clamp_all(self.state);
         moved_head
     }
+
     pub fn select_all(&mut self) {
         self.view.select_all(self.state);
         self.request_ensure_visible();
     }
+
     pub fn collapse_selection(&mut self) {
         self.view.collapse_selection();
     }
+
     pub fn select_word_at(&mut self, row: i32, column: i32) {
         let row = row.clamp(0, self.state.line_count() - 1);
         let line = self.state.line(row);
@@ -645,6 +692,7 @@ impl<'a> EditorCommands<'a> {
         let (start, end) = find_word_boundaries(&line, column);
         self.set_selection(row, start, row, end, CursorReveal::Ensure);
     }
+
     fn add_cursor_vertical(&mut self, delta: i32) {
         if self.state.line_count() <= 0 || delta == 0 {
             return;
@@ -666,6 +714,7 @@ impl<'a> EditorCommands<'a> {
         }
         self.insert_cursor(new);
     }
+
     /// Add a caret at a view-computed position, including another screen row of
     /// the same document line. Existing caret positions remain unique.
     pub fn add_cursor_at(&mut self, row: i32, column: i32) {
@@ -679,6 +728,7 @@ impl<'a> EditorCommands<'a> {
         new.collapse_to_head();
         self.insert_cursor(new);
     }
+
     fn insert_cursor(&mut self, new: Selection) {
         if self
             .view
@@ -702,9 +752,11 @@ impl<'a> EditorCommands<'a> {
         self.view.sync_primary_mirrors();
         self.request_ensure_visible();
     }
+
     pub fn add_cursor_above(&mut self) {
         self.add_cursor_vertical(-1);
     }
+
     pub fn add_cursor_below(&mut self) {
         self.add_cursor_vertical(1);
     }
@@ -729,10 +781,12 @@ impl<'a> EditorCommands<'a> {
             );
         }
     }
+
     fn merge_after_edit(&mut self) {
         self.view.merge_selections();
         self.view.sync_primary_mirrors();
     }
+
     pub fn delete_selection(&mut self) {
         if !self.view.has_selection() {
             return;
@@ -748,6 +802,7 @@ impl<'a> EditorCommands<'a> {
         }
         self.view.sync_primary_mirrors();
     }
+
     pub fn type_text(&mut self, utf8: &[u8]) {
         if utf8.is_empty() {
             return;
@@ -769,6 +824,7 @@ impl<'a> EditorCommands<'a> {
         self.merge_after_edit();
         self.end_batch();
     }
+
     pub fn insert_newline(&mut self) {
         self.begin_batch();
         for index in self.selection_order_reverse() {
@@ -796,6 +852,7 @@ impl<'a> EditorCommands<'a> {
         self.merge_after_edit();
         self.end_batch();
     }
+
     pub fn delete_left(&mut self, by_word: bool) {
         if self.view.has_selection() {
             self.delete_selection();
@@ -854,6 +911,7 @@ impl<'a> EditorCommands<'a> {
         self.merge_after_edit();
         self.end_batch();
     }
+
     pub fn delete_right(&mut self, by_word: bool) {
         if self.view.has_selection() {
             self.delete_selection();
@@ -912,6 +970,7 @@ impl<'a> EditorCommands<'a> {
         self.merge_after_edit();
         self.end_batch();
     }
+
     pub fn copy(&self) -> Vec<u8> {
         if self.view.selection_empty() {
             return Vec::new();
@@ -936,6 +995,7 @@ impl<'a> EditorCommands<'a> {
         }
         out
     }
+
     pub fn cut(&mut self) -> Vec<u8> {
         if !self.view.selection_empty() {
             let text = self.copy();
@@ -974,6 +1034,7 @@ impl<'a> EditorCommands<'a> {
         self.view.collapse_to_primary();
         text
     }
+
     fn normalize_paste(&self, raw: &[u8]) -> Vec<u8> {
         let mut text = Vec::new();
         if self.state.contains_byte(b'\t') {
@@ -1006,6 +1067,7 @@ impl<'a> EditorCommands<'a> {
         }
         EditorOperations::normalize_line_endings(self.state, &text)
     }
+
     pub fn paste(&mut self, raw: &[u8]) {
         let text = self.normalize_paste(raw);
         if text.is_empty() {
@@ -1014,6 +1076,7 @@ impl<'a> EditorCommands<'a> {
         self.type_text(&text);
         self.request_ensure_visible();
     }
+
     /// Toggle comments on the union of selected lines (or caret lines). A
     /// selection ending at column zero does not include that final line.
     /// Empty end markers denote line comments; paired markers wrap each line.
@@ -1122,6 +1185,7 @@ impl<'a> EditorCommands<'a> {
             self.indent_single_line();
         }
     }
+
     fn indent_single_line(&mut self) {
         self.begin_batch();
         for index in self.selection_order_reverse() {
@@ -1142,6 +1206,7 @@ impl<'a> EditorCommands<'a> {
         self.merge_after_edit();
         self.end_batch();
     }
+
     fn indent_multi_line(&mut self) {
         let (sr, _, mut er, ec) = self.view.get_ordered();
         if ec == 0 && er > sr {
@@ -1172,6 +1237,7 @@ impl<'a> EditorCommands<'a> {
         }
         self.view.sync_primary_mirrors();
     }
+
     pub fn outdent(&mut self) {
         let (sr, _, mut er, ec) = if !self.view.selection_empty() {
             self.view.get_ordered()
@@ -1235,6 +1301,7 @@ impl<'a> EditorCommands<'a> {
         }
         self.view.sync_primary_mirrors();
     }
+
     fn apply_history(&mut self, edit: &HistoryEdit, is_undo: bool) {
         let mut any = false;
         self.edit_dirty_lo = 0;
@@ -1270,6 +1337,7 @@ impl<'a> EditorCommands<'a> {
         }
         self.request_ensure_visible();
     }
+
     pub fn undo(&mut self) {
         if self.state.read_only {
             return;
@@ -1282,6 +1350,7 @@ impl<'a> EditorCommands<'a> {
             self.request_ensure_visible();
         }
     }
+
     pub fn redo(&mut self) {
         if self.state.read_only {
             return;
@@ -1335,6 +1404,7 @@ fn shift_pos_after_insert(
         *row += newlines;
     }
 }
+
 fn shift_pos_after_delete(
     row: &mut i32,
     col: &mut i32,
@@ -1390,6 +1460,7 @@ mod tests {
         undo: ProjectUndo,
         events: EditorEvents,
     }
+
     impl Fixture {
         fn new(text: &[u8]) -> Self {
             let mut state = EditorState::new();
@@ -1403,6 +1474,7 @@ mod tests {
                 events: EditorEvents::new(),
             }
         }
+
         fn commands(&mut self) -> EditorCommands<'_> {
             EditorCommands::new(
                 &mut self.state,
@@ -1412,14 +1484,17 @@ mod tests {
                 &mut self.events,
             )
         }
+
         fn caret(&mut self, row: i32, col: i32) {
             self.commands()
                 .set_cursor(row, col, false, CursorReveal::Ensure);
         }
+
         fn selection(&mut self, ar: i32, ac: i32, hr: i32, hc: i32) {
             self.commands()
                 .set_selection(ar, ac, hr, hc, CursorReveal::Ensure);
         }
+
         fn carets(&mut self, carets: &[(i32, i32)], primary: usize) {
             self.commands().set_selections(
                 carets
@@ -1436,6 +1511,7 @@ mod tests {
                 CursorReveal::Ensure,
             );
         }
+
         fn content(&self) -> Vec<u8> {
             self.state.join()
         }
@@ -1503,6 +1579,7 @@ mod tests {
         assert_eq!((f.view.row, f.view.column), (0, 6));
         assert!(f.state.dirty);
     }
+
     #[test]
     fn type_text_multibyte_utf8() {
         let mut f = Fixture::new(b"");
@@ -1517,6 +1594,7 @@ mod tests {
         assert_eq!(f.content(), "a📚b".as_bytes());
         assert_eq!(f.view.column, 6);
     }
+
     #[test]
     fn type_text_replaces_selection_in_one_did_edit() {
         let mut f = Fixture::new(b"abcdef");
@@ -1533,6 +1611,7 @@ mod tests {
         assert_eq!(edits.borrow().len(), 1);
         assert_eq!(edits.borrow()[0].changes.len(), 2);
     }
+
     #[test]
     fn did_edit_carries_incremental_changes() {
         let mut f = Fixture::new(b"hello");
@@ -1557,6 +1636,7 @@ mod tests {
         );
         assert_eq!(change.text, b"!");
     }
+
     #[test]
     fn type_text_empty_is_noop() {
         let mut f = Fixture::new(b"x");
@@ -1567,6 +1647,7 @@ mod tests {
         assert_eq!(f.state.version, version);
         assert_eq!(f.view.column, 1);
     }
+
     #[test]
     fn delete_left_mid_line_and_line_start() {
         let mut f = Fixture::new(b"abcd");
@@ -1580,6 +1661,7 @@ mod tests {
         assert_eq!(f.content(), b"abcd");
         assert_eq!((f.view.row, f.view.column), (0, 2));
     }
+
     #[test]
     fn delete_left_removes_whole_utf8_character_and_selection() {
         let mut f = Fixture::new("aéx".as_bytes());
@@ -1593,6 +1675,7 @@ mod tests {
         assert_eq!(f.content(), b" world");
         assert_eq!(f.view.column, 0);
     }
+
     #[test]
     fn delete_right_mid_line() {
         let mut f = Fixture::new(b"abcd");
@@ -1601,6 +1684,7 @@ mod tests {
         assert_eq!(f.content(), b"acd");
         assert_eq!(f.view.column, 1);
     }
+
     #[test]
     fn insert_newline_copies_leading_indent() {
         let mut f = Fixture::new(b"\tfoo");
@@ -1611,6 +1695,7 @@ mod tests {
         assert_eq!(f.state.line(1), b"\t");
         assert_eq!((f.view.row, f.view.column), (1, 1));
     }
+
     #[test]
     fn indent_single_and_multi_line() {
         let mut f = Fixture::new(b"foo");
@@ -1690,6 +1775,7 @@ mod tests {
         f.commands().toggle_comment(b"/*", b"*/");
         assert_eq!(f.content(), b"  color: red;");
     }
+
     #[test]
     fn outdent_tab_and_four_spaces() {
         let mut f = Fixture::new(b"\tfoo");
@@ -1701,6 +1787,7 @@ mod tests {
         f.commands().outdent();
         assert_eq!(f.content(), b"foo");
     }
+
     #[test]
     fn paste_and_replace_selection() {
         let mut f = Fixture::new(b"ab");
@@ -1713,6 +1800,7 @@ mod tests {
         f.commands().paste(b"XX");
         assert_eq!(f.content(), b"hXXo");
     }
+
     #[test]
     fn multiline_type_and_paste() {
         for paste in [false, true] {
@@ -1732,6 +1820,7 @@ mod tests {
             b"x\ny"
         );
     }
+
     #[test]
     fn copy_and_cut_primary_selection() {
         let mut f = Fixture::new(b"hello world");
@@ -1741,6 +1830,7 @@ mod tests {
         assert_eq!(f.commands().cut(), b"hello");
         assert_eq!(f.content(), b" world");
     }
+
     #[test]
     fn select_all_then_delete() {
         let mut f = Fixture::new(b"one\ntwo");
@@ -1751,6 +1841,7 @@ mod tests {
         assert!(f.state.line(0).is_empty());
         assert!(f.content().is_empty());
     }
+
     #[test]
     fn move_left_right_and_shift_selection() {
         let mut f = Fixture::new(b"ab");
@@ -1775,6 +1866,7 @@ mod tests {
         assert_eq!(f.content(), b"aXbc\ndXef\ngXhi");
         assert_eq!(f.view.selection_count(), 3);
     }
+
     #[test]
     fn multi_cursor_one_undo_restores_text_and_carets() {
         let mut f = Fixture::new(b"abc\ndef");
@@ -1803,6 +1895,7 @@ mod tests {
         assert_eq!(f.content(), b"aZbc\ndZef");
         assert_eq!(f.view.selection_count(), 2);
     }
+
     #[test]
     fn multi_cursor_same_line_shifts_later_heads() {
         let mut f = Fixture::new(b"abcdef");
@@ -1813,6 +1906,7 @@ mod tests {
         assert_eq!(f.view.selections[0].head_column, 2);
         assert_eq!(f.view.selections[1].head_column, 6);
     }
+
     #[test]
     fn multi_cursor_delete_left() {
         let mut f = Fixture::new(b"aXbYc");
@@ -1820,6 +1914,7 @@ mod tests {
         f.commands().delete_left(false);
         assert_eq!(f.content(), b"abc");
     }
+
     #[test]
     fn multi_cursor_replace_ranges_and_undo() {
         let mut f = Fixture::new(b"one two three");
@@ -1846,6 +1941,7 @@ mod tests {
         assert_eq!(f.view.selection_count(), 2);
         assert!(f.view.has_selection());
     }
+
     #[test]
     fn adjacent_single_caret_inserts_coalesce() {
         let mut f = Fixture::new(b"");
@@ -1856,6 +1952,7 @@ mod tests {
         f.commands().undo();
         assert_eq!(f.content(), b"");
     }
+
     #[test]
     fn replace_selection_is_one_undo_group() {
         let mut f = Fixture::new(b"abcdef");
@@ -1865,6 +1962,7 @@ mod tests {
         f.commands().undo();
         assert_eq!(f.content(), b"abcdef");
     }
+
     #[test]
     fn collapse_selection_drops_secondary_carets() {
         let mut f = Fixture::new(b"a\nb\nc");
@@ -1874,6 +1972,7 @@ mod tests {
         assert_eq!(f.view.selection_count(), 1);
         assert_eq!((f.view.row, f.view.column), (1, 0));
     }
+
     #[test]
     fn navigation_moves_every_caret_without_creating_ranges() {
         let mut f = Fixture::new(b"aa\nbb\ncc");
@@ -1893,6 +1992,7 @@ mod tests {
         f.commands().move_down(false);
         assert!(!f.view.has_selection());
     }
+
     #[test]
     fn shift_move_extends_and_plain_move_clears() {
         let mut f = Fixture::new(b"abcdef");
@@ -1905,6 +2005,7 @@ mod tests {
         assert!(!f.view.has_selection());
         assert_eq!(f.view.column, 4);
     }
+
     #[test]
     fn add_cursor_below_builds_column() {
         let mut f = Fixture::new(b"aaa\nbbb\nccc\nddd");
@@ -1921,6 +2022,7 @@ mod tests {
         f.commands().type_text(b"X");
         assert_eq!(f.content(), b"aXaa\nbXbb\ncXcc\nddd");
     }
+
     #[test]
     fn add_cursor_above_follows_new_caret_and_stops_at_edge() {
         let mut f = Fixture::new(b"aaa\nbbb\nccc");
@@ -1934,6 +2036,7 @@ mod tests {
         f.commands().add_cursor_above();
         assert_eq!(f.view.selection_count(), 3);
     }
+
     #[test]
     fn add_cursor_below_ignores_existing_caret() {
         let mut f = Fixture::new(b"aaa\nbbb");
@@ -1941,6 +2044,7 @@ mod tests {
         f.commands().add_cursor_below();
         assert_eq!(f.view.selection_count(), 2);
     }
+
     // Additional cases from tests/editor/undo_service_test.cpp.
     #[test]
     fn insert_then_delete_are_separate_undo_steps() {
@@ -1955,6 +2059,7 @@ mod tests {
         f.commands().undo();
         assert_eq!(f.content(), b"x");
     }
+
     #[test]
     fn new_edit_after_undo_discards_redo_branch() {
         let mut f = Fixture::new(b"");
@@ -1965,6 +2070,7 @@ mod tests {
         f.commands().redo();
         assert_eq!(f.content(), b"b");
     }
+
     #[test]
     fn independent_sessions_can_share_project_history() {
         let mut a = Fixture::new(b"A");

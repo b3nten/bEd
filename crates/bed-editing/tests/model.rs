@@ -15,6 +15,7 @@ fn text_model_data_one_line() {
     assert!(m.get_eol() == b"\n" || m.get_eol() == b"\r\n");
     assert_eq!(m.get_lines_content(), bytes(&["Hello world!"]));
 }
+
 #[test]
 fn text_model_data_multiline() {
     let m = TextModel::create("Hello,\r\ndear friend\nHow\rare\r\nyou?");
@@ -24,12 +25,14 @@ fn text_model_data_multiline() {
         bytes(&["Hello,", "dear friend", "How", "are", "you?"])
     );
 }
+
 #[test]
 fn text_model_data_non_basic_ascii() {
     let m = TextModel::create("Hello,\nZürich");
     assert_eq!(m.get_eol(), b"\n");
     assert_eq!(m.get_lines_content(), bytes(&["Hello,", "Zürich"]));
 }
+
 #[test]
 fn text_model_data_rtl_hebrew() {
     let m = TextModel::create("Hello,\nזוהי עובדה מבוססת שדעתו");
@@ -38,6 +41,7 @@ fn text_model_data_rtl_hebrew() {
     assert_eq!(m.get_line_content(1), b"Hello,");
     assert_eq!(m.get_line_content(2), "זוהי עובדה מבוססת שדעתו".as_bytes());
 }
+
 #[test]
 fn text_model_data_rtl_arabic() {
     let m = TextModel::create("Hello,\nهناك حقيقة مثبتة منذ زمن طويل");
@@ -75,6 +79,7 @@ fn range_length_crlf() {
         );
     }
 }
+
 #[test]
 fn range_length_lf() {
     let m = TextModel::create("My First Line\nMy Second Line\nMy Third Line");
@@ -97,6 +102,7 @@ fn range_length_lf() {
         );
     }
 }
+
 #[test]
 fn range_length_different_eol() {
     let m = TextModel::create("My First Line\r\nMy Second Line\r\nMy Third Line");
@@ -126,6 +132,7 @@ fn range_length_different_eol() {
         );
     }
 }
+
 #[test]
 fn validate_position() {
     let m = TextModel::create("line one\nline two");
@@ -147,6 +154,7 @@ fn validate_position() {
         assert_eq!(m.validate_position(p), expected, "{p:?}");
     }
 }
+
 #[test]
 fn validate_position_multibyte() {
     let m = TextModel::create("a📚b");
@@ -163,6 +171,7 @@ fn validate_position_multibyte() {
         assert_eq!(m.validate_position((1, column)), (1, expected));
     }
 }
+
 #[test]
 fn modify_position() {
     let m = TextModel::create("line one\nline two");
@@ -192,6 +201,7 @@ fn modify_position() {
         assert_eq!(m.modify_position(p, offset), expected, "{p:?}+{offset}");
     }
 }
+
 #[test]
 fn first_non_whitespace_column() {
     let m = TextModel::create_from_lines(&[
@@ -204,6 +214,7 @@ fn first_non_whitespace_column() {
         );
     }
 }
+
 #[test]
 fn last_non_whitespace_column() {
     let m = TextModel::create_from_lines(&[
@@ -216,6 +227,7 @@ fn last_non_whitespace_column() {
         );
     }
 }
+
 #[test]
 fn invalid_range_issue_50471() {
     let m = TextModel::create("My First Line\r\nMy Second Line\r\nMy Third Line");
@@ -224,6 +236,7 @@ fn invalid_range_issue_50471() {
         b"My"
     );
 }
+
 #[test]
 fn set_value_resets_buffer() {
     let mut m = TextModel::create("hello world!");
@@ -241,6 +254,7 @@ const BASE: &[&str] = &[
     "",
     "1",
 ];
+
 fn assert_single_edit(op: SingleEditOperation, edited: &[&str]) {
     let mut model = TextModel::create("My First Line\r\n\t\tMy Second Line\n    Third Line\n\r\n1");
     let inverse = model.apply_edits(std::slice::from_ref(&op), true);
@@ -263,6 +277,7 @@ fn assert_single_edit(op: SingleEditOperation, edited: &[&str]) {
     assert_eq!(strip_eol(&original[0].text), strip_eol(&op.text));
     assert_eq!(original[0].range.ordered(), op.range.ordered());
 }
+
 #[test]
 fn single_edit_insert_inline() {
     assert_single_edit(
@@ -270,6 +285,7 @@ fn single_edit_insert_inline() {
         &["aMy First Line", BASE[1], BASE[2], BASE[3], BASE[4]],
     );
 }
+
 #[test]
 fn single_edit_replace_inline_1() {
     assert_single_edit(
@@ -283,6 +299,7 @@ fn single_edit_replace_inline_1() {
         ],
     );
 }
+
 #[test]
 fn single_edit_replace_inline_2() {
     assert_single_edit(
@@ -296,6 +313,7 @@ fn single_edit_replace_inline_2() {
         ],
     );
 }
+
 #[test]
 fn single_edit_replace_inline_3() {
     assert_single_edit(
@@ -303,6 +321,7 @@ fn single_edit_replace_inline_3() {
         &["My new First Line.", BASE[1], BASE[2], BASE[3], BASE[4]],
     );
 }
+
 #[test]
 fn single_edit_replace_multiline_1() {
     assert_single_edit(
@@ -310,6 +329,7 @@ fn single_edit_replace_multiline_1() {
         &["My new First Line.", BASE[3], BASE[4]],
     );
 }
+
 #[test]
 fn single_edit_replace_multiline_2() {
     assert_single_edit(
@@ -317,6 +337,7 @@ fn single_edit_replace_multiline_2() {
         &["MMy new First Line.", BASE[3], BASE[4]],
     );
 }
+
 #[test]
 fn single_edit_replace_multiline_3() {
     assert_single_edit(
@@ -324,6 +345,7 @@ fn single_edit_replace_multiline_3() {
         &["MMy new First Line.   Third Line", BASE[3], BASE[4]],
     );
 }
+
 #[test]
 fn single_edit_insert_multiline() {
     assert_single_edit(
@@ -450,6 +472,7 @@ base_edit_case!(
     &["My Third Line", BASE[3], BASE[4]]
 );
 base_edit_case!(apply_edits_delete_all, Range(1, 1, 5, 2), &[""], &[""]);
+
 #[test]
 fn apply_edits_two_unrelated() {
     assert_edits(
@@ -458,6 +481,7 @@ fn apply_edits_two_unrelated() {
         &[BASE[0], "\tMy Second Line", "Third Line", "", "123"],
     );
 }
+
 #[test]
 fn apply_edits_two_on_one_line() {
     assert_edits(
@@ -478,6 +502,7 @@ fn apply_edits_two_on_one_line() {
         ],
     );
 }
+
 #[test]
 fn apply_edits_issue_19872() {
     assert_edits(
@@ -486,6 +511,7 @@ fn apply_edits_issue_19872() {
         &["something", "A", "B", "something else"],
     );
 }
+
 #[test]
 fn apply_edits_issue_19872_inverse() {
     assert_edits(
@@ -494,6 +520,7 @@ fn apply_edits_issue_19872_inverse() {
         &["something", " A", "", " B", "something else"],
     );
 }
+
 #[test]
 fn apply_edits_last_op_noop() {
     assert_edits(
@@ -502,6 +529,7 @@ fn apply_edits_last_op_noop() {
         &["y First Line", BASE[1], BASE[2], BASE[3], BASE[4]],
     );
 }
+
 #[test]
 fn apply_edits_many() {
     assert_edits(
@@ -514,6 +542,7 @@ fn apply_edits_many() {
         &["{", "  \"x\": 1", "}"],
     );
 }
+
 #[test]
 fn apply_edits_many_reversed() {
     assert_edits(
@@ -526,6 +555,7 @@ fn apply_edits_many_reversed() {
         &["{\"x\" : 1}"],
     );
 }
+
 #[test]
 fn apply_edits_utf8_1() {
     assert_edits(
@@ -534,6 +564,7 @@ fn apply_edits_utf8_1() {
         &["a📚some", "very nice", "text"],
     );
 }
+
 #[test]
 fn apply_edits_utf8_2() {
     assert_edits(
@@ -542,6 +573,7 @@ fn apply_edits_utf8_2() {
         &["asome", "very nice", "text"],
     );
 }
+
 #[test]
 fn apply_edits_issue_47733_unicode_undo() {
     assert_edits(&["'👁'"], &[edit_op(1, 1, 1, 1, &["a"])], &["a'👁'"]);

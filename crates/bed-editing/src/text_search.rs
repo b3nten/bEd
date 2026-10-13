@@ -22,6 +22,7 @@ pub struct CompiledSearch {
     include: Vec<Pattern>,
     exclude: Vec<Pattern>,
 }
+
 impl CompiledSearch {
     pub fn new(query: &[u8], options: &SearchOptions) -> Result<Self, String> {
         let pattern = if options.regex {
@@ -44,6 +45,7 @@ impl CompiledSearch {
             exclude: patterns(&options.exclude)?,
         })
     }
+
     pub fn includes_path(&self, relative: &str) -> bool {
         let matches = |pattern: &Pattern| {
             let target = if pattern.as_str().contains('/') {
@@ -63,6 +65,7 @@ impl CompiledSearch {
         (self.include.is_empty() || self.include.iter().any(matches))
             && !self.exclude.iter().any(matches)
     }
+
     pub fn matches<'a>(&'a self, line: &'a [u8]) -> impl Iterator<Item = Range<usize>> + 'a {
         self.matcher
             .find_iter(line)
@@ -77,6 +80,7 @@ impl CompiledSearch {
             })
             .map(|found| found.range())
     }
+
     /// Expand against the original whole line, retaining anchor/capture context.
     pub fn replacement(
         &self,
@@ -97,9 +101,11 @@ impl CompiledSearch {
         Ok(bytes)
     }
 }
+
 fn word_byte(byte: &u8) -> bool {
     byte.is_ascii_alphanumeric() || *byte == b'_'
 }
+
 fn patterns(input: &str) -> Result<Vec<Pattern>, String> {
     input
         .split(',')
@@ -130,6 +136,7 @@ pub fn binary_text_probe(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn literals_case_words_and_nonoverlapping_ranges() {
         let options = SearchOptions::default();
@@ -165,6 +172,7 @@ mod tests {
         .unwrap();
         assert_eq!(search.matches(b"CAT cat").collect::<Vec<_>>(), vec![4..7]);
     }
+
     #[test]
     fn captures_empty_matches_and_invalid_patterns() {
         let options = SearchOptions {
@@ -193,6 +201,7 @@ mod tests {
             .is_err()
         );
     }
+
     #[test]
     fn includes_are_alternatives_and_exclusions_win() {
         let search = CompiledSearch::new(

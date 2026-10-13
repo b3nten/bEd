@@ -3,6 +3,7 @@ macro_rules! identity {
     ($name:ident) => {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name(pub u64);
+
         impl $name {
             pub fn next() -> Self {
                 static NEXT: AtomicU64 = AtomicU64::new(1);

@@ -47,6 +47,7 @@ impl EditorState {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn platform_line_ending() -> Vec<u8> {
         b"\n".to_vec()
     }
@@ -131,41 +132,52 @@ impl EditorState {
     pub fn join(&self) -> Vec<u8> {
         self.text.bytes()
     }
+
     pub fn byte_size(&self) -> usize {
         self.text.size()
     }
+
     pub fn line_count(&self) -> i32 {
         self.text.line_count()
     }
+
     pub fn line_length(&self, row: i32) -> i32 {
         self.text.line_length(row)
     }
+
     pub fn line(&self, row: i32) -> Vec<u8> {
         self.text.line(row)
     }
+
     pub fn line_into(&self, row: i32, out: &mut Vec<u8>, max_bytes: usize) {
         self.text.line_into(row, out, max_bytes);
     }
+
     pub fn lines_into(&self, out: &mut Vec<Vec<u8>>) {
         out.resize_with(self.line_count() as usize, Vec::new);
         for (row, line) in out.iter_mut().enumerate() {
             self.line_into(row as i32, line, usize::MAX);
         }
     }
+
     pub fn lines(&self) -> Vec<Vec<u8>> {
         let mut out = Vec::new();
         self.lines_into(&mut out);
         out
     }
+
     pub fn offset_from_row_col(&self, row: i32, column: i32) -> usize {
         self.text.offset_from_row_col(row, column)
     }
+
     pub fn row_col_from_offset(&self, offset: usize) -> (i32, i32) {
         self.text.row_col_from_offset(offset)
     }
+
     pub fn copy_bytes(&self, off: usize, len: usize, out: &mut [u8]) {
         self.text.copy_bytes(off, len, out);
     }
+
     pub fn bytes_equal(&self, bytes: &[u8]) -> bool {
         if bytes.len() != self.byte_size() {
             return false;
@@ -179,25 +191,32 @@ impl EditorState {
         }
         true
     }
+
     pub fn line_starts(&self, out: &mut Vec<u32>) {
         self.text.line_starts(out);
     }
+
     pub fn contains_byte(&self, byte: u8) -> bool {
         self.text.contains_byte(byte)
     }
+
     pub fn snapshot(&self) -> Snapshot {
         self.text.snapshot()
     }
+
     pub fn mark_edited(&mut self) {
         self.version += 1;
         self.dirty = true;
     }
+
     pub fn mark_saved(&mut self) {
         self.dirty = false;
     }
+
     pub(crate) fn buffer_insert(&mut self, off: usize, bytes: &[u8]) {
         self.text.insert(off, bytes);
     }
+
     pub(crate) fn buffer_erase(&mut self, off: usize, len: usize) {
         self.text.erase(off, len);
     }
@@ -229,6 +248,7 @@ mod tests {
         state.set_from_bytes(raw);
         state
     }
+
     fn insert_at(state: &mut EditorState, row: i32, column: i32, text: &[u8]) {
         assert!(
             EditorOperations::new()
@@ -245,6 +265,7 @@ mod tests {
                 .ok
         );
     }
+
     fn erase_at(state: &mut EditorState, row: i32, column: i32, length: i32) {
         assert!(
             EditorOperations::new()

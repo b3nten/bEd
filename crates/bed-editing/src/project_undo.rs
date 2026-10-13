@@ -61,11 +61,13 @@ pub struct WorkspaceHistoryParticipant {
     pub before: u64,
     pub after: u64,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WorkspaceHistoryGroup {
     pub id: u64,
     pub participants: Vec<WorkspaceHistoryParticipant>,
 }
+
 pub fn history_fingerprint(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf29ce484222325, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
@@ -253,6 +255,7 @@ impl ProjectUndo {
         }
         self.dirty = true;
     }
+
     pub fn new(project_root: String) -> Self {
         Self {
             project_root,
@@ -356,6 +359,7 @@ impl ProjectUndo {
         self.dirty = true;
         self.maybe_save_to_disk();
     }
+
     /// Byte edits invalidate earlier text operations, but do not create a
     /// persistent history record for a file that has only been viewed as bytes.
     pub fn forget_existing_file(&mut self, path: &str) {
@@ -363,6 +367,7 @@ impl ProjectUndo {
             self.forget_file(path);
         }
     }
+
     pub fn remove_memory_file(&mut self, path: &str) {
         self.stacks.remove(path);
         self.reset_paths.remove(path);
@@ -406,6 +411,7 @@ impl ProjectUndo {
             stack.update_pending_final_cursor(row, column);
         }
     }
+
     /// Tag already-recorded document transactions after the session commits all
     /// participants. Group membership constrains undo to a session operation.
     pub fn group_latest(&mut self, group: WorkspaceHistoryGroup) -> std::io::Result<()> {
@@ -433,6 +439,7 @@ impl ProjectUndo {
         self.dirty = true;
         Ok(())
     }
+
     pub fn workspace_group(&mut self, path: &str, undo: bool) -> Option<WorkspaceHistoryGroup> {
         let stack = self.stack_for(path)?;
         stack.commit_pending();
@@ -444,11 +451,13 @@ impl ProjectUndo {
         .workspace_group
         .clone()
     }
+
     pub fn latest_undo_edit(&mut self, path: &str) -> Option<HistoryEdit> {
         let stack = self.stack_for(path)?;
         stack.commit_pending();
         stack.undo_stack.last().cloned()
     }
+
     pub fn validate_workspace_group(
         &mut self,
         group: &WorkspaceHistoryGroup,
@@ -470,6 +479,7 @@ impl ProjectUndo {
         }
         Ok(())
     }
+
     pub fn has_workspace_history(&self, path: &str) -> bool {
         self.stacks.get(path).is_some_and(|stack| {
             stack
@@ -480,11 +490,13 @@ impl ProjectUndo {
                 .any(|edit| edit.workspace_group.is_some())
         })
     }
+
     /// Only the session may consume grouped operations, after preflighting all
     /// participants. Ordinary document commands cannot partially undo a group.
     pub fn allow_workspace_history(&mut self, id: Option<u64>) {
         self.workspace_history_owner = id;
     }
+
     pub fn merge_workspace_groups(
         &mut self,
         original: &WorkspaceHistoryGroup,

@@ -41,9 +41,13 @@ pub struct DidRequestExclusiveOverlay {
 }
 
 type Listener<T> = Box<dyn FnMut(&T)>;
+
 type DocumentListener = Box<dyn FnMut(&DidEdit, &super::editor_state::EditorState)>;
+
 type SavedDocumentListener = Box<dyn FnMut(&DidSave, &super::editor_state::EditorState)>;
+
 type WeakDocumentListener = Box<dyn FnMut(&DidEdit, &super::editor_state::EditorState) -> bool>;
+
 type WeakOverlayListener = Box<dyn FnMut(Option<&DidRequestExclusiveOverlay>) -> bool>;
 
 #[derive(Default)]
@@ -84,6 +88,7 @@ impl EditorEvents {
     ) {
         self.weak_document_listeners.push(Box::new(listener));
     }
+
     pub fn subscribe_overlay_weak(
         &mut self,
         listener: impl FnMut(Option<&DidRequestExclusiveOverlay>) -> bool + 'static,
@@ -91,6 +96,7 @@ impl EditorEvents {
         self.weak_overlay_listeners
             .push((self.view_scope, Box::new(listener)));
     }
+
     pub fn set_view_scope(&mut self, view: Option<u64>) {
         self.view_scope = view;
     }

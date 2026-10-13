@@ -356,22 +356,27 @@ impl TextBuffer {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub(crate) fn assign(&mut self, bytes: &[u8]) {
         self.root = Node::from_bytes(bytes);
     }
+
     pub(crate) fn insert(&mut self, off: usize, bytes: &[u8]) {
         if !bytes.is_empty() {
             self.root = Node::insert(&self.root, off, bytes);
         }
     }
+
     pub(crate) fn erase(&mut self, off: usize, len: usize) {
         if len != 0 {
             self.root = Node::erase(&self.root, off, len);
         }
     }
+
     pub fn size(&self) -> usize {
         self.root.sum.bytes
     }
+
     pub fn line_count(&self) -> i32 {
         self.root.sum.lines()
     }
@@ -414,6 +419,7 @@ impl TextBuffer {
     pub fn line_length(&self, row: i32) -> i32 {
         self.line_body(row).1 as i32
     }
+
     pub fn offset_from_row_col(&self, row: i32, col: i32) -> usize {
         let row = row.clamp(0, self.line_count() - 1);
         let col = col.clamp(0, self.line_length(row));
@@ -452,6 +458,7 @@ impl TextBuffer {
         self.line_into(row, &mut out, usize::MAX);
         out
     }
+
     pub fn line_into(&self, row: i32, out: &mut Vec<u8>, max_bytes: usize) {
         out.clear();
         if max_bytes == 0 {
@@ -462,20 +469,25 @@ impl TextBuffer {
         out.resize(len, 0);
         self.root.copy(start, len, out);
     }
+
     pub fn bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.size());
         self.root.collect(&mut out);
         out
     }
+
     pub fn copy_bytes(&self, off: usize, len: usize, out: &mut [u8]) {
         self.root.copy(off, len, out);
     }
+
     pub fn line_starts(&self, out: &mut Vec<u32>) {
         self.root.line_starts(out);
     }
+
     pub fn contains_byte(&self, byte: u8) -> bool {
         self.root.contains_byte(byte)
     }
+
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             root: Some(Arc::clone(&self.root)),
@@ -492,14 +504,17 @@ impl Snapshot {
     pub fn size(&self) -> usize {
         self.root.as_ref().map_or(0, |root| root.sum.bytes)
     }
+
     pub fn line_count(&self) -> i32 {
         self.root.as_ref().map_or(1, |root| root.sum.lines())
     }
+
     pub fn copy_bytes(&self, off: usize, len: usize, out: &mut [u8]) {
         if let Some(root) = &self.root {
             root.copy(off, len, out);
         }
     }
+
     pub fn bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.size());
         if let Some(root) = &self.root {
@@ -507,6 +522,7 @@ impl Snapshot {
         }
         out
     }
+
     pub fn line_starts(&self, out: &mut Vec<u32>) {
         if let Some(root) = &self.root {
             root.line_starts(out);
