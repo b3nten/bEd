@@ -6831,3 +6831,10 @@ Helix contributors. Mozilla Public License Version 2.0.
 The original license is retained in resources/config/LICENSE.helix.
 Bed changes include editor identifiers, selected single-server associations,
 root markers, and omission of configuration for deferred editor features.
+
+Additional Helix provenance:
+The named language/server separation, layered overrides, and bounded root
+selection follow Helix's approach. Bed retains its own transport and document
+ownership; no Helix crates or runtime catalog downloads are required. Bed uses
+its own client identity and enables Python workspace diagnostics in the bundled
+recipe.
