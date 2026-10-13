@@ -61,9 +61,12 @@ pub fn directory_label(ui: &Ui, directory: &str) {
         ui.tooltip_text(directory);
     }
 }
+
 pub trait FileIcons {
     fn get(&self, name: &str) -> Option<TextureId>;
+
     fn get_for_file(&self, filename: &str) -> Option<TextureId>;
+
     fn file_icon_tint(&self, _filename: &str, text: [f32; 4]) -> [f32; 4] {
         text
     }

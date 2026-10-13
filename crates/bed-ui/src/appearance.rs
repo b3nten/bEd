@@ -4,6 +4,7 @@ pub struct UiFontOptions {
     pub family: String,
     pub size: f32,
 }
+
 impl Default for UiFontOptions {
     fn default() -> Self {
         Self {
@@ -12,6 +13,7 @@ impl Default for UiFontOptions {
         }
     }
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiPalette {
     pub background: [f32; 4],
@@ -21,6 +23,7 @@ pub struct UiPalette {
     pub accent: [f32; 4],
     pub selection: [f32; 4],
 }
+
 impl Default for UiPalette {
     fn default() -> Self {
         let rgb = |r: u8, g: u8, b: u8| {
@@ -41,12 +44,14 @@ impl Default for UiPalette {
         }
     }
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiAppearance {
     pub fonts: UiFontOptions,
     pub palette: UiPalette,
     pub opacity: f32,
 }
+
 impl Default for UiAppearance {
     fn default() -> Self {
         Self {

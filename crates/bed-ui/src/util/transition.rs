@@ -7,6 +7,7 @@ const SECONDS: f64 = 0.120;
 pub struct Motion {
     transition: Option<(f32, f32, f64)>,
 }
+
 impl Motion {
     pub fn sample(&mut self, target: f32, now: f64, enabled: bool) -> f32 {
         let Some((from, to, began)) = self.transition else {
@@ -33,6 +34,7 @@ pub struct ContentTransition<T> {
     outgoing: Option<T>,
     began: f64,
 }
+
 impl<T: Clone + PartialEq> ContentTransition<T> {
     /// Crossfade both documents at the same origin. Layout and scrolling belong
     /// to the new content; fading the actual vertices also covers syntax painters.
@@ -90,6 +92,7 @@ fn faded(ui: &Ui, alpha: f32, draw: impl FnOnce()) {
 pub struct Disclosure {
     motion: Motion,
 }
+
 impl Disclosure {
     pub fn draw(&mut self, ui: &Ui, open: bool, enabled: bool, draw: impl FnOnce()) {
         let amount = self
@@ -151,6 +154,7 @@ mod tests {
             .build();
         context
     }
+
     fn frame(context: &mut Context, delta: f32, draw: impl FnOnce(&Ui)) {
         context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], delta));
         let ui = context.frame();

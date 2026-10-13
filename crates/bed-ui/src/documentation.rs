@@ -15,6 +15,7 @@ pub struct Documentation {
     pub language: String,
     pub colors: ThemeColors,
 }
+
 impl Documentation {
     pub fn render(&self, ui: &Ui) {
         if self.markdown {
@@ -24,6 +25,7 @@ impl Documentation {
         }
     }
 }
+
 impl From<String> for Documentation {
     fn from(text: String) -> Self {
         Self {
@@ -32,6 +34,7 @@ impl From<String> for Documentation {
         }
     }
 }
+
 struct HoverColors {
     slots: [[f32; 4]; THEME_SLOTS.len()],
     bold: [f32; 4],
@@ -291,6 +294,7 @@ pub fn render_markdown(ui: &Ui, markdown: &str, colors: &ThemeColors, fallback_l
 mod tests {
     use super::*;
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions, WindowFlags};
+
     fn context() -> Context {
         let mut context = Context::create();
         context
@@ -303,6 +307,7 @@ mod tests {
             .build();
         context
     }
+
     fn frame(context: &mut Context, draw: impl FnOnce(&Ui)) {
         context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], 1.0 / 60.0));
         let ui = context.frame();
@@ -312,6 +317,7 @@ mod tests {
             .build(|| draw(ui));
         drop(context.render_legacy());
     }
+
     #[test]
     fn native_prose_wraps_styled_words_unicode_and_long_words_at_available_width() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();

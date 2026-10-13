@@ -17,6 +17,7 @@ struct Transition {
     to: f32,
     began: f64,
 }
+
 impl Transition {
     fn value(self, now: f64) -> f32 {
         let t = ((now - self.began) / DURATION).clamp(0.0, 1.0) as f32;
@@ -31,6 +32,7 @@ pub struct RowMotion {
     pub height: f32,
     pub interactive: bool,
 }
+
 impl Default for RowMotion {
     fn default() -> Self {
         Self {
@@ -50,6 +52,7 @@ pub struct TreeAnimation<K> {
     animating: bool,
     offsets: RefCell<Option<(f32, Rc<Vec<f32>>)>>,
 }
+
 impl<K> Default for TreeAnimation<K> {
     fn default() -> Self {
         Self {
@@ -63,6 +66,7 @@ impl<K> Default for TreeAnimation<K> {
         }
     }
 }
+
 impl<K: Clone + Eq + Hash> TreeAnimation<K> {
     /// Closing rows retain their order while their height eases to zero. Reversals
     /// start at the current height; wall time prevents duplicate draws advancing twice.
@@ -167,6 +171,7 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
         }
         self.advance();
     }
+
     fn advance(&mut self) {
         self.transitions
             .retain(|_, state| state.to > 0.0 || state.value(self.now) > 0.0001);
@@ -176,12 +181,15 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
             .values()
             .any(|state| state.from != state.to && self.now < state.began + DURATION);
     }
+
     pub fn rows(&self) -> &[K] {
         &self.rows
     }
+
     pub fn contains(&self, key: &K) -> bool {
         self.transitions.contains_key(key)
     }
+
     pub fn sample(&self, key: &K) -> RowMotion {
         self.transitions
             .get(key)
@@ -194,6 +202,7 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
                 }
             })
     }
+
     /// Remove invalid or newly filtered nodes immediately instead of displaying stale rows.
     pub fn retain(&mut self, mut keep: impl FnMut(&K) -> bool) {
         self.rows.retain(|key| keep(key));
@@ -201,6 +210,7 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
         self.desired.retain(|key| remaining.contains(key));
         self.transitions.retain(|key, _| remaining.contains(key));
     }
+
     pub fn layout(&self, ui: &Ui, row_height: f32) -> TreeLayout {
         let cached = self.offsets.borrow();
         let offsets = if !self.animating
@@ -238,6 +248,7 @@ pub struct TreeLayout {
     previous_max_y: f32,
     pub visible: Range<usize>,
 }
+
 impl TreeLayout {
     fn new(ui: &Ui, offsets: Rc<Vec<f32>>) -> Self {
         let origin = ui.cursor_pos();
@@ -268,12 +279,15 @@ impl TreeLayout {
             visible: first..last,
         }
     }
+
     pub fn position(&self, index: usize) -> [f32; 2] {
         [self.origin[0], self.origin[1] + self.offsets[index]]
     }
+
     pub fn height(&self, index: usize) -> f32 {
         self.offsets[index + 1] - self.offsets[index]
     }
+
     pub fn row_clip<'ui>(&self, ui: &'ui Ui, index: usize) -> ClipRectToken<'ui> {
         ui.push_clip_rect(
             [self.clip_min[0], self.screen[1] + self.offsets[index]],
@@ -281,6 +295,7 @@ impl TreeLayout {
             true,
         )
     }
+
     pub fn finish(&self, ui: &Ui) {
         ui.set_cursor_pos(self.origin);
         ui.dummy([0.0, self.offsets.last().copied().unwrap_or(0.0)]);
@@ -300,6 +315,7 @@ impl TreeLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn collapsing_height_moves_following_rows_continuously_and_reverses() {
         let mut motion = TreeAnimation::default();
@@ -318,6 +334,7 @@ mod tests {
         motion.update(&["root", "child", "sibling"], 1.168, 4, true, false, false);
         assert!((motion.sample(&"child").height - 0.75).abs() < 0.001);
     }
+
     #[test]
     fn toggle_off_snaps_to_target_and_finished_closures_leave_no_gap() {
         let mut motion = TreeAnimation::default();
@@ -332,6 +349,7 @@ mod tests {
         motion.update(&[1, 3], 1.3, 6, true, false, false);
         assert_eq!(motion.rows(), &[1, 3]);
     }
+
     #[test]
     fn mounts_stagger_and_missing_nodes_can_be_removed_immediately() {
         let mut motion = TreeAnimation::default();

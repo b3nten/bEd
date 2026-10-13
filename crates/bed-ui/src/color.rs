@@ -102,6 +102,7 @@ pub fn ensure_contrast(foreground: [f32; 4], background: [f32; 4], min_ratio: f3
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn known_srgb_luminance_and_contrast() {
         assert_eq!(relative_luminance([0.0, 0.0, 0.0, 1.0]), 0.0);
@@ -110,6 +111,7 @@ mod tests {
         assert!((contrast_ratio([0.0; 4], [1.0; 4]) - 21.0).abs() < 0.0001);
         assert_eq!(blend([1.0; 4], [0.0; 4], 0.25), [0.25; 4]);
     }
+
     #[test]
     fn readable_colors_stay_unchanged_and_low_contrast_colors_adapt_on_both_surfaces() {
         for background in [[0.02, 0.02, 0.03, 1.0], [0.96, 0.94, 0.90, 1.0]] {

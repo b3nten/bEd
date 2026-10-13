@@ -103,6 +103,7 @@ pub fn hover_markdown_plaintext(source: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n\n")
 }
+
 fn fence_language(line: &str) -> Option<String> {
     let bytes = line.as_bytes();
     let mut index = 0;
@@ -131,6 +132,7 @@ fn fence_language(line: &str) -> Option<String> {
     }
     Some(line[start..index].to_ascii_lowercase())
 }
+
 pub fn parse_hover_markdown(source: &str) -> Vec<HoverMdBlock> {
     let mut blocks = Vec::new();
     let mut current = HoverMdBlock::default();
@@ -187,6 +189,7 @@ pub fn parse_hover_markdown(source: &str) -> Vec<HoverMdBlock> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn inline_styling_preserves_words_unicode_and_explicit_breaks() {
         let (text, runs) = parse_hover_prose(
@@ -213,6 +216,7 @@ mod tests {
             "Unclosed **bold and `literal"
         );
     }
+
     #[test]
     fn upstream_fenced_code_and_prose() {
         let blocks = parse_hover_markdown("hello `int`\n```cpp\nint x;\n```\nworld");
@@ -228,6 +232,7 @@ mod tests {
                 .any(|block| !block.code && block.text.contains("hello"))
         );
     }
+
     #[test]
     fn upstream_rule_block() {
         let blocks = parse_hover_markdown("a\n---\nb");
@@ -235,6 +240,7 @@ mod tests {
         assert_eq!(blocks[1].text, "---");
         assert!(!blocks[1].code);
     }
+
     #[test]
     fn upstream_adjacent_blank_lines_trim_and_paragraphs_remain() {
         let blocks = parse_hover_markdown(
@@ -244,12 +250,14 @@ mod tests {
         assert!(blocks[0].code);
         assert_eq!(blocks[1].text, "First paragraph.\n\nSecond paragraph.");
     }
+
     #[test]
     fn upstream_split_terminators_and_cr() {
         assert_eq!(split_hover_lines("a\r\nb\nc"), vec!["a", "b", "c"]);
         assert_eq!(split_hover_lines(""), vec![""]);
         assert_eq!(split_hover_lines("x\n"), vec!["x", ""]);
     }
+
     #[test]
     fn subset_keeps_original_unclosed_fence_empty_code_and_rule_spelling() {
         let blocks = parse_hover_markdown("  ``` Cpp extra\n\n x\n");

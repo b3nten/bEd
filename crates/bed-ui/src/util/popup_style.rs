@@ -101,6 +101,7 @@ pub struct ControlsStyle<'ui> {
     _colors: Vec<ColorStackToken<'ui>>,
     _vars: Vec<StyleStackToken<'ui>>,
 }
+
 impl Drop for ControlsStyle<'_> {
     fn drop(&mut self) {
         while let Some(token) = self._vars.pop() {
@@ -147,6 +148,7 @@ pub struct DialogStyle<'ui> {
     _background: ColorStackToken<'ui>,
     _controls: ControlsStyle<'ui>,
 }
+
 impl Drop for DialogStyle<'_> {
     fn drop(&mut self) {
         while let Some(token) = self._vars.pop() {
@@ -179,6 +181,7 @@ pub struct ContextMenuStyle<'ui> {
     _viewport: PopupViewport<'ui>,
     _controls: ControlsStyle<'ui>,
 }
+
 impl Drop for ContextMenuStyle<'_> {
     fn drop(&mut self) {
         while let Some(token) = self._vars.pop() {
@@ -192,6 +195,7 @@ struct PopupViewport<'ui> {
     id: u32,
     armed: bool,
 }
+
 impl<'ui> PopupViewport<'ui> {
     fn new(ui: &'ui Ui) -> Self {
         let has_viewport = ui.with_bound_context(|| unsafe {
@@ -226,6 +230,7 @@ impl<'ui> PopupViewport<'ui> {
         }
     }
 }
+
 impl Drop for PopupViewport<'_> {
     fn drop(&mut self) {
         if !self.armed {
@@ -267,6 +272,7 @@ pub fn context_menu_style(ui: &Ui) -> ContextMenuStyle<'_> {
 mod tests {
     use super::*;
     use crate::color::contrast_ratio;
+
     #[test]
     fn light_and_dark_controls_keep_readable_text_and_disabled_labels() {
         for (background, text, accent) in [

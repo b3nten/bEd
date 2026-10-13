@@ -17,6 +17,7 @@ pub enum FontSourceData {
     File(PathBuf),
     Bytes(Arc<[u8]>),
 }
+
 impl FontSourceData {
     pub fn read(&self) -> io::Result<Arc<[u8]>> {
         match self {
@@ -25,6 +26,7 @@ impl FontSourceData {
         }
     }
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedFace {
     pub source: FontSourceData,
@@ -32,18 +34,21 @@ pub struct ResolvedFace {
     pub bold: bool,
     pub italic: bool,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedFallback {
     pub source: FontSourceData,
     pub index: u32,
     pub emoji: bool,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedFonts {
     pub family: String,
     pub faces: [ResolvedFace; 4],
     pub fallbacks: Vec<ResolvedFallback>,
 }
+
 fn catalog() -> &'static Database {
     static CATALOG: OnceLock<Database> = OnceLock::new();
     CATALOG.get_or_init(|| {
@@ -52,6 +57,7 @@ fn catalog() -> &'static Database {
         db
     })
 }
+
 pub fn available_fonts() -> Vec<String> {
     let families: BTreeSet<_> = catalog()
         .faces()
@@ -63,6 +69,7 @@ pub fn available_fonts() -> Vec<String> {
         .chain(families)
         .collect()
 }
+
 fn query_face(db: &Database, name: &str, bold: bool, italic: bool) -> Option<ResolvedFace> {
     let id = db.query(&Query {
         families: &[Family::Name(name)],
@@ -82,6 +89,7 @@ fn query_face(db: &Database, name: &str, bold: bool, italic: bool) -> Option<Res
         italic: face.style != Style::Normal,
     })
 }
+
 fn packaged_face(bold: bool) -> ResolvedFace {
     static REGULAR: OnceLock<Arc<[u8]>> = OnceLock::new();
     static BOLD: OnceLock<Arc<[u8]>> = OnceLock::new();
@@ -101,6 +109,7 @@ fn packaged_face(bold: bool) -> ResolvedFace {
         italic: false,
     }
 }
+
 impl ResolvedFonts {
     pub fn resolve(name: &str) -> Self {
         let db = catalog();
@@ -202,6 +211,7 @@ fn validated_bytes(source: &FontSourceData, index: u32) -> Option<Arc<[u8]>> {
     }
     Some(bytes)
 }
+
 fn source(bytes: &[u8], size: f32, config: FontConfig) -> FontSource<'_> {
     unsafe { FontSource::ttf_data_with_size(bytes, size) }.with_config(config)
 }
@@ -218,15 +228,18 @@ pub struct UiFonts {
     pub generation: u64,
     applied: Option<(UiFontOptions, bool)>,
 }
+
 impl UiFonts {
     pub fn available_fonts() -> Vec<String> {
         available_fonts()
     }
+
     pub fn size(&self) -> f32 {
         self.applied
             .as_ref()
             .map_or(20.0, |(options, _)| options.size)
     }
+
     /// Returns whether the atlas changed. Embedded contexts append fonts and
     /// preserve the host's default font size and pre-existing sources.
     pub fn apply(
@@ -371,6 +384,7 @@ impl UiFonts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn packaged_faces_work_without_application_assets() {
         assert!(
@@ -383,6 +397,7 @@ mod tests {
         }
         assert_eq!(available_fonts()[0], DEFAULT_FONT);
     }
+
     #[test]
     fn embedded_fonts_preserve_host_sources_and_unchanged_options_skip_reload() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -425,6 +440,7 @@ mod tests {
             .unwrap()
             .build();
     }
+
     #[test]
     fn invalid_options_and_foreign_loader_preserve_host_atlas() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();

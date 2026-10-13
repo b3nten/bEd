@@ -22,11 +22,13 @@ pub struct RgbaImage {
     pub height: u32,
     pub pixels: Vec<u8>,
 }
+
 #[derive(Default)]
 pub struct Icons {
     pub images: BTreeMap<String, RgbaImage>,
     pub textures: BTreeMap<String, TextureId>,
 }
+
 impl Icons {
     pub fn load(resources_root: &Path) -> Self {
         let mut icons = Self::default();
@@ -49,29 +51,36 @@ impl Icons {
         }
         icons
     }
+
     pub fn set_texture(&mut self, key: &str, texture: TextureId) {
         self.textures.insert(key.to_owned(), texture);
     }
+
     pub fn get(&self, name: &str) -> Option<TextureId> {
         self.textures
             .get(name)
             .or_else(|| self.textures.get("default"))
             .copied()
     }
+
     pub fn get_for_file(&self, filename: &str) -> Option<TextureId> {
         self.get(icon_key_for_file(filename))
     }
+
     pub fn file_icon_tint(&self, _filename: &str, text: [f32; 4]) -> [f32; 4] {
         text
     }
 }
+
 impl FileIcons for Icons {
     fn get(&self, name: &str) -> Option<TextureId> {
         self.get(name)
     }
+
     fn get_for_file(&self, filename: &str) -> Option<TextureId> {
         self.get_for_file(filename)
     }
+
     fn file_icon_tint(&self, filename: &str, text: [f32; 4]) -> [f32; 4] {
         self.file_icon_tint(filename, text)
     }
@@ -334,6 +343,7 @@ const FILE_EXTENSIONS: &[(&[&str], &str)] = &[
     (&["license"], "license"),
     (&["bin", "hex"], "hex"),
 ];
+
 pub fn icon_key_for_file(filename: &str) -> &'static str {
     let path = Path::new(filename);
     let name = path
@@ -420,6 +430,7 @@ pub fn icon_button(
     );
     clicked
 }
+
 pub fn resolve_icon_path(resources_root: &Path, filename: &str) -> Option<PathBuf> {
     let mut roots = vec![
         resources_root.join("resources/icons"),
@@ -433,6 +444,7 @@ pub fn resolve_icon_path(resources_root: &Path, filename: &str) -> Option<PathBu
         .map(|dir| dir.join(filename))
         .find(|path| path.exists())
 }
+
 pub fn load_svg(path: &Path) -> io::Result<RgbaImage> {
     let bytes = fs::read(path)?;
     let options = resvg::usvg::Options {
@@ -469,6 +481,7 @@ pub fn load_svg(path: &Path) -> io::Result<RgbaImage> {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
     #[test]
     fn icon_buttons_keep_clicks_hit_rectangles_and_disabled_theme_tint() {
         use dear_imgui_rs::{Condition, Context, FramePrepareOptions, MouseButton, sys};
@@ -550,6 +563,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn filenames_override_extensions_and_extensions_ignore_ascii_case() {
         for (file, key) in [
@@ -580,6 +594,7 @@ mod tests {
             assert_eq!(icon_key_for_file(file), key, "{file}");
         }
     }
+
     #[test]
     fn textures_fall_back_and_all_file_icons_follow_theme_ink() {
         let mut icons = Icons::default();
@@ -594,6 +609,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn catalog_and_associations_have_visible_monochrome_artwork() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

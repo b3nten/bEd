@@ -38,6 +38,7 @@ pub struct DeviceErrorHandlers {
     lost: Arc<Mutex<Option<String>>>,
     uncaptured: Arc<Mutex<Option<String>>>,
 }
+
 impl DeviceErrorHandlers {
     pub fn install(&self, device: &wgpu::Device) {
         let handlers = self.clone();
@@ -74,6 +75,7 @@ impl DeviceErrorHandlers {
 #[cfg(feature = "imgui")]
 #[derive(bevy::prelude::Resource, Default, Clone)]
 pub struct CanvasTextures(pub std::collections::HashMap<TextureHandle, dear_imgui_rs::TextureId>);
+
 #[derive(bevy::prelude::Component, Default, Clone, Copy, Debug)]
 pub struct CanvasVisible(pub bool);
 
@@ -86,6 +88,7 @@ pub struct RenderOutput {
     /// Increment whenever the output's contents need to change.
     pub revision: u64,
 }
+
 impl RenderOutput {
     pub fn validate(&self, maximum: u32) -> Result<(), String> {
         let [width, height] = self.size;
@@ -122,13 +125,17 @@ pub struct CanvasRenderInvocation {
     pub target: RenderTarget,
     pub generation: u64,
 }
+
 pub type CanvasRenderResult = Result<Vec<wgpu::CommandBuffer>, String>;
+
 pub type CanvasRenderSystem =
     bevy::ecs::system::SystemId<bevy::prelude::In<CanvasRenderInvocation>, CanvasRenderResult>;
 #[derive(Clone, Copy, bevy::prelude::Component)]
 pub struct CanvasRenderer(pub CanvasRenderSystem);
+
 #[derive(Clone, Copy, Debug, bevy::prelude::Component)]
 pub struct CanvasOutput(pub RenderOutput);
+
 impl RenderTarget {
     pub fn new(device: &wgpu::Device, output: RenderOutput) -> Result<Self, String> {
         output.validate(device.limits().max_texture_dimension_2d)?;
@@ -183,6 +190,7 @@ pub struct Canvas {
     pub hovered: bool,
     pub active: bool,
 }
+
 #[cfg(feature = "imgui")]
 impl Canvas {
     pub fn show(ui: &Ui, texture: Option<dear_imgui_rs::TextureId>, id: &str) -> Self {
@@ -239,6 +247,7 @@ fn canvas_pixels(size: [f32; 2], scale: [f32; 2]) -> [u32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn output_limits_reject_zero_oversized_and_overflowing_dimensions() {
         let output = |size| RenderOutput {
@@ -252,6 +261,7 @@ mod tests {
             assert!(output(size).validate(8192).is_err());
         }
     }
+
     #[test]
     fn canvas_uses_physical_pixels_and_bounds_large_targets() {
         assert_eq!(canvas_pixels([300.0, 200.0], [2.0; 2]), [600, 400]);
@@ -281,6 +291,7 @@ mod tests {
 
         fn block_on<T>(future: impl Future<Output = T>) -> T {
             struct ThreadWake(std::thread::Thread);
+
             impl Wake for ThreadWake {
                 fn wake(self: Arc<Self>) {
                     self.0.unpark();
