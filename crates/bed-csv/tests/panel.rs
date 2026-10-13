@@ -113,11 +113,16 @@ impl Harness {
     }
 
     fn chord(&mut self, key: Key) {
-        self.context.io_mut().add_key_event(Key::ModCtrl, true);
+        let modifier = if cfg!(target_os = "macos") {
+            Key::ModSuper
+        } else {
+            Key::ModCtrl
+        };
+        self.context.io_mut().add_key_event(modifier, true);
         self.context.io_mut().add_key_event(key, true);
         self.frame();
         self.context.io_mut().add_key_event(key, false);
-        self.context.io_mut().add_key_event(Key::ModCtrl, false);
+        self.context.io_mut().add_key_event(modifier, false);
         self.frame();
     }
 

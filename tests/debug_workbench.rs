@@ -63,6 +63,8 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
             )
         })
         .unwrap();
+    // Publish command availability for the newly opened source view.
+    app.update();
     dispatch_editor_plugin_command(
         app.world_mut(),
         bed_debug::BREAKPOINT_COMMAND,
@@ -84,7 +86,10 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
         .world_mut()
         .query::<(Entity, &PanelRecord)>()
         .iter(app.world())
-        .find(|(_, record)| record.panel_type == bed_debug::PANEL_ID)
+        .find(|(entity, record)| {
+            bed_workbench::owns_panel(app.world(), *entity)
+                && record.panel_type == bed_debug::PANEL_ID
+        })
         .unwrap()
         .0;
     let debug_id = app.world().get::<PanelPresentation>(debug).unwrap().id;
@@ -186,9 +191,12 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
     }
     let debug_count = app
         .world_mut()
-        .query::<&PanelRecord>()
+        .query::<(Entity, &PanelRecord)>()
         .iter(app.world())
-        .filter(|record| record.panel_type == bed_debug::PANEL_ID)
+        .filter(|(entity, record)| {
+            bed_workbench::owns_panel(app.world(), *entity)
+                && record.panel_type == bed_debug::PANEL_ID
+        })
         .count();
     assert_eq!(
         debug_count, 1,

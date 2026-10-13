@@ -965,6 +965,13 @@ impl CsvPanel {
         {
             return;
         }
+        if ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS)
+            && ui.is_key_pressed_with_repeat(Key::Escape, false)
+        {
+            self.draft = None;
+            self.message = None;
+            return;
+        }
         let draft = self.draft.as_mut().unwrap();
         ui.separator();
         ui.text(format!(
