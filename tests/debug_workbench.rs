@@ -47,7 +47,6 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
         .layout
         .largest_area();
     let source = open_file(app.world_mut(), &main, None, false, Some(source_area)).unwrap();
-    let source_surface = panel_presentation(app.world(), source).unwrap();
     let binding = app
         .world()
         .get::<EditorPanelBinding>(source)

@@ -4,6 +4,61 @@ use bed_editor_ui::editor_input::EditorInput;
 use std::time::{Duration, Instant};
 
 #[test]
+fn native_file_drops_enqueue_editor_requests_and_clear_the_hover() {
+    let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let mut context = Context::create();
+    context.set_ini_filename(None::<PathBuf>).unwrap();
+    let platform = bed_desktop::DesktopPlatform::new(&mut context);
+    let mut world = World::new();
+    world.insert_non_send(DesktopContext {
+        context,
+        platform,
+        snapshot_context: None,
+    });
+    world.insert_non_send(bed_document_session::EditorSession::new());
+    world.init_resource::<bed_workbench::WorkbenchLayout>();
+    world.init_resource::<bed_editor_workbench::LayoutSlots>();
+    world.init_resource::<bed_editor_workbench::EditorRequests>();
+    world.init_resource::<NativeFileDrag>();
+    #[cfg(target_os = "macos")]
+    world.init_resource::<bed_desktop::DesktopNativeActions>();
+    let path = PathBuf::from("/tmp/dropped.txt");
+    world.insert_resource(DesktopInputEvents(
+        [
+            WindowEvent::HoveredFile(path.clone()),
+            WindowEvent::DroppedFile(path),
+        ]
+        .into_iter()
+        .map(|event| bed_desktop::DesktopInputEvent {
+            event: bevy::winit::RawWinitWindowEvent {
+                window_id: winit::window::WindowId::dummy(),
+                event,
+            },
+            consumed: false,
+            gameplay_consumed: false,
+        })
+        .collect(),
+    ));
+
+    native_input(&mut world);
+
+    assert!(
+        !world
+            .resource::<bed_editor_workbench::EditorRequests>()
+            .is_empty()
+    );
+    assert!(
+        world
+            .resource::<DesktopInputEvents>()
+            .0
+            .iter()
+            .all(|event| event.consumed)
+    );
+    assert!(world.resource::<NativeFileDrag>().paths.is_empty());
+    assert!(world.resource::<NativeFileDrag>().panel.is_none());
+}
+
+#[test]
 fn workspace_window_launch_passes_only_the_shared_config_and_selected_root() {
     let config = std::env::temp_dir().canonicalize().unwrap();
     let root = config.join("workspace with spaces");

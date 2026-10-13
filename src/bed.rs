@@ -428,6 +428,8 @@ fn native_input(world: &mut World) {
         }
     }
 
+    native_file_events(world, file_events);
+
     for (delta, phase) in pinches {
         let (position, _) = native_drag_observation(world);
         let phase = match phase {
