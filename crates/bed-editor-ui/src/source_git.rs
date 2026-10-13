@@ -5,10 +5,12 @@ pub enum ConflictChoice {
     Incoming,
     Both,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SourceGitAction {
     ResolveConflict { id: u64, choice: ConflictChoice },
 }
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SourceConflict {
     pub id: u64,
@@ -18,6 +20,7 @@ pub struct SourceConflict {
     pub current_label: String,
     pub incoming_label: String,
 }
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SourceGitPresentation {
     pub conflicts: Vec<SourceConflict>,

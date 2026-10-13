@@ -8,6 +8,7 @@ use dear_imgui_rs::{
 };
 use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Mutex};
 static IMGUI_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 fn context() -> Context {
     let mut context = Context::create();
     context.set_ini_filename(None::<PathBuf>).unwrap();
@@ -21,11 +22,13 @@ fn context() -> Context {
         .build();
     context
 }
+
 fn sources(context: &Context) -> i32 {
     context
         .binding()
         .with_bound_context(|| unsafe { (*(*sys::igGetIO_Nil()).Fonts).Sources.Size })
 }
+
 #[derive(Debug, PartialEq, Eq)]
 struct Stacks {
     font: i32,
@@ -37,6 +40,7 @@ struct Stacks {
     ended: i32,
     rendered: i32,
 }
+
 fn stacks(ui: &Ui) -> Stacks {
     ui.with_bound_context(|| unsafe {
         let c = &*sys::igGetCurrentContext();
@@ -52,6 +56,7 @@ fn stacks(ui: &Ui) -> Stacks {
         }
     })
 }
+
 fn frame(
     context: &mut Context,
     session: &mut EditorSession,
@@ -60,6 +65,7 @@ fn frame(
 ) -> Vec<(u64, Vec<HostAction>)> {
     frame_with_delta(context, session, left, right, 1.0 / 60.0)
 }
+
 fn frame_with_delta(
     context: &mut Context,
     session: &mut EditorSession,
@@ -98,6 +104,7 @@ fn frame_with_delta(
     assert!(context.render_legacy().draw_data().total_vtx_count() > 0);
     actions
 }
+
 fn shortcut(
     context: &mut Context,
     session: &mut EditorSession,
@@ -413,19 +420,23 @@ struct Clipboard {
     gets: usize,
     sets: usize,
 }
+
 struct HostClipboard(Rc<RefCell<Clipboard>>);
+
 impl ClipboardBackend for HostClipboard {
     fn get(&mut self) -> Option<String> {
         let mut c = self.0.borrow_mut();
         c.gets += 1;
         Some(c.value.clone())
     }
+
     fn set(&mut self, text: &str) {
         let mut c = self.0.borrow_mut();
         c.sets += 1;
         c.value = text.to_owned();
     }
 }
+
 #[test]
 fn clipboard_and_save_actions_use_host_hooks_and_focus() {
     let _lock = IMGUI_TEST_LOCK.lock().unwrap();

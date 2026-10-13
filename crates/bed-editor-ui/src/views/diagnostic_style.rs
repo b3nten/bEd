@@ -8,10 +8,12 @@ pub fn severity_mark(severity: i32) -> u32 {
     };
     r | (g << 8) | (b << 16) | (a << 24)
 }
+
 pub fn severity_color(severity: i32) -> [f32; 4] {
     let mark = severity_mark(severity);
     std::array::from_fn(|index| ((mark >> (index * 8)) & 255) as f32 / 255.0)
 }
+
 pub fn severity_label(severity: i32) -> &'static str {
     match severity {
         2 => "Warning",

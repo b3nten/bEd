@@ -12,10 +12,12 @@ pub struct SourceHoverRequest {
     pub revision: SourceRevision,
     pub observation: SourceHoverObservation,
 }
+
 #[derive(Default)]
 pub struct SourceRequests {
     pub hover: Vec<SourceHoverRequest>,
 }
+
 impl SourceRequests {
     pub fn observe(&mut self, response: &ViewResponse) {
         if let Some(observation) = response.source_hover.clone() {
@@ -28,6 +30,7 @@ impl SourceRequests {
         }
     }
 }
+
 /// Commands retain the originating document and revision even if focus changes.
 pub fn source_commands(response: &ViewResponse) -> Vec<(&'static str, Value)> {
     response.source_actions.iter().map(|action| ("bed.debug.source-action", json!({"document":response.document.0,"revision":response.source_revision,"action":action})))

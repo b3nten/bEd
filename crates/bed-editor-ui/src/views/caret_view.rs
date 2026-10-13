@@ -91,6 +91,7 @@ impl CaretView {
     pub fn draw(ui: &Ui, state: &EditorState, view: &EditorViewState, layout: &ViewLayout) {
         Self::draw_projected(ui, state, view, layout, None);
     }
+
     pub(crate) fn draw_projected(
         ui: &Ui,
         state: &EditorState,

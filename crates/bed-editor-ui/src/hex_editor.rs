@@ -15,6 +15,7 @@ pub struct HexEditor {
     reveal_cursor: bool,
     observed_revision: Option<(u64, u64)>,
 }
+
 impl HexEditor {
     pub fn new(document: DocumentId) -> Self {
         Self {
@@ -30,15 +31,19 @@ impl HexEditor {
             observed_revision: None,
         }
     }
+
     pub fn document(&self) -> DocumentId {
         self.document
     }
+
     pub fn document_id(&self) -> DocumentId {
         self.document
     }
+
     pub fn state(&self) -> serde_json::Value {
         serde_json::json!({ "cursor": self.cursor, "anchor": self.anchor, "insert": self.insert })
     }
+
     pub fn restore_state(&mut self, state: &serde_json::Value) {
         self.cursor = state.get("cursor").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         self.anchor = state
@@ -51,6 +56,7 @@ impl HexEditor {
             .unwrap_or(false);
         self.reveal_cursor = true;
     }
+
     /// Update selection positions after edits in another view, including when
     /// this panel is hidden and the host is about to persist its state.
     pub fn synchronize(&mut self, session: &EditorSession) -> io::Result<()> {
@@ -67,10 +73,12 @@ impl HexEditor {
         self.observed_revision = Some(current);
         Ok(())
     }
+
     fn selection(&self, len: usize) -> Range<usize> {
         self.anchor.min(self.cursor).min(len)
             ..self.anchor.max(self.cursor).saturating_add(1).min(len)
     }
+
     fn move_cursor(&mut self, cursor: usize, shift: bool, len: usize) {
         self.cursor = cursor.min(len);
         if !shift {
@@ -79,6 +87,7 @@ impl HexEditor {
         self.pending_nibble = None;
         self.reveal_cursor = true;
     }
+
     fn replace(
         &mut self,
         session: &mut EditorSession,
@@ -95,6 +104,7 @@ impl HexEditor {
         self.reveal_cursor = true;
         Ok(())
     }
+
     pub fn copy_text(&mut self, session: &EditorSession) -> io::Result<String> {
         self.synchronize(session)?;
         let snapshot = session.snapshot(self.document)?;
@@ -104,6 +114,7 @@ impl HexEditor {
             .collect::<Vec<_>>()
             .join(" "))
     }
+
     pub fn paste_text(&mut self, session: &mut EditorSession, text: &str) -> io::Result<()> {
         self.synchronize(session)?;
         let bytes = parse_hex(text)?;
@@ -120,32 +131,38 @@ impl HexEditor {
         };
         self.replace(session, range, bytes)
     }
+
     pub fn cut_text(&mut self, session: &mut EditorSession) -> io::Result<String> {
         let text = self.copy_text(session)?;
         let len = session.with_document(self.document, |state| state.byte_size())?;
         self.replace(session, self.selection(len), Vec::new())?;
         Ok(text)
     }
+
     pub fn copy(&mut self, ui: &Ui, session: &EditorSession) -> io::Result<()> {
         set_clipboard(ui, &self.copy_text(session)?);
         Ok(())
     }
+
     pub fn paste(&mut self, ui: &Ui, session: &mut EditorSession) -> io::Result<()> {
         if let Some(text) = clipboard(ui) {
             self.paste_text(session, &text)?;
         }
         Ok(())
     }
+
     pub fn cut(&mut self, ui: &Ui, session: &mut EditorSession) -> io::Result<()> {
         set_clipboard(ui, &self.cut_text(session)?);
         Ok(())
     }
+
     pub fn select_all(&mut self, session: &EditorSession) -> io::Result<()> {
         let len = session.with_document(self.document, |state| state.byte_size())?;
         self.anchor = 0;
         self.cursor = len.saturating_sub(1);
         Ok(())
     }
+
     pub fn draw(&mut self, ui: &Ui, session: &mut EditorSession) -> io::Result<()> {
         if session.document_kind(self.document)? != DocumentKind::Bytes {
             return Err(io::Error::new(
@@ -293,6 +310,7 @@ impl HexEditor {
         }
         Ok(())
     }
+
     fn keyboard(&mut self, ui: &Ui, session: &mut EditorSession, len: usize) -> io::Result<()> {
         if self.shortcuts.suppressed(ui) {
             return Ok(());
@@ -404,6 +422,7 @@ impl HexEditor {
         Ok(())
     }
 }
+
 fn parse_hex(text: &str) -> io::Result<Vec<u8>> {
     let digits: Vec<_> = text.chars().filter(|ch| !ch.is_whitespace()).collect();
     if digits.len() % 2 != 0 {
@@ -433,12 +452,14 @@ fn parse_hex(text: &str) -> io::Result<Vec<u8>> {
         })
         .collect()
 }
+
 fn clipboard(ui: &Ui) -> Option<String> {
     ui.with_bound_context(|| unsafe {
         let ptr = dear_imgui_sys::igGetClipboardText();
         (!ptr.is_null()).then(|| std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned())
     })
 }
+
 fn set_clipboard(ui: &Ui, text: &str) {
     if let Ok(text) = std::ffi::CString::new(text) {
         ui.with_bound_context(|| unsafe { dear_imgui_sys::igSetClipboardText(text.as_ptr()) });
@@ -449,6 +470,7 @@ fn set_clipboard(ui: &Ui, text: &str) {
 mod tests {
     use super::*;
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
+
     fn context() -> Context {
         let mut context = Context::create();
         context
@@ -461,6 +483,7 @@ mod tests {
             .build();
         context
     }
+
     fn frame(context: &mut Context, editor: &mut HexEditor, session: &mut EditorSession) -> usize {
         context.prepare_frame(FramePrepareOptions::new([900.0, 600.0], 1.0 / 60.0));
         let ui = context.frame();
@@ -473,6 +496,7 @@ mod tests {
             });
         context.render_legacy().draw_data().total_vtx_count()
     }
+
     #[test]
     fn shared_navigation_overrides_move_and_extend_hex_selection() {
         use bed_keybindings::{Bindings, Overrides, Platform};
@@ -590,6 +614,7 @@ mod tests {
             [0xab, 0x22, 0x33]
         );
     }
+
     #[test]
     fn split_hex_views_transform_sibling_positions_without_replaying_own_edits() {
         let mut session = EditorSession::new();
@@ -619,6 +644,7 @@ mod tests {
         right.synchronize(&session).unwrap();
         assert_eq!((right.anchor, right.cursor), (1, 2));
     }
+
     #[test]
     fn large_byte_views_clip_rows_and_restore_selection_without_rendering_whole_file() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();

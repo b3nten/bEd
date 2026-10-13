@@ -12,6 +12,7 @@ pub enum DiffActionKind {
     Unstage,
     Discard,
 }
+
 impl DiffActionKind {
     pub fn label(self) -> &'static str {
         match self {
@@ -21,6 +22,7 @@ impl DiffActionKind {
         }
     }
 }
+
 #[derive(Clone, Debug)]
 pub struct DiffPresentation {
     pub baseline: Arc<[u8]>,
@@ -35,16 +37,19 @@ pub struct DiffPresentation {
     /// is projected locally until the next saved snapshot becomes available.
     pub saved: Option<DiffSnapshot>,
 }
+
 #[derive(Clone, Debug)]
 pub struct DiffSnapshot {
     pub current: Arc<[u8]>,
     pub hunks: Arc<[DiffHunkRange]>,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiffHunkRange {
     pub old_range: Range<usize>,
     pub new_range: Range<usize>,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiffAction {
     pub kind: DiffActionKind,
@@ -54,11 +59,13 @@ pub struct DiffAction {
     pub new_range: Range<usize>,
     pub revision: (u64, u64),
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiffLineKind {
     Context,
     Added,
 }
+
 #[derive(Clone, Debug)]
 pub(crate) enum ProjectedRow {
     Document {
@@ -76,6 +83,7 @@ pub(crate) enum ProjectedRow {
     },
     Conflict(SourceConflict),
 }
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RowProjection {
     pub rows: Vec<ProjectedRow>,
@@ -111,10 +119,12 @@ pub(crate) struct WrapCache {
     #[cfg(test)]
     measured_lines: usize,
 }
+
 impl WrapCache {
     pub fn clear(&mut self) {
         self.document_ranges.clear();
     }
+
     /// Changes use successive pre-edit line coordinates, in operation order.
     pub fn invalidate(&mut self, changes: &[DocumentChange]) {
         if changes.is_empty() {
@@ -139,6 +149,7 @@ impl WrapCache {
             );
         }
     }
+
     fn prepare(&mut self, ui: &Ui, state: &EditorState, width: f32) {
         let font = ui.with_bound_context(|| unsafe { dear_imgui_rs::sys::igGetFont() as usize });
         let metrics = (font, ui.current_font_size().to_bits());
@@ -157,6 +168,7 @@ impl WrapCache {
             self.document_ranges.resize_with(lines, || None);
         }
     }
+
     fn measure_line(&mut self, ui: &Ui, line: &[u8], width: f32, space: f32) -> Vec<WrapSegment> {
         #[cfg(test)]
         {
@@ -180,6 +192,7 @@ enum Edit {
     Delete(usize),
     Insert(usize),
 }
+
 fn lines(bytes: &[u8]) -> Vec<Vec<u8>> {
     if bytes.is_empty() {
         return Vec::new();
@@ -202,10 +215,12 @@ fn lines(bytes: &[u8]) -> Vec<Vec<u8>> {
         })
         .collect()
 }
+
 fn display_line(line: &[u8]) -> Vec<u8> {
     let line = line.strip_suffix(b"\n").unwrap_or(line);
     line.strip_suffix(b"\r").unwrap_or(line).to_vec()
 }
+
 fn authoritative_edits(
     old: &[Vec<u8>],
     new: &[Vec<u8>],
@@ -247,9 +262,11 @@ fn authoritative_edits(
     }
     Some(result)
 }
+
 fn text_lines(bytes: &[u8]) -> Vec<Vec<u8>> {
     lines(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes))
 }
+
 fn edits(old: &[Vec<u8>], new: &[Vec<u8>]) -> Vec<Edit> {
     let mut prefix = 0;
     while prefix < old.len().min(new.len()) && old[prefix] == new[prefix] {
@@ -297,6 +314,7 @@ fn edits(old: &[Vec<u8>], new: &[Vec<u8>]) -> Vec<Edit> {
     out.extend((0..old.len() - oe).map(|i| Edit::Equal(oe + i, ne + i)));
     out
 }
+
 impl RowProjection {
     pub fn build(
         state: &EditorState,
@@ -398,6 +416,7 @@ impl RowProjection {
             ..Default::default()
         }
     }
+
     /// Omit collapsed interiors from a fresh logical projection. Fold headers
     /// remain real document rows; document positions and selections do not move.
     pub fn fold(&mut self, collapsed: &[FoldRange]) {
@@ -460,9 +479,11 @@ impl RowProjection {
         self.identity_lines = 0;
         self.projected = true;
     }
+
     pub fn has_folds(&self) -> bool {
         !self.fold_headers.is_empty() || !self.fold_visuals.is_empty()
     }
+
     pub fn is_document_visible(&self, row: i32) -> bool {
         row >= 0
             && self
@@ -470,12 +491,14 @@ impl RowProjection {
                 .get(row as usize)
                 .is_none_or(|header| header.is_none())
     }
+
     pub fn folded_lines(&self, row: i32) -> usize {
         if row < 0 {
             return 0;
         }
         self.folded_lines.get(row as usize).copied().unwrap_or(0)
     }
+
     pub fn fold_openness(&self, row: i32) -> f32 {
         self.fold_visuals
             .iter()
@@ -484,6 +507,7 @@ impl RowProjection {
                 fold.openness
             })
     }
+
     /// Keep transitioning bodies available for wrapping. Target-collapsed
     /// bodies may still paint during closing, but cannot accept pointer input.
     pub fn fold_animated(&mut self, collapsed: &[FoldRange], visuals: &[FoldVisual]) {
@@ -523,6 +547,7 @@ impl RowProjection {
             }
         }
     }
+
     /// Crop each animated body from its bottom, after wrapping established its
     /// full visual height. Text keeps its normal size; only the final exposed
     /// row can have a fractional height, which renderers use as a clip boundary.
@@ -623,6 +648,7 @@ impl RowProjection {
         self.identity_lines = 0;
         self.projected = true;
     }
+
     pub fn row_top(&self, visual: usize) -> f32 {
         if visual >= self.len() {
             self.total_rows()
@@ -630,9 +656,11 @@ impl RowProjection {
             self.row_tops.get(visual).copied().unwrap_or(visual as f32)
         }
     }
+
     pub fn is_cropped(&self) -> bool {
         !self.row_tops.is_empty()
     }
+
     pub fn row_height(&self, visual: usize) -> f32 {
         if visual >= self.len() {
             0.0
@@ -640,12 +668,14 @@ impl RowProjection {
             self.row_heights.get(visual).copied().unwrap_or(1.0)
         }
     }
+
     pub fn total_rows(&self) -> f32 {
         self.row_tops
             .last()
             .zip(self.row_heights.last())
             .map_or(self.len() as f32, |(top, height)| top + height)
     }
+
     pub fn visual_at_y(&self, y: f32) -> usize {
         if self.row_tops.is_empty() {
             (y.max(0.0) as usize).min(self.len().saturating_sub(1))
@@ -656,6 +686,7 @@ impl RowProjection {
                 .min(self.len().saturating_sub(1))
         }
     }
+
     pub fn interactive_document_row(&self, visual: usize) -> Option<i32> {
         let row = self.document_row(visual)?;
         (self.row_height(visual) >= 1.0
@@ -665,11 +696,13 @@ impl RowProjection {
                 .is_none_or(|header| header.is_none()))
         .then_some(row)
     }
+
     /// Reflow a fresh logical projection. All consumers share these byte ranges;
     /// document storage and syntax-highlight coordinates remain unchanged.
     pub fn wrap(&mut self, ui: &Ui, state: &EditorState, width: f32) {
         self.wrap_cached(ui, state, width, &mut WrapCache::default());
     }
+
     pub fn wrap_cached(&mut self, ui: &Ui, state: &EditorState, width: f32, cache: &mut WrapCache) {
         assert!(!self.is_wrapped(), "wrap a fresh logical projection");
         let width = width.max(1.0);
@@ -722,24 +755,29 @@ impl RowProjection {
         self.wrap_width = Some(width);
         self.identity_lines = 0;
     }
+
     pub fn segment(&self, visual: usize) -> Option<Range<usize>> {
         self.segments
             .get(visual)
             .and_then(|s| s.as_ref())
             .map(|s| s.range.clone())
     }
+
     pub fn segment_indent(&self, visual: usize) -> f32 {
         self.segments
             .get(visual)
             .and_then(|s| s.as_ref())
             .map_or(0.0, |s| s.indent)
     }
+
     pub fn is_wrapped(&self) -> bool {
         self.wrap_width.is_some()
     }
+
     pub fn wrap_width(&self) -> Option<f32> {
         self.wrap_width
     }
+
     pub fn visual_position(&self, row: i32, column: i32) -> usize {
         let first = self.visual_row(row);
         if !self.is_wrapped() {
@@ -755,6 +793,7 @@ impl RowProjection {
         }
         visual
     }
+
     pub fn position_x(
         &self,
         ui: &Ui,
@@ -782,6 +821,7 @@ impl RowProjection {
             origin + self.segment_indent(visual),
         )
     }
+
     pub fn hit_column(&self, ui: &Ui, state: &EditorState, visual: usize, x: f32) -> i32 {
         let row = self
             .document_row(visual)
@@ -793,6 +833,7 @@ impl RowProjection {
             range.start as i32 + column_at_x(ui, &line[range], x - self.segment_indent(visual)),
         )
     }
+
     pub fn len(&self) -> usize {
         if self.rows.is_empty() {
             self.identity_lines
@@ -800,6 +841,7 @@ impl RowProjection {
             self.rows.len()
         }
     }
+
     pub fn visual_row(&self, row: i32) -> usize {
         if self.rows.is_empty() {
             return row.max(0) as usize;
@@ -809,6 +851,7 @@ impl RowProjection {
             .copied()
             .unwrap_or(0)
     }
+
     pub fn document_row(&self, visual: usize) -> Option<i32> {
         if self.rows.is_empty() {
             return (visual < self.identity_lines).then_some(visual as i32);
@@ -818,6 +861,7 @@ impl RowProjection {
             _ => None,
         }
     }
+
     pub fn nearest_document_row(&self, visual: usize) -> i32 {
         if self.rows.is_empty() {
             return visual.min(self.identity_lines.saturating_sub(1)) as i32;
@@ -841,6 +885,7 @@ impl RowProjection {
             })
             .unwrap_or(0)
     }
+
     pub fn is_projected(&self) -> bool {
         self.projected
     }
@@ -920,6 +965,7 @@ fn wrap_ranges(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn animated_body_reveals_normal_rows_and_crops_only_the_last_visible_row() {
         let mut state = EditorState::new();
@@ -1227,6 +1273,7 @@ mod tests {
         });
         drop(context.render_legacy());
     }
+
     #[test]
     fn wrapping_preserves_all_bytes_and_uses_whitespace_before_splitting_tokens() {
         let ranges = |bytes: &[u8], width| {
@@ -1330,6 +1377,7 @@ mod tests {
         });
         drop(context.render_legacy());
     }
+
     #[test]
     fn edit_reflow_reuses_unaffected_lines_and_tracks_inserted_and_deleted_rows() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -1443,6 +1491,7 @@ mod tests {
         });
         drop(context.render_legacy());
     }
+
     fn projection(old: &[u8], new: &[u8]) -> RowProjection {
         let mut state = EditorState::new();
         state.set_from_bytes(new);
@@ -1458,6 +1507,7 @@ mod tests {
             None,
         )
     }
+
     #[test]
     fn replacement_rows_keep_real_document_coordinates() {
         let p = projection(b"head\nold\ntail\n", b"head\nnew\ntail\n");
@@ -1473,6 +1523,7 @@ mod tests {
         assert_eq!(p.nearest_document_row(2), 1);
         assert_eq!(p.visual_row(3), 5);
     }
+
     #[test]
     fn empty_files_deletions_and_missing_final_newlines_are_distinct() {
         assert_eq!(projection(b"", b"").rows.len(), 1);
@@ -1488,6 +1539,7 @@ mod tests {
         let p = projection(b"", b"new\n");
         assert!(matches!(&p.rows[0], ProjectedRow::Hunk { old_range, .. } if old_range.is_empty()));
     }
+
     #[test]
     fn every_live_row_appears_once_even_with_conflict_controls() {
         let mut state = EditorState::new();
@@ -1508,6 +1560,7 @@ mod tests {
             assert_eq!(p.document_row(p.visual_row(row)), Some(row));
         }
     }
+
     #[test]
     fn display_normalizes_bom_and_all_editor_line_endings() {
         for bytes in [
@@ -1526,6 +1579,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn saved_git_hunks_remain_separate_above_the_local_diff_work_limit() {
         let old: Vec<u8> = (0..1100)

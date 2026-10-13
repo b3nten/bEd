@@ -53,6 +53,7 @@ impl Default for EditorViewOptions {
         }
     }
 }
+
 #[derive(Clone, Debug)]
 pub struct ViewResponse {
     pub view: ViewId,
@@ -73,6 +74,7 @@ pub struct ViewResponse {
     pub typed_text: Option<String>,
     pub prefix_backspace: bool,
 }
+
 /// Geometry and hover data for host menus and LSP presentation. Frame internals stay private.
 pub struct ViewPresentation<'a> {
     pub layout: crate::views::view_layout::ViewLayout,
@@ -82,6 +84,7 @@ pub struct ViewPresentation<'a> {
     pub hover_dismissed: bool,
     pub tooltip_arbiter: &'a crate::views::hover_tooltip::TooltipArbiter,
 }
+
 pub struct EditorView {
     id: ViewId,
     document: DocumentId,
@@ -99,10 +102,12 @@ pub struct EditorView {
     source_hover_rect: Option<crate::views::hover_tooltip::HoverRect>,
     _lifetime: Rc<()>,
 }
+
 struct ZoomReset {
     from: f32,
     elapsed: f32,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TextHit {
     Document { row: i32, column: i32 },
@@ -110,11 +115,13 @@ pub enum TextHit {
     Control,
     None,
 }
+
 impl EditorView {
     pub fn new(session: &mut EditorSession, document: DocumentId) -> io::Result<Self> {
         let (id, token) = session.create_managed_view(document)?;
         Self::with_identity(session, document, id, token)
     }
+
     /// Adopt a live managed view without changing its identity or selections.
     pub fn from_existing(session: &mut EditorSession, id: ViewId) -> io::Result<Self> {
         let token = session.retain_managed_view(id)?;
@@ -123,6 +130,7 @@ impl EditorView {
             .ok_or_else(|| io::Error::other("Existing view is unavailable"))?;
         Self::with_identity(session, document, id, token)
     }
+
     fn with_identity(
         session: &mut EditorSession,
         document: DocumentId,
@@ -147,49 +155,62 @@ impl EditorView {
             _lifetime: token,
         })
     }
+
     pub fn id(&self) -> ViewId {
         self.id
     }
+
     pub fn document_id(&self) -> DocumentId {
         self.document
     }
+
     pub fn workspace_id(&self) -> WorkspaceId {
         self.workspace
     }
+
     pub fn context_id(&self) -> Option<ContextId> {
         self.context
     }
+
     /// Animate caret movement, folding, explicit location jumps and zoom resets.
     /// Wheel, trackpad and ordinary caret scrolling always use native behavior.
     /// Enabled by default; disabling finishes active animations on the next draw.
     pub fn set_navigation_animations(&mut self, enabled: bool) {
         self.frame.navigation_animations = enabled;
     }
+
     /// Override this view's minimap for its lifetime without changing host settings.
     pub fn set_minimap_enabled(&mut self, enabled: bool) {
         self.minimap_override = Some(enabled);
     }
+
     pub fn minimap_enabled(&self, default: bool) -> bool {
         self.minimap_override.unwrap_or(default)
     }
+
     /// Override wrapping for this view's lifetime without changing host settings.
     pub fn set_soft_wrap(&mut self, enabled: bool) {
         self.soft_wrap_override = Some(enabled);
     }
+
     pub fn soft_wrap(&self, default: bool) -> bool {
         self.soft_wrap_override.unwrap_or(default)
     }
+
     /// View-local magnification, limited to 60%–140%.
     /// Neither document state nor host settings change.
     pub fn zoom(&self) -> f32 {
         self.zoom
     }
+
     pub fn zoom_in(&mut self) {
         self.set_zoom(self.zoom + 0.1);
     }
+
     pub fn zoom_out(&mut self) {
         self.set_zoom(self.zoom - 0.1);
     }
+
     /// Ease back to the host's font size over 100 ms, unless animations are disabled.
     /// Keyboard and gesture zoom interrupt an active reset at its current scale.
     pub fn reset_zoom(&mut self) {
@@ -202,11 +223,13 @@ impl EditorView {
             });
         }
     }
+
     /// Apply a positive, finite gesture multiplier.
     pub fn zoom_by(&mut self, factor: f32) {
         assert!(factor.is_finite() && factor > 0.0);
         self.set_zoom(self.zoom * factor);
     }
+
     fn set_zoom(&mut self, zoom: f32) {
         self.zoom_reset = None;
         let zoom = zoom.clamp(0.6, 1.4);
@@ -216,6 +239,7 @@ impl EditorView {
             zoom
         };
     }
+
     pub fn draw(
         &mut self,
         ui: &Ui,
@@ -443,25 +467,31 @@ impl EditorView {
             result
         })
     }
+
     pub fn close(&mut self, session: &mut EditorSession, policy: ClosePolicy) -> io::Result<bool> {
         self.check_session(session)?;
         session.close_view(self.id, policy)
     }
+
     pub fn open_find(&mut self, session: &mut EditorSession) -> io::Result<()> {
         self.check_session(session)?;
         self.frame.line_jump.dismiss();
         session.with_view(self.id, |editor| self.frame.finder.open(editor))
     }
+
     pub fn open_line_jump(&mut self) {
         self.frame.finder.dismiss();
         self.frame.line_jump.open();
     }
+
     pub fn find_visible(&self) -> bool {
         self.frame.finder.active
     }
+
     pub fn line_jump_visible(&self) -> bool {
         self.frame.line_jump.active
     }
+
     pub fn presentation(&self) -> ViewPresentation<'_> {
         ViewPresentation {
             layout: self.frame.layout,
@@ -471,18 +501,23 @@ impl EditorView {
             tooltip_arbiter: &self.frame.tooltip_arbiter,
         }
     }
+
     pub fn read_only(&self) -> bool {
         self.frame.read_only
     }
+
     pub fn folding_enabled(&self) -> bool {
         self.frame.folding_enabled()
     }
+
     pub fn projected(&self) -> bool {
         self.frame.projection.is_projected()
     }
+
     pub fn visual_row(&self, document_row: i32) -> usize {
         self.frame.projection.visual_row(document_row)
     }
+
     pub fn hit_test(
         &self,
         ui: &Ui,
@@ -538,6 +573,7 @@ impl EditorView {
             None => TextHit::None,
         })
     }
+
     fn check_session(&self, session: &EditorSession) -> io::Result<()> {
         if session.workspace_id() != self.workspace {
             return Err(io::Error::new(
@@ -807,6 +843,7 @@ mod tests {
             assert!(view.frame.layout.text_pos[0] < origin);
         }
     }
+
     #[test]
     fn source_observations_do_not_escape_changed_or_hidden_views() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -1199,6 +1236,7 @@ mod tests {
             "ordinary embeds do not emit debug actions"
         );
     }
+
     fn diff_frame(
         context: &mut Context,
         session: &mut EditorSession,
@@ -1454,6 +1492,7 @@ mod tests {
         diff_frame(&mut context, &mut session, &mut view, &options);
         assert!(!view.projected());
     }
+
     #[test]
     fn unified_diff_hit_testing_distinguishes_history_controls_and_utf8_live_text() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();

@@ -19,11 +19,13 @@ impl EditorLineJump {
         self.should_focus = true;
         self.input.clear();
     }
+
     pub fn dismiss(&mut self) {
         self.active = false;
         self.should_focus = false;
         self.input.clear();
     }
+
     pub fn jump_to_line(&mut self, editor: &mut ViewContext<'_>, line: i32) -> OverlayOutcome {
         editor.commands().go_to_line(line);
         editor.api().request_ensure_visible();
@@ -32,9 +34,11 @@ impl EditorLineJump {
             ..OverlayOutcome::default()
         }
     }
+
     pub fn draw(&mut self, ui: &Ui, editor: &mut ViewContext<'_>) -> OverlayOutcome {
         self.draw_with_style(ui, editor, &EditorOverlayStyle::default())
     }
+
     pub fn draw_with_style(
         &mut self,
         ui: &Ui,
@@ -170,6 +174,7 @@ fn parse_line_number(input: &str) -> i32 {
 mod tests {
     use super::*;
     use dear_imgui_rs::{Context, FramePrepareOptions};
+
     #[test]
     fn geometry_uses_font_pane_fraction_and_sequential_clamps() {
         assert_eq!(
@@ -181,6 +186,7 @@ mod tests {
             ([-200.0, 10.0], [400.0, 120.0])
         );
     }
+
     #[test]
     fn numeric_prefix_matches_atoi_and_overflow_has_defined_bounds() {
         for (input, expected) in [
@@ -203,6 +209,7 @@ mod tests {
             i32::MIN
         );
     }
+
     #[test]
     fn jump_and_dismiss_preserve_upstream_caret_and_reset_input() {
         let mut editor = Editor::new();

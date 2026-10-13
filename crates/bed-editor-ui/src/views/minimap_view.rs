@@ -11,6 +11,7 @@ use std::hash::{Hash, Hasher};
 
 pub const WIDTH_FONT_MUL: f32 = 4.0;
 pub const MIN_PANE_FONT_MUL: f32 = 16.0;
+
 #[derive(Clone, Copy)]
 struct Density {
     line_h: f32,
@@ -19,6 +20,7 @@ struct Density {
     pad_x: f32,
     slider_min: f32,
 }
+
 impl Density {
     fn new(fs: f32) -> Self {
         let fs = fs.max(1.0);
@@ -32,6 +34,7 @@ impl Density {
         }
     }
 }
+
 #[derive(Default)]
 struct Strip {
     start: i32,
@@ -43,6 +46,7 @@ struct Strip {
     slider_h: f32,
     ratio: f32,
 }
+
 fn make_strip(
     n: i32,
     layout: &ViewLayout,
@@ -88,6 +92,7 @@ fn make_strip(
     }
     s
 }
+
 #[derive(Clone, Copy, PartialEq)]
 struct CacheKey {
     version: i32,
@@ -100,6 +105,7 @@ struct CacheKey {
     font_size: f32,
     projection_hash: u64,
 }
+
 #[derive(Clone, Copy)]
 struct Run {
     x: f32,
@@ -108,6 +114,7 @@ struct Run {
     h: f32,
     color: [f32; 4],
 }
+
 #[derive(Default)]
 pub struct MinimapView {
     dragging: bool,
@@ -117,6 +124,7 @@ pub struct MinimapView {
     cache_key: Option<CacheKey>,
     cache_runs: Vec<Run>,
 }
+
 fn dim(mut color: [f32; 4]) -> [f32; 4] {
     for c in &mut color[..3] {
         *c *= 0.72;
@@ -187,6 +195,7 @@ fn minimap_wheel_scroll(ui: &Ui) -> Option<[f32; 2]> {
         Some(target)
     })
 }
+
 impl MinimapView {
     fn rebuild_density_cache(
         &mut self,
@@ -311,6 +320,7 @@ impl MinimapView {
             flush(col, &mut run_start, run_ink, &mut self.cache_runs);
         }
     }
+
     pub fn interact(
         &mut self,
         ui: &Ui,
@@ -320,6 +330,7 @@ impl MinimapView {
     ) {
         self.interact_projected(ui, state, view, layout, None);
     }
+
     pub(crate) fn interact_projected(
         &mut self,
         ui: &Ui,
@@ -390,6 +401,7 @@ impl MinimapView {
             };
         }
     }
+
     pub fn draw(
         &mut self,
         ui: &Ui,
@@ -400,6 +412,7 @@ impl MinimapView {
     ) {
         self.draw_projected(ui, state, view, highlight, layout, None);
     }
+
     pub(crate) fn draw_projected(
         &mut self,
         ui: &Ui,
@@ -960,6 +973,7 @@ mod tests {
         let middle = make_strip(state.line_count(), &layout, 9800.0, 400.0, d, None);
         assert!(middle.start > 0 && middle.end < 1000);
     }
+
     #[test]
     fn short_document_keeps_all_rows_and_zero_scroll_ratio() {
         let mut state = EditorState::new();

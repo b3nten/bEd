@@ -33,6 +33,7 @@ struct SourceFact<T> {
     revision: SourceRevision,
     presentation: T,
 }
+
 #[derive(Clone, Debug)]
 struct HoverFact {
     document: DocumentId,
@@ -47,6 +48,7 @@ pub struct EditorExtensions {
     source_git: HashMap<DocumentId, SourceFact<SourceGitPresentation>>,
     source_hover: HashMap<ViewId, HoverFact>,
 }
+
 impl EditorExtensions {
     pub fn set_source_debug(
         &mut self,
@@ -62,6 +64,7 @@ impl EditorExtensions {
             },
         );
     }
+
     pub fn set_source_git(
         &mut self,
         document: DocumentId,
@@ -76,6 +79,7 @@ impl EditorExtensions {
             },
         );
     }
+
     pub fn set_source_hover(
         &mut self,
         view: ViewId,
@@ -92,6 +96,7 @@ impl EditorExtensions {
             },
         );
     }
+
     pub fn source_debug(
         &self,
         document: DocumentId,
@@ -102,6 +107,7 @@ impl EditorExtensions {
             .filter(|fact| fact.revision == revision)
             .map(|fact| &fact.presentation)
     }
+
     /// Debugging remains available across edits while its row decorations await
     /// a fresh snapshot. A document replacement or explicit removal ends it.
     pub fn source_debug_available(&self, document: DocumentId, revision: SourceRevision) -> bool {
@@ -109,6 +115,7 @@ impl EditorExtensions {
             .get(&document)
             .is_some_and(|fact| fact.revision.0 == revision.0)
     }
+
     pub fn source_git(
         &self,
         document: DocumentId,
@@ -119,6 +126,7 @@ impl EditorExtensions {
             .filter(|fact| fact.revision == revision)
             .map(|fact| &fact.presentation)
     }
+
     pub fn source_hover(
         &self,
         view: ViewId,
@@ -130,24 +138,30 @@ impl EditorExtensions {
             .filter(|fact| fact.document == document && fact.revision == revision)
             .map(|fact| &fact.presentation)
     }
+
     pub fn clear_source_debug(&mut self, document: DocumentId) {
         self.source_debug.remove(&document);
         self.source_hover
             .retain(|_, fact| fact.document != document);
     }
+
     pub fn clear_source_git(&mut self, document: DocumentId) {
         self.source_git.remove(&document);
     }
+
     pub fn clear_source_hover(&mut self, view: ViewId) {
         self.source_hover.remove(&view);
     }
+
     pub fn clear_debug(&mut self) {
         self.source_debug.clear();
         self.source_hover.clear();
     }
+
     pub fn clear_git(&mut self) {
         self.source_git.clear();
     }
+
     pub fn clear(&mut self) {
         self.clear_debug();
         self.clear_git();
@@ -158,6 +172,7 @@ impl EditorExtensions {
 mod tests {
     use super::*;
     use bed_document_session::editor_session::EditorSession;
+
     #[test]
     fn snapshots_are_document_specific_revision_bound_and_independent() {
         let mut session = EditorSession::new();

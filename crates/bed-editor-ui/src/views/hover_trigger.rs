@@ -7,12 +7,14 @@ pub enum Zone {
     Text,
     Gutter,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Target {
     pub zone: Zone,
     pub row: i32,
     pub column: i32,
 }
+
 impl Default for Target {
     fn default() -> Self {
         Self {
@@ -22,6 +24,7 @@ impl Default for Target {
         }
     }
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Info {
     pub active: bool,
@@ -29,6 +32,7 @@ pub struct Info {
     pub row: i32,
     pub column: i32,
 }
+
 impl Default for Info {
     fn default() -> Self {
         Self {
@@ -39,6 +43,7 @@ impl Default for Info {
         }
     }
 }
+
 #[derive(Default)]
 pub struct HoverTrigger {
     armed: bool,
@@ -48,10 +53,12 @@ pub struct HoverTrigger {
     #[cfg(test)]
     test_delay: Option<f64>,
 }
+
 impl HoverTrigger {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn update_at(
         &mut self,
         now: f64,
@@ -84,9 +91,11 @@ impl HoverTrigger {
             };
         }
     }
+
     pub fn info(&self) -> Info {
         self.current
     }
+
     #[cfg(test)]
     fn set_delay_for_test(&mut self, seconds: f64) {
         self.test_delay = (seconds >= 0.0).then_some(seconds);
@@ -95,6 +104,7 @@ impl HoverTrigger {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn word() -> Target {
         Target {
             zone: Zone::Text,
@@ -102,6 +112,7 @@ mod tests {
             column: 10,
         }
     }
+
     #[test]
     fn upstream_rest_shows_any_movement_hides_and_rearms() {
         let mut trigger = HoverTrigger::new();
@@ -120,6 +131,7 @@ mod tests {
         trigger.update_at(0.8, false, false, word(), 0.0);
         assert!(trigger.info().active);
     }
+
     #[test]
     fn upstream_key_click_scroll_and_zone_exit_dismiss() {
         for (moved, dismissed, target) in [
@@ -136,6 +148,7 @@ mod tests {
             assert!(!trigger.info().active);
         }
     }
+
     #[test]
     fn upstream_dismissed_parked_mouse_cannot_rearm() {
         let mut trigger = HoverTrigger::new();
@@ -151,6 +164,7 @@ mod tests {
         trigger.update_at(20.2, false, false, word(), 0.0);
         assert!(trigger.info().active);
     }
+
     #[test]
     fn upstream_continuous_movement_never_fires() {
         let mut trigger = HoverTrigger::new();
@@ -160,6 +174,7 @@ mod tests {
             assert!(!trigger.info().active);
         }
     }
+
     #[test]
     fn style_floor_and_frozen_target_survive_stationary_content_change() {
         let mut trigger = HoverTrigger::new();

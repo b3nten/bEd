@@ -87,10 +87,12 @@ enum AnchorLocation {
     Document(i32, i32),
     Historical(usize, i32),
 }
+
 struct ViewportAnchor {
     location: AnchorLocation,
     fraction: f32,
 }
+
 impl ViewportAnchor {
     fn apply(&mut self, change: &DocumentChange) {
         let AnchorLocation::Document(row, column) = &mut self.location else {
@@ -822,15 +824,19 @@ impl EditorFrame {
     pub fn take_source_actions(&mut self) -> Vec<SourceDebugAction> {
         std::mem::take(&mut self.source_actions)
     }
+
     pub fn take_diff_actions(&mut self) -> Vec<DiffAction> {
         std::mem::take(&mut self.diff_actions)
     }
+
     pub fn take_git_actions(&mut self) -> Vec<SourceGitAction> {
         std::mem::take(&mut self.git_actions)
     }
+
     pub(crate) fn projection_revision(&self) -> Option<(u64, u64)> {
         self.projection_key.map(|key| (key.0, key.1))
     }
+
     pub(crate) fn folding_enabled(&self) -> bool {
         self.diff.is_none()
             && self
@@ -838,6 +844,7 @@ impl EditorFrame {
                 .as_ref()
                 .is_none_or(|git| git.conflicts.is_empty())
     }
+
     fn reveal_fold_targets(&self, editor: &mut ViewContext<'_>) {
         if !self.folding_enabled() {
             return;
@@ -858,6 +865,7 @@ impl EditorFrame {
             view.folds.reveal(row);
         }
     }
+
     fn sync_fold_animation(&mut self, ui: &Ui, editor: &Editor) {
         let source_changed = self.fold_animation_source.as_ref().is_none_or(|source| {
             source.0 != editor.document_generation()
@@ -900,6 +908,7 @@ impl EditorFrame {
             self.fold_visual_generation += 1;
         }
     }
+
     fn refresh_projection(&mut self, editor: &Editor) {
         let key = (
             editor.document_generation(),
@@ -957,6 +966,7 @@ impl EditorFrame {
             self.historical_width_dirty = true;
         }
     }
+
     fn viewport_anchor(&self, editor: &Editor, height: f32) -> Option<ViewportAnchor> {
         if height <= 0.0 {
             return None;
@@ -989,6 +999,7 @@ impl EditorFrame {
             fraction: top - self.projection.row_top(visual),
         })
     }
+
     fn refresh_wrap(
         &mut self,
         ui: &Ui,
@@ -1055,6 +1066,7 @@ impl EditorFrame {
             (self.projection.row_top(visual) + anchor.fraction.min(self.projection.row_height(visual))) * self.layout.line_height
         })
     }
+
     fn draw_controls(&mut self, ui: &Ui, enabled: bool) {
         let cursor = ui.cursor_screen_pos();
         let first = self
@@ -1140,6 +1152,7 @@ impl EditorFrame {
     pub fn hover_info(&self) -> Info {
         self.hover_trigger.info()
     }
+
     pub fn hover_dismissed(&self) -> bool {
         self.frame_dismissed
     }

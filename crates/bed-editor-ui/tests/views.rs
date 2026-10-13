@@ -23,6 +23,7 @@ use std::{fs, path::PathBuf, sync::Mutex};
 static IMGUI_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 struct FixtureRepo(PathBuf);
+
 impl FixtureRepo {
     fn new(name: &str, baseline: &str, current: &[u8]) -> Self {
         let root = std::env::temp_dir().join(format!("bed-view-{}-{name}", std::process::id()));
@@ -40,6 +41,7 @@ impl FixtureRepo {
         Self(root)
     }
 }
+
 impl Drop for FixtureRepo {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.0).unwrap();

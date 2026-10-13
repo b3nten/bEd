@@ -1,5 +1,6 @@
 //! Editor commands share one keymap in standalone and embedded widgets.
 use bed_keybindings::{Action, Bindings, EDITOR_SCOPE, Overrides, Platform, Scope, ShortcutInput};
+
 pub fn actions() -> Vec<Action> {
     let scope = Scope::panel(EDITOR_SCOPE);
     let mut result = bed_keybindings::common_actions();
@@ -177,6 +178,7 @@ pub fn actions() -> Vec<Action> {
     }
     result
 }
+
 pub fn default_input() -> ShortcutInput {
     ShortcutInput::new(Bindings::new(
         actions(),
@@ -195,6 +197,7 @@ pub fn hex_actions() -> Vec<Action> {
         &["Insert"],
     )]
 }
+
 pub fn hex_default_input() -> ShortcutInput {
     let mut declarations = actions();
     declarations.extend(hex_actions());

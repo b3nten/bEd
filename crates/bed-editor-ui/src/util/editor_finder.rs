@@ -13,6 +13,7 @@ pub struct EditorOverlayStyle {
     /// Host editor position and size. Omit to use the current ImGui window.
     pub pane: Option<([f32; 2], [f32; 2])>,
 }
+
 impl Default for EditorOverlayStyle {
     fn default() -> Self {
         Self {
@@ -21,6 +22,7 @@ impl Default for EditorOverlayStyle {
         }
     }
 }
+
 impl EditorOverlayStyle {
     pub(crate) fn dimmed_background(&self, ui: &Ui) -> [f32; 4] {
         let mut color = bed_ui::color::blend(
@@ -305,6 +307,7 @@ impl EditorFinder {
     ) -> OverlayOutcome {
         self.draw_with_policy(ui, editor, style, false)
     }
+
     pub(crate) fn draw_with_policy(
         &mut self,
         ui: &Ui,

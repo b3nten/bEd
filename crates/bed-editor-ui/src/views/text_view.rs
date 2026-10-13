@@ -53,6 +53,7 @@ impl TextView {
     ) {
         Self::draw_projected_diagnostics(ui, state, layout, diagnostics, hover, arbiter, None);
     }
+
     pub(crate) fn draw_projected_diagnostics(
         ui: &Ui,
         state: &EditorState,
@@ -195,9 +196,11 @@ impl TextView {
             }
         }
     }
+
     pub fn draw(ui: &Ui, state: &EditorState, view: &EditorViewState, layout: &ViewLayout) {
         Self::draw_with_highlight(ui, state, view, layout, None);
     }
+
     pub fn draw_with_highlight(
         ui: &Ui,
         state: &EditorState,
@@ -218,6 +221,7 @@ impl TextView {
     ) {
         Self::draw_projected(ui, state, view, layout, highlight, execution_row, None);
     }
+
     pub(crate) fn draw_projected(
         ui: &Ui,
         state: &EditorState,

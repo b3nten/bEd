@@ -99,6 +99,7 @@ impl GutterView {
     ) {
         Self::draw_projected_breakpoint_preview(ui, draw, editor, layout, pos, row, None);
     }
+
     pub(crate) fn draw_projected_breakpoint_preview(
         ui: &Ui,
         draw: &DrawListMut<'_>,
@@ -149,6 +150,7 @@ impl GutterView {
     ) {
         Self::draw_projected(ui, draw, editor, layout, pos, width, debug, None, false);
     }
+
     #[allow(clippy::too_many_arguments)] // Geometry and projection are borrowed for one draw.
     pub(crate) fn draw_projected(
         ui: &Ui,

@@ -222,6 +222,7 @@ pub struct TooltipArbiter {
     diagnostic: RefCell<Option<DiagnosticHover>>,
     caret_line: Cell<Option<[f32; 2]>>,
 }
+
 impl Default for TooltipArbiter {
     fn default() -> Self {
         Self {
@@ -231,6 +232,7 @@ impl Default for TooltipArbiter {
         }
     }
 }
+
 impl TooltipArbiter {
     pub fn set_caret_line(&self, top: f32, height: f32) {
         self.caret_line.set(Some([top, top + height]));

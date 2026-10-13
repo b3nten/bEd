@@ -23,12 +23,14 @@ struct Transition {
     started: f64,
     duration: f64,
 }
+
 impl Transition {
     fn openness(self, now: f64) -> f32 {
         let t = ((now - self.started) / self.duration).clamp(0.0, 1.0) as f32;
         let eased = t * t * (3.0 - 2.0 * t);
         self.from + (self.to - self.from) * eased
     }
+
     fn active(self, now: f64) -> bool {
         now < self.started + self.duration
     }
@@ -41,6 +43,7 @@ pub(crate) struct FoldAnimation {
     collapsed: Vec<FoldRange>,
     transitions: Vec<Transition>,
 }
+
 impl FoldAnimation {
     pub fn snap(&mut self, collapsed: &[FoldRange]) {
         self.collapsed = collapsed.to_vec();

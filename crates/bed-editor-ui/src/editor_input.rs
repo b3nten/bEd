@@ -92,6 +92,7 @@ impl EditorInput {
     ) -> Vec<HostAction> {
         self.process_input(ui, editor, layout, allow_navigation, None, false)
     }
+
     pub(crate) fn process_projected(
         &mut self,
         ui: &Ui,
@@ -110,6 +111,7 @@ impl EditorInput {
             read_only,
         )
     }
+
     fn process_input(
         &mut self,
         ui: &Ui,
@@ -135,12 +137,15 @@ impl EditorInput {
     pub fn take_definition_request(&mut self) -> Option<DefinitionRequest> {
         self.definition_request.take()
     }
+
     pub fn take_symbol_request(&mut self) -> Option<(i32, i32)> {
         self.symbol_request.take()
     }
+
     pub fn take_typed_text(&mut self) -> Option<String> {
         self.typed_text.take()
     }
+
     pub fn prefix_backspace(&self) -> bool {
         self.prefix_backspace
     }
@@ -679,6 +684,7 @@ fn get_clipboard(ui: &Ui) -> Option<String> {
         (!ptr.is_null()).then(|| std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned())
     })
 }
+
 fn set_clipboard(ui: &Ui, bytes: &[u8]) {
     if let Ok(text) = std::ffi::CString::new(String::from_utf8_lossy(bytes).as_bytes()) {
         ui.with_bound_context(|| unsafe { sys::igSetClipboardText(text.as_ptr()) });
