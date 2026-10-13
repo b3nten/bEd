@@ -33,6 +33,7 @@ pub struct SceneFrame {
     /// One frame impulse, used by the mascots' squash animations.
     pub pressed: bool,
 }
+
 impl Default for SceneFrame {
     fn default() -> Self {
         Self {
@@ -58,6 +59,7 @@ pub struct SceneView {
     renderer: Option<renderer::SceneRenderer>,
     failed_generation: Option<u64>,
 }
+
 impl SceneView {
     pub fn new(kind: SceneKind) -> Self {
         Self {
@@ -74,9 +76,11 @@ impl SceneView {
             failed_generation: None,
         }
     }
+
     pub fn handle(&self) -> TextureHandle {
         self.texture
     }
+
     pub fn update(&mut self, pixels: [u32; 2], mut frame: SceneFrame) {
         frame.mouse = frame.mouse.map(|x| {
             if x.is_finite() {
@@ -120,6 +124,7 @@ impl SceneView {
         self.frame = frame;
         self.size = Some(pixels);
     }
+
     pub fn render_output(&self) -> Option<RenderOutput> {
         Some(RenderOutput {
             handle: self.texture,
@@ -128,6 +133,7 @@ impl SceneView {
             revision: self.revision,
         })
     }
+
     pub fn render(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -167,6 +173,7 @@ impl SceneView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn stationary_scenes_keep_their_output_until_input_changes() {
         let mut view = SceneView::new(SceneKind::Duck);

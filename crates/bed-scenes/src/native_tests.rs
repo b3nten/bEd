@@ -7,6 +7,7 @@ use bed_ui::gpu::{renderer_device_descriptor, wgpu};
 fn native_registered_duck_renderer_owns_entities_in_the_shared_world() {
     use bed_ui::gpu::{CanvasRenderInvocation, CanvasRenderer};
     use bevy::prelude::*;
+
     #[derive(Component)]
     struct GameState;
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -693,6 +694,7 @@ struct SceneTestGpu<'a> {
     encoder: &'a mut wgpu::CommandEncoder,
     generation: u64,
 }
+
 impl SceneTestGpu<'_> {
     fn context(&mut self) -> GpuContext<'_> {
         GpuContext {
@@ -719,6 +721,7 @@ trait SceneTestFrame {
         impulse: f32,
     ) -> Result<(), String>;
 }
+
 impl SceneTestFrame for renderer::SceneRenderer {
     fn render(
         &mut self,

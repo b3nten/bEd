@@ -15,17 +15,21 @@ use std::collections::HashMap;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ScenePanel(pub SceneKind);
+
 #[derive(Default)]
 pub struct SceneStates(HashMap<Entity, MascotPanel>);
+
 impl SceneStates {
     pub fn get(&self, entity: Entity) -> Option<&SceneView> {
         self.0.get(&entity).map(|panel| &panel.scene)
     }
+
     #[cfg(test)]
     pub(crate) fn get_mut(&mut self, entity: Entity) -> Option<&mut SceneView> {
         self.0.get_mut(&entity).map(|panel| &mut panel.scene)
     }
 }
+
 #[derive(Resource)]
 struct SceneSystemsInstalled;
 
@@ -43,6 +47,7 @@ fn initialize_scenes(app: &mut App) {
 }
 
 pub struct BedPlugin;
+
 impl Plugin for BedPlugin {
     fn build(&self, app: &mut App) {
         initialize_scenes(app);
@@ -58,7 +63,9 @@ impl Plugin for BedPlugin {
         .expect("Bed systems must register exactly once");
     }
 }
+
 pub struct DuckPlugin;
+
 impl Plugin for DuckPlugin {
     fn build(&self, app: &mut App) {
         initialize_scenes(app);
@@ -76,9 +83,11 @@ impl Plugin for DuckPlugin {
 fn create_bed(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     create_scene(creation, world, SceneKind::Bed)
 }
+
 fn create_duck(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     create_scene(creation, world, SceneKind::Duck)
 }
+
 fn create_scene(creation: PanelCreation, world: &mut World, kind: SceneKind) -> PanelResult {
     world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
         ("Scene", "Move the pointer over the scene to see the mascot react. Resize or dock the panel to arrange it alongside your work."),
@@ -108,6 +117,7 @@ fn create_scene(creation: PanelCreation, world: &mut World, kind: SceneKind) -> 
         entity: creation.entity,
     }))
 }
+
 fn bed_command(
     In(invocation): In<CommandInvocation>,
     mut intents: ResMut<EditorIntents>,
@@ -126,6 +136,7 @@ fn bed_command(
     );
     Ok(Vec::new())
 }
+
 fn retire_scenes(mut states: NonSendMut<SceneStates>, live: Query<&ScenePanel>) {
     states.0.retain(|entity, _| live.get(*entity).is_ok());
 }
@@ -206,6 +217,7 @@ fn render_scene(
 struct SceneFrontend {
     entity: Entity,
 }
+
 impl Panel for SceneFrontend {
     fn title(&self, world: &World) -> String {
         world
@@ -215,6 +227,7 @@ impl Panel for SceneFrontend {
             .expect("A scene presentation owns its runtime state")
             .panel_title(&world.resource::<EditorFrame>().context())
     }
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -245,6 +258,7 @@ impl Panel for SceneFrontend {
             world.entity_mut(self.entity).insert(CanvasOutput(output));
         }
     }
+
     fn save(&self, _: &World) -> Value {
         Value::Null
     }
@@ -264,6 +278,7 @@ pub fn spawn_scene(world: &mut World, kind: SceneKind) -> Entity {
     .expect("transient scene requires no document");
     entity
 }
+
 pub fn update_scene(world: &mut World, entity: Entity, pixels: [u32; 2], frame: crate::SceneFrame) {
     let output = {
         let mut states = world.non_send_mut::<SceneStates>();
@@ -278,6 +293,7 @@ pub fn update_scene(world: &mut World, entity: Entity, pixels: [u32; 2], frame: 
 
 /// GPU scene support without contributing a workbench panel or menu item.
 pub struct SceneRenderingPlugin;
+
 impl Plugin for SceneRenderingPlugin {
     fn build(&self, app: &mut App) {
         initialize_scenes(app);
@@ -287,6 +303,7 @@ impl Plugin for SceneRenderingPlugin {
 mod tests {
     use super::*;
     use bed_editor_api::PanelInput;
+
     #[test]
     fn each_scene_presentation_owns_its_registered_renderer() {
         let mut app = App::new();
@@ -328,6 +345,7 @@ mod tests {
         assert!(app.world().non_send::<SceneStates>().get(first).is_none());
         assert!(app.world().non_send::<SceneStates>().get(second).is_some());
     }
+
     #[test]
     fn independent_scene_plugins_register_tool_panels_and_retire_world_state() {
         let mut app = App::new();
@@ -384,6 +402,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn opening_bed_preserves_the_command_origin() {
         let mut app = App::new();

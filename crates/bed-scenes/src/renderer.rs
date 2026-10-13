@@ -378,6 +378,7 @@ impl SceneRenderer {
         }
         material
     }
+
     fn mesh(
         &mut self,
         world: &mut World,
@@ -401,6 +402,7 @@ impl SceneRenderer {
         }
         entity
     }
+
     fn cube(
         &mut self,
         world: &mut World,
@@ -417,6 +419,7 @@ impl SceneRenderer {
             motion,
         )
     }
+
     fn ball(
         &mut self,
         world: &mut World,
@@ -1103,6 +1106,7 @@ fn error_scopes(device: &wgpu::Device) -> [wgpu::ErrorScopeGuard; 3] {
         device.push_error_scope(wgpu::ErrorFilter::Validation),
     ]
 }
+
 fn check_scopes(scopes: [wgpu::ErrorScopeGuard; 3]) -> Result<(), String> {
     let mut failure = None;
     for scope in scopes.into_iter().rev() {

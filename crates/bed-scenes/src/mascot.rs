@@ -29,6 +29,7 @@ pub(crate) struct MascotPanel {
     audio: Option<(OutputStream, Sink)>,
     audio_failed: bool,
 }
+
 impl MascotPanel {
     pub(crate) fn new(kind: SceneKind) -> Self {
         Self {
@@ -38,6 +39,7 @@ impl MascotPanel {
             audio_failed: false,
         }
     }
+
     fn squeak(&mut self) {
         if self.muted || self.audio_failed {
             return;
@@ -75,6 +77,7 @@ impl MascotPanel {
         sink.play();
     }
 }
+
 impl MascotPanel {
     pub(crate) fn panel_title(&self, _: &HostContext<'_>) -> String {
         match self.scene.kind {
@@ -84,6 +87,7 @@ impl MascotPanel {
         }
         .into()
     }
+
     pub(crate) fn draw_canvas(&mut self, ui: &Ui, host: &HostContext<'_>) {
         let muted = match self.scene.kind {
             SceneKind::Bed => false,
