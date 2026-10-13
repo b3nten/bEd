@@ -34,22 +34,27 @@ pub struct ContentSearch {
     pub(crate) advance_to: Option<(String, i32, usize)>,
     matching_files: usize,
 }
+
 impl Default for ContentSearch {
     fn default() -> Self {
         Self::new_lazy()
     }
 }
+
 impl Deref for ContentSearch {
     type Target = Search;
+
     fn deref(&self) -> &Search {
         &self.search
     }
 }
+
 impl DerefMut for ContentSearch {
     fn deref_mut(&mut self) -> &mut Search {
         &mut self.search
     }
 }
+
 impl ContentSearch {
     pub fn new_lazy() -> Self {
         Self {
@@ -71,24 +76,29 @@ impl ContentSearch {
             matching_files: 0,
         }
     }
+
     pub fn open(&mut self) {
         self.search.open();
         self.should_focus = true;
     }
+
     pub fn cancel(&mut self) {
         self.pending = None;
         self.search.cancel();
         self.search.canceled = true;
         self.stale = true;
     }
+
     pub fn needs_tick(&self) -> bool {
         self.pending.is_some() || self.searching
     }
+
     pub fn invalidate(&mut self) {
         self.search.cancel();
         self.stale = true;
         self.pending = Some(Instant::now() + Duration::from_millis(200));
     }
+
     fn observe(&mut self, root: &str) {
         let signature = (root.to_owned(), self.query.clone(), self.options());
         if self.observed.as_ref() != Some(&signature) {
@@ -107,6 +117,7 @@ impl ContentSearch {
             }
         }
     }
+
     pub fn tick(&mut self, root: &str, documents: &EditorSession) -> bool {
         self.observe(root);
         if self
@@ -178,6 +189,7 @@ impl ContentSearch {
         }
         changed || self.pending.is_some()
     }
+
     pub fn can_replace(&self) -> bool {
         !self.stale
             && self.pending.is_none()
@@ -187,6 +199,7 @@ impl ContentSearch {
             && self.error.is_none()
             && !self.results.is_empty()
     }
+
     /// Counts are maintained while accepting worker results, not while drawing
     /// or measuring status widgets.
     pub(crate) fn status_text(&self, root: &str) -> StatusText {
@@ -245,6 +258,7 @@ impl ContentSearch {
         }
         status
     }
+
     fn step(&mut self, direction: isize) -> ContentSearchAction {
         if self.results.is_empty() || self.stale {
             return ContentSearchAction::None;
@@ -254,6 +268,7 @@ impl ContentSearch {
         self.scroll_to_selected = true;
         ContentSearchAction::Open(self.results[self.selected_index].clone())
     }
+
     pub fn draw_body(
         &mut self,
         ui: &Ui,
@@ -451,12 +466,14 @@ pub enum ContentSearchAction {
     ReplaceAll,
     Cancel,
 }
+
 fn same_line_if_room(ui: &Ui, width: f32) {
     let right = ui.cursor_screen_pos()[0] + ui.content_region_avail()[0];
     if ui.item_rect_max()[0] + ui.clone_style().item_spacing()[0] + width <= right {
         ui.same_line();
     }
 }
+
 fn toggle(ui: &Ui, label: &str, hint: &str, active: &mut bool) -> bool {
     let color = active
         .then(|| ui.push_style_color(StyleColor::Button, ui.style_color(StyleColor::ButtonActive)));
@@ -470,6 +487,7 @@ fn toggle(ui: &Ui, label: &str, hint: &str, active: &mut bool) -> bool {
     }
     clicked
 }
+
 fn draw_result(ui: &Ui, pos: [f32; 2], found: &ContentMatch) {
     let start = found.range.start.saturating_sub(48);
     let end = found.range.start.saturating_add(160).min(found.line.len());
@@ -509,6 +527,7 @@ mod tests {
     use super::*;
     use crate::test_support::TempDir;
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
+
     #[test]
     fn query_changes_debounce_cancel_and_invalid_patterns_disable_replacement() {
         let temp = TempDir::new();
@@ -533,6 +552,7 @@ mod tests {
         assert!(search.results.is_empty());
         assert!(!search.needs_tick());
     }
+
     #[test]
     fn toolbar_wraps_and_full_panel_draws_in_narrow_and_wide_windows() {
         let mut context = Context::create();

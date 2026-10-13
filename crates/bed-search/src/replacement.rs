@@ -13,12 +13,14 @@ struct FileReplacement {
     path: String,
     matches: Vec<ContentMatch>,
 }
+
 struct PendingFile {
     path: String,
     document: DocumentId,
     count: usize,
     advance_offset: Option<usize>,
 }
+
 enum Stage {
     Ready,
     Opening(String),
@@ -27,6 +29,7 @@ enum Stage {
     Saving(SaveToken, PendingFile),
     Saved(PendingFile),
 }
+
 pub(crate) struct ReplacementJob {
     owner: bevy::prelude::Entity,
     files: VecDeque<FileReplacement>,
@@ -40,6 +43,7 @@ pub(crate) struct ReplacementJob {
     next_only: bool,
     revisions: HashMap<DocumentId, Revision>,
 }
+
 impl ReplacementJob {
     pub(crate) fn progress(&self) -> (usize, usize, usize, usize) {
         let in_flight = usize::from(matches!(
@@ -53,6 +57,7 @@ impl ReplacementJob {
             self.failures.len(),
         )
     }
+
     pub fn new(
         owner: bevy::prelude::Entity,
         search: &ContentSearch,
@@ -98,6 +103,7 @@ impl ReplacementJob {
             revisions,
         })
     }
+
     /// Advance at most one file per tick so broad replacements leave the UI responsive.
     pub fn tick(
         &mut self,
@@ -263,12 +269,15 @@ impl ReplacementJob {
         }
         false
     }
+
     pub fn owns(&self, entity: bevy::prelude::Entity) -> bool {
         self.owner == entity
     }
+
     pub fn owner(&self) -> bevy::prelude::Entity {
         self.owner
     }
+
     pub fn edit_result(&mut self, token: EditToken, result: Result<Revision, String>) {
         if !matches!(&self.stage, Stage::Applying(expected, _) if *expected == token) {
             return;
@@ -284,6 +293,7 @@ impl ReplacementJob {
             Err(error) => self.failures.push(format!("{}: {error}", file.path)),
         }
     }
+
     pub fn save_result(&mut self, token: SaveToken, result: Result<Vec<SavedDocument>, String>) {
         if !matches!(&self.stage, Stage::Saving(expected, _) if *expected == token) {
             return;
@@ -339,6 +349,7 @@ mod tests {
         assert!(search.error.is_none(), "{:?}", search.error);
         search
     }
+
     fn run(
         job: &mut ReplacementJob,
         search: &mut ContentSearch,
@@ -390,6 +401,7 @@ mod tests {
         }
         panic!("Replacement did not finish");
     }
+
     #[test]
     fn replace_all_saves_dirty_buffers_and_each_file_has_one_undo_unit() {
         let temp = TempDir::new();
@@ -429,6 +441,7 @@ mod tests {
                 .contains("Replaced 3 occurrences · saved 2 files")
         );
     }
+
     #[test]
     fn next_deletion_advances_and_write_failure_preserves_dirty_replacement() {
         let temp = TempDir::new();
@@ -457,6 +470,7 @@ mod tests {
                 .contains("replacement remains unsaved")
         );
     }
+
     #[test]
     fn changed_buffers_and_truncated_results_cannot_be_replaced() {
         let temp = TempDir::new();

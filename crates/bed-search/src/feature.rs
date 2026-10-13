@@ -13,6 +13,7 @@ use bevy::{ecs::system::SystemState, prelude::*};
 
 #[derive(Default)]
 pub struct SearchPanels(pub HashMap<Entity, SearchPanel>);
+
 impl SearchPanels {
     pub fn is_searching(&self) -> bool {
         self.0.values().any(|panel| panel.search.needs_tick())
@@ -21,10 +22,12 @@ impl SearchPanels {
     pub fn get(&self, entity: Entity) -> Option<&SearchPanel> {
         self.0.get(&entity)
     }
+
     pub fn get_mut(&mut self, entity: Entity) -> Option<&mut SearchPanel> {
         self.0.get_mut(&entity)
     }
 }
+
 #[derive(Resource)]
 struct Actions(bed_editor_api::PanelActionSystem);
 
@@ -33,7 +36,9 @@ struct SearchStatus {
     busy: bool,
     text: StatusText,
 }
+
 pub struct SearchPlugin;
+
 impl Plugin for SearchPlugin {
     fn build(&self, app: &mut App) {
         app.world_mut().init_non_send::<SearchState>();
@@ -82,6 +87,7 @@ impl Plugin for SearchPlugin {
             .add_systems(Last, shutdown.after(bevy::app::OnAppExitSystems));
     }
 }
+
 fn show(
     In(invocation): In<CommandInvocation>,
     mut intents: ResMut<EditorIntents>,
@@ -98,6 +104,7 @@ fn show(
     );
     Ok(Vec::new())
 }
+
 fn open(In(invocation): In<CommandInvocation>) -> CommandResult {
     Ok(vec![Action::OpenPanel {
         panel_type: PANEL_ID.into(),
@@ -105,6 +112,7 @@ fn open(In(invocation): In<CommandInvocation>) -> CommandResult {
         area: Some(invocation.area),
     }])
 }
+
 fn cancel(
     In(invocation): In<CommandInvocation>,
     state: NonSend<SearchState>,
@@ -130,6 +138,7 @@ fn cancel(
     }
     Ok(Vec::new())
 }
+
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
         ("Search", "Enter a query to find text across the project. Use the search options to control matching and scope."),
@@ -171,6 +180,7 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
     publish_status(world, creation.entity);
     Ok(Box::new(Frontend(creation.entity)))
 }
+
 fn panel_action(
     In(invocation): In<PanelActionInvocation>,
     mut panels: NonSendMut<SearchPanels>,
@@ -186,6 +196,7 @@ fn panel_action(
         Ok(false)
     }
 }
+
 fn shutdown(
     mut exit: MessageReader<bevy::app::AppExit>,
     mut state: NonSendMut<SearchState>,
@@ -198,6 +209,7 @@ fn shutdown(
         }
     }
 }
+
 fn prepare(
     mut state: NonSendMut<SearchState>,
     mut panels: NonSendMut<SearchPanels>,
@@ -286,6 +298,7 @@ fn search_status(
     }
     SearchStatus { busy, text }
 }
+
 fn publish_status(world: &mut World, entity: Entity) {
     let Some(panel) = world.non_send::<SearchPanels>().0.get(&entity) else {
         return;
@@ -298,6 +311,7 @@ fn publish_status(world: &mut World, entity: Entity) {
     );
     world.entity_mut(entity).insert(status);
 }
+
 fn visible_status(world: &World, context: StatusContext) -> Option<&SearchStatus> {
     let status = world.get::<SearchStatus>(context.publisher)?;
     match context.item_id {
@@ -306,9 +320,11 @@ fn visible_status(world: &World, context: StatusContext) -> Option<&SearchStatus
         _ => None,
     }
 }
+
 fn cancel_width(ui: &Ui) -> f32 {
     ui.calc_text_size("Cancel")[0] + ui.clone_style().frame_padding()[0] * 2.0
 }
+
 fn status_measure(world: &World, ui: &Ui, context: StatusContext) -> Option<f32> {
     visible_status(world, context).map(|status| {
         status.text.measure(ui)
@@ -319,6 +335,7 @@ fn status_measure(world: &World, ui: &Ui, context: StatusContext) -> Option<f32>
             }
     })
 }
+
 fn status_draw(world: &mut World, ui: &Ui, context: StatusDrawContext, actions: &mut Vec<Action>) {
     let Some(status) = visible_status(world, context.context) else {
         return;
@@ -343,11 +360,13 @@ fn status_draw(world: &mut World, ui: &Ui, context: StatusDrawContext, actions: 
         status.text.draw(ui, context, actions);
     }
 }
+
 fn status_tooltip(world: &World, ui: &Ui, context: StatusContext) {
     if let Some(status) = visible_status(world, context) {
         status.text.tooltip(ui);
     }
 }
+
 fn replies(mut replies: MessageReader<EditorFeatureReply>, mut state: NonSendMut<SearchState>) {
     for reply in replies.read() {
         let Some(job) = &mut state.replacement else {
@@ -368,6 +387,7 @@ fn replies(mut replies: MessageReader<EditorFeatureReply>, mut state: NonSendMut
         }
     }
 }
+
 fn document_events(
     mut events: MessageReader<EditorDocumentEvent>,
     state: NonSend<SearchState>,
@@ -394,11 +414,14 @@ fn document_events(
         }
     }
 }
+
 struct Frontend(Entity);
+
 impl Panel for Frontend {
     fn title(&self, _: &World) -> String {
         "Search".into()
     }
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -446,6 +469,7 @@ impl Panel for Frontend {
         }
         publish_status(world, self.0);
     }
+
     fn save(&self, world: &World) -> Value {
         world
             .non_send::<SearchPanels>()
@@ -460,6 +484,7 @@ impl Panel for Frontend {
 mod tests {
     use super::*;
     use bed_workbench::{WorkbenchPlugin, WorkbenchRequests, commit_close, panel_state};
+
     #[test]
     fn ambient_search_cancel_captures_its_owner_and_completed_counts_need_focus() {
         use std::time::{Duration, Instant};
@@ -572,6 +597,7 @@ mod tests {
                 .is_empty()
         );
     }
+
     #[test]
     fn registered_search_panels_keep_independent_queries_and_release_only_closed_workers() {
         let mut app = App::new();
@@ -622,6 +648,7 @@ mod tests {
                 .unwrap()
         );
     }
+
     #[test]
     fn replacement_system_waits_for_its_own_edit_and_save_messages() {
         use std::{

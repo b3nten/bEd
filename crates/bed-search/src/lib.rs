@@ -14,24 +14,29 @@ pub const PANEL_ID: &str = "bed.search.panel";
 pub const SHOW_COMMAND: &str = "bed.search.show";
 pub const NEW_COMMAND: &str = "bed.search.new";
 pub const CANCEL_COMMAND: &str = "bed.search.cancel";
+
 #[derive(Default)]
 pub struct SearchState {
     replacement: Option<ReplacementJob>,
     remote: Option<RemoteClient>,
 }
+
 impl SearchState {
     pub fn is_replacing(&self) -> bool {
         self.replacement.is_some()
     }
 }
+
 pub struct SearchPanel {
     pub search: ContentSearch,
 }
+
 impl Drop for SearchPanel {
     fn drop(&mut self) {
         self.search.dismiss();
     }
 }
+
 impl SearchPanel {
     pub fn new(remote: Option<RemoteClient>, state: &Value) -> Self {
         let mut search = ContentSearch::new_lazy();
@@ -49,9 +54,11 @@ impl SearchPanel {
         search.open();
         Self { search }
     }
+
     pub fn open(&mut self) {
         self.search.open();
     }
+
     pub fn draw_body(
         &mut self,
         entity: Entity,
@@ -96,6 +103,7 @@ impl SearchPanel {
         }
         Ok(())
     }
+
     pub fn state(&self) -> Value {
         let search = &self.search;
         json!({"query":search.query,"case_sensitive":search.case_sensitive,"include_ignored":search.include_ignored,"regex":search.regex,"whole_words":search.whole_words,"include":search.include,"exclude":search.exclude,"replacement":search.replacement,"show_replace":search.show_replace,"show_filters":search.show_filters})
@@ -125,6 +133,7 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
         ),
     ]
 }
+
 pub(crate) fn default_shortcuts() -> bed_keybindings::ShortcutInput {
     bed_keybindings::ShortcutInput::new(bed_keybindings::Bindings::new(
         shortcut_actions(),
