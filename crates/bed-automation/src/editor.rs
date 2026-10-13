@@ -15,6 +15,7 @@ pub struct DocumentHandle {
     session: u64,
     document: DocumentId,
 }
+
 impl DocumentHandle {
     pub fn id(self) -> DocumentId {
         self.document
@@ -30,6 +31,7 @@ pub struct DocumentInfo {
     pub dirty: bool,
     pub disk_conflict: Option<String>,
 }
+
 #[derive(Clone, Debug)]
 pub struct DocumentRead {
     pub info: DocumentInfo,
@@ -74,6 +76,7 @@ pub(super) enum PendingEditor {
     Request(EditorRequestId),
     Read(DocumentHandle),
 }
+
 fn document_handle(world: &World, document: DocumentId) -> DocumentHandle {
     DocumentHandle {
         app: world.resource::<AutomationScope>().0,
@@ -81,6 +84,7 @@ fn document_handle(world: &World, document: DocumentId) -> DocumentHandle {
         document,
     }
 }
+
 fn resolve_document(
     world: &World,
     document: DocumentHandle,
@@ -99,6 +103,7 @@ fn resolve_document(
     }
     Ok(document.document)
 }
+
 pub(super) fn start(
     world: &mut World,
     operation: EditorOperation,
@@ -170,6 +175,7 @@ pub(super) fn start(
         world, request,
     )))
 }
+
 pub(super) fn start_workbench(world: &mut World, action: Action) -> PendingEditor {
     let source = match &action {
         Action::Invoke(invocation) => invocation.source,
@@ -186,6 +192,7 @@ pub(super) fn start_workbench(world: &mut World, action: Action) -> PendingEdito
     );
     PendingEditor::Request(submit_editor_request(world, request))
 }
+
 pub(super) fn poll(world: &mut World, pending: &mut PendingEditor) -> Option<OperationResult> {
     match pending {
         PendingEditor::Read(document) => Some(read(world, *document).map(OperationValue::Document)),
@@ -216,6 +223,7 @@ pub(super) fn poll(world: &mut World, pending: &mut PendingEditor) -> Option<Ope
         }),
     }
 }
+
 fn read(world: &World, document: DocumentHandle) -> Result<DocumentRead, AutomationError> {
     let document_id = resolve_document(world, document)?;
     let session = world.non_send::<EditorSession>();
@@ -237,6 +245,7 @@ fn read(world: &World, document: DocumentHandle) -> Result<DocumentRead, Automat
         bytes: snapshot.bytes,
     })
 }
+
 pub(super) fn documents(world: &World) -> Result<Vec<DocumentInfo>, AutomationError> {
     let Some(session) = world.get_non_send::<EditorSession>() else {
         return Ok(Vec::new());
@@ -247,6 +256,7 @@ pub(super) fn documents(world: &World) -> Result<Vec<DocumentInfo>, AutomationEr
         .map(|id| read(world, document_handle(world, id)).map(|document| document.info))
         .collect()
 }
+
 pub(super) fn workspace(world: &World) -> Option<Value> {
     world
         .get_resource::<bed_editor_workbench::EditorWorkspace>()?

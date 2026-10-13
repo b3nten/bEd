@@ -35,6 +35,7 @@ pub struct PanelHandle {
     session: u64,
     entity: Entity,
 }
+
 impl PanelHandle {
     pub fn entity(self) -> Entity {
         self.entity
@@ -89,12 +90,14 @@ pub struct PanelInfo {
     pub readiness: Readiness,
     pub visible_content: Option<bed_desktop::DesktopRect>,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Readiness {
     Pending,
     Ready,
     Failed(String),
 }
+
 #[derive(Clone, Debug)]
 pub struct CommandInfo {
     pub id: String,
@@ -102,6 +105,7 @@ pub struct CommandInfo {
     pub enabled: bool,
     pub visible: bool,
 }
+
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     pub frame: Option<DesktopFrameInfo>,
@@ -113,6 +117,7 @@ pub struct Snapshot {
     #[cfg(feature = "editor")]
     pub workspace: Option<Value>,
 }
+
 #[derive(Debug)]
 pub enum OperationValue {
     Applied,
@@ -127,11 +132,13 @@ pub enum OperationValue {
     #[cfg(feature = "editor")]
     Saved(Vec<bed_editor_api::SavedDocument>),
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperationStatus {
     Pending,
     Complete,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
     StaleHandle,
@@ -142,17 +149,21 @@ pub enum ErrorKind {
     DeadlineExceeded,
     DependencyFailed,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AutomationError {
     pub kind: ErrorKind,
     pub message: String,
 }
+
 impl std::fmt::Display for AutomationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.message.fmt(f)
     }
 }
+
 impl std::error::Error for AutomationError {}
+
 impl AutomationError {
     fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
@@ -161,6 +172,7 @@ impl AutomationError {
         }
     }
 }
+
 pub type OperationResult = Result<OperationValue, AutomationError>;
 
 #[derive(Resource, Default)]
@@ -169,6 +181,7 @@ pub struct AutomationRequests {
     pending: VecDeque<(OperationId, Operation)>,
     statuses: Arc<Mutex<HashMap<OperationId, OperationStatus>>>,
 }
+
 impl AutomationRequests {
     pub fn submit(&mut self, operation: Operation) -> OperationId {
         self.next = self
@@ -184,16 +197,19 @@ impl AutomationRequests {
         id
     }
 }
+
 struct Completion {
     frame: DesktopFrameId,
     result: Result<(), AutomationError>,
     payload: Option<OperationResult>,
 }
+
 #[derive(Resource, Default)]
 pub struct AutomationResults {
     statuses: Arc<Mutex<HashMap<OperationId, OperationStatus>>>,
     complete: HashMap<OperationId, Completion>,
 }
+
 impl AutomationResults {
     pub fn status(&self, id: OperationId) -> Option<OperationStatus> {
         self.statuses
@@ -221,10 +237,13 @@ impl AutomationResults {
         );
     }
 }
+
 #[derive(Resource)]
 struct AutomationScope(u64);
+
 #[derive(Resource, Default)]
 struct ActiveOperations(Vec<(OperationId, Pending)>);
+
 enum Pending {
     Workbench(WorkbenchRequestId),
     Inspect,
@@ -238,12 +257,15 @@ enum Pending {
     #[cfg(feature = "editor")]
     Editor(editor::PendingEditor),
 }
+
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AutomationSystems {
     Ingress,
     Complete,
 }
+
 pub struct AutomationPlugin;
+
 impl Plugin for AutomationPlugin {
     fn build(&self, app: &mut App) {
         assert!(
@@ -285,11 +307,13 @@ impl Plugin for AutomationPlugin {
         .add_systems(Last, shutdown.after(bevy::app::OnAppExitSystems));
     }
 }
+
 fn frame(world: &World) -> DesktopFrameId {
     world
         .get_resource::<DesktopFrameInfo>()
         .map_or(DesktopFrameId(0), |info| info.frame)
 }
+
 fn session(world: &World) -> u64 {
     #[cfg(feature = "editor")]
     if let Some(session) =
@@ -300,6 +324,7 @@ fn session(world: &World) -> u64 {
     let _ = world;
     0
 }
+
 fn handle(world: &World, entity: Entity) -> PanelHandle {
     PanelHandle {
         app: world.resource::<AutomationScope>().0,
@@ -307,6 +332,7 @@ fn handle(world: &World, entity: Entity) -> PanelHandle {
         entity,
     }
 }
+
 fn resolve(world: &World, panel: PanelHandle) -> Result<Entity, AutomationError> {
     if panel.app != world.resource::<AutomationScope>().0
         || panel.session != session(world)
@@ -319,6 +345,7 @@ fn resolve(world: &World, panel: PanelHandle) -> Result<Entity, AutomationError>
     }
     Ok(panel.entity)
 }
+
 fn ingress(world: &mut World) {
     let operations = std::mem::take(&mut world.resource_mut::<AutomationRequests>().pending);
     for (id, operation) in operations {
@@ -336,6 +363,7 @@ fn ingress(world: &mut World) {
         }
     }
 }
+
 fn start(world: &mut World, operation: Operation) -> Result<Pending, AutomationError> {
     let action = match operation {
         Operation::Inspect => return Ok(Pending::Inspect),
@@ -463,6 +491,7 @@ fn start(world: &mut World, operation: Operation) -> Result<Pending, AutomationE
         world.resource_mut::<WorkbenchRequests>().submit(action),
     ))
 }
+
 fn complete(world: &mut World) {
     let operations = std::mem::take(&mut world.resource_mut::<ActiveOperations>().0);
     for (id, mut pending) in operations {
@@ -480,6 +509,7 @@ fn complete(world: &mut World) {
         }
     }
 }
+
 fn poll(world: &mut World, pending: &mut Pending) -> Option<OperationResult> {
     match pending {
         Pending::Workbench(id) => world
@@ -594,6 +624,7 @@ fn poll(world: &mut World, pending: &mut Pending) -> Option<OperationResult> {
         Pending::Editor(pending) => editor::poll(world, pending),
     }
 }
+
 fn inspect(world: &mut World) -> Result<Snapshot, AutomationError> {
     let frame = world.get_resource::<DesktopFrameInfo>().cloned();
     let records = world
@@ -725,5 +756,6 @@ fn shutdown(world: &mut World) {
         );
     }
 }
+
 #[cfg(test)]
 mod tests;

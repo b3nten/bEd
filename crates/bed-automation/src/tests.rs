@@ -5,6 +5,7 @@ use super::*;
 use bed_workbench_api::{Panel, PanelCreation, PanelResult};
 
 struct TestPanel;
+
 impl Panel for TestPanel {
     fn title(&self, _: &World) -> String {
         "Fixture".into()
@@ -18,6 +19,7 @@ impl Panel for TestPanel {
     ) {
     }
 }
+
 fn app() -> App {
     let mut app = App::new();
     app.add_plugins(bed_workbench::WorkbenchPlugin)
@@ -32,17 +34,20 @@ fn app() -> App {
     .unwrap();
     app
 }
+
 fn submit(app: &mut App, operation: Operation) -> OperationId {
     app.world_mut()
         .resource_mut::<AutomationRequests>()
         .submit(operation)
 }
+
 fn result(app: &mut App, id: OperationId) -> OperationResult {
     app.world_mut()
         .resource_mut::<AutomationResults>()
         .take(id)
         .expect("operation complete")
 }
+
 fn open(app: &mut App) -> PanelHandle {
     let id = submit(
         app,
@@ -62,6 +67,7 @@ fn open(app: &mut App) -> PanelHandle {
         _ => panic!("open receipt"),
     }
 }
+
 #[test]
 fn requests_have_actual_receipts_and_snapshots_are_owned() {
     let mut app = app();
@@ -87,6 +93,7 @@ fn requests_have_actual_receipts_and_snapshots_are_owned() {
         ErrorKind::StaleHandle
     );
 }
+
 #[test]
 fn handles_cannot_cross_app_instances() {
     let mut first = app();
@@ -127,6 +134,7 @@ fn snapshots_describe_the_active_layout_while_suspended_panels_remain_alive() {
     assert_eq!(snapshot.panels[0].handle, active);
     assert!(app.world().entities().contains(suspended.entity()));
 }
+
 #[test]
 fn missing_desktop_and_failed_dependencies_complete_as_errors() {
     let mut app = app();
