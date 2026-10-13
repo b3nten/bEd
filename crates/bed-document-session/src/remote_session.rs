@@ -32,16 +32,19 @@ enum Operation {
     },
     GitStatus,
 }
+
 #[derive(Clone, Copy)]
 enum ReadMode {
     Monitor,
     Reload,
     Keep,
 }
+
 struct Completion {
     operation: Operation,
     result: io::Result<Response>,
 }
+
 pub(super) struct RemoteSession {
     pub target: SshTarget,
     pub client: RemoteClient,
@@ -60,6 +63,7 @@ pub(super) struct RemoteSession {
     connected: bool,
     workspace_checks: BTreeMap<DocumentId, Option<Result<(), String>>>,
 }
+
 impl RemoteSession {
     fn new(target: SshTarget, client: RemoteClient, root: String) -> Self {
         let (requests, pending) = mpsc::sync_channel::<(Operation, Request)>(128);
@@ -143,6 +147,7 @@ impl RemoteSession {
             workspace_checks: BTreeMap::new(),
         }
     }
+
     fn queue(&self, operation: Operation, request: Request) -> io::Result<()> {
         if !self.connected {
             return Err(io::Error::new(
@@ -162,6 +167,7 @@ impl RemoteSession {
             })
     }
 }
+
 impl EditorSession {
     pub(super) fn remote_workspace_check(&mut self, document: DocumentId) -> io::Result<bool> {
         let path = self.entry(document)?.editor.state.path.clone();
@@ -198,6 +204,7 @@ impl EditorSession {
         remote.workspace_checks.insert(document, None);
         Ok(false)
     }
+
     /// The caller validates the root through the remote agent before construction.
     /// Remote history stays in memory; this never reads/writes a local project path.
     pub fn with_remote_options(
@@ -220,35 +227,43 @@ impl EditorSession {
         session.initialize_lsp();
         Ok(session)
     }
+
     pub fn is_remote(&self) -> bool {
         self.remote.is_some()
     }
+
     pub fn remote_connected(&self) -> bool {
         self.remote
             .as_ref()
             .is_some_and(|r| r.connected && r.client.is_connected())
     }
+
     pub fn remote_client(&self) -> Option<RemoteClient> {
         self.remote.as_ref().map(|r| r.client.clone())
     }
+
     pub fn ssh_target(&self) -> Option<&SshTarget> {
         self.remote.as_ref().map(|r| &r.target)
     }
+
     pub fn remote_file_modified(&self, path: &str) -> bool {
         self.remote
             .as_ref()
             .is_some_and(|r| r.modified_paths.contains(path))
     }
+
     pub fn save_pending(&self, document: DocumentId) -> bool {
         self.remote
             .as_ref()
             .is_some_and(|r| r.saving.contains(&document))
     }
+
     pub fn open_pending(&self, path: &Path) -> bool {
         self.remote
             .as_ref()
             .is_some_and(|r| path.to_str().is_some_and(|path| r.opening.contains(path)))
     }
+
     pub(super) fn remote_alias(&self, path: &Path) -> Option<DocumentId> {
         self.remote
             .as_ref()?
@@ -257,6 +272,7 @@ impl EditorSession {
             .copied()
             .filter(|id| self.documents.contains_key(id))
     }
+
     pub(super) fn forget_remote_document(&mut self, document: DocumentId, closing: bool) {
         if let Some(remote) = &mut self.remote {
             remote.aliases.retain(|_, id| *id != document);
@@ -325,6 +341,7 @@ impl EditorSession {
     pub fn request_open_file(&mut self, path: &Path) -> io::Result<Option<DocumentId>> {
         self.request_open_file_with_kind(path, DocumentKind::Text)
     }
+
     pub fn request_open_file_with_kind(
         &mut self,
         path: &Path,
@@ -332,9 +349,11 @@ impl EditorSession {
     ) -> io::Result<Option<DocumentId>> {
         self.request_open_mode(path, Some(kind), None)
     }
+
     pub fn request_open_file_auto(&mut self, path: &Path) -> io::Result<Option<DocumentId>> {
         self.request_open_mode(path, None, None)
     }
+
     pub(super) fn request_open_mode(
         &mut self,
         path: &Path,
@@ -374,6 +393,7 @@ impl EditorSession {
         remote.opening.insert(path);
         Ok(None)
     }
+
     pub(super) fn queue_remote_save(
         &mut self,
         document: DocumentId,
@@ -451,6 +471,7 @@ impl EditorSession {
             .cancel_pending();
         Ok(false)
     }
+
     fn queue_read(&mut self, document: DocumentId, mode: ReadMode) -> io::Result<()> {
         let entry = self.entry(document)?;
         let path = entry.editor.state.path.clone();
@@ -501,15 +522,19 @@ impl EditorSession {
         }
         Ok(())
     }
+
     pub(super) fn queue_remote_reload(&mut self, document: DocumentId) -> io::Result<()> {
         self.queue_read(document, ReadMode::Reload)
     }
+
     pub(super) fn queue_remote_monitor(&mut self, document: DocumentId) -> io::Result<()> {
         self.queue_read(document, ReadMode::Monitor)
     }
+
     pub(super) fn queue_remote_keep(&mut self, document: DocumentId) -> io::Result<()> {
         self.queue_read(document, ReadMode::Keep)
     }
+
     pub(super) fn tick_remote_document(&mut self, id: DocumentId, monitor: bool) {
         if !self.remote_connected() {
             return;
@@ -545,6 +570,7 @@ impl EditorSession {
             self.record_error(Some(id), "remote", &error);
         }
     }
+
     pub(super) fn configure_remote(&mut self, mut options: SessionOptions) -> io::Result<()> {
         if options.project_root != self.options.project_root {
             return Err(io::Error::new(
@@ -594,6 +620,7 @@ impl EditorSession {
         }
         Ok(())
     }
+
     pub(super) fn poll_remote(&mut self) {
         let completions: Vec<_> = self
             .remote
@@ -1031,6 +1058,7 @@ impl EditorSession {
             }
         }
     }
+
     pub(super) fn queue_remote_git(&mut self, document: DocumentId) {
         if !self.options.git || self.documents[&document].editor.state.kind == DocumentKind::Bytes {
             return;

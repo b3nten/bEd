@@ -14,10 +14,12 @@ use std::{
 };
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
 struct TempRepo {
     root: PathBuf,
     repo: Option<Repository>,
 }
+
 impl TempRepo {
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!(
@@ -32,17 +34,21 @@ impl TempRepo {
             repo: Some(repo),
         }
     }
+
     fn path(&self, name: &str) -> PathBuf {
         self.root.join(name)
     }
+
     fn root(&self) -> &str {
         self.root.to_str().unwrap()
     }
+
     fn write(&self, name: &str, bytes: &[u8]) {
         let path = self.path(name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, bytes).unwrap();
     }
+
     fn commit(&self, names: &[&str]) {
         let repo = self.repo.as_ref().unwrap();
         let mut index = repo.index().unwrap();
@@ -64,6 +70,7 @@ impl TempRepo {
         )
         .unwrap();
     }
+
     fn dirty() -> Self {
         let fixture = Self::new();
         fixture.write("README", b"line1\n");
@@ -72,6 +79,7 @@ impl TempRepo {
         fixture
     }
 }
+
 impl Drop for TempRepo {
     fn drop(&mut self) {
         self.repo.take();
@@ -82,6 +90,7 @@ impl Drop for TempRepo {
 fn lines(values: &[&str]) -> Vec<Vec<u8>> {
     values.iter().map(|line| line.as_bytes().to_vec()).collect()
 }
+
 fn state(raw: &[u8], path: &Path) -> EditorState {
     let mut state = EditorState::new();
     state.set_from_bytes(raw);
@@ -102,6 +111,7 @@ fn git_repo_discovers_nested_worktrees_and_fails_outside_a_repository() {
     );
     assert!(!repo.open(std::env::temp_dir().to_str().unwrap()));
 }
+
 #[test]
 fn modified_paths_detect_dirty_worktree_then_clear_on_restore() {
     let fixture = TempRepo::dirty();
@@ -111,6 +121,7 @@ fn modified_paths_detect_dirty_worktree_then_clear_on_restore() {
     fixture.write("README", b"line1\n");
     assert!(!repo.modified_paths().contains(b"README".as_slice()));
 }
+
 #[test]
 fn head_lines_then_line_diff_sees_unsaved_buffer_edits() {
     let fixture = TempRepo::dirty();
@@ -130,12 +141,14 @@ fn head_lines_then_line_diff_sees_unsaved_buffer_edits() {
     assert!(diff.additions > 0);
     assert!(!diff.added_lines.is_empty());
 }
+
 #[test]
 fn diff_lines_pure_unit() {
     let diff = diff_lines(&lines(&["a", "b", "c"]), &lines(&["a", "x", "c"]));
     assert_eq!((diff.additions, diff.deletions), (1, 1));
     assert!(diff.added_lines.contains(&2));
 }
+
 #[test]
 fn single_inserted_blank_marks_only_that_line() {
     let old: Vec<Vec<u8>> = (0..20)
@@ -147,6 +160,7 @@ fn single_inserted_blank_marks_only_that_line() {
     assert_eq!((diff.additions, diff.deletions), (1, 0));
     assert_eq!(diff.added_lines, HashSet::from([6]));
 }
+
 #[test]
 fn single_insert_in_large_file_does_not_mark_every_later_line() {
     let old: Vec<Vec<u8>> = (0..3000)
@@ -207,6 +221,7 @@ fn explicit_invalidation_refreshes_unborn_head_and_editor_gutter_without_reloadi
     service.invalidate_baseline(&state, true);
     assert!(!service.is_line_edited(&state.path, 1));
 }
+
 #[test]
 fn head_split_keeps_bom_raw_bytes_mixed_endings_and_trailing_empty_row() {
     let fixture = TempRepo::new();
@@ -231,6 +246,7 @@ fn head_split_keeps_bom_raw_bytes_mixed_endings_and_trailing_empty_row() {
     assert!(repo.head_lines("", &mut head));
     assert!(head.is_empty());
 }
+
 #[test]
 fn status_includes_index_deletions_and_nested_untracked_but_excludes_ignored() {
     let fixture = TempRepo::new();
@@ -255,6 +271,7 @@ fn status_includes_index_deletions_and_nested_untracked_but_excludes_ignored() {
     assert!(paths.contains(b"new/nested.txt".as_slice()));
     assert!(!paths.contains(b"ignored/data.txt".as_slice()));
 }
+
 #[test]
 fn real_editor_events_update_git_cache_for_multiple_actions_and_undo_immediately() {
     let fixture = TempRepo::new();
@@ -295,6 +312,7 @@ fn real_editor_events_update_git_cache_for_multiple_actions_and_undo_immediately
     editor.commands().undo();
     assert!(editor.git.borrow().current_git_changes.is_empty());
 }
+
 #[test]
 fn disabled_edit_keeps_old_markers_until_open_and_standalone_paths_discover_their_repository() {
     let fixture = TempRepo::dirty();
@@ -331,6 +349,7 @@ fn disabled_edit_keeps_old_markers_until_open_and_standalone_paths_discover_thei
     assert!(!git.is_line_edited(&document.path, 1));
     assert!(!git.is_line_edited(&document.path, 2));
 }
+
 #[test]
 fn status_path_queries_preserve_deleted_files_and_new_missing_parents() {
     let fixture = TempRepo::new();

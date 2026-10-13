@@ -17,6 +17,7 @@ use std::{
 fn client(delay: bool) -> RemoteClient {
     configured_client(delay, false)
 }
+
 fn configured_client(delay_write: bool, delay_read: bool) -> RemoteClient {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command.arg("--stdio");
@@ -28,6 +29,7 @@ fn configured_client(delay_write: bool, delay_read: bool) -> RemoteClient {
     }
     RemoteClient::launch_command(command).unwrap()
 }
+
 fn session(root: &Path, client: RemoteClient, monitoring: bool) -> EditorSession {
     EditorSession::with_remote_options(
         SessionOptions {
@@ -40,6 +42,7 @@ fn session(root: &Path, client: RemoteClient, monitoring: bool) -> EditorSession
     )
     .unwrap()
 }
+
 fn wait(session: &mut EditorSession, done: impl Fn(&EditorSession) -> bool) {
     let until = Instant::now() + Duration::from_secs(5);
     loop {
@@ -51,11 +54,13 @@ fn wait(session: &mut EditorSession, done: impl Fn(&EditorSession) -> bool) {
         thread::sleep(Duration::from_millis(2));
     }
 }
+
 fn open(session: &mut EditorSession, path: &Path) -> bed_document_session::DocumentId {
     assert!(session.request_open_file(path).unwrap().is_none());
     wait(session, |s| !s.open_pending(path));
     session.document_for_path(path).unwrap()
 }
+
 fn pump_for(session: &mut EditorSession, duration: Duration) {
     let until = Instant::now() + duration;
     while Instant::now() < until {
@@ -63,7 +68,9 @@ fn pump_for(session: &mut EditorSession, duration: Duration) {
         thread::sleep(Duration::from_millis(2));
     }
 }
+
 struct Fixture(PathBuf);
+
 impl Fixture {
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!("bed-remote-session-{}", std::process::id()));
@@ -71,6 +78,7 @@ impl Fixture {
         Self(fs::canonicalize(root).unwrap())
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

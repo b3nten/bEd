@@ -13,7 +13,9 @@ use std::{
 };
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
 struct TempDir(PathBuf);
+
 impl TempDir {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
@@ -24,12 +26,14 @@ impl TempDir {
         fs::create_dir_all(&path).unwrap();
         Self(fs::canonicalize(path).unwrap())
     }
+
     fn write(&self, name: &str, bytes: &[u8]) -> PathBuf {
         let path = self.0.join(name);
         fs::write(&path, bytes).unwrap();
         path
     }
 }
+
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

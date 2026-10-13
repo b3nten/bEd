@@ -48,9 +48,11 @@ impl EditorGit {
         self.rebuild_line_cache(state);
         self.recompute_gutter_from_cache(state, enabled);
     }
+
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn init(&mut self, state: &EditorState, project_root: &str, enabled: bool) {
         self.clear_gutter();
         self.document_path.clone_from(&state.path);
@@ -79,6 +81,7 @@ impl EditorGit {
             self.on_document_opened(state, enabled);
         }
     }
+
     fn clear_gutter(&mut self) {
         self.baseline_available = false;
         self.dirty_lines.clear();
@@ -87,6 +90,7 @@ impl EditorGit {
         self.baseline_path.clear();
         self.current_lines.clear();
     }
+
     fn relative_path(&self, path: &str) -> String {
         if self.project_root.is_empty() || path.is_empty() {
             return String::new();
@@ -109,6 +113,7 @@ impl EditorGit {
             .collect::<Vec<_>>()
             .join("/")
     }
+
     fn load_baseline(&mut self, state: &EditorState) {
         self.baseline.clear();
         self.baseline_path.clear();
@@ -122,9 +127,11 @@ impl EditorGit {
         self.repo.head_lines(&relative, &mut self.baseline);
         self.baseline_path.clone_from(&state.path);
     }
+
     fn rebuild_line_cache(&mut self, state: &EditorState) {
         state.lines_into(&mut self.current_lines);
     }
+
     fn sync_line_cache_from_edit(
         &mut self,
         state: &EditorState,
@@ -165,6 +172,7 @@ impl EditorGit {
         }
         true
     }
+
     fn recompute_gutter_from_cache(&mut self, state: &EditorState, enabled: bool) {
         self.dirty_lines.clear();
         self.current_git_changes.clear();
@@ -183,6 +191,7 @@ impl EditorGit {
             self.current_git_changes = format!("+{}-{}", diff.additions, diff.deletions);
         }
     }
+
     pub fn on_document_opened(&mut self, state: &EditorState, enabled: bool) {
         if self.discover_from_document && self.document_path != state.path {
             self.init(state, "", enabled);
@@ -193,6 +202,7 @@ impl EditorGit {
         self.rebuild_line_cache(state);
         self.recompute_gutter_from_cache(state, enabled);
     }
+
     pub fn on_did_edit(
         &mut self,
         state: &EditorState,
@@ -214,9 +224,11 @@ impl EditorGit {
         }
         self.recompute_gutter_from_cache(state, enabled);
     }
+
     fn refresh_status(&mut self) {
         self.modified_files = self.repo.modified_paths();
     }
+
     pub fn invalidate_baseline(&mut self, state: &EditorState, enabled: bool) {
         self.repo.invalidate_head();
         self.load_baseline(state);
@@ -225,9 +237,11 @@ impl EditorGit {
         self.refresh_status();
         self.last_status = Some(Instant::now());
     }
+
     pub fn poll(&mut self) {
         self.poll_at(Instant::now());
     }
+
     fn poll_at(&mut self, now: Instant) {
         if !self.repo.is_open()
             || self
@@ -239,9 +253,11 @@ impl EditorGit {
         self.refresh_status();
         self.last_status = Some(now);
     }
+
     pub fn is_line_edited(&self, path: &str, line_number: i32) -> bool {
         path == self.document_path && self.dirty_lines.contains(&line_number)
     }
+
     pub fn is_file_modified(&self, path: &str) -> bool {
         self.repo.is_open()
             && self

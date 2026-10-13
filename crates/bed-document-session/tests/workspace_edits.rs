@@ -8,6 +8,7 @@ use std::{
 };
 
 struct Fixture(PathBuf);
+
 impl Fixture {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -19,11 +20,13 @@ impl Fixture {
         fs::create_dir_all(&path).unwrap();
         Self(fs::canonicalize(path).unwrap())
     }
+
     fn file(&self, name: &str, bytes: &[u8]) -> PathBuf {
         let path = self.0.join(name);
         fs::write(&path, bytes).unwrap();
         path
     }
+
     fn session(&self, history: bool) -> EditorSession {
         EditorSession::with_options(SessionOptions {
             project_root: Some(self.0.clone()),
@@ -33,11 +36,13 @@ impl Fixture {
         .unwrap()
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
 fn edit(path: &Path, end: usize, replacement: &str) -> Value {
     json!({"textDocument":{"uri":LspUri::file_uri_from_path(path.to_str().unwrap()).unwrap().to_string(),"version":null},"edits":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":end}},"newText":replacement}]})
 }

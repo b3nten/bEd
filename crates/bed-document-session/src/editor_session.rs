@@ -49,6 +49,7 @@ struct ByteHistory {
     undo: Vec<ByteTransaction>,
     redo: Vec<ByteTransaction>,
 }
+
 #[derive(Clone, Copy)]
 struct ByteSplice {
     revision: u64,
@@ -56,6 +57,7 @@ struct ByteSplice {
     removed: usize,
     inserted: usize,
 }
+
 struct ByteTransaction {
     undo: Vec<ByteEdit>,
     redo: Vec<ByteEdit>,
@@ -70,6 +72,7 @@ pub enum LspConfigMode {
     /// Merge bundled defaults, the supplied user overrides, and project overrides.
     Layered,
 }
+
 /// No service, settings seeding, GUI, clipboard or global directory is touched
 /// by defaults. Disk/process services require explicit host configuration.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -85,6 +88,7 @@ pub struct SessionOptions {
     /// The host forwards project-wide filesystem observations to this session.
     pub lsp_file_observations: bool,
 }
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ClosePolicy {
     Save,
@@ -92,12 +96,14 @@ pub enum ClosePolicy {
     #[default]
     Cancel,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServiceError {
     pub document: Option<DocumentId>,
     pub service: &'static str,
     pub message: String,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionEvent {
     Opened {
@@ -140,12 +146,14 @@ pub enum SessionEvent {
         document: DocumentId,
     },
 }
+
 #[derive(Debug, Default)]
 pub struct TickReport {
     pub events: Vec<SessionEvent>,
     pub errors: Vec<ServiceError>,
     pub lsp_events: Vec<WorkspaceLspEvent>,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentSnapshot {
     pub kind: DocumentKind,
@@ -162,14 +170,17 @@ pub struct DocumentSnapshot {
     pub line_ending: Vec<u8>,
     pub disk_conflict: Option<String>,
 }
+
 enum Notification {
     Edit(DidEdit),
     Save(DidSave),
 }
+
 struct ViewEntry {
     state: EditorViewState,
     lifetime: Option<Weak<()>>,
 }
+
 impl ViewEntry {
     fn live(&self) -> bool {
         self.lifetime
@@ -177,6 +188,7 @@ impl ViewEntry {
             .is_none_or(|token| token.strong_count() > 0)
     }
 }
+
 struct DocumentEntry {
     byte_history: ByteHistory,
     byte_splices: VecDeque<ByteSplice>,
@@ -193,6 +205,7 @@ struct DocumentEntry {
     git_initialized: bool,
     workspace_edit_locked: bool,
 }
+
 /// Main-thread, GUI-independent document registry. Public mutation uses commands
 /// rather than mutable Editor/state references, preserving service/view updates.
 pub struct EditorSession {
@@ -221,6 +234,7 @@ pub struct EditorSession {
     workspace_request_revisions: Vec<(LspRequestOrigin, BTreeMap<DocumentId, (u64, u64)>)>,
     active_lsp_command_revisions: BTreeMap<u64, BTreeMap<DocumentId, (u64, u64)>>,
 }
+
 impl Default for EditorSession {
     fn default() -> Self {
         Self {
@@ -256,6 +270,7 @@ impl EditorSession {
     pub fn new() -> Self {
         Self::default()
     }
+
     /// The host reserves files that are owned outside the editable document
     /// registry. This protects direct service callers and autosave alike.
     pub fn set_read_only_local_paths(&mut self, paths: Vec<PathBuf>) {
@@ -306,6 +321,7 @@ impl EditorSession {
         }
         Ok(())
     }
+
     pub fn with_options(mut options: SessionOptions) -> io::Result<Self> {
         if let Some(root) = &options.project_root {
             options.project_root = Some(canonical_root(root)?);
@@ -329,12 +345,15 @@ impl EditorSession {
         session.initialize_lsp();
         Ok(session)
     }
+
     pub fn workspace_id(&self) -> WorkspaceId {
         self.workspace
     }
+
     pub fn options(&self) -> &SessionOptions {
         &self.options
     }
+
     pub fn view_ids(&self, document: DocumentId) -> Vec<ViewId> {
         self.documents
             .get(&document)
@@ -346,6 +365,7 @@ impl EditorSession {
                     .collect()
             })
     }
+
     pub fn set_highlight_theme(&mut self, theme: bed_highlight::tree_sitter::ThemeColors) {
         if self.theme == theme {
             return;
@@ -356,11 +376,13 @@ impl EditorSession {
             entry.editor.refresh_highlighting();
         }
     }
+
     pub fn set_git_enabled(&mut self, enabled: bool) -> io::Result<()> {
         let mut options = self.options.clone();
         options.git = enabled;
         self.configure(options)
     }
+
     /// Refresh repository comparisons without replacing text or resetting undo.
     pub fn invalidate_git_baselines(&mut self) {
         if let Some(remote) = &mut self.remote {
@@ -381,21 +403,26 @@ impl EditorSession {
             }
         }
     }
+
     pub fn set_highlighting_enabled(&mut self, enabled: bool) -> io::Result<()> {
         let mut options = self.options.clone();
         options.highlighting = enabled;
         self.configure(options)
     }
+
     pub fn pause_autosave(&mut self, document: DocumentId, paused: bool) -> io::Result<()> {
         self.entry_mut(document)?.autosave_paused = paused;
         Ok(())
     }
+
     pub fn autosave_paused(&self, document: DocumentId) -> io::Result<bool> {
         Ok(self.entry(document)?.autosave_paused)
     }
+
     pub fn document_ids(&self) -> Vec<DocumentId> {
         self.documents.keys().copied().collect()
     }
+
     pub fn document_for_path(&self, path: &Path) -> Option<DocumentId> {
         if self.remote.is_some() {
             return self
@@ -408,6 +435,7 @@ impl EditorSession {
             .ok()
             .and_then(|path| self.paths.get(&path).copied())
     }
+
     pub fn document_for_view(&self, view: ViewId) -> Option<DocumentId> {
         self.views.get(&view).copied().filter(|id| {
             self.documents
@@ -416,11 +444,13 @@ impl EditorSession {
                 .is_some_and(ViewEntry::live)
         })
     }
+
     pub fn view_count(&self, document: DocumentId) -> usize {
         self.documents
             .get(&document)
             .map_or(0, |e| e.views.values().filter(|v| v.live()).count())
     }
+
     pub fn snapshot(&self, document: DocumentId) -> io::Result<DocumentSnapshot> {
         let entry = self.entry(document)?;
         let state = &entry.editor.state;
@@ -439,15 +469,18 @@ impl EditorSession {
             disk_conflict: entry.editor.disk_conflict.clone(),
         })
     }
+
     /// Cheap cache identity: document replacement generation and text edit revision.
     /// Unlike a full snapshot, this never copies the document's bytes.
     pub fn document_revision(&self, document: DocumentId) -> io::Result<(u64, u64)> {
         let editor = &self.entry(document)?.editor;
         Ok((editor.document_generation(), editor.ops.generation()))
     }
+
     pub fn document_snapshot(&self, document: DocumentId) -> io::Result<DocumentSnapshot> {
         self.snapshot(document)
     }
+
     pub fn with_document<R>(
         &self,
         document: DocumentId,
@@ -455,13 +488,16 @@ impl EditorSession {
     ) -> io::Result<R> {
         Ok(f(&self.entry(document)?.editor.state))
     }
+
     pub fn view_snapshot(&self, view: ViewId) -> io::Result<EditorViewState> {
         let id = self.document_for_view(view).ok_or_else(missing_view)?;
         Ok(self.documents[&id].views[&view].state.clone())
     }
+
     pub fn create_document(&mut self, bytes: &[u8]) -> io::Result<DocumentId> {
         self.create_document_with_kind(bytes, DocumentKind::Text)
     }
+
     pub fn create_document_with_kind(
         &mut self,
         bytes: &[u8],
@@ -478,9 +514,11 @@ impl EditorSession {
         self.install_entry(id, editor, FileMonitor::new(), None);
         Ok(id)
     }
+
     pub fn document_kind(&self, document: DocumentId) -> io::Result<DocumentKind> {
         Ok(self.entry(document)?.editor.state.kind)
     }
+
     /// A service-free immutable document for index/commit comparisons.
     pub fn create_snapshot_document(
         &mut self,
@@ -498,11 +536,13 @@ impl EditorSession {
         self.entry_mut(id)?.autosave_paused = true;
         Ok(id)
     }
+
     pub fn is_snapshot_document(&self, document: DocumentId) -> bool {
         self.documents
             .get(&document)
             .is_some_and(|entry| entry.editor.state.read_only && !entry.workspace_edit_locked)
     }
+
     pub fn replace_snapshot_document(
         &mut self,
         document: DocumentId,
@@ -530,9 +570,11 @@ impl EditorSession {
         });
         Ok(())
     }
+
     pub fn open_file(&mut self, path: &Path) -> io::Result<DocumentId> {
         self.open_file_with_kind(path, DocumentKind::Text)
     }
+
     pub fn open_file_with_kind(
         &mut self,
         path: &Path,
@@ -540,6 +582,7 @@ impl EditorSession {
     ) -> io::Result<DocumentId> {
         self.open_file_in_context(path, kind, None)
     }
+
     /// Open a definition target using the requesting server's analysis context
     /// when the target is a new compatible file outside this workspace.
     pub fn open_file_from_lsp(
@@ -555,6 +598,7 @@ impl EditorSession {
         }
         self.open_file_in_context(path, DocumentKind::Text, Some(origin))
     }
+
     fn open_file_in_context(
         &mut self,
         path: &Path,
@@ -587,6 +631,7 @@ impl EditorSession {
         };
         self.install_local_file(path, kind, raw.raw, origin)
     }
+
     /// Open using the host's default text/bytes classifier.
     pub fn open_file_auto(&mut self, path: &Path) -> io::Result<DocumentId> {
         self.ensure_running()?;
@@ -608,6 +653,7 @@ impl EditorSession {
             None,
         )
     }
+
     fn install_local_file(
         &mut self,
         path: PathBuf,
@@ -630,6 +676,7 @@ impl EditorSession {
         self.install_entry(id, editor, monitor, origin);
         Ok(id)
     }
+
     fn install_entry(
         &mut self,
         id: DocumentId,
@@ -686,14 +733,17 @@ impl EditorSession {
         self.attach_lsp(id, origin);
         self.queued.push(SessionEvent::Opened { document: id });
     }
+
     pub fn create_view(&mut self, document: DocumentId) -> io::Result<ViewId> {
         self.create_view_entry(document, None)
     }
+
     pub fn create_managed_view(&mut self, document: DocumentId) -> io::Result<(ViewId, Rc<()>)> {
         let token = Rc::new(());
         let id = self.create_view_entry(document, Some(Rc::downgrade(&token)))?;
         Ok((id, token))
     }
+
     /// Retain an existing managed view while its presentation owner changes.
     /// This never creates a view or revives a released owner.
     pub fn retain_managed_view(&self, view: ViewId) -> io::Result<Rc<()>> {
@@ -710,6 +760,7 @@ impl EditorSession {
                 )
             })
     }
+
     fn create_view_entry(
         &mut self,
         document: DocumentId,
@@ -727,6 +778,7 @@ impl EditorSession {
         self.views.insert(view, document);
         Ok(view)
     }
+
     /// Borrow one view; restoration and sibling transforms run even when the closure unwinds.
     pub fn with_view<R>(
         &mut self,
@@ -742,6 +794,7 @@ impl EditorSession {
         }
         self.with_editor_view(view, |editor| f(&mut editor.view_context()))
     }
+
     pub fn with_commands<R>(
         &mut self,
         view: ViewId,
@@ -756,6 +809,7 @@ impl EditorSession {
         }
         self.with_editor_view(view, |editor| f(&mut editor.commands()))
     }
+
     pub(crate) fn with_editor_view<R>(
         &mut self,
         view: ViewId,
@@ -853,6 +907,7 @@ impl EditorSession {
             Err(panic) => std::panic::resume_unwind(panic),
         }
     }
+
     /// Apply one document-level undo unit. Validate revision, ranges, text
     /// boundaries and final size before changing any state or publishing events.
     pub fn apply_edits(
@@ -975,6 +1030,7 @@ impl EditorSession {
         }
         Ok(())
     }
+
     /// Keep independent byte-view positions attached to their original content.
     /// Returns false after a replacement or an expired change history; positions
     /// are still clamped safely. This journal contains lengths, never file data.
@@ -1025,6 +1081,7 @@ impl EditorSession {
         }
         Ok(available)
     }
+
     fn apply_byte_sequence(
         &mut self,
         document: DocumentId,
@@ -1070,12 +1127,15 @@ impl EditorSession {
         self.collect_notifications(document, None);
         Ok(inverse)
     }
+
     pub fn undo_document(&mut self, document: DocumentId) -> io::Result<()> {
         self.history_document(document, true)
     }
+
     pub fn redo_document(&mut self, document: DocumentId) -> io::Result<()> {
         self.history_document(document, false)
     }
+
     fn history_document(&mut self, document: DocumentId, undo: bool) -> io::Result<()> {
         self.ensure_running()?;
         if self.entry(document)?.workspace_edit_locked {
@@ -1097,6 +1157,7 @@ impl EditorSession {
         }
         self.history_document_ungrouped(document, undo)
     }
+
     pub(super) fn history_document_ungrouped(
         &mut self,
         document: DocumentId,
@@ -1145,6 +1206,7 @@ impl EditorSession {
         }
         Ok(())
     }
+
     pub fn set_scroll(&mut self, view: ViewId, x: f32, y: f32) -> io::Result<()> {
         let doc = self.document_for_view(view).ok_or_else(missing_view)?;
         self.documents
@@ -1157,6 +1219,7 @@ impl EditorSession {
             .request_scroll(x, y);
         Ok(())
     }
+
     pub fn request_focus(&mut self, view: ViewId) -> io::Result<()> {
         let doc = self.document_for_view(view).ok_or_else(missing_view)?;
         self.documents
@@ -1169,6 +1232,7 @@ impl EditorSession {
             .request_focus = true;
         Ok(())
     }
+
     pub fn detach_view(&mut self, view: ViewId) -> bool {
         let Some(doc) = self.views.remove(&view) else {
             return false;
@@ -1182,6 +1246,7 @@ impl EditorSession {
         });
         true
     }
+
     pub fn close_view(&mut self, view: ViewId, policy: ClosePolicy) -> io::Result<bool> {
         if policy == ClosePolicy::Cancel {
             return Ok(false);
@@ -1196,6 +1261,7 @@ impl EditorSession {
             Ok(self.detach_view(view))
         }
     }
+
     pub fn close_document(
         &mut self,
         document: DocumentId,
@@ -1297,6 +1363,7 @@ impl EditorSession {
         self.collect_notifications(document, None);
         Ok(saved)
     }
+
     /// Failed destination writes preserve the old identity, history, conflict,
     /// view state and dirty flag. Successful writes then commit the new binding.
     pub fn save_as(&mut self, document: DocumentId, destination: &Path) -> io::Result<bool> {
@@ -1367,6 +1434,7 @@ impl EditorSession {
             }
         }
     }
+
     pub fn check_rebind_path(
         &self,
         document: DocumentId,
@@ -1388,6 +1456,7 @@ impl EditorSession {
         path_string(&target)?;
         Ok(target)
     }
+
     pub fn rebind_path(&mut self, document: DocumentId, destination: &Path) -> io::Result<()> {
         if self.entry(document)?.workspace_edit_locked {
             return Err(io::Error::new(
@@ -1471,6 +1540,7 @@ impl EditorSession {
         });
         Ok(())
     }
+
     /// After successful trash/delete, cancel writes before the next service tick.
     pub fn invalidate_removed_path(&mut self, document: DocumentId) -> io::Result<()> {
         let entry = self.entry_mut(document)?;
@@ -1494,6 +1564,7 @@ impl EditorSession {
         self.queued.push(SessionEvent::Removed { document, path });
         Ok(())
     }
+
     /// Preserve a deleted document and its views/history as a Save As buffer.
     /// The host calls this after attempting to commit every attached panel draft.
     pub fn detach_removed_document(&mut self, document: DocumentId) -> io::Result<()> {
@@ -1546,9 +1617,11 @@ impl EditorSession {
         });
         Ok(())
     }
+
     pub fn original_path(&self, document: DocumentId) -> io::Result<Option<&str>> {
         Ok(self.entry(document)?.original_path.as_deref())
     }
+
     pub fn keep_buffer(&mut self, document: DocumentId) -> io::Result<()> {
         if self.entry(document)?.workspace_edit_locked {
             return Err(io::Error::new(
@@ -1574,6 +1647,7 @@ impl EditorSession {
         entry.editor.save_service.on_did_edit(&entry.editor.state);
         Ok(())
     }
+
     pub fn reload_from_disk(&mut self, document: DocumentId) -> io::Result<()> {
         if self.entry(document)?.workspace_edit_locked {
             return Err(io::Error::new(
@@ -1637,6 +1711,7 @@ impl EditorSession {
         });
         Ok(())
     }
+
     /// A content replacement invalidates position-based undo and pending jobs;
     /// every view keeps its own scroll and clamps its own carets.
     pub fn replace_content(&mut self, document: DocumentId, bytes: &[u8]) -> io::Result<()> {
@@ -1678,6 +1753,7 @@ impl EditorSession {
         });
         Ok(())
     }
+
     pub fn tick(&mut self) -> TickReport {
         self.prune_views();
         self.poll_remote();
@@ -1784,9 +1860,11 @@ impl EditorSession {
         self.refresh_document_diagnostics();
         self.drain_report(report)
     }
+
     pub fn take_events(&mut self) -> Vec<SessionEvent> {
         std::mem::take(&mut self.queued)
     }
+
     /// A shared workspace watcher can refresh an affected open document without
     /// waiting for the standalone monitor interval. Missing paths are confirmed
     /// after a short grace period so atomic saves and renames can settle.
@@ -1797,6 +1875,7 @@ impl EditorSession {
             self.poll_monitor(document)
         }
     }
+
     pub fn shutdown(&mut self, policy: ClosePolicy) -> io::Result<TickReport> {
         if self.stopped {
             return Ok(self.drain_report(TickReport::default()));
@@ -1865,6 +1944,7 @@ impl EditorSession {
         self.stopped = true;
         Ok(self.drain_report(TickReport::default()))
     }
+
     pub fn configure(&mut self, mut options: SessionOptions) -> io::Result<()> {
         self.ensure_running()?;
         if self.remote.is_some() {
@@ -1961,6 +2041,7 @@ impl EditorSession {
         }
         Ok(())
     }
+
     pub fn project_diagnostics(&self) -> crate::ProjectDiagnosticsSnapshot {
         let lsp = self
             .lsp
@@ -1977,6 +2058,7 @@ impl EditorSession {
             .is_some_and(WorkspaceLsp::diagnostic_coverage_complete);
         self.project_diagnostics.snapshot(lsp, unsaved, complete)
     }
+
     fn refresh_document_diagnostics(&mut self) {
         // Bed owns Cargo checks, so rust-analyzer does not publish their
         // semantic errors. Inline views and the diagnostics panel must consume
@@ -1992,6 +2074,7 @@ impl EditorSession {
                 .then(|| self.document_diagnostics.clone());
         }
     }
+
     /// Index notifications include unopened files. Build outputs are excluded
     /// so a check cannot schedule itself by writing its target directory.
     pub fn observe_project_file_changes(&mut self, changes: &[bed_remote::FilesystemChange]) {
@@ -2039,28 +2122,36 @@ impl EditorSession {
             }
         }
     }
+
     pub fn project_check_config(&self) -> &crate::ProjectCheckConfig {
         &self.project_diagnostics.config
     }
+
     pub fn configure_project_check(&mut self, config: crate::ProjectCheckConfig) {
         self.project_diagnostics.configure(config, true);
     }
+
     pub fn reset_project_check(&mut self) {
         self.project_diagnostics
             .configure(Default::default(), false);
     }
+
     pub fn request_project_check(&mut self) {
         self.project_diagnostics.request();
     }
+
     pub fn cancel_project_check(&mut self) {
         self.project_diagnostics.cancel();
     }
+
     pub fn lsp(&self) -> Option<&WorkspaceLsp> {
         self.lsp.as_ref()
     }
+
     pub fn lsp_mut(&mut self) -> Option<&mut WorkspaceLsp> {
         self.lsp.as_mut()
     }
+
     pub fn reload_lsp_config(&mut self) -> io::Result<()> {
         let result = self
             .lsp
@@ -2070,12 +2161,14 @@ impl EditorSession {
         self.refresh_lsp_bindings();
         result
     }
+
     pub fn retry_language(&mut self, language: &str) -> io::Result<bool> {
         self.lsp
             .as_mut()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "LSP is not enabled"))?
             .retry_language(language)
     }
+
     pub fn retry_server(
         &mut self,
         instance: &bed_lsp::workspace_lsp::ServerInstanceId,
@@ -2085,6 +2178,7 @@ impl EditorSession {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "LSP is not enabled"))?
             .retry_server(instance)
     }
+
     pub fn accepts_lsp_origin(&self, origin: &bed_lsp::workspace_lsp::LspRequestOrigin) -> bool {
         self.document_for_view(origin.view_id) == Some(origin.document_id)
             && self
@@ -2099,6 +2193,7 @@ impl EditorSession {
                 .as_ref()
                 .is_some_and(|pool| pool.origin_is_current(origin))
     }
+
     fn refresh_lsp_bindings(&mut self) {
         let Some(pool) = &self.lsp else {
             return;
@@ -2116,6 +2211,7 @@ impl EditorSession {
             }
         }
     }
+
     fn initialize_lsp(&mut self) {
         if self.lsp.is_none()
             && let (Some(config), Some(root)) =
@@ -2147,6 +2243,7 @@ impl EditorSession {
             pool.set_file_observations_available(self.options.lsp_file_observations);
         }
     }
+
     fn attach_lsp(&mut self, document: DocumentId, origin: Option<LspRequestOrigin>) {
         let Some(pool) = &mut self.lsp else {
             return;
@@ -2181,6 +2278,7 @@ impl EditorSession {
             self.record_error(Some(document), "lsp", &error);
         }
     }
+
     fn reopen_lsp(&mut self, document: DocumentId) {
         let Some(pool) = &mut self.lsp else {
             return;
@@ -2205,6 +2303,7 @@ impl EditorSession {
             self.record_error(Some(document), "lsp", &error);
         }
     }
+
     fn update_lsp_snapshot(&mut self, document: DocumentId) {
         let Some(pool) = &mut self.lsp else {
             return;
@@ -2224,6 +2323,7 @@ impl EditorSession {
             self.refresh_lsp_bindings();
         }
     }
+
     fn collect_notifications(&mut self, id: DocumentId, view: Option<ViewId>) {
         let entry = self.documents.get(&id).unwrap();
         for message in entry.editor.take_service_errors() {
@@ -2254,6 +2354,7 @@ impl EditorSession {
             });
         }
     }
+
     fn poll_monitor(&mut self, document: DocumentId) -> io::Result<()> {
         let entry = self.entry_mut(document)?;
         if entry.editor.state.path.is_empty()
@@ -2321,6 +2422,7 @@ impl EditorSession {
             }
         }
     }
+
     fn prune_views(&mut self) {
         let dead: Vec<_> = self
             .views
@@ -2332,6 +2434,7 @@ impl EditorSession {
             self.detach_view(view);
         }
     }
+
     fn record_error(
         &mut self,
         document: Option<DocumentId>,
@@ -2344,17 +2447,21 @@ impl EditorSession {
             message: error.to_string(),
         });
     }
+
     fn drain_report(&mut self, mut report: TickReport) -> TickReport {
         report.events = std::mem::take(&mut self.queued);
         report.errors = std::mem::take(&mut self.errors);
         report
     }
+
     fn entry(&self, id: DocumentId) -> io::Result<&DocumentEntry> {
         self.documents.get(&id).ok_or_else(missing_document)
     }
+
     fn entry_mut(&mut self, id: DocumentId) -> io::Result<&mut DocumentEntry> {
         self.documents.get_mut(&id).ok_or_else(missing_document)
     }
+
     fn ensure_running(&self) -> io::Result<()> {
         if self.stopped {
             Err(io::Error::new(
@@ -2366,6 +2473,7 @@ impl EditorSession {
         }
     }
 }
+
 impl Drop for EditorSession {
     fn drop(&mut self) {
         if let Some(remote) = &self.remote {
@@ -2381,6 +2489,7 @@ impl Drop for EditorSession {
         }
     }
 }
+
 fn transform_offset(offset: &mut usize, edit: &PendingEdit) {
     let start = edit.start_byte as usize;
     if edit.op.kind == OpKind::Insert {
@@ -2396,6 +2505,7 @@ fn transform_offset(offset: &mut usize, edit: &PendingEdit) {
         }
     }
 }
+
 fn guard_write(entry: &mut DocumentEntry) -> io::Result<()> {
     if !entry.editor.state.dirty || entry.editor.state.path.is_empty() {
         return Ok(());
@@ -2414,6 +2524,7 @@ fn guard_write(entry: &mut DocumentEntry) -> io::Result<()> {
     }
     Ok(())
 }
+
 fn monitor_saved_bytes(entry: &mut DocumentEntry) -> io::Result<()> {
     if entry.editor.state.byte_size() > bed_files::file_monitor::MAX_FILE_SIZE as usize {
         entry.monitor.reset();
@@ -2432,6 +2543,7 @@ fn monitor_saved_bytes(entry: &mut DocumentEntry) -> io::Result<()> {
     }
     result
 }
+
 fn canonical_root(path: &Path) -> io::Result<PathBuf> {
     let root = std::fs::canonicalize(path)?;
     if !root.is_dir() {
@@ -2443,6 +2555,7 @@ fn canonical_root(path: &Path) -> io::Result<PathBuf> {
     path_string(&root)?;
     Ok(root)
 }
+
 pub(crate) fn canonical_binding(path: &Path) -> io::Result<PathBuf> {
     match std::fs::canonicalize(path) {
         Ok(path) => Ok(path),
@@ -2459,16 +2572,19 @@ pub(crate) fn canonical_binding(path: &Path) -> io::Result<PathBuf> {
         Err(error) => Err(error),
     }
 }
+
 fn path_string(path: &Path) -> io::Result<&str> {
     path.to_str()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Path is not UTF-8"))
 }
+
 fn missing_document() -> io::Error {
     io::Error::new(
         io::ErrorKind::NotFound,
         "Document is not registered in this session",
     )
 }
+
 fn missing_view() -> io::Error {
     io::Error::new(
         io::ErrorKind::NotFound,

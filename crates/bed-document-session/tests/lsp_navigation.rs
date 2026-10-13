@@ -52,6 +52,7 @@ while True:
         config: PathBuf,
         trace: PathBuf,
     }
+
     impl Fixture {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -85,12 +86,14 @@ while True:
                 trace,
             }
         }
+
         fn file(&self, relative: &str) -> PathBuf {
             let path = self.root.join(relative);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, b"definition\n").unwrap();
             path
         }
+
         fn session(&self) -> EditorSession {
             EditorSession::with_options(SessionOptions {
                 project_root: Some(self.workspace.clone()),
@@ -100,6 +103,7 @@ while True:
             })
             .unwrap()
         }
+
         fn trace(&self) -> Vec<serde_json::Value> {
             fs::read_to_string(&self.trace)
                 .unwrap_or_default()
@@ -108,11 +112,13 @@ while True:
                 .collect()
         }
     }
+
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
     }
+
     fn wait(session: &mut EditorSession, predicate: impl Fn(&EditorSession) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while !predicate(session) {
@@ -126,6 +132,7 @@ while True:
             thread::sleep(Duration::from_millis(2));
         }
     }
+
     fn ready(session: &mut EditorSession, document: DocumentId) {
         wait(session, |session| {
             session
@@ -139,6 +146,7 @@ while True:
                 })
         });
     }
+
     fn origin(session: &EditorSession, document: DocumentId, view: ViewId) -> LspRequestOrigin {
         session
             .lsp()
@@ -151,6 +159,7 @@ while True:
             )
             .unwrap()
     }
+
     fn instance(session: &EditorSession, document: DocumentId) -> ServerInstanceId {
         let client = session
             .lsp()
@@ -634,6 +643,7 @@ os.execve(candidates[0], [candidates[0]] + args[1:], environment)
 fn main() {
     unix::run();
 }
+
 #[cfg(not(unix))]
 fn main() {
     println!("LSP subprocess navigation fixtures require a Unix host");

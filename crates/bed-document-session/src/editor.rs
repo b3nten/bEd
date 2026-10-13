@@ -23,8 +23,10 @@ use bed_highlight::{folding::FoldingService, highlight_service::EditorHighlight}
 use bed_lsp::{diagnostics::diagnostics_store::LspDiagnostics, lsp_client::LspClient};
 
 pub type SharedLspClient = Rc<RefCell<LspClient>>;
+
 /// One project history and disk writer, shared by every embedded editor tab.
 pub type SharedProjectUndo = Rc<RefCell<ProjectUndo>>;
+
 type LspBinding = Rc<RefCell<Option<SharedLspClient>>>;
 
 pub struct Editor {
@@ -171,6 +173,7 @@ impl Editor {
             .as_deref()
             .unwrap_or(&self.state.path)
     }
+
     pub(crate) fn take_service_errors(&self) -> Vec<String> {
         std::mem::take(&mut *self.service_errors.borrow_mut())
     }
@@ -281,6 +284,7 @@ impl Editor {
         }
         self.save_service.poll(&mut self.state, &mut self.events)
     }
+
     pub fn poll_services(&mut self) {
         if let Some(client) = self.lsp_client() {
             client.borrow_mut().poll();
@@ -300,12 +304,15 @@ impl Editor {
         }
         self.highlight.poll(&self.state, &self.ops);
     }
+
     pub fn refresh_highlighting(&mut self) {
         self.highlight_dirty.set(true);
     }
+
     pub fn set_git_changed_lines(&mut self, enabled: bool) {
         self.git_changed_lines.set(enabled);
     }
+
     pub fn git_changed_lines(&self) -> bool {
         self.git_changed_lines.get()
     }
@@ -314,9 +321,11 @@ impl Editor {
         self.diagnostics = client.as_ref().map(|client| client.borrow().diagnostics());
         *self.lsp_binding.borrow_mut() = client;
     }
+
     pub fn lsp_client(&self) -> Option<SharedLspClient> {
         self.lsp_binding.borrow().clone()
     }
+
     pub fn notify_document_opened(&self) {
         if self.state.kind == DocumentKind::Bytes || self.state.path.is_empty() {
             return;

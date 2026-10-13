@@ -7,7 +7,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
 struct Fixture(PathBuf);
+
 impl Fixture {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -21,11 +23,13 @@ impl Fixture {
         Self(root.canonicalize().unwrap())
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
 fn checked(session: &mut EditorSession) -> bed_document_session::ProjectDiagnosticsSnapshot {
     let started = Instant::now();
     loop {
@@ -43,6 +47,7 @@ fn checked(session: &mut EditorSession) -> bed_document_session::ProjectDiagnost
         thread::sleep(Duration::from_millis(10));
     }
 }
+
 #[test]
 fn cargo_checks_unopened_files_and_success_atomically_clears_results() {
     let fixture = Fixture::new();
@@ -157,6 +162,7 @@ fn compiler_diagnostics_reach_the_editor_before_the_workspace_check_finishes() {
     session.request_project_check();
     assert_eq!(checked(&mut session).errors, 0);
 }
+
 #[test]
 fn rust_check_does_not_claim_complete_coverage_for_other_project_languages() {
     let fixture = Fixture::new();

@@ -12,6 +12,7 @@ use std::{
 #[allow(dead_code)]
 #[path = "../../../tests/support/temp_dir.rs"]
 mod temp_dir;
+
 struct Fixture {
     session: EditorSession,
     doc: DocumentId,
@@ -20,6 +21,7 @@ struct Fixture {
     temp: temp_dir::TempDir,
     polled: Option<Instant>,
 }
+
 impl Fixture {
     fn new(raw: &[u8]) -> Self {
         let temp = temp_dir::TempDir::new();
@@ -43,15 +45,19 @@ impl Fixture {
             polled: None,
         }
     }
+
     fn snapshot(&self) -> DocumentSnapshot {
         self.session.snapshot(self.doc).unwrap()
     }
+
     fn edit<R>(&mut self, f: impl FnOnce(&mut EditorCommands<'_>) -> R) -> R {
         self.session.with_commands(self.view, f).unwrap()
     }
+
     fn external(&self, raw: &[u8]) {
         fs::write(&self.path, raw).unwrap();
     }
+
     fn poll(&mut self) -> TickReport {
         if let Some(last) = self.polled {
             thread::sleep(Duration::from_millis(510).saturating_sub(last.elapsed()));
@@ -59,6 +65,7 @@ impl Fixture {
         self.polled = Some(Instant::now());
         self.session.tick()
     }
+
     fn reloaded(&mut self) -> bool {
         let report = self.poll();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
@@ -66,15 +73,18 @@ impl Fixture {
             |event| matches!(event,SessionEvent::Reloaded { document,.. } if *document==self.doc),
         )
     }
+
     fn save(&mut self) -> std::io::Result<bool> {
         self.session.save(self.doc)
     }
+
     fn autosave(&mut self) {
         let mut options = self.session.options().clone();
         options.autosave = Some(Duration::ZERO);
         self.session.configure(options).unwrap();
     }
 }
+
 #[test]
 fn clean_external_edit_reloads_once_and_emits_session_event() {
     let mut fx = Fixture::new(b"before");
@@ -88,6 +98,7 @@ fn clean_external_edit_reloads_once_and_emits_session_event() {
     assert!(doc.disk_conflict.is_none());
     assert!(!fx.reloaded());
 }
+
 #[test]
 fn clean_reload_clamps_caret_and_preserves_scroll() {
     let mut fx = Fixture::new(b"first\nsecond\nlong final line");
@@ -106,6 +117,7 @@ fn clean_reload_clamps_caret_and_preserves_scroll() {
     assert_eq!((view.row, view.column), (0, 0));
     assert_eq!(view.selection_count(), 1);
 }
+
 #[test]
 fn external_reload_preserves_bom_and_crlf_and_save_round_trips() {
     let mut fx = Fixture::new(b"original\n");
@@ -124,6 +136,7 @@ fn external_reload_preserves_bom_and_crlf_and_save_round_trips() {
     );
     assert!(!fx.reloaded());
 }
+
 #[test]
 fn dirty_external_edit_retains_buffer_and_blocks_explicit_and_idle_saves() {
     let mut fx = Fixture::new(b"original");
@@ -145,6 +158,7 @@ fn dirty_external_edit_retains_buffer_and_blocks_explicit_and_idle_saves() {
     fx.poll();
     assert_eq!(fs::read(&fx.path).unwrap(), b"remote");
 }
+
 #[test]
 fn keep_buffer_accepts_disk_baseline_and_allows_explicit_save() {
     let mut fx = Fixture::new(b"original");
@@ -161,6 +175,7 @@ fn keep_buffer_accepts_disk_baseline_and_allows_explicit_save() {
     assert!(!fx.reloaded());
     assert!(!fx.snapshot().dirty);
 }
+
 #[test]
 fn removed_file_emits_one_removal_and_detaches_without_recreating() {
     let mut fx = Fixture::new(b"preserved");
@@ -219,6 +234,7 @@ fn removed_file_emits_one_removal_and_detaches_without_recreating() {
     assert_eq!(fs::read(&rescued).unwrap(), b"preserved");
     assert!(!fx.path.exists());
 }
+
 #[test]
 fn recreated_path_opens_separately_from_a_detached_buffer() {
     let mut fx = Fixture::new(b"old");
@@ -233,6 +249,7 @@ fn recreated_path_opens_separately_from_a_detached_buffer() {
     assert_eq!(fx.snapshot().bytes, b"unsaved old");
     assert_eq!(fx.session.snapshot(recreated).unwrap().bytes, b"new");
 }
+
 #[test]
 fn a_temporary_missing_path_during_atomic_save_does_not_remove_the_document() {
     let mut fx = Fixture::new(b"original");
@@ -258,6 +275,7 @@ fn a_temporary_missing_path_during_atomic_save_does_not_remove_the_document() {
             .all(|event| !matches!(event, SessionEvent::Removed { .. }))
     );
 }
+
 #[test]
 fn a_reliable_rename_during_removal_grace_keeps_dirty_buffer_and_undo() {
     let mut fx = Fixture::new(b"original");
@@ -281,6 +299,7 @@ fn a_reliable_rename_during_removal_grace_keeps_dirty_buffer_and_undo() {
     fx.edit(|c| c.undo());
     assert_eq!(fx.snapshot().bytes, b"original");
 }
+
 #[test]
 fn self_save_does_not_reload_or_reset_caret_or_undo() {
     let mut fx = Fixture::new(b"\xef\xbb\xbfhello\r\nworld");
@@ -298,6 +317,7 @@ fn self_save_does_not_reload_or_reset_caret_or_undo() {
     fx.edit(|c| c.undo());
     assert_eq!(fx.snapshot().bytes, b"hello\r\nworld");
 }
+
 #[test]
 fn confirmed_reload_discards_conflicting_edits_and_cancels_autosave() {
     let mut fx = Fixture::new(b"original");
@@ -312,6 +332,7 @@ fn confirmed_reload_discards_conflicting_edits_and_cancels_autosave() {
     fx.poll();
     assert_eq!(fs::read(&fx.path).unwrap(), b"remote");
 }
+
 fn invalid_external(raw: &[u8]) {
     let mut fx = Fixture::new(b"preserved");
     let generation = fx.snapshot().generation;
@@ -329,14 +350,17 @@ fn invalid_external(raw: &[u8]) {
     assert!(fx.snapshot().dirty);
     assert_eq!(fs::read(&fx.path).unwrap(), raw);
 }
+
 #[test]
 fn binary_external_reload_failure_preserves_buffer_and_blocks_future_saves() {
     invalid_external(&[0; 100]);
 }
+
 #[test]
 fn oversized_external_change_preserves_buffer_and_blocks_future_saves() {
     invalid_external(&vec![b'a'; bed_files::files::MAX_FILE_SIZE + 1]);
 }
+
 #[test]
 fn unchanged_oversized_monitor_errors_are_reported_once_and_recovery_is_retried() {
     let mut fx = Fixture::new(b"preserved");
@@ -400,6 +424,7 @@ fn unchanged_oversized_monitor_errors_are_reported_once_and_recovery_is_retried(
         1
     );
 }
+
 #[test]
 fn external_reload_resets_old_undo_and_persists_empty_history() {
     let mut fx = Fixture::new(b"original");

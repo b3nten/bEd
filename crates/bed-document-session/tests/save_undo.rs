@@ -14,6 +14,7 @@ use bed_editing::editor_view_state::Selection;
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 struct TempDir(PathBuf);
+
 impl TempDir {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
@@ -24,10 +25,12 @@ impl TempDir {
         fs::create_dir_all(&path).unwrap();
         Self(path)
     }
+
     fn file(&self, name: &str) -> PathBuf {
         self.0.join(name)
     }
 }
+
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

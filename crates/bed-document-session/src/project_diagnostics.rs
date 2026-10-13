@@ -29,11 +29,13 @@ pub struct ProjectCheckConfig {
     pub format: CheckFormat,
     pub automatic: bool,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CheckFormat {
     CargoJson,
     LspJsonLines,
 }
+
 impl Default for ProjectCheckConfig {
     fn default() -> Self {
         Self {
@@ -54,10 +56,12 @@ impl Default for ProjectCheckConfig {
         }
     }
 }
+
 impl ProjectCheckConfig {
     pub fn to_json(&self) -> Value {
         json!({"program":self.program,"arguments":self.arguments,"directory":self.directory,"format":if self.format == CheckFormat::CargoJson {"cargo-json"} else {"lsp-jsonl"},"automatic":self.automatic})
     }
+
     pub fn from_json(value: &Value) -> Option<Self> {
         Some(Self {
             program: value["program"].as_str()?.into(),
@@ -76,6 +80,7 @@ impl ProjectCheckConfig {
         })
     }
 }
+
 #[derive(Clone, Debug, Default)]
 pub struct ProjectDiagnosticsSnapshot {
     pub by_path: BTreeMap<String, Vec<DiagnosticItem>>,
@@ -86,6 +91,7 @@ pub struct ProjectDiagnosticsSnapshot {
     pub errors: usize,
     pub warnings: usize,
 }
+
 type ParsedCheck = (BTreeMap<String, Vec<DiagnosticItem>>, bool);
 
 fn is_non_rust_source(path: &str) -> bool {
@@ -116,6 +122,7 @@ fn is_non_rust_source(path: &str) -> bool {
             | "dart"
     )
 }
+
 struct Worker {
     canceled: Arc<AtomicBool>,
     result: mpsc::Receiver<Result<ParsedCheck, String>>,
@@ -123,20 +130,24 @@ struct Worker {
     unread: Vec<u8>,
     diagnostics: BTreeMap<String, Vec<DiagnosticItem>>,
 }
+
 impl Drop for Worker {
     fn drop(&mut self) {
         self.canceled.store(true, Ordering::Release);
     }
 }
+
 struct DiscoveredFiles {
     has_cargo: bool,
     has_non_rust_source: bool,
     paths: Vec<String>,
     complete: bool,
 }
+
 struct Discovery {
     result: mpsc::Receiver<Result<DiscoveredFiles, String>>,
 }
+
 #[derive(Default)]
 pub(crate) struct ProjectDiagnostics {
     root: Option<PathBuf>,
@@ -156,6 +167,7 @@ pub(crate) struct ProjectDiagnostics {
     stale: bool,
     status: String,
 }
+
 impl ProjectDiagnostics {
     pub fn bind(&mut self, root: Option<PathBuf>, remote: Option<RemoteClient>) {
         let same_remote = match (&self.remote, &remote) {
@@ -214,6 +226,7 @@ impl ProjectDiagnostics {
             Discovery { result }
         });
     }
+
     pub fn configure(&mut self, config: ProjectCheckConfig, explicit: bool) {
         if self.config == config && self.configured == explicit {
             return;
@@ -230,12 +243,14 @@ impl ProjectDiagnostics {
             self.pending = None;
         }
     }
+
     pub fn request(&mut self) {
         if self.root.is_some() {
             self.pending = Some(Instant::now());
             self.stale = true;
         }
     }
+
     pub fn saved(&mut self) {
         self.stale = true;
         if self.config.automatic && (self.available || self.configured) {
@@ -244,18 +259,22 @@ impl ProjectDiagnostics {
             self.pending = Some(Instant::now() + Duration::from_millis(150));
         }
     }
+
     pub fn edited(&mut self) {
         self.stale = true;
     }
+
     pub fn clear_path(&mut self, path: &str) {
         self.diagnostics
             .retain(|candidate, _| !Path::new(candidate).starts_with(path));
     }
+
     pub fn note_file(&mut self, path: &str) {
         if is_non_rust_source(path) {
             self.check_covers_project = false;
         }
     }
+
     pub fn relevant_file(&self, path: &str) -> bool {
         let path = Path::new(path);
         let relative = self
@@ -279,12 +298,14 @@ impl ProjectDiagnostics {
             || path.extension().and_then(|part| part.to_str()) == Some("rs")
             || is_non_rust_source(&path.to_string_lossy())
     }
+
     pub fn cancel(&mut self) {
         self.worker = None;
         self.pending = None;
         self.stale = true;
         self.status = "Project check canceled; previous results are stale".into();
     }
+
     pub fn owns_cargo_check(&self) -> bool {
         self.available
             && self.check_available
@@ -292,9 +313,11 @@ impl ProjectDiagnostics {
             && self.config.program == "cargo"
             && self.config.format == CheckFormat::CargoJson
     }
+
     pub fn take_discovered_paths(&mut self) -> Option<Vec<String>> {
         self.discovered_paths.take()
     }
+
     pub fn tick(&mut self) {
         if let Some(discovery) = &self.discovery
             && let Ok(result) = discovery.result.try_recv()
@@ -442,6 +465,7 @@ impl ProjectDiagnostics {
             });
         }
     }
+
     pub fn snapshot(
         &self,
         lsp: BTreeMap<String, Vec<DiagnosticItem>>,
@@ -489,6 +513,7 @@ impl ProjectDiagnostics {
         result
     }
 }
+
 fn local_check_command(
     config: &ProjectCheckConfig,
     environment: &ServerDiscoveryEnvironment,
@@ -510,6 +535,7 @@ fn local_check_command(
         .map_err(|error| error.to_string())?;
     Ok((program.to_string_lossy().into_owned(), Some(path)))
 }
+
 fn discover_files(root: &Path) -> (Vec<String>, bool) {
     let mut complete = true;
     let mut paths = Vec::new();
@@ -545,6 +571,7 @@ fn discover_files(root: &Path) -> (Vec<String>, bool) {
     }
     (paths, complete)
 }
+
 fn run_remote(
     client: &RemoteClient,
     root: PathBuf,
@@ -585,6 +612,7 @@ fn run_remote(
     let _ = client.call(Request::CheckRelease { job_id });
     result
 }
+
 fn parse_output(
     root: &Path,
     format: CheckFormat,
@@ -737,6 +765,7 @@ fn diagnostic_path(path: PathBuf, remote: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[cfg(unix)]
     #[test]
     fn gui_cargo_check_finds_cargo_and_rustc_without_changing_host_path() {
@@ -779,6 +808,7 @@ mod tests {
         }
         assert_eq!(std::env::var_os("PATH"), host_path);
     }
+
     #[test]
     fn cargo_check_ownership_requires_a_working_checker() {
         let mut service = ProjectDiagnostics {
@@ -810,6 +840,7 @@ mod tests {
         assert!(!service.owns_cargo_check());
         assert!(service.status.contains("compiler could not start"));
     }
+
     #[test]
     fn failed_streaming_check_preserves_the_last_completed_results() {
         let path = "/project/src/lib.rs".to_owned();
@@ -849,6 +880,7 @@ mod tests {
         assert!(snapshot.stale);
         assert_eq!(snapshot.by_path[&path], vec![previous]);
     }
+
     #[test]
     fn cargo_reports_closed_files_and_success_clears_previous_errors() {
         let root = Path::new("/project");
@@ -868,6 +900,7 @@ mod tests {
                 .is_empty()
         );
     }
+
     #[test]
     fn rustc_explanation_footers_do_not_create_manifest_errors() {
         let root = Path::new("/project");
@@ -893,6 +926,7 @@ mod tests {
         assert_eq!(items["/project/src/lib.rs"].len(), 2);
         assert_eq!(items.len(), 1);
     }
+
     #[test]
     fn spanless_compiler_errors_and_source_warnings_remain_reported() {
         let root = Path::new("/project");
@@ -920,6 +954,7 @@ mod tests {
         assert_eq!(items["/project/Cargo.toml"][0].severity, 1);
         assert_eq!(items["/project/src/lib.rs"][0].severity, 2);
     }
+
     #[test]
     fn jsonl_requires_valid_ranges_and_latest_file_report_replaces() {
         let output = CheckOutput {
@@ -953,6 +988,7 @@ mod tests {
             .is_err()
         );
     }
+
     #[test]
     fn incomplete_discovery_does_not_claim_full_language_server_coverage() {
         let service = ProjectDiagnostics {
@@ -961,6 +997,7 @@ mod tests {
         };
         assert!(!service.snapshot(BTreeMap::new(), false, true).complete);
     }
+
     #[test]
     fn saved_cargo_configuration_does_not_expand_language_coverage() {
         let service = ProjectDiagnostics {
@@ -971,6 +1008,7 @@ mod tests {
         };
         assert!(!service.snapshot(BTreeMap::new(), false, false).complete);
     }
+
     #[test]
     fn coverage_and_freshness_do_not_claim_unknown_project_is_clear() {
         let service = ProjectDiagnostics::default();

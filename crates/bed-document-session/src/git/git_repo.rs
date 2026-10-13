@@ -15,26 +15,32 @@ impl GitRepo {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn close(&mut self) {
         self.head_tree = None;
         self.head_tree_valid = false;
         self.repo = None;
     }
+
     pub fn open(&mut self, root: &str) -> bool {
         self.close();
         self.repo = Repository::discover(root).ok();
         self.is_open()
     }
+
     pub fn invalidate_head(&mut self) {
         self.head_tree = None;
         self.head_tree_valid = false;
     }
+
     pub fn is_open(&self) -> bool {
         self.repo.is_some()
     }
+
     pub fn workdir(&self) -> Option<&Path> {
         self.repo.as_ref().and_then(Repository::workdir)
     }
+
     fn ensure_head_tree(&mut self) -> bool {
         let Some(repo) = &self.repo else {
             return false;
@@ -54,6 +60,7 @@ impl GitRepo {
             .map(|tree| tree.id());
         self.head_tree.is_some()
     }
+
     pub fn head_lines(&mut self, relative_path: &str, out: &mut Vec<Vec<u8>>) -> bool {
         out.clear();
         if self.repo.is_none() || relative_path.is_empty() || !self.ensure_head_tree() {
@@ -74,6 +81,7 @@ impl GitRepo {
         *out = EditorState::split_lines(blob.content()).0;
         true
     }
+
     pub fn modified_paths(&self) -> BTreeSet<Vec<u8>> {
         let mut result = BTreeSet::new();
         let Some(repo) = &self.repo else {

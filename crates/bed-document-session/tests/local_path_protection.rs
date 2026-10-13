@@ -10,6 +10,7 @@ impl Fixture {
         fs::create_dir(&root).unwrap();
         Self(root)
     }
+
     fn path(&self, name: &str) -> PathBuf {
         self.0.join(name)
     }

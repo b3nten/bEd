@@ -81,6 +81,7 @@ impl<'a> EditorApi<'a> {
     pub fn is_file_modified(&self, path: &str) -> bool {
         self.editor.git.borrow().is_file_modified(path)
     }
+
     pub fn bind_diagnostics(
         &mut self,
         diagnostics: Option<bed_lsp::diagnostics::diagnostics_store::LspDiagnostics>,
@@ -91,66 +92,85 @@ impl<'a> EditorApi<'a> {
     pub fn set_content(&mut self, raw: &[u8]) {
         self.editor.set_content(raw);
     }
+
     pub fn path(&self) -> &str {
         &self.editor.state.path
     }
+
     pub fn has_path(&self) -> bool {
         !self.path().is_empty()
     }
+
     pub fn text(&self) -> Vec<u8> {
         self.editor.state.join()
     }
+
     pub fn line(&self, row: i32) -> Vec<u8> {
         self.editor.state.line(row)
     }
+
     pub fn version(&self) -> i32 {
         self.editor.state.version
     }
+
     pub fn language_id(&self) -> &str {
         &self.editor.state.language_id
     }
+
     pub fn get_caret(&self) -> (i32, i32) {
         (self.editor.view.row, self.editor.view.column)
     }
+
     pub fn reset_caret(&mut self) {
         self.restore_caret(0, 0);
     }
+
     pub fn restore_caret(&mut self, row: i32, column: i32) {
         self.editor
             .commands()
             .set_cursor(row, column, false, CursorReveal::Ensure);
     }
+
     pub fn center_on(&mut self, row: i32, column: i32) {
         self.editor
             .commands()
             .set_cursor(row, column, false, CursorReveal::Center);
     }
+
     pub fn request_ensure_visible(&mut self) {
         self.editor.commands().request_ensure_visible();
     }
+
     pub fn request_cursor_center(&mut self, row: i32, column: i32) {
         self.editor.view.request_cursor_center(row, column);
     }
+
     pub fn request_focus(&mut self) {
         self.editor.view.request_focus = true;
     }
+
     pub fn set_block_input(&mut self, blocked: bool) {
         self.editor.view.block_input = blocked;
     }
+
     pub fn is_block_input(&self) -> bool {
         self.editor.view.block_input
     }
+
     pub fn request_exclusive_overlay(&mut self, keep: Overlay) {
         self.editor
             .events
             .emit_did_request_exclusive_overlay(&DidRequestExclusiveOverlay { keep });
     }
+
     pub fn close_all_overlays(&mut self) {
         self.request_exclusive_overlay(Overlay::None);
     }
+
     pub fn save(&mut self) -> io::Result<bool> {
         self.editor.save()
     }
+
     pub fn events(&mut self) -> &mut EditorEvents {
         &mut self.editor.events
     }

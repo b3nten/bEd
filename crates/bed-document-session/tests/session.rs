@@ -9,7 +9,9 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime},
 };
+
 struct Fixture(PathBuf);
+
 impl Fixture {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -21,12 +23,14 @@ impl Fixture {
         fs::create_dir(&root).unwrap();
         Self(root)
     }
+
     fn file(&self, name: &str, bytes: &[u8]) -> PathBuf {
         let p = self.0.join(name);
         fs::write(&p, bytes).unwrap();
         p
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

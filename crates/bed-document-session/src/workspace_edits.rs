@@ -13,6 +13,7 @@ pub(super) struct DeferredWorkspaceEdit {
     edit: Value,
     started: Instant,
 }
+
 pub(super) struct PendingWorkspaceEdit {
     edit: Value,
     origin: Option<LspRequestOrigin>,
@@ -23,36 +24,42 @@ pub(super) struct PendingWorkspaceEdit {
     started: Instant,
     history_transition: bool,
 }
+
 pub(super) struct PendingWorkspaceHistory {
     group: WorkspaceHistoryGroup,
     undo: bool,
     remote_checked: BTreeSet<DocumentId>,
     applied: Option<PendingWorkspaceEdit>,
 }
+
 pub(super) struct WorkspaceEditReceipt {
     edit: Value,
     origin: Option<LspRequestOrigin>,
     result: Result<Vec<DocumentId>, String>,
     completed: Instant,
 }
+
 struct AppliedWorkspaceEdit {
     documents: Vec<DocumentId>,
     participants: Vec<WorkspaceHistoryParticipant>,
     before: Vec<(DocumentId, Vec<u8>, bool, bool)>,
     history: ProjectUndo,
 }
+
 fn pending() -> io::Error {
     io::Error::new(
         io::ErrorKind::WouldBlock,
         "Waiting for remote workspace edit I/O",
     )
 }
+
 fn changed(path: &str) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidInput,
         format!("{} changed; request the LSP action again", path),
     )
 }
+
 fn group_id() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     std::time::SystemTime::now()
@@ -85,6 +92,7 @@ impl EditorSession {
         }
         Ok(())
     }
+
     pub fn lsp_workspace_edit_is_pending(
         &self,
         edit: &Value,
@@ -98,6 +106,7 @@ impl EditorSession {
                 .iter()
                 .any(|receipt| receipt.edit == *edit && receipt.origin.as_ref() == origin)
     }
+
     pub fn begin_lsp_command(
         &mut self,
         origin: &LspRequestOrigin,
@@ -186,10 +195,12 @@ impl EditorSession {
             .insert(origin.server_generation, revisions);
         Ok(())
     }
+
     pub fn finish_lsp_command(&mut self, server_generation: u64) {
         self.active_lsp_commands.remove(&server_generation);
         self.active_lsp_command_revisions.remove(&server_generation);
     }
+
     pub fn apply_lsp_text_edits(
         &mut self,
         document: DocumentId,
@@ -608,6 +619,7 @@ impl EditorSession {
             result => result,
         }
     }
+
     fn apply_pending_workspace_history(
         &mut self,
         request: &mut PendingWorkspaceHistory,
