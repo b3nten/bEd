@@ -9,6 +9,7 @@ pub(super) struct ImageGpu {
     uniforms: wgpu::Buffer,
     size: [u32; 2],
 }
+
 impl ImageGpu {
     pub fn new(gpu: &GpuContext<'_>, decoded: &DecodedImage) -> Result<Self, String> {
         let texture = gpu.upload_rgba(decoded.size, &decoded.rgba, false)?;
@@ -86,6 +87,7 @@ impl ImageGpu {
             size: decoded.size,
         })
     }
+
     pub fn render(&self, gpu: &mut GpuContext<'_>, target: &RenderTarget, canvas: CanvasState) {
         let size = [
             self.size[0] as f32 * canvas.scale / canvas.size[0],
@@ -134,6 +136,7 @@ mod tests {
 
     fn block_on<T>(future: impl Future<Output = T>) -> T {
         struct ThreadWake(std::thread::Thread);
+
         impl Wake for ThreadWake {
             fn wake(self: Arc<Self>) {
                 self.0.unpark();

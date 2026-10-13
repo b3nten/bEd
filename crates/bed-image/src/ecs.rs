@@ -26,10 +26,12 @@ pub struct ImageDocument(pub DocumentId);
 
 #[derive(Default)]
 pub struct ImageStates(HashMap<Entity, ImagePanel>);
+
 impl ImageStates {
     pub fn get(&self, entity: Entity) -> Option<&ImagePanel> {
         self.0.get(&entity)
     }
+
     #[cfg(test)]
     pub(crate) fn get_mut(&mut self, entity: Entity) -> Option<&mut ImagePanel> {
         self.0.get_mut(&entity)
@@ -42,6 +44,7 @@ pub enum ImageSystems {
 }
 
 pub struct ImagePlugin;
+
 impl Plugin for ImagePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<EditorFrame>()
@@ -236,6 +239,7 @@ fn publish_output(world: &mut World, entity: Entity, output: Option<RenderOutput
 struct ImageFrontend {
     entity: Entity,
 }
+
 impl Panel for ImageFrontend {
     fn title(&self, world: &World) -> String {
         world

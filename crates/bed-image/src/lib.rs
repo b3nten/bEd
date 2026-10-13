@@ -48,6 +48,7 @@ fn register_metadata(registrar: &mut Registrar<'_>) {
     registrar.command(OPEN_FILE_COMMAND, "Open in Image Viewer", Some("image"));
     registrar.settings_ui("bed.image.settings", "Image Viewer", image_settings);
 }
+
 fn image_settings(ui: &Ui, settings: &mut Value) -> bool {
     let mut fit = settings["fit_by_default"].as_bool().unwrap_or(true);
     if ui.checkbox("Fit images to panel by default", &mut fit) {
@@ -59,6 +60,7 @@ fn image_settings(ui: &Ui, settings: &mut Value) -> bool {
     }
     false
 }
+
 /// Bounded, straight-alpha RGBA pixels reusable by document previews.
 #[derive(Clone, Debug)]
 pub struct DecodedImage {
@@ -71,11 +73,13 @@ pub struct DecodedImage {
 pub fn decode_preview(bytes: &[u8], path: &str) -> Result<DecodedImage, String> {
     decode(bytes, path)
 }
+
 struct DecodeJob {
     revision: Revision,
     bytes: Arc<[u8]>,
     path: String,
 }
+
 struct DecodeResult {
     revision: Revision,
     result: Result<DecodedImage, String>,
@@ -87,6 +91,7 @@ struct Decoder {
     sender: Option<mpsc::SyncSender<DecodeJob>>,
     receiver: mpsc::Receiver<DecodeResult>,
 }
+
 impl Decoder {
     fn new() -> Self {
         let (sender, jobs) = mpsc::sync_channel::<DecodeJob>(1);
@@ -110,6 +115,7 @@ impl Decoder {
             receiver,
         }
     }
+
     fn submit(&self, job: DecodeJob) -> bool {
         self.sender
             .as_ref()
@@ -132,6 +138,7 @@ pub struct ImagePanel {
     zoom: f32,
     pan: [f32; 2],
 }
+
 impl ImagePanel {
     fn new(document: DocumentId, state: &Value) -> Self {
         let finite = |value: Option<f64>, fallback: f32| {
@@ -163,6 +170,7 @@ impl ImagePanel {
             ],
         }
     }
+
     fn update(&mut self, host: &HostContext<'_>) {
         let Some(document) = host.document(self.document) else {
             self.decoded = None;
@@ -200,6 +208,7 @@ impl ImagePanel {
             self.gpu = None;
         }
     }
+
     fn draw_with_icons(
         &mut self,
         ui: &Ui,
@@ -210,6 +219,7 @@ impl ImagePanel {
         self.update(host);
         self.draw_prepared(ui, host, requests, icons);
     }
+
     fn draw_prepared(
         &mut self,
         ui: &Ui,
@@ -351,9 +361,11 @@ impl ImagePanel {
             .unwrap_or("Image Viewer")
             .to_owned()
     }
+
     fn saved_state(&self) -> Value {
         json!({ "fit": self.fit, "zoom": self.zoom, "pan": self.pan })
     }
+
     fn canvas_output(&self) -> Option<RenderOutput> {
         self.decoded.as_ref()?;
         Some(RenderOutput {
@@ -363,6 +375,7 @@ impl ImagePanel {
             revision: self.output_revision,
         })
     }
+
     fn record_render(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -396,20 +409,25 @@ impl ImagePanel {
     pub fn title(&self, host: &HostContext<'_>) -> String {
         self.panel_title(host)
     }
+
     pub fn attached_document(&self) -> Option<DocumentId> {
         Some(self.document)
     }
+
     pub fn save_state(&self) -> Value {
         self.saved_state()
     }
+
     pub fn close(&mut self, _requests: &mut Vec<HostRequest>) {
         self.decoder.sender = None;
         self.decoded = None;
         self.gpu = None;
     }
+
     pub fn render_output(&self) -> Option<RenderOutput> {
         self.canvas_output()
     }
+
     pub fn render(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -417,6 +435,7 @@ impl ImagePanel {
     ) -> Result<(), String> {
         self.record_render(gpu, target)
     }
+
     pub fn draw(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         self.draw_with_icons(ui, host, requests, None);
     }
@@ -434,6 +453,7 @@ mod tests {
         io::Cursor,
         time::{Duration, Instant},
     };
+
     fn png(width: u32, height: u32) -> Arc<[u8]> {
         let image = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
             width,
@@ -444,6 +464,7 @@ mod tests {
         image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
         bytes.into_inner().into()
     }
+
     #[test]
     fn common_zoom_overrides_target_focused_images_and_reset_actual_size() {
         use bed_keybindings::{Bindings, Overrides, Platform, Scope, ShortcutInput};
@@ -557,6 +578,7 @@ mod tests {
         assert_eq!(panels[0].pan, [0.0; 2]);
         assert_eq!(panels[1].zoom, 1.25);
     }
+
     #[test]
     fn text_backed_svg_preview_tracks_unsaved_revisions() {
         let mut panel = ImagePanel::new(DocumentId(1), &Value::Null);
@@ -610,6 +632,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn worker_discards_stale_results_and_close_releases_gpu_output() {
         let mut panel = ImagePanel::new(DocumentId(1), &Value::Null);
@@ -673,6 +696,7 @@ mod tests {
         assert!(panel.render_output().is_none());
         assert!(panel.gpu.is_none());
     }
+
     #[test]
     fn file_menu_command_keeps_captured_path_after_focus_changes() {
         let mut app = bevy::app::App::new();
@@ -703,6 +727,7 @@ mod tests {
             matches!(requests.as_slice(),[bed_editor_api::EditorIntent{request:HostRequest::OpenFile{path,viewer:Some(viewer)},..}] if path=="selected.png"&&viewer==VIEWER_ID)
         );
     }
+
     #[test]
     fn image_registration_exercises_contributions_and_extension_matching() {
         let mut registry = bed_editor_api::Registry::default();
