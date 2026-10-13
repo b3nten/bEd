@@ -106,6 +106,7 @@ struct Context {
     remote: Option<RemoteClient>,
     sources: Vec<String>,
 }
+
 impl Context {
     fn matches(
         &self,
@@ -133,10 +134,12 @@ struct ImageRect {
     uv0: [f32; 2],
     uv1: [f32; 2],
 }
+
 enum Entry {
     Ready(ImageRect),
     Error(String),
 }
+
 pub enum AssetState<'a> {
     Loading,
     Error(&'a str),
@@ -146,33 +149,40 @@ pub enum AssetState<'a> {
         uv1: [f32; 2],
     },
 }
+
 struct AtlasPixels {
     size: [u32; 2],
     rgba: Arc<[u8]>,
 }
+
 struct LoadResult {
     generation: u64,
     entries: HashMap<String, Entry>,
     atlas: Option<AtlasPixels>,
 }
+
 struct Job {
     generation: u64,
     context: Context,
 }
+
 #[derive(Default)]
 struct WorkerState {
     pending: Option<Job>,
     result: Option<LoadResult>,
     stopped: bool,
 }
+
 struct SharedWorker {
     state: Mutex<WorkerState>,
     ready: Condvar,
     generation: AtomicU64,
 }
+
 struct Worker {
     shared: Arc<SharedWorker>,
 }
+
 impl Worker {
     fn new() -> Result<Self, String> {
         let shared = Arc::new(SharedWorker {
@@ -208,6 +218,7 @@ impl Worker {
             .map_err(|error| format!("Could not start Markdown image worker: {error}"))?;
         Ok(Self { shared })
     }
+
     fn submit(&self, job: Job) {
         self.shared
             .generation
@@ -217,9 +228,11 @@ impl Worker {
         state.result = None;
         self.shared.ready.notify_one();
     }
+
     fn take_result(&self) -> Option<LoadResult> {
         self.shared.state.lock().unwrap().result.take()
     }
+
     pub fn close(&self) {
         self.shared.generation.fetch_add(1, Ordering::AcqRel);
         let mut state = self.shared.state.lock().unwrap();
@@ -229,6 +242,7 @@ impl Worker {
         self.shared.ready.notify_one();
     }
 }
+
 impl Drop for Worker {
     fn drop(&mut self) {
         self.close();
@@ -245,6 +259,7 @@ pub struct AssetManager {
     gpu: Option<AtlasGpu>,
     texture: TextureHandle,
 }
+
 impl AssetManager {
     pub fn new() -> Result<Self, String> {
         Ok(Self {
@@ -258,6 +273,7 @@ impl AssetManager {
             texture: TextureHandle::next(),
         })
     }
+
     /// Cheap for an unchanged source context. A Markdown revision also reloads
     /// referenced files, so path assets cannot stick across document contexts.
     pub fn sync(
@@ -283,6 +299,7 @@ impl AssetManager {
         };
         self.submit(context);
     }
+
     fn submit(&mut self, context: Context) {
         self.generation = self.generation.wrapping_add(1);
         self.version = self.version.wrapping_add(1);
@@ -295,12 +312,14 @@ impl AssetManager {
         });
         self.context = Some(context);
     }
+
     /// Explicit reload for images changed independently of the Markdown source.
     pub fn refresh(&mut self) {
         if let Some(context) = self.context.clone() {
             self.submit(context);
         }
     }
+
     pub fn close(&mut self) {
         self.worker.close();
         self.context = None;
@@ -309,6 +328,7 @@ impl AssetManager {
         self.gpu = None;
         self.version = self.version.wrapping_add(1);
     }
+
     pub fn poll(&mut self) {
         if let Some(result) = self.worker.take_result()
             && result.generation == self.generation
@@ -319,6 +339,7 @@ impl AssetManager {
             self.version = self.version.wrapping_add(1);
         }
     }
+
     pub(crate) fn pending(&self) -> bool {
         self.context.as_ref().is_some_and(|context| {
             context
@@ -327,12 +348,15 @@ impl AssetManager {
                 .any(|source| !self.entries.contains_key(source))
         })
     }
+
     pub fn version(&self) -> u64 {
         self.version
     }
+
     pub fn texture_handle(&self) -> TextureHandle {
         self.texture
     }
+
     pub fn get(&self, source: &str) -> AssetState<'_> {
         match self.entries.get(source) {
             Some(Entry::Ready(rect)) => AssetState::Ready {
@@ -344,6 +368,7 @@ impl AssetManager {
             None => AssetState::Loading,
         }
     }
+
     pub fn render_output(&self) -> Option<RenderOutput> {
         self.atlas.as_ref().map(|atlas| RenderOutput {
             handle: self.texture,
@@ -352,6 +377,7 @@ impl AssetManager {
             revision: self.version,
         })
     }
+
     pub fn render(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -463,6 +489,7 @@ struct LoadedImage {
     sources: Vec<String>,
     decoded: DecodedImage,
 }
+
 fn load_assets(job: &Job, current: &impl Fn() -> bool) -> Option<LoadResult> {
     let mut result = LoadResult {
         generation: job.generation,
@@ -822,7 +849,9 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir_all(root.join("images")).unwrap();
+
         struct Cleanup(PathBuf);
+
         impl Drop for Cleanup {
             fn drop(&mut self) {
                 let _ = fs::remove_dir_all(&self.0);
@@ -885,8 +914,10 @@ mod tests {
     fn native_atlas_preserves_rgba_and_recreates_after_device_generation_change() {
         use bed_ui::gpu::{renderer_device_descriptor, wgpu};
         use std::{future::Future, task::Wake};
+
         fn block_on<T>(future: impl Future<Output = T>) -> T {
             struct ThreadWake(thread::Thread);
+
             impl Wake for ThreadWake {
                 fn wake(self: Arc<Self>) {
                     self.0.unpark();

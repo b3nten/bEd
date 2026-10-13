@@ -72,12 +72,15 @@ impl MarkdownPanel {
             remote: None,
         })
     }
+
     pub fn is_ready(&self) -> bool {
         self.parsed.is_some() && self.error.is_none()
     }
+
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
+
     fn sync(&mut self, host: &HostContext<'_>) {
         let Some(document) = host.document(self.document) else {
             self.error = Some("This document is no longer open.".into());
@@ -126,6 +129,7 @@ impl MarkdownPanel {
         );
         self.assets.poll();
     }
+
     fn edit_as_text(&self, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         if let Some(menu) = host.viewer_menu
             && let Some(choice) = menu.choices.iter().find(|choice| choice.text_editor)
@@ -142,6 +146,7 @@ impl MarkdownPanel {
             });
         }
     }
+
     fn activate_link(
         &mut self,
         target: &str,
@@ -183,6 +188,7 @@ impl MarkdownPanel {
             }
         }
     }
+
     fn content(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         let size = ui.content_region_avail();
         ui.child_window("markdown-document")
@@ -256,21 +262,26 @@ impl MarkdownPanel {
     pub fn title(&self, host: &HostContext<'_>) -> String {
         self.panel_title(host)
     }
+
     pub fn attached_document(&self) -> Option<DocumentId> {
         Some(self.document)
     }
+
     pub fn save_state(&self) -> Value {
         self.saved_state()
     }
+
     pub fn close(&mut self, _: &mut Vec<HostRequest>) {
         self.worker.close();
         self.assets.close();
         self.parsed = None;
         self.layout = None;
     }
+
     pub fn render_output(&self) -> Option<RenderOutput> {
         self.canvas_output()
     }
+
     pub fn render(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -287,6 +298,7 @@ impl MarkdownPanel {
     ) -> Result<bool, String> {
         self.apply_action(action, host, requests)
     }
+
     pub fn draw(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         self.sync(host);
         self.draw_prepared(ui, host, requests);
@@ -301,12 +313,15 @@ impl MarkdownPanel {
             .unwrap_or("Markdown Preview")
             .to_owned()
     }
+
     pub(crate) fn saved_state(&self) -> Value {
         serde_json::to_value(&self.state).unwrap_or(Value::Null)
     }
+
     pub(crate) fn canvas_output(&self) -> Option<RenderOutput> {
         self.assets.render_output()
     }
+
     pub(crate) fn record_render(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -314,6 +329,7 @@ impl MarkdownPanel {
     ) -> Result<(), String> {
         self.assets.render(gpu, target)
     }
+
     pub(crate) fn apply_action(
         &mut self,
         action: PanelAction,
@@ -331,6 +347,7 @@ impl MarkdownPanel {
         }
         Ok(true)
     }
+
     pub(crate) fn draw_prepared(
         &mut self,
         ui: &Ui,
@@ -352,6 +369,7 @@ impl MarkdownPanel {
         }
         self.content(ui, host, requests);
     }
+
     pub(crate) fn prepare(
         &mut self,
         host: &HostContext<'_>,
@@ -362,6 +380,7 @@ impl MarkdownPanel {
         self.remote = remote;
         self.sync(host);
     }
+
     pub(crate) fn pending(&self) -> bool {
         (self.parsed.is_none() && self.error.is_none()) || self.assets.pending()
     }
@@ -372,6 +391,7 @@ mod tests {
     use super::*;
     use bed_editor_api::{DocumentKind, PluginDocument, ViewerChoice, ViewerMenu};
     use std::collections::HashMap;
+
     #[test]
     fn relative_links_anchors_and_edit_as_text_use_host_contracts() {
         let id = DocumentId::next();

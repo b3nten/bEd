@@ -47,6 +47,7 @@ fn supported_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn supported_extensions_are_case_insensitive() {
         for path in ["README.MD", "a.markdown", "a.mdown", "a.MkD"] {

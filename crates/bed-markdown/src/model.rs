@@ -83,6 +83,7 @@ struct Builder {
     used_anchors: HashSet<String>,
     budget: usize,
 }
+
 impl Builder {
     fn charge(&mut self, bytes: usize) -> Result<(), String> {
         // Reserve slack for Vec/HashMap capacity and duplicated anchor/image keys.
@@ -92,6 +93,7 @@ impl Builder {
         }
         Ok(())
     }
+
     fn block(&mut self, content: Content) -> Result<(), String> {
         self.charge(std::mem::size_of::<Block>())?;
         let marker = self.items.last_mut().and_then(Option::take);
@@ -104,6 +106,7 @@ impl Builder {
         });
         Ok(())
     }
+
     fn flush(&mut self) -> Result<(), String> {
         if self.spans.is_empty() && self.heading.is_none() {
             return Ok(());
@@ -135,6 +138,7 @@ impl Builder {
         };
         self.block(content)
     }
+
     fn flush_item(&mut self) -> Result<(), String> {
         self.flush()?;
         if self.items.last().is_some_and(Option::is_some) {
@@ -142,6 +146,7 @@ impl Builder {
         }
         Ok(())
     }
+
     fn text(&mut self, text: &str, code: bool) -> Result<(), String> {
         self.charge(text.len().saturating_add(std::mem::size_of::<Inline>()))?;
         if let Some((_, alt, _, _)) = &mut self.image {
@@ -426,9 +431,11 @@ pub fn heading_anchor(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn doc(source: &str) -> Document {
         parse(source.as_bytes(), || false).unwrap()
     }
+
     #[test]
     fn nested_blocks_styles_links_images_and_literal_html() {
         let document = doc(
@@ -463,6 +470,7 @@ mod tests {
         );
         assert!(spans.iter().any(|span| matches!(span, Inline::Text { style, .. } if style.link.as_deref() == Some("a.md"))));
     }
+
     #[test]
     fn tables_lists_breaks_and_duplicate_anchors() {
         let document = doc(
@@ -480,6 +488,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(plain_text(&rows[1][1]), "y");
     }
+
     #[test]
     fn source_limits_invalid_utf8_nesting_and_cancellation() {
         assert!(parse(&[255], || false).is_err());
@@ -493,6 +502,7 @@ mod tests {
             .contains("nesting")
         );
     }
+
     #[test]
     fn empty_list_items_remain_visible_and_heading_ids_do_not_collide() {
         let document = doc("-\n- next\n\n# Name\n# Name-1\n# Name\n");

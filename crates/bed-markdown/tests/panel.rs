@@ -11,6 +11,7 @@ use std::{
 };
 
 static IMGUI_LOCK: Mutex<()> = Mutex::new(());
+
 struct Harness {
     context: Context,
     panel: MarkdownPanel,
@@ -18,6 +19,7 @@ struct Harness {
     requests: Vec<HostRequest>,
     size: [f32; 2],
 }
+
 impl Harness {
     fn new(source: &str, state: Value) -> Self {
         let mut context = Context::create();
@@ -47,6 +49,7 @@ impl Harness {
             size: [900.0, 500.0],
         }
     }
+
     fn frame(&mut self) -> usize {
         self.context
             .prepare_frame(FramePrepareOptions::new(self.size, 1.0 / 60.0));
@@ -70,6 +73,7 @@ impl Harness {
             .build(|| self.panel.draw(ui, &host, &mut self.requests));
         self.context.render_legacy().total_vtx_count()
     }
+
     fn ready(&mut self) {
         self.frame();
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -81,6 +85,7 @@ impl Harness {
         }
         self.frame();
     }
+
     fn edit(&mut self, source: &str) {
         self.documents[0].revision.0 += 1;
         self.documents[0].bytes = source.as_bytes().to_vec().into();

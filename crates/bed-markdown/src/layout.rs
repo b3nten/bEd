@@ -26,11 +26,13 @@ enum Kind {
         uv1: [f32; 2],
     },
 }
+
 struct Primitive {
     pos: [f32; 2],
     size: [f32; 2],
     kind: Kind,
 }
+
 pub struct Layout {
     items: Vec<Primitive>,
     maximum_bottom: Vec<f32>,
@@ -39,6 +41,7 @@ pub struct Layout {
     pub size: [f32; 2],
     pub anchors: HashMap<String, f32>,
 }
+
 struct Builder<'a> {
     ui: &'a Ui,
     assets: &'a AssetManager,
@@ -70,9 +73,11 @@ impl Builder<'_> {
         self.items.push(Primitive { pos, size, kind });
         Ok(())
     }
+
     fn measure(&self, text: &str, size: f32) -> f32 {
         self.ui.calc_text_size(text)[0] * size / self.base
     }
+
     fn text(
         &mut self,
         pos: [f32; 2],
@@ -94,6 +99,7 @@ impl Builder<'_> {
         )?;
         Ok(width)
     }
+
     fn inline(
         &mut self,
         spans: &[Inline],

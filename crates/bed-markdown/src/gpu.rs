@@ -19,6 +19,7 @@ pub(super) struct AtlasGpu {
     pipeline: wgpu::RenderPipeline,
     bindings: wgpu::BindGroup,
 }
+
 impl AtlasGpu {
     pub fn new(gpu: &GpuContext<'_>, size: [u32; 2], rgba: &[u8]) -> Result<Self, String> {
         let texture = gpu.upload_rgba(size, rgba, false)?;
@@ -71,6 +72,7 @@ impl AtlasGpu {
             bindings,
         })
     }
+
     pub fn render(&self, gpu: &mut GpuContext<'_>, target: &RenderTarget) {
         let mut pass = gpu.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Bed Markdown atlas output"),

@@ -14,16 +14,19 @@ pub struct Job {
     pub revision: Revision,
     pub bytes: Arc<[u8]>,
 }
+
 pub struct Output {
     pub serial: u64,
     pub revision: Revision,
     pub result: Result<Document, String>,
 }
+
 pub struct Worker {
     sender: Option<mpsc::SyncSender<Job>>,
     output: Arc<Mutex<Option<Output>>>,
     serial: Arc<AtomicU64>,
 }
+
 impl Worker {
     pub fn new() -> Result<Self, String> {
         let (sender, jobs) = mpsc::sync_channel::<Job>(1);
@@ -59,22 +62,27 @@ impl Worker {
             serial,
         })
     }
+
     pub fn invalidate(&self) -> u64 {
         self.serial.fetch_add(1, Ordering::Relaxed) + 1
     }
+
     pub fn submit(&self, job: Job) -> bool {
         self.sender
             .as_ref()
             .is_some_and(|sender| sender.try_send(job).is_ok())
     }
+
     pub fn poll(&self) -> Option<Output> {
         self.output.lock().ok()?.take()
     }
+
     pub fn close(&mut self) {
         self.invalidate();
         self.sender.take();
     }
 }
+
 impl Drop for Worker {
     fn drop(&mut self) {
         self.close();

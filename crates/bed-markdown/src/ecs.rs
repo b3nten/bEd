@@ -25,10 +25,12 @@ pub struct MarkdownDocument(pub DocumentId);
 
 #[derive(Default)]
 pub struct MarkdownStates(HashMap<Entity, MarkdownPanel>);
+
 impl MarkdownStates {
     pub fn get(&self, entity: Entity) -> Option<&MarkdownPanel> {
         self.0.get(&entity)
     }
+
     #[cfg(test)]
     pub(crate) fn get_mut(&mut self, entity: Entity) -> Option<&mut MarkdownPanel> {
         self.0.get_mut(&entity)
@@ -42,7 +44,9 @@ pub enum MarkdownSystems {
 
 #[derive(Resource)]
 struct MarkdownActions(bed_editor_api::PanelActionSystem);
+
 pub struct MarkdownPlugin;
+
 impl Plugin for MarkdownPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<EditorFrame>()
@@ -255,6 +259,7 @@ fn publish_output(world: &mut World, entity: Entity, output: Option<RenderOutput
 struct MarkdownFrontend {
     entity: Entity,
 }
+
 impl Panel for MarkdownFrontend {
     fn title(&self, world: &World) -> String {
         world
@@ -359,6 +364,7 @@ mod ecs_tests {
             text: None,
         }
     }
+
     fn create(app: &mut App, state: Value) -> (Entity, Box<dyn Panel>) {
         let entity = app
             .world_mut()
@@ -382,6 +388,7 @@ mod ecs_tests {
             .unwrap();
         (entity, panel)
     }
+
     fn wait(app: &mut App, entity: Entity, ready: impl Fn(&MarkdownPanel) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -401,6 +408,7 @@ mod ecs_tests {
             thread::sleep(Duration::from_millis(1));
         }
     }
+
     #[test]
     fn commands_keep_the_origin_path_and_area() {
         let mut app = App::new();
