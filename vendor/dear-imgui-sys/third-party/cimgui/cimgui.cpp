@@ -10,15 +10,6 @@
 
 
 
-static inline ImColor ConvertToCPP_ImColor(const ImColor_c& src)
-{
-    ImColor dest;
-    dest.Value.x = src.Value.x;
-    dest.Value.y = src.Value.y;
-    dest.Value.z = src.Value.z;
-    dest.Value.w = src.Value.w;
-    return dest;
-}
 static inline ImColor_c ConvertFromCPP_ImColor(const ImColor& src)
 {
     ImColor_c dest;
@@ -70,13 +61,6 @@ static inline ImVec2 ConvertToCPP_ImVec2(const ImVec2_c& src)
 static inline ImVec2_c ConvertFromCPP_ImVec2(const ImVec2& src)
 {
     ImVec2_c dest;
-    dest.x = src.x;
-    dest.y = src.y;
-    return dest;
-}
-static inline ImVec2i ConvertToCPP_ImVec2i(const ImVec2i_c& src)
-{
-    ImVec2i dest;
     dest.x = src.x;
     dest.y = src.y;
     return dest;

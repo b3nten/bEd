@@ -1449,9 +1449,5 @@ fn use_pregenerated_bindings(cfg: &BuildConfig) -> bool {
         println!("cargo:warning=Failed to write pregenerated bindings: {error}");
         return false;
     }
-    println!(
-        "cargo:warning=Using pregenerated bindings: {}",
-        pregenerated.display()
-    );
     true
 }
