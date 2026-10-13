@@ -15,6 +15,7 @@ use std::{
 
 #[derive(Component, Default)]
 struct Feedback(Option<StatusText>);
+
 fn measure(world: &World, ui: &Ui, ctx: StatusContext) -> Option<f32> {
     world
         .get::<Feedback>(ctx.publisher)?
@@ -22,6 +23,7 @@ fn measure(world: &World, ui: &Ui, ctx: StatusContext) -> Option<f32> {
         .as_ref()
         .map(|text| text.measure(ui))
 }
+
 fn content(
     world: &mut World,
     ui: &Ui,
@@ -35,6 +37,7 @@ fn content(
         text.draw(ui, ctx, actions);
     }
 }
+
 fn tooltip(world: &World, ui: &Ui, ctx: StatusContext) {
     if let Some(text) = world
         .get::<Feedback>(ctx.publisher)
@@ -43,11 +46,13 @@ fn tooltip(world: &World, ui: &Ui, ctx: StatusContext) {
         text.tooltip(ui);
     }
 }
+
 struct Fixture {
     context: Context,
     app: App,
     panel: Entity,
 }
+
 impl Fixture {
     fn new(dir: &TempDir) -> Self {
         let config = dir.root().join("config");
@@ -102,6 +107,7 @@ impl Fixture {
         }
         fixture
     }
+
     fn frame(&mut self) {
         self.app.update();
         self.context
@@ -127,6 +133,7 @@ impl Fixture {
         drop(self.context.render_legacy());
         process_editor_requests(self.app.world_mut()).unwrap();
     }
+
     fn footer(&self) -> ([f32; 2], [f32; 2]) {
         self.context.binding().with_bound_context(|| unsafe {
             let window =
@@ -138,6 +145,7 @@ impl Fixture {
             )
         })
     }
+
     fn click(&mut self, point: [f32; 2]) {
         self.context.io_mut().add_mouse_pos_event(point);
         self.frame();

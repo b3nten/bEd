@@ -11,6 +11,7 @@ struct CsvFixture {
     csv: Entity,
     document: DocumentId,
 }
+
 impl CsvFixture {
     fn new(directory: &TempDir) -> Self {
         let path = directory.write("project/table.csv", b"name,value\nalpha,one\n");
@@ -54,6 +55,7 @@ impl CsvFixture {
         fixture.wait_ready();
         fixture
     }
+
     fn request(&mut self, action: EditorAction) -> io::Result<EditorRequestOutcome> {
         let request = capture_editor_request_from(
             self.app.world(),
@@ -67,6 +69,7 @@ impl CsvFixture {
             .expect("local request completed")
             .map_err(|error| io::Error::new(error.kind, error.message))
     }
+
     fn wait_ready(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -84,6 +87,7 @@ impl CsvFixture {
             thread::sleep(Duration::from_millis(1));
         }
     }
+
     fn draft(&mut self, text: &str) {
         self.app
             .world_mut()
@@ -91,6 +95,7 @@ impl CsvFixture {
             .set_cell_draft(self.csv, 1, 1, text.into())
             .unwrap();
     }
+
     fn text_view(&mut self) -> io::Result<()> {
         self.request(EditorAction::SwitchViewer {
             panel: self.tab,
@@ -98,9 +103,11 @@ impl CsvFixture {
         })
         .map(|_| ())
     }
+
     fn close(&mut self) -> io::Result<()> {
         self.request(EditorAction::ClosePanel(self.tab)).map(|_| ())
     }
+
     fn invalidate_revision(&mut self) {
         // Change the shared document without advancing CSV preparation. The
         // transaction must publish this revision before checking the old draft.
@@ -117,6 +124,7 @@ impl CsvFixture {
             )
             .unwrap();
     }
+
     fn draft_text(&self) -> Option<&str> {
         self.app
             .world()

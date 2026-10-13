@@ -11,6 +11,7 @@ pub use bed_workbench_api::{PanelGeometry, PanelPresentation as EditorPanel};
 pub use editor_runtime::*;
 pub use editor_ui::{draw_ui, set_root_top_inset};
 pub use workspace::store::{WorkspaceSpec, WorkspaceStore, WorkspaceTarget};
+
 /// Editor and generic workbench read the same canonical layout resource.
 pub type EditorLayout = WorkbenchLayout;
 #[cfg(test)]

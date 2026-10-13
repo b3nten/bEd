@@ -16,6 +16,7 @@ pub struct WorkspaceStore {
     path: PathBuf,
     state: Value,
 }
+
 impl WorkspaceStore {
     pub fn load(config_dir: &Path) -> io::Result<Self> {
         let path = config_dir.join("workspaces.json");
@@ -81,6 +82,7 @@ impl WorkspaceStore {
         }
         Ok(Self { path, state })
     }
+
     pub fn recent_workspaces(&self) -> Vec<WorkspaceSpec> {
         self.state["recent"]
             .as_array()
@@ -90,21 +92,25 @@ impl WorkspaceStore {
             .filter_map(|id| WorkspaceSpec::from_value(&self.state["workspaces"][id]["spec"]))
             .collect()
     }
+
     pub fn default_layout(&self) -> Option<&Value> {
         self.state
             .get("default_layout")
             .filter(|value| !value.is_null())
     }
+
     pub fn set_default_layout(&mut self, layout: Value) -> io::Result<()> {
         let _lock = self.reload_for_write()?;
         self.state["default_layout"] = layout;
         self.save()
     }
+
     pub fn reset_default_layout(&mut self) -> io::Result<()> {
         let _lock = self.reload_for_write()?;
         self.state.as_object_mut().unwrap().remove("default_layout");
         self.save()
     }
+
     /// The caller validates SSH projects with the agent before recording them.
     /// In particular, remote roots must never be canonicalized on this machine.
     pub fn record_workspace(&mut self, mut spec: WorkspaceSpec) -> io::Result<WorkspaceSpec> {
@@ -149,6 +155,7 @@ impl WorkspaceStore {
         self.save()?;
         Ok(spec)
     }
+
     pub fn forget_workspace(&mut self, spec: &WorkspaceSpec) -> io::Result<()> {
         let _lock = self.reload_for_write()?;
         let id = spec.identity();
@@ -157,6 +164,7 @@ impl WorkspaceStore {
         }
         self.save()
     }
+
     pub fn rename_workspace(
         &mut self,
         spec: &WorkspaceSpec,
@@ -177,6 +185,7 @@ impl WorkspaceStore {
         self.save()?;
         Ok(renamed)
     }
+
     pub fn layout(&self, spec: &WorkspaceSpec) -> Option<&Value> {
         let workspace = self.state.get("workspaces")?.get(spec.identity())?;
         workspace
@@ -184,13 +193,16 @@ impl WorkspaceStore {
             .and_then(|layouts| layouts.get(self.active_layout_slot(Some(spec)).to_string()))
             .or_else(|| workspace.get("layout"))
     }
+
     /// Module state belongs to the workspace, independent of its visible panels.
     pub fn all_module_settings(&self, spec: &WorkspaceSpec) -> Option<&Value> {
         self.state["workspaces"][spec.identity()].get("modules")
     }
+
     pub fn all_standalone_module_settings(&self) -> Option<&Value> {
         self.state.get("standalone_modules")
     }
+
     pub fn module_settings(&self, spec: &WorkspaceSpec, module: &str) -> Option<&Value> {
         let workspace = self.state.get("workspaces")?.get(spec.identity())?;
         workspace
@@ -198,10 +210,12 @@ impl WorkspaceStore {
             .and_then(|modules| modules.get(module))
             .or_else(|| workspace.get(legacy_module_field(module)?))
     }
+
     /// No-project module state is independent of the standalone window layout.
     pub fn standalone_module_settings(&self, module: &str) -> Option<&Value> {
         self.state.get("standalone_modules")?.get(module)
     }
+
     pub fn save_standalone_module_settings(&mut self, settings: Value) -> io::Result<()> {
         let _lock = self.reload_for_write()?;
         if self.state.get("standalone_modules") == Some(&settings) {
@@ -210,6 +224,7 @@ impl WorkspaceStore {
         self.state["standalone_modules"] = settings;
         self.save()
     }
+
     /// Update one module without replacing other modules' workspace state.
     pub fn set_module_settings(
         &mut self,
@@ -229,6 +244,7 @@ impl WorkspaceStore {
         }
         self.save()
     }
+
     /// Replace the complete snapshot of registered modules' workspace state.
     pub fn save_module_settings(
         &mut self,
@@ -254,6 +270,7 @@ impl WorkspaceStore {
         workspace["modules"] = settings;
         self.save()
     }
+
     /// Older configurations resume the most recent project. An explicit null
     /// means the last window had no project open.
     pub fn last_workspace(&self) -> Option<WorkspaceSpec> {
@@ -265,17 +282,20 @@ impl WorkspaceStore {
             None => self.recent_workspaces().into_iter().next(),
         }
     }
+
     pub fn standalone_layout(&self) -> Option<&Value> {
         self.session_layouts(None)
             .and_then(|layouts| layouts.get(self.active_layout_slot(None).to_string()))
             .or_else(|| self.state.get("standalone_layout"))
     }
+
     pub fn session_layouts(&self, spec: Option<&WorkspaceSpec>) -> Option<&Value> {
         match spec {
             Some(spec) => self.state["workspaces"][spec.identity()].get("layouts"),
             None => self.state.get("standalone_layouts"),
         }
     }
+
     pub fn active_layout_slot(&self, spec: Option<&WorkspaceSpec>) -> LayoutSlot {
         let value = match spec {
             Some(spec) => &self.state["workspaces"][spec.identity()]["active_layout_slot"],
@@ -283,6 +303,7 @@ impl WorkspaceStore {
         };
         LayoutSlot::from_value(value).unwrap_or_default()
     }
+
     pub fn save_session_layout(
         &mut self,
         spec: Option<&WorkspaceSpec>,
@@ -345,6 +366,7 @@ impl WorkspaceStore {
         }
         self.save()
     }
+
     pub fn set_layout(&mut self, spec: &WorkspaceSpec, layout: Value) -> io::Result<()> {
         let _lock = self.reload_for_write()?;
         self.ensure_record(spec);
@@ -357,15 +379,18 @@ impl WorkspaceStore {
         }
         self.save()
     }
+
     pub(crate) fn stored_spec(&self, spec: &WorkspaceSpec) -> Option<WorkspaceSpec> {
         WorkspaceSpec::from_value(&self.state["workspaces"][spec.identity()]["spec"])
     }
+
     fn ensure_record(&mut self, spec: &WorkspaceSpec) {
         let id = spec.identity();
         if !self.state["workspaces"][&id].is_object() {
             self.state["workspaces"][&id] = json!({"spec":spec.to_value()});
         }
     }
+
     // Legacy local-project helpers remain for standalone and embedding callers.
     pub fn recent_projects(&self) -> Vec<PathBuf> {
         self.recent_workspaces()
@@ -375,6 +400,7 @@ impl WorkspaceStore {
             })
             .collect()
     }
+
     pub fn record_project(&mut self, root: &Path) -> io::Result<PathBuf> {
         let root = fs::canonicalize(root)?;
         let root_text = root.to_str().ok_or_else(|| {
@@ -385,24 +411,29 @@ impl WorkspaceStore {
         self.record_workspace(spec)?;
         Ok(root)
     }
+
     pub fn forget_project(&mut self, root: &Path) -> io::Result<()> {
         let root = root.to_str().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "Project path is not UTF-8")
         })?;
         self.forget_workspace(&WorkspaceSpec::local(root))
     }
+
     pub fn workspace(&self, root: &Path) -> Option<&Value> {
         self.layout(&WorkspaceSpec::local(root.to_str()?))
     }
+
     pub fn set_workspace(&mut self, root: &Path, workspace: Value) -> io::Result<()> {
         let root = root.to_str().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "Project path is not UTF-8")
         })?;
         self.set_layout(&WorkspaceSpec::local(root), workspace)
     }
+
     fn save(&self) -> io::Result<()> {
         write_atomic(&self.path, &self.state)
     }
+
     fn reload_for_write(&mut self) -> io::Result<fs::File> {
         let parent = self
             .path
@@ -422,6 +453,7 @@ impl WorkspaceStore {
         Ok(lock)
     }
 }
+
 // Old application fields are compatibility aliases, never feature-owned types.
 fn legacy_module_field(module: &str) -> Option<&'static str> {
     match module {
@@ -454,6 +486,7 @@ fn migrate_v1(old: &Value) -> Value {
     }
     state
 }
+
 pub fn write_atomic(path: &Path, value: &Value) -> io::Result<()> {
     static NEXT_WRITE: AtomicU64 = AtomicU64::new(1);
     let parent = path.parent().ok_or_else(|| {

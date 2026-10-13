@@ -17,6 +17,7 @@ pub struct LayoutSlots {
     saved: serde_json::Map<String, Value>,
     pending: VecDeque<(LayoutSlot, Option<EditorRequestId>)>,
 }
+
 impl Default for LayoutSlots {
     fn default() -> Self {
         Self {
@@ -27,6 +28,7 @@ impl Default for LayoutSlots {
         }
     }
 }
+
 impl LayoutSlots {
     pub fn active(&self) -> LayoutSlot {
         self.active
@@ -536,13 +538,17 @@ mod tests {
 
     #[derive(Component)]
     struct FixtureState(Value);
+
     #[derive(Resource, Default)]
     struct Closed(usize);
+
     struct Fixture(Entity);
+
     impl Panel for Fixture {
         fn title(&self, _: &World) -> String {
             "Fixture".into()
         }
+
         fn draw(
             &mut self,
             _: &Ui,
@@ -551,11 +557,14 @@ mod tests {
             _: &bed_workbench_api::ShortcutInput,
         ) {
         }
+
         fn save(&self, world: &World) -> Value {
             world.get::<FixtureState>(self.0).unwrap().0.clone()
         }
     }
+
     struct FixturePlugin;
+
     impl Plugin for FixturePlugin {
         fn build(&self, app: &mut App) {
             app.init_resource::<Closed>();
@@ -580,6 +589,7 @@ mod tests {
             .unwrap();
         }
     }
+
     fn app(dir: &TempDir, restore: bool) -> App {
         let mut app = App::new();
         install_test_infrastructure(&mut app, &dir.path("config"));
@@ -598,6 +608,7 @@ mod tests {
         app.update();
         app
     }
+
     fn fixture(world: &mut World) -> Entity {
         open_panel(
             world,

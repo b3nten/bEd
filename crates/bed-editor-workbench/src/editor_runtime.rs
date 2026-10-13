@@ -134,6 +134,7 @@ impl WorkspacePersistence {
         }
     }
 }
+
 /// The application locates packaged helpers before installing editor integration.
 #[derive(Resource, Clone)]
 pub struct RemoteHelperDirectory(pub PathBuf);
@@ -338,12 +339,15 @@ pub struct EditorRequestError {
     pub kind: io::ErrorKind,
     pub message: String,
 }
+
 impl std::fmt::Display for EditorRequestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.message)
     }
 }
+
 impl std::error::Error for EditorRequestError {}
+
 impl From<io::Error> for EditorRequestError {
     fn from(error: io::Error) -> Self {
         Self {
@@ -352,6 +356,7 @@ impl From<io::Error> for EditorRequestError {
         }
     }
 }
+
 impl From<String> for EditorRequestError {
     fn from(message: String) -> Self {
         Self {
@@ -360,6 +365,7 @@ impl From<String> for EditorRequestError {
         }
     }
 }
+
 impl From<&str> for EditorRequestError {
     fn from(message: &str) -> Self {
         message.to_owned().into()
@@ -387,6 +393,7 @@ struct QueuedRequest {
     id: Option<EditorRequestId>,
     request: EditorRequest,
 }
+
 #[derive(Resource, Default)]
 pub struct EditorRequests {
     next_id: u64,
@@ -394,6 +401,7 @@ pub struct EditorRequests {
     results: HashMap<EditorRequestId, Result<EditorRequestOutcome, EditorRequestError>>,
     generic: HashMap<EditorRequestId, WorkbenchRequestId>,
 }
+
 impl EditorRequests {
     pub fn enqueue(&mut self, request: EditorRequest) {
         self.pending.push_back(QueuedRequest {
@@ -402,6 +410,7 @@ impl EditorRequests {
             request,
         });
     }
+
     pub fn submit(&mut self, request: EditorRequest) -> EditorRequestId {
         self.next_id = self
             .next_id
@@ -415,6 +424,7 @@ impl EditorRequests {
         });
         id
     }
+
     pub fn take_result(
         &mut self,
         id: EditorRequestId,
@@ -423,19 +433,23 @@ impl EditorRequests {
             .remove(&id)
             .map(|result| result.map_err(|error| error.message))
     }
+
     pub fn is_empty(&self) -> bool {
         self.pending.is_empty()
     }
 }
+
 pub fn submit_editor_request(world: &mut World, request: EditorRequest) -> EditorRequestId {
     world.resource_mut::<EditorRequests>().submit(request)
 }
+
 pub fn poll_editor_request_result(
     world: &mut World,
     id: EditorRequestId,
 ) -> Option<Result<EditorRequestOutcome, EditorRequestError>> {
     world.resource_mut::<EditorRequests>().results.remove(&id)
 }
+
 pub fn poll_editor_request(
     world: &mut World,
     id: EditorRequestId,
@@ -445,8 +459,10 @@ pub fn poll_editor_request(
 
 #[derive(ScheduleLabel, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EditorRequestsSchedule;
+
 #[derive(ScheduleLabel, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EditorServicesSchedule;
+
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EditorSystemSet {
     Services,
@@ -458,6 +474,7 @@ pub enum EditorSystemSet {
 pub struct EditorWorkbenchPlugin {
     pub options: EditorWorkbenchOptions,
 }
+
 impl Plugin for EditorWorkbenchPlugin {
     fn build(&self, app: &mut App) {
         if !app.is_plugin_added::<bed_workbench::WorkbenchPlugin>() {
@@ -546,6 +563,7 @@ impl Plugin for EditorWorkbenchPlugin {
 
 #[derive(Resource, Default)]
 struct EditorInitialized(bool);
+
 #[derive(Resource)]
 struct InitialEditorOptions(Option<EditorWorkbenchOptions>);
 
@@ -608,6 +626,7 @@ pub fn process_editor_requests(world: &mut World) -> io::Result<()> {
     world.run_schedule(EditorRequestsSchedule);
     Ok(())
 }
+
 pub fn tick_editor_services(world: &mut World) -> io::Result<()> {
     world.run_schedule(EditorServicesSchedule);
     process_editor_requests(world)
@@ -621,6 +640,7 @@ pub fn dispatch_editor_command(
     let request = capture_editor_request(world, EditorAction::Command(command), target);
     dispatch_request(world, request)
 }
+
 pub fn dispatch_editor_plugin_command(
     world: &mut World,
     command: impl Into<String>,
@@ -630,6 +650,7 @@ pub fn dispatch_editor_plugin_command(
         capture_editor_request(world, EditorAction::PluginCommand(command.into()), target);
     dispatch_request(world, request)
 }
+
 fn dispatch_request(world: &mut World, request: EditorRequest) -> io::Result<bool> {
     let id = submit_editor_request(world, request);
     process_editor_requests(world)?;
@@ -657,6 +678,7 @@ enum Continuation {
         panels: Vec<Entity>,
     },
 }
+
 struct PendingSave {
     id: Option<EditorRequestId>,
     session: u64,
@@ -665,6 +687,7 @@ struct PendingSave {
     reply: Option<(String, SaveToken)>,
     continuation: Option<Continuation>,
 }
+
 #[derive(Resource, Default)]
 struct PendingOperations {
     saves: Vec<PendingSave>,
@@ -677,6 +700,7 @@ struct PendingBatch {
     child: EditorRequestId,
     remaining: VecDeque<EditorRequest>,
 }
+
 fn internal_request_id(world: &mut World) -> EditorRequestId {
     let mut requests = world.resource_mut::<EditorRequests>();
     requests.next_id = requests
@@ -685,6 +709,7 @@ fn internal_request_id(world: &mut World) -> EditorRequestId {
         .expect("editor request ID overflow");
     EditorRequestId(requests.next_id)
 }
+
 fn apply_batch(
     world: &mut World,
     mut requests: VecDeque<EditorRequest>,
@@ -710,6 +735,7 @@ fn apply_batch(
     }
     Ok(Some(outcome))
 }
+
 fn poll_batches(world: &mut World) {
     let batches = std::mem::take(&mut world.resource_mut::<PendingOperations>().batches);
     for batch in batches {
@@ -727,6 +753,7 @@ fn poll_batches(world: &mut World) {
         }
     }
 }
+
 fn captured_effect(
     world: &World,
     template: &EditorRequest,
@@ -2112,6 +2139,7 @@ struct SaveTarget {
     document: DocumentId,
     destination: Option<PathBuf>,
 }
+
 fn begin_save(
     world: &mut World,
     documents: Vec<DocumentId>,
@@ -2133,6 +2161,7 @@ fn begin_save(
         id,
     )
 }
+
 fn begin_save_as(
     world: &mut World,
     document: DocumentId,
@@ -2150,6 +2179,7 @@ fn begin_save_as(
         id,
     )
 }
+
 // Capture every write before starting any I/O. A draft or path failure keeps
 // all affected panels live and acknowledges the exact failed operation.
 fn begin_save_targets(
@@ -2369,6 +2399,7 @@ fn begin_close(
         id,
     )
 }
+
 fn begin_close_transition(
     world: &mut World,
     panels: Vec<Entity>,
@@ -2487,6 +2518,7 @@ fn retire_presentations(world: &mut World, panel: Entity) -> io::Result<()> {
         .remove::<bed_workbench_api::PanelFrontend>();
     Ok(())
 }
+
 fn pristine_panel(world: &World, panel: Entity) -> bool {
     let Some(surface) = panel_presentation(world, panel) else {
         return false;
@@ -2500,6 +2532,7 @@ fn pristine_panel(world: &World, panel: Entity) -> bool {
             snapshot.path.is_empty() && snapshot.bytes.is_empty() && !snapshot.dirty
         })
 }
+
 fn reusable_panel(world: &mut World, area: Option<u32>) -> io::Result<Option<Entity>> {
     let layout = world.resource::<WorkbenchLayout>();
     let focused = layout.focused.filter(|panel| {
@@ -2555,6 +2588,7 @@ fn reusable_panel(world: &mut World, area: Option<u32>) -> io::Result<Option<Ent
     }
     Ok(None)
 }
+
 fn replace_pristine_panel(
     world: &mut World,
     panel: Entity,
@@ -4612,6 +4646,7 @@ pub fn application_commands(world: &World) -> Vec<crate::commands::CommandItem> 
         })
         .collect()
 }
+
 pub fn toolbar_commands(world: &World) -> Vec<crate::commands::CommandItem> {
     let registry = world.resource::<bed_editor_api::Registry>();
     let facts = world.get_resource::<bed_editor_api::CommandPresentations>();
@@ -4641,12 +4676,14 @@ struct ConnectedWorkspace {
     target: bed_remote::SshTarget,
     client: bed_remote::RemoteClient,
 }
+
 struct Connection {
     session: u64,
     id: Option<EditorRequestId>,
     reconnect: bool,
     receiver: std::sync::mpsc::Receiver<io::Result<ConnectedWorkspace>>,
 }
+
 struct RemoteOpen {
     session: u64,
     id: Option<EditorRequestId>,
@@ -4661,6 +4698,7 @@ struct RemoteOpen {
     restore: Option<Entity>,
     follow_up: Option<EditorRequest>,
 }
+
 #[derive(Default)]
 struct RemoteOperations {
     connection: Option<Connection>,
@@ -4740,6 +4778,7 @@ fn start_connection(
     });
     Ok(())
 }
+
 fn reconnect_workspace(world: &mut World, id: Option<EditorRequestId>) -> io::Result<()> {
     let spec = world
         .resource::<EditorWorkspace>()
@@ -4748,6 +4787,7 @@ fn reconnect_workspace(world: &mut World, id: Option<EditorRequestId>) -> io::Re
         .ok_or_else(|| io::Error::other("No remote workspace is open"))?;
     start_connection(world, spec, true, id)
 }
+
 fn replace_connected_workspace(world: &mut World, connected: ConnectedWorkspace) -> io::Result<()> {
     let options = session_options(world, Some(PathBuf::from(&connected.spec.root)));
     let session = EditorSession::with_remote_options(
@@ -4783,6 +4823,7 @@ fn replace_connected_workspace(world: &mut World, connected: ConnectedWorkspace)
     cancel_foreign_pending(world);
     restore_workspace(world)
 }
+
 fn place_opened_panel(
     world: &mut World,
     panel: Entity,
@@ -4812,6 +4853,7 @@ fn place_opened_panel(
     }
     Ok(())
 }
+
 fn begin_open_file(
     world: &mut World,
     path: &Path,
@@ -4861,6 +4903,7 @@ fn begin_open_file(
         Err(error) => Err(error),
     }
 }
+
 fn queue_remote_restore(world: &mut World, record: Value, area: Option<u32>) -> io::Result<Entity> {
     let panel = bed_workbench::spawn_panel(world, record.clone(), area, record["id"].as_u64())
         .map_err(io::Error::other)?;
@@ -4896,6 +4939,7 @@ fn queue_remote_restore(world: &mut World, record: Value, area: Option<u32>) -> 
         });
     Ok(panel)
 }
+
 fn poll_remote_operations(
     world: &mut World,
     errors: &[bed_document_session::ServiceError],

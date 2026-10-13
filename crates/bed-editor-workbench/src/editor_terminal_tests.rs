@@ -9,11 +9,14 @@ struct Terminals {
     created: u64,
     closed: Vec<u64>,
 }
+
 struct TerminalFrontend(u64);
+
 impl Panel for TerminalFrontend {
     fn title(&self, _: &World) -> String {
         format!("Shell {}", self.0)
     }
+
     fn draw(
         &mut self,
         _: &Ui,
@@ -22,10 +25,12 @@ impl Panel for TerminalFrontend {
         _shortcuts: &bed_workbench_api::ShortcutInput,
     ) {
     }
+
     fn save(&self, _: &World) -> Value {
         json!({"transcript":self.0})
     }
 }
+
 pub(super) fn open_terminal(world: &mut World) -> Entity {
     if !world.contains_resource::<Terminals>() {
         world.init_resource::<Terminals>();
@@ -81,6 +86,7 @@ pub(super) fn open_terminal(world: &mut World) -> Entity {
     )
     .unwrap()
 }
+
 fn app(dir: &TempDir) -> App {
     let mut app = App::new();
     install_test_infrastructure(&mut app, &dir.path("config"));
@@ -97,6 +103,7 @@ fn app(dir: &TempDir) -> App {
     app.update();
     app
 }
+
 fn request(world: &mut World, source: Entity, host: HostRequest) -> EditorRequestOutcome {
     let request = capture_editor_request_from(
         world,

@@ -66,11 +66,13 @@ fn remote_app(directory: &TempDir, restore: bool) -> App {
     app.update();
     app
 }
+
 fn submit(app: &mut App, action: EditorAction, source: Option<Entity>) -> EditorRequestId {
     let request =
         capture_editor_request_from(app.world(), action, PanelTarget::LastFocused, source);
     submit_editor_request(app.world_mut(), request)
 }
+
 fn wait(app: &mut App, mut done: impl FnMut(&mut App) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(8);
     loop {
@@ -86,6 +88,7 @@ fn wait(app: &mut App, mut done: impl FnMut(&mut App) -> bool) {
         thread::sleep(Duration::from_millis(2));
     }
 }
+
 fn outcome(app: &mut App, id: EditorRequestId) -> EditorRequestOutcome {
     let mut result = None;
     wait(app, |app| {
@@ -94,6 +97,7 @@ fn outcome(app: &mut App, id: EditorRequestId) -> EditorRequestOutcome {
     });
     result.unwrap().unwrap()
 }
+
 fn open(app: &mut App, path: &Path, area: u32) -> Entity {
     let id = request_open(app, path, area);
     app.update();
@@ -106,6 +110,7 @@ fn open(app: &mut App, path: &Path, area: u32) -> Entity {
         _ => panic!(),
     }
 }
+
 fn request_open(app: &mut App, path: &Path, area: u32) -> EditorRequestId {
     let mut request = capture_editor_request(
         app.world(),
@@ -120,6 +125,7 @@ fn request_open(app: &mut App, path: &Path, area: u32) -> EditorRequestId {
     request.area = area;
     submit_editor_request(app.world_mut(), request)
 }
+
 fn shutdown(app: &mut App) {
     app.world_mut()
         .non_send_mut::<EditorSession>()

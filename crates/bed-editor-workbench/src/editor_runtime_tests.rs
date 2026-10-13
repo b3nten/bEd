@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_support::TempDir;
+
 fn app(dir: &TempDir) -> App {
     let mut app = App::new();
     install_test_infrastructure(&mut app, &dir.root().join("config"));
@@ -18,10 +19,12 @@ fn app(dir: &TempDir) -> App {
     app.update();
     app
 }
+
 fn submit(world: &mut World, action: EditorAction, source: Option<Entity>) -> EditorRequestId {
     let request = capture_editor_request_from(world, action, PanelTarget::LastFocused, source);
     submit_editor_request(world, request)
 }
+
 fn apply(world: &mut World, action: EditorAction, source: Option<Entity>) -> EditorRequestOutcome {
     let id = submit(world, action, source);
     process_editor_requests(world).unwrap();
@@ -109,10 +112,12 @@ fn previews_replace_across_viewer_types_and_keep_existing_tab_order() {
 #[test]
 fn local_file_viewers_share_the_preview_slot_with_document_viewers() {
     struct LocalViewer;
+
     impl bed_workbench_api::Panel for LocalViewer {
         fn title(&self, _: &World) -> String {
             "Local viewer".into()
         }
+
         fn draw(
             &mut self,
             _: &dear_imgui_rs::Ui,
@@ -641,6 +646,7 @@ fn location_navigation_reveals_the_target_in_a_new_and_existing_view() {
     );
     assert_target_visible(app.world());
 }
+
 #[test]
 fn the_ui_and_registered_handlers_borrow_permanent_domain_resources() {
     let dir = TempDir::new();
@@ -692,6 +698,7 @@ fn the_ui_and_registered_handlers_borrow_permanent_domain_resources() {
             .visible
     );
 }
+
 #[test]
 fn saving_a_captured_panel_never_redirects_to_newer_focus() {
     for from_widget in [false, true] {
@@ -746,6 +753,7 @@ fn saving_a_captured_panel_never_redirects_to_newer_focus() {
         assert_eq!(app.world().resource::<WorkbenchLayout>().focused, Some(b));
     }
 }
+
 #[test]
 fn inactive_viewers_remain_owned_until_the_layout_panel_closes() {
     let dir = TempDir::new();
@@ -879,6 +887,7 @@ fn a_registered_viewer_factory_failure_retains_the_active_presentation_and_docum
     );
     assert_eq!(std::fs::read(path).unwrap(), b"original");
 }
+
 #[test]
 fn missing_feature_records_roundtrip_without_discarding_opaque_data() {
     let dir = TempDir::new();
@@ -898,6 +907,7 @@ fn missing_feature_records_roundtrip_without_discarding_opaque_data() {
     assert_eq!(saved["panels"][0]["extension"], record["extension"]);
     assert_eq!(saved["panels"][0]["state"], record["state"]);
 }
+
 #[test]
 fn attachment_preserves_the_session_and_dirty_panel_entities_across_saved_id_collisions() {
     let dir = TempDir::new();
@@ -1533,6 +1543,7 @@ fn a_failed_batch_retains_panels_and_never_applies_later_intentions() {
 fn registered_close(In(invocation): In<CommandInvocation>) -> bed_workbench_api::CommandResult {
     Ok(vec![Action::ClosePanel(invocation.source.unwrap())])
 }
+
 #[test]
 fn registered_command_receipts_follow_actual_save_and_close_effects() {
     let dir = TempDir::new();

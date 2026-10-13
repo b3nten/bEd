@@ -3,6 +3,7 @@ use super::editor_runtime::*;
 use bed_editor_api::PanelTarget;
 use bed_workbench_api::{CommandInvocation, CommandResult};
 use bevy::prelude::*;
+
 pub fn register(world: &mut World) {
     bed_workbench_api::register(world, "bed.app", |registrar| {
         registrar.command("bed.app.Debug", "Debug", command);
@@ -86,6 +87,7 @@ pub fn register(world: &mut World) {
     })
     .expect("application commands are registered once");
 }
+
 fn command(In(invocation): In<CommandInvocation>, world: &mut World) -> CommandResult {
     let command = match invocation.command.as_str() {
         "bed.app.Debug" => WindowCommand::Debug,
@@ -136,6 +138,7 @@ fn command(In(invocation): In<CommandInvocation>, world: &mut World) -> CommandR
     world.resource_mut::<EditorRequests>().enqueue(request);
     Ok(Vec::new())
 }
+
 fn focus(In(invocation): In<CommandInvocation>, world: &mut World) -> CommandResult {
     let index = invocation
         .command

@@ -62,6 +62,7 @@ fn startup_sessions_roundtrip_alongside_numbered_slots() {
             .is_err()
     );
 }
+
 #[test]
 fn independent_instances_preserve_other_projects_and_fields() {
     let temp = TempDir::new();
@@ -89,6 +90,7 @@ fn independent_instances_preserve_other_projects_and_fields() {
         Some(&json!({"hidden":true}))
     );
 }
+
 #[test]
 fn concurrent_instances_serialize_workspace_updates() {
     let temp = TempDir::new();
@@ -123,6 +125,7 @@ fn concurrent_instances_serialize_workspace_updates() {
         assert_eq!(loaded.layout(&spec).unwrap()["revision"], 4);
     }
 }
+
 #[test]
 fn module_settings_roundtrip_without_changing_layout_or_other_workspaces() {
     let temp = TempDir::new();
@@ -296,6 +299,7 @@ fn canonical_module_snapshots_win_over_legacy_fields_when_a_workspace_is_reactiv
         Some(&Value::Null)
     );
 }
+
 #[test]
 fn canonical_recents_deduplicate_and_workspace_round_trips() {
     let temp = TempDir::new();
@@ -316,6 +320,7 @@ fn canonical_recents_deduplicate_and_workspace_round_trips() {
     assert!(store.recent_projects().is_empty());
     assert!(store.workspace(&root).is_some());
 }
+
 #[test]
 fn failed_project_open_does_not_create_history() {
     let temp = TempDir::new();
@@ -323,6 +328,7 @@ fn failed_project_open_does_not_create_history() {
     assert!(store.record_project(&temp.path("missing")).is_err());
     assert!(!temp.path("config/workspaces.json").exists());
 }
+
 fn remote(host: &str, root: &str) -> WorkspaceSpec {
     WorkspaceSpec {
         name: "Remote project".into(),
@@ -330,6 +336,7 @@ fn remote(host: &str, root: &str) -> WorkspaceSpec {
         root: root.into(),
     }
 }
+
 #[test]
 fn v1_projects_migrate_in_order_with_missing_and_unlisted_layouts() {
     let temp = TempDir::new();
@@ -373,6 +380,7 @@ fn v1_projects_migrate_in_order_with_missing_and_unlisted_layouts() {
     let loaded = WorkspaceStore::load(&config).unwrap();
     assert_eq!(loaded.recent_workspaces()[1].name, "Named project");
 }
+
 #[test]
 fn remote_hosts_and_local_target_keep_layouts_separate() {
     let temp = TempDir::new();
@@ -398,6 +406,7 @@ fn remote_hosts_and_local_target_keep_layouts_separate() {
     assert_eq!(loaded.layout(&first).unwrap()["dock"], "first");
     assert_eq!(loaded.layout(&second).unwrap()["dock"], "second");
 }
+
 #[test]
 fn remote_paths_are_preserved_without_accessing_local_filesystem() {
     let temp = TempDir::new();
@@ -416,6 +425,7 @@ fn remote_paths_are_preserved_without_accessing_local_filesystem() {
     let loaded = WorkspaceStore::load(&temp.path("config")).unwrap();
     assert_eq!(loaded.stored_spec(&spec).unwrap().name, "SSH project");
 }
+
 #[test]
 fn renaming_local_workspace_survives_legacy_recording_and_layout_changes() {
     let temp = TempDir::new();
@@ -431,6 +441,7 @@ fn renaming_local_workspace_survives_legacy_recording_and_layout_changes() {
     assert_eq!(store.recent_workspaces()[0].name, "My project");
     assert!(store.rename_workspace(&spec, "  ").is_err());
 }
+
 #[test]
 fn legacy_executable_overrides_are_ignored_without_losing_layout() {
     let temp = TempDir::new();
@@ -451,6 +462,7 @@ fn legacy_executable_overrides_are_ignored_without_losing_layout() {
             .is_none()
     );
 }
+
 #[test]
 fn remote_projects_round_trip_without_executable_configuration() {
     let temp = TempDir::new();

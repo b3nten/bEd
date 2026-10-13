@@ -10,6 +10,7 @@ use std::io;
 pub struct EditorUi {
     pub host_mode: WorkbenchHostMode,
 }
+
 impl EditorUi {
     pub fn new(host_mode: WorkbenchHostMode) -> Self {
         Self { host_mode }
