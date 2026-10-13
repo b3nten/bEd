@@ -1,6 +1,4 @@
 use super::*;
-use bed_document_session::editor::Editor;
-use bed_editor_ui::editor_input::EditorInput;
 use std::time::{Duration, Instant};
 
 #[test]
@@ -22,6 +20,8 @@ fn native_file_drops_enqueue_editor_requests_and_clear_the_hover() {
     world.init_resource::<NativeFileDrag>();
     #[cfg(target_os = "macos")]
     world.init_resource::<bed_desktop::DesktopNativeActions>();
+    #[cfg(all(feature = "automation", target_os = "macos"))]
+    world.init_resource::<NativeMenuObservations>();
     let path = PathBuf::from("/tmp/dropped.txt");
     world.insert_resource(DesktopInputEvents(
         [
@@ -178,7 +178,7 @@ fn smaller_checkbox_keeps_its_full_click_target_and_label_layout() {
 #[cfg(target_os = "macos")]
 #[test]
 fn native_edit_shortcuts_undo_and_redo_once_without_inserting_characters() {
-    use bed_editor_ui::views::view_layout::ViewLayout;
+    use bed_editor_ui::{EditorView, EditorViewOptions};
     use dear_imgui_rs::{Condition, FramePrepareOptions, Key};
     let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
     let mut context = Context::create();
@@ -188,42 +188,56 @@ fn native_edit_shortcuts_undo_and_redo_once_without_inserting_characters() {
         .try_claim_legacy_renderer()
         .unwrap()
         .build();
-    let mut editor = Editor::new();
-    // A named in-memory document records upstream undo without touching any
-    // source file or scheduling a disk save in this input-only fixture.
-    editor
-        .api()
-        .open_document("test://native-menu", b"baseline");
-    editor.commands().type_text(b"!");
-    let mut input = EditorInput::default();
-    let mut render = |context: &mut Context, editor: &mut Editor| {
+    let mut session = bed_document_session::EditorSession::new();
+    let document = session.create_document(b"baseline").unwrap();
+    let mut view = EditorView::new(&mut session, document).unwrap();
+    session
+        .with_commands(view.id(), |commands| commands.type_text(b"!"))
+        .unwrap();
+    session
+        .with_commands(view.id(), |commands| {
+            // Nonadjacent edits stay separate, making repeated actions observable.
+            commands.move_doc_end(false);
+            commands.type_text(b"?");
+        })
+        .unwrap();
+    session.request_focus(view.id()).unwrap();
+    let mut render = |context: &mut Context, session: &mut bed_document_session::EditorSession| {
         context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], 1.0 / 60.0));
         let ui = context.frame();
         ui.window("Native menu editing")
             .position([0.0; 2], Condition::Always)
             .size([640.0, 480.0], Condition::Always)
             .build(|| {
-                ui.set_window_focus(None);
-                assert!(
-                    input
-                        .process(ui, &mut editor.view_context(), &ViewLayout::default())
-                        .is_empty()
-                );
+                let response = view
+                    .draw(ui, session, &EditorViewOptions::default())
+                    .unwrap();
+                assert!(response.actions.is_empty());
             });
         drop(context.render_legacy());
     };
-    render(&mut context, &mut editor);
-    assert_eq!(editor.state.join(), b"!baseline");
+    render(&mut context, &mut session);
+    assert_eq!(session.snapshot(document).unwrap().bytes, b"!baseline?");
     queue_native_edit_shortcut(&mut context, Key::Z, false);
     for _ in 0..4 {
-        render(&mut context, &mut editor);
+        render(&mut context, &mut session);
     }
-    assert_eq!(editor.state.join(), b"baseline");
+    assert_eq!(session.snapshot(document).unwrap().bytes, b"!baseline");
+    queue_native_edit_shortcut(&mut context, Key::Z, false);
+    for _ in 0..4 {
+        render(&mut context, &mut session);
+    }
+    assert_eq!(session.snapshot(document).unwrap().bytes, b"baseline");
     queue_native_edit_shortcut(&mut context, Key::Z, true);
     for _ in 0..4 {
-        render(&mut context, &mut editor);
+        render(&mut context, &mut session);
     }
-    assert_eq!(editor.state.join(), b"!baseline");
+    assert_eq!(session.snapshot(document).unwrap().bytes, b"!baseline");
+    queue_native_edit_shortcut(&mut context, Key::Z, true);
+    for _ in 0..4 {
+        render(&mut context, &mut session);
+    }
+    assert_eq!(session.snapshot(document).unwrap().bytes, b"!baseline?");
     assert!(!context.io().key_ctrl());
     assert!(!context.io().key_super());
     assert!(!context.io().key_shift());
