@@ -57,25 +57,30 @@ struct JobKey {
     face: u32,
     request: RasterRequest,
 }
+
 struct Job {
     serial: u64,
     key: JobKey,
     bytes: Arc<[u8]>,
 }
+
 struct Preview {
     info: Arc<FontInfo>,
     raster: Raster,
     request: RasterRequest,
 }
+
 struct JobResult {
     serial: u64,
     revision: Revision,
     result: Result<Preview, String>,
 }
+
 struct Worker {
     sender: Option<mpsc::SyncSender<Job>>,
     receiver: mpsc::Receiver<JobResult>,
 }
+
 impl Worker {
     fn new() -> Self {
         let (sender, jobs) = mpsc::sync_channel::<Job>(1);
@@ -153,6 +158,7 @@ pub struct FontPanel {
     jump: String,
     jump_error: Option<String>,
 }
+
 impl FontPanel {
     fn new(document: DocumentId, state: &Value) -> Self {
         let size = state["size"]
@@ -209,6 +215,7 @@ impl FontPanel {
             jump_error: None,
         }
     }
+
     fn poll(&mut self, revision: Revision) {
         if self.revision != Some(revision) {
             self.revision = Some(revision);
@@ -249,6 +256,7 @@ impl FontPanel {
             }
         }
     }
+
     fn submit(&mut self, revision: Revision, bytes: &Arc<[u8]>, request: RasterRequest) {
         let key = JobKey {
             revision,
@@ -273,6 +281,7 @@ impl FontPanel {
             self.error = None;
         }
     }
+
     fn information(&self, ui: &Ui, info: &FontInfo, path: &str, bytes: usize) {
         ui.text_wrapped(path);
         ui.text(format!(
@@ -305,6 +314,7 @@ impl FontPanel {
             ui.text_wrapped(value);
         }
     }
+
     fn glyph_controls(&mut self, ui: &Ui, info: &FontInfo) {
         ui.set_next_item_width(180.0);
         let enter = ui
@@ -359,6 +369,7 @@ impl FontPanel {
             }
         }
     }
+
     fn glyph_overlay(&mut self, ui: &Ui, origin: [f32; 2], logical: [f32; 2], hovered: bool) {
         let Some(preview) = &self.preview else {
             return;
@@ -443,6 +454,7 @@ impl FontPanel {
             }
         }
     }
+
     fn glyph_canvas(
         &mut self,
         ui: &Ui,
@@ -500,21 +512,26 @@ impl FontPanel {
     pub fn title(&self, host: &HostContext<'_>) -> String {
         self.panel_title(host)
     }
+
     pub fn attached_document(&self) -> Option<DocumentId> {
         Some(self.document)
     }
+
     pub fn save_state(&self) -> Value {
         self.saved_state()
     }
+
     pub fn close(&mut self, _: &mut Vec<HostRequest>) {
         self.worker.sender = None;
         self.preview = None;
         self.gpu = None;
         self.canvas = None;
     }
+
     pub fn render_output(&self) -> Option<RenderOutput> {
         self.canvas_output()
     }
+
     pub fn render(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -522,6 +539,7 @@ impl FontPanel {
     ) -> Result<(), String> {
         self.record_render(gpu, target)
     }
+
     pub fn draw(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         if let Some(document) = host.document(self.document) {
             self.poll(document.revision);
@@ -537,11 +555,13 @@ impl FontPanel {
             .unwrap_or("Font Viewer")
             .to_owned()
     }
+
     fn saved_state(&self) -> Value {
         json!({ "face": self.face, "view": self.view, "size": self.size, "sample": self.sample,
             "ligatures": self.ligatures, "kerning": self.kerning, "direction": self.direction,
             "pan": self.pan, "glyph_scroll": self.glyph_scroll, "selected": self.selected })
     }
+
     fn canvas_output(&self) -> Option<RenderOutput> {
         if self.view == 2 {
             return None;
@@ -554,6 +574,7 @@ impl FontPanel {
             revision: self.output_revision,
         })
     }
+
     fn record_render(
         &mut self,
         gpu: &mut GpuContext<'_>,
@@ -576,6 +597,7 @@ impl FontPanel {
         renderer.render(gpu, target);
         Ok(())
     }
+
     fn draw_prepared(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         let _controls = bed_ui::util::popup_style::controls_style(ui);
         let Some(document) = host.document(self.document) else {
@@ -743,6 +765,7 @@ fn truncate_sample(sample: &mut String) {
         sample.truncate(end);
     }
 }
+
 fn find_glyph(info: &FontInfo, query: &str) -> Option<u32> {
     let query = query.trim();
     let codepoint = if let Some(hex) = query

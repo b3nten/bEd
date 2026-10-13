@@ -25,10 +25,12 @@ pub struct FontDocument(pub DocumentId);
 
 #[derive(Default)]
 pub struct FontStates(HashMap<Entity, FontPanel>);
+
 impl FontStates {
     pub fn get(&self, entity: Entity) -> Option<&FontPanel> {
         self.0.get(&entity)
     }
+
     #[cfg(test)]
     pub(crate) fn get_mut(&mut self, entity: Entity) -> Option<&mut FontPanel> {
         self.0.get_mut(&entity)
@@ -41,6 +43,7 @@ pub enum FontSystems {
 }
 
 pub struct FontPlugin;
+
 impl Plugin for FontPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<EditorFrame>()
@@ -233,6 +236,7 @@ fn publish_output(world: &mut World, entity: Entity, output: Option<RenderOutput
 struct FontFrontend {
     entity: Entity,
 }
+
 impl Panel for FontFrontend {
     fn title(&self, world: &World) -> String {
         world.non_send::<FontStates>().get(self.entity).map_or_else(
@@ -341,6 +345,7 @@ mod ecs_tests {
             text: None,
         }
     }
+
     fn create(app: &mut App, state: Value) -> (Entity, Box<dyn Panel>) {
         let entity = app
             .world_mut()
@@ -364,6 +369,7 @@ mod ecs_tests {
             .unwrap();
         (entity, panel)
     }
+
     fn wait(app: &mut App, entity: Entity, ready: impl Fn(&FontPanel) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -375,6 +381,7 @@ mod ecs_tests {
             thread::sleep(Duration::from_millis(1));
         }
     }
+
     #[test]
     fn commands_keep_the_origin_path_and_area() {
         let mut app = App::new();

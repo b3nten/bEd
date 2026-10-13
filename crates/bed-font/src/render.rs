@@ -9,6 +9,7 @@ pub(crate) struct FontGpu {
     sampler: wgpu::Sampler,
     bindings: Option<wgpu::BindGroup>,
 }
+
 impl FontGpu {
     pub fn new(gpu: &GpuContext<'_>) -> Self {
         let shader = gpu
@@ -57,6 +58,7 @@ impl FontGpu {
             bindings: None,
         }
     }
+
     pub fn upload(&mut self, gpu: &GpuContext<'_>, raster: &Raster) -> Result<(), String> {
         let texture = gpu.upload_rgba(raster.size, &raster.rgba, false)?;
         self.bindings = Some(gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -77,6 +79,7 @@ impl FontGpu {
         }));
         Ok(())
     }
+
     pub fn render(&self, gpu: &mut GpuContext<'_>, target: &RenderTarget) {
         let mut pass = gpu.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Font preview output"),

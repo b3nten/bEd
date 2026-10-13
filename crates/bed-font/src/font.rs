@@ -63,6 +63,7 @@ struct Face {
     // FT_New_Memory_Face borrows this immutable buffer until FT_Done_Face.
     _bytes: Arc<[u8]>,
 }
+
 impl Face {
     fn new(bytes: Arc<[u8]>, index: u32) -> Result<Self, String> {
         if bytes.is_empty() || bytes.len() > MAX_FONT_BYTES {
@@ -94,6 +95,7 @@ impl Face {
         })
     }
 }
+
 impl Drop for Face {
     fn drop(&mut self) {
         // SAFETY: unique handles are destroyed before their borrowed bytes.
@@ -119,6 +121,7 @@ pub(crate) struct FontEngine {
     bitmaps: HashMap<(u32, u32), Arc<GlyphBitmap>>,
     cache_bytes: usize,
 }
+
 impl FontEngine {
     pub fn new(bytes: Arc<[u8]>, index: u32) -> Result<Self, String> {
         // Decode once on the worker so FreeType and HarfRust use identical

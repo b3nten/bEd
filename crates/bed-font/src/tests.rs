@@ -9,6 +9,7 @@ const WOFF2: &[u8] = include_bytes!("../tests/fixtures/SourceCodePro-Regular.wof
 fn engine() -> FontEngine {
     FontEngine::new(Arc::from(DEJAVU), 0).unwrap()
 }
+
 fn request(mode: Mode) -> RasterRequest {
     RasterRequest {
         mode,
@@ -623,6 +624,7 @@ fn native_registered_font_renderer_preserves_raster_and_recovers_generation() {
 
     fn block_on<T>(future: impl Future<Output = T>) -> T {
         struct ThreadWake(thread::Thread);
+
         impl Wake for ThreadWake {
             fn wake(self: Arc<Self>) {
                 self.0.unpark();

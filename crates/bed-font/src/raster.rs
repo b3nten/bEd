@@ -31,6 +31,7 @@ pub(crate) struct GridLayout {
     pub viewport: [f32; 2],
     pub detail: [f32; 4],
 }
+
 impl GridLayout {
     pub fn new(logical: [f32; 2], label_height: f32, size: f32) -> Self {
         let [width, height] = logical;
@@ -58,24 +59,29 @@ impl GridLayout {
             detail,
         }
     }
+
     pub fn scroll_max(&self, glyphs: usize) -> f32 {
         (glyphs.div_ceil(self.columns) as f32 * self.cell[1] - self.viewport[1]).max(0.0)
     }
+
     pub fn scroll_to(&self, id: usize, glyphs: usize) -> f32 {
         ((id / self.columns) as f32 * self.cell[1]).min(self.scroll_max(glyphs))
     }
+
     pub fn visible(&self, scroll: f32, glyphs: usize) -> std::ops::Range<usize> {
         let scroll = scroll.clamp(0.0, self.scroll_max(glyphs));
         let first = (scroll / self.cell[1]).floor() as usize * self.columns;
         let end = ((scroll + self.viewport[1]) / self.cell[1]).ceil() as usize * self.columns;
         first.min(glyphs)..end.min(glyphs)
     }
+
     pub fn cell_origin(&self, id: usize, scroll: f32) -> [f32; 2] {
         [
             (id % self.columns) as f32 * self.cell[0],
             (id / self.columns) as f32 * self.cell[1] - scroll,
         ]
     }
+
     pub fn glyph_at(&self, point: [f32; 2], scroll: f32, glyphs: usize) -> Option<usize> {
         if point[0] < 0.0
             || point[1] < 0.0
@@ -106,6 +112,7 @@ struct Surface {
     pixels: Vec<u8>,
     ink: [u8; 4],
 }
+
 impl Surface {
     fn new(request: &RasterRequest) -> Result<Self, String> {
         let [w, h] = request.pixels;
@@ -124,6 +131,7 @@ impl Surface {
             ink: request.ink.map(byte),
         })
     }
+
     fn glyph(&mut self, bitmap: &GlyphBitmap, baseline: [f32; 2]) {
         let origin = [
             baseline[0].round() as i64 + i64::from(bitmap.left),
@@ -162,6 +170,7 @@ impl Surface {
             }
         }
     }
+
     fn centered(&mut self, bitmap: &GlyphBitmap, rect: [f32; 4], scale: f32) {
         let baseline = [
             (rect[0] + rect[2] * 0.5) * scale - bitmap.size[0] as f32 * 0.5 - bitmap.left as f32,
@@ -170,6 +179,7 @@ impl Surface {
         self.glyph(bitmap, baseline);
     }
 }
+
 fn byte(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
