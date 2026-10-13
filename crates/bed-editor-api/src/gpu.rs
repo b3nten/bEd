@@ -20,6 +20,7 @@ pub struct GpuContext<'a> {
     /// Changes with the host device. Rebuild all plugin GPU resources on change.
     pub generation: u64,
 }
+
 impl GpuContext<'_> {
     pub fn restore_host_handlers(&self) {
         if let Some(handlers) = self.error_handlers {

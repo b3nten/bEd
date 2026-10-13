@@ -15,6 +15,7 @@ pub struct WorkspaceSpec {
     pub target: WorkspaceTarget,
     pub root: String,
 }
+
 impl WorkspaceSpec {
     pub fn local(root: impl Into<String>) -> Self {
         let root = root.into();
@@ -24,6 +25,7 @@ impl WorkspaceSpec {
             root,
         }
     }
+
     /// A stable, unambiguous key; names can change without losing layout.
     pub fn identity(&self) -> String {
         match &self.target {
@@ -31,12 +33,14 @@ impl WorkspaceSpec {
             WorkspaceTarget::Ssh { host, .. } => json!(["ssh", host, self.root]).to_string(),
         }
     }
+
     pub fn location(&self) -> String {
         match &self.target {
             WorkspaceTarget::Local => self.root.clone(),
             WorkspaceTarget::Ssh { host, .. } => format!("{host}:{}", self.root),
         }
     }
+
     pub fn to_value(&self) -> Value {
         let target = match &self.target {
             WorkspaceTarget::Local => json!({"kind":"local"}),
@@ -46,6 +50,7 @@ impl WorkspaceSpec {
         };
         json!({"name":self.name,"target":target,"root":self.root})
     }
+
     pub fn from_value(value: &Value) -> Option<Self> {
         let root = value.get("root")?.as_str()?.to_owned();
         let target = match value.get("target")?.get("kind")?.as_str()? {
@@ -62,6 +67,7 @@ impl WorkspaceSpec {
         })
     }
 }
+
 pub fn default_name(root: &str) -> String {
     root.trim_end_matches(['/', '\\'])
         .rsplit(['/', '\\'])

@@ -52,6 +52,7 @@ pub struct CommandPresentation {
     pub enabled: bool,
     pub visible: bool,
 }
+
 impl Default for CommandPresentation {
     fn default() -> Self {
         Self {
@@ -61,12 +62,14 @@ impl Default for CommandPresentation {
         }
     }
 }
+
 #[derive(bevy::prelude::Resource, Default)]
 pub struct CommandPresentations(pub HashMap<String, CommandPresentation>);
 
 /// Correlates a queued edit with its acknowledgement without exposing host panels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EditToken(pub u64);
+
 impl EditToken {
     pub fn next() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -77,6 +80,7 @@ impl EditToken {
 /// Correlates a module's save barrier with completed disk writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SaveToken(pub u64);
+
 impl SaveToken {
     pub fn next() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -116,12 +120,15 @@ pub enum ClipboardAction {
     Paste(String),
     SelectAll,
 }
+
 #[derive(Clone, Debug)]
 pub struct ClipboardInvocation {
     pub entity: bevy::prelude::Entity,
     pub action: ClipboardAction,
 }
+
 pub type ClipboardResult = Result<Option<String>, String>;
+
 pub type EditorPanelClipboardSystem =
     bevy::ecs::system::SystemId<bevy::prelude::In<ClipboardInvocation>, ClipboardResult>;
 #[derive(bevy::prelude::Component, Clone, Copy)]
@@ -193,6 +200,7 @@ pub enum PanelInput {
     Document(DocumentId),
     LocalFile(PathBuf),
 }
+
 impl PanelInput {
     pub fn document(&self) -> Option<DocumentId> {
         match self {
@@ -200,6 +208,7 @@ impl PanelInput {
             _ => None,
         }
     }
+
     pub fn local_file(&self) -> Option<&Path> {
         match self {
             Self::LocalFile(path) => Some(path),
@@ -207,6 +216,7 @@ impl PanelInput {
         }
     }
 }
+
 impl From<Option<DocumentId>> for PanelInput {
     fn from(document: Option<DocumentId>) -> Self {
         document.map(Self::Document).unwrap_or(Self::None)
@@ -223,6 +233,7 @@ pub trait FileDialogService {
 /// move intent is retained only by the workbench.
 pub trait FileClipboardService {
     fn read_files(&mut self) -> std::io::Result<Vec<PathBuf>>;
+
     fn write_files(&mut self, paths: &[PathBuf]) -> std::io::Result<()>;
 }
 
@@ -294,6 +305,7 @@ pub struct EditorFrame {
     pub diagnostics: Value,
     pub default_viewers: Value,
 }
+
 impl EditorFrame {
     /// Refresh revision-bound snapshots from the canonical document session.
     pub fn refresh_documents(
@@ -373,7 +385,9 @@ pub struct PanelActionInvocation {
     pub entity: bevy::prelude::Entity,
     pub action: PanelAction,
 }
+
 pub type PanelActionResult = Result<bool, String>;
+
 pub type PanelActionSystem =
     bevy::ecs::system::SystemId<bevy::prelude::In<PanelActionInvocation>, PanelActionResult>;
 
@@ -386,6 +400,7 @@ pub struct PanelExternalFilesInvocation {
     pub entity: bevy::prelude::Entity,
     pub event: ExternalFileDrag,
 }
+
 pub type PanelExternalFilesSystem = bevy::ecs::system::SystemId<
     bevy::prelude::In<PanelExternalFilesInvocation>,
     Result<ExternalFileDropResponse, String>,
@@ -401,7 +416,9 @@ pub struct PanelEditResult {
     pub token: EditToken,
     pub result: Result<Revision, String>,
 }
+
 pub type PanelEditSystem = bevy::ecs::system::SystemId<bevy::prelude::In<PanelEditResult>>;
+
 #[derive(Clone, Copy, bevy::prelude::Component)]
 pub struct EditorPanelEdits(pub PanelEditSystem);
 
@@ -424,6 +441,7 @@ pub struct EditorIntent {
 pub struct EditorIntents {
     pending: Vec<EditorIntent>,
 }
+
 impl EditorIntents {
     pub fn push(&mut self, source: Option<bevy::prelude::Entity>, request: HostRequest) {
         self.pending.push(EditorIntent {
@@ -433,6 +451,7 @@ impl EditorIntents {
             request,
         });
     }
+
     pub fn push_at(
         &mut self,
         source: Option<bevy::prelude::Entity>,
@@ -446,9 +465,11 @@ impl EditorIntents {
             request,
         });
     }
+
     pub fn take(&mut self) -> Vec<EditorIntent> {
         std::mem::take(&mut self.pending)
     }
+
     pub fn push_intent(&mut self, intent: EditorIntent) {
         self.pending.push(intent);
     }
@@ -544,21 +565,26 @@ impl ViewerMenu {
         }
     }
 }
+
 impl HostContext<'_> {
     pub fn draw_viewer_menu(&self, ui: &Ui, requests: &mut Vec<HostRequest>) {
         if let Some(menu) = self.viewer_menu {
             menu.draw(ui, requests);
         }
     }
+
     pub fn document(&self, id: DocumentId) -> Option<&PluginDocument> {
         self.documents.iter().find(|document| document.id == id)
     }
+
     pub fn active(&self) -> Option<&PluginDocument> {
         self.document(self.active_document?)
     }
+
     pub fn settings_for(&self, plugin: &str) -> &Value {
         &self.settings[plugin]
     }
+
     pub fn texture(&self, handle: TextureHandle) -> Option<TextureId> {
         self.textures.get(&handle).copied()
     }
@@ -802,15 +828,18 @@ pub struct CommandDescriptor {
     pub label: &'static str,
     pub icon: Option<&'static str>,
 }
+
 #[derive(Clone, Debug)]
 pub struct MenuContribution {
     pub slot: MenuSlot,
     pub command: &'static str,
 }
+
 #[derive(Clone, Debug)]
 pub struct ToolbarContribution {
     pub command: &'static str,
 }
+
 #[derive(Clone, Debug)]
 pub struct SettingsSection {
     pub id: &'static str,
@@ -818,6 +847,7 @@ pub struct SettingsSection {
     pub label: &'static str,
     pub draw: Option<fn(&Ui, &mut Value) -> bool>,
 }
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PanelPlacement {
     #[default]
@@ -843,6 +873,7 @@ pub struct PanelType {
     pub plugin: &'static str,
     pub label: &'static str,
 }
+
 /// Storage a viewer consumes. File-backed viewers have no editor document kind.
 #[derive(Clone, Debug)]
 pub enum ViewerBacking {
@@ -877,9 +908,11 @@ impl FileViewer {
             ViewerBacking::LocalFile => None,
         }
     }
+
     pub fn is_local_file(&self) -> bool {
         matches!(self.backing, ViewerBacking::LocalFile)
     }
+
     pub fn single_document_kind(&self) -> Option<DocumentKind> {
         match self.backing {
             ViewerBacking::Document {
@@ -889,6 +922,7 @@ impl FileViewer {
             _ => None,
         }
     }
+
     /// Match only the filename's extension, ignoring ASCII case.
     pub fn matches_path(&self, path: &str) -> bool {
         let filename = path.rsplit(['/', '\\']).next().unwrap_or_default();
@@ -931,21 +965,27 @@ impl Registry {
     pub fn has_owner(&self, owner: &str) -> bool {
         self.plugins.contains(owner)
     }
+
     pub fn commands(&self) -> &[CommandDescriptor] {
         &self.commands
     }
+
     pub fn menus(&self) -> &[MenuContribution] {
         &self.menus
     }
+
     pub fn toolbar(&self) -> &[ToolbarContribution] {
         &self.toolbar
     }
+
     pub fn settings(&self) -> &[SettingsSection] {
         &self.settings
     }
+
     pub fn panels(&self) -> &[PanelType] {
         &self.panels
     }
+
     pub fn viewers(&self) -> &[FileViewer] {
         &self.viewers
     }
@@ -1061,22 +1101,27 @@ impl Registry {
         self.plugins.insert(owner);
         Ok(())
     }
+
     pub fn command(&self, id: &str) -> Option<&CommandDescriptor> {
         self.commands.iter().find(|entry| entry.id == id)
     }
+
     pub fn panel(&self, id: &str) -> Option<&PanelType> {
         self.panels.iter().find(|entry| entry.id == id)
     }
+
     pub fn viewer(&self, id: &str) -> Option<&FileViewer> {
         self.viewers
             .iter()
             .find(|entry| entry.id == id || entry.aliases.contains(&id))
     }
+
     pub fn default_viewer(&self, kind: DocumentKind) -> Option<&FileViewer> {
         self.viewers
             .iter()
             .find(|entry| entry.fallback && entry.document_kind() == Some(kind))
     }
+
     /// Registration order resolves conflicts; no generic wildcard masks text fallback.
     pub fn viewer_for_path(&self, path: &str) -> Option<&FileViewer> {
         self.viewers.iter().find(|viewer| viewer.matches_path(path))
@@ -1167,6 +1212,7 @@ pub struct Registrar<'a> {
     owner: &'static str,
     registry: &'a mut Registry,
 }
+
 impl Registrar<'_> {
     pub fn command(&mut self, id: &'static str, label: &'static str, icon: Option<&'static str>) {
         self.registry.commands.push(CommandDescriptor {
@@ -1176,12 +1222,15 @@ impl Registrar<'_> {
             icon,
         });
     }
+
     pub fn menu(&mut self, slot: MenuSlot, command: &'static str) {
         self.registry.menus.push(MenuContribution { slot, command });
     }
+
     pub fn toolbar(&mut self, command: &'static str) {
         self.registry.toolbar.push(ToolbarContribution { command });
     }
+
     pub fn settings(&mut self, id: &'static str, label: &'static str) {
         self.registry.settings.push(SettingsSection {
             id,
@@ -1190,6 +1239,7 @@ impl Registrar<'_> {
             draw: None,
         });
     }
+
     pub fn settings_ui(
         &mut self,
         id: &'static str,
@@ -1203,6 +1253,7 @@ impl Registrar<'_> {
             draw: Some(draw),
         });
     }
+
     pub fn panel(&mut self, id: &'static str, label: &'static str) {
         self.registry.panels.push(PanelType {
             empty_input: true,
@@ -1215,6 +1266,7 @@ impl Registrar<'_> {
             label,
         });
     }
+
     pub fn panel_options(
         &mut self,
         id: &'static str,
@@ -1230,6 +1282,7 @@ impl Registrar<'_> {
         panel.open_placement = placement;
         panel.legacy_kind = legacy_kind;
     }
+
     /// Override the legacy runtime placement hint without changing the initial layout.
     pub fn panel_requires_input(&mut self, id: &'static str) {
         self.registry
@@ -1239,6 +1292,7 @@ impl Registrar<'_> {
             .expect("panel metadata is registered before its input policy")
             .empty_input = false;
     }
+
     pub fn panel_open_placement(&mut self, id: &'static str, placement: PanelPlacement) {
         let panel = self
             .registry
@@ -1248,6 +1302,7 @@ impl Registrar<'_> {
             .expect("register a panel before setting its open placement");
         panel.open_placement = placement;
     }
+
     pub fn fallback_viewer(
         &mut self,
         id: &'static str,
@@ -1261,6 +1316,7 @@ impl Registrar<'_> {
         viewer.fallback = true;
         viewer.aliases = aliases;
     }
+
     pub fn viewer(
         &mut self,
         id: &'static str,
@@ -1370,8 +1426,10 @@ mod tests {
 
     trait TestDeclaration {
         fn id(&self) -> &'static str;
+
         fn register(&self, registrar: &mut Registrar<'_>);
     }
+
     impl TestDeclaration for TestModule {
         fn id(&self) -> &'static str {
             self.id
@@ -1867,6 +1925,7 @@ mod tests {
         viewer: &'static str,
         command: &'static str,
     }
+
     impl TestDeclaration for Example {
         fn id(&self) -> &'static str {
             self.id
@@ -1884,6 +1943,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn matching_is_case_insensitive_and_conflicts_keep_registration_order() {
         let mut registry = Registry::default();
