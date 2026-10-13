@@ -35,10 +35,12 @@ pub struct IdleController {
     swallow_ime: bool,
     scroll_until: Option<Instant>,
 }
+
 impl IdleController {
     pub fn viewport(&self) -> Option<u32> {
         self.viewport
     }
+
     pub fn new(now: Instant) -> Self {
         Self {
             last_activity: now,
@@ -51,10 +53,12 @@ impl IdleController {
             scroll_until: None,
         }
     }
+
     pub fn activity(&mut self, now: Instant) -> bool {
         self.last_activity = now;
         self.viewport.take().is_some()
     }
+
     pub fn update(
         &mut self,
         now: Instant,
@@ -72,6 +76,7 @@ impl IdleController {
         }
         self.viewport
     }
+
     pub fn intercept(&mut self, event: &WindowEvent, now: Instant) -> bool {
         match event {
             WindowEvent::Focused(_) => {
@@ -130,6 +135,7 @@ impl IdleController {
             _ => false,
         }
     }
+
     fn gesture(&mut self, phase: TouchPhase, now: Instant) -> bool {
         let consume = self.activity(now) || self.scroll_until.is_some_and(|until| now < until);
         self.scroll_until =
@@ -140,6 +146,7 @@ impl IdleController {
             };
         consume
     }
+
     fn key(&mut self, key: PhysicalKey, state: ElementState, now: Instant) -> bool {
         let consume = self.activity(now) || self.swallowed_keys.contains(&key);
         if state == ElementState::Pressed {
@@ -154,6 +161,7 @@ impl IdleController {
         }
         consume
     }
+
     fn button(&mut self, button: MouseButton, state: ElementState, now: Instant) -> bool {
         let consume = self.activity(now) || self.swallowed_buttons.contains(&button);
         if state == ElementState::Pressed && consume {
@@ -169,6 +177,7 @@ impl IdleController {
 mod tests {
     use super::*;
     use winit::keyboard::KeyCode;
+
     #[test]
     fn unset_main_viewport_scale_preserves_scene_resolution_and_aspect() {
         assert_eq!(
@@ -181,6 +190,7 @@ mod tests {
             [1920, 1280]
         );
     }
+
     #[test]
     fn idle_activates_for_the_focused_window_and_resets_when_it_changes() {
         let now = Instant::now();
@@ -193,6 +203,7 @@ mod tests {
         assert_eq!(idle.update(now + delay * 4, Some(8), true, delay), None);
         assert_eq!(idle.update(now + delay * 5, Some(8), true, delay), Some(8));
     }
+
     #[test]
     fn waking_key_and_click_consume_the_whole_sequence() {
         let now = Instant::now();
@@ -211,6 +222,7 @@ mod tests {
         assert!(idle.button(MouseButton::Left, ElementState::Released, now + delay * 2));
         assert!(!idle.button(MouseButton::Left, ElementState::Pressed, now + delay * 2));
     }
+
     #[test]
     fn waking_mouse_movement_and_focus_reset_idle() {
         let now = Instant::now();
@@ -223,6 +235,7 @@ mod tests {
         assert!(!idle.intercept(&WindowEvent::Focused(false), now + delay));
         assert_eq!(idle.update(now + delay * 2, Some(1), true, delay), None);
     }
+
     #[test]
     fn waking_ime_preedit_consumes_its_commit_and_then_recovers() {
         let now = Instant::now();
@@ -241,6 +254,7 @@ mod tests {
         assert!(idle.intercept(&WindowEvent::Ime(Ime::Commit("é".into())), now + delay));
         assert!(!idle.intercept(&WindowEvent::Ime(Ime::Commit("x".into())), now + delay));
     }
+
     #[test]
     fn focus_change_clears_lost_releases_and_waking_gestures_consume_continuations() {
         let now = Instant::now();
@@ -277,6 +291,7 @@ pub struct IdleSettings {
     pub delay: Duration,
     pub eligible: Option<u32>,
 }
+
 impl Default for IdleSettings {
     fn default() -> Self {
         Self {
@@ -286,11 +301,14 @@ impl Default for IdleSettings {
         }
     }
 }
+
 pub struct IdlePlugin;
+
 #[derive(bevy::prelude::SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IdleSystems {
     Intercept,
 }
+
 impl bevy::prelude::Plugin for IdlePlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         use bevy::prelude::*;
@@ -320,6 +338,7 @@ impl bevy::prelude::Plugin for IdlePlugin {
         }
     }
 }
+
 fn update_idle(
     settings: bevy::prelude::Res<IdleSettings>,
     mut idle: bevy::prelude::ResMut<IdleController>,
@@ -331,6 +350,7 @@ fn update_idle(
         settings.delay,
     );
 }
+
 fn intercept_input(
     mut idle: bevy::prelude::ResMut<IdleController>,
     mut native: bevy::prelude::ResMut<bed_desktop::DesktopInputEvents>,
