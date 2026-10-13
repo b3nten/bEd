@@ -64,6 +64,11 @@ resolver = "3"
 [workspace.package]
 license = "GPL-3.0-only"
 
+# Keep workspace code easy to debug while reducing dependency code and unwind
+# tables below macOS's compact-unwind limit. The test profile inherits this.
+[profile.dev.package."*"]
+opt-level = 1
+
 [workspace.dependencies]
 bed-keybindings = { path = "crates/bed-keybindings" }
 bed-idle = { path = "crates/bed-idle" }
