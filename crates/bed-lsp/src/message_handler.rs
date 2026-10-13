@@ -35,11 +35,14 @@ const OUTBOUND_CAPACITY: usize = 64;
 static NEXT_ID: AtomicI32 = AtomicI32::new(1);
 
 type ResponseCallback = Box<dyn FnOnce(Result<Value, ResponseError>)>;
+
 struct PendingRequest {
     callback: ResponseCallback,
     deadline: Instant,
 }
+
 type RequestHandler = Box<dyn FnMut(Option<Value>) -> Result<Value, ResponseError>>;
+
 type NotificationHandler = Box<dyn FnMut(Option<Value>) -> Result<(), ResponseError>>;
 
 #[derive(Debug)]
@@ -101,6 +104,7 @@ impl RpcSession {
     pub fn start(program: &Path, arguments: &[String]) -> io::Result<Self> {
         Self::start_with_options(program, arguments, &ProcessOptions::default())
     }
+
     pub fn start_with_options(
         program: &Path,
         arguments: &[String],
@@ -229,9 +233,11 @@ impl RpcSession {
     pub fn process_id(&self) -> u32 {
         self.process.id()
     }
+
     pub fn is_connected(&self) -> bool {
         self.connected
     }
+
     pub fn pending_request_count(&self) -> usize {
         self.pending.len()
     }
@@ -239,10 +245,12 @@ impl RpcSession {
     pub fn set_request_timeout(&mut self, timeout: Duration) {
         self.request_timeout = timeout;
     }
+
     /// The document session owns mutation and replies after edits are committed.
     pub fn defer_workspace_edits(&mut self) {
         self.defer_workspace_edits = true;
     }
+
     pub fn reply_workspace_edit(
         &mut self,
         id: RpcId,
@@ -329,6 +337,7 @@ impl RpcSession {
         }
         sent
     }
+
     pub fn send_notification(&self, method: &str, params: Option<Value>) -> io::Result<()> {
         self.queue(
             &Packet::Single(Message::Request(Request {

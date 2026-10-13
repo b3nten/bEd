@@ -15,6 +15,7 @@ use std::{
 };
 
 struct Fixture(PathBuf);
+
 impl Fixture {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -29,11 +30,13 @@ impl Fixture {
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
         Self(root.canonicalize().unwrap())
     }
+
     fn path(&self, name: &str) -> String {
         let path = self.0.join(name);
         fs::write(&path, b"one").unwrap();
         path.to_string_lossy().into_owned()
     }
+
     fn client(&self, provider: Option<Value>) -> LspClient {
         let mut capabilities =
             json!({"textDocumentSync":{"openClose":true,"change":2,"save":true}});
@@ -49,6 +52,7 @@ impl Fixture {
         assert!(client.start_server("fixture", "").unwrap());
         client
     }
+
     fn wire(&self) -> Vec<Value> {
         fs::read_to_string(self.0.join("wire.jsonl"))
             .unwrap_or_default()
@@ -56,6 +60,7 @@ impl Fixture {
             .filter_map(|line| serde_json::from_str(line).ok())
             .collect()
     }
+
     fn wait_message(
         &self,
         client: &mut LspClient,
@@ -69,6 +74,7 @@ impl Fixture {
         });
         found.unwrap()
     }
+
     fn pull(&self, client: &mut LspClient, path: &str, occurrence: usize) -> Value {
         let uri = uri(path);
         self.wait_message(
@@ -80,23 +86,27 @@ impl Fixture {
             occurrence,
         )
     }
+
     fn send(&self, client: &LspClient, message: Value) {
         client
             .send_notification("fixture/control", Some(json!({"send":message})))
             .unwrap();
     }
+
     fn reply(&self, client: &LspClient, request: &Value, result: Value) {
         self.send(
             client,
             json!({"jsonrpc":"2.0", "id":request["id"], "result":result}),
         );
     }
+
     fn error(&self, client: &LspClient, request: &Value, error: Value) {
         self.send(
             client,
             json!({"jsonrpc":"2.0", "id":request["id"], "error":error}),
         );
     }
+
     fn barrier(&self, client: &mut LspClient) -> Value {
         let result = Rc::new(RefCell::new(None));
         let output = result.clone();
@@ -108,6 +118,7 @@ impl Fixture {
         until(client, |_| result.borrow().is_some());
         result.borrow_mut().take().unwrap()
     }
+
     fn registration(&self, client: &LspClient, id: &str, identifier: &str, pattern: &str) {
         self.send(client, json!({
             "jsonrpc":"2.0", "id":format!("register-{id}"), "method":"client/registerCapability",
@@ -117,6 +128,7 @@ impl Fixture {
             }}]}
         }));
     }
+
     fn unregister(&self, client: &LspClient, id: &str) {
         self.send(client, json!({
             "jsonrpc":"2.0", "id":format!("unregister-{id}"), "method":"client/unregisterCapability",
@@ -124,6 +136,7 @@ impl Fixture {
         }));
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -146,6 +159,7 @@ fn until(client: &mut LspClient, mut ready: impl FnMut(&LspClient) -> bool) {
         thread::sleep(Duration::from_millis(2));
     }
 }
+
 fn settle(client: &mut LspClient) {
     let deadline = Instant::now() + Duration::from_millis(250);
     while Instant::now() < deadline {
@@ -153,18 +167,22 @@ fn settle(client: &mut LspClient) {
         thread::sleep(Duration::from_millis(2));
     }
 }
+
 fn uri(path: &str) -> String {
     LspUri::file_uri_from_path(path).unwrap().to_string()
 }
+
 fn provider(inter_file: bool) -> Value {
     json!({"identifier":"static-fixture","interFileDependencies":inter_file,"workspaceDiagnostics":false})
 }
+
 fn full(result_id: &str, message: &str) -> Value {
     json!({"kind":"full","resultId":result_id,"items":if message.is_empty() {vec![]} else {vec![json!({
         "range":{"start":{"line":0,"character":0},"end":{"line":0,"character":3}},
         "severity":1,"message":message
     })]}})
 }
+
 fn messages(client: &LspClient, path: &str) -> Vec<String> {
     client
         .diagnostics()
@@ -173,6 +191,7 @@ fn messages(client: &LspClient, path: &str) -> Vec<String> {
         .map(|item| item.message)
         .collect()
 }
+
 fn change(client: &mut LspClient, path: &str, version: i32) {
     client
         .did_change(
@@ -187,6 +206,7 @@ fn change(client: &mut LspClient, path: &str, version: i32) {
         )
         .unwrap();
 }
+
 fn save(client: &mut LspClient, path: &str) {
     client.did_save(path, || Ok("two".into())).unwrap();
 }

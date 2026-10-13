@@ -21,19 +21,23 @@ struct Store {
 pub struct LspDiagnostics {
     inner: Arc<Mutex<Store>>,
 }
+
 impl LspDiagnostics {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn set_remote_paths(&self, remote: bool) {
         *self.inner.lock().unwrap() = Store {
             remote_paths: remote,
             ..Default::default()
         };
     }
+
     pub(crate) fn uses_remote_paths(&self) -> bool {
         self.inner.lock().unwrap().remote_paths
     }
+
     fn key_for(store: &mut Store, path: &str) -> String {
         if path.is_empty() {
             return String::new();
@@ -51,9 +55,11 @@ impl LspDiagnostics {
             })
             .clone()
     }
+
     pub fn replace(&self, path: &str, items: Vec<DiagnosticItem>, version: i32) {
         self.replace_raw(path, items, Vec::new(), version);
     }
+
     pub(crate) fn replace_raw(
         &self,
         path: &str,
@@ -78,6 +84,7 @@ impl LspDiagnostics {
         store.raw_by_path.insert(key.clone(), raw);
         store.by_path.insert(key, items);
     }
+
     pub fn clear(&self, path: &str) {
         let mut store = self.inner.lock().unwrap();
         let key = Self::key_for(&mut store, path);
@@ -88,6 +95,7 @@ impl LspDiagnostics {
         store.raw_by_path.remove(&key);
         store.versions.remove(&key);
     }
+
     pub fn clear_all(&self) {
         let mut store = self.inner.lock().unwrap();
         *store = Store {
@@ -95,6 +103,7 @@ impl LspDiagnostics {
             ..Default::default()
         };
     }
+
     /// Publish a complete presentation snapshot without changing server-owned
     /// versions or raw diagnostic payloads in the source stores.
     pub fn replace_snapshot(
@@ -114,6 +123,7 @@ impl LspDiagnostics {
         }
         *self.inner.lock().unwrap() = next;
     }
+
     /// One consistent snapshot, including files that have never been opened.
     pub fn snapshot(&self) -> std::collections::BTreeMap<String, Vec<DiagnosticItem>> {
         self.inner
@@ -124,6 +134,7 @@ impl LspDiagnostics {
             .map(|(path, items)| (path.clone(), items.clone()))
             .collect()
     }
+
     /// A closed document's last report remains useful, but its next open starts
     /// a new version sequence and must not be rejected as an old publication.
     pub fn forget_version(&self, path: &str) {
@@ -131,17 +142,20 @@ impl LspDiagnostics {
         let key = Self::key_for(&mut store, path);
         store.versions.remove(&key);
     }
+
     pub fn for_document(&self, path: &str) -> Vec<DiagnosticItem> {
         let mut store = self.inner.lock().unwrap();
         let key = Self::key_for(&mut store, path);
         store.by_path.get(&key).cloned().unwrap_or_default()
     }
+
     /// Preserve server-specific diagnostic code/data when requesting quick fixes.
     pub fn raw_for_document(&self, path: &str) -> Vec<serde_json::Value> {
         let mut store = self.inner.lock().unwrap();
         let key = Self::key_for(&mut store, path);
         store.raw_by_path.get(&key).cloned().unwrap_or_default()
     }
+
     pub fn for_line(&self, path: &str, line: i32) -> Vec<DiagnosticItem> {
         if line < 0 {
             return Vec::new();
@@ -151,6 +165,7 @@ impl LspDiagnostics {
             .filter(|item| item.start_line <= line && line <= item.end_line)
             .collect()
     }
+
     pub fn max_severity_by_line(&self, path: &str, line_count: i32) -> Vec<i32> {
         let mut result = vec![0; line_count.max(0) as usize];
         for item in self.for_document(path) {
@@ -168,6 +183,7 @@ impl LspDiagnostics {
         }
         result
     }
+
     pub fn contains(&self, path: &str, line: i32, utf16_column: i32) -> bool {
         self.for_line(path, line)
             .iter()
@@ -178,6 +194,7 @@ impl LspDiagnostics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn presentation_snapshots_replace_all_paths_and_keep_remote_identity() {
         let store = LspDiagnostics::new();
@@ -193,6 +210,7 @@ mod tests {
         assert!(store.for_document(path).is_empty());
         assert!(store.snapshot().is_empty());
     }
+
     #[test]
     fn raw_diagnostics_preserve_quick_fix_data_and_follow_version_rejection() {
         let store = LspDiagnostics::new();
@@ -208,6 +226,7 @@ mod tests {
         store.clear("/tmp/action.rs");
         assert!(store.raw_for_document("/tmp/action.rs").is_empty());
     }
+
     #[test]
     fn remote_diagnostic_keys_do_not_use_local_path_normalization_after_clear() {
         let store = LspDiagnostics::new();
@@ -220,6 +239,7 @@ mod tests {
             store.clear_all();
         }
     }
+
     #[test]
     fn upstream_replace_and_query_by_line() {
         let store = LspDiagnostics::new();
@@ -247,6 +267,7 @@ mod tests {
         store.clear("/tmp/a.cpp");
         assert_eq!(store.max_severity_by_line("/tmp/a.cpp", 5)[2], 0);
     }
+
     #[test]
     fn upstream_stale_versions_rejected() {
         let store = LspDiagnostics::new();
@@ -260,6 +281,7 @@ mod tests {
         store.replace("/tmp/stale.cpp", vec![item("v3")], 3);
         assert_eq!(store.for_line("/tmp/stale.cpp", 0)[0].message, "v3");
     }
+
     #[test]
     fn upstream_versionless_publishes_do_not_block_updates() {
         let store = LspDiagnostics::new();
@@ -274,6 +296,7 @@ mod tests {
         store.replace("/tmp/anon.cpp", vec![item("v0")], 0);
         assert_eq!(store.for_line("/tmp/anon.cpp", 0)[0].message, "v0");
     }
+
     #[test]
     fn inclusive_utf16_ranges_shared_keys_and_severity_limits() {
         let store = LspDiagnostics::new();

@@ -10,7 +10,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
 struct Fixture(PathBuf);
+
 impl Fixture {
     fn new(script: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -25,6 +27,7 @@ impl Fixture {
         fs::set_permissions(file, fs::Permissions::from_mode(0o755)).unwrap();
         Self(root)
     }
+
     fn client(&self) -> LspClient {
         let mut client = LspClient::with_config(
             self.0.join("missing.json"),
@@ -42,11 +45,13 @@ impl Fixture {
         client
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
 fn until(client: &mut LspClient, ready: impl Fn(&LspClient) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {

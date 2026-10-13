@@ -244,37 +244,48 @@ struct UniqueValue(Value);
 impl<'de> Deserialize<'de> for UniqueValue {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct UniqueVisitor;
+
         impl<'de> Visitor<'de> for UniqueVisitor {
             type Value = UniqueValue;
+
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 formatter.write_str("JSON value with unique object keys")
             }
+
             fn visit_bool<E: de::Error>(self, value: bool) -> Result<Self::Value, E> {
                 Ok(UniqueValue(Value::Bool(value)))
             }
+
             fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
                 Ok(UniqueValue(Value::from(value)))
             }
+
             fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
                 Ok(UniqueValue(Value::from(value)))
             }
+
             fn visit_f64<E: de::Error>(self, value: f64) -> Result<Self::Value, E> {
                 Number::from_f64(value)
                     .map(|number| UniqueValue(Value::Number(number)))
                     .ok_or_else(|| E::custom("Nonfinite JSON number"))
             }
+
             fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
                 Ok(UniqueValue(Value::from(value)))
             }
+
             fn visit_string<E: de::Error>(self, value: String) -> Result<Self::Value, E> {
                 Ok(UniqueValue(Value::from(value)))
             }
+
             fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
                 Ok(UniqueValue(Value::Null))
             }
+
             fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
                 Ok(UniqueValue(Value::Null))
             }
+
             fn visit_seq<A: SeqAccess<'de>>(
                 self,
                 mut sequence: A,
@@ -285,6 +296,7 @@ impl<'de> Deserialize<'de> for UniqueValue {
                 }
                 Ok(UniqueValue(Value::Array(values)))
             }
+
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
                 let mut values = Map::new();
                 while let Some(key) = map.next_key::<String>()? {
@@ -304,6 +316,7 @@ impl<'de> Deserialize<'de> for UniqueValue {
 mod tests {
     use super::*;
     use serde_json::json;
+
     #[test]
     fn validates_batches_identifiers_and_response_shape() {
         assert!(Packet::parse(br#"[]"#).is_err());
@@ -322,6 +335,7 @@ mod tests {
             Packet::Single(Message::Request(Request { params: None, .. }))
         ));
     }
+
     #[test]
     fn preserves_duplicate_key_rejection_and_strict_utf8() {
         for bytes in [
@@ -332,6 +346,7 @@ mod tests {
             assert_eq!(Packet::parse(bytes).unwrap_err().code, PARSE_ERROR);
         }
     }
+
     #[test]
     fn error_data_is_inside_error() {
         let error = ResponseError {

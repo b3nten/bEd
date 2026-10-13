@@ -25,12 +25,14 @@ struct Filter {
     scheme: Option<String>,
     pattern: Option<globset::GlobMatcher>,
 }
+
 pub(crate) struct Provider {
     registration_id: Option<String>,
     identifier: Option<String>,
     selector: Option<Vec<Filter>>,
     inter_file: bool,
 }
+
 impl Provider {
     pub(crate) fn parse(value: &Value) -> Result<Self, ResponseError> {
         if !value.is_object() {
@@ -110,12 +112,14 @@ impl Provider {
             inter_file: value["interFileDependencies"].as_bool().unwrap_or(false),
         })
     }
+
     fn identity(&self) -> String {
         self.identifier
             .as_ref()
             .map(|id| format!("id:{id}"))
             .unwrap_or_else(|| "$default".into())
     }
+
     fn matches(&self, document: &Document) -> bool {
         let Some(filters) = &self.selector else {
             return true;
@@ -139,13 +143,16 @@ impl Provider {
         })
     }
 }
+
 pub(crate) enum Input {
     Register(String, Provider),
     Unregister(String),
     Refresh,
     FilesChanged(Vec<String>),
 }
+
 pub(crate) type Inputs = Rc<RefCell<VecDeque<Input>>>;
+
 struct Document {
     uri: String,
     path: String,
@@ -154,12 +161,14 @@ struct Document {
     revision: u64,
     synchronized: bool,
 }
+
 #[derive(Default)]
 struct Job {
     due: Option<Instant>,
     pending: Option<Pending>,
     retry_delay: u64,
 }
+
 struct Pending {
     id: RpcId,
     sequence: u64,
@@ -167,11 +176,13 @@ struct Pending {
     primary_revision: u64,
     cache_ids: BTreeMap<String, String>,
 }
+
 struct Reply {
     key: Key,
     sequence: u64,
     result: Result<Value, ResponseError>,
 }
+
 struct Cached {
     id: Option<String>,
     items: Vec<DiagnosticItem>,
@@ -195,24 +206,29 @@ pub(crate) struct DocumentDiagnosticPull {
     pub(crate) inputs: Inputs,
     replies: Rc<RefCell<VecDeque<Reply>>>,
 }
+
 impl DocumentDiagnosticPull {
     fn bump(&mut self, uri: &str) -> u64 {
         self.next_revision += 1;
         self.revisions.insert(uri.into(), self.next_revision);
         self.next_revision
     }
+
     pub(crate) fn contains(&self, uri: &str) -> bool {
         self.documents.contains_key(uri)
     }
+
     pub(crate) fn take_released_uris(&mut self) -> Vec<String> {
         std::mem::take(&mut self.released).into_iter().collect()
     }
+
     pub(crate) fn set_static(&mut self, provider: Option<Provider>) {
         if let Some(provider) = provider {
             let id = provider.registration_id.clone();
             self.providers.insert(id, provider);
         }
     }
+
     pub(crate) fn open(&mut self, uri: String, path: String, language: String, version: i32) {
         if self.documents.contains_key(&uri) {
             self.change(&uri, version, true);
@@ -232,6 +248,7 @@ impl DocumentDiagnosticPull {
         );
         self.dirty(&uri, Duration::ZERO, true);
     }
+
     pub(crate) fn change(&mut self, uri: &str, version: i32, synchronized: bool) {
         let revision = self.bump(uri);
         if let Some(document) = self.documents.get_mut(uri) {
@@ -241,12 +258,14 @@ impl DocumentDiagnosticPull {
         }
         self.dirty(uri, EDIT_DELAY, true);
     }
+
     pub(crate) fn save(&mut self, uri: &str) {
         if let Some(document) = self.documents.get_mut(uri) {
             document.synchronized = true;
         }
         self.dirty(uri, Duration::ZERO, true);
     }
+
     pub(crate) fn close(&mut self, uri: &str, store: &LspDiagnostics) -> bool {
         let document = self.documents.remove(uri);
         self.bump(uri);
@@ -268,6 +287,7 @@ impl DocumentDiagnosticPull {
         }
         had_report
     }
+
     pub(crate) fn refresh(&mut self) {
         let now = Instant::now();
         for job in self.jobs.values_mut() {
@@ -278,6 +298,7 @@ impl DocumentDiagnosticPull {
             job.retry_delay = 0;
         }
     }
+
     fn dirty(&mut self, uri: &str, delay: Duration, dependencies: bool) {
         let inter_file: BTreeSet<_> = self
             .providers
@@ -295,6 +316,7 @@ impl DocumentDiagnosticPull {
             }
         }
     }
+
     fn remove_job(&mut self, key: &Key) {
         if let Some(job) = self.jobs.remove(key)
             && let Some(pending) = job.pending
@@ -302,6 +324,7 @@ impl DocumentDiagnosticPull {
             self.cancel.push(pending.id);
         }
     }
+
     fn reconcile(&mut self, store: &LspDiagnostics) {
         let desired: BTreeSet<Key> = self
             .documents
@@ -349,6 +372,7 @@ impl DocumentDiagnosticPull {
             }
         }
     }
+
     pub(crate) fn canonical_uri(
         uri: &str,
         store: &LspDiagnostics,
@@ -379,6 +403,7 @@ impl DocumentDiagnosticPull {
         .to_string();
         Ok((canonical, path))
     }
+
     fn publish(&self, uri: &str, store: &LspDiagnostics) {
         let Ok((_, path)) = Self::canonical_uri(uri, store) else {
             return;
@@ -403,6 +428,7 @@ impl DocumentDiagnosticPull {
             .collect();
         store.replace_raw(&path, items, raw, version);
     }
+
     /// While a document pull owns an open buffer, workspace reports cannot
     /// describe its unsaved contents reliably (including null-version reports).
     pub(crate) fn accepts_workspace(
@@ -425,6 +451,7 @@ impl DocumentDiagnosticPull {
             .values()
             .any(|provider| provider.matches(document))
     }
+
     fn apply(
         &mut self,
         key: &Key,
@@ -544,6 +571,7 @@ impl DocumentDiagnosticPull {
         }
         Ok(())
     }
+
     pub(crate) fn poll(
         &mut self,
         session: &mut RpcSession,
@@ -730,6 +758,7 @@ mod tests {
             synchronized: true,
         }
     }
+
     #[test]
     fn selectors_combine_filter_fields_and_respect_protocol_glob_segments() {
         let selected = document("/project/deep/file.py", "python");
@@ -763,6 +792,7 @@ mod tests {
                 .matches(&selected)
         );
     }
+
     #[test]
     fn invalid_filters_and_foreign_file_uris_cannot_acquire_document_scope() {
         for selector in [

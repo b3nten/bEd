@@ -14,6 +14,7 @@ use std::{
 };
 
 struct Project(PathBuf);
+
 impl Project {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -25,6 +26,7 @@ impl Project {
         fs::create_dir_all(&root).unwrap();
         Self(fs::canonicalize(root).unwrap())
     }
+
     fn write(&self, name: &str, text: &str) -> String {
         let path = self.0.join(name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -32,11 +34,13 @@ impl Project {
         path.to_string_lossy().into_owned()
     }
 }
+
 impl Drop for Project {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
 fn wait(
     client: &mut LspClient,
     ready: impl Fn(&LspClient) -> bool,
@@ -63,6 +67,7 @@ fn wait(
         thread::sleep(Duration::from_millis(10));
     }
 }
+
 fn semantic_reply(client: &mut LspClient, method: &str, params: &Value) -> Value {
     assert!(
         client.supports_method(method),
@@ -93,6 +98,7 @@ fn semantic_reply(client: &mut LspClient, method: &str, params: &Value) -> Value
         thread::sleep(Duration::from_millis(50));
     }
 }
+
 fn exercise(
     project: &Project,
     path: &str,

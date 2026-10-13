@@ -38,6 +38,7 @@ pub enum ProgressToken {
     Number(i32),
     String(String),
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkDoneProgress {
     pub token: ProgressToken,
@@ -56,10 +57,12 @@ struct ProgressState {
     active: VecDeque<WorkDoneProgress>,
     completed: VecDeque<WorkDoneProgress>,
 }
+
 impl ProgressState {
     fn snapshot(&self) -> Vec<WorkDoneProgress> {
         self.active.iter().chain(&self.completed).cloned().collect()
     }
+
     fn apply(&mut self, params: Option<&Value>) -> Result<(), ResponseError> {
         let Some(params) = params.and_then(Value::as_object) else {
             return Ok(());
@@ -145,6 +148,7 @@ impl ProgressState {
         Ok(())
     }
 }
+
 fn progress_token(value: Option<&Value>) -> Result<ProgressToken, ResponseError> {
     if let Some(token) = value.and_then(Value::as_str) {
         if token.len() <= MAX_PROGRESS_TOKEN_BYTES && !token.contains('\0') {
@@ -160,6 +164,7 @@ fn progress_token(value: Option<&Value>) -> Result<ProgressToken, ResponseError>
             ResponseError::invalid_params("Expected string or signed 32-bit progress token")
         })
 }
+
 fn progress_text(value: &str) -> String {
     // Server text reaches native text widgets. Replace embedded NULs and cut
     // at a UTF-8 boundary, bounding each retained title/message independently.
@@ -183,6 +188,7 @@ struct WatchedFile {
     base: Option<PathBuf>,
     kind: u8,
 }
+
 impl WatchedFile {
     fn parse(value: &Value, remote: bool) -> Result<Self, ResponseError> {
         let glob = &value["globPattern"];
@@ -229,6 +235,7 @@ impl WatchedFile {
             kind,
         })
     }
+
     fn matches(&self, path: &Path, kind: u8) -> bool {
         if self.kind & kind == 0 {
             return false;
@@ -316,6 +323,7 @@ impl LspClient {
         client.set_configuration(config);
         client
     }
+
     pub fn set_configuration(&mut self, config: LspConfig) {
         self.sync.set_configuration(&config);
         self.config = config;
@@ -345,6 +353,7 @@ impl LspClient {
             self.workspace = workspace.into();
         }
     }
+
     /// Use target-native paths and launch language servers on this SSH host.
     /// Configuration stays local; binary discovery and process cwd stay remote.
     pub fn set_ssh_target(&mut self, target: Option<bed_remote::SshTarget>) {
@@ -359,21 +368,27 @@ impl LspClient {
     pub fn workspace(&self) -> &str {
         &self.workspace
     }
+
     pub fn is_remote(&self) -> bool {
         self.ssh_target.is_some()
     }
+
     pub fn config(&self) -> &LspConfig {
         &self.config
     }
+
     pub fn config_path(&self) -> &Path {
         &self.config_path
     }
+
     pub fn set_file_observations_available(&mut self, available: bool) {
         self.file_observations_available = available;
     }
+
     pub fn server_capabilities(&self) -> &Value {
         &self.server_capabilities
     }
+
     pub fn reply_workspace_edit(
         &mut self,
         id: RpcId,
@@ -384,6 +399,7 @@ impl LspClient {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "LSP disconnected"))?
             .reply_workspace_edit(id, result)
     }
+
     pub fn supports_method(&self, method: &str) -> bool {
         let capability = match method {
             "textDocument/completion" => "completionProvider",
@@ -411,6 +427,7 @@ impl LspClient {
             _ => false,
         }
     }
+
     /// Existing workspace observers supply facts; registered server filters
     /// determine which changes are sent to this process.
     pub fn observe_file_changes(&self, changes: &[bed_remote::FilesystemChange]) -> io::Result<()> {
@@ -473,19 +490,24 @@ impl LspClient {
             Some(json!({"changes":events})),
         )
     }
+
     /// Named server identity for the active process.
     pub fn current_server(&self) -> &str {
         &self.current_server
     }
+
     pub fn language_servers(&self) -> &BTreeMap<String, ServerConfiguration> {
         &self.config.language_servers
     }
+
     pub fn supported_languages(&self) -> Vec<String> {
         self.config.supported_languages()
     }
+
     pub fn detect_language_from_file(&self, path: &str) -> String {
         self.config.detect_language(path)
     }
+
     pub fn find_server_path(&self, language: &str) -> Option<PathBuf> {
         if self.ssh_target.is_some() {
             self.config
@@ -497,18 +519,23 @@ impl LspClient {
             self.config.find_server_path(language)
         }
     }
+
     pub fn diagnostics(&self) -> LspDiagnostics {
         self.diagnostics.clone()
     }
+
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
     }
+
     pub fn stderr_text(&self) -> String {
         String::from_utf8_lossy(&self.stderr_tail.iter().copied().collect::<Vec<_>>()).into_owned()
     }
+
     pub fn rust_startup_issue(&self) -> Option<&RustStartupIssue> {
         self.rust_issue.as_ref()
     }
+
     pub fn startup_error_details(&self) -> Option<String> {
         self.startup_failure.as_ref().map(|error| {
             let stderr = self.stderr_text();
@@ -519,9 +546,11 @@ impl LspClient {
             }
         })
     }
+
     pub(crate) fn rustup_launch(&self) -> Option<RustupLaunch> {
         self.rustup_launch.clone()
     }
+
     fn clear_startup_issue(&mut self) {
         self.startup_failure = None;
         self.rust_issue = None;
@@ -529,20 +558,25 @@ impl LspClient {
         self.rust_probe = None;
         self.rustup_launch = None;
     }
+
     /// Active jobs followed by recent completed jobs; initialization alone is
     /// not a statement that workspace loading/indexing has completed.
     pub fn progress(&self) -> Vec<WorkDoneProgress> {
         self.progress.borrow().snapshot()
     }
+
     pub fn is_initialized(&self) -> bool {
         self.sync.is_ready()
     }
+
     pub fn is_process_started(&self) -> bool {
         self.session.as_ref().is_some_and(RpcSession::is_connected)
     }
+
     pub fn is_document_open(&self, path: &str) -> bool {
         self.sync.is_document_open(path)
     }
+
     pub fn process_id(&self) -> Option<u32> {
         self.session.as_ref().map(RpcSession::process_id)
     }
@@ -814,10 +848,12 @@ impl LspClient {
         }
         events
     }
+
     /// True only after a workspace pull has completed successfully.
     pub fn workspace_diagnostics_complete(&self) -> bool {
         self.workspace_pull.complete()
     }
+
     pub fn set_project_check_owner(&mut self, enabled: bool) {
         if self.project_check_owner == enabled {
             return;
@@ -846,6 +882,7 @@ impl LspClient {
             }
         }
     }
+
     pub fn refresh_workspace_diagnostics(&mut self) {
         self.document_pull.refresh();
         self.workspace_pull.refresh();
@@ -1403,6 +1440,7 @@ fn apply_diagnostics(store: &LspDiagnostics, params: Option<&Value>) -> Result<(
     );
     Ok(())
 }
+
 pub(crate) fn decode_diagnostics(
     store: &LspDiagnostics,
     params: Option<&Value>,
@@ -1486,6 +1524,7 @@ pub type SharedLspClient = std::rc::Rc<std::cell::RefCell<LspClient>>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn late_rustup_stderr_updates_remote_startup_error_without_local_queries() {
         let directory = crate::test_support::TempDir::new();
@@ -1516,6 +1555,7 @@ mod tests {
         assert!(client.rust_probe.is_none());
         assert!(client.rustup_launch.is_none());
     }
+
     #[test]
     fn watched_files_support_relative_patterns_kinds_and_literal_roots() {
         let watch = WatchedFile::parse(&json!({"globPattern":{"baseUri":{"uri":"file:///project/a%27b"},"pattern":"**/*.{rs,toml}"},"kind":5}), false).unwrap();
@@ -1533,6 +1573,7 @@ mod tests {
         );
         assert!(WatchedFile::parse(&json!({"globPattern":"**","kind":8}), false).is_err());
     }
+
     #[test]
     fn method_support_tracks_negotiated_provider_capabilities() {
         let mut client = LspClient::new("/missing/lsp.json");
@@ -1544,6 +1585,7 @@ mod tests {
         assert!(client.supports_method("textDocument/references"));
         assert!(client.supports_method("workspace/diagnostic"));
     }
+
     #[test]
     fn bed_cargo_ownership_restores_user_check_on_save_configuration() {
         for original in [Some(json!(false)), Some(json!(true)), None] {
@@ -1571,6 +1613,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn remote_launch_quotes_candidates_and_environment_without_local_cwd_or_path() {
         let target = bed_remote::SshTarget {
@@ -1597,6 +1640,7 @@ mod tests {
         assert_eq!(params["processId"], Value::Null);
         assert_eq!(params["rootUri"], "file:///target/project");
     }
+
     #[test]
     fn remote_discovery_preserves_target_paths_without_local_existence_checks() {
         let mut client = LspClient::with_config(
@@ -1610,6 +1654,7 @@ mod tests {
             Some(PathBuf::from("/remote/only/rust-analyzer"))
         );
     }
+
     #[test]
     fn initialize_advertises_original_features_and_utf16() {
         let params = initialize_params(env!("CARGO_MANIFEST_DIR"), false).unwrap();
@@ -1636,6 +1681,7 @@ mod tests {
                 .unwrap()
         );
     }
+
     #[test]
     fn work_done_progress_preserves_phases_and_partial_results_are_ignored() {
         let mut state = ProgressState::default();
@@ -1684,6 +1730,7 @@ mod tests {
         assert_eq!(state.snapshot().len(), 2);
         assert!(state.snapshot().iter().all(|job| !job.finished));
     }
+
     #[test]
     fn work_done_progress_bounds_unicode_text_jobs_and_invalid_percentages() {
         let mut state = ProgressState::default();
@@ -1728,6 +1775,7 @@ mod tests {
         assert!(state.snapshot().iter().all(|job| job.finished));
         assert!(state.apply(Some(&json!({"token":"x".repeat(MAX_PROGRESS_TOKEN_BYTES + 1),"value":{"kind":"begin","title":"Overflow"}}))).is_err());
     }
+
     #[test]
     fn diagnostic_notifications_validate_whole_payload_and_keep_versions() {
         let store = LspDiagnostics::new();

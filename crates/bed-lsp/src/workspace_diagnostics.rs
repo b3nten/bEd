@@ -22,6 +22,7 @@ pub(crate) struct Provider {
     identifier: Identity,
     enabled: bool,
 }
+
 impl Provider {
     pub(crate) fn parse(value: &Value) -> Result<Self, ResponseError> {
         if !value.is_object() {
@@ -55,12 +56,14 @@ impl Provider {
         })
     }
 }
+
 pub(crate) enum Input {
     Register(String, Provider),
     Unregister(String),
     Refresh,
     Progress(String, Value),
 }
+
 pub(crate) type Inputs = Rc<RefCell<VecDeque<Input>>>;
 
 struct Cached {
@@ -70,12 +73,14 @@ struct Cached {
     version: i32,
     sequence: u64,
 }
+
 struct Pending {
     id: RpcId,
     sequence: u64,
     token: String,
     previous_ids: BTreeMap<String, String>,
 }
+
 #[derive(Default)]
 struct State {
     cache: BTreeMap<String, Cached>,
@@ -87,6 +92,7 @@ struct State {
     retry_at: Option<Instant>,
     retry_delay: u64,
 }
+
 struct Reply {
     provider: Identity,
     sequence: u64,
@@ -104,15 +110,18 @@ pub(crate) struct WorkspaceDiagnosticPull {
     pub(crate) inputs: Inputs,
     replies: Rc<RefCell<VecDeque<Reply>>>,
 }
+
 impl WorkspaceDiagnosticPull {
     pub(crate) fn set_static(&mut self, provider: Option<Provider>, id: Option<String>) {
         if let Some(provider) = provider {
             self.registrations.insert(id, provider);
         }
     }
+
     pub(crate) fn complete(&self) -> bool {
         !self.providers.is_empty() && self.providers.values().all(|state| state.completed)
     }
+
     pub(crate) fn refresh(&mut self) {
         for state in self.providers.values_mut() {
             if let Some(pending) = state.pending.take() {
@@ -125,6 +134,7 @@ impl WorkspaceDiagnosticPull {
             state.retry_delay = 0;
         }
     }
+
     /// The document owner relinquished a URI. Forget its workspace IDs so the
     /// next pull returns disk contents instead of an unchanged unsaved report.
     pub(crate) fn close(&mut self, uri: &str, store: &LspDiagnostics) {
@@ -135,6 +145,7 @@ impl WorkspaceDiagnosticPull {
         }
         self.refresh();
     }
+
     fn reconcile(&mut self, store: &LspDiagnostics, documents: &DocumentDiagnosticPull) {
         let desired: BTreeSet<_> = self
             .registrations
@@ -167,6 +178,7 @@ impl WorkspaceDiagnosticPull {
             self.publish(&uri, store, documents, true);
         }
     }
+
     fn publish(
         &self,
         uri: &str,
@@ -218,6 +230,7 @@ impl WorkspaceDiagnosticPull {
         }
         store.replace_raw(&path, items, raw, version);
     }
+
     fn apply(
         &mut self,
         identity: &Identity,
@@ -341,6 +354,7 @@ impl WorkspaceDiagnosticPull {
         }
         Ok(())
     }
+
     pub(crate) fn poll(
         &mut self,
         session: &mut RpcSession,
@@ -531,6 +545,7 @@ mod tests {
             enabled: true,
         }
     }
+
     fn pending(sequence: u64, previous_ids: BTreeMap<String, String>) -> Pending {
         Pending {
             id: RpcId::Number(sequence as i32),
@@ -539,6 +554,7 @@ mod tests {
             previous_ids,
         }
     }
+
     fn report(uri: &str, id: Option<&str>, version: Option<i32>, message: &str) -> Value {
         let items = if message.is_empty() {
             json!([])
@@ -552,6 +568,7 @@ mod tests {
         }
         json!({"items":[value]})
     }
+
     fn activate(
         pull: &mut WorkspaceDiagnosticPull,
         id: &str,

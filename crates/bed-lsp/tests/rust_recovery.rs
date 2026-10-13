@@ -24,6 +24,7 @@ fn until(pool: &mut WorkspaceLsp, ready: impl Fn(&WorkspaceLsp) -> bool) {
         thread::sleep(Duration::from_millis(5));
     }
 }
+
 fn setup(fixture: &RustupFixture) -> (WorkspaceLsp, ServerInstanceId) {
     let root = fixture.root("first");
     let instance = ServerInstanceId {

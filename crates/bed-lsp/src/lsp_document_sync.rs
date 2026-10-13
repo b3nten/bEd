@@ -72,6 +72,7 @@ pub fn validate_initialize_result(result: &Value) -> io::Result<()> {
     }
     Ok(())
 }
+
 #[derive(Clone, Debug)]
 struct PendingOpen {
     key: String,
@@ -79,6 +80,7 @@ struct PendingOpen {
     language_id: String,
     version: i32,
 }
+
 pub struct LspDocumentSync {
     remote_paths: bool,
     diagnostics: LspDiagnostics,
@@ -91,11 +93,13 @@ pub struct LspDocumentSync {
     pending_opens: Vec<PendingOpen>,
     open_documents: HashSet<String>,
 }
+
 impl Default for LspDocumentSync {
     fn default() -> Self {
         Self::new(LspDiagnostics::new())
     }
 }
+
 impl LspDocumentSync {
     pub fn new(diagnostics: LspDiagnostics) -> Self {
         Self {
@@ -111,13 +115,16 @@ impl LspDocumentSync {
             open_documents: HashSet::new(),
         }
     }
+
     pub fn set_configuration(&mut self, configuration: &LspConfig) {
         self.languages = configuration.clone();
     }
+
     pub fn set_remote_paths(&mut self, remote: bool) {
         self.disconnect();
         self.remote_paths = remote;
     }
+
     pub(crate) fn key(&self, path: &str) -> String {
         if self.remote_paths {
             path.to_owned()
@@ -125,6 +132,7 @@ impl LspDocumentSync {
             doc_path::normalize(path)
         }
     }
+
     pub(crate) fn file_uri(&self, path: &str) -> io::Result<LspUri> {
         if self.remote_paths {
             LspUri::file_uri_from_remote_path(path)
@@ -132,9 +140,11 @@ impl LspDocumentSync {
             LspUri::file_uri_from_path(path)
         }
     }
+
     pub fn connect(&mut self) {
         self.connected = true;
     }
+
     pub fn disconnect(&mut self) {
         self.connected = false;
         self.ready = false;
@@ -144,12 +154,15 @@ impl LspDocumentSync {
         self.pending_opens.clear();
         self.open_documents.clear();
     }
+
     pub fn is_ready(&self) -> bool {
         self.ready
     }
+
     pub(crate) fn syncs_changes(&self) -> bool {
         self.sync_kind != 0
     }
+
     pub(crate) fn language_id(&self, key: &str, content: &str, supplied: &str) -> String {
         if !supplied.is_empty() {
             return supplied.to_owned();
@@ -161,9 +174,11 @@ impl LspDocumentSync {
             .unwrap_or("plaintext")
             .to_owned()
     }
+
     pub fn is_document_open(&self, path: &str) -> bool {
         !path.is_empty() && self.open_documents.contains(&self.key(path))
     }
+
     /// A closed shared document must not be resurrected after initialize.
     pub fn cancel_pending_open(&mut self, path: &str) {
         let key = self.key(path);
@@ -172,6 +187,7 @@ impl LspDocumentSync {
             self.diagnostics.clear(&key);
         }
     }
+
     /// The caller has already decoded the initialize result. Missing sync
     /// capabilities retain the original default incremental behavior.
     pub fn apply_capabilities(&mut self, result: &Value) {
@@ -204,10 +220,12 @@ impl LspDocumentSync {
             self.sync_kind = kind;
         }
     }
+
     pub fn mark_handshake_ready(&mut self, sink: &impl NotificationSink) -> io::Result<()> {
         self.ready = true;
         self.flush_pending(sink)
     }
+
     fn upsert_pending_open(
         &mut self,
         key: String,
@@ -231,6 +249,7 @@ impl LspDocumentSync {
             language_id,
         });
     }
+
     fn send_did_open(
         &mut self,
         key: &str,
@@ -246,6 +265,7 @@ impl LspDocumentSync {
         self.open_documents.insert(key.to_owned());
         Ok(())
     }
+
     fn flush_pending(&mut self, sink: &impl NotificationSink) -> io::Result<()> {
         let mut first_error = None;
         for document in std::mem::take(&mut self.pending_opens) {
@@ -273,6 +293,7 @@ impl LspDocumentSync {
         }
         first_error.map_or(Ok(()), Err)
     }
+
     pub fn did_open(
         &mut self,
         path: &str,
@@ -295,6 +316,7 @@ impl LspDocumentSync {
         }
         self.send_did_open(&key, content, version, &language_id, sink)
     }
+
     pub fn did_change(
         &mut self,
         path: &str,
@@ -329,6 +351,7 @@ impl LspDocumentSync {
         };
         sink.send_notification("textDocument/didChange",Some(json!({"textDocument":{"uri":self.file_uri(&key)?.to_string(),"version":version},"contentChanges":content_changes})))
     }
+
     pub fn did_save(
         &mut self,
         path: &str,
@@ -348,6 +371,7 @@ impl LspDocumentSync {
         }
         sink.send_notification("textDocument/didSave", Some(params))
     }
+
     pub fn did_close(&mut self, path: &str, sink: &impl NotificationSink) -> io::Result<()> {
         if !self.connected || path.is_empty() {
             return Ok(());
@@ -372,11 +396,13 @@ impl LspDocumentSync {
 mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
+
     #[derive(Default)]
     struct Sink {
         messages: RefCell<Vec<(String, Value)>>,
         fail: Cell<bool>,
     }
+
     impl NotificationSink for Sink {
         fn send_notification(&self, method: &str, params: Option<Value>) -> io::Result<()> {
             if self.fail.get() {
@@ -391,11 +417,13 @@ mod tests {
             Ok(())
         }
     }
+
     fn ready(sync: &mut LspDocumentSync, sink: &Sink, capabilities: Value) {
         sync.connect();
         sync.apply_capabilities(&json!({"capabilities":capabilities}));
         sync.mark_handshake_ready(sink).unwrap();
     }
+
     #[test]
     fn remote_document_paths_remain_target_native_through_sync() {
         let sink = Sink::default();
@@ -423,6 +451,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn queued_open_latest_text_first_language_and_insertion_order() {
         let sink = Sink::default();
@@ -446,6 +475,7 @@ mod tests {
         assert_eq!(messages[0].1["textDocument"]["languageId"], "first");
         assert_eq!(messages[1].1["textDocument"]["text"], "other");
     }
+
     #[test]
     fn incremental_changes_keep_utf16_sequence_and_never_join_full_text() {
         let sink = Sink::default();
@@ -482,6 +512,7 @@ mod tests {
         assert_eq!(events[1]["range"]["start"]["character"], 0);
         assert_eq!(events[1]["text"], "é");
     }
+
     #[test]
     fn full_none_and_empty_incremental_change_list_negotiate_lazy_provider() {
         for kind in [0, 1, 2] {
@@ -506,6 +537,7 @@ mod tests {
             assert_eq!(sink.messages.borrow().len(), if kind == 0 { 1 } else { 2 });
         }
     }
+
     #[test]
     fn save_presence_false_quirk_and_include_text_provider() {
         for save in [
@@ -551,6 +583,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn reopen_is_change_and_close_retains_report_even_on_failed_notify() {
         let sink = Sink::default();
@@ -570,6 +603,7 @@ mod tests {
         diagnostics.replace("Cargo.toml", vec![], 0);
         assert!(diagnostics.for_document("Cargo.toml").is_empty());
     }
+
     #[test]
     fn untracked_change_opens_and_pending_close_retains_original_quirk() {
         let sink = Sink::default();
@@ -588,6 +622,7 @@ mod tests {
         assert!(!sync.is_ready());
         assert!(!sync.is_document_open("Cargo.toml"));
     }
+
     #[test]
     fn workspace_close_cancels_queued_open_before_handshake() {
         let sink = Sink::default();
@@ -604,6 +639,7 @@ mod tests {
         assert!(sync.is_document_open("kept.rs"));
         assert_eq!(sink.messages.borrow().len(), 1);
     }
+
     #[test]
     fn absent_protocol_id_uses_configuration_and_disconnect_guards_providers() {
         let sink = Sink::default();
@@ -626,6 +662,7 @@ mod tests {
         sync.did_save("a.c", || panic!("disconnected joined text"), &sink)
             .unwrap();
     }
+
     #[test]
     fn supplied_protocol_ids_are_used_verbatim_and_absent_ids_detect() {
         let sink = Sink::default();
@@ -652,6 +689,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn invalid_edit_bytes_and_failed_full_provider_do_not_send_lossy_text() {
         let sink = Sink::default();
@@ -687,6 +725,7 @@ mod tests {
         );
         assert_eq!(sink.messages.borrow().len(), 1);
     }
+
     #[test]
     fn typed_initialize_capabilities_accept_null_fractional_and_custom_enumerations() {
         for sync in [

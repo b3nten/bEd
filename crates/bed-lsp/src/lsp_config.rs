@@ -33,6 +33,7 @@ pub enum FileType {
     Extension(String),
     Glob(String),
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LanguageConfiguration {
     pub name: String,
@@ -44,6 +45,7 @@ pub struct LanguageConfiguration {
     pub language_server: Option<String>,
     pub enabled: bool,
 }
+
 impl Default for LanguageConfiguration {
     fn default() -> Self {
         Self {
@@ -58,6 +60,7 @@ impl Default for LanguageConfiguration {
         }
     }
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ServerConfiguration {
     pub command: Vec<String>,
@@ -67,6 +70,7 @@ pub struct ServerConfiguration {
     pub initialization_options: Option<Value>,
     pub timeout_secs: u64,
 }
+
 impl Default for ServerConfiguration {
     fn default() -> Self {
         Self {
@@ -79,17 +83,20 @@ impl Default for ServerConfiguration {
         }
     }
 }
+
 #[derive(Clone, Debug, Default)]
 pub struct LspConfig {
     pub languages: Vec<LanguageConfiguration>,
     pub language_servers: BTreeMap<String, ServerConfiguration>,
     compiled_globs: Vec<(usize, GlobMatcher)>,
 }
+
 impl PartialEq for LspConfig {
     fn eq(&self, other: &Self) -> bool {
         self.languages == other.languages && self.language_servers == other.language_servers
     }
 }
+
 impl LspConfig {
     /// Load a complete configuration without applying bundled defaults.
     pub fn load(path: &Path) -> io::Result<Self> {
@@ -97,9 +104,11 @@ impl LspConfig {
             .and_then(|value| Self::from_json(&value))
             .map_err(|error| source_error(path, error))
     }
+
     pub fn from_json(value: &Value) -> io::Result<Self> {
         Self::parse(value)
     }
+
     /// Embedded defaults, optional user overrides, then optional project overrides.
     pub fn load_layered(user_path: &Path, project_path: Option<&Path>) -> io::Result<Self> {
         let read_optional = |path: &Path| match read_json(path) {
@@ -111,6 +120,7 @@ impl LspConfig {
         let project = project_path.map(read_optional).transpose()?.flatten();
         Self::from_layers(user.as_ref(), project.as_ref())
     }
+
     pub fn from_layers(user: Option<&Value>, project: Option<&Value>) -> io::Result<Self> {
         let mut effective: Value = serde_json::from_str(BUNDLED).expect("valid bundled LSP JSON");
         for (source, layer) in [("user", user), ("project", project)] {
@@ -123,6 +133,7 @@ impl LspConfig {
         }
         Self::parse(&effective)
     }
+
     fn parse(value: &Value) -> io::Result<Self> {
         let object = configuration_object(value)?;
         let rows = value
@@ -307,11 +318,13 @@ impl LspConfig {
         }
         Ok(config)
     }
+
     pub fn detect_language(&self, file_path: &str) -> String {
         self.detect_language_with_content(Path::new(file_path), &[])
             .map(|language| language.name.clone())
             .unwrap_or_default()
     }
+
     pub fn detect_language_with_content(
         &self,
         path: impl AsRef<Path>,
@@ -347,20 +360,24 @@ impl LspConfig {
             language.enabled && language.shebangs.iter().any(|value| value == &marker)
         })
     }
+
     pub fn language(&self, name: &str) -> Option<&LanguageConfiguration> {
         self.languages.iter().find(|language| language.name == name)
     }
+
     pub fn server_id(&self, language: &str) -> Option<&str> {
         self.language(language)
             .filter(|language| language.enabled)?
             .language_server
             .as_deref()
     }
+
     pub fn server(&self, name_or_language: &str) -> Option<&ServerConfiguration> {
         self.language_servers
             .get(name_or_language)
             .or_else(|| self.language_servers.get(self.server_id(name_or_language)?))
     }
+
     pub fn find_server_path(&self, name_or_language: &str) -> Option<PathBuf> {
         let server = self.server(name_or_language)?;
         let mut environment = ServerDiscoveryEnvironment::current();
@@ -369,6 +386,7 @@ impl LspConfig {
         }
         resolve_server_paths_with_environment(&server.command, &environment)
     }
+
     pub fn supported_languages(&self) -> Vec<String> {
         self.languages
             .iter()
@@ -377,15 +395,18 @@ impl LspConfig {
             .collect()
     }
 }
+
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
         format!("Invalid lsp.json: {}", message.into()),
     )
 }
+
 fn source_error(path: &Path, error: io::Error) -> io::Error {
     io::Error::new(error.kind(), format!("{}: {error}", path.display()))
 }
+
 fn known_fields(object: &Map<String, Value>, fields: &[&str], kind: &str) -> io::Result<()> {
     for field in object.keys() {
         if !fields.contains(&field.as_str()) {
@@ -394,6 +415,7 @@ fn known_fields(object: &Map<String, Value>, fields: &[&str], kind: &str) -> io:
     }
     Ok(())
 }
+
 fn configuration_object(value: &Value) -> io::Result<&Map<String, Value>> {
     let object = value
         .as_object()
@@ -411,6 +433,7 @@ fn configuration_object(value: &Value) -> io::Result<&Map<String, Value>> {
     }
     Ok(object)
 }
+
 fn strings(value: &Value, field: &str) -> io::Result<Vec<String>> {
     value
         .as_array()
@@ -424,6 +447,7 @@ fn strings(value: &Value, field: &str) -> io::Result<Vec<String>> {
         })
         .collect()
 }
+
 fn optional_strings(object: &Map<String, Value>, field: &str) -> io::Result<Vec<String>> {
     object
         .get(field)
@@ -431,9 +455,11 @@ fn optional_strings(object: &Map<String, Value>, field: &str) -> io::Result<Vec<
         .transpose()
         .map(Option::unwrap_or_default)
 }
+
 fn required_string(object: &Map<String, Value>, field: &str) -> io::Result<String> {
     optional_string(object, field)?.ok_or_else(|| invalid(format!("{field} is required")))
 }
+
 fn optional_string(object: &Map<String, Value>, field: &str) -> io::Result<Option<String>> {
     match object.get(field) {
         None | Some(Value::Null) => Ok(None),
@@ -443,6 +469,7 @@ fn optional_string(object: &Map<String, Value>, field: &str) -> io::Result<Optio
         ))),
     }
 }
+
 fn shebang_marker(content: &[u8]) -> Option<String> {
     let first_line = content.split(|byte| *byte == b'\n').next()?;
     let line = std::str::from_utf8(first_line)
@@ -473,6 +500,7 @@ fn shebang_marker(content: &[u8]) -> Option<String> {
         .trim_end_matches(|character: char| character.is_ascii_digit() || character == '.');
     (!marker.is_empty()).then(|| marker.to_owned())
 }
+
 fn merge_object(base: &mut Value, overrides: &Value) {
     if let (Some(base), Some(overrides)) = (base.as_object_mut(), overrides.as_object()) {
         for (key, value) in overrides {
@@ -487,6 +515,7 @@ fn merge_object(base: &mut Value, overrides: &Value) {
         *base = overrides.clone();
     }
 }
+
 fn merge_configuration(base: &mut Value, overrides: &Value) -> io::Result<()> {
     let object = configuration_object(overrides)?;
     if let Some(rows) = object.get("languages") {
@@ -537,6 +566,7 @@ fn merge_configuration(base: &mut Value, overrides: &Value) -> io::Result<()> {
     }
     Ok(())
 }
+
 /// Captured search inputs make discovery deterministic without changing the
 /// process environment. Never canonicalize a rustup proxy into `rustup`.
 #[derive(Clone, Debug, Default)]
@@ -546,6 +576,7 @@ pub struct ServerDiscoveryEnvironment {
     pub home: Option<PathBuf>,
     pub current_directory: PathBuf,
 }
+
 impl ServerDiscoveryEnvironment {
     pub fn current() -> Self {
         Self {
@@ -559,12 +590,14 @@ impl ServerDiscoveryEnvironment {
             current_directory: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         }
     }
+
     pub fn cargo_bin(&self) -> Option<PathBuf> {
         self.cargo_home
             .clone()
             .or_else(|| self.home.as_ref().map(|home| home.join(".cargo")))
             .map(|home| self.absolute(&home).join("bin"))
     }
+
     fn absolute(&self, path: &Path) -> PathBuf {
         if path.is_absolute() {
             path.to_owned()
@@ -577,6 +610,7 @@ impl ServerDiscoveryEnvironment {
 pub fn resolve_server_paths(paths: &[String]) -> Option<PathBuf> {
     resolve_server_paths_with_environment(paths, &ServerDiscoveryEnvironment::current())
 }
+
 pub fn resolve_server_paths_with_environment(
     paths: &[String],
     environment: &ServerDiscoveryEnvironment,
@@ -612,6 +646,7 @@ pub fn resolve_server_paths_with_environment(
     }
     None
 }
+
 fn executable_file(path: &Path) -> bool {
     let Ok(metadata) = path.metadata() else {
         return false;
@@ -628,6 +663,7 @@ fn executable_file(path: &Path) -> bool {
 pub fn server_child_path(program: &Path) -> io::Result<OsString> {
     server_child_path_with_environment(program, &ServerDiscoveryEnvironment::current())
 }
+
 pub fn server_child_path_with_environment(
     program: &Path,
     environment: &ServerDiscoveryEnvironment,
@@ -655,6 +691,7 @@ pub fn server_child_path_with_environment(
     }
     std::env::join_paths(unique).map_err(io::Error::other)
 }
+
 fn read_json(path: &std::path::Path) -> std::io::Result<serde_json::Value> {
     let bytes = std::fs::read(path)?;
     serde_json::from_slice(&bytes)
@@ -693,6 +730,7 @@ mod tests {
         assert_eq!(config.server_id("json"), config.server_id("jsonc"));
         assert_eq!(config.server_id("css"), config.server_id("less"));
     }
+
     #[test]
     fn layered_objects_merge_arrays_replace_and_defaults_stay_available() {
         let user = json!({"languages":[{"name":"rust","roots":["user.toml"]}], "language_servers":{"rust-analyzer":{"environment":{"A":"user","B":"user"},"args":["user"],"settings":{"check":{"command":"clippy","targets":["user"]}}}}});
@@ -717,6 +755,7 @@ mod tests {
         );
         assert!(config.language("lua").is_some());
     }
+
     #[test]
     fn language_override_layers_control_detection_conflicts() {
         let user = json!({"languages":[{"name":"first","file_types":["rs",{"glob":"*.custom"}]},{"name":"second","file_types":["rs",{"glob":"*.custom"}]}]});
@@ -727,6 +766,7 @@ mod tests {
         let user_only = LspConfig::from_layers(Some(&user), None).unwrap();
         assert_eq!(user_only.detect_language("test.rs"), "first");
     }
+
     #[test]
     fn disables_and_null_associations_remain_distinct() {
         let config = LspConfig::from_layers(Some(&json!({"languages":[{"name":"rust","enabled":false},{"name":"python","language_server":null}]})), None).unwrap();
@@ -735,6 +775,7 @@ mod tests {
         assert!(config.server_id("rust").is_none());
         assert!(config.server_id("python").is_none());
     }
+
     #[test]
     fn filename_globs_precede_extensions_and_support_braces_and_separators() {
         let config = LspConfig::from_layers(None, None).unwrap();
@@ -753,6 +794,7 @@ mod tests {
             assert_eq!(config.detect_language(path), expected, "{path}");
         }
     }
+
     #[test]
     fn shebangs_use_document_content_and_env_arguments() {
         let config = LspConfig::from_layers(None, None).unwrap();
@@ -789,6 +831,7 @@ mod tests {
                 .is_none()
         );
     }
+
     #[test]
     fn snapshots_are_exact_and_do_not_infer_server_arguments_or_settings() {
         let empty = LspConfig::from_json(&json!({"languages":[]})).unwrap();
@@ -808,6 +851,7 @@ mod tests {
         assert_eq!(server.settings, json!({}));
         assert_eq!(server.initialization_options, None);
     }
+
     #[test]
     fn empty_layered_overrides_preserve_the_bundled_catalog() {
         let defaults = LspConfig::from_layers(None, None).unwrap();
@@ -818,6 +862,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn unknown_fields_fail_at_the_configuration_language_and_server_boundaries() {
         for (value, field) in [
@@ -852,6 +897,7 @@ mod tests {
             "initialization_options":{"anything":[1,2]}}}});
         assert!(LspConfig::from_json(&settings).is_ok());
     }
+
     #[test]
     fn malformed_boundaries_reject_bad_paths_types_and_launch_parameters() {
         for root in ["../outside", "/outside", "C:\\outside", "..\\outside"] {
@@ -878,6 +924,7 @@ mod tests {
             assert!(LspConfig::from_layers(Some(&user), None).is_err(), "{user}");
         }
     }
+
     #[test]
     fn invalid_user_configuration_cannot_be_hidden_by_project_overrides() {
         let user = json!({"language_servers":{"rust-analyzer":{"timeout_secs":0}}});
@@ -885,6 +932,7 @@ mod tests {
         let error = LspConfig::from_layers(Some(&user), Some(&project)).unwrap_err();
         assert!(error.to_string().contains("user overrides"));
     }
+
     #[test]
     fn optional_files_missing_are_defaults_and_parse_errors_name_the_source() {
         let temp = TempDir::new();
@@ -901,6 +949,7 @@ mod tests {
         assert!(error.to_string().contains("malformed.json"));
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
+
     #[test]
     fn configured_environment_path_is_used_for_executable_discovery() {
         use std::os::unix::fs::PermissionsExt;
@@ -910,6 +959,7 @@ mod tests {
         let config = LspConfig::from_json(&json!({"languages":[{"name":"custom","language_server":"fixture"}],"language_servers":{"fixture":{"command":"custom-server","environment":{"PATH":executable.parent().unwrap()}}}})).unwrap();
         assert_eq!(config.find_server_path("custom"), Some(executable));
     }
+
     #[test]
     fn explicit_discovery_keeps_configured_regular_file_order() {
         let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
@@ -920,6 +970,7 @@ mod tests {
         );
         assert!(config.find_server_path("missing").is_none());
     }
+
     #[test]
     fn bare_servers_search_path_then_cargo_without_global_environment_changes() {
         use std::os::unix::fs::PermissionsExt;
@@ -961,6 +1012,7 @@ mod tests {
         );
         assert!(resolve_server_paths_with_environment(&["clangd".into()], &environment).is_none());
     }
+
     #[test]
     fn rustup_proxy_keeps_its_dispatch_filename_and_gui_home_fallback() {
         use std::os::unix::fs::{PermissionsExt, symlink};

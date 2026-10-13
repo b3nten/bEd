@@ -1,16 +1,20 @@
 //! Translated from ned lsp/lsp_request.h; see LICENSE and NOTICE.
 use crate::workspace_lsp::LspRequestOrigin;
 use std::sync::Mutex;
+
 pub type Ticket = u64;
+
 struct State<T> {
     ticket: Ticket,
     pending: bool,
     result: Option<T>,
     origin: Option<LspRequestOrigin>,
 }
+
 pub struct LspRequestState<T> {
     inner: Mutex<State<T>>,
 }
+
 impl<T> Default for LspRequestState<T> {
     fn default() -> Self {
         Self {
@@ -23,10 +27,12 @@ impl<T> Default for LspRequestState<T> {
         }
     }
 }
+
 impl<T> LspRequestState<T> {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn begin(&self) -> Ticket {
         let mut state = self.inner.lock().unwrap();
         state.ticket = state.ticket.wrapping_add(1);
@@ -35,6 +41,7 @@ impl<T> LspRequestState<T> {
         state.origin = None;
         state.ticket
     }
+
     pub fn begin_for(&self, mut origin: LspRequestOrigin) -> LspRequestOrigin {
         let mut state = self.inner.lock().unwrap();
         state.ticket = state.ticket.wrapping_add(1);
@@ -44,9 +51,11 @@ impl<T> LspRequestState<T> {
         state.origin = Some(origin);
         origin
     }
+
     pub fn origin(&self) -> Option<LspRequestOrigin> {
         self.inner.lock().unwrap().origin
     }
+
     pub fn deliver_for(&self, origin: LspRequestOrigin, result: Option<T>) {
         let mut state = self.inner.lock().unwrap();
         if state.origin != Some(origin) || state.ticket != origin.ticket {
@@ -55,6 +64,7 @@ impl<T> LspRequestState<T> {
         state.pending = false;
         state.result = result;
     }
+
     pub fn snapshot_for(&self, origin: &LspRequestOrigin) -> Option<T>
     where
         T: Clone,
@@ -64,6 +74,7 @@ impl<T> LspRequestState<T> {
             .then(|| state.result.clone())
             .flatten()
     }
+
     pub fn cancel(&self) {
         let mut state = self.inner.lock().unwrap();
         state.ticket = state.ticket.wrapping_add(1);
@@ -71,6 +82,7 @@ impl<T> LspRequestState<T> {
         state.result = None;
         state.origin = None;
     }
+
     pub fn deliver(&self, ticket: Ticket, result: Option<T>) {
         let mut state = self.inner.lock().unwrap();
         if state.ticket != ticket {
@@ -79,9 +91,11 @@ impl<T> LspRequestState<T> {
         state.pending = false;
         state.result = result;
     }
+
     pub fn is_pending(&self) -> bool {
         self.inner.lock().unwrap().pending
     }
+
     pub fn snapshot(&self) -> Option<T>
     where
         T: Clone,
@@ -93,6 +107,7 @@ impl<T> LspRequestState<T> {
 mod tests {
     use super::*;
     use bed_editing::identity::{DocumentId, ViewId, WorkspaceId};
+
     #[test]
     fn routed_replies_require_exact_workspace_document_version_view_and_ticket() {
         let state = LspRequestState::new();
@@ -152,6 +167,7 @@ mod tests {
         state.deliver_for(origin, Some("late"));
         assert!(state.snapshot().is_none());
     }
+
     #[test]
     fn upstream_empty_result_clears_pending() {
         let state = LspRequestState::<Vec<i32>>::new();
@@ -162,6 +178,7 @@ mod tests {
         assert!(!state.is_pending());
         assert_eq!(state.snapshot(), Some(vec![]));
     }
+
     #[test]
     fn upstream_stale_deliveries_drop() {
         let state = LspRequestState::new();
@@ -173,6 +190,7 @@ mod tests {
         assert_eq!(state.snapshot(), Some("fresh"));
         assert!(!state.is_pending());
     }
+
     #[test]
     fn upstream_cancel_invalidates_replies() {
         let state = LspRequestState::new();
@@ -182,6 +200,7 @@ mod tests {
         assert!(!state.is_pending());
         assert_eq!(state.snapshot(), None);
     }
+
     #[test]
     fn cross_thread_errors_clear_pending_without_resurrecting_cancel() {
         let state = std::sync::Arc::new(LspRequestState::<String>::new());

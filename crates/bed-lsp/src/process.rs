@@ -28,6 +28,7 @@ impl Process {
     pub fn start(program: &Path, arguments: &[String]) -> io::Result<(Self, ProcessPipes)> {
         Self::start_with_options(program, arguments, &ProcessOptions::default())
     }
+
     pub fn start_with_options(
         program: &Path,
         arguments: &[String],
@@ -60,6 +61,7 @@ impl Process {
     pub fn id(&self) -> u32 {
         self.child.id()
     }
+
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         self.child.try_wait()
     }

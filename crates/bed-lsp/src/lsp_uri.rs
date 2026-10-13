@@ -10,9 +10,11 @@ pub struct LspUri {
     query: Option<String>,
     fragment: Option<String>,
 }
+
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
+
 impl LspUri {
     pub fn parse(input: &str) -> io::Result<Self> {
         let scheme_end = input
@@ -53,6 +55,7 @@ impl LspUri {
             fragment,
         })
     }
+
     pub fn file_uri_from_path(path: &str) -> io::Result<Self> {
         let absolute = std::path::absolute(Path::new(path))?;
         let native = absolute
@@ -66,6 +69,7 @@ impl LspUri {
             fragment: None,
         })
     }
+
     /// Linux target paths are interpreted on the SSH host, never on this host.
     pub fn file_uri_from_remote_path(path: &str) -> io::Result<Self> {
         if !path.starts_with('/') || path.contains('\0') {
@@ -81,39 +85,51 @@ impl LspUri {
             fragment: None,
         })
     }
+
     pub fn fs_path(&self) -> String {
         self.path.clone()
     }
+
     pub fn is_valid(&self) -> bool {
         !self.scheme.is_empty()
     }
+
     pub fn is_file_uri(&self) -> bool {
         self.scheme == "file"
     }
+
     pub fn has_authority(&self) -> bool {
         self.authority.is_some()
     }
+
     pub fn has_query(&self) -> bool {
         self.query.is_some()
     }
+
     pub fn has_fragment(&self) -> bool {
         self.fragment.is_some()
     }
+
     pub fn scheme(&self) -> &str {
         &self.scheme
     }
+
     pub fn authority(&self) -> &str {
         self.authority.as_deref().unwrap_or("")
     }
+
     pub fn path(&self) -> &str {
         &self.path
     }
+
     pub fn query(&self) -> &str {
         self.query.as_deref().unwrap_or("")
     }
+
     pub fn fragment(&self) -> &str {
         self.fragment.as_deref().unwrap_or("")
     }
+
     pub fn encode(decoded: &str, exclude: &str) -> String {
         const HEX: &[u8; 16] = b"0123456789ABCDEF";
         let mut encoded = String::new();
@@ -131,6 +147,7 @@ impl LspUri {
         }
         encoded
     }
+
     pub fn decode(encoded: &str) -> io::Result<String> {
         let source = encoded.as_bytes();
         let mut decoded = Vec::new();
@@ -157,6 +174,7 @@ impl LspUri {
         String::from_utf8(decoded).map_err(|_| invalid("URI path is not UTF-8"))
     }
 }
+
 impl fmt::Display for LspUri {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !self.is_valid() {
@@ -176,6 +194,7 @@ impl fmt::Display for LspUri {
         Ok(())
     }
 }
+
 fn normalize_encoded_case(input: &str) -> String {
     let mut result = input.as_bytes().to_vec();
     let mut index = 0;
@@ -193,6 +212,7 @@ fn normalize_encoded_case(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn exact_byte_encoding_and_decoded_path_roundtrip() {
         let uri = LspUri::parse("FILE:///tmp/a%20b/%c3%a9%F0%9F%99%82~.rs?q=%ab#%cd").unwrap();
@@ -206,6 +226,7 @@ mod tests {
         assert!(LspUri::decode("%FF").is_err());
         assert!(LspUri::parse("file:///bad%zz").is_err());
     }
+
     #[test]
     fn file_paths_become_absolute_and_authority_is_not_a_filesystem_prefix() {
         let uri = LspUri::file_uri_from_path("Cargo.toml").unwrap();

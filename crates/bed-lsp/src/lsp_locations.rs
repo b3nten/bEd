@@ -2,15 +2,18 @@
 use crate::lsp_uri::LspUri;
 use serde_json::Value;
 use std::io;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LspLocation {
     pub file: String,
     pub line: i32,
     pub character: i32,
 }
+
 fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "Invalid LSP location result")
 }
+
 fn position(value: &Value) -> io::Result<(i32, i32)> {
     let coordinate = |name: &str| {
         let number = value
@@ -26,11 +29,13 @@ fn position(value: &Value) -> io::Result<(i32, i32)> {
     };
     Ok((coordinate("line")?, coordinate("character")?))
 }
+
 fn range_start(value: &Value) -> io::Result<(i32, i32)> {
     let start = position(value.get("start").ok_or_else(invalid)?)?;
     position(value.get("end").ok_or_else(invalid)?)?;
     Ok(start)
 }
+
 fn from_location(value: &Value) -> io::Result<LspLocation> {
     let uri = LspUri::parse(
         value
@@ -48,6 +53,7 @@ fn from_location(value: &Value) -> io::Result<LspLocation> {
         character,
     })
 }
+
 fn from_link(value: &Value) -> io::Result<LspLocation> {
     let uri = LspUri::parse(
         value
@@ -63,6 +69,7 @@ fn from_link(value: &Value) -> io::Result<LspLocation> {
         character,
     })
 }
+
 pub fn from_definition_result(value: &Value) -> io::Result<Vec<LspLocation>> {
     if value.is_null() {
         return Ok(Vec::new());
@@ -79,6 +86,7 @@ pub fn from_definition_result(value: &Value) -> io::Result<Vec<LspLocation>> {
         Ok(vec![from_location(value)?])
     }
 }
+
 pub fn from_references_result(value: &Value) -> io::Result<Vec<LspLocation>> {
     if value.is_null() {
         return Ok(Vec::new());
@@ -94,6 +102,7 @@ pub fn from_references_result(value: &Value) -> io::Result<Vec<LspLocation>> {
 mod tests {
     use super::*;
     use serde_json::json;
+
     #[test]
     fn upstream_definition_accepts_normal_location_array() {
         let value = json!([{"uri":"file:///tmp/example.cpp","range":{"start":{"line":3,"character":5},"end":{"line":3,"character":8}}}]);
@@ -105,6 +114,7 @@ mod tests {
         fractional["range"]["start"]["line"] = json!(3.8);
         assert_eq!(from_definition_result(&fractional).unwrap()[0].line, 3);
     }
+
     #[test]
     fn definition_links_use_selection_range_and_null_is_an_answer() {
         let range =

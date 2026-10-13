@@ -15,6 +15,7 @@ use std::{
 };
 
 struct Fixture(PathBuf);
+
 impl Fixture {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -32,9 +33,11 @@ impl Fixture {
         fs::write(root.join("lsp.json"), "{\"languages\":[]}").unwrap();
         Self(fs::canonicalize(root).unwrap())
     }
+
     fn path(&self, name: &str) -> String {
         self.0.join(name).to_string_lossy().into_owned()
     }
+
     fn client(&self, observations: bool) -> LspClient {
         let config = LspConfig::from_json(&json!({
             "languages":[{"name":"fixture", "language_id":"fixture", "file_types":["rs"], "language_server":"fixture-server"}],
@@ -52,11 +55,13 @@ impl Fixture {
         client
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
 fn until(client: &mut LspClient, ready: impl Fn() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !ready() {

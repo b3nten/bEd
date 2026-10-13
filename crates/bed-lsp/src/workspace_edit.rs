@@ -9,21 +9,25 @@ pub struct Position {
     pub line: usize,
     pub character: usize,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextEdit {
     pub start: Position,
     pub end: Position,
     pub new_text: String,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentEdit {
     pub path: PathBuf,
     pub version: Option<i32>,
     pub edits: Vec<TextEdit>,
 }
+
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
+
 fn position(value: &Value) -> io::Result<Position> {
     let number = |key| {
         value
@@ -37,6 +41,7 @@ fn position(value: &Value) -> io::Result<Position> {
         character: number("character")?,
     })
 }
+
 pub fn parse_text_edits(value: &Value) -> io::Result<Vec<TextEdit>> {
     if value.is_null() {
         return Ok(Vec::new());
@@ -63,6 +68,7 @@ pub fn parse_text_edits(value: &Value) -> io::Result<Vec<TextEdit>> {
         })
         .collect()
 }
+
 fn path(uri: &str) -> io::Result<PathBuf> {
     let uri = LspUri::parse(uri)?;
     if !uri.is_file_uri()
@@ -76,6 +82,7 @@ fn path(uri: &str) -> io::Result<PathBuf> {
     }
     Ok(PathBuf::from(uri.fs_path()))
 }
+
 pub fn parse_workspace_edit(value: &Value) -> io::Result<Vec<DocumentEdit>> {
     if value.is_null() {
         return Ok(Vec::new());
@@ -153,6 +160,7 @@ pub fn parse_workspace_edit(value: &Value) -> io::Result<Vec<DocumentEdit>> {
     }
     Ok(documents.into_values().collect())
 }
+
 pub fn position_offset(bytes: &[u8], position: Position) -> io::Result<usize> {
     let text = std::str::from_utf8(bytes).map_err(|_| invalid("LSP edits require UTF-8 text"))?;
     let mut start = 0;
@@ -188,6 +196,7 @@ pub fn position_offset(bytes: &[u8], position: Position) -> io::Result<usize> {
         Err(invalid("LSP position is beyond line"))
     }
 }
+
 pub fn byte_edits(bytes: &[u8], edits: &[TextEdit]) -> io::Result<Vec<(Range<usize>, Vec<u8>)>> {
     let mut result = edits
         .iter()
@@ -211,6 +220,7 @@ pub fn byte_edits(bytes: &[u8], edits: &[TextEdit]) -> io::Result<Vec<(Range<usi
 mod tests {
     use super::*;
     use serde_json::json;
+
     #[test]
     fn utf16_positions_validate_surrogates_crlf_and_trailing_line() {
         let text = "é🙂x\r\nnext\n".as_bytes();
@@ -268,6 +278,7 @@ mod tests {
             7
         );
     }
+
     #[test]
     fn workspace_boundary_rejects_resource_operations_and_bad_versions() {
         assert!(parse_workspace_edit(&json!({"documentChanges":[{"kind":"rename","oldUri":"file:///a","newUri":"file:///b"}]})).is_err());

@@ -39,6 +39,7 @@ pub struct ServerInstanceId {
     pub server: String,
     pub root: PathBuf,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LspRequestOrigin {
     pub workspace_id: WorkspaceId,
@@ -49,11 +50,13 @@ pub struct LspRequestOrigin {
     pub view_id: ViewId,
     pub ticket: u64,
 }
+
 #[derive(Debug)]
 pub struct RoutedLspResponse {
     pub origin: LspRequestOrigin,
     pub result: Result<Value, ResponseError>,
 }
+
 #[derive(Debug)]
 pub enum WorkspaceLspEvent {
     Rpc {
@@ -66,6 +69,7 @@ pub enum WorkspaceLspEvent {
         message: String,
     },
 }
+
 #[derive(Clone, Debug)]
 pub struct WorkspaceServerStatus {
     pub language: String,
@@ -81,6 +85,7 @@ pub struct WorkspaceServerStatus {
     pub startup_details: Option<String>,
     pub rust_install: Option<RustInstallStatus>,
 }
+
 struct RustInstallJob {
     instance: ServerInstanceId,
     generation: u64,
@@ -89,10 +94,12 @@ struct RustInstallJob {
     output: SharedOutput,
     message: String,
 }
+
 struct ServerSlot {
     client: SharedLspClient,
     generation: Rc<Cell<u64>>,
 }
+
 struct RegisteredDocument {
     path: String,
     bytes: Vec<u8>,
@@ -124,6 +131,7 @@ enum DiscoveryJob {
     },
     Clear,
 }
+
 enum DiscoveryResult {
     Config {
         epoch: u64,
@@ -136,11 +144,13 @@ enum DiscoveryResult {
         result: io::Result<PathBuf>,
     },
 }
+
 struct DiscoveryWorker {
     sender: SyncSender<DiscoveryJob>,
     receiver: Receiver<DiscoveryResult>,
     stop: Arc<AtomicBool>,
 }
+
 impl DiscoveryWorker {
     fn new() -> Self {
         let (sender, jobs) = mpsc::sync_channel(32);
@@ -203,6 +213,7 @@ impl DiscoveryWorker {
         }
     }
 }
+
 impl Drop for DiscoveryWorker {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
@@ -232,6 +243,7 @@ pub struct WorkspaceLsp {
     clear_cache_pending: bool,
     rust_install: Option<RustInstallJob>,
 }
+
 impl WorkspaceLsp {
     /// Exact supplied configuration, preserving the embedded-host contract.
     pub fn new(workspace_id: WorkspaceId, config_path: PathBuf, root: PathBuf) -> Self {
@@ -245,6 +257,7 @@ impl WorkspaceLsp {
         }
         workspace
     }
+
     fn unloaded(workspace_id: WorkspaceId, config_path: PathBuf, root: PathBuf) -> Self {
         Self {
             ssh_target: None,
@@ -270,6 +283,7 @@ impl WorkspaceLsp {
             rust_install: None,
         }
     }
+
     pub fn new_remote(
         workspace_id: WorkspaceId,
         config_path: PathBuf,
@@ -280,12 +294,14 @@ impl WorkspaceLsp {
         workspace.ssh_target = Some(target);
         workspace
     }
+
     pub fn new_layered(workspace_id: WorkspaceId, config_path: PathBuf, root: PathBuf) -> Self {
         let root = PathBuf::from(doc_path::normalize(&root.to_string_lossy()));
         let mut workspace = Self::unloaded(workspace_id, config_path, root);
         workspace.begin_layered(None);
         workspace
     }
+
     pub fn new_remote_layered(
         workspace_id: WorkspaceId,
         config_path: PathBuf,
@@ -298,6 +314,7 @@ impl WorkspaceLsp {
         workspace.begin_layered(Some(remote));
         workspace
     }
+
     fn begin_layered(&mut self, remote: Option<RemoteClient>) {
         self.remote_client = remote;
         self.config = LspConfig::default();
@@ -307,6 +324,7 @@ impl WorkspaceLsp {
         self.discovery = Some(DiscoveryWorker::new());
         self.queue_config();
     }
+
     fn queue_config(&mut self) {
         self.epoch = next_server_generation();
         for document in self
@@ -326,6 +344,7 @@ impl WorkspaceLsp {
         self.config_queued = false;
         self.submit_discovery();
     }
+
     pub fn configuration_sources(&self) -> Vec<PathBuf> {
         if self.discovery.is_some() {
             vec![
@@ -337,6 +356,7 @@ impl WorkspaceLsp {
             vec![self.config_path.clone()]
         }
     }
+
     pub fn is_discovering(&self) -> bool {
         self.pending_config.is_some()
             || self.config_queued
@@ -345,9 +365,11 @@ impl WorkspaceLsp {
                 .values()
                 .any(|document| document.resolve_pending)
     }
+
     pub fn ssh_target(&self) -> Option<&bed_remote::SshTarget> {
         self.ssh_target.as_ref()
     }
+
     fn document_key(&self, path: &str) -> String {
         if self.ssh_target.is_some() {
             path.to_owned()
@@ -355,21 +377,27 @@ impl WorkspaceLsp {
             doc_path::normalize(path)
         }
     }
+
     pub fn workspace_id(&self) -> WorkspaceId {
         self.workspace_id
     }
+
     pub fn root(&self) -> &Path {
         &self.root
     }
+
     pub fn config(&self) -> &LspConfig {
         &self.config
     }
+
     pub fn config_path(&self) -> &Path {
         &self.config_path
     }
+
     pub fn config_error(&self) -> Option<&str> {
         self.config_error.as_deref()
     }
+
     fn config_for_path(&self, path: &str) -> &LspConfig {
         if self.discovery.is_some() && !Path::new(path).starts_with(&self.root) {
             &self.outside_config
@@ -377,12 +405,14 @@ impl WorkspaceLsp {
             &self.config
         }
     }
+
     fn config_for_context(&self, path: &str, instance: Option<&ServerInstanceId>) -> &LspConfig {
         match instance {
             Some(instance) => self.config_for_path(&instance.root.to_string_lossy()),
             None => self.config_for_path(path),
         }
     }
+
     pub fn set_server_arguments(&mut self, language: &str, arguments: Vec<String>) {
         let id = self
             .config
@@ -403,6 +433,7 @@ impl WorkspaceLsp {
             }
         }
     }
+
     fn ensure_slot(&mut self, instance: &ServerInstanceId, outside: bool) -> &mut ServerSlot {
         self.servers.entry(instance.clone()).or_insert_with(|| {
             let config = if outside {
@@ -421,6 +452,7 @@ impl WorkspaceLsp {
             }
         })
     }
+
     pub fn register_document(
         &mut self,
         id: DocumentId,
@@ -431,6 +463,7 @@ impl WorkspaceLsp {
     ) -> io::Result<()> {
         self.register_document_with_context(id, path, bytes, version, language_id, None)
     }
+
     /// Definition targets outside this workspace belong to the requesting
     /// server's analysis context. Ordinary file opens still discover their root.
     pub fn register_document_from_origin(
@@ -451,6 +484,7 @@ impl WorkspaceLsp {
         let context = self.documents[&origin.document_id].instance.clone();
         self.register_document_with_context(id, path, bytes, version, language_id, context)
     }
+
     fn register_document_with_context(
         &mut self,
         id: DocumentId,
@@ -503,6 +537,7 @@ impl WorkspaceLsp {
         self.submit_discovery();
         Ok(())
     }
+
     fn prepare_document(&mut self, id: DocumentId) -> io::Result<()> {
         let document = &self.documents[&id];
         let inherited_instance = document.inherited_instance.clone().filter(|instance| {
@@ -543,6 +578,7 @@ impl WorkspaceLsp {
         }
         Ok(())
     }
+
     fn bind_document(&mut self, id: DocumentId, instance: ServerInstanceId) -> io::Result<()> {
         let document = self.documents.get_mut(&id).unwrap();
         document.resolve_pending = false;
@@ -581,6 +617,7 @@ impl WorkspaceLsp {
         }
         Ok(())
     }
+
     /// Snapshots support retries and edits made before asynchronous discovery.
     /// The editor's listeners remain the sole source of ordinary didChange/save.
     pub fn update_document_snapshot(
@@ -610,6 +647,7 @@ impl WorkspaceLsp {
         document.version = version;
         Ok(())
     }
+
     pub fn unregister_document(&mut self, id: DocumentId) -> io::Result<()> {
         if let Some(document) = self.documents.remove(&id)
             && let Some(instance) = document.instance
@@ -619,6 +657,7 @@ impl WorkspaceLsp {
         }
         Ok(())
     }
+
     /// A content reload closes/reopens synchronization without discarding the
     /// external document's inherited analysis context. Renames rediscover it.
     pub fn reopen_document(
@@ -645,17 +684,21 @@ impl WorkspaceLsp {
         self.unregister_document(id)?;
         self.register_document_with_context(id, &key, bytes, version, language_id, context)
     }
+
     pub fn client_for_document(&self, id: DocumentId) -> Option<SharedLspClient> {
         self.client_for_instance(self.documents.get(&id)?.instance.as_ref()?)
     }
+
     pub fn client_for_instance(&self, id: &ServerInstanceId) -> Option<SharedLspClient> {
         self.servers.get(id).map(|slot| slot.client.clone())
     }
+
     /// Existing server clients, including servers whose last document closed.
     /// Activity displays can inspect these without discovering executable paths.
     pub fn server_clients(&self) -> impl Iterator<Item = SharedLspClient> + '_ {
         self.servers.values().map(|slot| slot.client.clone())
     }
+
     pub fn client_for_path(&self, path: &str) -> Option<SharedLspClient> {
         let path = self.document_key(path);
         let document = self
@@ -665,6 +708,7 @@ impl WorkspaceLsp {
             .0;
         self.client_for_document(*document)
     }
+
     /// Compatibility for single-root hosts. Instance-based lookup is precise.
     pub fn client_for_language(&self, language: &str) -> Option<SharedLspClient> {
         let server = self.config.server_id(language).unwrap_or(language);
@@ -673,16 +717,19 @@ impl WorkspaceLsp {
             .find(|(id, _)| id.server == server)
             .map(|(_, slot)| slot.client.clone())
     }
+
     pub fn diagnostics_for_document(&self, id: DocumentId) -> Option<LspDiagnostics> {
         self.client_for_document(id)
             .map(|client| client.borrow().diagnostics())
     }
+
     pub fn set_project_check_owner(&mut self, enabled: bool) {
         self.project_check_owner = enabled;
         for slot in self.servers.values() {
             slot.client.borrow_mut().set_project_check_owner(enabled);
         }
     }
+
     pub fn set_file_observations_available(&mut self, available: bool) {
         self.file_observations = available;
         for slot in self.servers.values() {
@@ -691,17 +738,20 @@ impl WorkspaceLsp {
                 .set_file_observations_available(available);
         }
     }
+
     pub fn refresh_workspace_diagnostics(&mut self) {
         for slot in self.servers.values() {
             slot.client.borrow_mut().refresh_workspace_diagnostics();
         }
     }
+
     /// Index facts inform coverage without launching additional processes.
     pub fn note_project_paths(&mut self, paths: &[String]) {
         for path in paths {
             self.indexed_paths.insert(self.document_key(path));
         }
     }
+
     pub fn observe_file_changes(
         &mut self,
         changes: &[bed_remote::FilesystemChange],
@@ -793,6 +843,7 @@ impl WorkspaceLsp {
         }
         Ok(())
     }
+
     pub fn diagnostic_coverage_complete(&self) -> bool {
         !self.servers.is_empty()
             && !self.is_discovering()
@@ -811,6 +862,7 @@ impl WorkspaceLsp {
                 })
             })
     }
+
     pub fn diagnostic_snapshot(&self) -> BTreeMap<String, Vec<crate::diagnostics::DiagnosticItem>> {
         let mut result = BTreeMap::<String, Vec<crate::diagnostics::DiagnosticItem>>::new();
         for slot in self.servers.values() {
@@ -825,11 +877,13 @@ impl WorkspaceLsp {
         }
         result
     }
+
     pub fn clear_diagnostics(&self, path: &str) {
         for slot in self.servers.values() {
             slot.client.borrow().diagnostics().clear(path);
         }
     }
+
     /// Explicit prewarming for snapshot hosts. Desktop index updates never call it.
     pub fn start_project_languages(&mut self, paths: &[String]) {
         if self.discovery.is_some() {
@@ -855,6 +909,7 @@ impl WorkspaceLsp {
             }
         }
     }
+
     fn submit_discovery(&mut self) {
         let Some(worker) = &self.discovery else {
             return;
@@ -916,6 +971,7 @@ impl WorkspaceLsp {
             }
         }
     }
+
     fn poll_discovery(&mut self) {
         loop {
             let result = self
@@ -983,6 +1039,7 @@ impl WorkspaceLsp {
         }
         self.submit_discovery();
     }
+
     pub fn poll(&mut self) -> Vec<WorkspaceLspEvent> {
         self.poll_discovery();
         self.poll_rust_install();
@@ -998,11 +1055,13 @@ impl WorkspaceLsp {
         }
         events
     }
+
     pub fn is_installing_rust(&self) -> bool {
         self.rust_install
             .as_ref()
             .is_some_and(|job| job.receiver.is_some())
     }
+
     pub fn install_rust_tooling(&mut self, instance: &ServerInstanceId) -> io::Result<()> {
         if self.ssh_target.is_some() {
             return Err(io::Error::other(
@@ -1053,6 +1112,7 @@ impl WorkspaceLsp {
         });
         Ok(())
     }
+
     fn poll_rust_install(&mut self) {
         let result = self
             .rust_install
@@ -1092,6 +1152,7 @@ impl WorkspaceLsp {
         }
         self.rust_install = Some(job);
     }
+
     pub fn retry_language(&mut self, language: &str) -> io::Result<bool> {
         let server = self
             .config
@@ -1119,6 +1180,7 @@ impl WorkspaceLsp {
         }
         Ok(started)
     }
+
     pub fn retry_server(&mut self, instance: &ServerInstanceId) -> io::Result<bool> {
         if self
             .rust_install
@@ -1158,6 +1220,7 @@ impl WorkspaceLsp {
         }
         Ok(true)
     }
+
     fn apply_config(&mut self, config: LspConfig, outside: LspConfig) {
         self.shutdown();
         self.servers.clear();
@@ -1181,6 +1244,7 @@ impl WorkspaceLsp {
             }
         }
     }
+
     pub fn reload_config(&mut self) -> io::Result<()> {
         if self.discovery.is_some() {
             self.queue_config();
@@ -1196,6 +1260,7 @@ impl WorkspaceLsp {
         self.apply_config(config.clone(), config);
         Ok(())
     }
+
     pub fn server_statuses(&self) -> Vec<WorkspaceServerStatus> {
         let mut statuses = Vec::new();
         for (instance, slot) in &self.servers {
@@ -1261,6 +1326,7 @@ impl WorkspaceLsp {
         statuses.sort_by(|a, b| a.instance.cmp(&b.instance));
         statuses
     }
+
     pub fn request_origin(
         &self,
         id: DocumentId,
@@ -1280,6 +1346,7 @@ impl WorkspaceLsp {
             ticket,
         })
     }
+
     pub fn origin_is_current(&self, origin: &LspRequestOrigin) -> bool {
         origin.workspace_id == self.workspace_id
             && self
@@ -1294,6 +1361,7 @@ impl WorkspaceLsp {
                             .is_some_and(|slot| slot.generation.get() == origin.server_generation)
                 })
     }
+
     pub fn send_request(
         &mut self,
         origin: LspRequestOrigin,
@@ -1324,6 +1392,7 @@ impl WorkspaceLsp {
                 callback(RoutedLspResponse { origin, result });
             })
     }
+
     pub fn reply_workspace_edit(
         &mut self,
         generation: u64,
@@ -1339,11 +1408,13 @@ impl WorkspaceLsp {
             })?;
         slot.client.borrow_mut().reply_workspace_edit(id, result)
     }
+
     pub fn server_generation_is_current(&self, generation: u64) -> bool {
         self.servers
             .values()
             .any(|slot| slot.generation.get() == generation)
     }
+
     pub fn shutdown(&mut self) {
         for slot in self.servers.values() {
             slot.generation.set(next_server_generation());
@@ -1351,6 +1422,7 @@ impl WorkspaceLsp {
         }
     }
 }
+
 impl Drop for WorkspaceLsp {
     fn drop(&mut self) {
         self.shutdown();

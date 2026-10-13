@@ -26,6 +26,7 @@ impl std::fmt::Display for ConnectionError {
 }
 
 impl std::error::Error for ConnectionError {}
+
 impl From<io::Error> for ConnectionError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
@@ -177,6 +178,7 @@ mod tests {
     use super::*;
     use crate::jsonrpc::{Message, Request};
     use std::io::Cursor;
+
     #[test]
     fn framing_preserves_utf8_byte_length_and_duplicate_header_semantics() {
         let packet = Packet::Single(Message::Request(Request {
@@ -201,6 +203,7 @@ mod tests {
             packet
         );
     }
+
     #[test]
     fn complete_invalid_frames_leave_next_message_readable() {
         let packet = Packet::Single(Message::Request(Request {
@@ -217,6 +220,7 @@ mod tests {
         ));
         assert_eq!(connection.read_packet().unwrap(), packet);
     }
+
     #[test]
     fn rejects_header_body_and_eof_errors() {
         for bytes in [

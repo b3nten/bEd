@@ -23,12 +23,14 @@ pub struct RustStartupIssue {
     pub kind: RustStartupIssueKind,
     pub install_available: bool,
 }
+
 #[derive(Clone, Debug)]
 pub struct RustInstallStatus {
     pub running: bool,
     pub message: String,
     pub output: String,
 }
+
 impl RustStartupIssue {
     pub fn message(&self) -> String {
         match self.kind {
@@ -41,6 +43,7 @@ impl RustStartupIssue {
             }
         }
     }
+
     pub fn arguments(&self) -> Vec<String> {
         match self.kind {
             RustStartupIssueKind::MissingComponents => vec![
@@ -66,6 +69,7 @@ impl RustStartupIssue {
         .map(str::to_owned)
         .collect()
     }
+
     pub fn command(&self) -> String {
         format!("rustup {}", self.arguments().join(" "))
     }
@@ -160,6 +164,7 @@ pub(crate) struct RustupLaunch {
     pub program: PathBuf,
     pub options: ProcessOptions,
 }
+
 impl RustupLaunch {
     pub fn for_server(program: &Path, options: &ProcessOptions) -> Option<Self> {
         let path = options
@@ -352,10 +357,12 @@ impl RustupLaunch {
 }
 
 pub(crate) type SharedOutput = Arc<Mutex<VecDeque<u8>>>;
+
 pub(crate) fn output_text(output: &SharedOutput) -> String {
     String::from_utf8_lossy(&output.lock().unwrap().iter().copied().collect::<Vec<_>>())
         .into_owned()
 }
+
 pub(crate) fn probe(
     launch: RustupLaunch,
     issue: RustStartupIssue,
@@ -370,6 +377,7 @@ pub(crate) fn probe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn recognizes_rustup_errors_and_rejects_unrelated_or_custom_failures() {
         for error in [
