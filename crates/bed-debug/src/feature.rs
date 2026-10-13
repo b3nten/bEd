@@ -20,8 +20,10 @@ mod status;
 
 #[derive(Default)]
 pub struct DebugState(pub Debugger);
+
 #[derive(Resource, Default)]
 struct RetainedTerminal(Option<u64>);
+
 struct PendingLaunch {
     invocation: CommandInvocation,
     action: Action,
@@ -30,6 +32,7 @@ struct PendingLaunch {
     workspace: bed_document_session::editor_session::WorkspaceId,
     result: Option<Result<Vec<bed_editor_api::SavedDocument>, String>>,
 }
+
 #[derive(Resource, Default)]
 struct LaunchBarrier(Option<PendingLaunch>);
 
@@ -46,9 +49,12 @@ const COMMANDS: &[(&str, &str)] = &[
     (OUT_COMMAND, "Step Out"),
     (BREAKPOINT_COMMAND, "Toggle Breakpoint"),
 ];
+
 #[derive(Component)]
 struct DebugPresentation;
+
 pub struct DebugPlugin;
+
 impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
         app.world_mut()
@@ -141,6 +147,7 @@ impl Plugin for DebugPlugin {
         .add_systems(Last, shutdown.after(bevy::app::OnAppExitSystems));
     }
 }
+
 // Native process ownership stays in BedTerminal. A release preserves a transcript
 // still attached to a panel; it closes an unobserved debugger-owned process.
 #[derive(Clone, Debug)]
@@ -155,6 +162,7 @@ pub(crate) struct Terminals<'a> {
     terminal: &'a mut BedTerminal,
     visible: std::collections::HashSet<u64>,
 }
+
 impl Terminals<'_> {
     pub(crate) fn spawn(&mut self, launch: TerminalLaunch) -> io::Result<(u64, u32)> {
         let program = launch
@@ -175,15 +183,18 @@ impl Terminals<'_> {
         }
         self.terminal.new_command_session(options, launch.title)
     }
+
     pub(crate) fn stop(&mut self, id: u64) {
         self.terminal.stop_session_id(id);
     }
+
     pub(crate) fn release(&mut self, id: u64) {
         if !self.visible.contains(&id) {
             self.terminal.close_session_id(id);
         }
     }
 }
+
 fn visible(world: &mut World) -> std::collections::HashSet<u64> {
     world
         .query::<&bed_terminal_core::TerminalAttachment>()
@@ -191,6 +202,7 @@ fn visible(world: &mut World) -> std::collections::HashSet<u64> {
         .map(|panel| panel.session)
         .collect()
 }
+
 fn publish(
     world: &mut World,
     source: Option<Entity>,
@@ -294,6 +306,7 @@ fn prepare(world: &mut World) {
     // destination from the current layout when it resolves these intentions.
     publish(world, None, None, requests);
 }
+
 fn command(In(invocation): In<CommandInvocation>, world: &mut World) -> CommandResult {
     if invocation.command == BREAKPOINT_COMMAND {
         let view = invocation.source.and_then(|source| {
@@ -399,6 +412,7 @@ fn command(In(invocation): In<CommandInvocation>, world: &mut World) -> CommandR
     }
     execute(world, invocation, action)
 }
+
 fn execute(
     world: &mut World,
     invocation: CommandInvocation,
@@ -462,6 +476,7 @@ fn execute(
     publish(world, invocation.source, Some(invocation.area), requests);
     Ok(Vec::new())
 }
+
 fn launch_replies(
     mut replies: MessageReader<EditorFeatureReply>,
     mut barrier: ResMut<LaunchBarrier>,
@@ -480,6 +495,7 @@ fn launch_replies(
         }
     }
 }
+
 fn launch_pending(world: &mut World) {
     if world
         .resource::<LaunchBarrier>()
@@ -530,6 +546,7 @@ fn launch_pending(world: &mut World) {
             .push(None, HostRequest::Invalidate);
     }
 }
+
 fn publish_readiness(world: &mut World) {
     let debugger = &world.non_send::<DebugState>().0;
     let readiness = match &debugger.error {
@@ -555,6 +572,7 @@ fn publish_readiness(world: &mut World) {
         world.entity_mut(entity).insert(readiness.clone());
     }
 }
+
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
         ("Run", "Configure a launch profile, then start debugging. Use the session controls to continue, pause, step, or stop."),
@@ -566,11 +584,14 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
     world.entity_mut(creation.entity).insert(DebugPresentation);
     Ok(Box::new(Frontend(creation.entity)))
 }
+
 struct Frontend(Entity);
+
 impl Panel for Frontend {
     fn title(&self, _: &World) -> String {
         "Debug".into()
     }
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -611,6 +632,7 @@ impl Panel for Frontend {
         }));
     }
 }
+
 fn document_events(
     mut events: MessageReader<EditorDocumentEvent>,
     mut debugger: NonSendMut<DebugState>,
@@ -626,9 +648,11 @@ fn document_events(
         }
     }
 }
+
 fn save_workspace(debugger: NonSendMut<DebugState>) -> Value {
     debugger.0.settings()
 }
+
 fn restore_workspace(
     In(restore): In<EditorWorkspaceRestore>,
     world: &mut World,
@@ -644,6 +668,7 @@ fn restore_workspace(
     }
     Ok(())
 }
+
 fn stop(world: &mut World) {
     world.resource_mut::<LaunchBarrier>().0 = None;
     if !world.contains_non_send::<BedTerminal>() {
@@ -668,6 +693,7 @@ fn stop(world: &mut World) {
             .remove(&previous);
     }
 }
+
 fn shutdown(world: &mut World) {
     if world
         .get_resource::<Messages<bevy::app::AppExit>>()
@@ -676,6 +702,7 @@ fn shutdown(world: &mut World) {
         stop(world);
     }
 }
+
 /// Global shortcuts emit captured commands and run no debugger I/O in the UI.
 pub fn shortcuts(world: &mut World, ui: &Ui) -> Vec<WorkbenchAction> {
     let actions = world
@@ -724,6 +751,7 @@ pub fn shortcuts(world: &mut World, ui: &Ui) -> Vec<WorkbenchAction> {
         })
         .collect()
 }
+
 fn start_or_continue(
     In(mut invocation): In<CommandInvocation>,
     world: &mut World,
@@ -783,6 +811,7 @@ fn source_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn f9_shortcut_captures_the_active_presentation_before_focus_changes() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -865,6 +894,7 @@ mod tests {
         assert!(debugger.source.breakpoints.contains_key(&first_key));
         assert!(!debugger.source.breakpoints.contains_key(&second_key));
     }
+
     #[test]
     fn registered_breakpoint_command_uses_the_captured_view_and_existing_provider_state() {
         let directory = crate::test_support::TempDir::new();
@@ -911,6 +941,7 @@ mod tests {
         assert!(state.source.breakpoints.contains_key(&first_key));
         assert!(!state.source.breakpoints.contains_key(&second_key));
     }
+
     #[test]
     fn debug_launch_waits_for_every_file_and_rejects_failed_or_stale_save_replies() {
         for outcome in ["failure", "missing", "changed", "workspace"] {
@@ -1012,6 +1043,7 @@ mod tests {
             assert_eq!(std::fs::read(&path).unwrap(), b"fn main() {}\n");
         }
     }
+
     #[test]
     fn invalid_launch_does_not_request_saves_or_create_pending_work() {
         for remote in [false, true] {
@@ -1065,9 +1097,11 @@ mod tests {
             assert_eq!(std::fs::read(&path).unwrap(), b"saved\n");
         }
     }
+
     #[test]
     fn stop_cancels_a_waiting_launch_before_its_save_reply_arrives() {
         struct Dialogs;
+
         impl FileDialogService for Dialogs {
             fn pick_file(&mut self, _: &Path, _: &[&str]) -> Option<std::path::PathBuf> {
                 None
@@ -1129,9 +1163,11 @@ mod tests {
         assert!(debugger.build.is_none());
         assert!(debugger.error.is_none());
     }
+
     #[test]
     fn registered_ui_actions_update_world_state_and_reject_unknown_payloads() {
         struct Dialogs;
+
         impl FileDialogService for Dialogs {
             fn pick_file(&mut self, _: &Path, _: &[&str]) -> Option<std::path::PathBuf> {
                 None

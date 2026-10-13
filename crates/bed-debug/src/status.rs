@@ -27,19 +27,23 @@ pub(super) fn install(app: &mut App) {
             .to_vec(),
     ));
 }
+
 fn measure(world: &World, ui: &Ui, context: StatusContext) -> Option<f32> {
     presentation(world, context).map(|status| status.measure(ui))
 }
+
 fn draw(world: &mut World, ui: &Ui, context: StatusDrawContext, actions: &mut Vec<Action>) {
     if let Some(status) = presentation(world, context.context) {
         status.draw(ui, context, actions);
     }
 }
+
 fn tooltip(world: &World, ui: &Ui, context: StatusContext) {
     if let Some(status) = presentation(world, context) {
         status.tooltip(ui);
     }
 }
+
 fn presentation(world: &World, context: StatusContext) -> Option<StatusText> {
     let debugger = &world.get_non_send::<DebugState>()?.0;
     let saving = world
@@ -166,6 +170,7 @@ mod tests {
             area: 3,
         }
     }
+
     #[test]
     fn debug_errors_publish_without_a_panel_and_idle_status_requires_debug_focus() {
         let mut app = App::new();

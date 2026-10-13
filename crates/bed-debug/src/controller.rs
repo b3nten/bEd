@@ -77,6 +77,7 @@ struct HoverKey {
     stop: u64,
     expression: String,
 }
+
 struct RuntimeHover {
     key: HoverKey,
     value: Option<String>,
@@ -117,16 +118,19 @@ impl Debugger {
     pub fn owns_terminal(&self, id: u64) -> bool {
         self.terminal == Some(id)
     }
+
     pub fn active(&self) -> bool {
         self.build.is_some()
             || self.session.as_ref().is_some_and(|s| {
                 !matches!(s.state, SessionState::Terminated | SessionState::Failed)
             })
     }
+
     pub fn settings(&self) -> Value {
         json!({"version":1,"profiles":self.profiles,"selected":self.selected,
             "watches":self.watches,"adapter_path":self.adapter_path})
     }
+
     pub fn load(&mut self, value: Option<&Value>) {
         if let Some(value) = value {
             self.profiles = serde_json::from_value(value["profiles"].clone()).unwrap_or_default();
@@ -492,6 +496,7 @@ fn hover_expression(line: &[u8], column: i32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn hover_extracts_names_without_running_arbitrary_expressions() {
         assert_eq!(
@@ -509,6 +514,7 @@ mod tests {
         assert_eq!(hover_expression(b"23", 0), None);
         assert_eq!(hover_expression(b"foo--bar", 2), None);
     }
+
     #[test]
     fn logs_are_bounded_at_unicode_boundaries() {
         let mut log = "x".repeat(LOG_LIMIT - 1);
@@ -547,6 +553,7 @@ impl Debugger {
         self.source_paths.clear();
         requests.push(HostRequest::Invalidate);
     }
+
     pub(crate) fn start_native(
         &mut self,
         documents: &mut EditorSession,
@@ -592,6 +599,7 @@ impl Debugger {
         requests.push(HostRequest::Invalidate);
         Ok(())
     }
+
     pub(crate) fn action_native(
         &mut self,
         action: Action,
@@ -742,6 +750,7 @@ impl Debugger {
         requests.push(HostRequest::Invalidate);
         Ok(())
     }
+
     pub(crate) fn tick_native(
         &mut self,
         documents: &mut EditorSession,
@@ -1031,6 +1040,7 @@ impl Debugger {
         }
         Ok(())
     }
+
     fn launch_native(
         &mut self,
         artifact: bed_debug_core::BuildArtifact,
@@ -1089,6 +1099,7 @@ impl Debugger {
 mod evaluate_context {
     use bed_debug_core::EvaluateContext;
     use serde::{Deserialize, Deserializer, Serializer};
+
     pub fn serialize<S: Serializer>(
         value: &EvaluateContext,
         serializer: S,
@@ -1099,6 +1110,7 @@ mod evaluate_context {
             EvaluateContext::Repl => "repl",
         })
     }
+
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<EvaluateContext, D::Error> {
