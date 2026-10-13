@@ -29,6 +29,7 @@ pub struct TerminalAppearance {
     pub foreground: [f32; 4],
     pub ansi: [[f32; 4]; 16],
 }
+
 impl Default for TerminalAppearance {
     fn default() -> Self {
         Self {
@@ -60,6 +61,7 @@ pub use bed_terminal_core::{TerminalAttachment as TerminalPanelState, TerminalRe
 
 #[derive(Resource, Default)]
 struct PanelSessions(HashSet<u64>);
+
 #[derive(Resource, Clone, Copy)]
 struct Lifecycle {
     focus: bed_editor_api::EditorPanelLifecycleSystem,
@@ -70,6 +72,7 @@ struct Lifecycle {
 /// The application supplies its configured NonSend BedTerminal and TerminalFonts;
 /// the plugin registers shell panel factories and retains no separate process owner.
 pub struct TerminalPlugin;
+
 impl Plugin for TerminalPlugin {
     fn build(&self, app: &mut App) {
         if !app.is_plugin_added::<bed_terminal_core::TerminalCorePlugin>() {
@@ -268,6 +271,7 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
 pub struct TerminalFrontend {
     pub entity: Entity,
 }
+
 impl Panel for TerminalFrontend {
     fn title(&self, world: &World) -> String {
         let session = world
@@ -346,14 +350,17 @@ fn terminal_status(world: &World, context: StatusContext) -> Option<StatusText> 
     }
     Some(StatusText::new(summary, details))
 }
+
 fn status_measure(world: &World, ui: &Ui, context: StatusContext) -> Option<f32> {
     terminal_status(world, context).map(|status| status.measure(ui))
 }
+
 fn status_draw(world: &mut World, ui: &Ui, context: StatusDrawContext, actions: &mut Vec<Action>) {
     if let Some(status) = terminal_status(world, context.context) {
         status.draw(ui, context, actions);
     }
 }
+
 fn status_tooltip(world: &World, ui: &Ui, context: StatusContext) {
     if let Some(status) = terminal_status(world, context) {
         status.tooltip(ui);
@@ -511,6 +518,7 @@ mod tests {
         app.add_plugins((WorkbenchPlugin, TerminalPlugin));
         app
     }
+
     fn open(app: &mut App, state: Value) -> Entity {
         app.world_mut()
             .resource_mut::<WorkbenchRequests>()

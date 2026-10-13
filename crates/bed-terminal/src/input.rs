@@ -16,21 +16,25 @@ use winit::{
     keyboard::{Key as WinitKey, KeyCode, ModifiersState, NamedKey, PhysicalKey},
     platform::modifier_supplement::KeyEventExtModifierSupplement,
 };
+
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TerminalInputSystems {
     Intercept,
 }
+
 #[derive(Resource, Default)]
 struct InputState {
     modifiers: TerminalModifiers,
     reserved: HashMap<PhysicalKey, KeyRoute>,
     composing: bool,
 }
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum KeyRoute {
     Application,
     Terminal,
 }
+
 pub(crate) fn install(app: &mut App) {
     app.init_resource::<InputState>()
         .init_resource::<TerminalInputPolicy>()
@@ -50,6 +54,7 @@ pub(crate) fn install(app: &mut App) {
                 .in_set(TerminalInputSystems::Intercept),
         );
 }
+
 /// Application chord keys reserved before terminal input. Hosts may replace
 /// this policy without depending on a configuration storage implementation.
 #[derive(Resource, Clone, Debug)]
@@ -60,6 +65,7 @@ pub struct TerminalInputPolicy {
     pub select_all: Vec<bed_keybindings::Stroke>,
     pub recording: bool,
 }
+
 impl Default for TerminalInputPolicy {
     fn default() -> Self {
         let bindings = bed_keybindings::Bindings::new(
@@ -76,6 +82,7 @@ impl Default for TerminalInputPolicy {
         }
     }
 }
+
 impl TerminalInputPolicy {
     /// Default Control chords belong to the shell. An explicit common binding
     /// applies here too; otherwise terminals use the shared Shift alternatives.
@@ -103,6 +110,7 @@ impl TerminalInputPolicy {
             .collect()
     }
 }
+
 fn stroke(key: &TerminalKeyEvent) -> Option<bed_keybindings::Stroke> {
     use TerminalKey::*;
     let name = match &key.key {
@@ -158,10 +166,12 @@ fn stroke(key: &TerminalKeyEvent) -> Option<bed_keybindings::Stroke> {
         },
     })
 }
+
 fn application_shortcut(key: &TerminalKeyEvent, policy: &TerminalInputPolicy) -> bool {
     policy.recording
         || stroke(key).is_some_and(|stroke| policy.application_shortcuts.contains(&stroke))
 }
+
 fn clipboard_key(key: &TerminalKeyEvent, policy: &TerminalInputPolicy) -> Option<&'static str> {
     let stroke = stroke(key)?;
     if policy.copy.contains(&stroke) {
@@ -522,6 +532,7 @@ fn file_paste_text(paths: &[std::path::PathBuf]) -> std::io::Result<String> {
     }
     Ok(text)
 }
+
 fn terminal_key_event(event: &KeyEvent, modifiers: TerminalModifiers) -> TerminalKeyEvent {
     let key = match &event.logical_key {
         WinitKey::Character(text) => TerminalKey::Character(text.to_string()),
@@ -690,6 +701,7 @@ fn terminal_base_key(key: KeyCode) -> Option<char> {
 
 #[derive(Resource, Default)]
 struct FontSelection(Option<u64>);
+
 fn fonts(
     mut selection: ResMut<FontSelection>,
     mut fonts: NonSendMut<bed_terminal_core::terminal_font::TerminalFonts>,
@@ -777,6 +789,7 @@ mod tests {
             gameplay_consumed: false,
         }
     }
+
     fn focused_terminal(capture: &std::path::Path) -> (App, Context, Entity) {
         let mut app = App::new();
         app.add_plugins(crate::TerminalPlugin);
@@ -830,6 +843,7 @@ mod tests {
         assert!(app.world().non_send::<BedTerminal>().is_focused());
         (app, context, entity)
     }
+
     #[test]
     fn shared_clipboard_bindings_preserve_shell_defaults_and_respect_global_chords() {
         use bed_keybindings::{Action, Bindings, Overrides, Platform, Scope};
@@ -935,11 +949,14 @@ mod tests {
         let temp = crate::test_support::TempDir::new();
         let capture = temp.path("capture");
         let (mut app, mut context, _) = focused_terminal(&capture);
+
         struct Clipboard;
+
         impl dear_imgui_rs::ClipboardBackend for Clipboard {
             fn get(&mut self) -> Option<String> {
                 Some("ordinary clipboard text".into())
             }
+
             fn set(&mut self, _: &str) {}
         }
         context.set_clipboard_backend(Clipboard);
@@ -1070,6 +1087,7 @@ mod tests {
         app.update();
         assert_eq!(app.world().non_send::<BedTerminal>().session_count(), 0);
     }
+
     #[test]
     fn native_focus_loss_prevents_terminal_capture_and_resets_modifier_state() {
         let _lock = UI_LOCK.lock().unwrap();
@@ -1144,6 +1162,7 @@ mod tests {
         app.world_mut().write_message(bevy::app::AppExit::Success);
         app.update();
     }
+
     #[test]
     fn application_shortcut_release_follows_its_ui_route_after_modifiers_and_focus_change() {
         let _lock = UI_LOCK.lock().unwrap();
