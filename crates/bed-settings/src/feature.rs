@@ -12,6 +12,7 @@ use dear_imgui_rs::{TreeNodeFlags, Ui};
 use serde_json::{Value, json};
 
 pub struct SettingsPlugin;
+
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<bed_editor_api::Registry>();

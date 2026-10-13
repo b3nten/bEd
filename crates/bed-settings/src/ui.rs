@@ -24,6 +24,7 @@ pub enum SettingsCategory {
     Keybindings,
     Extensions,
 }
+
 impl SettingsCategory {
     const ALL: [(Self, &'static str); 7] = [
         (Self::General, "General"),
@@ -56,6 +57,7 @@ pub struct SettingsWindowState {
     pub(crate) shortcut_recording: Option<(String, Option<usize>)>,
     shortcut_recording_frame: usize,
 }
+
 impl Default for SettingsWindowState {
     fn default() -> Self {
         Self {
@@ -83,17 +85,21 @@ struct SettingsView<'a> {
     service: &'a mut Settings,
     window: &'a mut SettingsWindowState,
 }
+
 impl<'a> SettingsView<'a> {
     fn new(service: &'a mut Settings, window: &'a mut SettingsWindowState) -> Self {
         Self { service, window }
     }
 }
+
 impl Deref for SettingsView<'_> {
     type Target = Settings;
+
     fn deref(&self) -> &Settings {
         self.service
     }
 }
+
 impl DerefMut for SettingsView<'_> {
     fn deref_mut(&mut self) -> &mut Settings {
         self.service
@@ -109,6 +115,7 @@ pub trait SettingsUi {
         editor: &mut Editor,
         shaders_available: bool,
     );
+
     fn draw_with_icons(
         &mut self,
         ui: &Ui,
@@ -117,6 +124,7 @@ pub trait SettingsUi {
         shaders_available: bool,
         icons: Option<&Icons>,
     );
+
     fn draw_with_icons_and_extensions(
         &mut self,
         ui: &Ui,
@@ -126,6 +134,7 @@ pub trait SettingsUi {
         icons: Option<&Icons>,
         extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
     );
+
     fn draw_tab_with_state(
         &mut self,
         ui: &Ui,
@@ -134,7 +143,9 @@ pub trait SettingsUi {
         icons: Option<&Icons>,
         extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
     );
+
     fn draw_tab(&mut self, ui: &Ui, editor: &mut Editor, icons: Option<&Icons>);
+
     fn draw_tab_with_extensions(
         &mut self,
         ui: &Ui,
@@ -143,6 +154,7 @@ pub trait SettingsUi {
         extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
     );
 }
+
 impl SettingsUi for Settings {
     fn draw(
         &mut self,
@@ -153,6 +165,7 @@ impl SettingsUi for Settings {
     ) {
         SettingsView::new(self, window).draw(ui, editor, shaders_available);
     }
+
     fn draw_with_icons(
         &mut self,
         ui: &Ui,
@@ -163,6 +176,7 @@ impl SettingsUi for Settings {
     ) {
         SettingsView::new(self, window).draw_with_icons(ui, editor, shaders_available, icons);
     }
+
     fn draw_with_icons_and_extensions(
         &mut self,
         ui: &Ui,
@@ -180,6 +194,7 @@ impl SettingsUi for Settings {
             extensions,
         );
     }
+
     fn draw_tab_with_state(
         &mut self,
         ui: &Ui,
@@ -190,9 +205,11 @@ impl SettingsUi for Settings {
     ) {
         SettingsView::new(self, state).draw_tab_with_extensions(ui, editor, icons, extensions);
     }
+
     fn draw_tab(&mut self, ui: &Ui, editor: &mut Editor, icons: Option<&Icons>) {
         self.draw_tab_with_extensions(ui, editor, icons, &mut |_, _| false);
     }
+
     fn draw_tab_with_extensions(
         &mut self,
         ui: &Ui,
@@ -229,9 +246,11 @@ impl SettingsView<'_> {
             self.error = Some(e.to_string());
         }
     }
+
     pub fn draw(&mut self, ui: &Ui, editor: &mut Editor, shaders_available: bool) {
         self.draw_with_icons(ui, editor, shaders_available, None);
     }
+
     pub fn draw_with_icons(
         &mut self,
         ui: &Ui,
@@ -243,6 +262,7 @@ impl SettingsView<'_> {
             false
         });
     }
+
     pub fn draw_with_icons_and_extensions(
         &mut self,
         ui: &Ui,
@@ -351,11 +371,13 @@ impl SettingsView<'_> {
         drop(rounding);
         drop(alpha);
     }
+
     fn close_settings_window(&mut self, editor: &mut Editor) {
         self.window.show_settings_window = false;
         self.persist_ui();
         editor.view.block_input = false;
     }
+
     fn draw_settings_content(
         &mut self,
         ui: &Ui,
@@ -373,6 +395,7 @@ impl SettingsView<'_> {
         self.draw_categories(ui, editor, shaders_available, extensions);
         self.handle_window_input(ui, editor);
     }
+
     /// The docked panel owns this state, independently of other settings views.
     pub fn draw_tab_with_extensions(
         &mut self,
@@ -384,6 +407,7 @@ impl SettingsView<'_> {
         let _controls = bed_ui::util::popup_style::controls_style(ui);
         self.draw_categories(ui, editor, !self.is_embedded, extensions);
     }
+
     fn draw_categories(
         &mut self,
         ui: &Ui,
@@ -507,6 +531,7 @@ impl SettingsView<'_> {
                 }
             });
     }
+
     fn draw_default_viewers(&mut self, ui: &Ui) {
         ui.text("Default viewers");
         ui.separator();
@@ -591,6 +616,7 @@ impl SettingsView<'_> {
             self.persist_ui();
         }
     }
+
     fn draw_boolean(&mut self, ui: &Ui, label: &str, key: &str, default: bool) {
         let mut value = self.bool(key, default);
         if ui.checkbox(label, &mut value) {
@@ -599,6 +625,7 @@ impl SettingsView<'_> {
             self.persist_ui();
         }
     }
+
     fn draw_window_header(&mut self, ui: &Ui, editor: &mut Editor, icons: Option<&Icons>) {
         let focused =
             ui.is_window_focused_with_flags(dear_imgui_rs::FocusedFlags::ROOT_AND_CHILD_WINDOWS);
@@ -652,6 +679,7 @@ impl SettingsView<'_> {
         });
         ui.separator();
     }
+
     fn handle_window_input(&mut self, ui: &Ui, editor: &mut Editor) {
         if ui.is_key_pressed(Key::Escape) {
             self.close_settings_window(editor);
@@ -677,6 +705,7 @@ impl SettingsView<'_> {
             self.close_settings_window(editor);
         }
     }
+
     fn draw_theme_selector(&mut self, ui: &Ui) {
         let current = self.settings["theme"]
             .as_str()
@@ -706,6 +735,7 @@ impl SettingsView<'_> {
         ui.text_wrapped("Custom themes: copy a built-in theme JSON into the config directory's themes folder, then select it here.");
         ui.spacing();
     }
+
     fn draw_main_settings(&mut self, ui: &Ui) {
         let current = self.settings["font"]
             .as_str()
@@ -746,6 +776,7 @@ impl SettingsView<'_> {
         }
         ui.spacing();
     }
+
     fn draw_autosave_settings(&mut self, ui: &Ui) {
         let mut autosave = self.autosave_enabled();
         if ui.checkbox("Autosave code files", &mut autosave) {
@@ -778,6 +809,7 @@ impl SettingsView<'_> {
             }
         }
     }
+
     fn draw_lsp_settings(&mut self, ui: &Ui) {
         self.draw_boolean(ui, "Automatic LSP completions", "lsp_autocomplete", true);
         if ui.is_item_hovered() {
@@ -811,6 +843,7 @@ impl SettingsView<'_> {
             );
         }
     }
+
     fn draw_mac_settings(&mut self, ui: &Ui) {
         ui.spacing();
         let mut opacity = self.background_opacity();
@@ -829,6 +862,7 @@ impl SettingsView<'_> {
         #[cfg(target_os = "macos")]
         self.draw_boolean(ui, "Enable Background Blur", "mac_blur_enabled", true);
     }
+
     fn draw_shader_settings(&mut self, ui: &Ui) {
         ui.spacing();
         let mut selected = match self.effect_preset {
@@ -909,6 +943,7 @@ impl SettingsView<'_> {
             ui.spacing();
         }
     }
+
     fn draw_keybinds_settings(&mut self, ui: &Ui) {
         use bed_keybindings::{Bindings, CollisionKind, Platform, Stroke};
         let size = ui.current_font_size();
@@ -1146,6 +1181,7 @@ impl SettingsView<'_> {
 }
 
 struct NativeSettingsWindowGuard<'ui>(&'ui Ui);
+
 impl Drop for NativeSettingsWindowGuard<'_> {
     fn drop(&mut self) {
         self.0
@@ -1160,7 +1196,9 @@ mod tests {
     use dear_imgui_rs::Context;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
     struct TempDir(PathBuf);
+
     impl TempDir {
         fn new() -> Self {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -1173,11 +1211,13 @@ mod tests {
             Self(path)
         }
     }
+
     impl Drop for TempDir {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+
     fn settings(temp: &TempDir) -> Settings {
         Settings::with_paths(
             temp.0.clone(),
@@ -1185,6 +1225,7 @@ mod tests {
         )
         .unwrap()
     }
+
     #[test]
     fn lsp_completion_and_explicit_save_controls_persist_their_preferences() {
         use dear_imgui_rs::FramePrepareOptions;
@@ -1242,6 +1283,7 @@ mod tests {
             std::time::Duration::from_millis(150)
         );
     }
+
     #[test]
     fn effects_cursor_smear_defaults_on_and_persists_when_shaders_are_unavailable() {
         use dear_imgui_rs::{FramePrepareOptions, sys};
@@ -1324,6 +1366,7 @@ mod tests {
             "off state survives restarting"
         );
     }
+
     #[test]
     fn recording_alternatives_persists_and_escape_cancels_without_changing_bindings() {
         use bed_keybindings::{Bindings, Platform};
@@ -1452,6 +1495,7 @@ mod tests {
             settings.settings["default_viewers"]
         );
     }
+
     #[test]
     fn theme_editor_requires_a_choice_and_keeps_the_draft_when_going_back() {
         use dear_imgui_rs::{FramePrepareOptions, sys};
@@ -1522,6 +1566,7 @@ mod tests {
         assert_eq!(settings.settings["theme"], "tokyo");
         assert_eq!(fs::read_dir(temp.0.join("themes")).unwrap().count(), 0);
     }
+
     #[test]
     fn theme_editor_saves_and_applies_an_independent_view_draft() {
         use dear_imgui_rs::{FramePrepareOptions, sys};
@@ -1594,6 +1639,7 @@ mod tests {
             "Custom view 1"
         );
     }
+
     #[test]
     fn category_clicks_stay_with_their_settings_view() {
         use dear_imgui_rs::{FramePrepareOptions, sys};
@@ -1664,6 +1710,7 @@ mod tests {
         assert_eq!(extension_calls[0], 0);
         assert_eq!(extension_calls[1], 6);
     }
+
     #[test]
     fn extension_settings_render_and_persist_in_tab_and_legacy_window() {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -1738,11 +1785,13 @@ mod tests {
         colors: Vec<u32>,
         close_icon: Option<NativeIcon>,
     }
+
     struct NativeIcon {
         min: [f32; 2],
         max: [f32; 2],
         colors: Vec<u32>,
     }
+
     fn settings_context() -> Context {
         let mut context = Context::create();
         context.set_ini_filename(None::<PathBuf>).unwrap();
@@ -1753,6 +1802,7 @@ mod tests {
             .build();
         context
     }
+
     fn draw_settings(
         context: &mut Context,
         settings: &mut Settings,
@@ -1761,6 +1811,7 @@ mod tests {
     ) -> NativeSettingsWindow {
         draw_settings_with_icons(context, settings, window_state, editor, None)
     }
+
     fn draw_settings_with_icons(
         context: &mut Context,
         settings: &mut Settings,
@@ -1832,6 +1883,7 @@ mod tests {
         drop(context.render_legacy());
         window
     }
+
     #[test]
     fn native_embedded_settings_preserves_host_palette_and_remembers_moved_geometry() {
         use dear_imgui_rs::sys;
