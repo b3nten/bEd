@@ -12,6 +12,7 @@ use std::{
 };
 
 struct Repo(PathBuf);
+
 impl Repo {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -30,6 +31,7 @@ impl Repo {
         repo.git(&["config", "push.default", "simple"]);
         repo
     }
+
     fn command(&self, args: &[&str]) -> ProcessOutput {
         Command::new("git")
             .arg("--literal-pathspecs")
@@ -41,6 +43,7 @@ impl Repo {
             .output()
             .unwrap()
     }
+
     fn git(&self, args: &[&str]) -> ProcessOutput {
         let out = self.command(args);
         assert!(
@@ -50,18 +53,22 @@ impl Repo {
         );
         out
     }
+
     fn write(&self, path: &str, bytes: &[u8]) {
         fs::write(self.0.join(path), bytes).unwrap();
     }
+
     fn run(&self, operation: Operation) -> Output {
         execute(&self.0, &operation).unwrap()
     }
+
     fn status(&self) -> Status {
         let Output::Status(status) = self.run(Operation::Status) else {
             panic!()
         };
         status
     }
+
     fn diff(&self, path: &str, side: DiffSide) -> Diff {
         let Output::Diff(diff) = self.run(Operation::Diff {
             path: path.into(),
@@ -71,6 +78,7 @@ impl Repo {
         };
         diff
     }
+
     fn initial(&self) {
         self.write("a.txt", b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n");
         self.run(Operation::Stage { paths: vec![] });
@@ -79,6 +87,7 @@ impl Repo {
         });
     }
 }
+
 impl Drop for Repo {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

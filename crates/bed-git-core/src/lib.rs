@@ -113,6 +113,7 @@ pub enum Operation {
     Continue,
     Abort,
 }
+
 impl Operation {
     pub fn is_mutating(&self) -> bool {
         !matches!(self, Self::Status | Self::Diff { .. })
@@ -134,6 +135,7 @@ pub struct Status {
     pub branches: Vec<String>,
     pub snapshot: String,
 }
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct StatusEntry {
     pub path: String,
@@ -149,11 +151,13 @@ pub enum LineKind {
     Added,
     Removed,
 }
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DiffLine {
     pub kind: LineKind,
     pub text: String,
 }
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Hunk {
     /// Zero-based row positions; an empty range is an insertion position.
@@ -164,6 +168,7 @@ pub struct Hunk {
     pub header: String,
     pub lines: Vec<DiffLine>,
 }
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Diff {
     pub path: String,
@@ -176,6 +181,7 @@ pub struct Diff {
     pub binary: bool,
     pub can_apply_hunks: bool,
 }
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum Output {
     Status(Status),
@@ -194,12 +200,14 @@ pub enum ErrorKind {
     Failed,
     TooLarge,
 }
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Error {
     pub kind: ErrorKind,
     pub message: String,
     pub output: String,
 }
+
 impl Error {
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
@@ -208,6 +216,7 @@ impl Error {
             output: String::new(),
         }
     }
+
     pub fn into_io(self) -> io::Error {
         let kind = match self.kind {
             ErrorKind::InvalidInput | ErrorKind::TooLarge => io::ErrorKind::InvalidInput,
@@ -220,6 +229,7 @@ impl Error {
         io::Error::new(kind, self)
     }
 }
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.message)?;
@@ -229,12 +239,15 @@ impl fmt::Display for Error {
         Ok(())
     }
 }
+
 impl std::error::Error for Error {}
+
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
         Self::new(ErrorKind::Failed, error.to_string())
     }
 }
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// One asynchronous operation. Dropping the job requests cancellation, including
@@ -244,6 +257,7 @@ pub struct Job {
     completed: mpsc::Receiver<Result<Output>>,
     worker: Option<thread::JoinHandle<()>>,
 }
+
 impl Job {
     pub fn start(root: PathBuf, operation: Operation) -> Self {
         let canceled = Arc::new(AtomicBool::new(false));
@@ -258,6 +272,7 @@ impl Job {
             worker: Some(worker),
         }
     }
+
     pub fn try_result(&mut self) -> Option<Result<Output>> {
         match self.completed.try_recv() {
             Ok(result) => Some(result),
@@ -267,10 +282,12 @@ impl Job {
             }
         }
     }
+
     pub fn cancel(&self) {
         self.canceled.store(true, Ordering::Release);
     }
 }
+
 impl Drop for Job {
     fn drop(&mut self) {
         self.cancel();

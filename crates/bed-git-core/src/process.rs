@@ -14,11 +14,13 @@ use std::{
 pub const MAX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_LOG_BYTES: usize = 256 * 1024;
 const TERMINATION_GRACE: Duration = Duration::from_secs(1);
+
 pub struct Run {
     pub status: ExitStatus,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
 }
+
 impl Run {
     pub fn log(&self) -> String {
         let mut bytes = self.stdout.clone();
@@ -37,6 +39,7 @@ impl Run {
             text
         }
     }
+
     pub fn checked(self) -> Result<Self> {
         if self.status.success() {
             Ok(self)

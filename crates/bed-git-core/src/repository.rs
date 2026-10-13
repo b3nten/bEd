@@ -16,7 +16,9 @@ fn locks() -> &'static Mutex<std::collections::HashSet<PathBuf>> {
     static LOCKS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
     LOCKS.get_or_init(Mutex::default)
 }
+
 struct RepositoryLock(PathBuf);
+
 impl RepositoryLock {
     fn acquire(key: PathBuf) -> Result<Self> {
         if !locks().lock().unwrap().insert(key.clone()) {
@@ -28,6 +30,7 @@ impl RepositoryLock {
         Ok(Self(key))
     }
 }
+
 impl Drop for RepositoryLock {
     fn drop(&mut self) {
         locks().lock().unwrap().remove(&self.0);
@@ -39,6 +42,7 @@ struct Repository {
     workspace: PathBuf,
     canceled: Arc<AtomicBool>,
 }
+
 impl Repository {
     fn open(root: &Path, canceled: Arc<AtomicBool>) -> Result<Option<Self>> {
         let workspace = fs::canonicalize(root)?;
@@ -61,12 +65,15 @@ impl Repository {
             canceled,
         }))
     }
+
     fn run(&self, args: &[&str], input: Option<&[u8]>) -> Result<Run> {
         process::git(&self.root, args, input, &self.canceled)
     }
+
     fn checked(&self, args: &[&str], input: Option<&[u8]>) -> Result<Run> {
         self.run(args, input)?.checked()
     }
+
     fn writable(&self) -> Result<()> {
         if self.workspace != self.root {
             return Err(Error::new(
@@ -76,6 +83,7 @@ impl Repository {
         }
         Ok(())
     }
+
     fn path(&self, path: &str) -> Result<PathBuf> {
         let relative = Path::new(path);
         if path.is_empty()
@@ -113,6 +121,7 @@ impl Repository {
         }
         Ok(absolute)
     }
+
     fn metadata(&self, name: &str) -> Result<PathBuf> {
         Ok(PathBuf::from(text_line(
             &self
@@ -123,6 +132,7 @@ impl Repository {
                 .stdout,
         )?))
     }
+
     fn key(&self) -> Result<PathBuf> {
         let key = self.checked(
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -130,6 +140,7 @@ impl Repository {
         )?;
         Ok(fs::canonicalize(text_line(&key.stdout)?)?)
     }
+
     fn operation(&self) -> Result<RepositoryOperation> {
         for (name, operation) in [
             ("rebase-merge", RepositoryOperation::Rebase),
@@ -144,6 +155,7 @@ impl Repository {
         }
         Ok(RepositoryOperation::None)
     }
+
     fn head(&self) -> Result<Option<String>> {
         let run = self.run(&["rev-parse", "--verify", "HEAD"], None)?;
         if run.status.success() {
@@ -152,6 +164,7 @@ impl Repository {
             Ok(None)
         }
     }
+
     fn status(&self) -> Result<Status> {
         let run = self.checked(
             &[
@@ -266,6 +279,7 @@ impl Repository {
         status.snapshot = fingerprint(&[&run.stdout]);
         Ok(status)
     }
+
     fn blob(&self, object: &str) -> Result<Vec<u8>> {
         let run = self.run(&["cat-file", "blob", object], None)?;
         if run.status.success() {
@@ -274,6 +288,7 @@ impl Repository {
             Ok(Vec::new())
         }
     }
+
     fn diff(&self, path: &str, side: DiffSide) -> Result<PreparedDiff> {
         let absolute = self.path(path)?;
         let status = self.status()?;
@@ -415,6 +430,7 @@ impl Repository {
             header,
         })
     }
+
     fn object_reference(&self, object: &str) -> Result<Vec<u8>> {
         let run = self.run(&["rev-parse", "--verify", object], None)?;
         if run.status.success() {
@@ -423,6 +439,7 @@ impl Repository {
             Ok(Vec::new())
         }
     }
+
     fn paths(&self, paths: &[String]) -> Result<Vec<String>> {
         let status = self.status()?;
         let mut result = Vec::new();
@@ -444,11 +461,13 @@ impl Repository {
         }
         Ok(result)
     }
+
     fn done(&self, args: &[&str], input: Option<&[u8]>) -> Result<Output> {
         Ok(Output::Done {
             output: self.checked(args, input)?.log(),
         })
     }
+
     fn apply_hunk(
         &self,
         path: &str,
@@ -485,6 +504,7 @@ impl Repository {
         self.checked(&check, Some(&patch))?;
         self.done(&args, Some(&patch))
     }
+
     fn apply_range(
         &self,
         path: &str,
@@ -576,12 +596,14 @@ impl Repository {
 fn lines(bytes: &[u8]) -> Vec<&[u8]> {
     bytes.split_inclusive(|b| *b == b'\n').collect()
 }
+
 fn bare_cr(bytes: &[u8]) -> bool {
     bytes
         .iter()
         .enumerate()
         .any(|(i, b)| *b == b'\r' && bytes.get(i + 1) != Some(&b'\n'))
 }
+
 fn append_patch_line(patch: &mut Vec<u8>, prefix: u8, line: &[u8]) {
     patch.push(prefix);
     patch.extend_from_slice(line);
@@ -589,6 +611,7 @@ fn append_patch_line(patch: &mut Vec<u8>, prefix: u8, line: &[u8]) {
         patch.extend_from_slice(b"\n\\ No newline at end of file\n");
     }
 }
+
 fn append_range_header(patch: &mut Vec<u8>, start: usize, old_count: usize, new_count: usize) {
     patch.extend_from_slice(
         format!(
@@ -601,6 +624,7 @@ fn append_range_header(patch: &mut Vec<u8>, start: usize, old_count: usize, new_
         .as_bytes(),
     );
 }
+
 fn canonical_new_bytes(prepared: &PreparedDiff) -> Result<Vec<u8>> {
     let old = lines(&prepared.diff.old_bytes);
     let mut result = Vec::new();
@@ -641,21 +665,25 @@ fn canonical_new_bytes(prepared: &PreparedDiff) -> Result<Vec<u8>> {
 fn normalize_status(byte: u8) -> char {
     if byte == b'.' { ' ' } else { byte as char }
 }
+
 fn text_line(bytes: &[u8]) -> Result<&str> {
     std::str::from_utf8(bytes.strip_suffix(b"\n").unwrap_or(bytes))
         .map_err(|_| Error::new(ErrorKind::InvalidInput, "Git path is not valid UTF-8"))
 }
+
 fn path_text(path: &Path) -> Result<String> {
     path.to_str()
         .map(str::to_owned)
         .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Git path is not valid UTF-8"))
 }
+
 fn stale() -> Error {
     Error::new(
         ErrorKind::Stale,
         "The Git diff changed; refresh and review it before applying this action",
     )
 }
+
 fn read_entry(path: &Path) -> Result<Vec<u8>> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(m) => m,
@@ -703,6 +731,7 @@ fn read_entry(path: &Path) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
+
 fn fingerprint(parts: &[&[u8]]) -> String {
     // Stable change identity, not an authentication digest. Applying a patch
     // still asks Git to validate the exact old content while locking the index.
@@ -715,11 +744,13 @@ fn fingerprint(parts: &[&[u8]]) -> String {
     }
     format!("{hash:016x}")
 }
+
 struct PreparedDiff {
     diff: Diff,
     header: Vec<u8>,
     patches: Vec<Vec<u8>>,
 }
+
 fn range(text: &str) -> Result<(usize, usize)> {
     let (start, count) = text.split_once(',').unwrap_or((text, "1"));
     let start: usize = start
@@ -737,7 +768,9 @@ fn range(text: &str) -> Result<(usize, usize)> {
         count,
     ))
 }
+
 type ParsedPatch = (Vec<Hunk>, Vec<Vec<u8>>, Vec<u8>);
+
 fn parse_patch(patch: &[u8]) -> Result<ParsedPatch> {
     let mut hunks: Vec<Hunk> = Vec::new();
     let mut patches: Vec<Vec<u8>> = Vec::new();
@@ -796,9 +829,11 @@ pub fn repository_key(root: &Path) -> Result<PathBuf> {
         .ok_or_else(|| Error::new(ErrorKind::NotRepository, "Folder is not a Git repository"))?;
     repo.key()
 }
+
 pub fn execute(root: &Path, operation: &Operation) -> Result<Output> {
     execute_with_cancel(root, operation, Arc::new(AtomicBool::new(false)))
 }
+
 pub(crate) fn execute_with_cancel(
     root: &Path,
     operation: &Operation,
