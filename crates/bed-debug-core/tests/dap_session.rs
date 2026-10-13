@@ -19,11 +19,13 @@ fn send(value: Value) {
     }
     stdout.flush().unwrap();
 }
+
 fn response(request: &Value, body: Value) {
     send(
         json!({"seq":100,"type":"response","request_seq":request["seq"],"command":request["command"],"success":true,"body":body}),
     );
 }
+
 fn adapter(scenario: &str) {
     let mut input = BufReader::new(io::stdin());
     let mut launch = None;
@@ -191,6 +193,7 @@ fn session(scenario: &str) -> DebugSession {
     )
     .unwrap()
 }
+
 fn poll_until(
     session: &mut DebugSession,
     mut done: impl FnMut(&DebugSession, &[DebugEvent]) -> bool,
@@ -223,6 +226,7 @@ fn poll_until(
         thread::sleep(Duration::from_millis(2));
     }
 }
+
 fn complete_session() {
     let mut session = session("basic");
     let events = poll_until(&mut session, |s, _| s.variables.contains_key(&20));
@@ -251,6 +255,7 @@ fn complete_session() {
     poll_until(&mut session, |s, _| s.state == SessionState::Terminated);
     assert_eq!(session.exit_code, Some(0));
 }
+
 fn stale_evaluation_is_rejected() {
     let mut session = session("stale");
     poll_until(&mut session, |s, _| s.variables.contains_key(&20));
@@ -272,16 +277,19 @@ fn stale_evaluation_is_rejected() {
     session.disconnect().unwrap();
     poll_until(&mut session, |s, _| s.state == SessionState::Terminated);
 }
+
 fn adapter_crash_is_reported() {
     let mut session = session("crash");
     let events = poll_until(&mut session, |s, _| s.state == SessionState::Failed);
     assert!(events.iter().any(|e| matches!(e, DebugEvent::Error(_))));
 }
+
 fn drop_silent_adapter_is_bounded() {
     let started = Instant::now();
     drop(session("basic"));
     assert!(started.elapsed() < Duration::from_secs(2));
 }
+
 fn superseded_breakpoint_responses_never_replace_latest_locations() {
     let mut session = session("breakpoint-order");
     poll_until(&mut session, |s, _| s.variables.contains_key(&20));
@@ -319,6 +327,7 @@ fn superseded_breakpoint_responses_never_replace_latest_locations() {
     );
     assert!(events.iter().any(|e| matches!(e,DebugEvent::Breakpoints{request_id,breakpoints,..} if *request_id==latest && breakpoints[0].line==Some(5))));
 }
+
 fn variable_expansion_requests_are_deduplicated() {
     let mut session = session("basic");
     poll_until(&mut session, |s, _| s.variables.contains_key(&20));
@@ -328,6 +337,7 @@ fn variable_expansion_requests_are_deduplicated() {
     poll_until(&mut session, |s, _| s.variables.contains_key(&30));
     assert_eq!(session.load_variables(30).unwrap(), 0);
 }
+
 fn globals_and_registers_load_only_after_expansion() {
     let mut session = session("lazy-scopes");
     poll_until(&mut session, |s, _| s.variables.contains_key(&20));
@@ -346,6 +356,7 @@ fn globals_and_registers_load_only_after_expansion() {
         s.variables.contains_key(&21) && s.variables.contains_key(&22)
     });
 }
+
 fn failed_variables_require_explicit_retry(scenario: &str) {
     let mut session = session(scenario);
     poll_until(&mut session, |s, _| s.variables.contains_key(&20));
@@ -373,6 +384,7 @@ fn failed_variables_require_explicit_retry(scenario: &str) {
     poll_until(&mut session, |s, _| s.variables.contains_key(&30));
     assert_eq!(session.variables[&30][0].value, "42");
 }
+
 fn variable_errors_are_cleared_when_the_frame_changes() {
     let mut session = session("variable-error");
     poll_until(&mut session, |s, _| s.variables.contains_key(&20));
@@ -382,6 +394,7 @@ fn variable_errors_are_cleared_when_the_frame_changes() {
     assert!(session.variable_errors.is_empty());
     poll_until(&mut session, |s, _| s.variables.contains_key(&20));
 }
+
 fn stale_variable_errors_are_discarded() {
     let mut session = session("stale-variable");
     poll_until(&mut session, |s, _| s.variables.contains_key(&20));
@@ -396,6 +409,7 @@ fn stale_variable_errors_are_discarded() {
             .any(|event| matches!(event, DebugEvent::Error(_)))
     );
 }
+
 fn main() {
     let arguments: Vec<_> = std::env::args().collect();
     if arguments.get(1).map(String::as_str) == Some("--mock-adapter") {

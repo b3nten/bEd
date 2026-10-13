@@ -10,7 +10,9 @@ use std::{
 };
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
+
 struct Fixture(PathBuf);
+
 impl Fixture {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
@@ -21,17 +23,20 @@ impl Fixture {
         fs::create_dir_all(&path).unwrap();
         Self(path.canonicalize().unwrap())
     }
+
     fn write(&self, name: &str, text: &str) {
         let path = self.0.join(name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, text).unwrap();
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
 fn finish(job: &mut BuildJob) -> Vec<BuildEvent> {
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut events = Vec::new();
@@ -42,6 +47,7 @@ fn finish(job: &mut BuildJob) -> Vec<BuildEvent> {
     }
     events
 }
+
 #[test]
 fn cargo_discovers_and_builds_exact_binary_example_and_test_artifacts() {
     let fixture = Fixture::new();
@@ -106,6 +112,7 @@ fn cargo_discovers_and_builds_exact_binary_example_and_test_artifacts() {
         }
     }
 }
+
 #[cfg(unix)]
 #[test]
 fn failed_manual_build_never_returns_an_existing_old_program() {
@@ -128,6 +135,7 @@ fn failed_manual_build_never_returns_an_existing_old_program() {
         )
     );
 }
+
 #[cfg(unix)]
 #[test]
 fn cancelling_a_running_build_terminates_it_promptly() {
@@ -160,6 +168,7 @@ fn cancelling_a_running_build_terminates_it_promptly() {
             .contains("cancelled")
     );
 }
+
 #[test]
 fn omitted_profile_fields_preserve_safe_defaults() {
     let profile: DebugProfile =

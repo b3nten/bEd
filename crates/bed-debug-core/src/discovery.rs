@@ -27,6 +27,7 @@ pub fn discover_adapter(override_path: Option<&Path>) -> io::Result<PathBuf> {
         use std::os::unix::fs::PermissionsExt;
         metadata.permissions().mode() & 0o111 != 0
     }
+
     fn find(name: &Path) -> Option<PathBuf> {
         if name.is_absolute() || name.components().count() > 1 {
             return executable(name).then(|| name.to_owned());
@@ -90,12 +91,14 @@ pub struct CargoDiscoveredTarget {
     pub target: CargoTarget,
     pub required_features: Vec<String>,
 }
+
 #[derive(Clone, Debug)]
 pub struct CargoWorkspace {
     pub root: PathBuf,
     pub target_directory: PathBuf,
     pub targets: Vec<CargoDiscoveredTarget>,
 }
+
 #[derive(Deserialize)]
 struct Metadata {
     packages: Vec<Package>,
@@ -103,6 +106,7 @@ struct Metadata {
     workspace_root: PathBuf,
     target_directory: PathBuf,
 }
+
 #[derive(Deserialize)]
 struct Package {
     name: String,
@@ -110,6 +114,7 @@ struct Package {
     manifest_path: PathBuf,
     targets: Vec<Target>,
 }
+
 #[derive(Deserialize)]
 struct Target {
     name: String,
@@ -179,6 +184,7 @@ pub fn parse_metadata(bytes: &[u8]) -> Result<CargoWorkspace, String> {
         targets,
     })
 }
+
 pub(crate) fn discover(
     manifest: &Path,
     cancel: &AtomicBool,
@@ -228,6 +234,7 @@ pub struct CargoDiscovery {
     receiver: mpsc::Receiver<Result<CargoWorkspace, String>>,
     outcome: Option<Result<CargoWorkspace, String>>,
 }
+
 impl CargoDiscovery {
     pub fn start(manifest: &Path) -> io::Result<Self> {
         let manifest = if manifest.is_absolute() {
@@ -250,6 +257,7 @@ impl CargoDiscovery {
             outcome: None,
         })
     }
+
     pub fn poll(&mut self) -> bool {
         if self.outcome.is_some() {
             return false;
@@ -266,13 +274,16 @@ impl CargoDiscovery {
             Err(mpsc::TryRecvError::Empty) => false,
         }
     }
+
     pub fn outcome(&self) -> Option<&Result<CargoWorkspace, String>> {
         self.outcome.as_ref()
     }
+
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Release);
     }
 }
+
 impl Drop for CargoDiscovery {
     fn drop(&mut self) {
         self.cancel();
@@ -282,6 +293,7 @@ impl Drop for CargoDiscovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn discovery_lists_launchable_targets_and_test_modes_only() {
         let value = serde_json::json!({"workspace_members":["p"],"workspace_root":"/p","target_directory":"/out","packages":[{"name":"p","id":"p","manifest_path":"/p/Cargo.toml","targets":[{"name":"app","kind":["bin"],"test":true},{"name":"p","kind":["lib"],"test":true},{"name":"demo","kind":["example"],"crate_types":["bin"]},{"name":"helper","kind":["example"],"crate_types":["lib"]},{"name":"integration","kind":["test"]},{"name":"speed","kind":["bench"]}]}]});

@@ -161,7 +161,9 @@ mod tests {
     };
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
     struct Fixture(PathBuf);
+
     impl Fixture {
         fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
@@ -172,12 +174,14 @@ mod tests {
             fs::create_dir_all(&path).unwrap();
             Self(path.canonicalize().unwrap())
         }
+
         fn write(&self, name: &str, contents: &str) -> PathBuf {
             let path = self.0.join(name);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, contents).unwrap();
             path
         }
+
         fn printers(&self, legacy: bool) -> PathBuf {
             let root = self.0.join("toolchain with spaces");
             self.write(
@@ -192,6 +196,7 @@ mod tests {
             }
             root
         }
+
         #[cfg(unix)]
         fn compiler(&self, script: &str) -> PathBuf {
             use std::os::unix::fs::PermissionsExt;
@@ -200,6 +205,7 @@ mod tests {
             path
         }
     }
+
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);

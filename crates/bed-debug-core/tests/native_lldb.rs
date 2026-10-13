@@ -79,12 +79,14 @@ const LITERAL_ARGUMENT: &str = "literal argument $(no expansion) 日本語";
 const TERMINAL_INPUT: &str = "interactive terminal input";
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
 struct Fixture {
     directory: PathBuf,
     source: PathBuf,
     program: PathBuf,
     breakpoint_line: u32,
 }
+
 impl Fixture {
     fn compile(language: &str, source: &str) -> Self {
         let directory = std::env::temp_dir().join(format!(
@@ -144,6 +146,7 @@ impl Fixture {
         }
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.directory);
@@ -161,6 +164,7 @@ struct Harness {
     breakpoint_verified: bool,
     expect_clean_exit: bool,
 }
+
 impl Harness {
     fn launch(adapter: &Path, fixture: &Fixture) -> Self {
         Self::launch_with_init_commands(adapter, fixture, Vec::new())

@@ -92,10 +92,12 @@ pub enum TransportEvent {
     Message(Value),
     Closed(String),
 }
+
 struct QueuedFrame {
     bytes: Vec<u8>,
     budget: Arc<AtomicUsize>,
 }
+
 impl Drop for QueuedFrame {
     fn drop(&mut self) {
         self.budget.fetch_sub(self.bytes.len(), Ordering::AcqRel);
@@ -109,6 +111,7 @@ pub struct DapTransport {
     stderr: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
     write_budget: Arc<AtomicUsize>,
 }
+
 impl DapTransport {
     pub fn spawn(program: &Path, arguments: &[String], cwd: Option<&Path>) -> io::Result<Self> {
         let mut command = Command::new(program);
@@ -191,9 +194,11 @@ impl DapTransport {
             })?;
         Ok(owner)
     }
+
     pub fn process_id(&self) -> u32 {
         self.child.id()
     }
+
     pub fn send(&self, message: &Value) -> io::Result<()> {
         let bytes = encode_frame(message)?;
         self.write_budget
@@ -224,15 +229,18 @@ impl DapTransport {
                 }
             })
     }
+
     pub fn poll(&self) -> Vec<TransportEvent> {
         self.incoming
             .as_ref()
             .map(|r| r.try_iter().take(INBOUND_CAPACITY).collect())
             .unwrap_or_default()
     }
+
     pub fn stderr(&self) -> String {
         String::from_utf8_lossy(&self.stderr.lock().unwrap_or_else(|p| p.into_inner())).into_owned()
     }
+
     pub fn shutdown(&mut self) {
         self.outgoing.take();
         self.incoming.take();
@@ -246,6 +254,7 @@ impl DapTransport {
         let _ = self.child.wait();
     }
 }
+
 impl Drop for DapTransport {
     fn drop(&mut self) {
         self.shutdown();
@@ -256,6 +265,7 @@ impl Drop for DapTransport {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
     #[test]
     fn utf8_framing_uses_byte_length_and_handles_adjacent_frames() {
         let value = serde_json::json!({"type":"event","output":"héλlo"});
@@ -265,6 +275,7 @@ mod tests {
         assert_eq!(read_frame(&mut reader).unwrap(), value);
         assert_eq!(read_frame(&mut reader).unwrap(), value);
     }
+
     #[test]
     fn rejects_invalid_duplicate_missing_and_oversized_lengths() {
         for bytes in [

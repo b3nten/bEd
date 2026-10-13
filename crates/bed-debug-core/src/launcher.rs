@@ -79,6 +79,7 @@ mod unix {
         }
         Ok(())
     }
+
     fn wait(deadline: Instant) -> io::Result<()> {
         if Instant::now() >= deadline {
             return Err(io::Error::new(
@@ -89,6 +90,7 @@ mod unix {
         thread::sleep(Duration::from_millis(2));
         Ok(())
     }
+
     fn open(path: &Path, write: bool, deadline: Instant) -> io::Result<File> {
         loop {
             match OpenOptions::new()
@@ -115,6 +117,7 @@ mod unix {
             }
         }
     }
+
     fn notify_pid(path: &Path, deadline: Instant) -> io::Result<()> {
         let mut writer = open(path, true, deadline)?;
         let message = format!("{}\n", json!({"kind":"pid","pid":std::process::id()}));
@@ -130,6 +133,7 @@ mod unix {
         }
         Ok(())
     }
+
     fn open_reply_reader(path: &Path, deadline: Instant) -> io::Result<File> {
         let path = path.to_owned();
         let (sender, receiver) = mpsc::sync_channel(1);
@@ -165,6 +169,7 @@ mod unix {
         }
         Ok(file)
     }
+
     fn wait_attached(path: &Path, deadline: Instant) -> io::Result<()> {
         let mut reader = open_reply_reader(path, deadline)?;
         let mut message = Vec::new();
@@ -198,6 +203,7 @@ mod unix {
             }
         }
     }
+
     pub(super) fn run(args: Vec<OsString>) -> io::Result<()> {
         if args.len() < 6
             || args[0] != "--comm-file"
@@ -235,6 +241,7 @@ mod unix {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     #[cfg(unix)]
     fn rewrites_only_the_launcher_prefix_and_preserves_literal_target_arguments() {
@@ -265,6 +272,7 @@ mod tests {
         invalid[4] = "0".into();
         assert!(arguments(&invalid, Path::new("/app/bed")).is_none());
     }
+
     #[test]
     fn rejects_incomplete_helper_invocations() {
         assert!(run(Vec::<OsString>::new()).is_err());

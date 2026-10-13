@@ -23,17 +23,20 @@ pub struct BuildArtifact {
     pub environment: BTreeMap<String, String>,
     pub init_commands: Vec<String>,
 }
+
 #[derive(Clone, Debug)]
 pub enum BuildEvent {
     Output(String),
     Finished(Result<BuildArtifact, String>),
 }
+
 #[derive(Clone, Debug)]
 enum BuildCommand {
     None,
     Shell(String),
     Cargo(CargoLaunch),
 }
+
 #[derive(Clone, Debug)]
 pub struct BuildRequest {
     command: BuildCommand,
@@ -42,6 +45,7 @@ pub struct BuildRequest {
     program: PathBuf,
     rust_formatters: bool,
 }
+
 fn resolve(root: &Path, path: &str) -> PathBuf {
     let path = Path::new(path);
     if path.is_absolute() {
@@ -50,6 +54,7 @@ fn resolve(root: &Path, path: &str) -> PathBuf {
         root.join(path)
     }
 }
+
 impl BuildRequest {
     pub fn for_profile(profile: &DebugProfile, workspace: &Path) -> io::Result<Self> {
         let workspace = if workspace.is_absolute() {
@@ -92,6 +97,7 @@ pub struct BuildJob {
     receiver: mpsc::Receiver<Result<BuildArtifact, String>>,
     outcome: Option<Result<BuildArtifact, String>>,
 }
+
 impl BuildJob {
     pub fn start(request: BuildRequest) -> io::Result<Self> {
         let cancel = Arc::new(AtomicBool::new(false));
@@ -111,6 +117,7 @@ impl BuildJob {
             outcome: None,
         })
     }
+
     pub fn poll(&mut self) -> Vec<BuildEvent> {
         let mut events: Vec<_> = self
             .logs
@@ -134,16 +141,20 @@ impl BuildJob {
         }
         events
     }
+
     pub fn is_finished(&self) -> bool {
         self.outcome.is_some()
     }
+
     pub fn outcome(&self) -> Option<&Result<BuildArtifact, String>> {
         self.outcome.as_ref()
     }
+
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Release);
     }
 }
+
 impl Drop for BuildJob {
     fn drop(&mut self) {
         self.cancel();
@@ -376,6 +387,7 @@ struct CargoOutput {
     library_paths: BTreeSet<PathBuf>,
     build_success: Option<bool>,
 }
+
 impl CargoOutput {
     fn new(package: String, launch: CargoLaunch) -> Self {
         Self {
@@ -387,6 +399,7 @@ impl CargoOutput {
             build_success: None,
         }
     }
+
     fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>, String> {
         if self.pending.len().saturating_add(bytes.len()) > 16 * 1024 * 1024 {
             return Err("Cargo output line exceeds 16 MiB".into());
@@ -401,6 +414,7 @@ impl CargoOutput {
         }
         Ok(output)
     }
+
     fn finish(&mut self) -> Result<Vec<String>, String> {
         let bytes = std::mem::take(&mut self.pending);
         Ok(if bytes.is_empty() {
@@ -409,6 +423,7 @@ impl CargoOutput {
             self.line(&bytes).into_iter().collect()
         })
     }
+
     fn line(&mut self, bytes: &[u8]) -> Option<String> {
         let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
             return Some(String::from_utf8_lossy(bytes).into_owned());
@@ -447,6 +462,7 @@ impl CargoOutput {
             _ => None,
         }
     }
+
     fn artifact(&self) -> Result<PathBuf, String> {
         if self.artifacts.len() != 1 {
             return Err(format!(
@@ -462,6 +478,7 @@ impl CargoOutput {
 mod tests {
     use super::*;
     use crate::profile::{CargoTarget, CargoTargetKind};
+
     #[test]
     fn artifact_selection_ignores_dependencies_and_regular_binary_for_tests() {
         let launch = CargoLaunch {
@@ -489,6 +506,7 @@ mod tests {
             PathBuf::from("/custom/out/deps/app-hash")
         );
     }
+
     #[test]
     fn ambiguous_or_absent_artifacts_never_guess_a_binary() {
         let mut parser = CargoOutput::new("p".into(), CargoLaunch::default());

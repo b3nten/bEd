@@ -18,7 +18,9 @@ use std::{
 };
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
+
 struct Fixture(PathBuf);
+
 impl Fixture {
     fn new() -> Self {
         let directory = std::env::temp_dir().join(format!(
@@ -29,6 +31,7 @@ impl Fixture {
         fs::create_dir_all(&directory).unwrap();
         Self(directory)
     }
+
     fn fifo(&self) -> PathBuf {
         let path = self.0.join("comm fifo");
         let c_path = CString::new(path.as_os_str().as_bytes()).unwrap();
@@ -36,18 +39,22 @@ impl Fixture {
         path
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
 struct Owner(Child);
+
 impl Drop for Owner {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
 }
+
 fn launch(fifo: &std::path::Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_bed-debug-launcher"));
     command

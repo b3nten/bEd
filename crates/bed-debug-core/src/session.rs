@@ -19,6 +19,7 @@ pub struct LaunchConfig {
     pub breakpoints: BTreeMap<String, Vec<SourceBreakpoint>>,
     pub init_commands: Vec<String>,
 }
+
 impl Default for LaunchConfig {
     fn default() -> Self {
         Self {
@@ -33,6 +34,7 @@ impl Default for LaunchConfig {
         }
     }
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionState {
     Initializing,
@@ -43,11 +45,13 @@ pub enum SessionState {
     Terminated,
     Failed,
 }
+
 impl SessionState {
     pub fn is_finished(self) -> bool {
         matches!(self, Self::Terminated | Self::Failed)
     }
 }
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct SourceBreakpoint {
@@ -59,6 +63,7 @@ pub struct SourceBreakpoint {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub log_message: Option<String>,
 }
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Breakpoint {
@@ -67,11 +72,13 @@ pub struct Breakpoint {
     pub line: Option<usize>,
     pub message: Option<String>,
 }
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct Thread {
     pub id: i64,
     pub name: String,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StackFrame {
     pub id: i64,
@@ -80,6 +87,7 @@ pub struct StackFrame {
     pub line: usize,
     pub column: usize,
 }
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Scope {
@@ -90,6 +98,7 @@ pub struct Scope {
     #[serde(default)]
     pub expensive: bool,
 }
+
 impl Scope {
     /// Only local variables load automatically. LLDB can mark Globals and
     /// Registers inexpensive even when fetching them blocks other requests.
@@ -98,6 +107,7 @@ impl Scope {
             || self.name.eq_ignore_ascii_case("locals")
     }
 }
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Variable {
@@ -110,6 +120,7 @@ pub struct Variable {
     #[serde(default)]
     pub evaluate_name: Option<String>,
 }
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct EvaluateResult {
@@ -119,12 +130,14 @@ pub struct EvaluateResult {
     #[serde(default)]
     pub variables_reference: i64,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EvaluateContext {
     Watch,
     Hover,
     Repl,
 }
+
 impl EvaluateContext {
     fn as_str(self) -> &'static str {
         match self {
@@ -134,6 +147,7 @@ impl EvaluateContext {
         }
     }
 }
+
 #[derive(Clone, Debug)]
 pub struct RunInTerminalRequest {
     pub request_seq: u64,
@@ -142,6 +156,7 @@ pub struct RunInTerminalRequest {
     pub env: BTreeMap<String, Option<String>>,
     pub title: String,
 }
+
 #[derive(Clone, Debug)]
 pub enum DebugEvent {
     Changed,
@@ -165,6 +180,7 @@ pub enum DebugEvent {
         result: Result<EvaluateResult, String>,
     },
 }
+
 #[derive(Clone, Debug)]
 enum PendingKind {
     Initialize,
@@ -180,6 +196,7 @@ enum PendingKind {
     Pause,
     Disconnect,
 }
+
 impl PendingKind {
     fn is_inspection(&self) -> bool {
         matches!(
@@ -188,6 +205,7 @@ impl PendingKind {
         )
     }
 }
+
 struct Pending {
     kind: PendingKind,
     stop_generation: u64,
@@ -223,10 +241,12 @@ pub struct DebugSession {
     supports_restart: bool,
     events: Vec<DebugEvent>,
 }
+
 impl DebugSession {
     pub fn launch(adapter: &Path, config: LaunchConfig) -> io::Result<Self> {
         Self::launch_with_args(adapter, &[], config)
     }
+
     pub fn launch_with_args(
         adapter: &Path,
         arguments: &[String],
@@ -273,12 +293,15 @@ impl DebugSession {
         }), PendingKind::Initialize)?;
         Ok(this)
     }
+
     pub fn adapter_process_id(&self) -> u32 {
         self.transport.process_id()
     }
+
     pub fn adapter_stderr(&self) -> String {
         self.transport.stderr()
     }
+
     fn request(&mut self, command: &str, arguments: Value, kind: PendingKind) -> io::Result<u64> {
         if self.pending.len() >= 256 {
             return Err(io::Error::new(
@@ -309,6 +332,7 @@ impl DebugSession {
         );
         Ok(seq)
     }
+
     pub fn poll(&mut self) -> Vec<DebugEvent> {
         for event in self.transport.poll() {
             if self.state.is_finished() {
@@ -386,6 +410,7 @@ impl DebugSession {
         }
         std::mem::take(&mut self.events)
     }
+
     fn fail(&mut self, error: String) {
         if self.state.is_finished() {
             return;
@@ -398,6 +423,7 @@ impl DebugSession {
         self.events.push(DebugEvent::Error(error));
         self.events.push(DebugEvent::Changed);
     }
+
     fn invalidate_inspection(&mut self) {
         self.stop_generation += 1;
         self.selection_generation += 1;
@@ -408,6 +434,7 @@ impl DebugSession {
         self.variable_errors.clear();
         self.selected_frame = None;
     }
+
     fn discard_inspection_requests(&mut self) {
         self.pending.retain(|id, pending| {
             if matches!(pending.kind, PendingKind::Evaluate) {
@@ -419,6 +446,7 @@ impl DebugSession {
             !pending.kind.is_inspection()
         });
     }
+
     fn variable_error(&mut self, reference: i64, error: String) {
         self.variable_errors.insert(reference, error.clone());
         // The scope owns this recoverable error. A global error banner would
@@ -429,6 +457,7 @@ impl DebugSession {
         });
         self.events.push(DebugEvent::Changed);
     }
+
     fn require_stopped(&self) -> io::Result<()> {
         if self.state != SessionState::Stopped {
             return Err(io::Error::new(
@@ -438,6 +467,7 @@ impl DebugSession {
         }
         Ok(())
     }
+
     pub fn set_breakpoints(
         &mut self,
         path: impl Into<String>,
@@ -467,6 +497,7 @@ impl DebugSession {
         }
         Ok(seq)
     }
+
     fn finish_configuration(&mut self) -> io::Result<()> {
         if self.initialized && !self.configure_sent && self.startup_breakpoints == 0 {
             self.configure_sent = true;
@@ -474,18 +505,23 @@ impl DebugSession {
         }
         Ok(())
     }
+
     pub fn continue_execution(&mut self) -> io::Result<u64> {
         self.resume("continue")
     }
+
     pub fn step_over(&mut self) -> io::Result<u64> {
         self.resume("next")
     }
+
     pub fn step_in(&mut self) -> io::Result<u64> {
         self.resume("stepIn")
     }
+
     pub fn step_out(&mut self) -> io::Result<u64> {
         self.resume("stepOut")
     }
+
     fn resume(&mut self, command: &str) -> io::Result<u64> {
         self.require_stopped()?;
         let thread = self
@@ -501,6 +537,7 @@ impl DebugSession {
         self.events.push(DebugEvent::Changed);
         Ok(id)
     }
+
     pub fn pause(&mut self) -> io::Result<u64> {
         if self.state != SessionState::Running {
             return Err(io::Error::other("Program is not running"));
@@ -511,6 +548,7 @@ impl DebugSession {
             PendingKind::Pause,
         )
     }
+
     /// The host normally rebuilds by disconnecting and starting a new session.
     /// This method is provided for adapter-level restart of the same executable.
     pub fn restart(&mut self) -> io::Result<u64> {
@@ -525,6 +563,7 @@ impl DebugSession {
         self.invalidate_inspection();
         Ok(id)
     }
+
     pub fn disconnect(&mut self) -> io::Result<u64> {
         if self.state.is_finished() {
             return Ok(0);
@@ -539,6 +578,7 @@ impl DebugSession {
         self.events.push(DebugEvent::Changed);
         Ok(id)
     }
+
     /// Give the adapter a short opportunity to terminate its owned debuggee
     /// before forcibly reaping the adapter. The host also stops its PTY session.
     pub fn shutdown(&mut self) {
@@ -560,6 +600,7 @@ impl DebugSession {
             self.terminal_requests.clear();
         }
     }
+
     pub fn select_thread(&mut self, id: i64) -> io::Result<u64> {
         self.require_stopped()?;
         self.selected_thread = Some(id);
@@ -576,6 +617,7 @@ impl DebugSession {
             PendingKind::Frames,
         )
     }
+
     pub fn select_frame(&mut self, id: i64) -> io::Result<u64> {
         self.require_stopped()?;
         self.selected_frame = Some(id);
@@ -586,6 +628,7 @@ impl DebugSession {
         self.variable_errors.clear();
         self.request("scopes", json!({"frameId":id}), PendingKind::Scopes)
     }
+
     pub fn load_variables(&mut self, reference: i64) -> io::Result<u64> {
         self.require_stopped()?;
         if reference <= 0 {
@@ -608,14 +651,17 @@ impl DebugSession {
             PendingKind::Variables(reference),
         )
     }
+
     pub fn request_variables(&mut self, reference: i64) -> io::Result<u64> {
         self.load_variables(reference)
     }
+
     pub fn retry_variables(&mut self, reference: i64) -> io::Result<u64> {
         self.require_stopped()?;
         self.variable_errors.remove(&reference);
         self.load_variables(reference)
     }
+
     pub fn evaluate(
         &mut self,
         expression: impl Into<String>,
@@ -625,6 +671,7 @@ impl DebugSession {
         self.require_stopped()?;
         self.request("evaluate", json!({"expression":expression.into(),"context":context.as_str(),"frameId":frame_id.or(self.selected_frame)}), PendingKind::Evaluate)
     }
+
     pub fn respond_run_in_terminal(
         &mut self,
         request_seq: u64,
@@ -645,6 +692,7 @@ impl DebugSession {
         };
         self.transport.send(&response)
     }
+
     fn handle_message(&mut self, message: Value) -> io::Result<()> {
         match message["type"].as_str() {
             Some("response") => self.handle_response(message),
@@ -653,6 +701,7 @@ impl DebugSession {
             _ => Err(io::Error::other("Unknown debugger protocol message type")),
         }
     }
+
     fn handle_request(&mut self, message: Value) -> io::Result<()> {
         let request_seq = message["seq"]
             .as_u64()
@@ -703,6 +752,7 @@ impl DebugSession {
             }));
         Ok(())
     }
+
     fn handle_response(&mut self, message: Value) -> io::Result<()> {
         let Some(id) = message["request_seq"].as_u64() else {
             return Err(io::Error::other("Debugger response has no request ID"));
@@ -871,10 +921,12 @@ impl DebugSession {
         self.events.push(DebugEvent::Changed);
         Ok(())
     }
+
     fn refresh_threads(&mut self) -> io::Result<()> {
         self.request("threads", json!({}), PendingKind::Threads)?;
         Ok(())
     }
+
     fn handle_event(&mut self, message: Value) -> io::Result<()> {
         let body = &message["body"];
         if self.state == SessionState::Stopping
@@ -947,6 +999,7 @@ impl DebugSession {
         Ok(())
     }
 }
+
 impl Drop for DebugSession {
     fn drop(&mut self) {
         self.shutdown();

@@ -16,15 +16,18 @@ pub(crate) enum Stream {
     Stdout,
     Stderr,
 }
+
 enum ReadEvent {
     Bytes(Stream, Vec<u8>),
     Eof,
     Error(String),
 }
+
 struct Owner {
     child: Child,
     finished: bool,
 }
+
 impl Drop for Owner {
     fn drop(&mut self) {
         if !self.finished {
@@ -37,6 +40,7 @@ impl Drop for Owner {
         let _ = self.child.wait();
     }
 }
+
 pub(crate) fn run(
     mut command: Command,
     cancel: &AtomicBool,
@@ -59,6 +63,7 @@ pub(crate) fn run(
     let stdout = owner.child.stdout.take().expect("piped stdout");
     let stderr = owner.child.stderr.take().expect("piped stderr");
     let (sender, receiver) = mpsc::sync_channel(16);
+
     fn reader(
         mut pipe: impl Read + Send + 'static,
         stream: Stream,
