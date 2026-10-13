@@ -1,34 +1,30 @@
-//! Private shell commands enter the same ordered, tracked editor reducer as UI.
+//! Local shell aliases dispatch to their owning registered workbench command.
 use crate::TerminalPanelState;
+#[cfg(feature = "remote")]
+use bed_api::files::FileProviderId;
 use bed_api::workbench::{
-    CommandInvocation, CommandResult, PanelOwner, PanelPresentation, WorkbenchAction,
+    CommandInvocation, CommandPresentations, PanelOwner, PanelPresentation, ShellInvocation,
+    WorkbenchAction, WorkbenchRegistry,
 };
 use bed_api::{
-    features::{HostAction, HostEffects, HostFrame},
-    workbench::PanelTarget,
+    features::{HostAction, HostEffects},
+    files::FileContext,
 };
-use bed_documents::DocumentSession;
 use bed_terminal::{
     bed_terminal::BedTerminal,
-    shell_bridge::{self, Bridge, Request},
+    shell_bridge::{self, Bridge},
 };
 use bed_workbench::{WorkbenchLayout, WorkbenchRequestId, WorkbenchRequests};
 use bevy::prelude::*;
+#[cfg(test)]
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
-pub(crate) const COMMAND: &str = "bed.terminal.editor.shell_request";
-
-struct PendingRequest {
-    source: Option<Entity>,
-    request: HostAction,
-}
-
 type ShellContext<'w> = (
     Option<Res<'w, WorkbenchLayout>>,
-    Option<Res<'w, bed_workbench::WorkbenchRequestMode>>,
-    Option<Res<'w, HostFrame>>,
-    Option<NonSend<'w, DocumentSession>>,
+    Res<'w, WorkbenchRegistry>,
+    Option<Res<'w, FileContext>>,
+    Option<Res<'w, CommandPresentations>>,
 );
 
 #[derive(Resource, Default)]
@@ -36,7 +32,6 @@ pub(crate) struct ShellBridge {
     bridge: Option<Bridge>,
     environment: HashMap<String, String>,
     next: u64,
-    requests: HashMap<u64, PendingRequest>,
     operations: HashMap<u64, WorkbenchRequestId>,
     results: HashMap<u64, Result<(), String>>,
 }
@@ -56,10 +51,16 @@ pub(crate) fn install(app: &mut App) {
 fn initialize(
     mut shell: ResMut<ShellBridge>,
     mut terminal: NonSendMut<BedTerminal>,
-    mut intents: ResMut<HostEffects>,
+    mut intents: Option<ResMut<HostEffects>>,
+    registry: Res<WorkbenchRegistry>,
+    mut activity: ResMut<bed_terminal::TerminalActivity>,
 ) {
+    if registry.shell_aliases().is_empty() {
+        return;
+    }
     let result = (|| -> std::io::Result<_> {
-        let bridge = Bridge::new()?;
+        let bridge =
+            Bridge::with_aliases(registry.shell_aliases().iter().map(|entry| entry.alias))?;
         let executable = std::env::current_exe()?;
         let mut paths = vec![bridge.helper_directory().to_owned()];
         if let Some(parent) = executable.parent() {
@@ -88,11 +89,11 @@ fn initialize(
             shell.environment = environment;
             shell.bridge = Some(bridge);
         }
-        Err(error) => intents.push(
+        Err(error) => report_error(
+            &mut intents,
+            &mut activity,
             None,
-            HostAction::Notify {
-                message: format!("Terminal shell commands are unavailable: {error}"),
-            },
+            format!("Terminal shell commands are unavailable: {error}"),
         ),
     }
 }
@@ -104,9 +105,15 @@ fn poll(
     presentations: Query<&PanelPresentation>,
     context: ShellContext,
     mut requests: ResMut<WorkbenchRequests>,
-    mut intents: ResMut<HostEffects>,
+    feedback: (
+        Option<ResMut<HostEffects>>,
+        ResMut<bed_terminal::TerminalActivity>,
+    ),
 ) {
-    let (layout, mode, frame, documents) = context;
+    let (mut intents, mut activity) = feedback;
+    let (layout, registry, files, command_presentations) = context;
+    #[cfg(not(feature = "remote"))]
+    let _ = files;
     let source_for_session = |session| {
         panels.iter().find_map(|(entity, state, owner)| {
             let owner = owner.map_or(entity, |owner| owner.0);
@@ -150,13 +157,9 @@ fn poll(
                         if host.as_deref().is_some_and(|host| host != remote_host) {
                             return Err("The file link belongs to a different SSH host".into());
                         }
-                        if !documents.as_ref().is_some_and(|documents| {
-                            documents
-                                .ssh_target()
-                                .is_some_and(|target| target.host == ssh.host)
-                        }) {
+                        if !files.as_ref().is_some_and(|files| matches!(&files.provider, FileProviderId::Ssh { host } if host == &ssh.host)) {
                             return Err(
-                                "Open this terminal's SSH workspace before opening its file links"
+                                "Open this terminal's SSH directory before opening its file links"
                                     .into(),
                             );
                         }
@@ -181,6 +184,9 @@ fn poll(
                         };
                         path = directory.join(path);
                     }
+                    let intents = intents
+                        .as_mut()
+                        .ok_or("File links require shared document integration")?;
                     intents.push(
                         Some(source),
                         HostAction::OpenTerminalLink { path, position },
@@ -190,7 +196,7 @@ fn poll(
             Ok(())
         })();
         if let Err(message) = result {
-            intents.push(source, HostAction::Notify { message });
+            report_error(&mut intents, &mut activity, source, message);
         }
     }
     if shell.bridge.is_none() {
@@ -202,20 +208,30 @@ fn poll(
         .operations
         .iter()
         .filter_map(|(&nonce, &operation)| {
-            requests
-                .take_result(operation)
-                .map(|result| (nonce, result.map(|_| ())))
+            requests.take_result(operation).map(|result| {
+                (
+                    nonce,
+                    result.and_then(|outcome| {
+                        if matches!(outcome, bed_workbench::WorkbenchOutcome::Ignored) {
+                            Err(
+                                "The shell command is no longer available in its originating panel"
+                                    .into(),
+                            )
+                        } else {
+                            Ok(())
+                        }
+                    }),
+                )
+            })
         })
         .collect::<Vec<_>>();
     for (nonce, result) in completed {
         shell.operations.remove(&nonce);
-        shell.requests.remove(&nonce);
         shell.results.insert(nonce, result);
     }
     let ShellBridge {
         bridge,
         next,
-        requests: pending,
         operations,
         results,
         ..
@@ -223,17 +239,19 @@ fn poll(
     let bridge = bridge.as_mut().expect("checked above");
     let result = bridge.poll_deferred(
         |request| {
-            if !mode
-                .as_ref()
-                .is_some_and(|mode| **mode == bed_workbench::WorkbenchRequestMode::External)
-            {
-                return Err("Shell commands require an editor workbench".into());
+            let request = request.into_invocation();
+            let command = registry
+                .shell_command(&request.alias)
+                .ok_or_else(|| format!("Shell command unavailable: {}", request.alias))?;
+            if command_presentations.as_ref().is_some_and(|presentations| {
+                presentations
+                    .0
+                    .get(command.id)
+                    .is_some_and(|presentation| !presentation.enabled || !presentation.visible)
+            }) {
+                return Err(format!("Shell command unavailable: {}", request.alias));
             }
-            let pane = match &request {
-                Request::Open { pane, .. }
-                | Request::Workspace { pane, .. }
-                | Request::Ducky { pane } => pane,
-            };
+            let pane = &request.pane;
             let session = match pane {
                 Some(pane) => Some(terminal.session_for_pane(pane).ok_or_else(|| {
                     "The shell that requested this command is no longer available".to_owned()
@@ -248,27 +266,6 @@ fn poll(
             if pane.is_some() && source.is_none() {
                 return Err("The shell that requested this command is no longer available".into());
             }
-            let host = match request {
-                Request::Open { paths, .. } => HostAction::OpenTerminalFiles { paths },
-                Request::Workspace { root, .. } => {
-                    if frame.as_ref().is_some_and(|frame| frame.remote)
-                        || documents
-                            .as_ref()
-                            .is_some_and(|documents| documents.is_remote())
-                        || session.is_some_and(|session| terminal.is_remote_session(session))
-                    {
-                        return Err("Workspace upgrades require a local terminal".into());
-                    }
-                    HostAction::PromoteWorkspace { root }
-                }
-                Request::Ducky { .. } => HostAction::ShowPanelIn {
-                    panel_type: "bed.duck.panel".into(),
-                    document: None,
-                    state: Value::Null,
-                    action: None,
-                    target: PanelTarget::LargestArea,
-                },
-            };
             let layout = layout
                 .as_ref()
                 .ok_or_else(|| "Shell commands require a workbench layout".to_owned())?;
@@ -285,18 +282,18 @@ fn poll(
                 .unwrap_or(layout.tiling.layout.areas[0].id);
             *next = next.checked_add(1).expect("shell request ID overflow");
             let nonce = *next;
-            pending.insert(
-                nonce,
-                PendingRequest {
-                    source,
-                    request: host,
-                },
-            );
+            let arguments = ShellInvocation {
+                arguments: request.arguments,
+                directory: std::os::unix::ffi::OsStrExt::as_bytes(request.directory.as_os_str())
+                    .to_vec(),
+                pane: request.pane,
+            }
+            .to_arguments();
             let operation = requests.submit(WorkbenchAction::Invoke(CommandInvocation {
-                command: COMMAND.into(),
+                command: command.id.into(),
                 source,
                 area,
-                arguments: Value::from(nonce),
+                arguments,
             }));
             operations.insert(nonce, operation);
             Ok(nonce)
@@ -306,49 +303,33 @@ fn poll(
     let waiting = bridge.pending_requests().collect::<HashSet<_>>();
     results.retain(|nonce, _| waiting.contains(nonce));
     if let Err(error) = result {
-        intents.push(
+        report_error(
+            &mut intents,
+            &mut activity,
             None,
-            HostAction::Notify {
-                message: format!("Terminal shell command socket failed: {error}"),
-            },
+            format!("Terminal shell command socket failed: {error}"),
         );
     }
 }
 
-pub(crate) fn apply_request(
-    In(invocation): In<CommandInvocation>,
-    mut shell: ResMut<ShellBridge>,
-    mut intents: ResMut<HostEffects>,
-) -> CommandResult {
-    let nonce = invocation
-        .arguments
-        .as_u64()
-        .ok_or("Invalid shell request correlation")?;
-    let request = shell
-        .requests
-        .remove(&nonce)
-        .ok_or("The shell request is no longer available")?;
-    if request.source != invocation.source {
-        return Err("The shell request's originating panel changed".into());
-    }
-    if matches!(
-        &request.request,
-        HostAction::ShowPanelIn { .. }
-            | HostAction::OpenFileIn { .. }
-            | HostAction::OpenTerminalFiles { .. }
-    ) {
-        intents.push(request.source, request.request);
+fn report_error(
+    intents: &mut Option<ResMut<HostEffects>>,
+    activity: &mut bed_terminal::TerminalActivity,
+    source: Option<Entity>,
+    message: String,
+) {
+    if let Some(intents) = intents {
+        intents.push(source, HostAction::Notify { message });
     } else {
-        intents.push_at(request.source, invocation.area, request.request);
+        activity.error = Some(message);
+        activity.changed = true;
     }
-    Ok(Vec::new())
 }
 
 fn shutdown(mut exit: MessageReader<bevy::app::AppExit>, mut shell: ResMut<ShellBridge>) {
     if exit.read().next().is_some() {
         shell.bridge = None;
         shell.environment.clear();
-        shell.requests.clear();
         shell.operations.clear();
         shell.results.clear();
     }
@@ -358,11 +339,13 @@ fn shutdown(mut exit: MessageReader<bevy::app::AppExit>, mut shell: ResMut<Shell
 mod tests {
     use super::*;
     use crate::test_support::TempDir;
+    use bed_api::workbench::PanelTarget;
     use bed_app::{
         AppAction, AppOptions, AppRuntimePlugin, PanelPresentation, WorkspaceState,
         capture_app_request, open_panel, panel_presentation, process_app_requests,
         submit_app_request,
     };
+    use bed_documents::DocumentSession;
     use bed_terminal::{terminal_font::TerminalFonts, terminal_pty::TerminalShell};
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
     use serde_json::json;
@@ -497,12 +480,82 @@ mod tests {
         }
     }
 
-    fn has_no_reply(stream: &mut UnixStream) {
-        let mut byte = [0];
-        assert_eq!(
-            stream.read(&mut byte).unwrap_err().kind(),
-            std::io::ErrorKind::WouldBlock
+    #[test]
+    fn registered_third_party_shell_commands_need_no_workspace_or_documents() {
+        #[derive(Resource, Default)]
+        struct Observed(Vec<(Option<Entity>, ShellInvocation)>);
+        fn command(
+            In(input): In<CommandInvocation>,
+            mut observed: ResMut<Observed>,
+        ) -> bed_api::workbench::CommandResult {
+            observed.0.push((
+                input.source,
+                ShellInvocation::from_arguments(&input.arguments)?,
+            ));
+            Ok(Vec::new())
+        }
+        let directory = TempDir::new();
+        let mut app = App::new();
+        app.add_plugins((bed_workbench::WorkbenchPlugin, crate::TerminalPlugin));
+        app.init_resource::<Observed>();
+        bed_workbench::register(app.world_mut(), "example", |register| {
+            register.command("example.shell", "Custom shell command", command);
+            register.shell_alias("+custom", "example.shell");
+        })
+        .unwrap();
+        app.update();
+        assert!(
+            app.world()
+                .get_non_send::<bed_documents::DocumentSession>()
+                .is_none()
         );
+        let bytes = b"argument\xff".to_vec();
+        let stream = send(
+            &app,
+            json!({"command":"invoke", "alias":"+custom", "arguments":[bytes], "directory":directory.root().as_os_str().as_bytes()}),
+        );
+        assert!(reply(&mut app, stream)["error"].is_null());
+        let observed = &app.world().resource::<Observed>().0;
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0].1.arguments, vec![bytes]);
+        assert_eq!(
+            observed[0].1.directory,
+            directory.root().as_os_str().as_bytes()
+        );
+        let stream = send(
+            &app,
+            json!({"command":"invoke", "alias":"+unavailable", "arguments":[], "directory":directory.root().as_os_str().as_bytes()}),
+        );
+        assert!(
+            reply(&mut app, stream)["error"]
+                .as_str()
+                .unwrap()
+                .contains("unavailable")
+        );
+        app.world_mut()
+            .resource_mut::<CommandPresentations>()
+            .0
+            .insert(
+                "example.shell".into(),
+                bed_api::workbench::CommandPresentation {
+                    label: None,
+                    enabled: false,
+                    visible: true,
+                },
+            );
+        let stream = send(
+            &app,
+            json!({"command":"invoke", "alias":"+custom", "arguments":[], "directory":directory.root().as_os_str().as_bytes()}),
+        );
+        assert!(
+            reply(&mut app, stream)["error"]
+                .as_str()
+                .unwrap()
+                .contains("unavailable")
+        );
+        assert_eq!(app.world().resource::<Observed>().0.len(), 1);
+        app.world_mut().write_message(AppExit::Success);
+        app.update();
     }
 
     #[test]
@@ -520,8 +573,9 @@ mod tests {
         assert_eq!(
             app.world()
                 .non_send::<BedTerminal>()
-                .working_directory(session),
-            Some(directory.root())
+                .working_directory(session)
+                .map(Path::to_path_buf),
+            Some(directory.root().canonicalize().unwrap())
         );
         let _context = start_shell(&mut app, session);
         let expected = directory.root().canonicalize().unwrap();
@@ -651,8 +705,9 @@ mod tests {
         assert_eq!(
             app.world()
                 .non_send::<BedTerminal>()
-                .working_directory(session),
-            Some(directory.root())
+                .working_directory(session)
+                .map(Path::to_path_buf),
+            Some(directory.root().canonicalize().unwrap())
         );
         let _context = start_shell(&mut app, session);
         let pid = app
@@ -708,12 +763,11 @@ mod tests {
             Some(other_session)
         );
 
-        let mut failure = send(
+        let failure = send(
             &app,
             json!({"command":"workspace", "root":directory.path("missing").as_os_str().as_bytes(), "pane":pane}),
         );
         app.update();
-        has_no_reply(&mut failure);
         assert!(
             reply(&mut app, failure)["error"]
                 .as_str()
@@ -722,12 +776,11 @@ mod tests {
         assert!(app.world().resource::<WorkspaceState>().spec.is_none());
         assert!(app.world().get::<PanelPresentation>(other).is_some());
 
-        let mut open = send(
+        let open = send(
             &app,
             json!({"command":"open", "paths":[file.as_os_str().as_bytes()], "pane":pane}),
         );
         app.update();
-        has_no_reply(&mut open);
         assert!(reply(&mut app, open)["error"].is_null());
         let editor = app.world().resource::<WorkbenchLayout>().focused.unwrap();
         let editor_frontend = panel_presentation(app.world(), editor).unwrap();
@@ -756,13 +809,13 @@ mod tests {
         submit_app_request(app.world_mut(), request);
         process_app_requests(app.world_mut()).unwrap();
 
-        let mut promote = send(
+        let promote = send(
             &app,
             json!({"command":"workspace", "root":root.as_os_str().as_bytes(), "pane":pane}),
         );
         app.update();
-        has_no_reply(&mut promote);
-        assert!(reply(&mut app, promote)["error"].is_null());
+        let promotion_reply = reply(&mut app, promote);
+        assert!(promotion_reply["error"].is_null(), "{promotion_reply}");
         assert_eq!(
             app.world()
                 .resource::<WorkspaceState>()

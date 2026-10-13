@@ -84,6 +84,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn registering_a_memory_asset_consumer_after_asset_server_builds_fails_clearly() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            BedMemoryAssets::register(&mut app)
+        }));
+        assert!(result.is_err());
+        assert!(!app.world().contains_resource::<BedMemoryAssets>());
+    }
+
+    #[test]
     fn plugins_can_write_independent_namespaces_after_asset_server_builds() {
         let mut app = App::new();
         BedMemoryAssets::register(&mut app);

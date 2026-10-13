@@ -11,6 +11,7 @@ bed-api = { workspace = true, features = ["documents"] }
 bed-ui = { workspace = true, features = ["imgui"] }
 bed-git = { workspace = true }
 bed-editing = { workspace = true }
+bed-files = { workspace = true, features = ["workspace-services"] }
 bed-documents = { workspace = true, features = ["ide-services"] }
 bed-editor-widgets = { workspace = true, features = ["language-services"] }
 bed-remote = { workspace = true }

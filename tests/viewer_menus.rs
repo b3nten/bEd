@@ -7,12 +7,12 @@ mod editor_host;
 mod temp_dir;
 
 use bed_api::{
-    application::WorkspaceAction,
     documents::PanelBinding,
     features::{HostAction, HostEffects},
 };
 use bed_app::{AppOptions, AppRuntimePlugin, WorkspaceState};
 use bed_documents::DocumentSession;
+use bed_plugin_workspaces::WorkspaceAction;
 use bevy::prelude::*;
 use dear_imgui_rs::{Context, MouseButton, sys};
 use std::{
@@ -159,9 +159,11 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
         bed_plugin_sqlite_browser::SqliteBrowserPlugin,
     ));
     app.update();
-    app.world_mut().resource_mut::<HostEffects>().push(
+    bed_plugin_workspaces::request_workspace(
+        app.world_mut(),
+        WorkspaceAction::OpenLocalWorkspace(root.clone()),
         None,
-        HostAction::Workspace(WorkspaceAction::OpenLocalWorkspace(root.clone())),
+        0,
     );
     app.update();
     app.world_mut().resource_mut::<HostEffects>().push(

@@ -3,6 +3,8 @@ use crate::{
     worker::{Request, Response, Worker},
 };
 use bed_api::features::{HostAction, HostContext};
+#[cfg(test)]
+use dear_imgui_rs::Key;
 use dear_imgui_rs::{
     ChildFlags, FocusedFlags, ListClipper, StyleColor, StyleVar, TabItemFlags, TableColumnFlags,
     TableColumnWidth, TableFlags, TableRowFlags, Ui, WindowFlags,
@@ -1898,6 +1900,3 @@ mod tests {
         assert!(!data.has_more);
     }
 }
-
-#[cfg(test)]
-use dear_imgui_rs::Key;

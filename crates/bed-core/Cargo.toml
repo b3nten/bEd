@@ -6,13 +6,21 @@ publish = false
 license.workspace = true
 description = "A Bevy desktop workbench with shared documents and editing"
 
+[features]
+default = []
+remote = ["bed-documents/remote"]
+language-services = ["bed-api/language-services", "bed-documents/ide-services", "dep:bed-lsp"]
+
 [dependencies]
 bed-desktop = { workspace = true }
 bed-runtime = { workspace = true }
 bed-workbench = { workspace = true }
 bed-api = { workspace = true, features = ["documents"] }
-bed-documents = { workspace = true }
+bed-documents = { workspace = true, features = ["file-services"] }
+bed-files = { workspace = true, features = ["file-services"] }
+bed-storage = { workspace = true }
 bed-editing = { workspace = true }
+bed-lsp = { workspace = true, optional = true }
 bed-ui = { workspace = true, features = ["imgui", "gpu"] }
 bevy = { workspace = true, features = ["std"] }
 dear-imgui-rs = { workspace = true }

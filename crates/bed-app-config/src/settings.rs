@@ -128,7 +128,7 @@ impl Settings {
     pub fn new() -> io::Result<Self> {
         Self::with_paths(Self::get_user_config_dir()?, Self::get_app_resources_path())
     }
-    
+
     pub fn with_paths(config_dir: PathBuf, resources_root: PathBuf) -> io::Result<Self> {
         let keybinds = KeybindsManager::new(&config_dir);
         let mut this = Self {
@@ -155,7 +155,7 @@ impl Settings {
         this.keybinds.load_keybinds()?;
         Ok(this)
     }
-    
+
     pub fn get_user_config_dir() -> io::Result<PathBuf> {
         std::env::var_os("HOME")
             .filter(|s| !s.is_empty())
@@ -164,7 +164,7 @@ impl Settings {
                 io::Error::new(io::ErrorKind::NotFound, "Home directory is not set (HOME)")
             })
     }
-    
+
     pub fn get_app_resources_path() -> PathBuf {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let mut candidates = vec![
@@ -188,7 +188,7 @@ impl Settings {
             .map(|path| fs::canonicalize(&path).unwrap_or(path))
             .unwrap_or(cwd)
     }
-    
+
     fn read_preferences(bytes: &[u8]) -> io::Result<Value> {
         let mut value: Value = serde_json::from_slice(bytes)?;
         if !value.is_object() {
@@ -244,7 +244,7 @@ impl Settings {
         }
         Ok(value)
     }
-    
+
     pub fn load_settings(&mut self) -> io::Result<()> {
         fs::create_dir_all(self.config_dir.join("themes"))?;
         self.settings_path = self.config_dir.join(SETTINGS_FILE);
@@ -272,7 +272,7 @@ impl Settings {
         self.needs_apply = true;
         Ok(())
     }
-    
+
     pub fn save_settings(&mut self) -> io::Result<()> {
         // A broken external edit must be repaired by its author, never silently
         // replaced by the UI's last valid in-memory preferences.
@@ -287,7 +287,7 @@ impl Settings {
         self.disk_contents = Some(fs::read(&self.settings_path)?);
         Ok(())
     }
-    
+
     pub fn check_settings_file(&mut self) -> bool {
         let mut changed = false;
         self.reload_error = None;
@@ -319,7 +319,7 @@ impl Settings {
         self.needs_apply |= changed;
         changed
     }
-    
+
     fn sync_effect_preset(&mut self) {
         self.effect_preset = match self.settings["effect_preset"].as_str() {
             Some("sharp") => EffectPreset::Sharp,
@@ -328,7 +328,7 @@ impl Settings {
             _ => EffectPreset::Off,
         };
     }
-    
+
     pub fn theme_path(&self, selection: &str) -> io::Result<PathBuf> {
         if BUILTIN_THEMES.contains(&selection) {
             return Ok(self
@@ -350,7 +350,7 @@ impl Settings {
             format!("Unknown theme '{selection}'; choose a built-in ID or themes/<name>.json"),
         ))
     }
-    
+
     fn refresh_theme(&mut self) -> io::Result<bool> {
         let selection = self.settings["theme"].as_str().unwrap_or(DEFAULT_THEME);
         let path = self.theme_path(selection)?;
@@ -370,7 +370,7 @@ impl Settings {
         self.theme_contents = bytes;
         Ok(true)
     }
-    
+
     pub fn select_theme(&mut self, selection: &str) -> io::Result<()> {
         // Validate before changing the selection or writing any preferences.
         Theme::load(&self.theme_path(selection)?)?;
@@ -384,7 +384,7 @@ impl Settings {
         self.request_apply();
         Ok(())
     }
-    
+
     pub fn list_themes(&self) -> Vec<(String, String)> {
         let mut themes: Vec<_> = BUILTIN_THEMES
             .iter()
@@ -417,7 +417,7 @@ impl Settings {
         }
         themes
     }
-    
+
     pub fn load_theme(&self, selection: &str) -> io::Result<Theme> {
         Theme::load(&self.theme_path(selection)?)
     }
@@ -481,76 +481,76 @@ impl Settings {
         }
         unreachable!()
     }
-    
+
     pub fn background_opacity(&self) -> f32 {
         self.number("background_opacity", 1.0).clamp(0.0, 1.0)
     }
-    
+
     /// Opaque theme color used for contrast and transient surfaces. Background
     /// opacity is applied to rendered backgrounds, never to foreground ink.
     pub fn background_color(&self) -> [f32; 4] {
         self.theme.background
     }
-    
+
     /// Opaque base color beneath workspace panels. Rendering applies the same
     /// background opacity as panel surfaces.
     pub fn window_background_color(&self) -> [f32; 4] {
         self.theme.window_background
     }
-    
+
     pub fn text_color(&self) -> [f32; 4] {
         ensure_contrast(self.theme.foreground, self.theme.background, 4.5)
     }
-    
+
     pub fn accent_color(&self) -> [f32; 4] {
         ensure_contrast(self.theme.accent, self.theme.background, 3.0)
     }
-    
+
     pub fn highlight_colors(&self) -> bed_highlight::tree_sitter::ThemeColors {
         self.theme.syntax.clone()
     }
-    
+
     pub fn bool(&self, key: &str, default: bool) -> bool {
         self.settings[key].as_bool().unwrap_or(default)
     }
-    
+
     pub fn number(&self, key: &str, default: f32) -> f32 {
         self.settings[key]
             .as_f64()
             .filter(|v| v.is_finite())
             .map_or(default, |v| v as f32)
     }
-    
+
     pub fn font_size(&self) -> f32 {
         self.number("fontSize", 20.0).clamp(4.0, 64.0)
     }
-    
+
     pub fn autosave_enabled(&self) -> bool {
         self.bool("autosave", true)
     }
-    
+
     pub fn autosave_delay(&self) -> Duration {
         Duration::from_millis(
             self.number("autosave_delay_ms", 1000.0)
                 .clamp(100.0, 60_000.0) as u64,
         )
     }
-    
+
     pub fn lsp_autocomplete_enabled(&self) -> bool {
         self.bool("lsp_autocomplete", true)
     }
-    
+
     pub fn lsp_completion_delay(&self) -> Duration {
         Duration::from_millis(
             self.number("lsp_completion_delay_ms", 150.0)
                 .clamp(0.0, 5_000.0) as u64,
         )
     }
-    
+
     pub fn lsp_format_on_save_enabled(&self) -> bool {
         self.bool("lsp_format_on_save", true)
     }
-    
+
     pub fn shader_settings(&self) -> bed_effects_config::ShaderSettings {
         use bed_effects_config::ShaderSettings;
         match self.effect_preset {
@@ -568,14 +568,14 @@ impl Settings {
             EffectPreset::Custom => ShaderSettings::from_json(&self.settings),
         }
     }
-    
+
     pub fn set_effect_preset(&mut self, preset: EffectPreset) -> io::Result<()> {
         self.settings["effect_preset"] = json!(preset.name());
         self.save_settings()?;
         self.effect_preset = preset;
         Ok(())
     }
-    
+
     pub fn customize_shaders(&mut self) -> io::Result<()> {
         let current = self.shader_settings();
         self.settings["shader_toggle"] = json!(current.enabled);
@@ -597,15 +597,15 @@ impl Settings {
         self.save_settings()?;
         self.set_effect_preset(EffectPreset::Custom)
     }
-    
+
     pub fn rainbow(&self) -> bool {
         self.bool("rainbow", true)
     }
-    
+
     pub fn request_apply(&mut self) {
         self.needs_apply = true;
     }
-    
+
     /// Refresh persisted preferences and consume the pending configuration change.
     /// Invalid external edits retain the last valid values and expose reload_error.
     pub fn refresh(&mut self) -> bool {
@@ -623,7 +623,7 @@ impl Settings {
         self.terminal_visible = self.bool("terminal_visible", true);
         true
     }
-    
+
     /// Pure projection; the UI host owns atlas handles and applies these values.
     pub fn appearance(&self) -> bed_ui::appearance::UiAppearance {
         use bed_ui::appearance::{UiAppearance, UiFontOptions, UiPalette};
@@ -646,13 +646,13 @@ impl Settings {
             opacity: self.background_opacity(),
         }
     }
-    
+
     pub fn toggle_sidebar(&mut self) -> io::Result<()> {
         self.sidebar_visible = !self.sidebar_visible;
         self.settings["sidebar_visible"] = json!(self.sidebar_visible);
         self.save_settings()
     }
-    
+
     pub fn toggle_terminal(&mut self) -> io::Result<()> {
         self.terminal_visible = !self.terminal_visible;
         self.settings["terminal_visible"] = json!(self.terminal_visible);
@@ -664,9 +664,9 @@ impl Settings {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    
+
     struct TempDir(PathBuf);
-    
+
     impl TempDir {
         fn new() -> Self {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -679,13 +679,13 @@ mod tests {
             Self(path)
         }
     }
-    
+
     impl Drop for TempDir {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
-    
+
     fn settings(temp: &TempDir) -> Settings {
         Settings::with_paths(
             temp.0.clone(),
@@ -693,7 +693,7 @@ mod tests {
         )
         .unwrap()
     }
-    
+
     #[test]
     fn lsp_seed_contains_only_overrides_and_keeps_existing_user_configuration() {
         let temp = TempDir::new();
@@ -708,7 +708,7 @@ mod tests {
         current.load_settings().unwrap();
         assert_eq!(fs::read(path).unwrap(), custom);
     }
-    
+
     #[test]
     fn lsp_action_defaults_preserve_existing_explicit_preferences() {
         let temp = TempDir::new();
@@ -747,15 +747,15 @@ mod tests {
 mod desktop_tests {
     use super::*;
     use crate::test_support::TempDir;
-    
+
     fn root() -> PathBuf {
         PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
     }
-    
+
     fn settings(dir: &TempDir) -> Settings {
         Settings::with_paths(dir.path("config"), root()).unwrap()
     }
-    
+
     #[test]
     fn fresh_preferences_ignore_legacy_and_seed_only_application_config() {
         let dir = TempDir::new();
@@ -781,7 +781,7 @@ mod desktop_tests {
             b"legacy unchanged"
         );
     }
-    
+
     #[test]
     fn viewer_defaults_upgrade_old_preferences_and_preserve_explicit_removals() {
         let old = Settings::read_preferences(br#"{"fontSize":22}"#).unwrap();
@@ -844,7 +844,7 @@ mod desktop_tests {
             current.settings["default_viewers"]
         );
     }
-    
+
     #[test]
     fn every_theme_switch_preserves_preferences_and_survives_restart() {
         let dir = TempDir::new();
@@ -873,7 +873,7 @@ mod desktop_tests {
         current.set_effect_preset(EffectPreset::Off).unwrap();
         assert!(!settings(&dir).shader_settings().enabled);
     }
-    
+
     #[test]
     fn custom_color_reload_is_isolated_and_invalid_edits_are_recoverable() {
         let dir = TempDir::new();
@@ -912,7 +912,7 @@ mod desktop_tests {
         assert_eq!(current.theme.name, "Custom");
         assert!(current.reload_error.is_none());
     }
-    
+
     #[test]
     fn broken_settings_are_never_overwritten_and_valid_edits_reload() {
         let dir = TempDir::new();
@@ -958,7 +958,7 @@ mod desktop_tests {
         let invalid = json!({"layout_defaults":{"0":template}});
         assert!(Settings::read_preferences(&serde_json::to_vec(&invalid).unwrap()).is_err());
     }
-    
+
     #[test]
     fn refresh_reloads_keybindings_without_changing_font_options() {
         let dir = TempDir::new();
@@ -981,7 +981,7 @@ mod desktop_tests {
         );
         assert_eq!(current.keybinds.overrides, expected);
     }
-    
+
     #[test]
     fn appearance_projection_reports_changes_without_owning_an_atlas() {
         let dir = TempDir::new();
@@ -999,7 +999,7 @@ mod desktop_tests {
             assert_eq!(appearance.palette, first.palette);
         }
     }
-    
+
     #[test]
     fn custom_theme_saves_are_unique_color_only_and_reload_selected_edits() {
         let dir = TempDir::new();

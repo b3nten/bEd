@@ -473,7 +473,7 @@ mod tests {
         use bed_keybindings::{Bindings, Overrides, Platform, Scope, ShortcutInput};
         use dear_imgui_rs::{Condition, Context, FramePrepareOptions, Key};
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
-        let mut frame_data = bed_api::features::HostFrame::default();
+        let mut frame_data = bed_api::features::FrontendSnapshot::default();
         frame_data
             .documents
             .push(bed_api::documents::PluginDocument {

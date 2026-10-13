@@ -47,7 +47,7 @@ enum WorkerMessage {
         query: Vec<u8>,
         options: SearchOptions,
         buffers: Vec<SearchBuffer>,
-        remote: Option<bed_remote::RemoteClient>,
+        services: Box<crate::FileServices>,
     },
     Stop,
 }
@@ -78,7 +78,7 @@ pub struct SearchProgress {
 /// Only the main thread mutates UI state. Bounded worker batches carry a
 /// generation, so replacements/cancellation discard partial and final results.
 pub struct ContentSearch {
-    remote_client: Option<bed_remote::RemoteClient>,
+    services: crate::FileServices,
     has_remote_requests: bool,
     pub active: bool,
     pub query: String,
@@ -116,7 +116,7 @@ impl ContentSearch {
         let (requests, _) = mpsc::channel();
         let (_, completed) = mpsc::channel();
         Self {
-            remote_client: None,
+            services: crate::FileServices::local(),
             has_remote_requests: false,
             active: false,
             query: String::new(),
@@ -160,14 +160,14 @@ impl ContentSearch {
                     query,
                     options,
                     buffers,
-                    remote,
+                    services,
                 } = request
                 else {
                     break;
                 };
-                let result = if let Some(client) = &remote {
+                let result = if services.is_remote() {
                     run_remote_search(
-                        client,
+                        &services,
                         &root,
                         &query,
                         &options,
@@ -201,10 +201,10 @@ impl ContentSearch {
         Self::default()
     }
 
-    pub fn set_remote_client(&mut self, client: Option<bed_remote::RemoteClient>) {
+    pub fn set_file_services(&mut self, services: crate::FileServices) {
         self.cancel();
         self.results.clear();
-        self.remote_client = client;
+        self.services = services;
     }
 
     pub fn open(&mut self) {
@@ -256,7 +256,14 @@ impl ContentSearch {
             ..SearchProgress::default()
         };
         self.searching = !query.is_empty();
-        self.has_remote_requests |= self.searching && self.remote_client.is_some();
+        if self.searching && !self.services.connected() {
+            self.searching = false;
+            self.error = Some("File provider is unavailable".into());
+            self.progress.discovering = false;
+            return;
+        }
+
+        self.has_remote_requests |= self.searching && self.services.is_remote();
         if self.searching
             && self
                 .requests
@@ -266,7 +273,7 @@ impl ContentSearch {
                     query: query.as_bytes().to_vec(),
                     options: self.options(),
                     buffers,
-                    remote: self.remote_client.clone(),
+                    services: Box::new(self.services.clone()),
                 })
                 .is_err()
         {
@@ -318,7 +325,7 @@ impl Drop for ContentSearch {
 }
 
 fn run_remote_search(
-    client: &bed_remote::RemoteClient,
+    services: &crate::FileServices,
     root: &str,
     query: &[u8],
     options: &SearchOptions,
@@ -329,7 +336,7 @@ fn run_remote_search(
     if current_generation.load(Ordering::Relaxed) != generation {
         return None;
     }
-    let response = client.call(bed_remote::Request::Search {
+    let response = services.call(bed_remote::Request::Search {
         root: root.into(),
         query: String::from_utf8_lossy(query).into_owned(),
         options: options.clone(),

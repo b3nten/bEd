@@ -5,8 +5,9 @@ use bed_api::{
 };
 use bed_documents::{DocumentId, DocumentSession};
 use bed_editor_widgets::{DiffAction, DiffActionKind, SourceGitPresentation};
+use bed_files::FileServices;
 use bed_git::{Diff, DiffSide, Operation, Output, RepositoryOperation, Status, StatusEntry};
-use bed_remote::{RemoteClient, WorkspaceFilesystem, WorkspaceUpdate};
+use bed_remote::{WorkspaceFilesystem, WorkspaceUpdate};
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -96,7 +97,7 @@ pub struct GitController {
     pub pending_save: Option<PendingSave>,
     active: Option<(Task, Worker)>,
     tasks: VecDeque<Task>,
-    remote: Option<RemoteClient>,
+    services: FileServices,
     next_comparison: u64,
     filesystem: Option<Receiver<WorkspaceUpdate>>,
     last_refresh: Instant,
@@ -126,7 +127,7 @@ impl Default for GitController {
             pending_save: None,
             active: None,
             tasks: VecDeque::new(),
-            remote: None,
+            services: FileServices::local(),
             next_comparison: 1,
             filesystem: None,
             last_refresh: Instant::now(),
@@ -615,6 +616,7 @@ impl GitController {
         documents: &mut DocumentSession,
         project_root: &str,
         filesystem: Option<&WorkspaceFilesystem>,
+        services: &FileServices,
         requests: &mut Vec<HostAction>,
     ) -> io::Result<()> {
         if self.root.is_empty() {
@@ -623,12 +625,15 @@ impl GitController {
         if self.root.is_empty() {
             return Ok(());
         }
-        let remote = documents.remote_client();
-        let changed = match (&remote, &self.remote) {
-            (Some(a), Some(b)) => !a.same_connection(b),
-            (None, None) => false,
-            _ => true,
-        };
+        if !services.connected() {
+            self.cancel();
+            self.services = services.clone();
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "Git file provider is unavailable",
+            ));
+        }
+        let changed = !services.same_provider(&self.services);
         if changed {
             if self
                 .active
@@ -638,7 +643,7 @@ impl GitController {
                 self.error = Some("Git connection changed during an operation; its outcome is unknown. Status will refresh.".into());
             }
             self.cancel();
-            self.remote = remote;
+            self.services = services.clone();
             self.refresh = true;
             self.filesystem = None;
         }
@@ -822,7 +827,7 @@ impl GitController {
             let worker = Worker::start(
                 self.root.clone(),
                 task.operation.clone(),
-                self.remote.clone(),
+                self.services.clone(),
             );
             self.active = Some((task, worker));
             requests.push(HostAction::Invalidate);
@@ -921,7 +926,7 @@ mod tests {
     fn tick_once(controller: &mut GitController, session: &mut DocumentSession) {
         let root = controller.root.clone();
         controller
-            .tick_native(session, &root, None, &mut vec![])
+            .tick_native(session, &root, None, &FileServices::local(), &mut vec![])
             .unwrap();
     }
 
@@ -947,7 +952,7 @@ mod tests {
         let start = Instant::now();
         loop {
             controller
-                .tick_native(session, &root, None, &mut vec![])
+                .tick_native(session, &root, None, &FileServices::local(), &mut vec![])
                 .unwrap();
             if !controller.busy() {
                 return;
@@ -1128,7 +1133,13 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             controller
-                .tick_native(&mut session, "", None, &mut requests)
+                .tick_native(
+                    &mut session,
+                    "",
+                    None,
+                    &FileServices::local(),
+                    &mut requests,
+                )
                 .unwrap();
             if !controller.busy() {
                 break;

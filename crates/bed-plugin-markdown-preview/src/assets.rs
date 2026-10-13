@@ -3,9 +3,10 @@
 //! separately bounded 64 MiB atlas. Packing briefly owns both; source pixels are
 //! released before the result reaches the UI thread.
 use crate::gpu::AtlasGpu;
+use bed_api::files::FileServices;
 use bed_api::{documents::Revision, gpu::GpuContext};
 use bed_plugin_image_viewer::{DecodedImage, decode_preview};
-use bed_remote::{RemoteClient, Request, Response};
+use bed_remote::{Request, Response};
 use bed_ui::TextureHandle;
 use bed_ui::gpu::{RenderOutput, RenderTarget};
 use std::{
@@ -103,7 +104,7 @@ struct Context {
     revision: Revision,
     document_path: Option<String>,
     root: String,
-    remote: Option<RemoteClient>,
+    services: FileServices,
     sources: Vec<String>,
 }
 
@@ -113,18 +114,14 @@ impl Context {
         revision: Revision,
         document_path: Option<&str>,
         root: &str,
-        remote: &Option<RemoteClient>,
+        services: &FileServices,
         sources: &[String],
     ) -> bool {
         self.revision == revision
             && self.document_path.as_deref() == document_path
             && self.root == root
             && self.sources == sources
-            && match (&self.remote, remote) {
-                (None, None) => true,
-                (Some(a), Some(b)) => a.same_connection(b),
-                _ => false,
-            }
+            && self.services.same_provider(services)
     }
 }
 
@@ -281,12 +278,12 @@ impl AssetManager {
         revision: Revision,
         document_path: Option<&str>,
         project_root: &str,
-        remote: Option<RemoteClient>,
+        services: FileServices,
         sources: &[String],
     ) {
         let document_path = document_path.filter(|path| !path.is_empty());
         if self.context.as_ref().is_some_and(|previous| {
-            previous.matches(revision, document_path, project_root, &remote, sources)
+            previous.matches(revision, document_path, project_root, &services, sources)
         }) {
             return;
         }
@@ -294,7 +291,7 @@ impl AssetManager {
             revision,
             document_path: document_path.map(str::to_owned),
             root: project_root.into(),
-            remote,
+            services,
             sources: sources.to_vec(),
         };
         self.submit(context);
@@ -531,9 +528,17 @@ fn load_assets(job: &Job, current: &impl Fn() -> bool) -> Option<LoadResult> {
             continue;
         }
         let decoded = (|| {
-            let bytes = if let Some(remote) = &context.remote {
+            if !context.services.connected() {
+                return Err("Image file provider is unavailable".into());
+            }
+            let bytes = if context.services.is_remote() {
                 read_remote(
-                    &|request| remote.call(request).map_err(|error| error.to_string()),
+                    &|request| {
+                        context
+                            .services
+                            .call(request)
+                            .map_err(|error| error.to_string())
+                    },
                     &context.root,
                     &path,
                     current,
@@ -830,7 +835,7 @@ mod tests {
                 revision: (1, 1),
                 document_path: Some("/does/not/exist.md".into()),
                 root: "/".into(),
-                remote: None,
+                services: FileServices::local(),
                 sources: vec!["picture.png".into()],
             },
         };
@@ -870,7 +875,7 @@ mod tests {
             (1, 1),
             Some(root.join("guide.md").to_str().unwrap()),
             root.to_str().unwrap(),
-            None,
+            FileServices::local(),
             &["images/picture.svg".into(), "missing.svg".into()],
         );
         let wait = |assets: &mut AssetManager| {

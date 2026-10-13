@@ -178,8 +178,8 @@ fn prepare_name(value: &Value, bytes: &[u8]) -> io::Result<String> {
     let range = value.get("range").unwrap_or(value);
     let edits = bed_lsp::workspace_edit::parse_text_edits(&json!([{"range":range,"newText":""}]))?;
     let edits = bed_lsp::workspace_edit::byte_edits(bytes, &edits)?;
-    Ok(String::from_utf8(bytes[edits[0].0.clone()].to_vec())
-        .map_err(|error| io::Error::other(error.to_string()))?)
+    String::from_utf8(bytes[edits[0].0.clone()].to_vec())
+        .map_err(|error| io::Error::other(error.to_string()))
 }
 
 impl EditorActions {

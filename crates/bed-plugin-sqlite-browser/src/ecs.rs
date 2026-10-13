@@ -2,12 +2,15 @@
 use crate::{
     OPEN_COMMAND, OPEN_FILE_COMMAND, PANEL_ID, PLUGIN_ID, SqlitePanel, VIEWER_ID, register_metadata,
 };
+use bed_api::documents::DocumentFrame;
+use bed_api::features::FrontendSnapshot;
+use bed_api::files::{FileContext, FileProviderId};
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction,
 };
 use bed_api::{
     documents::{PanelBinding, PanelInput},
-    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects, HostFrame},
+    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects},
 };
 use bevy::{ecs::system::SystemState, prelude::*};
 use dear_imgui_rs::Ui;
@@ -40,7 +43,8 @@ pub struct SqliteBrowserPlugin;
 
 impl Plugin for SqliteBrowserPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HostFrame>()
+        app.init_resource::<DocumentFrame>()
+            .init_resource::<FileContext>()
             .init_resource::<HostEffects>()
             .init_resource::<FeatureRegistry>()
             .init_resource::<bed_api::workbench::CommandPresentations>()
@@ -103,7 +107,10 @@ fn create_sqlite_panel(In(creation): In<PanelCreation>, world: &mut World) -> Pa
         PanelInput::None => {}
         PanelInput::Document(_) => return Err("SQLite Viewer requires a local file".into()),
         PanelInput::LocalFile(path) => {
-            if world.resource::<HostFrame>().remote {
+            if matches!(
+                world.resource::<FileContext>().provider,
+                FileProviderId::Ssh { .. }
+            ) {
                 return Err("SQLite Viewer supports local databases only".into());
             }
             if world
@@ -130,7 +137,7 @@ fn poll_sqlite(
     mut states: NonSendMut<SqliteStates>,
     live: Query<&SqliteFile>,
     mut intents: ResMut<HostEffects>,
-    frame: Res<HostFrame>,
+    context: Res<FileContext>,
     mut commands: ResMut<bed_api::workbench::CommandPresentations>,
     mut entities: Commands,
 ) {
@@ -138,8 +145,8 @@ fn poll_sqlite(
         commands.0.insert(
             command.into(),
             bed_api::workbench::CommandPresentation {
-                enabled: !frame.remote,
-                visible: !frame.remote,
+                enabled: !matches!(context.provider, FileProviderId::Ssh { .. }),
+                visible: !matches!(context.provider, FileProviderId::Ssh { .. }),
                 ..Default::default()
             },
         );
@@ -162,11 +169,11 @@ fn poll_sqlite(
 
 fn sqlite_command(
     In(invocation): In<CommandInvocation>,
-    frame: Res<HostFrame>,
+    context: Res<FileContext>,
     bindings: Query<&PanelBinding>,
     mut intents: ResMut<HostEffects>,
 ) -> CommandResult {
-    if frame.remote {
+    if matches!(context.provider, FileProviderId::Ssh { .. }) {
         return Err("SQLite Viewer supports local databases only".into());
     }
     let request = match invocation.command.as_str() {
@@ -243,7 +250,7 @@ impl Panel for SqliteFrontend {
             .get(self.entity)
             .map_or_else(
                 || "SQLite Viewer".into(),
-                |panel| panel.panel_title(&world.resource::<HostFrame>().context()),
+                |panel| panel.panel_title(&FrontendSnapshot::capture(world).context()),
             )
     }
 
@@ -254,12 +261,9 @@ impl Panel for SqliteFrontend {
         _requests: &mut Vec<WorkbenchAction>,
         _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
-        let mut state = SystemState::<(
-            Res<HostFrame>,
-            NonSendMut<SqliteStates>,
-            ResMut<HostEffects>,
-        )>::new(world);
-        let (frame, mut states, mut intents) = state
+        let frame = FrontendSnapshot::capture(world);
+        let mut state = SystemState::<(NonSendMut<SqliteStates>, ResMut<HostEffects>)>::new(world);
+        let (mut states, mut intents) = state
             .get_mut(world)
             .expect("SQLite plugin initialized its presentation resources");
         let mut requests = Vec::new();
@@ -445,7 +449,9 @@ mod tests {
         assert!(panel.err().unwrap().contains("requires a local file"));
         assert!(app.world().get::<SqliteFile>(entity).is_none());
 
-        app.world_mut().resource_mut::<HostFrame>().remote = true;
+        app.world_mut().resource_mut::<FileContext>().provider = FileProviderId::Ssh {
+            host: "fixture".into(),
+        };
         let (remote, panel) = create(
             &mut app,
             PanelInput::LocalFile(PathBuf::from("/remote/not-opened.sqlite")),
@@ -488,7 +494,9 @@ mod tests {
             matches!(&requests[0].action, HostAction::OpenFile { path, viewer }
             if path == "/local/captured.sqlite" && viewer.as_deref() == Some(VIEWER_ID))
         );
-        app.world_mut().resource_mut::<HostFrame>().remote = true;
+        app.world_mut().resource_mut::<FileContext>().provider = FileProviderId::Ssh {
+            host: "fixture".into(),
+        };
         assert!(
             app.world_mut()
                 .run_system_with(command, invocation)

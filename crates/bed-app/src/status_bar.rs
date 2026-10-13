@@ -18,7 +18,7 @@ fn host_information(workspace: &WorkspaceState) -> (String, String) {
     } else {
         let cwd = workspace.working_directory.to_string_lossy();
         (
-            bed_api::application::default_name(&cwd),
+            bed_plugin_workspaces::default_name(&cwd),
             format!("Working directory: {cwd}"),
         )
     }

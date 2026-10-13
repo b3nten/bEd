@@ -7,12 +7,18 @@ license.workspace = true
 
 [features]
 default = []
+workspaces = []
+terminal = ["dep:bed-terminal"]
 file-explorer = ["dep:bed-plugin-file-explorer"]
 git = ["dep:bed-plugin-git"]
 debugger = ["dep:bed-plugin-debugger"]
 http-client = ["dep:bed-plugin-http-client"]
 
 [dependencies]
+bed-terminal = { workspace = true, features = ["ui"], optional = true }
+bed-core = { workspace = true, features = ["language-services"] }
+bed-storage = { workspace = true }
+bed-plugin-workspaces = { workspace = true, default-features = false }
 bed-plugin-layouts = { workspace = true }
 bed-workbench = { workspace = true }
 bed-api = { workspace = true, features = ["gpu", "language-services", "documents"] }

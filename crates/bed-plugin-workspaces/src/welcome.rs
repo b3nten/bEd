@@ -1,8 +1,6 @@
 //! Local and SSH project picker with recent workspaces.
-use bed_api::{
-    application::{WorkspaceSpec, WorkspaceTarget},
-    features::HostContext,
-};
+use crate::{WorkspaceSpec, WorkspaceTarget};
+use bed_api::features::HostContext;
 #[cfg(feature = "mascots")]
 use bed_plugin_mascots::{MascotFrame, MascotKind, MascotView};
 #[cfg(feature = "mascots")]
@@ -38,6 +36,8 @@ pub struct Welcome {
     drawn_items: Vec<DrawnItem>,
 }
 
+// Mascot builds initialize a welcome scene rather than the field's default value.
+#[cfg_attr(not(feature = "mascots"), allow(clippy::derivable_impls))]
 impl Default for Welcome {
     fn default() -> Self {
         Self {

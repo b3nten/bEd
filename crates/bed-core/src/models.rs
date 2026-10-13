@@ -68,7 +68,6 @@ struct History<M: DocumentModel> {
 pub(crate) enum ModelOperation {
     Undo,
     Redo,
-    Save,
 }
 pub(crate) struct ModelInvocation {
     pub entity: Entity,
@@ -85,10 +84,72 @@ fn ensure_model_session(world: &World, session: SessionId) -> Result<(), String>
     }
     Ok(())
 }
+type ModelEncoder = fn(&World, Entity) -> Result<Vec<u8>, String>;
 #[derive(Resource, Default)]
 pub(crate) struct ModelRegistry {
     documents: HashMap<DocumentId, (Entity, ModelSystem)>,
     handlers: HashMap<TypeId, ModelSystem>,
+    encoders: HashMap<DocumentId, ModelEncoder>,
+}
+
+pub(crate) struct ModelSaveCapture {
+    pub document: DocumentId,
+    pub session: SessionId,
+    pub revision: u64,
+    state: u64,
+    pub path: PathBuf,
+    pub bytes: Vec<u8>,
+}
+fn encode_model<M: DocumentModel>(world: &World, entity: Entity) -> Result<Vec<u8>, String> {
+    world
+        .get::<ModelContent<M>>(entity)
+        .ok_or("Document has a different model")?
+        .read()
+        .encode()
+}
+pub(crate) fn capture_model_save(
+    world: &World,
+    document: DocumentId,
+    destination: Option<&std::path::Path>,
+) -> Result<ModelSaveCapture, String> {
+    let entity = model_entity(world, document).ok_or("Document is unavailable")?;
+    let info = world
+        .get::<ModelDocument>(entity)
+        .ok_or("Document metadata is unavailable")?;
+    ensure_model_session(world, info.session_id)?;
+    let path = destination
+        .map(std::path::Path::to_path_buf)
+        .or_else(|| info.path.clone())
+        .ok_or("Save As requires a document destination")?;
+    let encoder = world
+        .resource::<ModelRegistry>()
+        .encoders
+        .get(&document)
+        .ok_or("Document encoder is unavailable")?;
+    Ok(ModelSaveCapture {
+        document,
+        session: info.session_id,
+        revision: info.revision,
+        state: info.state,
+        path,
+        bytes: encoder(world, entity)?,
+    })
+}
+pub(crate) fn complete_model_save(
+    world: &mut World,
+    saved: &ModelSaveCapture,
+) -> Result<(), String> {
+    ensure_model_session(world, saved.session)?;
+    let entity = model_entity(world, saved.document).ok_or("Document is unavailable")?;
+    let mut info = world
+        .get_mut::<ModelDocument>(entity)
+        .ok_or("Document metadata is unavailable")?;
+    if info.session_id != saved.session {
+        return Err("Document session was replaced".into());
+    }
+    info.saved_state = saved.state;
+    info.path = Some(saved.path.clone());
+    Ok(())
 }
 
 pub fn create_model_document<M: DocumentModel>(
@@ -142,6 +203,10 @@ pub fn create_model_document<M: DocumentModel>(
         .resource_mut::<ModelRegistry>()
         .documents
         .insert(id, (entity, handler));
+    world
+        .resource_mut::<ModelRegistry>()
+        .encoders
+        .insert(id, encode_model::<M>);
     id
 }
 
@@ -159,6 +224,23 @@ pub fn model<M: DocumentModel>(world: &World, document: DocumentId) -> Option<&M
 }
 pub fn model_document(world: &World, document: DocumentId) -> Option<&ModelDocument> {
     world.get::<ModelDocument>(model_entity(world, document)?)
+}
+
+pub(crate) fn retire_model_document(world: &mut World, document: DocumentId) -> bool {
+    let entry = world
+        .resource_mut::<ModelRegistry>()
+        .documents
+        .remove(&document);
+    world
+        .resource_mut::<ModelRegistry>()
+        .encoders
+        .remove(&document);
+    if let Some((entity, _)) = entry {
+        world.despawn(entity);
+        true
+    } else {
+        false
+    }
 }
 
 /// Commit one semantic edit between frontend scopes. History and revisions
@@ -265,19 +347,6 @@ fn model_operation<M: DocumentModel>(
         .ok_or("Document is unavailable")?
         .clone();
     ensure_model_session(world, info.session_id)?;
-    if matches!(input.operation, ModelOperation::Save) {
-        let path = info
-            .path
-            .as_ref()
-            .ok_or("Save As requires a document destination")?;
-        let bytes = world
-            .get::<ModelContent<M>>(input.entity)
-            .unwrap()
-            .0
-            .encode()?;
-        write_model(path, info.id, info.revision, &bytes)?;
-        return mark_model_saved(world, info.id, info.revision);
-    }
     let history = world.get::<History<M>>(input.entity).unwrap();
     let undo = matches!(input.operation, ModelOperation::Undo);
     let entry = if undo {
@@ -312,39 +381,6 @@ fn model_operation<M: DocumentModel>(
     info.state = state;
     info.revision = revision;
     Ok(())
-}
-
-fn write_model(
-    path: &std::path::Path,
-    document: DocumentId,
-    revision: u64,
-    bytes: &[u8],
-) -> Result<(), String> {
-    use std::io::Write;
-    let name = path
-        .file_name()
-        .ok_or("Save destination has no filename")?
-        .to_string_lossy();
-    let temporary = path.with_file_name(format!(
-        ".{name}.bed-{}-{}-{revision}.tmp",
-        std::process::id(),
-        document.0
-    ));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .map_err(|error| error.to_string())?;
-    let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&temporary, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    result.map_err(|error| error.to_string())
 }
 
 pub fn undo_document(world: &mut World, document: DocumentId) -> Result<(), String> {

@@ -18,6 +18,7 @@ use bed_api::{
     features::{FeatureRegistry, HostAction, HostContext, MenuSlot},
     workbench::PanelPlacement,
 };
+#[cfg(test)]
 use bed_remote::RemoteClient;
 use bed_ui::presentation::FileIcons;
 use dear_imgui_rs::Ui;
@@ -202,7 +203,7 @@ pub struct ExplorerConfig {
 /// tree or its popup holds mutable widget state.
 pub enum ExplorerAction {
     Tree(FileTreeAction),
-    OpenProjectDialog,
+    ChooseDirectory,
     Import {
         paths: Vec<std::path::PathBuf>,
         destination: String,
@@ -313,11 +314,11 @@ impl ExplorerState {
 
     /// Replace a transport only at workspace activation/reconnection. Replacing
     /// it cancels the old generation of discovery work.
-    pub fn set_remote_client(&mut self, client: Option<RemoteClient>) {
+    pub fn set_file_services(&mut self, services: bed_files::FileServices) {
         self.file_content.reset();
         let state = &mut self.file_explorer;
         state.file_finder.set_project_dir("");
-        state.file_finder.set_remote_client(client);
+        state.file_finder.set_file_services(services);
         let root = state.project_root.clone();
         state.file_finder.set_project_dir(&root);
     }
@@ -495,8 +496,8 @@ impl ExplorerState {
             content.configure(
                 &self.config.workspace_identity,
                 &state.project_root,
-                target.remote.is_some(),
-                target.remote.clone(),
+                target.services.is_remote(),
+                target.services.clone(),
             );
             if content.poll() {
                 requests.push(HostAction::Invalidate);
@@ -582,20 +583,19 @@ impl ExplorerPanel {
         &mut self,
         controller: &mut ExplorerState,
         ui: &Ui,
-        frame: &bed_api::features::HostFrame,
+        frame: &bed_api::features::FrontendSnapshot,
         target: &ExplorerTarget,
         documents: &mut bed_documents::DocumentSession,
         icons: Option<&dyn FileIcons>,
         requests: &mut Vec<HostAction>,
     ) -> io::Result<()> {
         let mut host = frame.context();
-        host.remote = target.remote.is_some();
-        let document_provider = operations::provider_matches(target.remote.as_ref(), documents);
+        host.remote = target.services.is_remote();
+        let document_provider = operations::provider_matches(&target.services, documents);
         if !document_provider {
             host.documents = &[];
             host.active_document = None;
         }
-        let active_view = frame.active_view;
         let root = controller.file_explorer.project_root.clone();
         self.drop_root = root.clone();
         self.panel_bounds = Some(ui.with_bound_context(|| unsafe {
@@ -604,9 +604,9 @@ impl ExplorerPanel {
         }));
         if root.is_empty() {
             self.drop_targets.clear();
-            ui.text_disabled("Open a project to browse files");
+            ui.text_disabled("Open a folder to browse files");
             if ui.button("Open Folder") {
-                controller.actions.push(ExplorerAction::OpenProjectDialog);
+                controller.actions.push(ExplorerAction::ChooseDirectory);
             }
             return Ok(());
         }
@@ -616,31 +616,24 @@ impl ExplorerPanel {
             .active()
             .map(|document| document.path.as_str())
             .unwrap_or_default();
-        let remote = target.remote.is_some();
+        let remote = target.services.is_remote();
 
         fn modified_paths(
             node: &FileNode,
             documents: &mut bed_documents::DocumentSession,
-            active_view: Option<bed_documents::ViewId>,
             remote: bool,
             paths: &mut std::collections::HashSet<String>,
         ) {
             let modified = if remote {
                 documents.remote_file_modified(&node.full_path)
             } else {
-                active_view.is_some_and(|view| {
-                    documents
-                        .with_view(view, |editor| {
-                            editor.git.borrow().is_file_modified(&node.full_path)
-                        })
-                        .unwrap_or(false)
-                })
+                documents.git_file_modified(&node.full_path)
             };
             if modified {
                 paths.insert(node.full_path.clone());
             }
             for child in &node.children {
-                modified_paths(child, documents, active_view, remote, paths);
+                modified_paths(child, documents, remote, paths);
             }
         }
         let mut modified_files = std::collections::HashSet::new();
@@ -648,7 +641,6 @@ impl ExplorerPanel {
             modified_paths(
                 &controller.file_explorer.file_tree.root_node,
                 documents,
-                active_view,
                 remote,
                 &mut modified_files,
             );
@@ -682,7 +674,7 @@ impl ExplorerPanel {
             state.file_tree.file_info.configure(
                 config.workspace_identity,
                 &root,
-                target.remote.clone(),
+                target.services.clone(),
             );
             let mut style = config.tree_style;
             style.rainbow_time = ui.time() as f32;
@@ -758,6 +750,86 @@ pub(crate) static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(
 #[allow(dead_code)]
 #[path = "../../../tests/support/temp_dir.rs"]
 pub(crate) mod test_support;
+
+pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::ShortcutAction> {
+    vec![
+        bed_keybindings::ShortcutAction::new(
+            "bed.explorer.move_first",
+            "Move to First Item",
+            MODULE_ID,
+            bed_keybindings::Scope::panel(PANEL_ID),
+            &["Home"],
+        ),
+        bed_keybindings::ShortcutAction::new(
+            "bed.explorer.move_last",
+            "Move to Last Item",
+            MODULE_ID,
+            bed_keybindings::Scope::panel(PANEL_ID),
+            &["End"],
+        ),
+        bed_keybindings::ShortcutAction::new(
+            "bed.explorer.select_first",
+            "Extend Selection to First",
+            MODULE_ID,
+            bed_keybindings::Scope::panel(PANEL_ID),
+            &["Shift+Home"],
+        ),
+        bed_keybindings::ShortcutAction::new(
+            "bed.explorer.select_last",
+            "Extend Selection to Last",
+            MODULE_ID,
+            bed_keybindings::Scope::panel(PANEL_ID),
+            &["Shift+End"],
+        ),
+        bed_keybindings::ShortcutAction::new(
+            "bed.explorer.open",
+            "Open Selected Files",
+            MODULE_ID,
+            bed_keybindings::Scope::panel(PANEL_ID),
+            &["Enter", "KeypadEnter"],
+        ),
+        bed_keybindings::ShortcutAction::new(
+            "bed.explorer.duplicate",
+            "Duplicate Files",
+            MODULE_ID,
+            bed_keybindings::Scope::panel(PANEL_ID),
+            &[],
+        ),
+        bed_keybindings::ShortcutAction::new(
+            "bed.explorer.trash",
+            "Move to Trash",
+            MODULE_ID,
+            bed_keybindings::Scope::panel(PANEL_ID),
+            &["Delete"],
+        ),
+        bed_keybindings::ShortcutAction::new(
+            "bed.explorer.rename",
+            "Rename",
+            MODULE_ID,
+            bed_keybindings::Scope::panel(PANEL_ID),
+            &["F2"],
+        ),
+        bed_keybindings::ShortcutAction::new(
+            "bed.explorer.refresh",
+            "Refresh",
+            MODULE_ID,
+            bed_keybindings::Scope::panel(PANEL_ID),
+            &[],
+        ),
+    ]
+}
+
+pub(crate) fn default_shortcuts() -> bed_keybindings::ShortcutInput {
+    bed_keybindings::ShortcutInput::new(bed_keybindings::Bindings::new(
+        bed_keybindings::common_actions()
+            .into_iter()
+            .chain(shortcut_actions())
+            .collect(),
+        &Default::default(),
+        bed_keybindings::Platform::current(),
+    ))
+    .with_scope(bed_keybindings::Scope::panel(PANEL_ID))
+}
 
 #[cfg(test)]
 mod tests {
@@ -1058,84 +1130,4 @@ mod tests {
             );
         }
     }
-}
-
-pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::ShortcutAction> {
-    vec![
-        bed_keybindings::ShortcutAction::new(
-            "bed.explorer.move_first",
-            "Move to First Item",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Home"],
-        ),
-        bed_keybindings::ShortcutAction::new(
-            "bed.explorer.move_last",
-            "Move to Last Item",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["End"],
-        ),
-        bed_keybindings::ShortcutAction::new(
-            "bed.explorer.select_first",
-            "Extend Selection to First",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Shift+Home"],
-        ),
-        bed_keybindings::ShortcutAction::new(
-            "bed.explorer.select_last",
-            "Extend Selection to Last",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Shift+End"],
-        ),
-        bed_keybindings::ShortcutAction::new(
-            "bed.explorer.open",
-            "Open Selected Files",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Enter", "KeypadEnter"],
-        ),
-        bed_keybindings::ShortcutAction::new(
-            "bed.explorer.duplicate",
-            "Duplicate Files",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &[],
-        ),
-        bed_keybindings::ShortcutAction::new(
-            "bed.explorer.trash",
-            "Move to Trash",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["Delete"],
-        ),
-        bed_keybindings::ShortcutAction::new(
-            "bed.explorer.rename",
-            "Rename",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &["F2"],
-        ),
-        bed_keybindings::ShortcutAction::new(
-            "bed.explorer.refresh",
-            "Refresh",
-            MODULE_ID,
-            bed_keybindings::Scope::panel(PANEL_ID),
-            &[],
-        ),
-    ]
-}
-
-pub(crate) fn default_shortcuts() -> bed_keybindings::ShortcutInput {
-    bed_keybindings::ShortcutInput::new(bed_keybindings::Bindings::new(
-        bed_keybindings::common_actions()
-            .into_iter()
-            .chain(shortcut_actions())
-            .collect(),
-        &Default::default(),
-        bed_keybindings::Platform::current(),
-    ))
-    .with_scope(bed_keybindings::Scope::panel(PANEL_ID))
 }

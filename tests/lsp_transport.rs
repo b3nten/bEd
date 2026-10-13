@@ -1858,7 +1858,7 @@ impl NavigationWorkbench {
             bevy::prelude::Entity,
         ),
     ) -> Self {
-        use bed_app::{AppOptions, AppRuntimePlugin, WindowCommand, WorkspaceSpec};
+        use bed_app::{AppOptions, AppRuntimePlugin, WindowCommand};
         use bed_editing::text_commands::CursorReveal;
         let fixture = PoolFixture::new(9910, "basic");
         let path = fixture.root.join("navigation.rs");
@@ -1899,7 +1899,6 @@ impl NavigationWorkbench {
             AppRuntimePlugin {
                 options: AppOptions {
                     working_directory: Some(fixture.root.clone()),
-                    workspace: Some(WorkspaceSpec::local(fixture.root.to_string_lossy())),
                     ..Default::default()
                 },
             },

@@ -31,11 +31,15 @@ members = [
     "crates/bed-workbench",
     "crates/bed-desktop",
     "crates/bed-core",
+    "crates/bed-storage",
     "crates/bed-plugin-layouts",
     "examples/layouts",
     "examples/terminal",
     "examples/editor",
     "examples/model",
+    "examples/gameplay/game",
+    "examples/gameplay/editor",
+    "examples/gameplay/runtime",
     "crates/bed-plugin-editor",
     "crates/bed-plugin-debugger",
     "crates/bed-plugin-git",
@@ -78,6 +82,7 @@ bed-plugin-idle = { path = "crates/bed-plugin-idle" }
 bed-plugin-automation = { path = "crates/bed-plugin-automation" }
 bed-desktop = { path = "crates/bed-desktop" }
 bed-core = { path = "crates/bed-core" }
+bed-storage = { path = "crates/bed-storage" }
 bed-plugin-layouts = { path = "crates/bed-plugin-layouts" }
 bed-workbench = { path = "crates/bed-workbench" }
 bed-api = { path = "crates/bed-api", default-features = false }
@@ -173,8 +178,8 @@ debugger = ["dep:bed-plugin-debugger", "dep:bed-debugger", "bed-app/debugger"]
 git = ["dep:bed-plugin-git", "bed-app/git"]
 file-explorer = ["dep:bed-plugin-file-explorer", "bed-app/file-explorer"]
 file-search = ["dep:bed-plugin-file-search"]
-terminal = ["dep:bed-plugin-terminal", "bed-plugin-terminal/desktop", "bed-plugin-terminal/remote", "dep:bed-terminal", "dep:bed-app-shell"]
-workspaces = ["dep:bed-plugin-workspaces"]
+terminal = ["dep:bed-plugin-terminal", "bed-plugin-terminal/desktop", "bed-plugin-terminal/remote", "dep:bed-terminal", "dep:bed-app-shell", "bed-app/terminal"]
+workspaces = ["dep:bed-plugin-workspaces", "bed-app/workspaces", "bed-plugin-automation?/workspaces"]
 color-picker = ["dep:bed-plugin-color-picker"]
 settings = ["dep:bed-plugin-settings"]
 effects = ["dep:bed-plugin-effects"]
@@ -182,7 +187,7 @@ idle = ["dep:bed-plugin-idle"]
 viewers = ["source-outline", "image-viewer", "model-viewer", "font-viewer", "audio-player", "csv-table", "markdown-preview", "json-tree", "sqlite-browser", "http-client"]
 source-outline = ["dep:bed-plugin-source-outline"]
 image-viewer = ["dep:bed-plugin-image-viewer"]
-model-viewer = ["dep:bed-plugin-model-viewer", "bed-runtime/scene"]
+model-viewer = ["dep:bed-plugin-model-viewer", "bed-runtime/scene", "bed-desktop/preview"]
 font-viewer = ["dep:bed-plugin-font-viewer"]
 audio-player = ["dep:bed-plugin-audio-player"]
 csv-table = ["dep:bed-plugin-csv-table"]
@@ -190,7 +195,7 @@ markdown-preview = ["dep:bed-plugin-markdown-preview"]
 json-tree = ["dep:bed-plugin-json-tree"]
 sqlite-browser = ["dep:bed-plugin-sqlite-browser"]
 http-client = ["dep:bed-plugin-http-client", "bed-app/http-client"]
-mascots = ["dep:bed-plugin-mascots", "bed-runtime/scene", "bed-plugin-workspaces?/mascots", "bed-plugin-idle?/mascots"]
+mascots = ["dep:bed-plugin-mascots", "bed-runtime/scene", "bed-desktop/preview", "bed-plugin-workspaces?/mascots", "bed-plugin-idle?/mascots"]
 
 [dependencies]
 bed-keybindings = { workspace = true }

@@ -27,19 +27,41 @@ adapters resolve those facts with `CommandDefinition::presentation`.
 
 The default frontend draws the workbench, command menu and contributed status
 items. A host may supply `DesktopUi` before installing core to draw its own
-frontend. `HostRequestMode::Application` transfers document request and
-native presentation ownership to an application adapter, as used by bEd.
-Set that mode before adding core so command and shortcut registration are also
-delegated to the application.
+frontend. `CorePresentationMode::Application` delegates native presentation and
+application command registration to the host. Shared document processing remains
+owned by core in either presentation mode.
+
+## Integration with an existing Bevy application
+
+For a host that already owns its window and renderer, install
+`bed_desktop::DesktopIntegrationPlugin` followed by `BedCoreIntegrationPlugin`.
+This path adds workbench and editing services without adding `DefaultPlugins`,
+a second window, runner or renderer. Register `BedMemoryAssets` before Bevy's
+asset plugin only when an installed plugin consumes that asset source.
+
+The [gameplay example](../../examples/gameplay/README.md) shares one ordinary
+Bevy game plugin between an editor viewport target and a runtime target whose
+dependency graph excludes bEd foundations. Gameplay entities and camera ownership
+stay with the game; its editor adapter owns viewport routing, input admission and
+play/pause controls.
 
 ## Documents and editing
 
-Core installs an empty `DocumentSession` for canonical text and byte documents,
+Core installs a `FileContext` for the selected directory, local `FileServices`,
+and an empty `DocumentSession` for canonical text and byte documents,
 revision-bound edits, multiple views and undo/redo. It polls document services,
 publishes document snapshots and resolves requests after drawing. Add
 `bed_plugin_editor::EditorPlugin` for the existing text and hex widgets. Its default
-build does not install LSP, highlighting, Git or SSH services; bEd explicitly
-enables its `language-services` feature.
+build does not install language servers or highlighting. Core uses the shared
+file-provider backend for local atomic saves; bEd explicitly enables
+`language-services`. Core's `remote` feature provides SSH document access without
+language-server or highlighting services.
+
+Applications prepare a session with
+`DocumentSession::with_file_services(options, &context, &services)`. SSH providers
+retain the authenticated transport and deployed agent path. File locations keep
+provider identity, so a remote path cannot fall back to a coincident local file.
+The selected directory is independent of process cwd and saved-workspace policy.
 
 `open_file` selects a registered viewer and binds its document or local file
 before running the panel factory. `open_document_panel` creates another view of
@@ -57,18 +79,25 @@ callers needing an operation receipt, use `submit_host_request` and
 stale layout actions and effects from failed panels are rejected. Save receipts
 identify the exact committed revision. The internal admitted-request queue and
 receipt table remain durable rather than depending on message retention.
+An operation barrier holds later intentions until earlier writes finish. The
+requesting integration then prepares and validates the document transition,
+retires its presentations, and commits the new context. Failed preflight leaves
+the existing session intact.
 The message envelope lives in `bed-api`, so feature plugins can emit it
-without depending on the desktop composition crate. `HostEffects` remains a
-compatibility surface for existing rich frontends and the synchronous effect
-outbox for registered commands, panel actions and draft commits.
+without depending on the desktop composition crate. `HostEffects` is the synchronous effect outbox for registered commands,
+panel actions and draft commits.
 
 Custom typed contents implement `DocumentModel`, whose change returns its
 inverse and whose encoding supplies bytes for saving. `create_model_document`
 registers the contents; panels use `DocumentBinding` and read through `model`.
 `edit_model` validates the expected revision and applies the entire change to a
 clone before committing contents and history. `undo_document`, `redo_document`,
-`save_document`, `document_revision` and `document_dirty` work for both default
-and typed documents. Hosts with custom storage acknowledge the exact persisted
+`save_document`, `save_document_as`, `document_revision` and `document_dirty`
+work for both default and typed documents. Saves return a `DocumentSaveId`;
+consume `poll_document_save` before reporting success. Its receipt names the exact
+persisted revision. Edits made while an older revision is
+saving remain dirty. Format-on-save runs through this same owner when language
+services are enabled. Hosts with custom storage acknowledge the exact persisted
 revision through `mark_model_saved`. A plugin can also keep its own model without
 joining this document lifecycle.
 Model mutation and persistence stop when the shared session shuts down.
@@ -83,6 +112,11 @@ complete set during an aggregate layout/restore preflight, so other closing
 views cannot be mistaken for surviving views. Retirement hooks run only at the
 workbench's actual close commit.
 
+Settings readers consume `api::settings::SettingsSnapshot` and submit
+`SettingsRequest` messages. Core applies them in memory; the application chooses
+when and where to persist preferences. A plugin therefore needs no saved
+workspace to read or change settings.
+
 ## Layout and feature persistence
 
 Core supplies one active workbench layout. Add
@@ -90,10 +124,12 @@ Core supplies one active workbench layout. Add
 of numbered or named layouts. The layout crate retains suspended panels and
 returns serializable snapshots; the host supplies its storage.
 
-`FeatureStateContribution` registers save/restore systems for a feature's state,
-and `FeatureStateChanged` reports changes through Bevy messages. Neither includes
-a workspace or filesystem location. Applications invoke these systems at their
-own persistence boundary and preserve unknown contributions as needed. See the
+[`bed-storage`](../bed-storage/README.md), exposed as `api::storage`, owns
+`FeatureStateContribution`, `FeatureStateChanged`, snapshot collection and
+restoration. Core initializes an in-memory `Storage`; the host supplies a
+`StateStore` and selects an opaque `StateScope` when persistence is wanted.
+Collecting snapshots preserves absent plugins' state. It writes nothing unless
+the host explicitly saves it. See the
 [bEd adapter](../bed-app/README.md) for workspace policy.
 
 ## Plugin icon sources
@@ -157,13 +193,15 @@ migrate.
 ## Terminal launch integration
 
 `TerminalPlugin` supplies ordinary shell panels, process/input handling, fonts
-and runtime appearance. Set `TerminalWorkspace` to choose the directory for new
+and runtime appearance. Set `TerminalLaunchContext` to choose the directory for new
 shells. Its errors are observable through `bed_terminal::TerminalActivity`;
 ordinary hosts need no executable helper dispatch or application request queue.
 
-`TerminalAppIntegrationPlugin` opts into application workspace projection, panel lifecycle
-and clipboard integration, shell commands such as `+open`/`+workspace`, and
-terminal file links. The application host resolves those requests. Install it after
+`TerminalAppIntegrationPlugin` adds panel lifecycle, clipboard and terminal file
+link integration. Plugin owners register shell aliases through the workbench;
+document integration contributes `+open`, workspace integration contributes
+`+workspace`, and mascots contribute `+ducky`. Terminal owns forwarding and
+operation acknowledgements while command handlers own their behavior. Install it after
 `TerminalPlugin` and dispatch `bed_plugin_terminal::run_helper` before constructing the
 GUI, because private helper invocations execute the host binary:
 

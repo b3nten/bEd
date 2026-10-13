@@ -2,12 +2,10 @@
 use super::{
     MODULE_ID, NEW_COMMAND, PANEL_ID, WorkspacesState, welcome::Welcome, workspace_actions,
 };
+use crate::WorkspaceAction;
+use bed_api::features::FrontendSnapshot;
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction, register,
-};
-use bed_api::{
-    application::WorkspaceAction,
-    features::{HostAction, HostEffects, HostFrame},
 };
 use bevy::prelude::*;
 use dear_imgui_rs::Ui;
@@ -17,6 +15,9 @@ pub struct WorkspacesPlugin;
 
 impl Plugin for WorkspacesPlugin {
     fn build(&self, app: &mut App) {
+        if !app.is_plugin_added::<crate::WorkspacesIntegrationPlugin>() {
+            app.add_plugins(crate::WorkspacesIntegrationPlugin);
+        }
         app.init_resource::<bed_api::features::FeatureRegistry>();
         app.world_mut()
             .resource_mut::<bed_api::features::FeatureRegistry>()
@@ -30,12 +31,10 @@ impl Plugin for WorkspacesPlugin {
                 registrar.command_ref(NEW_COMMAND);
             })
             .expect("feature metadata is installed once");
-        app.init_resource::<WorkspacesState>()
-            .init_resource::<HostEffects>()
-            .add_systems(
-                PreUpdate,
-                observe_workspace.in_set(bed_api::features::FeatureSystems::Prepare),
-            );
+        app.init_resource::<WorkspacesState>().add_systems(
+            PreUpdate,
+            observe_workspace.in_set(bed_api::features::FeatureSystems::Prepare),
+        );
         register(app.world_mut(), MODULE_ID, |registrar| {
             registrar.panel(PANEL_ID, "Workspaces", create_panel);
             registrar.command(NEW_COMMAND, "New Workspaces Panel", open_panel);
@@ -46,12 +45,12 @@ impl Plugin for WorkspacesPlugin {
     }
 }
 
-fn observe_workspace(frame: Option<Res<HostFrame>>, mut state: ResMut<WorkspacesState>) {
-    if let Some(frame) = frame {
-        state.recent_workspaces.clone_from(&frame.recent_workspaces);
-        state.connecting = frame.remote_connecting;
-        state.disconnected = frame.remote_disconnected;
-    }
+fn observe_workspace(
+    context: Option<Res<bed_files::FileContext>>,
+    mut state: ResMut<WorkspacesState>,
+) {
+    state.disconnected = context
+        .is_some_and(|context| context.availability == bed_files::FileAvailability::Disconnected);
 }
 
 /// Identifies live launchers independently of their main-thread UI objects.
@@ -72,6 +71,7 @@ fn open_panel(In(invocation): In<CommandInvocation>) -> CommandResult {
 }
 
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
+    crate::refresh_workspace_observations(world).map_err(|error| error.to_string())?;
     world.entity_mut(creation.entity).insert(bed_api::workbench::PanelDocumentation::new(&[
         ("Workspaces", "Open a folder or choose a recent project to begin working. Remote projects use their saved SSH connection."),
         ("Recent entries", "Right-click a recent project to open it in a new window, rename its label, or remove the entry."),
@@ -120,12 +120,16 @@ impl Panel for WorkspacesFrontend {
             ui.text_disabled("SSH connection lost. Your buffers are retained.");
             ui.button("Reconnect")
         };
+        let error = state.error.clone();
         self.welcome
             .set_recent_workspaces(state.recent_workspaces.clone());
-        let frame = world
-            .get_resource::<HostFrame>()
-            .cloned()
-            .unwrap_or_default();
+        if let Some(error) = error {
+            ui.text_wrapped(&error);
+            if ui.small_button("Dismiss workspace error") {
+                world.resource_mut::<WorkspacesState>().error = None;
+            }
+        }
+        let frame = FrontendSnapshot::capture(world);
         #[cfg(feature = "mascots")]
         let action = {
             let mut scene = world
@@ -145,15 +149,11 @@ impl Panel for WorkspacesFrontend {
                 .entity_mut(self.entity)
                 .insert(bed_ui::gpu::CanvasOutput(output));
         }
-        let mut intents = world.resource_mut::<HostEffects>();
         if reconnect {
-            intents.push(
-                Some(self.entity),
-                HostAction::Workspace(WorkspaceAction::Reconnect),
-            );
+            crate::request_workspace(world, WorkspaceAction::Reconnect, Some(self.entity), 0);
         }
         for request in workspace_actions(action) {
-            intents.push(Some(self.entity), HostAction::Workspace(request));
+            crate::request_workspace(world, request, Some(self.entity), 0);
         }
     }
 }
@@ -204,7 +204,7 @@ fn render_scene(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bed_api::application::WorkspaceSpec;
+    use crate::WorkspaceSpec;
     use bed_workbench::{WorkbenchLayout, WorkbenchPlugin, WorkbenchRequests, capture_command};
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions, MouseButton};
 
@@ -365,9 +365,12 @@ mod tests {
             .io_mut()
             .add_mouse_button_event(MouseButton::Left, false);
         frame(&mut context, &mut frontend, app.world_mut());
-        let intents = app.world_mut().resource_mut::<HostEffects>().take();
+        let mut cursor = bevy::ecs::message::MessageCursor::<crate::WorkspaceRequest>::default();
+        let intents = cursor
+            .read(app.world().resource::<Messages<crate::WorkspaceRequest>>())
+            .collect::<Vec<_>>();
         assert!(matches!(intents.as_slice(), [intent]
-            if intent.source == Some(first) && matches!(intent.action, HostAction::Workspace(WorkspaceAction::OpenFolder))));
+            if intent.source == Some(first) && matches!(intent.action, WorkspaceAction::OpenFolder)));
         assert_eq!(
             app.world().resource::<WorkspacesState>().recent_workspaces,
             vec![workspace]

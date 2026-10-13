@@ -1,20 +1,12 @@
-//! Explicit saves wait for formatting; background and lifecycle saves bypass it.
+//! bEd chooses format-on-save policy; core owns formatting, writes and receipts.
 use super::*;
-use bed_lsp::{jsonrpc::RpcId, lsp_uri::LspUri};
-use std::{
-    sync::{Mutex, mpsc},
-    time::Duration,
-};
+#[cfg(test)]
+use std::time::Duration;
 
 pub(super) struct PendingFormatSave {
     ids: Vec<Option<AppRequestId>>,
-    origin: LspRequestOrigin,
-    revision: Revision,
-    rpc: RpcId,
-    response: Mutex<mpsc::Receiver<Result<Value, String>>>,
-    started: Instant,
-    autosave_was_paused: bool,
-    temporary_view: bool,
+    document: DocumentId,
+    save: bed_core::DocumentSaveId,
 }
 
 pub(super) fn begin(
@@ -26,169 +18,63 @@ pub(super) fn begin(
         .resource_mut::<PendingOperations>()
         .formats
         .iter_mut()
-        .find(|pending| pending.origin.document_id == document)
+        .find(|pending| pending.document == document)
     {
         pending.ids.push(id);
         return Ok(None);
     }
-    let enabled = world.non_send::<Settings>().lsp_format_on_save_enabled();
-    let ready = {
-        let session = world.non_send::<DocumentSession>();
-        session.document_kind(document)? == bed_documents::DocumentKind::Text
-            && !session.is_snapshot_document(document)
-            && session
-                .lsp()
-                .and_then(|pool| pool.client_for_document(document))
-                .is_some_and(|client| {
-                    let client = client.borrow();
-                    client.is_initialized() && client.supports_method("textDocument/formatting")
-                })
-    };
-    if !enabled || !ready {
-        return begin_save(world, vec![document], None, None, id);
-    }
-    commit_documents(world, &HashSet::from([document]))?;
-    let mut session = world.non_send_mut::<DocumentSession>();
-    let snapshot = session.snapshot(document)?;
-    if snapshot.path.is_empty() || snapshot.disk_conflict.is_some() {
-        drop(session);
-        return begin_save(world, vec![document], None, None, id);
-    }
-    let existing = session.view_ids(document).into_iter().next();
-    let view = match existing {
-        Some(view) => view,
-        None => session.create_view(document)?,
-    };
-    let revision = session.document_revision(document)?;
-    let origin = session
-        .lsp()
-        .and_then(|pool| pool.request_origin(document, view, snapshot.generation, 0))
-        .ok_or_else(|| io::Error::other("Formatting document is no longer bound to a server"))?;
-    let uri = if session.is_remote() {
-        LspUri::file_uri_from_remote_path(&snapshot.path)?
-    } else {
-        LspUri::file_uri_from_path(&snapshot.path)?
-    };
-    // The editor currently indents using four spaces.
-    let params =
-        json!({"textDocument":{"uri":uri.to_string()},"options":{"tabSize":4,"insertSpaces":true}});
-    let (sender, response) = mpsc::channel();
-    let request = session.lsp_mut().unwrap().send_request(
-        origin,
-        "textDocument/formatting",
-        params,
-        move |reply| {
-            let _ = sender.send(reply.result.map_err(|error| error.to_string()));
-        },
-    );
-    let rpc = match request {
-        Ok(rpc) => rpc,
-        Err(error) => {
-            if existing.is_none() {
-                session.detach_view(view);
+    let format = world.non_send::<Settings>().lsp_format_on_save_enabled();
+    let save = bed_core::begin_explicit_document_save(world, document, format)
+        .map_err(io::Error::other)?;
+    match bed_core::poll_document_save(world, save) {
+        Some(result) => {
+            if let Some(warning) = bed_core::take_document_save_warning(world, save) {
+                world.resource_mut::<WorkspaceState>().error = Some(warning);
             }
-            drop(session);
-            world.resource_mut::<WorkspaceState>().error =
-                Some(format!("Formatting failed; saving current text: {error}"));
-            return begin_save(world, vec![document], None, None, id);
+            result
+                .map(|documents| Some(AppRequestOutcome::Saved { documents }))
+                .map_err(io::Error::other)
         }
-    };
-    let autosave_was_paused = session.autosave_paused(document)?;
-    session.pause_autosave(document, true)?;
-    drop(session);
-    world
-        .resource_mut::<PendingOperations>()
-        .formats
-        .push(PendingFormatSave {
-            ids: vec![id],
-            origin,
-            revision,
-            rpc,
-            response: Mutex::new(response),
-            started: Instant::now(),
-            autosave_was_paused,
-            temporary_view: existing.is_none(),
-        });
-    Ok(None)
+        None => {
+            world
+                .resource_mut::<PendingOperations>()
+                .formats
+                .push(PendingFormatSave {
+                    ids: vec![id],
+                    document,
+                    save,
+                });
+            Ok(None)
+        }
+    }
 }
 
 pub(super) fn poll(world: &mut World) {
     let requests = std::mem::take(&mut world.resource_mut::<PendingOperations>().formats);
     for pending in requests {
-        let current = world
-            .non_send::<DocumentSession>()
-            .accepts_lsp_origin(&pending.origin);
-        let reply = match pending.response.lock().unwrap().try_recv() {
-            Ok(reply) => Some(reply),
-            Err(mpsc::TryRecvError::Disconnected) => Some(Err("Server disconnected".into())),
-            Err(mpsc::TryRecvError::Empty)
-                if pending.started.elapsed() >= Duration::from_secs(3) =>
-            {
-                Some(Err("Formatting timed out".into()))
-            }
-            Err(mpsc::TryRecvError::Empty) => None,
-        };
-        if reply.is_none() && current {
+        let Some(result) = bed_core::poll_document_save(world, pending.save) else {
             world
                 .resource_mut::<PendingOperations>()
                 .formats
                 .push(pending);
             continue;
-        }
-        let document = pending.origin.document_id;
-        let workspace_matches =
-            world.non_send::<DocumentSession>().session_id() == pending.origin.session_id;
-        let result = if current {
-            match reply.unwrap() {
-                Ok(edits) => world
-                    .non_send_mut::<DocumentSession>()
-                    .apply_lsp_text_edits(document, pending.revision, &edits),
-                Err(error) => Err(io::Error::other(error)),
-            }
-        } else {
-            Ok(()) // A newer revision wins; the pending save writes that revision.
         };
-        release(world, &pending);
-        if let Err(error) = result {
-            world.resource_mut::<WorkspaceState>().error =
-                Some(format!("Formatting failed; saving current text: {error}"));
+        if let Some(warning) = bed_core::take_document_save_warning(world, pending.save) {
+            world.resource_mut::<WorkspaceState>().error = Some(warning);
         }
+        let result = result
+            .map(|documents| AppRequestOutcome::Saved { documents })
+            .map_err(AppRequestError::from);
         for id in pending.ids {
-            let outcome = if workspace_matches {
-                begin_save(world, vec![document], None, None, id)
-            } else {
-                Err(io::Error::other("Workspace changed while formatting"))
-            };
-            match outcome {
-                Ok(Some(outcome)) => complete(world, id, Ok(outcome)),
-                Ok(None) => {}
-                Err(error) => complete(world, id, Err(error.into())),
-            }
+            complete(world, id, result.clone());
         }
-    }
-}
-
-fn release(world: &mut World, pending: &PendingFormatSave) {
-    let mut session = world.non_send_mut::<DocumentSession>();
-    if session.session_id() != pending.origin.session_id {
-        return;
-    }
-    if let Some(client) = session
-        .lsp()
-        .and_then(|pool| pool.client_for_document(pending.origin.document_id))
-    {
-        let _ = client.borrow_mut().cancel_request(&pending.rpc);
-    }
-    let _ = session.pause_autosave(pending.origin.document_id, pending.autosave_was_paused);
-    if pending.temporary_view {
-        session.detach_view(pending.origin.view_id);
     }
 }
 
 pub(super) fn cancel(world: &mut World) {
+    bed_core::cancel_explicit_document_saves(world);
     let requests = std::mem::take(&mut world.resource_mut::<PendingOperations>().formats);
     for pending in requests {
-        release(world, &pending);
         for id in pending.ids {
             complete(world, id, Err("Workspace changed while formatting".into()));
         }
@@ -242,8 +128,17 @@ while True:
         }
     }
 
-    #[test]
-    fn explicit_save_formats_but_autosave_bypasses_and_newer_edits_win() {
+    struct FormatterFixture {
+        _dir: TempDir,
+        app: App,
+        path: PathBuf,
+        mode: PathBuf,
+        trace: PathBuf,
+        panel: Entity,
+        document: DocumentId,
+    }
+
+    fn formatter_fixture() -> FormatterFixture {
         let dir = TempDir::new();
         let server = dir.write("server.py", SERVER.as_bytes());
         fs::set_permissions(&server, fs::Permissions::from_mode(0o755)).unwrap();
@@ -290,6 +185,166 @@ while True:
                 .and_then(|pool| pool.client_for_document(document))
                 .is_some_and(|client| client.borrow().is_initialized())
         });
+        FormatterFixture {
+            _dir: dir,
+            app,
+            path,
+            mode,
+            trace,
+            panel,
+            document,
+        }
+    }
+
+    #[test]
+    fn pending_panel_draft_wins_over_formatting_reply() {
+        let FormatterFixture {
+            _dir,
+            mut app,
+            path,
+            panel,
+            document,
+            ..
+        } = formatter_fixture();
+        let revision = app
+            .world()
+            .non_send::<DocumentSession>()
+            .document_revision(document)
+            .unwrap();
+        let request = internal_request_id(app.world_mut());
+        assert!(
+            begin(app.world_mut(), document, Some(request))
+                .unwrap()
+                .is_none()
+        );
+
+        #[derive(Component)]
+        struct PendingDraft {
+            document: DocumentId,
+            revision: bed_api::documents::Revision,
+        }
+        let frontend = panel_presentation(app.world(), panel).unwrap();
+        let commit = app.world_mut().register_system(
+            |In(invocation): In<bed_api::workbench::PanelActionInvocation>, world: &mut World| {
+                if invocation.action == bed_api::workbench::PanelAction::CommitEdit
+                    && let Some(draft) = world.entity_mut(invocation.entity).take::<PendingDraft>()
+                {
+                    world.resource_mut::<HostEffects>().push(
+                        Some(invocation.entity),
+                        HostAction::ApplyEdits {
+                            document: draft.document,
+                            revision: draft.revision,
+                            edits: vec![ByteEdit {
+                                range: 0..12,
+                                bytes: b"fn draft(){}".to_vec(),
+                            }],
+                        },
+                    );
+                }
+                Ok(true)
+            },
+        );
+        app.world_mut().entity_mut(frontend).insert((
+            PendingDraft { document, revision },
+            bed_api::workbench::PanelActions(commit),
+        ));
+        assert_eq!(
+            app.world()
+                .non_send::<DocumentSession>()
+                .document_revision(document)
+                .unwrap(),
+            revision,
+            "the late draft has not reached the canonical document"
+        );
+
+        pump(&mut app, |world| {
+            world.resource::<PendingOperations>().formats.is_empty()
+        });
+        assert!(poll_app_request(app.world_mut(), request).unwrap().is_ok());
+        assert!(app.world().get::<PendingDraft>(frontend).is_none());
+        assert_eq!(fs::read(&path).unwrap(), b"fn draft(){}\n");
+        assert_eq!(
+            app.world()
+                .non_send::<DocumentSession>()
+                .snapshot(document)
+                .unwrap()
+                .bytes,
+            b"fn draft(){}\n"
+        );
+        app.world_mut()
+            .non_send_mut::<DocumentSession>()
+            .shutdown(ClosePolicy::Discard)
+            .unwrap();
+    }
+
+    #[test]
+    fn rejected_late_panel_draft_prevents_formatting_save() {
+        let FormatterFixture {
+            _dir,
+            mut app,
+            path,
+            panel,
+            document,
+            ..
+        } = formatter_fixture();
+        let request = internal_request_id(app.world_mut());
+        assert!(
+            begin(app.world_mut(), document, Some(request))
+                .unwrap()
+                .is_none()
+        );
+        let frontend = panel_presentation(app.world(), panel).unwrap();
+        #[derive(Component)]
+        struct RejectedDraft;
+        let commit = app.world_mut().register_system(
+            |In(_): In<bed_api::workbench::PanelActionInvocation>| {
+                Err::<bool, String>("draft rejected".into())
+            },
+        );
+        app.world_mut()
+            .entity_mut(frontend)
+            .insert((RejectedDraft, bed_api::workbench::PanelActions(commit)));
+
+        pump(&mut app, |world| {
+            world.resource::<PendingOperations>().formats.is_empty()
+        });
+        let error = poll_app_request(app.world_mut(), request)
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.to_string(), "draft rejected");
+        assert!(app.world().get::<RejectedDraft>(frontend).is_some());
+        assert_eq!(fs::read(&path).unwrap(), b"fn main( ){}\n");
+        assert_eq!(
+            app.world()
+                .non_send::<DocumentSession>()
+                .snapshot(document)
+                .unwrap()
+                .bytes,
+            b"fn main( ){}\n"
+        );
+        assert!(
+            !app.world()
+                .non_send::<DocumentSession>()
+                .autosave_paused(document)
+                .unwrap()
+        );
+        app.world_mut()
+            .non_send_mut::<DocumentSession>()
+            .shutdown(ClosePolicy::Discard)
+            .unwrap();
+    }
+
+    #[test]
+    fn explicit_save_formats_but_autosave_bypasses_and_newer_edits_win() {
+        let FormatterFixture {
+            _dir,
+            mut app,
+            path,
+            mode,
+            trace,
+            document,
+            ..
+        } = formatter_fixture();
 
         let request = internal_request_id(app.world_mut());
         assert!(
@@ -333,19 +388,20 @@ while True:
                 .unwrap()
                 .is_none()
         );
-        let mut session = app.world_mut().non_send_mut::<DocumentSession>();
-        let revision = session.document_revision(document).unwrap();
-        session
-            .apply_edits(
-                document,
-                revision,
-                &[ByteEdit {
-                    range: 0..12,
-                    bytes: b"fn other(){}".to_vec(),
-                }],
-            )
-            .unwrap();
-        drop(session);
+        {
+            let mut session = app.world_mut().non_send_mut::<DocumentSession>();
+            let revision = session.document_revision(document).unwrap();
+            session
+                .apply_edits(
+                    document,
+                    revision,
+                    &[ByteEdit {
+                        range: 0..12,
+                        bytes: b"fn other(){}".to_vec(),
+                    }],
+                )
+                .unwrap();
+        }
         pump(&mut app, |world| {
             world.resource::<PendingOperations>().formats.is_empty()
         });
@@ -379,19 +435,20 @@ while True:
         assert_eq!(fs::read_to_string(&trace).unwrap().lines().count(), count);
         app.world_mut().non_send_mut::<Settings>().settings["lsp_format_on_save"] = json!(true);
         app.world_mut().non_send_mut::<Settings>().settings["autosave_delay_ms"] = json!(0);
-        let mut session = app.world_mut().non_send_mut::<DocumentSession>();
-        let revision = session.document_revision(document).unwrap();
-        session
-            .apply_edits(
-                document,
-                revision,
-                &[ByteEdit {
-                    range: 0..12,
-                    bytes: b"fn auto( ){}".to_vec(),
-                }],
-            )
-            .unwrap();
-        drop(session);
+        {
+            let mut session = app.world_mut().non_send_mut::<DocumentSession>();
+            let revision = session.document_revision(document).unwrap();
+            session
+                .apply_edits(
+                    document,
+                    revision,
+                    &[ByteEdit {
+                        range: 0..12,
+                        bytes: b"fn auto( ){}".to_vec(),
+                    }],
+                )
+                .unwrap();
+        }
         pump(&mut app, |world| {
             !world
                 .non_send::<DocumentSession>()

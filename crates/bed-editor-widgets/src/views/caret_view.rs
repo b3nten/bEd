@@ -497,7 +497,7 @@ mod tests {
     fn long_columns_and_wrap_boundaries_remain_animated() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let mut fixture = Fixture::new();
-        fixture.editor.set_content(&vec![b'x'; 120]);
+        fixture.editor.set_content(&[b'x'; 120]);
         fixture.render(1.0 / 60.0);
         fixture.move_to(0, 80);
         fixture.render(1.0 / 60.0);

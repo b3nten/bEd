@@ -4,7 +4,7 @@ A fresh Bevy `App` with `BedCorePlugin` and `TerminalPlugin`. Core supplies the
 native window, renderer, Dear ImGui, theme, embedded fonts/icons, workbench and
 shared document foundation. The terminal owns shell sessions, rendering and
 input. New shells use the launch directory; an application can configure a
-different directory through `TerminalWorkspace`.
+different directory through `TerminalLaunchContext`.
 
 ```sh
 cargo run --locked -p bed-example-terminal

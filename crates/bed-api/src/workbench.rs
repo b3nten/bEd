@@ -250,6 +250,40 @@ pub struct PanelCreation {
     pub state: Value,
 }
 
+/// Bytes supplied by a local shell. Command owners validate argument semantics;
+/// terminal transport preserves the calling directory and originating pane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShellInvocation {
+    pub arguments: Vec<Vec<u8>>,
+    pub directory: Vec<u8>,
+    pub pane: Option<String>,
+}
+impl ShellInvocation {
+    pub fn to_arguments(&self) -> Value {
+        serde_json::json!({"shell":{"arguments":self.arguments,"directory":self.directory,"pane":self.pane}})
+    }
+    pub fn from_arguments(arguments: &Value) -> Result<Self, String> {
+        let shell = arguments.get("shell").ok_or("Missing shell invocation")?;
+        let arguments = serde_json::from_value(shell["arguments"].clone())
+            .map_err(|_| "Invalid shell argument bytes")?;
+        let directory = serde_json::from_value(shell["directory"].clone())
+            .map_err(|_| "Invalid shell directory bytes")?;
+        let pane =
+            serde_json::from_value(shell["pane"].clone()).map_err(|_| "Invalid shell pane")?;
+        Ok(Self {
+            arguments,
+            directory,
+            pane,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShellAlias {
+    pub alias: &'static str,
+    pub command: &'static str,
+}
+
 /// Captured at the originating surface. Dispatch never substitutes later focus.
 #[derive(Clone, Debug)]
 pub struct CommandInvocation {
@@ -353,6 +387,7 @@ pub struct WorkbenchRegistry {
     menus: Vec<&'static str>,
     toolbar: Vec<&'static str>,
     shortcuts: Vec<ShortcutAction>,
+    shell_aliases: Vec<ShellAlias>,
 }
 
 impl Default for WorkbenchRegistry {
@@ -364,11 +399,22 @@ impl Default for WorkbenchRegistry {
             menus: Vec::new(),
             toolbar: Vec::new(),
             shortcuts: bed_keybindings::common_actions(),
+            shell_aliases: Vec::new(),
         }
     }
 }
 
 impl WorkbenchRegistry {
+    pub fn shell_aliases(&self) -> &[ShellAlias] {
+        &self.shell_aliases
+    }
+    pub fn shell_command(&self, alias: &str) -> Option<&CommandDefinition> {
+        self.shell_aliases
+            .iter()
+            .find(|entry| entry.alias == alias)
+            .and_then(|entry| self.command(entry.command))
+    }
+
     pub fn shortcuts(&self) -> &[ShortcutAction] {
         &self.shortcuts
     }
@@ -428,9 +474,15 @@ pub struct WorkbenchRegistrar {
     command_icons: Vec<(&'static str, &'static str)>,
     panel_icons: Vec<(&'static str, &'static str)>,
     shortcuts: Vec<ShortcutAction>,
+    shell_aliases: Vec<ShellAlias>,
 }
 
 impl WorkbenchRegistrar {
+    /// Expose an owned workbench command through the local shell bridge.
+    pub fn shell_alias(&mut self, alias: &'static str, command: &'static str) {
+        self.shell_aliases.push(ShellAlias { alias, command });
+    }
+
     pub fn command<M>(
         &mut self,
         id: &'static str,
@@ -533,6 +585,30 @@ pub fn register(
     for command in pending.menus.iter().chain(&pending.toolbar) {
         if !pending.commands.iter().any(|entry| entry.id == *command) {
             return Err(format!("Missing contributed command: {command}"));
+        }
+    }
+    let mut aliases = HashSet::new();
+    for entry in &pending.shell_aliases {
+        if !valid_shell_alias(entry.alias)
+            || !aliases.insert(entry.alias)
+            || registry.is_some_and(|registry| {
+                registry
+                    .shell_aliases
+                    .iter()
+                    .any(|existing| existing.alias == entry.alias)
+            })
+        {
+            return Err(format!("Invalid or duplicate shell alias: {}", entry.alias));
+        }
+        if !pending
+            .commands
+            .iter()
+            .any(|command| command.id == entry.command)
+        {
+            return Err(format!(
+                "Missing contributed shell command: {}",
+                entry.command
+            ));
         }
     }
     let mut toolbar_ids = HashSet::new();
@@ -645,8 +721,19 @@ pub fn register(
     registry.menus.extend(pending.menus);
     registry.toolbar.extend(pending.toolbar);
     registry.shortcuts.extend(pending.shortcuts);
+    registry.shell_aliases.extend(pending.shell_aliases);
     registry.owners.insert(owner);
     Ok(())
+}
+
+pub fn valid_shell_alias(alias: &str) -> bool {
+    alias.strip_prefix('+').is_some_and(|name| {
+        !name.is_empty()
+            && name.len() <= 63
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    })
 }
 
 /// Shared by workbench and feature contribution validation.
@@ -701,6 +788,62 @@ mod shortcut_tests {
 
     fn panel(In(_): In<PanelCreation>) -> PanelResult {
         Err("fixture".into())
+    }
+
+    #[test]
+    fn shell_registration_is_owned_unique_and_atomic() {
+        let mut world = World::new();
+        for invalid in ["+../outside", "name", "+", "+name/other"] {
+            assert!(
+                register(&mut world, "example", |r| {
+                    r.command("example.open", "Open", command);
+                    r.shell_alias(invalid, "example.open");
+                })
+                .is_err()
+            );
+            assert!(!world.contains_resource::<WorkbenchRegistry>());
+        }
+        assert!(
+            register(&mut world, "example", |r| r
+                .shell_alias("+name", "example.missing"))
+            .is_err()
+        );
+        register(&mut world, "example", |r| {
+            r.command("example.open", "Open", command);
+            r.shell_alias("+name", "example.open");
+            r.shell_alias("+n", "example.open");
+        })
+        .unwrap();
+        assert_eq!(
+            world
+                .resource::<WorkbenchRegistry>()
+                .shell_command("+name")
+                .unwrap()
+                .owner,
+            "example"
+        );
+        assert!(
+            register(&mut world, "other", |r| {
+                r.command("other.open", "Other", command);
+                r.shell_alias("+name", "other.open");
+            })
+            .is_err()
+        );
+        assert!(
+            world
+                .resource::<WorkbenchRegistry>()
+                .command("other.open")
+                .is_none()
+        );
+        let invocation = ShellInvocation {
+            arguments: vec![b"non-utf8\xff".to_vec()],
+            directory: b"/tmp/root\xff".to_vec(),
+            pane: Some("pane".into()),
+        };
+        assert_eq!(
+            ShellInvocation::from_arguments(&invocation.to_arguments()).unwrap(),
+            invocation
+        );
     }
 
     #[test]

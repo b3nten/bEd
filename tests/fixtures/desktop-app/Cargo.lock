@@ -410,7 +410,9 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 name = "bed-api"
 version = "0.1.0"
 dependencies = [
+ "bed-files",
  "bed-keybindings",
+ "bed-storage",
  "bed-ui",
  "bevy",
  "dear-imgui-rs",
@@ -440,10 +442,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "bed-editing"
+version = "0.1.0"
+dependencies = [
+ "glob",
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bed-effects-config"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+]
+
+[[package]]
+name = "bed-files"
+version = "0.1.0"
+dependencies = [
+ "bed-editing",
+ "bevy",
+ "libc",
 ]
 
 [[package]]
@@ -466,6 +487,14 @@ dependencies = [
  "dear-imgui-wgpu",
  "serde_json",
  "wgpu",
+]
+
+[[package]]
+name = "bed-storage"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "serde_json",
 ]
 
 [[package]]
@@ -3680,6 +3709,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "737970939a87c6fa31e7acad13307bccbb017a073b695b6089a2c484f929e20e"
 dependencies = [
  "bitflags 2.13.2",
+]
+
+[[package]]
+name = "regex"
+version = "1.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e10754a14b9137dd7b1e3e5b0493cc9171fdd105e0ab477f51b72e7f3ac0e276"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]

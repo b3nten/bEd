@@ -121,7 +121,7 @@ fn merge_entries(files: &mut Vec<FileEntry>, mut additions: Vec<FileEntry>) {
 
 #[derive(Default)]
 pub struct FileFinder {
-    remote_client: Option<bed_remote::RemoteClient>,
+    services: crate::FileServices,
     pub show_ff_window: bool,
     pub search_buffer: String,
     pub selected_index: usize,
@@ -146,9 +146,9 @@ impl FileFinder {
         Self::default()
     }
 
-    pub fn set_remote_client(&mut self, client: Option<bed_remote::RemoteClient>) {
+    pub fn set_file_services(&mut self, services: crate::FileServices) {
         self.stop_worker();
-        self.remote_client = client;
+        self.services = services;
         self.file_list.clear();
         self.filtered_list.clear();
         self.start_service();
@@ -172,14 +172,15 @@ impl FileFinder {
         if !self.started || self.filesystem.is_some() || self.current_project_dir.is_empty() {
             return;
         }
-        let filesystem = if let Some(client) = &self.remote_client {
-            WorkspaceFilesystem::remote(
-                self.current_project_dir.clone(),
-                self.include_ignored,
-                client.clone(),
-            )
-        } else {
-            WorkspaceFilesystem::local(self.current_project_dir.clone(), self.include_ignored)
+        let filesystem = match self
+            .services
+            .watch(self.current_project_dir.clone(), self.include_ignored)
+        {
+            Ok(filesystem) => filesystem,
+            Err(error) => {
+                self.discovery_status = Some(error.to_string());
+                return;
+            }
         };
         self.updates = Some(filesystem.subscribe());
         self.filesystem = Some(filesystem);

@@ -8,7 +8,7 @@ license.workspace = true
 [features]
 default = ["desktop"]
 desktop = ["dep:bed-desktop", "dep:winit"]
-remote = ["bed-terminal/remote", "bed-documents/ide-services"]
+remote = ["bed-terminal/remote", "bed-documents/remote"]
 
 [dependencies]
 bed-keybindings = { workspace = true }
@@ -28,5 +28,5 @@ winit = { workspace = true, optional = true }
 [dev-dependencies]
 bed-remote = { workspace = true }
 bed-app-config = { workspace = true }
-bed-app = { workspace = true }
+bed-app = { workspace = true, features = ["workspaces", "terminal"] }
 bed-plugin-editor = { workspace = true }

@@ -55,6 +55,7 @@ fn native_file_drops_enqueue_editor_requests_and_clear_the_hover() {
     assert!(world.resource::<NativeFileDrag>().panel.is_none());
 }
 
+#[cfg(feature = "workspaces")]
 #[test]
 fn workspace_window_launch_passes_only_the_shared_config_and_selected_root() {
     let config = std::env::temp_dir().canonicalize().unwrap();
@@ -494,9 +495,10 @@ fn native_edit_actions_respect_text_input_ownership() {
     );
 }
 
+#[cfg(feature = "workspaces")]
 #[test]
 fn workspace_window_launch_preserves_local_and_ssh_identity_as_one_argument() {
-    use bed_api::application::{WorkspaceSpec, WorkspaceTarget};
+    use bed_plugin_workspaces::{WorkspaceSpec, WorkspaceTarget};
     let config = std::env::temp_dir().canonicalize().unwrap();
     for workspace in [
         WorkspaceSpec::local("/tmp/project with spaces"),

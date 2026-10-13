@@ -17,7 +17,7 @@ pub(super) struct DeferredWorkspaceEdit {
 pub(super) struct PendingWorkspaceEdit {
     edit: Value,
     origin: Option<LspRequestOrigin>,
-    revisions: BTreeMap<DocumentId, (u64, u64)>,
+    revisions: CapturedDocumentRevisions,
     unopened: BTreeSet<PathBuf>,
     applied: Option<AppliedWorkspaceEdit>,
     remote_checked: BTreeSet<DocumentId>,
@@ -267,14 +267,13 @@ impl DocumentSession {
             for edit in &documents {
                 if let Some(id) = self.document_for_path(&edit.path) {
                     let current = self.document_revision(id)?;
-                    if let Some(captured) = captured {
-                        if captured
+                    if let Some(captured) = captured
+                        && (captured
                             .get(&id)
                             .is_some_and(|revision| *revision != current)
-                            || (!captured.contains_key(&id) && self.snapshot(id)?.dirty)
-                        {
-                            return Err(changed(&self.snapshot(id)?.path));
-                        }
+                            || (!captured.contains_key(&id) && self.snapshot(id)?.dirty))
+                    {
+                        return Err(changed(&self.snapshot(id)?.path));
                     }
                     revisions.insert(id, current);
                 } else {
@@ -569,10 +568,9 @@ impl DocumentSession {
                 .participants
                 .iter()
                 .any(|participant| participant.persisted && participant.path == path)
+                && let Err(error) = self.save(*document)
             {
-                if let Err(error) = self.save(*document) {
-                    failures.push(format!("{}: {}", path, error));
-                }
+                failures.push(format!("{}: {}", path, error));
             }
             self.entry_mut(*document)?.runtime.state.dirty = *dirty;
         }

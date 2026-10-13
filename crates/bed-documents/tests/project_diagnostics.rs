@@ -320,8 +320,10 @@ fn saved_semantic_errors_reach_editor(lsp: bool) {
             })
             .unwrap();
         assert_eq!(
-            inline.iter().any(|item| item.severity == 1
-                && token.map_or(true, |token| item.message.contains(token))),
+            inline
+                .iter()
+                .any(|item| item.severity == 1
+                    && token.is_none_or(|token| item.message.contains(token))),
             token.is_some(),
             "saved semantic errors must reach the same diagnostics handle used by editor squiggles: {inline:?}"
         );

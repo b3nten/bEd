@@ -1,10 +1,13 @@
 //! Zoom belongs to one text presentation. Commands carry its captured entity;
 //! native gestures retain the presentation beneath their starting position.
 use crate::{EditorConfig, EditorViews};
+use bed_api::documents::DocumentFrame;
 use bed_api::workbench::{CommandInvocation, CommandResult, PanelFrontend, WorkbenchOverlay};
 use bed_api::workbench::{CommandPresentation, CommandPresentations, PinchEvents, PinchPhase};
 use bed_editor_widgets::EditorView;
 use bevy::prelude::*;
+#[cfg(test)]
+use dear_imgui_rs::Key;
 use dear_imgui_rs::{PopupQueryFlags, Ui, sys};
 
 pub const ZOOM_IN: &str = "bed.editor.zoom_in";
@@ -184,7 +187,7 @@ fn gestures(world: &mut World, ui: &Ui) {
         }
     }
     world.resource_mut::<GestureTarget>().0 = target;
-    let active = world.resource::<bed_api::features::HostFrame>().active_view;
+    let active = world.resource::<DocumentFrame>().active_view;
     let enabled = active.is_some_and(|active| {
         world.non_send::<EditorViews>().widgets.values().any(
             |widget| matches!(widget, crate::feature::Widget::Text(view) if view.id() == active),
@@ -515,6 +518,3 @@ mod tests {
         assert!(app.world().resource::<GestureTarget>().0.is_none());
     }
 }
-
-#[cfg(test)]
-use dear_imgui_rs::Key;

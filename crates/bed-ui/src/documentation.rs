@@ -184,7 +184,7 @@ fn wrapped_hover_lines(
                     source_line.as_ptr().add(source_line.len()).cast(),
                     width.max(1.0),
                     if keep_blanks {
-                        sys::ImDrawTextFlags_WrapKeepBlanks as i32
+                        sys::ImDrawTextFlags_WrapKeepBlanks
                     } else {
                         0
                     },

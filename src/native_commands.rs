@@ -153,7 +153,7 @@ impl MenuAction {
     }
 }
 
-fn requires_workspace(action: MenuAction) -> bool {
+fn requires_directory(action: MenuAction) -> bool {
     matches!(
         action,
         MenuAction::LspDashboard
@@ -211,20 +211,32 @@ pub fn menu_shortcut(
     input_shortcut(action, bindings)
 }
 
+pub struct MenuContext {
+    pub directory_available: bool,
+    pub document: bool,
+    pub clipboard: bool,
+    pub text_input: bool,
+    pub editor_focused: bool,
+    pub active_layout: LayoutSlot,
+}
+
 pub fn menus(
     bindings: &Bindings,
-    workspace: bool,
-    document: bool,
-    clipboard: bool,
-    text_input: bool,
-    editor_focused: bool,
     commands: &[bed_app::commands::CommandItem],
-    active_layout: LayoutSlot,
+    context: MenuContext,
 ) -> Vec<DesktopMenu> {
+    let MenuContext {
+        directory_available,
+        document,
+        clipboard,
+        text_input,
+        editor_focused,
+        active_layout,
+    } = context;
     use DesktopMenuItem::*;
     use MenuAction as A;
     let command = |action: A, label: &str| {
-        let enabled = (!requires_workspace(action) || workspace)
+        let enabled = (!requires_directory(action) || directory_available)
             && match action {
                 A::Undo | A::Redo => text_input || (!clipboard && document),
                 A::Cut => text_input || !clipboard,
@@ -242,7 +254,6 @@ pub fn menus(
                         super_key: stroke.modifiers.super_key,
                         alt: stroke.modifiers.alt,
                         shift: stroke.modifiers.shift,
-                        ..Default::default()
                     },
                 }
             }),
@@ -343,6 +354,7 @@ pub fn menus(
         (A::NewExplorer, "File Explorer"),
         (A::NewTerminal, "Terminal"),
         (A::NewSettings, "Settings"),
+        #[cfg(feature = "workspaces")]
         (A::NewWorkspaces, "Workspaces"),
         (A::NewContentSearch, "Project Search"),
         (A::NewDiagnostics, "Diagnostics"),
@@ -424,13 +436,15 @@ mod tests {
         }];
         let menus = menus(
             &bindings,
-            true,
-            true,
-            false,
-            false,
-            true,
             &commands,
-            LayoutSlot::Layout1,
+            MenuContext {
+                directory_available: true,
+                document: true,
+                clipboard: false,
+                text_input: false,
+                editor_focused: true,
+                active_layout: LayoutSlot::Layout1,
+            },
         );
         assert!(!menus.iter().any(|menu| menu.label == "View"));
         let window = menus.iter().find(|menu| menu.label == "Window").unwrap();
@@ -481,13 +495,15 @@ mod tests {
         let bindings = Bindings::new(actions, &Overrides::default(), Platform::Mac);
         let menus = menus(
             &bindings,
-            true,
-            true,
-            false,
-            false,
-            true,
             &[],
-            LayoutSlot::Layout3,
+            MenuContext {
+                directory_available: true,
+                document: true,
+                clipboard: false,
+                text_input: false,
+                editor_focused: true,
+                active_layout: LayoutSlot::Layout3,
+            },
         );
         let window = menus.iter().find(|menu| menu.label == "Window").unwrap();
         let selected = window
@@ -561,13 +577,15 @@ mod tests {
         }
         let startup_menus = self::menus(
             &bindings,
-            true,
-            false,
-            false,
-            false,
-            false,
             &[],
-            LayoutSlot::Startup,
+            MenuContext {
+                directory_available: true,
+                document: false,
+                clipboard: false,
+                text_input: false,
+                editor_focused: false,
+                active_layout: LayoutSlot::Startup,
+            },
         );
         let startup_window = startup_menus
             .iter()

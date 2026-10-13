@@ -31,17 +31,18 @@ ALLOWED_INTERNAL = {
         "bed-app", "bed-api", "bed-editing", "bed-files", "bed-highlight",
         "bed-lsp", "bed-documents", "bed-ui", "bed-editor-widgets", "bed-app-config",
         "bed-terminal", "bed-debugger", "bed-plugin-effects", "bed-effects-config",
-        "bed-remote", "bed-keybindings",
+        "bed-remote", "bed-keybindings", "bed-storage",
     } | CONTENT_PLUGINS,
-    "bed-api": {"bed-editing", "bed-documents", "bed-lsp", "bed-ui", "bed-keybindings"},
+    "bed-api": {"bed-editing", "bed-documents", "bed-lsp", "bed-ui", "bed-keybindings", "bed-files", "bed-storage"},
+    "bed-storage": set(),
     "bed-core": {
         "bed-desktop", "bed-runtime", "bed-workbench", "bed-api", "bed-documents",
-        "bed-editing", "bed-ui",
+        "bed-editing", "bed-ui", "bed-files", "bed-storage", "bed-lsp",
     },
     "bed-app": {
         "bed-plugin-layouts", "bed-workbench", "bed-api", "bed-editing", "bed-files",
         "bed-highlight", "bed-lsp", "bed-documents", "bed-ui", "bed-editor-widgets",
-        "bed-app-config", "bed-remote", "bed-runtime", "bed-keybindings",
+        "bed-app-config", "bed-remote", "bed-runtime", "bed-keybindings", "bed-core", "bed-storage", "bed-plugin-workspaces", "bed-terminal",
     } | APP_PROJECTIONS,
     "bed-app-config": {
         "bed-plugin-layouts", "bed-highlight", "bed-ui", "bed-effects-config",
@@ -49,15 +50,18 @@ ALLOWED_INTERNAL = {
     },
     "bed-app-shell": {"bed-terminal"},
     "bed-runtime": set(),
-    "bed-desktop": {"bed-ui"},
+    "bed-desktop": {"bed-ui", "bed-runtime"},
     "bed-workbench": {"bed-api", "bed-ui", "bed-keybindings"},
     "bed-plugin-layouts": {"bed-workbench", "bed-api"},
     "bed-example-layouts": {"bed-core", "bed-plugin-layouts", "bed-desktop", "bed-workbench", "bed-api"},
     "bed-example-terminal": {"bed-core", "bed-workbench", "bed-plugin-terminal"},
     "bed-example-editor": {"bed-core", "bed-plugin-editor", "bed-editing"},
     "bed-example-model": {"bed-core"},
+    "bed-example-game": set(),
+    "bed-example-game-runtime": {"bed-example-game"},
+    "bed-example-game-editor": {"bed-example-game", "bed-core", "bed-desktop", "bed-ui"},
     "bed-plugin-automation": {
-        "bed-desktop", "bed-workbench", "bed-api", "bed-app", "bed-documents", "bed-editing",
+        "bed-desktop", "bed-workbench", "bed-api", "bed-app", "bed-documents", "bed-editing", "bed-plugin-workspaces",
     },
     "bed-plugin-idle": {"bed-desktop", "bed-plugin-mascots", "bed-api", "bed-ui"},
     "bed-plugin-editor": {
@@ -70,7 +74,7 @@ ALLOWED_INTERNAL = {
     },
     "bed-plugin-git": {
         "bed-git", "bed-editing", "bed-documents", "bed-editor-widgets", "bed-remote",
-        "bed-ui", "bed-api",
+        "bed-ui", "bed-api", "bed-files",
     },
     "bed-plugin-file-explorer": {
         "bed-editing", "bed-files", "bed-remote", "bed-documents", "bed-ui",
@@ -84,8 +88,8 @@ ALLOWED_INTERNAL = {
         "bed-documents", "bed-api", "bed-terminal", "bed-ui", "bed-workbench",
         "bed-desktop", "bed-app-shell", "bed-keybindings",
     },
-    "bed-plugin-workspaces": {"bed-documents", "bed-ui", "bed-api", "bed-plugin-mascots"},
-    "bed-plugin-mascots": {"bed-api", "bed-documents", "bed-runtime", "bed-ui"},
+    "bed-plugin-workspaces": {"bed-documents", "bed-ui", "bed-api", "bed-plugin-mascots", "bed-core", "bed-files", "bed-storage", "bed-workbench"},
+    "bed-plugin-mascots": {"bed-api", "bed-documents", "bed-runtime", "bed-ui", "bed-desktop"},
     "bed-plugin-color-picker": {"bed-api", "bed-editing", "bed-ui"},
     "bed-plugin-settings": {
         "bed-editing", "bed-documents", "bed-app-config", "bed-ui", "bed-api", "bed-keybindings",
@@ -112,7 +116,7 @@ ALLOWED_INTERNAL = {
     "bed-plugin-audio-player": {"bed-editing", "bed-api", "bed-ui", "bed-keybindings"},
     "bed-plugin-csv-table": {"bed-editing", "bed-api", "bed-documents", "bed-ui", "bed-keybindings"},
     "bed-plugin-markdown-preview": {
-        "bed-editing", "bed-api", "bed-plugin-image-viewer", "bed-remote", "bed-ui", "bed-documents",
+        "bed-editing", "bed-api", "bed-plugin-image-viewer", "bed-remote", "bed-ui", "bed-documents", "bed-files",
     },
     "bed-plugin-json-tree": {"bed-editing", "bed-api"},
     "bed-plugin-sqlite-browser": {"bed-editing", "bed-api", "bed-keybindings"},
@@ -121,7 +125,7 @@ ALLOWED_INTERNAL = {
 HEADLESS = {
     "bed-editing", "bed-files", "bed-highlight", "bed-lsp", "bed-documents",
     "bed-remote", "bed-remote-agent", "bed-debugger", "bed-effects-config", "bed-git",
-    "bed-terminal",
+    "bed-terminal", "bed-storage",
 }
 GUI = {
     "dear-imgui-rs", "dear-imgui-sys", "dear-imgui-winit", "dear-imgui-wgpu",
@@ -132,8 +136,9 @@ NATIVE_BACKENDS = {
 }
 PORTABLE_UI = {
     "bed-ui", "bed-editor-widgets", "bed-app-config", "bed-api", "bed-app-shell",
-} | CONTENT_PLUGINS - {"bed-plugin-model-viewer"}
+} | CONTENT_PLUGINS - {"bed-plugin-model-viewer", "bed-plugin-workspaces", "bed-plugin-mascots"}
 IDE_SERVICES = {"bed-highlight", "bed-lsp", "bed-remote", "bed-git", "git2"}
+FILE_BACKENDS = {"bed-remote", "bed-git", "git2"}
 EXAMPLE_PLUGINS = {
     "bed-example-layouts": {"bed-plugin-layouts"},
     "bed-example-terminal": {"bed-plugin-terminal"},
@@ -183,6 +188,10 @@ def check(offline=False):
                 "bed-editing", "bed-documents", "bed-lsp", "bed-git", "bed-terminal",
                 "bevy_pbr", "bevy_gltf", "rodio",
             } | CONTENT_PLUGINS
+            if name in {"bed-workbench", "bed-api", "bed-plugin-layouts"}:
+                # Provider identities, lightweight file algorithms and state contracts
+                # are foundations; authenticated transports remain feature gated.
+                forbidden -= {"bed-files", "bed-editing"}
             if name != "bed-desktop":
                 forbidden |= NATIVE_BACKENDS | {"bed-desktop", "bed-plugin-effects", "wgpu"}
         elif name == "bed-core" or name in EXAMPLE_PLUGINS:
@@ -190,6 +199,7 @@ def check(offline=False):
                 "bed", "bed-app", "bed-app-config", "bed-plugin-effects", "bed-plugin-idle",
                 "bed-plugin-automation", "bevy_pbr", "bevy_gltf", "rodio", "bed-debugger",
             } | IDE_SERVICES | CONTENT_PLUGINS | {"bed-plugin-layouts", "bed-terminal", "bed-app-shell"}
+            forbidden -= FILE_BACKENDS
             allowed = EXAMPLE_PLUGINS.get(name, set())
             forbidden -= allowed
             if "bed-plugin-terminal" in allowed:
@@ -209,9 +219,11 @@ def check(offline=False):
                 forbidden |= {"bed-api"} | CONTENT_PLUGINS
             elif name == "bed-plugin-editor":
                 forbidden |= IDE_SERVICES
-        elif name == "bed-plugin-model-viewer":
+        elif name in {"bed-plugin-model-viewer", "bed-plugin-workspaces", "bed-plugin-mascots"}:
             # The renderer uses desktop-owned memory assets and the shared GPU.
-            forbidden = {"bed", "bed-app", "bed-app-config", "bed-core", "bed-plugin-effects"} | (CONTENT_PLUGINS - {name})
+            forbidden = {"bed", "bed-app", "bed-app-config", "bed-plugin-effects"} | (CONTENT_PLUGINS - {name})
+            if name == "bed-plugin-model-viewer": forbidden.add("bed-core")
+            else: forbidden -= {"bed-plugin-mascots"}
         elif name == "bed-runtime":
             forbidden = NATIVE_BACKENDS | {
                 "bed", "bed-app", "bed-api", "dear-imgui-rs", "dear-imgui-sys",
@@ -219,12 +231,15 @@ def check(offline=False):
             } | CONTENT_PLUGINS
         elif name == "bed-app":
             forbidden = {
-                "bed", "winit", "arboard", "muda", "dear-imgui-winit", "dear-imgui-wgpu",
-                "bed-plugin-effects", "bed-terminal",
+                "bed", "bed-plugin-effects", "bed-terminal",
             } | CONTENT_PLUGINS
+            forbidden -= {"bed-plugin-workspaces"}
             assert not direct & (NATIVE_BACKENDS - {"rfd"}), (
                 f"Application integration imports native host APIs: {sorted(direct & (NATIVE_BACKENDS - {'rfd'}))}"
             )
+        if name in {"bed-example-game", "bed-example-game-runtime"}:
+            forbidden |= set(ALLOWED_INTERNAL) - {name, "bed-example-game"}
+            forbidden |= {"dear-imgui-rs", "dear-imgui-sys"}
         assert not names & forbidden, f"{name} crosses its dependency boundary: {sorted(names & forbidden)}"
     # The merged API must stay lean with documents disabled, including when only
     # GPU contracts are requested. Document contracts add no IDE services by default.
@@ -232,12 +247,21 @@ def check(offline=False):
         names = dependency_tree("bed-api", offline, features)
         forbidden = NATIVE_BACKENDS | {"bed", "bed-app", "bed-app-config", "bed-core", "bed-desktop", "bed-terminal"} | CONTENT_PLUGINS
         if "documents" not in features:
-            forbidden |= {"bed-documents", "bed-editing", "bed-files"} | IDE_SERVICES
+            forbidden |= {"bed-documents"} | IDE_SERVICES
         elif "language-services" not in features:
             forbidden |= IDE_SERVICES
         if "gpu" not in features:
             forbidden.add("wgpu")
         assert not names & forbidden, f"bed-api/{features} crosses its boundary: {sorted(names & forbidden)}"
+    for features in ("", "file-services", "remote"):
+        names=dependency_tree("bed-documents", offline, features or None)
+        forbidden=GUI | {"bed-highlight", "bed-lsp"}
+        if not features: forbidden |= FILE_BACKENDS
+        assert not names & forbidden, f"bed-documents/{features or 'base'} crosses its boundary: {sorted(names & forbidden)}"
+    remote_core=dependency_tree("bed-core", offline, "remote")
+    assert not remote_core & {"bed-highlight", "bed-lsp"}, "Remote core requires language services"
+    assert not dependency_tree("bed-plugin-automation", offline, "app") & {"bed-plugin-mascots"}, "Application automation requires workspace presentation"
+    assert not dependency_tree("bed-plugin-color-picker", offline) & {"bed-documents", "bed-lsp", "bed-core"}, "Settings metadata requires documents"
     print(f"All {len(members)} crates respect their production dependency boundaries.")
 
 

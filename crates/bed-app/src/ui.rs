@@ -1,5 +1,5 @@
 //! Main-thread ImGui frontend. All domain resources stay installed while drawing.
-use crate::runtime::{WorkbenchHostMode, WorkspaceState, process_app_requests, publish_host_frame};
+use crate::runtime::{WorkbenchHostMode, WorkspaceState, process_app_requests, publish_app_state};
 use bed_app_config::Settings;
 use bevy::prelude::*;
 use dear_imgui_rs::Ui;
@@ -32,10 +32,10 @@ pub fn draw_ui(world: &mut World, ui: &Ui) -> io::Result<()> {
     if let Some(textures) = world.get_resource::<bed_ui::gpu::CanvasTextures>() {
         let textures = textures.0.clone();
         world
-            .resource_mut::<bed_api::features::HostFrame>()
+            .resource_mut::<bed_api::presentation::PresentationFrame>()
             .textures = textures;
     }
-    publish_host_frame(world);
+    publish_app_state(world);
     for mut visible in world
         .query::<&mut bed_ui::gpu::CanvasVisible>()
         .iter_mut(world)
@@ -60,33 +60,6 @@ pub fn draw_ui(world: &mut World, ui: &Ui) -> io::Result<()> {
     world
         .resource_mut::<bed_workbench::WorkbenchViewport>()
         .bottom_inset = status_height;
-    let dirty = world
-        .query::<(Entity, &bed_api::documents::PanelBinding)>()
-        .iter(world)
-        .filter_map(|(entity, binding)| {
-            world
-                .get::<bed_workbench::PanelPresentation>(entity)
-                .map(|_| {
-                    (
-                        entity,
-                        binding
-                            .document
-                            .and_then(|document| {
-                                world
-                                    .non_send::<bed_documents::DocumentSession>()
-                                    .snapshot(document)
-                                    .ok()
-                            })
-                            .is_some_and(|snapshot| snapshot.dirty),
-                    )
-                })
-        })
-        .collect::<Vec<_>>();
-    for (entity, dirty) in dirty {
-        world
-            .entity_mut(entity)
-            .insert(bed_workbench::PanelDirty(dirty));
-    }
     world.init_non_send::<bed_workbench::WorkbenchShortcuts>();
     let overrides = world.non_send::<Settings>().keybinds.overrides.clone();
     world

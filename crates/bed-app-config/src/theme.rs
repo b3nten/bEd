@@ -106,7 +106,7 @@ impl Theme {
             .map_err(|e| invalid(format!("{}: {e}", path.display())))?;
         Self::from_json(&value).map_err(|e| invalid(format!("{}: {e}", path.display())))
     }
-    
+
     pub fn from_json(value: &Value) -> io::Result<Self> {
         let name = value["name"]
             .as_str()

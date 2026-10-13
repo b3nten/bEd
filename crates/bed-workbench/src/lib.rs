@@ -320,7 +320,7 @@ impl Plugin for WorkbenchPlugin {
             .init_non_send::<PanelUiStore>()
             .init_non_send::<tiling_ui::TilingFrontend>()
             .add_message::<api::PanelDrop>()
-            .add_message::<bed_api::features::FeatureStateChanged>()
+            .add_message::<bed_api::storage::FeatureStateChanged>()
             .add_systems(
                 PreUpdate,
                 process_requests.in_set(WorkbenchSystems::Requests),

@@ -925,3 +925,49 @@ fn scoped_view_unwind_restores_state_and_publishes_sibling_edits() {
     session.with_view(b, |view| view.commands().undo()).unwrap();
     assert_eq!(session.snapshot(doc).unwrap().bytes, b"base");
 }
+
+#[test]
+fn live_directory_configures_document_services_without_saved_workspace_metadata() {
+    let temp = Fixture::new();
+    let context = bed_files::FileContext::local(&temp.0).unwrap();
+    let services = bed_files::FileServices::local();
+    let mut session =
+        DocumentSession::with_file_services(SessionOptions::default(), &context, &services)
+            .unwrap();
+    let session_id = session.session_id();
+    assert_eq!(
+        session.options().project_root.as_ref(),
+        Some(&context.directory)
+    );
+    assert!(!session.options().persistent_history);
+    session
+        .configure_file_services(SessionOptions::default(), &context, &services)
+        .unwrap();
+    assert_eq!(session.session_id(), session_id);
+    let mismatched = bed_files::FileContext::remote("different", "/directory").unwrap();
+    assert!(
+        DocumentSession::with_file_services(SessionOptions::default(), &mismatched, &services)
+            .is_err()
+    );
+    let mut disconnected = context.clone();
+    disconnected.availability = bed_files::FileAvailability::Disconnected;
+    assert_eq!(
+        DocumentSession::with_file_services(SessionOptions::default(), &disconnected, &services)
+            .err()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::NotConnected
+    );
+    assert_eq!(
+        session
+            .configure_file_services(SessionOptions::default(), &disconnected, &services)
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::NotConnected
+    );
+    assert_eq!(session.session_id(), session_id);
+    assert_eq!(
+        session.options().project_root.as_ref(),
+        Some(&context.directory)
+    );
+}

@@ -1,4 +1,5 @@
-use bed_remote::{FileInfo, LocalBackend, RemoteClient, Request, Response};
+use bed_files::FileServices;
+use bed_remote::FileInfo;
 use dear_imgui_rs::{StyleVar, Ui};
 use std::{
     collections::{HashMap, HashSet},
@@ -11,7 +12,7 @@ struct Job {
     generation: u64,
     path: String,
     root: String,
-    remote: Option<RemoteClient>,
+    services: FileServices,
 }
 
 struct Completed {
@@ -36,18 +37,10 @@ impl Worker {
         let (results, receiver) = mpsc::channel();
         thread::spawn(move || {
             while let Ok(job) = jobs.recv() {
-                let request = Request::FileInfo {
-                    root: job.root,
-                    path: job.path.clone(),
-                };
-                let response = match job.remote {
-                    Some(client) => client.call(request),
-                    None => LocalBackend.call(request).map_err(|e| e.into_io()),
-                };
-                let result = response.map_err(|e| e.to_string()).and_then(|r| match r {
-                    Response::FileInfo { info } => Ok(info),
-                    _ => Err("Unexpected file information response".into()),
-                });
+                let result = job
+                    .services
+                    .file_info(&job.root, &job.path)
+                    .map_err(|error| error.to_string());
                 if results
                     .send(Completed {
                         generation: job.generation,
@@ -69,7 +62,7 @@ impl Worker {
 pub struct FileInfoHover {
     scope: String,
     root: String,
-    remote: Option<RemoteClient>,
+    services: FileServices,
     generation: u64,
     worker: Option<Worker>,
     cache: HashMap<String, Cached>,
@@ -77,15 +70,15 @@ pub struct FileInfoHover {
 }
 
 impl FileInfoHover {
-    pub fn configure(&mut self, scope: String, root: &str, remote: Option<RemoteClient>) {
-        if self.scope != scope || self.root != root || self.remote.is_some() != remote.is_some() {
+    pub fn configure(&mut self, scope: String, root: &str, services: FileServices) {
+        if self.scope != scope || self.root != root || !self.services.same_provider(&services) {
             self.scope = scope;
             self.root = root.into();
             self.generation = self.generation.wrapping_add(1);
             self.cache.clear();
             self.pending.clear();
         }
-        self.remote = remote;
+        self.services = services;
     }
 
     fn poll(&mut self) {
@@ -120,20 +113,20 @@ impl FileInfoHover {
         // Direct tree consumers get local metadata automatically. A remote tree
         // without a configured client never probes a coincident local path.
         if self.root != root {
-            self.configure(root.into(), root, None);
+            self.configure(root.into(), root, FileServices::local());
         }
         self.poll();
         let expired = self
             .cache
             .get(path)
             .is_none_or(|c| c.updated.elapsed() >= Duration::from_secs(5));
-        if expired && !self.pending.contains(path) && (!remote || self.remote.is_some()) {
+        if expired && !self.pending.contains(path) && (!remote || self.services.is_remote()) {
             let worker = self.worker.get_or_insert_with(Worker::new);
             let job = Job {
                 generation: self.generation,
                 path: path.into(),
                 root: root.into(),
-                remote: self.remote.clone(),
+                services: self.services.clone(),
             };
             if worker.sender.try_send(job).is_ok() {
                 self.pending.insert(path.into());
@@ -183,7 +176,7 @@ impl FileInfoHover {
                     }
                 }
                 Some(Err(error)) => ui.text(format!("File information unavailable: {error}")),
-                None => ui.text_disabled(if remote && self.remote.is_none() {
+                None => ui.text_disabled(if remote && !self.services.is_remote() {
                     "File information unavailable while disconnected"
                 } else {
                     "Loading file information…"
@@ -232,7 +225,7 @@ mod tests {
                 generation: 4,
                 path: path.clone(),
                 root: root.into(),
-                remote: None,
+                services: FileServices::local(),
             })
             .unwrap();
         let result = worker
@@ -249,7 +242,7 @@ mod tests {
                 generation: 4,
                 path: image.to_str().unwrap().into(),
                 root: root.into(),
-                remote: None,
+                services: FileServices::local(),
             })
             .unwrap();
         let image = worker
@@ -274,7 +267,7 @@ mod tests {
         };
         hover.pending.insert(path);
         sender.send(result).unwrap();
-        hover.configure("second-host".into(), root, None);
+        hover.configure("second-host".into(), root, FileServices::local());
         hover.poll();
         assert!(hover.cache.is_empty());
         assert!(hover.pending.is_empty());

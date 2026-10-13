@@ -3,13 +3,15 @@ use crate::{
     AudioPanel, OPEN_COMMAND, OPEN_FILE_COMMAND, PANEL_ID, PLUGIN_ID, VIEWER_ID, register_metadata,
     supported_path,
 };
+use bed_api::documents::DocumentFrame;
+use bed_api::features::FrontendSnapshot;
 use bed_api::gpu::GpuContext;
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction,
 };
 use bed_api::{
     documents::PanelBinding,
-    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects, HostFrame},
+    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects},
 };
 use bed_editing::identity::DocumentId;
 use bed_ui::gpu::{
@@ -44,7 +46,7 @@ pub struct AudioPlayerPlugin;
 
 impl Plugin for AudioPlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HostFrame>()
+        app.init_resource::<DocumentFrame>()
             .init_resource::<HostEffects>()
             .init_resource::<FeatureRegistry>()
             .init_non_send::<AudioStates>()
@@ -121,13 +123,13 @@ fn create_audio_panel(In(creation): In<PanelCreation>, world: &mut World) -> Pan
 
 fn poll_audios(world: &mut World) {
     let outputs = {
+        let frame = FrontendSnapshot::capture(world);
         let mut state = SystemState::<(
-            Res<HostFrame>,
             NonSendMut<AudioStates>,
             Query<&AudioDocument>,
             ResMut<HostEffects>,
         )>::new(world);
-        let (frame, mut states, live, mut intents) = state
+        let (mut states, live, mut intents) = state
             .get_mut(world)
             .expect("Audio plugin initialized its preparation resources");
         states.0.retain(|entity, _| live.get(*entity).is_ok());
@@ -175,7 +177,7 @@ fn poll_audios(world: &mut World) {
 
 fn playback_command(
     In(invocation): In<CommandInvocation>,
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     live: Query<&AudioDocument>,
     mut states: NonSendMut<AudioStates>,
     mut intents: ResMut<HostEffects>,
@@ -212,7 +214,7 @@ fn playback_command(
 
 fn audio_command(
     In(invocation): In<CommandInvocation>,
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     bindings: Query<&PanelBinding>,
     mut intents: ResMut<HostEffects>,
 ) -> CommandResult {
@@ -297,7 +299,7 @@ impl Panel for AudioFrontend {
             .get(self.entity)
             .map_or_else(
                 || "Audio Viewer".into(),
-                |panel| panel.panel_title(&world.resource::<HostFrame>().context()),
+                |panel| panel.panel_title(&FrontendSnapshot::capture(world).context()),
             )
     }
 
@@ -309,11 +311,10 @@ impl Panel for AudioFrontend {
         _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         let output = {
+            let frame = FrontendSnapshot::capture(world);
             let mut state =
-                SystemState::<(Res<HostFrame>, NonSendMut<AudioStates>, ResMut<HostEffects>)>::new(
-                    world,
-                );
-            let (frame, mut states, mut intents) = state
+                SystemState::<(NonSendMut<AudioStates>, ResMut<HostEffects>)>::new(world);
+            let (mut states, mut intents) = state
                 .get_mut(world)
                 .expect("Audio plugin initialized its presentation resources");
             let mut requests = Vec::new();
@@ -414,7 +415,7 @@ mod ecs_tests {
     fn commands_keep_the_origin_path_and_area() {
         let mut app = App::new();
         app.add_plugins(AudioPlayerPlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents =
+        app.world_mut().resource_mut::<DocumentFrame>().documents =
             vec![document(Arc::from(&b"unused"[..]), 1)];
         let (entity, _) = create(&mut app, Value::Null);
         let handler = app
@@ -448,7 +449,7 @@ mod ecs_tests {
     fn preparation_decodes_and_analyzes_hidden_audio_and_never_autoplays() {
         let mut app = App::new();
         app.add_plugins(AudioPlayerPlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents = vec![document(
+        app.world_mut().resource_mut::<DocumentFrame>().documents = vec![document(
             crate::tests::wav(&[1000; 8000], 1, 8000).into(),
             1,
         )];
@@ -502,7 +503,7 @@ mod ecs_tests {
             .command(play.command)
             .unwrap()
             .handler;
-        app.world_mut().resource_mut::<HostFrame>().documents[0].revision = (1, 2);
+        app.world_mut().resource_mut::<DocumentFrame>().documents[0].revision = (1, 2);
         app.world_mut()
             .run_system_with(
                 handler,
@@ -524,7 +525,7 @@ mod ecs_tests {
                 .is_none(),
             "stale Play must not start audio output"
         );
-        app.world_mut().resource_mut::<HostFrame>().documents[0].revision = (1, 1);
+        app.world_mut().resource_mut::<DocumentFrame>().documents[0].revision = (1, 1);
         app.world_mut()
             .non_send_mut::<AudioStates>()
             .get_mut(entity)
@@ -532,7 +533,7 @@ mod ecs_tests {
             .spectrogram_visible = true;
         app.update();
         assert!(app.world().get::<CanvasOutput>(entity).is_some());
-        app.world_mut().resource_mut::<HostFrame>().documents[0] =
+        app.world_mut().resource_mut::<DocumentFrame>().documents[0] =
             document(crate::tests::wav(&[0; 4000], 1, 8000).into(), 2);
         app.update();
         assert!(app.world().get::<CanvasOutput>(entity).is_none());
@@ -567,7 +568,7 @@ mod ecs_tests {
     fn rejected_audio_stops_requesting_frames_and_paused_spectrum_finishes_in_prepare() {
         let mut app = App::new();
         app.add_plugins(AudioPlayerPlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents = vec![document(
+        app.world_mut().resource_mut::<DocumentFrame>().documents = vec![document(
             crate::tests::wav(&[1000; 8000], 1, 8000).into(),
             1,
         )];
@@ -583,7 +584,7 @@ mod ecs_tests {
             assert!(panel.playback.is_none());
         }
         wait(&mut app, entity, |panel| !panel.spectrum_pending());
-        app.world_mut().resource_mut::<HostFrame>().documents[0] =
+        app.world_mut().resource_mut::<DocumentFrame>().documents[0] =
             document(Arc::from(&b"corrupt audio"[..]), 2);
         wait(&mut app, entity, |panel| panel.error.is_some());
         app.world_mut().resource_mut::<HostEffects>().take();

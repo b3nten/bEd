@@ -1,14 +1,12 @@
 #![cfg(all(feature = "editor", feature = "file-explorer", feature = "workspaces"))]
 
-use bed_api::{
-    application::WorkspaceAction,
-    features::{HostAction, HostEffects, HostFrame},
-};
+use bed_api::features::{HostAction, HostEffects};
 use bed_app::{
     AppOptions, AppRuntimePlugin, RemoteHelperDirectory, WorkspacePersistence, WorkspaceSpec,
     WorkspaceState, WorkspaceStore,
 };
 use bed_app_config::Settings;
+use bed_plugin_workspaces::WorkspaceAction;
 use bevy::prelude::*;
 use std::{
     path::PathBuf,
@@ -123,9 +121,11 @@ fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() 
         .unwrap(),
     )
     .unwrap();
-    app.world_mut().resource_mut::<HostEffects>().push(
+    bed_plugin_workspaces::request_workspace(
+        app.world_mut(),
+        WorkspaceAction::OpenLocalWorkspace(root),
         None,
-        HostAction::Workspace(WorkspaceAction::OpenLocalWorkspace(root)),
+        0,
     );
     app.update();
     let panel = bed_app::open_file(app.world_mut(), &source, None, false, None).unwrap();
@@ -351,9 +351,11 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
     std::fs::write(&source, "dragged file\n").unwrap();
     std::fs::write(&target, "target panel\n").unwrap();
     let mut app = fixture.app();
-    app.world_mut().resource_mut::<HostEffects>().push(
+    bed_plugin_workspaces::request_workspace(
+        app.world_mut(),
+        WorkspaceAction::OpenLocalWorkspace(root.clone()),
         None,
-        HostAction::Workspace(WorkspaceAction::OpenLocalWorkspace(root.clone())),
+        0,
     );
     app.update();
     app.world_mut().resource_mut::<HostEffects>().push(
@@ -656,7 +658,7 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
 }
 
 #[test]
-fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selected_tree() {
+fn directory_picker_stays_temporary_until_saved_then_restores_recent_workspaces() {
     let fixture = Fixture::new();
     let root = fixture.0.join("project");
     std::fs::create_dir(&root).unwrap();
@@ -669,16 +671,17 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
             .recent_workspaces
             .is_empty()
     );
-    app.world_mut().resource_mut::<HostEffects>().push(
+    bed_plugin_workspaces::request_workspace(
+        app.world_mut(),
+        WorkspaceAction::OpenLocalWorkspace(root.clone()),
         None,
-        HostAction::Workspace(WorkspaceAction::OpenLocalWorkspace(root.clone())),
+        0,
     );
     app.update();
+    // Context admission runs after feature preparation; its consumers observe it next frame.
+    app.update();
     let spec = WorkspaceSpec::local(root.to_string_lossy());
-    assert_eq!(
-        app.world().resource::<WorkspaceState>().spec.as_ref(),
-        Some(&spec)
-    );
+    assert_eq!(app.world().resource::<WorkspaceState>().spec.as_ref(), None);
     {
         let explorer = app
             .world()
@@ -723,6 +726,23 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+    assert!(
+        app.world()
+            .resource::<bed_plugin_workspaces::WorkspacesState>()
+            .recent_workspaces
+            .is_empty()
+    );
+    bed_plugin_workspaces::request_workspace(
+        app.world_mut(),
+        WorkspaceAction::SaveCurrent { name: None },
+        None,
+        0,
+    );
+    app.update();
+    assert_eq!(
+        app.world().resource::<WorkspaceState>().spec.as_ref(),
+        Some(&spec)
+    );
     assert_eq!(
         app.world()
             .resource::<bed_plugin_workspaces::WorkspacesState>()
@@ -740,7 +760,7 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
     app.update();
     assert!(
         app.world()
-            .resource::<HostFrame>()
+            .resource::<bed_api::documents::DocumentFrame>()
             .documents
             .iter()
             .any(|document| document.path == file.to_string_lossy())
@@ -757,21 +777,16 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
     // A fresh standalone launcher receives saved history before its first draw.
     let mut app = fixture.app();
     assert_eq!(
-        app.world().resource::<HostFrame>().recent_workspaces,
-        vec![spec.clone()]
-    );
-    assert_eq!(
         app.world()
             .resource::<bed_plugin_workspaces::WorkspacesState>()
             .recent_workspaces,
         vec![spec.clone()]
     );
-    app.world_mut().resource_mut::<HostEffects>().push(
+    bed_plugin_workspaces::request_workspace(
+        app.world_mut(),
+        WorkspaceAction::RenameWorkspace(spec.clone(), "Renamed".into()),
         None,
-        HostAction::Workspace(WorkspaceAction::RenameWorkspace(
-            spec.clone(),
-            "Renamed".into(),
-        )),
+        0,
     );
     app.update();
     app.update();
@@ -782,9 +797,11 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
             .name,
         "Renamed"
     );
-    app.world_mut().resource_mut::<HostEffects>().push(
+    bed_plugin_workspaces::request_workspace(
+        app.world_mut(),
+        WorkspaceAction::RemoveWorkspace(spec),
         None,
-        HostAction::Workspace(WorkspaceAction::RemoveWorkspace(spec)),
+        0,
     );
     app.update();
     app.update();

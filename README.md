@@ -67,6 +67,8 @@ The examples show the supported composition boundaries:
   using the same document/history commands.
 - [`bed-example-layouts`](examples/layouts/README.md): optional numbered layouts from
   [`bed-plugin-layouts`](crates/bed-plugin-layouts/README.md), with application-owned disk persistence.
+- [Gameplay editor and runtime](examples/gameplay/README.md): one Bevy game runs in
+  an editor viewport, or directly in a standalone runtime without bEd foundations.
 
 Plugins register their own namespaced artwork and filename contracts. Hosts can
 override directories per plugin; embedded defaults make the examples independent
@@ -87,11 +89,14 @@ supply panels and commands. Example applications use `bed-example-*`.
 | Editor | Code editor plugin and its text/hex widgets in `bed-editor-widgets` |
 | Documents | Content, revisions, views, saving and undo/redo |
 | Workbench | Panels, commands, focus and layout |
-| Host | Shared context and request handling for feature plugins |
-| Workspace / App | bEd workspace selection, persistence, restore and SSH policy |
+| Host | Application supplying services and resolving registered requests |
+| File context | Selected directory, provider identity and connection availability |
+| Workspace | Optional saved arrangement and plugin state associated with a location |
+| App | bEd startup, native windows, configuration and persistence policy |
 
 [`bed-api`](crates/bed-api/README.md) holds shared contracts in `workbench`,
-`documents`, `features`, `application`, `settings`, `status` and `gpu` modules.
+`documents`, `features`, `files`, `storage`, `settings`, `presentation`, `status`
+and `gpu` modules.
 Use `bed_core::api` when building on core. The API's default build supports a
 workbench without document services; its `documents` feature adds document
 contracts. `gpu` and `language-services` are separate opt-ins.
@@ -99,8 +104,13 @@ contracts. `gpu` and `language-services` are separate opt-ins.
 [`bed-app`](crates/bed-app/README.md), `bed-app-config` and `bed-app-shell` own
 bEd's application policy. The Workspaces and Settings panels are named
 `bed-plugin-workspaces` and `bed-plugin-settings` because they are Bevy plugins,
-but their UI and actions implement bEd's workspace and configuration policy.
-Other applications can use core and feature plugins without installing these panels.
+and the workspace plugin accepts an application-supplied repository. Documents,
+Search, Explorer and Git use the live file context without requiring a saved
+workspace. New directories stay temporary until explicitly saved; global
+preferences remain persistent.
+
+[`bed-storage`](crates/bed-storage/README.md) holds app-neutral plugin snapshots.
+The application chooses their persistence scope and storage implementation.
 
 The [`bed-remote-agent`](crates/bed-remote-agent/README.md) executable serves
 remote filesystem, Git, language-server and process requests without a window.

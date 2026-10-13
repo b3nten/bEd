@@ -476,3 +476,70 @@ fn remote_projects_round_trip_without_executable_configuration() {
         json!({"kind":"ssh","host":"host"})
     );
 }
+
+#[test]
+fn atomic_live_snapshot_preserves_unknown_plugins_and_unvisited_slots() {
+    let temp = TempDir::new();
+    let config = temp.path("config");
+    let mut store = WorkspaceStore::load(&config).unwrap();
+    let spec = remote("host", "/project");
+    store.record_workspace(spec.clone()).unwrap();
+    store
+        .save_session_layout(
+            Some(&spec),
+            json!({"active_layout_slot":4,"layouts":{"4":{"panels":[],"saved":"unvisited"}}}),
+        )
+        .unwrap();
+    store
+        .set_module_settings(&spec, "missing", json!({"opaque":[1,2]}))
+        .unwrap();
+    let spec = store
+        .commit_snapshot(
+            spec,
+            bed_plugin_workspaces::WorkspaceSnapshot {
+                layouts: json!({"active_layout_slot":1,"layouts":{"1":{"panels":[],"live":true}}}),
+                plugins: json!({"present":{"draft":"live"}}),
+            },
+        )
+        .unwrap();
+    let stored = WorkspaceStore::load(&config).unwrap();
+    assert_eq!(stored.recent_workspaces(), vec![spec.clone()]);
+    assert_eq!(stored.active_layout_slot(Some(&spec)), LayoutSlot::Layout1);
+    assert_eq!(
+        stored.session_layouts(Some(&spec)).unwrap()["4"]["saved"],
+        "unvisited"
+    );
+    assert_eq!(
+        stored.module_settings(&spec, "missing"),
+        Some(&json!({"opaque":[1,2]}))
+    );
+    assert_eq!(
+        stored.module_settings(&spec, "present"),
+        Some(&json!({"draft":"live"}))
+    );
+}
+
+#[test]
+fn rejected_snapshot_never_changes_definition_recents_or_disk_state() {
+    let temp = TempDir::new();
+    let config = temp.path("config");
+    let mut store = WorkspaceStore::load(&config).unwrap();
+    let existing = store.record_workspace(remote("host", "/old")).unwrap();
+    let bytes = std::fs::read(config.join("workspaces.json")).unwrap();
+    assert!(
+        store
+            .commit_snapshot(
+                remote("host", "/new"),
+                bed_plugin_workspaces::WorkspaceSnapshot {
+                    layouts: json!({"active_layout_slot":1,"layouts":{"1":{"bad":true}}}),
+                    plugins: json!({})
+                }
+            )
+            .is_err()
+    );
+    assert_eq!(store.recent_workspaces(), vec![existing]);
+    assert_eq!(
+        std::fs::read(config.join("workspaces.json")).unwrap(),
+        bytes
+    );
+}

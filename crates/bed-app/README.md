@@ -1,34 +1,32 @@
 # bed-app
 
-This crate implements bEd's application policy: selected workspaces, MRU and
-window handoff, SSH connections, startup restore, numbered-layout navigation,
-workspace persistence and the application command reducer. Reusable desktop hosts
-start with [`bed-core`](../bed-core/README.md).
+bEd application policy sits above [`bed-core`](../bed-core/README.md): native window
+handoff, startup decisions, directory/workspace transitions and numbered layouts.
+The binary keeps configuration, helper/debugger entrypoints and smoke commands.
 
-bEd installs core in `HostRequestMode::Application`, then installs
-`AppRuntimePlugin`. The application reducer owns its document requests and
-native presentation, including remote save acknowledgements and workspace change
-barriers. The binary retains configuration loading, helper/debugger dispatch,
-CLI choices and smoke commands.
+The application coordinates its ordered workbench requests with core's shared
+editing owner. Drafts, edits, history, asynchronous saves and service polling run
+through core. Context transitions hold an operation barrier while saving and
+revalidate document revisions before retirement.
 
-Feature plugins consume their domain inputs. `configure_feature_targets` maps
-bEd's selected workspace to `ExplorerTarget`/`ExplorerDefaults`, `GitTarget`,
-`DebugTarget` and HTTP persistence wording. Ordinary terminal panels use
-`TerminalWorkspace`; `TerminalAppIntegrationPlugin` opts into bEd's shell/file-link
-integration. Other applications can supply the same targets directly.
+A live `FileContext` supplies the directory/provider for Documents, Search,
+Explorer and Git. A saved workspace is optional. Unknown directories and remote
+roots stay temporary until Save Workspace; their layouts/plugin state cause no
+automatic disk writes. Saving attaches persistence without restoring an older
+arrangement or replacing documents, undo, panels, suspended layouts or terminals.
 
-Features contribute state through `bed_api::features::FeatureStateContribution`
-and emit `FeatureStateChanged`. These contracts carry only feature state. bEd
-chooses the workspace storage location and preserves unrecognized feature blobs.
-Restoring a workspace supplies domain targets before restoring feature state.
+The `workspaces` feature installs optional workspace lifecycle and commands.
+`bed-plugin-workspaces` owns its contracts and an injectable repository; bEd's
+adapter retains the version-2 `workspaces.json` format, file lock, atomic writes,
+unknown plugin blobs and unvisited layout slots. Remote UI state remains local.
+Without this feature bEd opens temporary directories and does not read saved
+workspace state. Explicit legacy standalone restoration remains available.
 
-Numbered layout membership and retention live in
-[`bed-plugin-layouts`](../bed-plugin-layouts/README.md). This crate supplies the bEd navigation
-context, close/save preflight and existing persistence schema. Switching layouts
-suspends outgoing panels, retaining views, local drafts and terminal processes.
+Plugin snapshots use [`bed-storage`](../bed-storage/README.md), exposed through
+`bed_api::storage`. Global preferences/layout templates remain independent of
+workspace persistence. Numbered layout retention lives in `bed-plugin-layouts`.
 
-`AppRuntimePlugin` supplies policy and request processing; the main binary
-composes it with native projections through `BedAppPlugin`. The code editor is
-the optional `bed-plugin-editor` feature, while `DocumentSession` belongs to
-the shared `bed-documents` foundation. Workspaces and Settings are bEd-specific
-panels; reusable hosts choose their own workspace and settings UI.
+Terminal launch context follows file context; plugin owners register shell
+commands. Workspace integration contributes `+workspace`/`+w`, preserving their
+calling-terminal promotion and window-handoff behavior. Save Workspace is a
+separate operation.

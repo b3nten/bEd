@@ -1,0 +1,14 @@
+[package]
+name = "bed-example-game-editor"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "keyboard", "mouse", "bevy_sprite", "bevy_sprite_render", "bevy_core_pipeline", "bevy_winit", "x11", "wayland", "bevy_log"] }
+bed-core = { workspace = true }
+bed-desktop = { workspace = true }
+bed-ui = { workspace = true, features = ["imgui", "gpu"] }
+serde_json = { workspace = true }
+bed-example-game = { path = "../game" }

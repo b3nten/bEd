@@ -465,9 +465,8 @@ impl RpcSession {
                 Message::Request(request) => {
                     if self.defer_workspace_edits
                         && request.method == "workspace/applyEdit"
-                        && request.id.is_some()
+                        && let Some(id) = request.id.clone()
                     {
-                        let id = request.id.unwrap();
                         if self.deferred_requests.len() >= MAX_PENDING_REQUESTS
                             || !self.deferred_requests.insert(id.clone())
                         {

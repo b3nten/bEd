@@ -3,9 +3,10 @@ use crate::{
     DIAGNOSTICS_PANEL_TYPE, EditorRuntime, LSP_DASHBOARD_PANEL_TYPE, NavigationOutcomeKind,
     NavigationStage, SHOW_DIAGNOSTICS_COMMAND, SHOW_LSP_COMMAND, lsp::lsp_ui::ContextLspAction,
 };
+use bed_api::documents::DocumentFrame;
 use bed_api::{
     documents::PanelBinding,
-    features::{HostAction, HostEffects, HostFrame},
+    features::{HostAction, HostEffects},
 };
 use bed_api::{
     status::{StatusContext, StatusDrawContext, StatusItem, StatusItems, StatusText},
@@ -33,7 +34,7 @@ pub(crate) fn install(app: &mut App) {
             id,
             label,
             priority,
-            icon: icon,
+            icon,
             prefer_icon: false,
             measure,
             draw,
@@ -135,7 +136,7 @@ fn displayed_document(
     {
         return binding.document.map(|document| (document, binding.view));
     }
-    let frame = world.get_resource::<HostFrame>()?;
+    let frame = world.get_resource::<DocumentFrame>()?;
     frame
         .active_document
         .map(|document| (document, frame.active_view))
@@ -164,7 +165,8 @@ fn navigation(
             format!("{}: {stage}…", label(activity.action)),
             false,
         )
-    } else if let Some(outcome) = runtime.navigation_outcome() {
+    } else {
+        let outcome = runtime.navigation_outcome()?;
         let (summary, error) = match &outcome.kind {
             NavigationOutcomeKind::Empty => (
                 match outcome.action {
@@ -184,8 +186,6 @@ fn navigation(
             NavigationOutcomeKind::Cancelled => return None,
         };
         (outcome.view, summary, error)
-    } else {
-        return None;
     };
     if session.document_for_view(view) != Some(document) {
         return None;
@@ -400,7 +400,7 @@ mod tests {
             })
             .id();
         {
-            let mut frame = app.world_mut().resource_mut::<HostFrame>();
+            let mut frame = app.world_mut().resource_mut::<DocumentFrame>();
             frame.active_document = Some(document);
             frame.active_view = Some(view);
         }
@@ -455,7 +455,9 @@ mod tests {
             .0;
         let tool = app.world_mut().spawn_empty().id();
         let context = context(publisher, NAVIGATION, Some(tool));
-        app.world_mut().resource_mut::<HostFrame>().active_document = Some(first);
+        app.world_mut()
+            .resource_mut::<DocumentFrame>()
+            .active_document = Some(first);
         assert_eq!(
             navigation(
                 app.world(),
@@ -466,7 +468,9 @@ mod tests {
             .summary,
             "Go to definition: Language servers are unavailable for this workspace"
         );
-        app.world_mut().resource_mut::<HostFrame>().active_document = Some(second);
+        app.world_mut()
+            .resource_mut::<DocumentFrame>()
+            .active_document = Some(second);
         assert!(
             navigation(
                 app.world(),
@@ -475,7 +479,9 @@ mod tests {
             )
             .is_none()
         );
-        app.world_mut().resource_mut::<HostFrame>().active_document = Some(first);
+        app.world_mut()
+            .resource_mut::<DocumentFrame>()
+            .active_document = Some(first);
         app.world_mut()
             .non_send_mut::<DocumentSession>()
             .close_view(view, bed_documents::ClosePolicy::Discard)

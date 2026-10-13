@@ -274,8 +274,8 @@ fn capture_target(gpu: &TestGpu, target: &RenderTarget) -> Vec<u8> {
 #[ignore = "requires a native GPU adapter"]
 fn native_registered_model_renderer_shares_game_world_and_retires_its_view() {
     use bed_api::{
+        documents::DocumentFrame,
         documents::{PanelBinding, PanelInput, PluginDocument},
-        features::HostFrame,
     };
     use bed_ui::gpu::{CanvasRenderInvocation, CanvasRenderer};
     use bevy::prelude::*;
@@ -298,7 +298,7 @@ fn native_registered_model_renderer_shares_game_world_and_retires_its_view() {
     app.cleanup();
     let game = app.world_mut().spawn(GameState(42)).id();
     let document = bed_editing::identity::DocumentId(4);
-    app.world_mut().resource_mut::<HostFrame>().documents = vec![PluginDocument {
+    app.world_mut().resource_mut::<DocumentFrame>().documents = vec![PluginDocument {
         id: document,
         path: "cube.glb".into(),
         kind: bed_api::documents::DocumentKind::Bytes,

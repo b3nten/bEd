@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 bevy = { workspace = true, features = ["std"] }
 bed-api = { workspace = true, features = ["gpu", "documents"] }
-bed-documents = { workspace = true, features = ["ide-services"] }
+bed-files = { workspace = true, features = ["file-services"] }
 bed-editing = { workspace = true }
 bed-plugin-image-viewer = { workspace = true }
 bed-remote = { workspace = true }

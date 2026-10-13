@@ -4,11 +4,11 @@ mod feature;
 #[cfg(unix)]
 mod shell;
 /// Dispatch terminal shell helpers before creating the GUI. Applications installing
-/// TerminalAppIntegrationPlugin call this from their executable; ordinary panels do not need it.
+/// TerminalPlugin call this from their executable when exposing registered shell commands.
 pub use bed_app_shell::run_shell_command as run_helper;
 pub use feature::{
-    TerminalAppIntegrationPlugin, TerminalAppearance, TerminalFrontend, TerminalPanelState,
-    TerminalPlugin, TerminalRetentions, TerminalWorkspace, close_panel, focus_panel,
+    TerminalAppIntegrationPlugin, TerminalAppearance, TerminalFrontend, TerminalLaunchContext,
+    TerminalPanelState, TerminalPlugin, TerminalRetentions, close_panel, focus_panel,
 };
 use std::path::{Path, PathBuf};
 

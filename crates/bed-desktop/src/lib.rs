@@ -22,6 +22,10 @@ mod memory_assets;
 mod platform;
 mod render;
 pub use memory_assets::{BED_MEMORY_SOURCE, BedMemoryAssets};
+#[cfg(feature = "preview")]
+mod previews;
+#[cfg(feature = "preview")]
+pub use previews::DesktopPreviewIntegrationPlugin;
 #[cfg(test)]
 static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub use platform::DesktopPlatform;
@@ -92,9 +96,7 @@ impl PluginGroup for DesktopPlugins {
     fn build(self) -> bevy::app::PluginGroupBuilder {
         bevy::app::PluginGroupBuilder::start::<Self>()
             .add(DesktopHostPlugin(self))
-            .add(DesktopAppearancePlugin)
-            .add(DesktopNativePlugin)
-            .add(DesktopCanvasPlugin)
+            .add(DesktopIntegrationPlugin)
     }
 }
 
@@ -126,6 +128,33 @@ impl Plugin for DesktopHostPlugin {
         if app.is_plugin_added::<diagnostic::FrameCountPlugin>() {
             plugins = plugins.disable::<diagnostic::FrameCountPlugin>();
         }
+        app.insert_resource(DesktopSettings(self.0.wgpu.clone()));
+        if !app
+            .world()
+            .contains_resource::<bevy::render::error_handler::RenderErrorHandler>()
+        {
+            app.insert_resource(bevy::render::error_handler::RenderErrorHandler(
+                default_render_error,
+            ));
+        }
+        app.add_plugins(plugins);
+    }
+}
+
+/// Attach desktop presentation to a host's existing Bevy window and renderer.
+/// Add this after DefaultPlugins with PipelinedRenderingPlugin disabled. The
+/// host retains its runner, window-close configuration and render error policy.
+/// Memory assets are required only by consumers; register BedMemoryAssets before
+/// AssetPlugin when using one of those consumers.
+pub struct DesktopIntegrationPlugin;
+
+impl Plugin for DesktopIntegrationPlugin {
+    fn build(&self, app: &mut App) {
+        validate_integration(app);
+        #[cfg(target_os = "macos")]
+        app.insert_resource(native::NativeClosePolicy(
+            app.get_added_plugins::<bevy::window::WindowPlugin>()[0].close_when_requested,
+        ));
         let mut context = Context::create();
         context
             .set_ini_filename(None::<PathBuf>)
@@ -138,14 +167,10 @@ impl Plugin for DesktopHostPlugin {
             platform,
             snapshot_context: None,
         })
-        .insert_resource(DesktopSettings(self.0.wgpu.clone()))
         .init_resource::<DesktopFrame>()
         .init_resource::<DesktopFrameInfo>()
         .init_resource::<DesktopScreenshotRequest>()
         .init_resource::<DesktopScreenshotResult>();
-        #[cfg(target_os = "macos")]
-        app.insert_resource(native::NativeClosePolicy(self.0.close_when_requested));
-        app.add_plugins(plugins);
         let captures = capture::CaptureBridge::default();
         captures.install(app.world_mut());
 
@@ -154,6 +179,11 @@ impl Plugin for DesktopHostPlugin {
         let status = DesktopRenderStatus::default();
         app.insert_resource(bridge.clone())
             .insert_resource(status.clone());
+        let policy = app
+            .world_mut()
+            .remove_resource::<bevy::render::error_handler::RenderErrorHandler>()
+            .unwrap_or_default();
+        app.insert_resource(HostRenderErrorHandler(policy.0));
         app.insert_resource(bevy::render::error_handler::RenderErrorHandler(
             render_error,
         ));
@@ -174,8 +204,40 @@ impl Plugin for DesktopHostPlugin {
             .add_systems(RenderStartup, publish_device)
             .add_systems(ExtractSchedule, extract_frame);
         render::install(app);
+        app.add_plugins((
+            DesktopAppearancePlugin,
+            DesktopNativePlugin,
+            DesktopCanvasPlugin,
+        ));
     }
 }
+
+fn validate_integration(app: &App) {
+    assert!(
+        !app.is_plugin_added::<PipelinedRenderingPlugin>(),
+        "DesktopIntegrationPlugin requires serial rendering; disable PipelinedRenderingPlugin before adding DefaultPlugins"
+    );
+    assert!(
+        app.is_plugin_added::<bevy::window::WindowPlugin>()
+            && app.is_plugin_added::<bevy::asset::AssetPlugin>()
+            && app.is_plugin_added::<RenderPlugin>()
+            && app.is_plugin_added::<bevy::camera::CameraPlugin>()
+            && app.is_plugin_added::<bevy::core_pipeline::CorePipelinePlugin>()
+            && app.is_plugin_added::<bevy::input::InputPlugin>()
+            && app.is_plugin_added::<bevy::winit::WinitPlugin>()
+            && app.get_sub_app(RenderApp).is_some(),
+        "DesktopIntegrationPlugin requires the host's window, assets, renderer, camera, core pipeline, input and Winit plugins"
+    );
+}
+
+type RenderErrorCallback = for<'a> fn(
+    &'a bevy::render::error_handler::RenderError,
+    &'a mut World,
+    &'a mut World,
+) -> bevy::render::error_handler::RenderErrorPolicy;
+
+#[derive(Resource)]
+struct HostRenderErrorHandler(RenderErrorCallback);
 
 /// UI-thread state. The frame token and Ui never become resources.
 pub struct DesktopContext {
@@ -721,10 +783,17 @@ fn render_error(
     render: &mut World,
 ) -> bevy::render::error_handler::RenderErrorPolicy {
     use bevy::render::error_handler::{ErrorType, RenderErrorPolicy};
+    // Ask the owner first, then clean up desktop attachments if that decision
+    // abandons the current device. Keep the owner's exact recovery settings.
+    let callback = main.resource::<HostRenderErrorHandler>().0;
+    let policy = callback(error, main, render);
     let status = main.resource::<DesktopRenderStatus>().clone();
     if error.ty != ErrorType::DeviceLost {
         status.0.lock().unwrap().error = Some(error.description.clone());
-        return RenderErrorPolicy::StopRendering;
+        return policy;
+    }
+    if matches!(policy, RenderErrorPolicy::Ignore) {
+        return policy;
     }
     // Device loss is an owned recovery transition. Publish it through
     // recovering/recoveries; hosts may treat error as a terminal failure.
@@ -767,9 +836,24 @@ fn render_error(
     render.remove_resource::<DesktopGpu>();
     render.remove_resource::<DesktopRenderer>();
     render::reset_capture_targets(render);
-    status.0.lock().unwrap().recoveries += 1;
-    status.0.lock().unwrap().recovering = true;
-    RenderErrorPolicy::Recover(main.resource::<DesktopSettings>().0.clone().into())
+    if matches!(policy, RenderErrorPolicy::Recover(_)) {
+        status.0.lock().unwrap().recoveries += 1;
+        status.0.lock().unwrap().recovering = true;
+    }
+    policy
+}
+
+fn default_render_error(
+    error: &bevy::render::error_handler::RenderError,
+    main: &mut World,
+    _: &mut World,
+) -> bevy::render::error_handler::RenderErrorPolicy {
+    use bevy::render::error_handler::{ErrorType, RenderErrorPolicy};
+    if error.ty == ErrorType::DeviceLost {
+        RenderErrorPolicy::Recover(main.resource::<DesktopSettings>().0.clone().into())
+    } else {
+        RenderErrorPolicy::StopRendering
+    }
 }
 
 fn shutdown_on_exit(world: &mut World) {
@@ -891,6 +975,83 @@ fn save_ppm(path: &std::path::Path, image: &bevy::image::Image) -> std::io::Resu
 mod tests {
     use super::*;
     use bevy::asset::RenderAssetUsages;
+
+    #[test]
+    fn attachment_rejects_pipelined_rendering_before_installing_desktop_state() {
+        let mut app = App::new();
+        app.add_plugins(PipelinedRenderingPlugin);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            app.add_plugins(DesktopIntegrationPlugin);
+        }));
+        assert!(result.is_err());
+        assert!(!app.world().contains_resource::<DesktopFrame>());
+        assert!(app.world().get_non_send::<DesktopContext>().is_none());
+    }
+
+    #[test]
+    fn attachment_requires_the_existing_bevy_stack_before_installing_state() {
+        let mut app = App::new();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            app.add_plugins(DesktopIntegrationPlugin);
+        }));
+        assert!(result.is_err());
+        assert!(!app.world().contains_resource::<DesktopFrame>());
+    }
+
+    #[test]
+    fn desktop_recovery_preserves_host_policy_and_exact_recovery_configuration() {
+        use bevy::render::{
+            error_handler::{ErrorType, RenderError, RenderErrorPolicy},
+            settings::RenderCreation,
+        };
+        #[derive(Resource, Default)]
+        struct Calls(u32);
+        fn recover(_: &RenderError, main: &mut World, _: &mut World) -> RenderErrorPolicy {
+            main.resource_mut::<Calls>().0 += 1;
+            RenderErrorPolicy::Recover(
+                WgpuSettings {
+                    device_label: Some("host-owned replacement".into()),
+                    ..default()
+                }
+                .into(),
+            )
+        }
+        fn ignore(_: &RenderError, main: &mut World, _: &mut World) -> RenderErrorPolicy {
+            main.resource_mut::<Calls>().0 += 1;
+            RenderErrorPolicy::Ignore
+        }
+        let mut main = World::new();
+        main.init_resource::<Calls>();
+        main.init_resource::<DesktopFrame>();
+        main.init_resource::<DesktopRenderStatus>();
+        main.init_resource::<DeviceBridge>();
+        main.insert_resource(HostRenderErrorHandler(recover));
+        let mut render = World::new();
+        render.init_resource::<render::RenderFrame>();
+        let error = RenderError {
+            ty: ErrorType::DeviceLost,
+            description: "fixture".into(),
+            source: None,
+        };
+        let RenderErrorPolicy::Recover(RenderCreation::Automatic(settings)) =
+            render_error(&error, &mut main, &mut render)
+        else {
+            panic!("host recovery must remain recovery");
+        };
+        assert_eq!(
+            settings.device_label.as_deref(),
+            Some("host-owned replacement")
+        );
+        assert_eq!(main.resource::<Calls>().0, 1);
+        assert_eq!(main.resource::<DesktopRenderStatus>().read().recoveries, 1);
+        main.insert_resource(HostRenderErrorHandler(ignore));
+        assert!(matches!(
+            render_error(&error, &mut main, &mut render),
+            RenderErrorPolicy::Ignore
+        ));
+        assert_eq!(main.resource::<Calls>().0, 2);
+        assert_eq!(main.resource::<DesktopRenderStatus>().read().recoveries, 1);
+    }
 
     #[test]
     fn screenshot_exports_rgba_and_bgra_as_display_rgb() {

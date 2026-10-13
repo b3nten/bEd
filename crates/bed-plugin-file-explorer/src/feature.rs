@@ -1,20 +1,22 @@
 //! Files widgets keep pointer bounds; the shared finder and tree run in Prepare.
 use super::*;
+use bed_api::documents::DocumentFrame;
+use bed_api::features::FrontendSnapshot;
+use bed_api::storage::{FeatureStateContribution, FeatureStateRestore};
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelPadding, PanelResult,
     WorkbenchAction, register,
 };
 use bed_api::{
     documents::{DocumentReply, PanelBinding},
-    features::{
-        FeatureStateContribution, FeatureStateRestore, FeatureSystems, HostEffects, HostFrame,
-    },
+    features::{FeatureSystems, HostEffects},
     workbench::{
         CommandPresentations, FileClipboardService, PanelExternalFiles,
         PanelExternalFilesInvocation,
     },
 };
 use bed_documents::DocumentSession;
+use bed_files::{FileContext, FileServices};
 use bed_ui::icons::Icons;
 use bevy::{ecs::system::SystemState, prelude::*};
 
@@ -38,7 +40,7 @@ impl ExplorerPanels {
 }
 
 #[derive(Resource, Default)]
-struct Transport(Option<RemoteClient>);
+struct Transport(FileServices);
 
 #[derive(Resource, Default)]
 struct ReplyCursor(bevy::ecs::message::MessageCursor<DocumentReply>);
@@ -53,7 +55,20 @@ struct Drag(bed_api::workbench::PanelExternalFilesSystem);
 #[derive(Resource, Clone, Default)]
 pub struct ExplorerTarget {
     pub root: String,
-    pub remote: Option<bed_remote::RemoteClient>,
+    pub services: FileServices,
+}
+
+impl ExplorerTarget {
+    fn resolve(&self, context: &FileContext, services: &FileServices) -> Self {
+        if self.root.is_empty() {
+            Self {
+                root: context.directory_string(),
+                services: services.for_context(context),
+            }
+        } else {
+            self.clone()
+        }
+    }
 }
 
 /// Inherited visibility choices. Saved feature state retains only explicit overrides.
@@ -100,8 +115,10 @@ impl Plugin for FileExplorerPlugin {
             .init_non_send::<operations::FileOperations>();
         app.world_mut().init_non_send::<Transport>();
         app.init_resource::<ExplorerPresentation>()
-            .init_resource::<HostFrame>()
+            .init_resource::<DocumentFrame>()
             .init_resource::<ExplorerTarget>()
+            .init_resource::<FileContext>()
+            .init_resource::<FileServices>()
             .init_resource::<ExplorerDefaults>()
             .init_resource::<HostEffects>()
             .init_resource::<bed_api::features::FeatureRegistry>()
@@ -110,7 +127,7 @@ impl Plugin for FileExplorerPlugin {
             .init_resource::<DropCursor>()
             .add_message::<bed_api::workbench::PanelDrop>()
             .add_message::<DocumentReply>()
-            .add_message::<bed_api::features::FeatureStateChanged>();
+            .add_message::<bed_api::storage::FeatureStateChanged>();
         app.world_mut()
             .resource_mut::<bed_api::features::FeatureRegistry>()
             .register_with(MODULE_ID, |registrar| {
@@ -214,51 +231,47 @@ fn prepare(world: &mut World) {
         .retain(|entity, _| alive.contains(entity));
     let protected = protected_paths(world);
     let mut requests = Vec::new();
+    let frame = FrontendSnapshot::capture(world);
     let mut state = SystemState::<(
         NonSendMut<ExplorerState>,
         NonSendMut<DocumentSession>,
         NonSendMut<operations::FileOperations>,
         NonSendMut<Transport>,
-        Res<HostFrame>,
         Res<bed_api::features::FeatureRegistry>,
         Res<bed_api::workbench::WorkbenchRegistry>,
         Res<CommandPresentations>,
         Res<ExplorerPresentation>,
-        Res<ExplorerTarget>,
+        (Res<ExplorerTarget>, Res<FileContext>, Res<FileServices>),
         Res<ExplorerDefaults>,
         Option<NonSendMut<Box<dyn FileClipboardService>>>,
         Res<Messages<DocumentReply>>,
         ResMut<ReplyCursor>,
-        MessageWriter<bed_api::features::FeatureStateChanged>,
+        MessageWriter<bed_api::storage::FeatureStateChanged>,
     )>::new(world);
     let (
         mut explorer,
         mut documents,
         mut operations,
         mut transport,
-        frame,
         registry,
         definitions,
         commands,
         presentation,
-        target,
+        (target, file_context, file_services),
         defaults,
         mut clipboard,
         replies,
         mut cursor,
         mut feature_changes,
     ) = state.get_mut(world).expect("Files resources are installed");
+    let target = target.resolve(&file_context, &file_services);
     operations.bind_target(&target, &mut documents);
-    let remote = target.remote.clone();
-    let changed = match (&transport.0, &remote) {
-        (Some(old), Some(new)) => !old.same_connection(new),
-        (None, None) => false,
-        _ => true,
-    };
+    let services = target.services.clone();
+    let changed = !transport.0.same_provider(&services);
     if changed || explorer.file_explorer.project_root != target.root {
         let preferences = explorer.file_explorer.file_tree.preferences.clone();
         configure_target(&mut explorer, &target, preferences);
-        transport.0 = remote;
+        transport.0 = services;
     }
     explorer.configure_presentation(
         presentation.tree,
@@ -279,8 +292,8 @@ fn prepare(world: &mut World) {
         requests.push(HostAction::Invalidate);
     }
     let mut context = frame.context();
-    context.remote = target.remote.is_some();
-    if !operations::provider_matches(target.remote.as_ref(), &documents) {
+    context.remote = target.services.is_remote();
+    if !operations::provider_matches(&target.services, &documents) {
         context.documents = &[];
         context.active_document = None;
     }
@@ -307,7 +320,7 @@ fn prepare(world: &mut World) {
     );
     for action in explorer.take_actions() {
         if matches!(&action, ExplorerAction::PreferencesChanged(_)) {
-            feature_changes.write(bed_api::features::FeatureStateChanged { owner: MODULE_ID });
+            feature_changes.write(bed_api::storage::FeatureStateChanged { owner: MODULE_ID });
         }
         if let Err(error) = operations.action(
             action,
@@ -416,17 +429,21 @@ impl Panel for Frontend {
         _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         let mut requests = Vec::new();
+        let frame = FrontendSnapshot::capture(world);
         let mut state = SystemState::<(
             NonSendMut<ExplorerPanels>,
             NonSendMut<ExplorerState>,
             NonSendMut<DocumentSession>,
-            Res<HostFrame>,
             Res<ExplorerTarget>,
+            Res<FileContext>,
+            Res<FileServices>,
             Option<NonSend<Icons>>,
         )>::new(world);
-        let (mut panels, mut controller, mut documents, frame, target, icons) = state
-            .get_mut(world)
-            .expect("Files frontend resources are installed");
+        let (mut panels, mut controller, mut documents, target, file_context, file_services, icons) =
+            state
+                .get_mut(world)
+                .expect("Files frontend resources are installed");
+        let target = target.resolve(&file_context, &file_services);
         controller.file_explorer.file_tree.shortcuts = _shortcuts.clone();
         controller.config.tree_style.rainbow_time = ui.time() as f32;
         if let Err(error) = panels
@@ -466,11 +483,14 @@ pub fn draw_popups(world: &mut World, ui: &Ui) {
         NonSendMut<operations::FileOperations>,
         NonSend<DocumentSession>,
         Res<ExplorerTarget>,
+        Res<FileContext>,
+        Res<FileServices>,
         Option<NonSend<Icons>>,
     )>::new(world);
-    let (mut explorer, mut operations, session, target, icons) = state
+    let (mut explorer, mut operations, session, target, file_context, file_services, icons) = state
         .get_mut(world)
         .expect("Files popup resources are installed");
+    let target = target.resolve(&file_context, &file_services);
     explorer.config.tree_style.rainbow_time = ui.time() as f32;
     explorer.draw_popups(
         ui,
@@ -490,17 +510,20 @@ fn open_dropped_files(world: &mut World) {
         ResMut<DropCursor>,
         NonSend<ExplorerState>,
         Res<ExplorerTarget>,
+        Res<FileContext>,
+        Res<FileServices>,
         NonSend<DocumentSession>,
         ResMut<HostEffects>,
     )>::new(world);
-    let (drops, mut cursor, explorer, target, documents, mut intents) =
+    let (drops, mut cursor, explorer, target, file_context, file_services, documents, mut intents) =
         state.get_mut(world).unwrap();
     let tree = &explorer.file_explorer.file_tree;
+    let target = target.resolve(&file_context, &file_services);
     for drop in cursor.0.read(&drops) {
         if drop.payload_type != "BED_FILES" {
             continue;
         }
-        if !operations::provider_matches(target.remote.as_ref(), &documents) {
+        if !operations::provider_matches(&target.services, &documents) {
             intents.push(
                 drop.panel,
                 HostAction::Notify {
@@ -539,9 +562,14 @@ fn restore_workspace(
     mut operations: NonSendMut<operations::FileOperations>,
     mut documents: NonSendMut<DocumentSession>,
     mut transport: NonSendMut<Transport>,
-    target: Res<ExplorerTarget>,
+    (target, file_context, file_services): (
+        Res<ExplorerTarget>,
+        Res<FileContext>,
+        Res<FileServices>,
+    ),
     defaults: Res<ExplorerDefaults>,
 ) -> Result<(), String> {
+    let target = target.resolve(&file_context, &file_services);
     let mut preferences = restore
         .state
         .as_ref()
@@ -551,7 +579,7 @@ fn restore_workspace(
     if !operations.bind_target(&target, &mut documents) {
         operations.cancel(&mut documents);
     }
-    transport.0 = target.remote.clone();
+    transport.0 = target.services.clone();
     configure_target(&mut handle, &target, preferences);
     Ok(())
 }
@@ -565,12 +593,12 @@ fn configure_target(
 ) {
     handle.file_content.reset();
     handle.actions.clear();
-    handle.set_remote_client(target.remote.clone());
+    handle.set_file_services(target.services.clone());
     let state = &mut handle.file_explorer;
     state.project_root = target.root.clone();
     state.file_finder.cancel_and_close();
     state.file_finder.set_project_dir("");
-    state.file_finder.set_remote_client(target.remote.clone());
+    state.file_finder.set_file_services(target.services.clone());
     state.file_finder.set_directory_label(None);
     state.file_tree = file_tree::FileTree {
         root_node: FileNode {
@@ -596,6 +624,50 @@ mod tests {
     use super::*;
     use bed_workbench::{WorkbenchPlugin, WorkbenchRequests, commit_close};
 
+    #[test]
+    fn a_temporary_directory_is_browsable_without_a_saved_workspace_or_host_module() {
+        use std::time::{Duration, Instant};
+        let directory = crate::test_support::TempDir::new();
+        let path = std::fs::canonicalize(directory.write("standalone.txt", b"content")).unwrap();
+        let context = FileContext::local(directory.root()).unwrap();
+        let root = context.directory_string();
+        let mut app = App::new();
+        app.insert_resource(context)
+            .add_plugins((WorkbenchPlugin, FileExplorerPlugin));
+        app.update();
+        assert_eq!(
+            app.world()
+                .non_send::<ExplorerState>()
+                .file_explorer
+                .project_root,
+            root
+        );
+        // Native watcher startup can take several seconds under concurrent tests.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            app.update();
+            let explorer = app.world().non_send::<ExplorerState>();
+            if explorer
+                .file_explorer
+                .file_tree
+                .root_node
+                .children
+                .iter()
+                .any(|node| node.full_path == path.to_string_lossy())
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "temporary directory discovery did not finish: tree={:?}, status={:?}",
+                explorer.file_explorer.file_tree.root_node,
+                explorer.file_explorer.file_finder.discovery_status,
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(app.world().resource::<FileServices>().connected());
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_remote_target_with_local_documents_never_inspects_or_opens_local_paths() {
@@ -607,7 +679,7 @@ mod tests {
         app.add_plugins(FileExplorerPlugin)
             .insert_resource(ExplorerTarget {
                 root: temp.root().to_string_lossy().into_owned(),
-                remote: Some(client),
+                services: FileServices::remote("explorer-fixture", client),
             });
         prepare(app.world_mut());
         assert!(!app.world().non_send::<DocumentSession>().is_remote());
@@ -759,7 +831,7 @@ mod tests {
         let session_id = app.world().non_send::<DocumentSession>().session_id().0;
         app.world_mut().resource_mut::<ExplorerTarget>().root =
             temp.root().to_string_lossy().into_owned();
-        app.world_mut().resource_mut::<HostFrame>().session_id = session_id;
+        app.world_mut().resource_mut::<DocumentFrame>().session_id = session_id;
         prepare(app.world_mut());
         app.world_mut().spawn(PanelBinding {
             input: bed_api::documents::PanelInput::LocalFile(database),
@@ -872,7 +944,7 @@ mod tests {
         app.update();
         let changes = app
             .world()
-            .resource::<Messages<bed_api::features::FeatureStateChanged>>();
+            .resource::<Messages<bed_api::storage::FeatureStateChanged>>();
         assert!(
             changes
                 .get_cursor()

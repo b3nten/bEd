@@ -21,7 +21,7 @@ fn main() {
     }
     let client = RemoteClient::launch_local(std::env::current_exe().unwrap()).unwrap();
     let mut finder = FileFinder::new();
-    finder.set_remote_client(Some(client.clone()));
+    finder.set_file_services(bed_files::FileServices::remote("fixture", client.clone()));
     finder.set_project_dir("/remote/project");
     finder.start_background_thread();
     wait_until(|| finder.poll());
@@ -30,7 +30,7 @@ fn main() {
     assert_eq!(finder.filtered_list[0].relative_path, "file.rs");
 
     let mut search = ContentSearch::new_lazy();
-    search.set_remote_client(Some(client.clone()));
+    search.set_file_services(bed_files::FileServices::remote("fixture", client.clone()));
     search.include_ignored = true;
     search.start("/remote/project", "needle", false);
     wait_until(|| {
@@ -50,6 +50,41 @@ fn main() {
 
     let temp = test_support::TempDir::new();
     let root = std::fs::canonicalize(temp.root()).unwrap();
+    let context = bed_files::FileContext::remote("fixture", root.clone()).unwrap();
+    let services = bed_files::FileServices::remote("fixture", client.clone());
+    let location = context.location("facade.bin");
+    let baseline = services
+        .write_atomic(&root, &location, b"\0initial\xff", None)
+        .unwrap();
+    assert_eq!(services.read(&root, &location).unwrap().0, b"\0initial\xff");
+    assert_eq!(
+        services.canonicalize(&root, &location, false).unwrap(),
+        location
+    );
+    std::fs::write(&location.path, b"external").unwrap();
+    assert!(
+        services
+            .write_atomic(&root, &location, b"ours", Some(&baseline))
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&location.path).unwrap(), b"external");
+    let outside = test_support::TempDir::new();
+    let outside_file = std::fs::canonicalize(outside.write("outside", b"outside")).unwrap();
+    assert!(
+        services
+            .read(&root, &context.location(outside_file))
+            .is_err()
+    );
+    assert!(
+        services
+            .read(
+                &root,
+                &bed_files::FileContext::local(&root)
+                    .unwrap()
+                    .location("facade.bin")
+            )
+            .is_err()
+    );
     git2::Repository::init(&root).unwrap();
     temp.write(".gitignore", b"ignored.rs\n");
     let path = temp.write("src/main.rs", b"value=1");
@@ -128,7 +163,10 @@ fn serve_fixture() {
     let mut workspace = String::new();
     let mut initial = true;
     while let Some(frame) = read_frame::<_, RequestFrame>(&mut input).unwrap() {
-        let response = if matches!(&frame.request, Request::Search {root, ..} if root != "/remote/project")
+        let response = if matches!(&frame.request,
+            Request::Search {root, ..} | Request::ReadFile {root, ..}
+            | Request::WriteFile {root, ..} | Request::Canonicalize {root, ..}
+            if root != "/remote/project")
         {
             bed_remote::LocalBackend.call(frame.request)
         } else {

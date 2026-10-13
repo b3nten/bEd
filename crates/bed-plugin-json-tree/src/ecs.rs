@@ -3,12 +3,14 @@ use crate::{
     JsonPanel, OPEN_COMMAND, OPEN_FILE_COMMAND, PANEL_ID, PLUGIN_ID, VIEWER_ID, register_metadata,
     supported_path,
 };
+use bed_api::documents::DocumentFrame;
+use bed_api::features::FrontendSnapshot;
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction,
 };
 use bed_api::{
     documents::{PanelBinding, panel_viewer_menu},
-    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects, HostFrame},
+    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects},
     workbench::{PanelActionInvocation, PanelActionResult, PanelActionSystem, PanelActions},
 };
 use bed_editing::identity::DocumentId;
@@ -42,7 +44,7 @@ struct JsonActionHandler(PanelActionSystem);
 
 impl Plugin for JsonTreePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HostFrame>()
+        app.init_resource::<DocumentFrame>()
             .init_resource::<HostEffects>()
             .init_resource::<FeatureRegistry>()
             .init_non_send::<JsonStates>()
@@ -106,11 +108,20 @@ fn create_json_panel(In(creation): In<PanelCreation>, world: &mut World) -> Pane
 }
 
 fn poll_json(
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     mut states: NonSendMut<JsonStates>,
     live: Query<&JsonDocument>,
     mut commands: Commands,
 ) {
+    let frame = FrontendSnapshot {
+        documents: frame.documents.clone(),
+        active_document: frame.active_document,
+        active_view: frame.active_view,
+        session_id: frame.session_id,
+        diagnostics: frame.diagnostics.clone(),
+        ..Default::default()
+    };
+
     // Removing a panel invalidates its bounded worker and releases its tree.
     states.0.retain(|entity, _| live.get(*entity).is_ok());
     let host = frame.context();
@@ -126,7 +137,7 @@ fn poll_json(
 
 fn json_command(
     In(invocation): In<CommandInvocation>,
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     bindings: Query<&PanelBinding>,
     mut intents: ResMut<HostEffects>,
 ) -> CommandResult {
@@ -187,7 +198,7 @@ impl Panel for JsonFrontend {
     fn title(&self, world: &World) -> String {
         world.non_send::<JsonStates>().get(self.entity).map_or_else(
             || "JSON Tree".into(),
-            |panel| panel.panel_title(&world.resource::<HostFrame>().context()),
+            |panel| panel.panel_title(&FrontendSnapshot::capture(world).context()),
         )
     }
 
@@ -199,11 +210,9 @@ impl Panel for JsonFrontend {
         _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         let menu = panel_viewer_menu(world, self.entity, VIEWER_ID);
-        let mut state =
-            SystemState::<(Res<HostFrame>, NonSendMut<JsonStates>, ResMut<HostEffects>)>::new(
-                world,
-            );
-        let (frame, mut states, mut intents) = state
+        let frame = FrontendSnapshot::capture(world);
+        let mut state = SystemState::<(NonSendMut<JsonStates>, ResMut<HostEffects>)>::new(world);
+        let (mut states, mut intents) = state
             .get_mut(world)
             .expect("JSON plugin initialized its presentation resources");
         let mut requests = Vec::new();
@@ -314,7 +323,7 @@ mod tests {
     fn world_prepares_unsaved_revisions_without_drawing_and_releases_closed_panels() {
         let mut app = App::new();
         app.add_plugins(JsonTreePlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents =
+        app.world_mut().resource_mut::<DocumentFrame>().documents =
             vec![document(4, "source.json", r#"{"nested":{"value":1}}"#, 1)];
         let (entity, frontend) = create(
             &mut app,
@@ -325,7 +334,7 @@ mod tests {
         assert_eq!(frontend.title(app.world()), "source.json");
         assert_eq!(frontend.save(app.world())["scroll"], json!([0.0, 20.0]));
 
-        app.world_mut().resource_mut::<HostFrame>().documents[0] =
+        app.world_mut().resource_mut::<DocumentFrame>().documents[0] =
             document(4, "renamed.JSONC", "[1,]", 2);
         wait_ready(&mut app, entity);
         assert_eq!(frontend.title(app.world()), "renamed.JSONC");
@@ -338,7 +347,7 @@ mod tests {
                 .is_none()
         );
 
-        app.world_mut().resource_mut::<HostFrame>().documents[0] =
+        app.world_mut().resource_mut::<DocumentFrame>().documents[0] =
             document(4, "renamed.JSONC", "{", 3);
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -389,11 +398,13 @@ mod tests {
                 );
             })
             .unwrap();
-        app.world_mut().resource_mut::<HostFrame>().documents = vec![
+        app.world_mut().resource_mut::<DocumentFrame>().documents = vec![
             document(4, "origin.json", "{", 1),
             document(5, "focused.json", "{}", 1),
         ];
-        app.world_mut().resource_mut::<HostFrame>().active_document = Some(DocumentId(5));
+        app.world_mut()
+            .resource_mut::<DocumentFrame>()
+            .active_document = Some(DocumentId(5));
         let (entity, mut frontend) = create(&mut app, Some(DocumentId(4)), Value::Null);
         let owner = app.world_mut().spawn(PanelPresentation::new(37)).id();
         app.world_mut()
@@ -475,12 +486,14 @@ mod tests {
     fn registered_commands_preserve_origin_and_area_when_focus_changes() {
         let mut app = App::new();
         app.add_plugins(JsonTreePlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents = vec![
+        app.world_mut().resource_mut::<DocumentFrame>().documents = vec![
             document(4, "origin.json", "{}", 1),
             document(5, "focused.json", "{}", 1),
         ];
         let (origin, _) = create(&mut app, Some(DocumentId(4)), Value::Null);
-        app.world_mut().resource_mut::<HostFrame>().active_document = Some(DocumentId(5));
+        app.world_mut()
+            .resource_mut::<DocumentFrame>()
+            .active_document = Some(DocumentId(5));
         let command = app
             .world()
             .resource::<bed_api::workbench::WorkbenchRegistry>()
@@ -512,12 +525,14 @@ mod tests {
     fn document_actions_target_the_origin_and_ignore_retired_entities() {
         let mut app = App::new();
         app.add_plugins(JsonTreePlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents = vec![
+        app.world_mut().resource_mut::<DocumentFrame>().documents = vec![
             document(4, "origin.json", "{}", 1),
             document(5, "focused.json", "{}", 1),
         ];
         let (entity, _) = create(&mut app, Some(DocumentId(4)), Value::Null);
-        app.world_mut().resource_mut::<HostFrame>().active_document = Some(DocumentId(5));
+        app.world_mut()
+            .resource_mut::<DocumentFrame>()
+            .active_document = Some(DocumentId(5));
         let action = app.world().get::<PanelActions>(entity).unwrap().0;
         assert!(
             app.world_mut()

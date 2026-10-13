@@ -1,18 +1,24 @@
 //! Plugin host requests, preparation, contributions and persistence facts.
 #[cfg(feature = "documents")]
+use crate::documents::*;
+#[cfg(feature = "documents")]
+use crate::workbench::{PanelAction, PanelTarget};
 use crate::{
-    application::{WorkspaceAction, WorkspaceSpec},
-    documents::*,
     settings::SettingsSection,
-    workbench::{PanelAction, PanelPlacement, PanelTarget, PanelType, valid_id},
+    workbench::{PanelPlacement, PanelType, valid_id},
 };
 #[cfg(feature = "documents")]
 use bed_ui::TextureHandle;
 #[cfg(feature = "documents")]
-use dear_imgui_rs::{TextureId, Ui};
+use dear_imgui_rs::TextureId;
+use dear_imgui_rs::Ui;
 use serde_json::Value;
 #[cfg(feature = "documents")]
-use std::{collections::HashMap, io, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf};
+
+/// Identifies a held operation without coupling shared editing to its owner's policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct OperationBarrierToken(pub u64);
 
 /// Shared emission order for hosts merging panel commands and document requests.
 pub fn next_request_sequence() -> u64 {
@@ -23,27 +29,6 @@ pub fn next_request_sequence() -> u64 {
         |value| value.checked_add(1),
     )
     .expect("request sequence overflow")
-}
-
-/// Opaque feature state supplied by the host's chosen persistence policy.
-pub struct FeatureStateRestore {
-    pub state: Option<Value>,
-}
-
-/// A feature committed a change to the state it contributes to persistence.
-/// The host decides whether and where that state should be stored.
-#[derive(bevy::prelude::Message, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FeatureStateChanged {
-    pub owner: &'static str,
-}
-
-/// A feature contributes state without requiring a project or workspace model.
-#[derive(bevy::prelude::Component, Clone, Copy)]
-pub struct FeatureStateContribution {
-    pub owner: &'static str,
-    pub save: bevy::ecs::system::SystemId<(), Value>,
-    pub restore:
-        bevy::ecs::system::SystemId<bevy::prelude::In<FeatureStateRestore>, Result<(), String>>,
 }
 
 #[cfg(feature = "documents")]
@@ -132,10 +117,10 @@ impl HostAction {
             | HostAction::Navigate { .. } => true,
             #[cfg(feature = "language-services")]
             HostAction::NavigateLocation { .. } => true,
-            HostAction::Workspace(_)
-            | HostAction::PromoteWorkspace { .. }
+            HostAction::OperationBarrier { .. }
+            | HostAction::OpenDirectory { .. }
+            | HostAction::ChooseDirectory
             | HostAction::Invalidate
-            | HostAction::PersistWorkspace
             | HostAction::ApplyEdits { .. }
             | HostAction::ApplyEditsWithResult { .. }
             | HostAction::ApplyModuleEditsWithResult { .. }
@@ -144,7 +129,6 @@ impl HostAction {
             | HostAction::SaveDocumentsWithResult { .. }
             | HostAction::Undo { .. }
             | HostAction::Redo { .. }
-            | HostAction::SetSetting { .. }
             | HostAction::Notify { .. } => false,
         }
     }
@@ -152,7 +136,7 @@ impl HostAction {
 
 #[cfg(feature = "documents")]
 pub struct HostContext<'a> {
-    /// Whether paths and documents belong to an SSH workspace.
+    /// Whether paths and documents belong to an SSH file provider.
     pub remote: bool,
     pub documents: &'a [PluginDocument],
     pub active_document: Option<DocumentId>,
@@ -168,17 +152,12 @@ pub struct HostContext<'a> {
 }
 
 #[cfg(feature = "documents")]
-/// Immutable host data published before feature systems and ImGui drawing.
-/// Workers and game plugins can inspect documents without borrowing the session.
-#[derive(Clone, Default, bevy::prelude::Resource)]
-pub struct HostFrame {
+/// A frontend-owned snapshot assembled at a callback boundary. It is not a
+/// resource and does not make document consumers depend on application state.
+#[derive(Clone, Default)]
+pub struct FrontendSnapshot {
     pub remote: bool,
-    pub project_root: String,
-    pub working_directory: String,
-    pub recent_workspaces: Vec<WorkspaceSpec>,
-    pub remote_connecting: bool,
-    pub remote_disconnected: bool,
-    pub active_view: Option<bed_documents::session::ViewId>,
+    pub active_view: Option<bed_documents::ViewId>,
     pub documents: Vec<PluginDocument>,
     pub active_document: Option<DocumentId>,
     pub settings: Value,
@@ -188,55 +167,38 @@ pub struct HostFrame {
     pub diagnostics: Value,
     pub default_viewers: Value,
 }
-
 #[cfg(feature = "documents")]
-impl HostFrame {
-    /// Refresh revision-bound snapshots from the canonical document session.
-    pub fn refresh_documents(
-        &mut self,
-        documents: &bed_documents::session::DocumentSession,
-    ) -> io::Result<()> {
-        let ids = documents.document_ids();
-        self.documents.retain(|doc| ids.contains(&doc.id));
-        for id in ids {
-            let revision = documents.document_revision(id)?;
-            let existing = self.documents.iter().position(|doc| doc.id == id);
-            if let Some(index) =
-                existing.filter(|&index| self.documents[index].revision == revision)
-            {
-                documents.with_document(id, |state| {
-                    let cached = &mut self.documents[index];
-                    cached.path.clone_from(&state.path);
-                    cached.language_id.clone_from(&state.language_id);
-                    cached.dirty = state.dirty;
-                })?;
-            } else {
-                let doc = documents.snapshot(id)?;
-                let text = if doc.kind == DocumentKind::Text {
-                    Some(documents.with_document(id, |state| state.snapshot())?)
-                } else {
-                    None
-                };
-                let document = PluginDocument {
-                    id,
-                    path: doc.path,
-                    kind: doc.kind,
-                    language_id: doc.language_id,
-                    revision,
-                    dirty: doc.dirty,
-                    bytes: Arc::from(doc.bytes),
-                    text,
-                };
-                if let Some(index) = existing {
-                    self.documents[index] = document;
-                } else {
-                    self.documents.push(document);
-                }
-            }
+impl FrontendSnapshot {
+    pub fn capture(world: &bevy::prelude::World) -> Self {
+        let documents = world
+            .get_resource::<crate::documents::DocumentFrame>()
+            .cloned()
+            .unwrap_or_default();
+        let settings = world
+            .get_resource::<crate::settings::SettingsSnapshot>()
+            .cloned()
+            .unwrap_or_default();
+        let presentation = world
+            .get_resource::<crate::presentation::PresentationFrame>()
+            .cloned()
+            .unwrap_or_default();
+        Self {
+            remote: world
+                .get_resource::<bed_files::FileContext>()
+                .is_some_and(|context| {
+                    matches!(context.provider, bed_files::FileProviderId::Ssh { .. })
+                }),
+            active_view: documents.active_view,
+            documents: documents.documents,
+            active_document: documents.active_document,
+            session_id: documents.session_id,
+            diagnostics: documents.diagnostics,
+            settings: settings.settings,
+            default_viewers: settings.default_viewers,
+            textures: presentation.textures,
+            animations: presentation.animations,
         }
-        Ok(())
     }
-
     pub fn context(&self) -> HostContext<'_> {
         HostContext {
             remote: self.remote,
@@ -339,12 +301,13 @@ impl HostContext<'_> {
 #[cfg(feature = "documents")]
 #[derive(Clone, Debug)]
 pub enum HostAction {
-    Workspace(WorkspaceAction),
-    /// Save and retire the loose window's other panels, attaching its workspace
-    /// while preserving the requesting terminal presentation and live process.
-    PromoteWorkspace {
-        root: PathBuf,
+    OperationBarrier {
+        token: OperationBarrierToken,
     },
+    OpenDirectory {
+        location: bed_files::FileLocation,
+    },
+    ChooseDirectory,
     /// Open shell-requested files using the standard largest-area placement.
     OpenTerminalFiles {
         paths: Vec<PathBuf>,
@@ -383,8 +346,6 @@ pub enum HostAction {
         id: u64,
     },
     Invalidate,
-    /// Snapshot current layout and feature workspace contributions to persistence.
-    PersistWorkspace,
 
     ShowPanel {
         panel_type: String,
@@ -491,17 +452,11 @@ pub enum HostAction {
     Redo {
         document: DocumentId,
     },
-    SetSetting {
-        plugin: String,
-        key: String,
-        value: Value,
-    },
     Notify {
         message: String,
     },
 }
 
-#[cfg(feature = "documents")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuSlot {
     File,
@@ -511,27 +466,23 @@ pub enum MenuSlot {
     Application,
 }
 
-#[cfg(feature = "documents")]
 #[derive(Clone, Debug)]
 pub struct CommandDescriptor {
     pub id: &'static str,
     pub plugin: &'static str,
 }
 
-#[cfg(feature = "documents")]
 #[derive(Clone, Debug)]
 pub struct MenuContribution {
     pub slot: MenuSlot,
     pub command: &'static str,
 }
 
-#[cfg(feature = "documents")]
 #[derive(Clone, Debug)]
 pub struct ToolbarContribution {
     pub command: &'static str,
 }
 
-#[cfg(feature = "documents")]
 #[derive(Clone, Default, bevy::prelude::Resource)]
 pub struct FeatureRegistry {
     commands: Vec<CommandDescriptor>,
@@ -539,11 +490,11 @@ pub struct FeatureRegistry {
     toolbar: Vec<ToolbarContribution>,
     settings: Vec<SettingsSection>,
     panels: Vec<PanelType>,
+    #[cfg(feature = "documents")]
     viewers: Vec<FileViewer>,
     plugins: std::collections::HashSet<&'static str>,
 }
 
-#[cfg(feature = "documents")]
 impl FeatureRegistry {
     pub fn has_owner(&self, owner: &str) -> bool {
         self.plugins.contains(owner)
@@ -569,17 +520,30 @@ impl FeatureRegistry {
         &self.panels
     }
 
+    #[cfg(feature = "documents")]
     pub fn viewers(&self) -> &[FileViewer] {
         &self.viewers
     }
 
     fn contribution_ids(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.commands
+        let ids = self
+            .commands
             .iter()
             .map(|entry| entry.id)
             .chain(self.panels.iter().map(|entry| entry.id))
-            .chain(self.viewers.iter().map(|entry| entry.id))
-            .chain(self.settings.iter().map(|entry| entry.id))
+            .chain(self.settings.iter().map(|entry| entry.id));
+        #[cfg(feature = "documents")]
+        let ids = ids.chain(self.viewers.iter().map(|entry| entry.id));
+        ids
+    }
+    fn viewer_aliases(&self) -> impl Iterator<Item = &'static str> + '_ {
+        #[cfg(feature = "documents")]
+        return self
+            .viewers
+            .iter()
+            .flat_map(|viewer| viewer.aliases.iter().copied());
+        #[cfg(not(feature = "documents"))]
+        std::iter::empty()
     }
 
     /// Publish one complete contribution batch after validating every entry.
@@ -601,16 +565,14 @@ impl FeatureRegistry {
             registry: &mut pending,
         });
         // Validate the entire contribution before changing the registry.
+        #[cfg(feature = "documents")]
         let mut ids = std::collections::HashSet::new();
         crate::workbench::validate_contribution_ids(
             owner,
             pending.contribution_ids(),
-            self.contribution_ids().chain(
-                self.viewers
-                    .iter()
-                    .flat_map(|viewer| viewer.aliases.iter().copied()),
-            ),
+            self.contribution_ids().chain(self.viewer_aliases()),
         )?;
+        #[cfg(feature = "documents")]
         ids.extend(pending.contribution_ids());
         for command in pending
             .menus
@@ -622,31 +584,34 @@ impl FeatureRegistry {
                 return Err(format!("Missing contributed command: {command}"));
             }
         }
-        for viewer in &pending.viewers {
-            if !pending.panels.iter().any(|x| x.id == viewer.panel_type) {
-                return Err(format!("Missing viewer panel: {}", viewer.panel_type));
-            }
-        }
-        let mut aliases = std::collections::HashSet::new();
-        let mut fallback_kinds = Vec::new();
-        for viewer in &pending.viewers {
-            if viewer.fallback {
-                let kind = viewer
-                    .document_kind()
-                    .ok_or("Local-file viewers cannot be fallbacks")?;
-                if fallback_kinds.contains(&kind) || self.default_viewer(kind).is_some() {
-                    return Err(format!("Fallback viewer already registered for {:?}", kind));
+        #[cfg(feature = "documents")]
+        {
+            for viewer in &pending.viewers {
+                if !pending.panels.iter().any(|x| x.id == viewer.panel_type) {
+                    return Err(format!("Missing viewer panel: {}", viewer.panel_type));
                 }
-                fallback_kinds.push(kind);
             }
-            for &alias in viewer.aliases {
-                if !valid_id(alias)
-                    || ids.contains(alias)
-                    || !aliases.insert(alias)
-                    || self.contribution_ids().any(|existing| existing == alias)
-                    || self.viewer(alias).is_some()
-                {
-                    return Err(format!("Invalid or duplicate viewer alias: {alias}"));
+            let mut aliases = std::collections::HashSet::new();
+            let mut fallback_kinds = Vec::new();
+            for viewer in &pending.viewers {
+                if viewer.fallback {
+                    let kind = viewer
+                        .document_kind()
+                        .ok_or("Local-file viewers cannot be fallbacks")?;
+                    if fallback_kinds.contains(&kind) || self.default_viewer(kind).is_some() {
+                        return Err(format!("Fallback viewer already registered for {:?}", kind));
+                    }
+                    fallback_kinds.push(kind);
+                }
+                for &alias in viewer.aliases {
+                    if !valid_id(alias)
+                        || ids.contains(alias)
+                        || !aliases.insert(alias)
+                        || self.contribution_ids().any(|existing| existing == alias)
+                        || self.viewer(alias).is_some()
+                    {
+                        return Err(format!("Invalid or duplicate viewer alias: {alias}"));
+                    }
                 }
             }
         }
@@ -680,6 +645,7 @@ impl FeatureRegistry {
         self.toolbar.extend(pending.toolbar);
         self.settings.extend(pending.settings);
         self.panels.extend(pending.panels);
+        #[cfg(feature = "documents")]
         self.viewers.extend(pending.viewers);
         self.plugins.insert(owner);
         Ok(())
@@ -693,12 +659,14 @@ impl FeatureRegistry {
         self.panels.iter().find(|entry| entry.id == id)
     }
 
+    #[cfg(feature = "documents")]
     pub fn viewer(&self, id: &str) -> Option<&FileViewer> {
         self.viewers
             .iter()
             .find(|entry| entry.id == id || entry.aliases.contains(&id))
     }
 
+    #[cfg(feature = "documents")]
     pub fn default_viewer(&self, kind: DocumentKind) -> Option<&FileViewer> {
         self.viewers
             .iter()
@@ -706,12 +674,14 @@ impl FeatureRegistry {
     }
 
     /// Registration order resolves conflicts; no generic wildcard masks text fallback.
+    #[cfg(feature = "documents")]
     pub fn viewer_for_path(&self, path: &str) -> Option<&FileViewer> {
         self.viewers.iter().find(|viewer| viewer.matches_path(path))
     }
 
     /// Text defaults to its editor. Binary uses the first matching compatible
     /// format viewer, then hex. Unknown content has no default yet.
+    #[cfg(feature = "documents")]
     pub fn default_viewer_for_file(
         &self,
         path: &str,
@@ -729,6 +699,7 @@ impl FeatureRegistry {
     }
 
     /// Preferences select presentations, while classification owns document storage.
+    #[cfg(feature = "documents")]
     pub fn preferred_viewer_for_file(
         &self,
         path: &str,
@@ -760,6 +731,7 @@ impl FeatureRegistry {
     /// List the compatible default, other matching formats in registration
     /// order, then text and byte fallbacks. Text viewers require known text;
     /// byte fallbacks remain available while classification is pending.
+    #[cfg(feature = "documents")]
     pub fn compatible_viewers(
         &self,
         path: &str,
@@ -789,13 +761,11 @@ impl FeatureRegistry {
     }
 }
 
-#[cfg(feature = "documents")]
 pub struct FeatureRegistrar<'a> {
     owner: &'static str,
     registry: &'a mut FeatureRegistry,
 }
 
-#[cfg(feature = "documents")]
 impl FeatureRegistrar<'_> {
     /// Feature domains refer to commands whose handler and presentation are
     /// contributed once through the neutral workbench registry.
@@ -884,6 +854,7 @@ impl FeatureRegistrar<'_> {
         panel.open_placement = placement;
     }
 
+    #[cfg(feature = "documents")]
     pub fn fallback_viewer(
         &mut self,
         id: &'static str,
@@ -898,6 +869,7 @@ impl FeatureRegistrar<'_> {
         viewer.aliases = aliases;
     }
 
+    #[cfg(feature = "documents")]
     pub fn viewer(
         &mut self,
         id: &'static str,
@@ -924,6 +896,7 @@ impl FeatureRegistrar<'_> {
         });
     }
 
+    #[cfg(feature = "documents")]
     pub fn local_file_viewer(
         &mut self,
         id: &'static str,
@@ -943,6 +916,7 @@ impl FeatureRegistrar<'_> {
         });
     }
 
+    #[cfg(feature = "documents")]
     pub fn viewer_document_kinds(&mut self, id: &str, kinds: &'static [DocumentKind]) {
         let viewer = self
             .registry

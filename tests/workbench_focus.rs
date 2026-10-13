@@ -445,6 +445,7 @@ fn presentation_drawing_keeps_session_settings_and_registry_installed() {
     );
 }
 
+#[cfg(feature = "workspaces")]
 #[test]
 fn workspace_restore_focus_survives_first_presentation_frames() {
     let _lock = CONTEXT_LOCK.lock().unwrap();
@@ -477,7 +478,7 @@ fn workspace_restore_focus_survives_first_presentation_frames() {
         .add_plugins(AppRuntimePlugin {
             options: AppOptions {
                 working_directory: Some(fixture.root.clone()),
-                workspace: Some(bed_api::application::WorkspaceSpec::local(
+                workspace: Some(bed_plugin_workspaces::WorkspaceSpec::local(
                     fixture.root.to_str().unwrap(),
                 )),
                 ..Default::default()

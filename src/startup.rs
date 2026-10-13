@@ -1,6 +1,6 @@
 //! Standalone windows use the Startup layout.
 //! Explicit launch paths take precedence and only exact saved roots attach.
-use bed_api::application::{WorkspaceSpec, WorkspaceTarget};
+use bed_app::{WorkspaceSpec, WorkspaceTarget};
 use bed_app_config::{LayoutSlot, Settings};
 use std::{
     io,
@@ -77,9 +77,17 @@ pub(crate) struct Startup {
 impl Startup {
     pub fn into_options(self, settings: &Settings) -> io::Result<bed_app::AppOptions> {
         use bed_app::{AppOptions, OpenFileOptions};
-        let store =
-            crate::app_runtime::workspace::store::WorkspaceStore::load(&settings.config_dir)?;
-        let workspace = if let Some(spec) = self.requested_workspace {
+        let store = if cfg!(feature = "workspaces") {
+            crate::app_runtime::workspace::store::WorkspaceStore::load(&settings.config_dir)?
+        } else {
+            crate::app_runtime::workspace::store::WorkspaceStore::empty(&settings.config_dir)
+        };
+        let workspace = if !cfg!(feature = "workspaces") {
+            if self.requested_workspace.is_some() {
+                return Err(io::Error::other("Workspace support is disabled"));
+            }
+            None
+        } else if let Some(spec) = self.requested_workspace {
             Some(spec)
         } else if let Some(root) = self.workspace {
             store.recent_workspaces().into_iter().find(|spec| {
@@ -157,6 +165,7 @@ mod tests {
         }
     }
     #[test]
+    #[cfg(feature = "workspaces")]
     fn only_exact_saved_folder_roots_attach() {
         let fixture = Fixture::new();
         let saved = fixture.project("saved");
@@ -234,10 +243,16 @@ mod tests {
         assert_eq!(options.files.len(), 1);
         let saved = fixture.project("explicit");
         let options = fixture.options(StartupOptions::default(), vec![PathBuf::from(&saved.root)]);
-        assert_eq!(options.workspace, Some(saved));
-        assert!(options.initial_layout.is_none());
+        if cfg!(feature = "workspaces") {
+            assert_eq!(options.workspace, Some(saved));
+            assert!(options.initial_layout.is_none());
+        } else {
+            assert!(options.workspace.is_none());
+            assert_eq!(options.initial_layout, Some(LayoutSlot::Startup));
+        }
     }
     #[test]
+    #[cfg(feature = "workspaces")]
     fn explicit_remote_workspace_wins_over_preferences_without_local_canonicalization() {
         let fixture = Fixture::new();
         let spec = WorkspaceSpec {
@@ -257,6 +272,20 @@ mod tests {
         assert_eq!(options.workspace, Some(spec));
         assert!(options.initial_layout.is_none());
     }
+    #[test]
+    #[cfg(not(feature = "workspaces"))]
+    fn disabled_workspace_integration_ignores_unusable_saved_workspace_state() {
+        let fixture = Fixture::new();
+        std::fs::write(
+            fixture.settings.config_dir.join("workspaces.json"),
+            b"not valid JSON",
+        )
+        .unwrap();
+        let options = fixture.options(StartupOptions::default(), vec![fixture.root.clone()]);
+        assert!(options.workspace.is_none());
+        assert_eq!(options.initial_layout, Some(LayoutSlot::Startup));
+    }
+
     #[test]
     fn launch_directory_validates_and_defaults_to_home() {
         let home = std::env::temp_dir();

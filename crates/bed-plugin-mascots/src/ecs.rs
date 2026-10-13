@@ -5,7 +5,7 @@ use bed_api::workbench::{
 };
 use bed_api::{
     documents::PanelBinding,
-    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects, HostFrame},
+    features::{FeatureRegistry, FeatureSystems, FrontendSnapshot, HostAction, HostEffects},
     gpu::GpuContext,
 };
 use bed_ui::gpu::{CanvasOutput, CanvasRenderInvocation, CanvasRenderResult, CanvasRenderer, wgpu};
@@ -35,7 +35,12 @@ impl MascotStates {
 struct SceneSystemsInstalled;
 
 fn initialize_scenes(app: &mut App) {
-    app.init_resource::<HostFrame>()
+    if app.is_plugin_added::<bed_desktop::DesktopIntegrationPlugin>()
+        && !app.is_plugin_added::<bed_desktop::DesktopPreviewIntegrationPlugin>()
+    {
+        app.add_plugins(bed_desktop::DesktopPreviewIntegrationPlugin);
+    }
+    app.init_resource::<bed_api::presentation::PresentationFrame>()
         .init_resource::<HostEffects>()
         .init_resource::<FeatureRegistry>()
         .init_non_send::<MascotStates>();
@@ -75,6 +80,12 @@ impl Plugin for DuckMascotPlugin {
             .expect("Duck declarations must register exactly once");
         bed_api::workbench::register(app.world_mut(), "bed.duck", |registrar| {
             registrar.panel(crate::mascot::PANEL_ID, "Ducky", create_duck);
+            registrar.command(
+                "bed.duck.shell",
+                "Show Ducky from shell",
+                duck_shell_command,
+            );
+            registrar.shell_alias("+ducky", "bed.duck.shell");
         })
         .expect("Duck systems must register exactly once");
     }
@@ -117,6 +128,27 @@ fn create_scene(creation: PanelCreation, world: &mut World, kind: MascotKind) ->
     Ok(Box::new(SceneFrontend {
         entity: creation.entity,
     }))
+}
+
+fn duck_shell_command(
+    In(invocation): In<CommandInvocation>,
+    mut intents: ResMut<HostEffects>,
+) -> CommandResult {
+    let shell = bed_api::workbench::ShellInvocation::from_arguments(&invocation.arguments)?;
+    if !shell.arguments.is_empty() {
+        return Err("usage: +ducky".into());
+    }
+    intents.push(
+        invocation.source,
+        HostAction::ShowPanelIn {
+            panel_type: crate::mascot::PANEL_ID.into(),
+            document: None,
+            state: Value::Null,
+            action: None,
+            target: bed_api::workbench::PanelTarget::LargestArea,
+        },
+    );
+    Ok(Vec::new())
 }
 
 fn bed_command(
@@ -226,7 +258,7 @@ impl Panel for SceneFrontend {
             .0
             .get(&self.entity)
             .expect("A scene presentation owns its runtime state")
-            .panel_title(&world.resource::<HostFrame>().context())
+            .panel_title(&FrontendSnapshot::capture(world).context())
     }
 
     fn draw(
@@ -237,12 +269,10 @@ impl Panel for SceneFrontend {
         _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         let output = {
-            let mut state = SystemState::<(
-                Res<HostFrame>,
-                NonSendMut<MascotStates>,
-                ResMut<HostEffects>,
-            )>::new(world);
-            let (frame, mut states, mut intents) = state
+            let frame = FrontendSnapshot::capture(world);
+            let mut state =
+                SystemState::<(NonSendMut<MascotStates>, ResMut<HostEffects>)>::new(world);
+            let (mut states, mut intents) = state
                 .get_mut(world)
                 .expect("Scene plugins initialized their presentation resources");
             let panel = states

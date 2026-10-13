@@ -12,6 +12,8 @@ use bed_debugger::{CargoLaunch, SessionState};
 use bed_documents::session::{DocumentId, DocumentSession};
 
 use controller::{Debugger, DebuggerAction};
+#[cfg(test)]
+use dear_imgui_rs::Key;
 use dear_imgui_rs::Ui;
 use serde_json::Value;
 use std::{io, path::Path};
@@ -94,6 +96,3 @@ mod test_support {
         }
     }
 }
-
-#[cfg(test)]
-use dear_imgui_rs::Key;

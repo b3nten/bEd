@@ -431,6 +431,7 @@ fn deleting_a_file_with_a_rejected_csv_draft_preserves_the_deleted_buffer_and_re
 }
 
 #[test]
+#[cfg(feature = "workspaces")]
 fn a_pending_workspace_attachment_validates_csv_drafts_before_changing_the_workspace() {
     let directory = TempDir::new();
     fs::create_dir_all(directory.path("other")).unwrap();
@@ -468,7 +469,8 @@ fn a_pending_workspace_attachment_validates_csv_drafts_before_changing_the_works
 }
 
 #[test]
-fn pending_workspace_attachment_commits_csv_input_and_retains_the_actual_live_presentation() {
+#[cfg(feature = "workspaces")]
+fn temporary_directory_adoption_commits_csv_input_and_retains_the_live_presentation() {
     let directory = TempDir::new();
     fs::create_dir_all(directory.path("other")).unwrap();
     let mut fixture = CsvFixture::new(&directory);
@@ -496,24 +498,26 @@ fn pending_workspace_attachment_commits_csv_input_and_retains_the_actual_live_pr
         b"name,value\nalpha,attached edit\n"
     );
     assert_eq!(fs::read(&fixture.path).unwrap(), b"name,value\nalpha,one\n");
-    assert_eq!(
+    assert!(
         fixture
             .app
             .world()
             .resource::<WorkspaceState>()
             .spec
-            .as_ref()
-            .unwrap()
-            .root,
-        directory
-            .path("other")
-            .canonicalize()
-            .unwrap()
-            .to_string_lossy()
+            .is_none()
+    );
+    assert_eq!(
+        fixture
+            .app
+            .world()
+            .resource::<bed_files::FileContext>()
+            .directory,
+        directory.path("other").canonicalize().unwrap()
     );
 }
 
 #[test]
+#[cfg(feature = "workspaces")]
 fn terminal_promotion_rejects_a_stale_retained_csv_draft_before_closing_any_panel() {
     let directory = TempDir::new();
     fs::create_dir(directory.path("other")).unwrap();
@@ -529,9 +533,7 @@ fn terminal_promotion_rejects_a_stale_retained_csv_draft_before_closing_any_pane
         .session_id();
     let request = capture_app_request_from(
         fixture.app.world(),
-        AppAction::HostAction(HostAction::PromoteWorkspace {
-            root: directory.path("other"),
-        }),
+        AppAction::Workspace(WorkspaceAction::Promote(directory.path("other"))),
         PanelTarget::LastFocused,
         Some(caller),
     );
@@ -565,4 +567,50 @@ fn terminal_promotion_rejects_a_stale_retained_csv_draft_before_closing_any_pane
             .into_iter()
             .all(|panel| fixture.app.world().entities().contains(panel))
     );
+}
+
+#[test]
+#[cfg(feature = "workspaces")]
+fn registered_workspace_command_acknowledges_promotion_failure() {
+    let directory = TempDir::new();
+    fs::create_dir(directory.path("other")).unwrap();
+    let mut fixture = CsvFixture::new(&directory);
+    let caller = super::terminal_tests::open_terminal(fixture.app.world_mut());
+    fixture.draft("retain this command draft");
+    fixture.invalidate_revision();
+    let session = fixture
+        .app
+        .world()
+        .non_send::<DocumentSession>()
+        .session_id();
+    let mut request = capture_app_request_from(
+        fixture.app.world(),
+        AppAction::PluginCommand(bed_plugin_workspaces::PROMOTE_COMMAND.into()),
+        PanelTarget::LastFocused,
+        Some(caller),
+    );
+    request.arguments = json!({"directory":directory.path("other")});
+    let id = submit_app_request(fixture.app.world_mut(), request);
+    process_app_requests(fixture.app.world_mut()).unwrap();
+    let result = poll_app_request_result(fixture.app.world_mut(), id)
+        .expect("the command resolves its actual promotion");
+    assert!(result.is_err());
+    assert_eq!(
+        fixture
+            .app
+            .world()
+            .non_send::<DocumentSession>()
+            .session_id(),
+        session
+    );
+    assert!(
+        fixture
+            .app
+            .world()
+            .resource::<WorkspaceState>()
+            .spec
+            .is_none()
+    );
+    assert!(fixture.app.world().entities().contains(caller));
+    assert!(!bed_core::operation_barrier_active(fixture.app.world()));
 }

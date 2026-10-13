@@ -7,10 +7,12 @@ license.workspace = true
 
 [features]
 default = []
-workspace-services = ["dep:bed-remote", "dep:git2"]
+file-services = ["dep:bed-remote"]
+workspace-services = ["file-services", "dep:git2"]
 
 [dependencies]
 bed-editing = { workspace = true }
+bevy = { workspace = true, features = ["std"] }
 bed-remote = { workspace = true, optional = true }
 git2 = { workspace = true, optional = true }
 

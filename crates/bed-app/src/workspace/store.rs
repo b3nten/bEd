@@ -9,8 +9,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use bed_api::application::default_name;
-pub use bed_api::application::{WorkspaceSpec, WorkspaceTarget};
+use bed_plugin_workspaces::default_name;
+pub use bed_plugin_workspaces::{WorkspaceSpec, WorkspaceTarget};
 
 pub struct WorkspaceStore {
     path: PathBuf,
@@ -18,6 +18,13 @@ pub struct WorkspaceStore {
 }
 
 impl WorkspaceStore {
+    /// Disabled workspace integration never reads or writes saved session state.
+    pub fn empty(config_dir: &Path) -> Self {
+        Self {
+            path: config_dir.join("workspaces.json"),
+            state: json!({"version":2,"recent":[],"workspaces":{}}),
+        }
+    }
     pub fn load(config_dir: &Path) -> io::Result<Self> {
         let path = config_dir.join("workspaces.json");
         let mut state: Value = match fs::read(&path) {
@@ -430,6 +437,120 @@ impl WorkspaceStore {
         self.set_layout(&WorkspaceSpec::local(root), workspace)
     }
 
+    /// Save a live session atomically without restoring or replacing its state.
+    pub fn commit_snapshot(
+        &mut self,
+        mut spec: WorkspaceSpec,
+        snapshot: bed_plugin_workspaces::WorkspaceSnapshot,
+    ) -> io::Result<WorkspaceSpec> {
+        bed_storage::validate_snapshot(&snapshot.plugins)?;
+        match &spec.target {
+            WorkspaceTarget::Local => {
+                let root = fs::canonicalize(&spec.root)?;
+                if !root.is_dir() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Workspace must be a directory",
+                    ));
+                }
+                spec.root = root
+                    .to_str()
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidInput, "Workspace path is not UTF-8")
+                    })?
+                    .to_owned();
+            }
+            WorkspaceTarget::Ssh { host }
+                if host.trim().is_empty() || !spec.root.starts_with('/') =>
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SSH workspace requires a host and absolute project path",
+                ));
+            }
+            _ => {}
+        }
+        spec.name = spec.name.trim().to_owned();
+        if spec.name.is_empty() {
+            spec.name = default_name(&spec.root);
+        }
+        let _lock = self.reload_for_write()?;
+        let previous = self.state.clone();
+        let id = spec.identity();
+        self.ensure_record(&spec);
+        let entry = &mut self.state["workspaces"][&id];
+        entry["spec"] = spec.to_value();
+        if let Some(incoming) = snapshot.layouts.get("layouts") {
+            let Some(active) = snapshot.layouts.get("active_layout_slot") else {
+                self.state = previous;
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Missing active layout slot",
+                ));
+            };
+            if LayoutSlot::from_value(active).is_none()
+                || !incoming.as_object().is_some_and(|slots| {
+                    slots.iter().all(|(slot, value)| {
+                        LayoutSlot::from_key(slot).is_some() && value["panels"].is_array()
+                    })
+                })
+            {
+                self.state = previous;
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Invalid layout slots",
+                ));
+            }
+            let mut slots = entry["layouts"].as_object().cloned().unwrap_or_default();
+            slots.extend(incoming.as_object().unwrap().clone());
+            entry["layouts"] = Value::Object(slots);
+            entry["active_layout_slot"] = active.clone();
+            entry.as_object_mut().unwrap().remove("layout");
+        } else if !snapshot.layouts.is_null() {
+            if !snapshot.layouts["panels"].is_array() {
+                self.state = previous;
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Invalid layout",
+                ));
+            }
+            entry["layout"] = snapshot.layouts;
+        }
+        let mut plugins = entry["modules"].as_object().cloned().unwrap_or_default();
+        plugins.extend(snapshot.plugins.as_object().unwrap().clone());
+        entry["modules"] = Value::Object(plugins);
+        let mut recent = self.state["recent"].as_array().cloned().unwrap_or_default();
+        recent.retain(|entry| entry.as_str() != Some(&id));
+        recent.insert(0, Value::String(id.clone()));
+        recent.truncate(20);
+        self.state["recent"] = Value::Array(recent);
+        self.state["last_workspace"] = Value::String(id);
+        if self.state == previous {
+            return Ok(spec);
+        }
+        if let Err(error) = self.save() {
+            self.state = previous;
+            return Err(error);
+        }
+        Ok(spec)
+    }
+
+    pub fn state_store(&self) -> WorkspaceStateStore {
+        WorkspaceStateStore {
+            config_dir: self.path.parent().unwrap().to_owned(),
+        }
+    }
+
+    pub fn repository(&self) -> WorkspaceStoreRepository {
+        WorkspaceStoreRepository {
+            config_dir: self.path.parent().unwrap().to_owned(),
+        }
+    }
+    pub fn reload(&mut self) -> io::Result<()> {
+        *self = Self::load(self.path.parent().unwrap())?;
+        Ok(())
+    }
+
     fn save(&self) -> io::Result<()> {
         write_atomic(&self.path, &self.state)
     }
@@ -520,3 +641,98 @@ pub fn write_atomic(path: &Path, value: &Value) -> io::Result<()> {
 #[cfg(test)]
 #[path = "store_tests.rs"]
 mod tests;
+
+/// bEd's disk adapter keeps remote UI state on the client and shares the existing file lock.
+pub struct WorkspaceStoreRepository {
+    config_dir: PathBuf,
+}
+impl bed_plugin_workspaces::WorkspaceRepository for WorkspaceStoreRepository {
+    fn recent(&self) -> io::Result<Vec<WorkspaceSpec>> {
+        Ok(WorkspaceStore::load(&self.config_dir)?.recent_workspaces())
+    }
+    fn find(&self, spec: &WorkspaceSpec) -> io::Result<Option<WorkspaceSpec>> {
+        Ok(WorkspaceStore::load(&self.config_dir)?.stored_spec(spec))
+    }
+    fn load(
+        &self,
+        spec: &WorkspaceSpec,
+    ) -> io::Result<Option<bed_plugin_workspaces::WorkspaceSnapshot>> {
+        let store = WorkspaceStore::load(&self.config_dir)?;
+        if store.stored_spec(spec).is_none() {
+            return Ok(None);
+        }
+        let layouts = match store.session_layouts(Some(spec)) {
+            Some(layouts) => {
+                json!({"layouts":layouts,"active_layout_slot":store.active_layout_slot(Some(spec)).to_value()})
+            }
+            None => store.layout(spec).cloned().unwrap_or(Value::Null),
+        };
+        if let Some(state) = store.all_module_settings(spec) {
+            bed_storage::validate_snapshot(state)?;
+        }
+        let mut plugins = store
+            .all_module_settings(spec)
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        for owner in ["bed.debug", "bed.explorer"] {
+            if !plugins.contains_key(owner)
+                && let Some(value) = store.module_settings(spec, owner)
+            {
+                plugins.insert(owner.to_owned(), value.clone());
+            }
+        }
+        let plugins = Value::Object(plugins);
+        Ok(Some(bed_plugin_workspaces::WorkspaceSnapshot {
+            layouts,
+            plugins,
+        }))
+    }
+    fn commit(
+        &mut self,
+        spec: WorkspaceSpec,
+        snapshot: bed_plugin_workspaces::WorkspaceSnapshot,
+    ) -> io::Result<WorkspaceSpec> {
+        WorkspaceStore::load(&self.config_dir)?.commit_snapshot(spec, snapshot)
+    }
+    fn forget(&mut self, spec: &WorkspaceSpec) -> io::Result<()> {
+        WorkspaceStore::load(&self.config_dir)?.forget_workspace(spec)
+    }
+    fn rename(&mut self, spec: &WorkspaceSpec, name: &str) -> io::Result<WorkspaceSpec> {
+        let mut store = WorkspaceStore::load(&self.config_dir)?;
+        if store.stored_spec(spec).is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Workspace has not been saved",
+            ));
+        }
+        store.rename_workspace(spec, name)
+    }
+}
+
+/// Plugin-state adapter uses saved workspace identities as opaque scopes.
+/// A state write cannot create a workspace definition or promote a temporary session.
+pub struct WorkspaceStateStore {
+    config_dir: PathBuf,
+}
+impl bed_storage::StateStore for WorkspaceStateStore {
+    fn load(&self, scope: &bed_storage::StateScope) -> io::Result<Option<Value>> {
+        let store = WorkspaceStore::load(&self.config_dir)?;
+        Ok(store.state["workspaces"][&scope.0].get("modules").cloned())
+    }
+    fn save(&mut self, scope: &bed_storage::StateScope, snapshot: &Value) -> io::Result<()> {
+        bed_storage::validate_snapshot(snapshot)?;
+        let mut store = WorkspaceStore::load(&self.config_dir)?;
+        let _lock = store.reload_for_write()?;
+        let entry = store.state["workspaces"].get_mut(&scope.0).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "State scope has no saved workspace",
+            )
+        })?;
+        let mut state = entry["modules"].as_object().cloned().unwrap_or_default();
+        state.extend(snapshot.as_object().unwrap().clone());
+        entry["modules"] = Value::Object(state);
+        store.save()
+    }
+}

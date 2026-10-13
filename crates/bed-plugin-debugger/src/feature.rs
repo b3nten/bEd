@@ -1,13 +1,13 @@
 //! Debug sessions keep their registered source-provider allocation in the world.
 use super::*;
+use bed_api::documents::DocumentFrame;
+use bed_api::storage::{FeatureStateContribution, FeatureStateRestore};
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction, register,
 };
 use bed_api::{
     documents::{DocumentEvent, DocumentReply, PanelBinding},
-    features::{
-        FeatureStateContribution, FeatureStateRestore, FeatureSystems, HostEffects, HostFrame,
-    },
+    features::{FeatureSystems, HostEffects},
     workbench::FileDialogService,
 };
 use bed_terminal::{
@@ -97,7 +97,7 @@ impl Plugin for DebuggerPlugin {
         app.init_non_send::<bed_editor_widgets::extensions::EditorExtensions>()
             .init_non_send::<bed_editor_widgets::source_intents::SourceRequests>()
             .init_resource::<bed_api::workbench::CommandPresentations>()
-            .init_resource::<HostFrame>()
+            .init_resource::<DocumentFrame>()
             .init_resource::<DebugTarget>()
             .init_resource::<HostEffects>()
             .init_resource::<bed_api::features::FeatureRegistry>()
@@ -266,7 +266,7 @@ fn prepare(world: &mut World) {
         NonSendMut<DebugState>,
         NonSendMut<DocumentSession>,
         NonSendMut<BedTerminal>,
-        Res<HostFrame>,
+        Res<DocumentFrame>,
         Res<DebugTarget>,
         NonSendMut<bed_editor_widgets::extensions::EditorExtensions>,
         NonSendMut<bed_editor_widgets::source_intents::SourceRequests>,
@@ -751,13 +751,16 @@ pub fn shortcuts(world: &mut World, ui: &Ui) -> Vec<WorkbenchAction> {
                 bed_keybindings::Platform::current(),
             ))
         });
-    let source = world.resource::<HostFrame>().active_view.and_then(|view| {
-        world
-            .query::<(Entity, &PanelBinding)>()
-            .iter(world)
-            .find(|(_, b)| b.view == Some(view))
-            .map(|(entity, _)| entity)
-    });
+    let source = world
+        .resource::<DocumentFrame>()
+        .active_view
+        .and_then(|view| {
+            world
+                .query::<(Entity, &PanelBinding)>()
+                .iter(world)
+                .find(|(_, b)| b.view == Some(view))
+                .map(|(entity, _)| entity)
+        });
     let layout = world.resource::<bed_workbench::WorkbenchLayout>();
     let area = source
         .and_then(|source| bed_api::workbench::panel_owner(world, source))
@@ -883,7 +886,7 @@ mod tests {
             ))
             .id();
         {
-            let mut frame = app.world_mut().resource_mut::<HostFrame>();
+            let mut frame = app.world_mut().resource_mut::<DocumentFrame>();
             frame.active_view = Some(first_view);
             frame.session_id = session_id;
         }
@@ -908,7 +911,7 @@ mod tests {
         };
         assert_eq!(invocation.source, Some(source));
         assert_eq!(invocation.area, area);
-        app.world_mut().resource_mut::<HostFrame>().active_view = Some(second_view);
+        app.world_mut().resource_mut::<DocumentFrame>().active_view = Some(second_view);
         let handler = app
             .world()
             .resource::<bed_api::workbench::WorkbenchRegistry>()
@@ -939,7 +942,7 @@ mod tests {
         let mut app = App::new();
         app.world_mut().insert_non_send(documents);
         app.add_plugins(DebuggerPlugin);
-        app.world_mut().resource_mut::<HostFrame>().active_view = Some(second_view);
+        app.world_mut().resource_mut::<DocumentFrame>().active_view = Some(second_view);
         let source = app
             .world_mut()
             .spawn(PanelBinding {

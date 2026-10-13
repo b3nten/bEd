@@ -962,43 +962,44 @@ mod tests {
             shift: !cfg!(target_os = "macos"),
             ..default()
         };
-        let mut terminal = app.world_mut().non_send_mut::<BedTerminal>();
-        // Paste reaches the real PTY once, including a held key and its release,
-        // without accessing the user's system clipboard.
-        for key_state in [KeyState::Press, KeyState::Repeat, KeyState::Release] {
-            assert!(
-                deliver_key(
-                    &mut state,
-                    &mut terminal,
-                    Some(&mut desktop),
-                    None,
-                    PhysicalKey::Code(KeyCode::KeyV),
-                    TerminalKeyEvent {
-                        key: TerminalKey::Character("v".into()),
-                        modifiers,
-                        state: key_state,
-                        ..default()
-                    },
-                    &TerminalInputPolicy::default(),
-                )
-                .unwrap()
-            );
+        {
+            let mut terminal = app.world_mut().non_send_mut::<BedTerminal>();
+            // Paste reaches the real PTY once, including a held key and its release,
+            // without accessing the user's system clipboard.
+            for key_state in [KeyState::Press, KeyState::Repeat, KeyState::Release] {
+                assert!(
+                    deliver_key(
+                        &mut state,
+                        &mut terminal,
+                        Some(&mut desktop),
+                        None,
+                        PhysicalKey::Code(KeyCode::KeyV),
+                        TerminalKeyEvent {
+                            key: TerminalKey::Character("v".into()),
+                            modifiers,
+                            state: key_state,
+                            ..default()
+                        },
+                        &TerminalInputPolicy::default(),
+                    )
+                    .unwrap()
+                );
+            }
+            deliver_key(
+                &mut state,
+                &mut terminal,
+                None,
+                None,
+                PhysicalKey::Code(KeyCode::Enter),
+                TerminalKeyEvent {
+                    key: TerminalKey::Enter,
+                    state: KeyState::Press,
+                    ..default()
+                },
+                &TerminalInputPolicy::default(),
+            )
+            .unwrap();
         }
-        deliver_key(
-            &mut state,
-            &mut terminal,
-            None,
-            None,
-            PhysicalKey::Code(KeyCode::Enter),
-            TerminalKeyEvent {
-                key: TerminalKey::Enter,
-                state: KeyState::Press,
-                ..default()
-            },
-            &TerminalInputPolicy::default(),
-        )
-        .unwrap();
-        drop(terminal);
         let deadline = Instant::now() + Duration::from_secs(5);
         while !capture.exists() && Instant::now() < deadline {
             app.update();

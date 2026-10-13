@@ -10,6 +10,8 @@ use dear_imgui_rs::{
     WindowHoveredFlags,
 };
 use serde_json::{Value, json};
+#[cfg(test)]
+use std::fs;
 use std::ops::{Deref, DerefMut};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1107,26 +1109,26 @@ impl SettingsView<'_> {
                         remove = Some(index);
                     }
                 }
-                if let Some(index) = remove {
-                    if let Err(error) = self.keybinds.remove(action, index) {
-                        self.error = Some(error.to_string());
-                    }
+                if let Some(index) = remove
+                    && let Err(error) = self.keybinds.remove(action, index)
+                {
+                    self.error = Some(error.to_string());
                 }
                 if ui.small_button("Add binding") {
                     self.window.shortcut_recording = Some((action.id.clone(), None));
                     self.window.shortcut_recording_frame = ui.frame_count();
                 }
                 ui.same_line();
-                if ui.small_button("Clear") {
-                    if let Err(error) = self.keybinds.clear(&action.id) {
-                        self.error = Some(error.to_string());
-                    }
+                if ui.small_button("Clear")
+                    && let Err(error) = self.keybinds.clear(&action.id)
+                {
+                    self.error = Some(error.to_string());
                 }
                 ui.same_line();
-                if ui.small_button("Restore defaults") {
-                    if let Err(error) = self.keybinds.restore(&action.id) {
-                        self.error = Some(error.to_string());
-                    }
+                if ui.small_button("Restore defaults")
+                    && let Err(error) = self.keybinds.restore(&action.id)
+                {
+                    self.error = Some(error.to_string());
                 }
                 if self.keybinds.overrides.actions.contains_key(&action.id) {
                     ui.text_disabled(format!(
@@ -1172,10 +1174,10 @@ impl SettingsView<'_> {
         if actions.is_empty() {
             ui.text_disabled("No shortcut actions registered by this host.");
         }
-        if let Some((action, index, stroke)) = edit {
-            if let Err(error) = self.keybinds.assign(&action, index, stroke) {
-                self.error = Some(error.to_string());
-            }
+        if let Some((action, index, stroke)) = edit
+            && let Err(error) = self.keybinds.assign(&action, index, stroke)
+        {
+            self.error = Some(error.to_string());
         }
     }
 }
@@ -1377,9 +1379,11 @@ mod tests {
             .into_iter()
             .find(|action| action.id == bed_keybindings::RESET_ZOOM)
             .unwrap();
-        let mut state = SettingsWindowState::default();
-        state.shortcut_actions = vec![action.clone()];
-        state.shortcut_recording = Some((action.id.clone(), None));
+        let mut state = SettingsWindowState {
+            shortcut_actions: vec![action.clone()],
+            shortcut_recording: Some((action.id.clone(), None)),
+            ..Default::default()
+        };
         let mut context = settings_context();
         let draw =
             |context: &mut Context, settings: &mut Settings, state: &mut SettingsWindowState| {
@@ -2278,6 +2282,3 @@ mod tests {
         );
     }
 }
-
-#[cfg(test)]
-use std::fs;

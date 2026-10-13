@@ -3,17 +3,18 @@ use std::io;
 
 use std::{
     cell::Cell,
-    fs::File,
-    io::Write,
     rc::Rc,
     time::{Duration, Instant},
 };
+#[cfg(not(feature = "file-services"))]
+use std::{fs::File, io::Write};
 
 use bed_editing::{
     document_state::{DocumentKind, DocumentState},
     editing_events::{DidSave, EditingEvents},
 };
 
+#[cfg(not(feature = "file-services"))]
 const WRITE_CHUNK: usize = 64 * 1024;
 
 fn check_save_size(state: &DocumentState) -> io::Result<()> {
@@ -99,22 +100,56 @@ impl DocumentSave {
             return Ok(false);
         }
         check_save_size(state)?;
-        let mut file = File::create(&state.path)?;
-        if state.kind == DocumentKind::Text && state.utf8_bom {
-            file.write_all(&[0xef, 0xbb, 0xbf])?;
+        #[cfg(feature = "file-services")]
+        {
+            let path = std::path::Path::new(&state.path);
+            let path = match std::fs::canonicalize(path) {
+                Ok(path) => path,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => path.to_path_buf(),
+                Err(error) => return Err(error),
+            };
+            let root = path.parent().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Save path requires a parent directory",
+                )
+            })?;
+            let services = bed_files::FileServices::local();
+            let location = bed_files::FileLocation {
+                provider: bed_files::FileProviderId::Local,
+                path: path.clone(),
+            };
+            let baseline = match services.read(root, &location) {
+                Ok((_, baseline)) => Some(baseline),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error),
+            };
+            services.write_atomic(
+                root,
+                &location,
+                &Self::bytes_for_save(state)?,
+                baseline.as_ref(),
+            )?;
         }
-        let total = state.byte_size();
-        let mut buffer = vec![0; total.clamp(1, WRITE_CHUNK)];
-        let mut offset = 0;
-        while offset < total {
-            let len = WRITE_CHUNK.min(total - offset);
-            state.copy_bytes(offset, len, &mut buffer);
-            file.write_all(&buffer[..len])?;
-            offset += len;
+        #[cfg(not(feature = "file-services"))]
+        {
+            let mut file = File::create(&state.path)?;
+            if state.kind == DocumentKind::Text && state.utf8_bom {
+                file.write_all(&[0xef, 0xbb, 0xbf])?;
+            }
+            let total = state.byte_size();
+            let mut buffer = vec![0; total.clamp(1, WRITE_CHUNK)];
+            let mut offset = 0;
+            while offset < total {
+                let len = WRITE_CHUNK.min(total - offset);
+                state.copy_bytes(offset, len, &mut buffer);
+                file.write_all(&buffer[..len])?;
+                offset += len;
+            }
+            // Unlike unchecked ostream::close, keep dirty on any write/flush error.
+            file.flush()?;
+            drop(file);
         }
-        // Unlike unchecked ostream::close, keep dirty on any write/flush error.
-        file.flush()?;
-        drop(file);
         state.mark_saved();
         events.emit_did_save_document(
             &DidSave {

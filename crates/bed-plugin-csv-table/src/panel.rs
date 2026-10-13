@@ -2,6 +2,10 @@ use crate::{
     model::{self, ColumnFilter, FilterOp, Sort, SortMode, Table},
     worker::{Job, View, Worker},
 };
+#[cfg(test)]
+use bed_api::documents::DocumentFrame;
+#[cfg(test)]
+use bed_api::features::FrontendSnapshot;
 use bed_api::{
     documents::{EditToken, Revision},
     features::{HostAction, HostContext},
@@ -1659,7 +1663,7 @@ mod tests {
     use crate::{CsvStates, CsvTablePlugin};
     use bed_api::{
         documents::{PanelBinding, PanelEditResult, PanelEdits, PanelInput, PluginDocument},
-        features::{HostEffects, HostFrame},
+        features::HostEffects,
         workbench::{PanelActionInvocation, PanelActions},
     };
     use bevy::prelude::{App, Entity};
@@ -1669,7 +1673,7 @@ mod tests {
         use bed_keybindings::{Bindings, Overrides, Platform};
         use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
         let (mut app, entity) = world_table();
-        let host_frame = app.world().resource::<HostFrame>().clone();
+        let host_frame = FrontendSnapshot::capture(app.world());
         let mut states = app.world_mut().non_send_mut::<CsvStates>();
         let panel = states.get_mut(entity).unwrap();
         panel.select(0, 0, false);
@@ -1728,7 +1732,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(CsvTablePlugin);
         app.world_mut()
-            .resource_mut::<HostFrame>()
+            .resource_mut::<DocumentFrame>()
             .documents
             .push(PluginDocument {
                 id: DocumentId(1),
@@ -1904,7 +1908,7 @@ mod tests {
             !panel.is_ready(),
             "the previous document must not become editable after the ack"
         );
-        let document = &mut app.world_mut().resource_mut::<HostFrame>().documents[0];
+        let document = &mut app.world_mut().resource_mut::<DocumentFrame>().documents[0];
         document.revision = (0, 1);
         document.bytes = Arc::from(&b"name,value\nsecond,001\n"[..]);
         wait_world(&mut app, entity);
@@ -1945,7 +1949,7 @@ mod tests {
             .begin_record_edit(1, 0, Some("draft".into()), false);
         // The command resolver publishes this snapshot before running CommitEdit.
         // No preparation or frontend frame has run against it yet.
-        app.world_mut().resource_mut::<HostFrame>().documents[0].revision = (0, 1);
+        app.world_mut().resource_mut::<DocumentFrame>().documents[0].revision = (0, 1);
         let error = world_commit(&mut app, entity).unwrap_err();
         assert!(error.contains("document changed"));
         assert_eq!(

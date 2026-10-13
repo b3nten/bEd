@@ -69,14 +69,7 @@ impl Plugin for BedAppPlugin {
                     .in_set(DesktopSystems::Prepare)
                     .in_set(BedPlatformSystems::Prepare),
             )
-            .add_systems(PreUpdate, after_ui.in_set(DesktopSystems::AfterUi))
-            .add_systems(PreUpdate, begin_previews.before(DesktopSystems::Ui))
-            .add_systems(
-                PreUpdate,
-                retire_previews
-                    .after(bed_desktop::DesktopCanvasSystems::Render)
-                    .before(DesktopSystems::RouteInput),
-            );
+            .add_systems(PreUpdate, after_ui.in_set(DesktopSystems::AfterUi));
         #[cfg(target_os = "macos")]
         app.init_resource::<ToolbarDropCursor>();
         #[cfg(not(feature = "terminal"))]
@@ -132,19 +125,6 @@ impl Plugin for BedAppPlugin {
                 .before(DesktopSystems::Ui),
         );
     }
-}
-
-fn begin_previews(world: &mut World) {
-    bed_runtime::render::begin_preview_frame(world);
-}
-
-fn retire_previews(world: &mut World) {
-    let live = world
-        .query::<&bed_ui::gpu::CanvasOutput>()
-        .iter(world)
-        .map(|output| output.0.handle.0)
-        .collect();
-    bed_runtime::render::retire_previews(world, &live);
 }
 
 fn fail(world: &mut World, error: impl std::fmt::Display) {
@@ -818,7 +798,8 @@ fn after_ui(world: &mut World) {
 fn update_native_presentation(world: &mut World) {
     let toolbar = bed_app::toolbar_commands(world);
     let application = bed_app::application_commands(world);
-    let available = world.resource::<WorkspaceState>().spec.is_some();
+    let available = world.resource::<bed_api::files::FileContext>().availability
+        == bed_api::files::FileAvailability::Available;
     let has_document = world
         .resource::<bed_app::DocumentNavigation>()
         .active_document
@@ -851,13 +832,15 @@ fn update_native_presentation(world: &mut World) {
     );
     let menus = crate::native_commands::menus(
         &bindings,
-        available,
-        has_document,
-        clipboard_focused,
-        text_input_focused,
-        editor_shortcuts_focused(world),
         &application,
-        world.resource::<bed_app::LayoutSlots>().active(),
+        crate::native_commands::MenuContext {
+            directory_available: available,
+            document: has_document,
+            clipboard: clipboard_focused,
+            text_input: text_input_focused,
+            editor_focused: editor_shortcuts_focused(world),
+            active_layout: world.resource::<bed_app::LayoutSlots>().active(),
+        },
     );
     let presentation = bed_desktop::DesktopNativePresentation {
         opacity: settings.background_opacity(),
@@ -886,7 +869,11 @@ fn update_native_presentation(world: &mut World) {
 
 /// Build a headful app. Embedders can compose the same editor plugins in their own app.
 pub fn build_app(mut options: AppOptions, settings: Settings) -> io::Result<App> {
-    let store = bed_app::WorkspaceStore::load(&settings.config_dir)?;
+    let store = if cfg!(feature = "workspaces") {
+        bed_app::WorkspaceStore::load(&settings.config_dir)?
+    } else {
+        bed_app::WorkspaceStore::empty(&settings.config_dir)
+    };
     let icons = bed_ui::icons::Icons::load(&settings.resources_root);
     if options.working_directory.is_none() {
         options.working_directory = Some(std::env::current_dir()?);
@@ -898,7 +885,7 @@ pub fn build_app(mut options: AppOptions, settings: Settings) -> io::Result<App>
         .insert_resource(bed_app::RemoteHelperDirectory(
             crate::remote_helpers::helpers_directory(),
         ));
-    app.insert_resource(bed_core::HostRequestMode::Application);
+    app.insert_resource(bed_core::CorePresentationMode::Application);
     app.add_plugins(bed_core::BedCorePlugin {
         desktop: DesktopPlugins {
             close_when_requested: false,
@@ -923,8 +910,11 @@ pub fn build_app(mut options: AppOptions, settings: Settings) -> io::Result<App>
     })
     .add_plugins(AppRuntimePlugin { options })
     .add_plugins(crate::builtins::BedBuiltinPlugins)
-    .add_plugins(bed_runtime::render::BedPreviewPlugin)
     .add_plugins(BedAppPlugin);
+    #[cfg(any(feature = "model-viewer", feature = "mascots"))]
+    if !app.is_plugin_added::<bed_desktop::DesktopPreviewIntegrationPlugin>() {
+        app.add_plugins(bed_desktop::DesktopPreviewIntegrationPlugin);
+    }
     #[cfg(feature = "effects")]
     app.add_plugins(bed_plugin_effects::EffectsPlugin);
     #[cfg(feature = "idle")]
@@ -990,7 +980,7 @@ fn new_instance_command(
     executable: &Path,
     config_dir: &Path,
     wait: bool,
-    workspace: Option<&bed_api::application::WorkspaceSpec>,
+    workspace: Option<&bed_app::WorkspaceSpec>,
 ) -> io::Result<std::process::Command> {
     let config_dir = std::fs::canonicalize(config_dir)?;
     // Launch Services needs -n to start another process for a running bundle.
@@ -1283,10 +1273,7 @@ pub(crate) fn smoke_native_chrome(world: &World) -> io::Result<()> {
     Ok(())
 }
 
-fn spawn_instance(
-    world: &mut World,
-    workspace: Option<&bed_api::application::WorkspaceSpec>,
-) -> io::Result<()> {
+fn spawn_instance(world: &mut World, workspace: Option<&bed_app::WorkspaceSpec>) -> io::Result<()> {
     let config = world.non_send::<Settings>().config_dir.clone();
     let mut command = new_instance_command(&std::env::current_exe()?, &config, false, workspace)?;
     #[cfg(feature = "automation")]

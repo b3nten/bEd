@@ -1,15 +1,16 @@
 //! The same repository controller serves source widgets, sidebar and diff views.
 use super::*;
+use bed_api::documents::DocumentFrame;
+use bed_api::storage::{FeatureStateContribution, FeatureStateRestore};
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction, register,
 };
 use bed_api::{
     documents::{DocumentEvent, DocumentReply},
-    features::{
-        FeatureStateContribution, FeatureStateRestore, FeatureSystems, HostEffects, HostFrame,
-    },
+    features::{FeatureSystems, HostEffects},
     workbench::{CommandPresentation, CommandPresentations, PanelClose},
 };
+use bed_files::{FileContext, FileServices};
 use bevy::{ecs::system::SystemState, prelude::*};
 use std::collections::HashMap;
 
@@ -28,6 +29,14 @@ pub struct GitTarget {
     pub root: String,
     pub working_directory: String,
     pub session_id: Option<bed_documents::SessionId>,
+}
+
+fn working_directory(target: &GitTarget, context: &FileContext) -> String {
+    if target.working_directory.is_empty() {
+        context.directory_string()
+    } else {
+        target.working_directory.clone()
+    }
 }
 
 pub struct GitPlugin;
@@ -64,8 +73,10 @@ impl Plugin for GitPlugin {
         app.world_mut().init_non_send::<GitPanels>();
         app.init_non_send::<bed_editor_widgets::extensions::EditorExtensions>()
             .init_non_send::<bed_editor_widgets::source_intents::SourceRequests>()
-            .init_resource::<HostFrame>()
+            .init_resource::<DocumentFrame>()
             .init_resource::<GitTarget>()
+            .init_resource::<FileContext>()
+            .init_resource::<FileServices>()
             .init_resource::<HostEffects>()
             .init_resource::<bed_api::features::FeatureRegistry>()
             .init_resource::<CommandPresentations>()
@@ -134,8 +145,10 @@ pub(crate) fn prepare(
     alive: Query<Entity>,
     documents: Option<NonSendMut<DocumentSession>>,
     filesystem: Option<NonSend<bed_remote::WorkspaceFilesystem>>,
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     target: Res<GitTarget>,
+    file_context: Res<FileContext>,
+    file_services: Res<FileServices>,
     mut intents: ResMut<HostEffects>,
     mut source: NonSendMut<bed_editor_widgets::extensions::EditorExtensions>,
     mut commands: Commands,
@@ -146,11 +159,14 @@ pub(crate) fn prepare(
         return;
     };
     let mut requests = Vec::new();
+    let file_services = file_services.for_context(&file_context);
     let controller = &mut controller.0;
+    controller.capture_directory_native(&working_directory(&target, &file_context), &target.root);
     if let Err(error) = controller.tick_native(
         &mut documents,
         &target.root,
         filesystem.as_deref(),
+        &file_services,
         &mut requests,
     ) {
         controller.error = Some(error.to_string());
@@ -220,11 +236,12 @@ fn document_events(mut events: MessageReader<DocumentEvent>, mut controller: Non
 fn command(
     In(invocation): In<CommandInvocation>,
     target: Res<GitTarget>,
+    file_context: Res<FileContext>,
     mut controller: NonSendMut<GitState>,
     mut intents: ResMut<HostEffects>,
 ) -> CommandResult {
     let controller = &mut controller.0;
-    controller.capture_directory_native(&target.working_directory, &target.root);
+    controller.capture_directory_native(&working_directory(&target, &file_context), &target.root);
     let mut requests = Vec::new();
     match invocation.command.as_str() {
         SHOW_COMMAND => requests.push(HostAction::ShowPanel {
@@ -256,11 +273,10 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
     let session = target
         .session_id
         .unwrap_or_else(|| world.non_send::<DocumentSession>().session_id());
+    let cwd = working_directory(&target, world.resource::<FileContext>());
     let mut controller = world.non_send_mut::<GitState>();
     controller.0.claim_session(session.0)?;
-    controller
-        .0
-        .capture_directory_native(&target.working_directory, &target.root);
+    controller.0.capture_directory_native(&cwd, &target.root);
     controller.0.visible += 1;
     world
         .non_send_mut::<GitPanels>()

@@ -7,7 +7,16 @@ pub use bed_workbench;
 pub use bevy;
 mod commands;
 pub mod documents;
+mod files;
+#[cfg(feature = "language-services")]
+mod format_saves;
 pub mod models;
+mod saves;
+mod transitions;
+#[cfg(feature = "language-services")]
+pub use format_saves::*;
+pub use saves::*;
+pub use transitions::*;
 mod native;
 #[cfg(test)]
 mod tests;
@@ -35,6 +44,25 @@ impl Default for BedCorePlugin {
 
 impl Plugin for BedCorePlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(DesktopPlugins {
+            window: self.desktop.window.clone(),
+            wgpu: self.desktop.wgpu.clone(),
+            close_when_requested: self.desktop.close_when_requested,
+        })
+        .add_plugins(BedCoreIntegrationPlugin);
+    }
+}
+
+/// Attach shared editing and workbench services to an existing Bevy desktop.
+/// DesktopIntegrationPlugin must already be installed; the host owns its
+/// DefaultPlugins, renderer configuration, window and runner.
+pub struct BedCoreIntegrationPlugin;
+impl Plugin for BedCoreIntegrationPlugin {
+    fn build(&self, app: &mut App) {
+        assert!(
+            app.is_plugin_added::<bed_desktop::DesktopIntegrationPlugin>(),
+            "BedCoreIntegrationPlugin requires DesktopIntegrationPlugin"
+        );
         app.init_non_send::<bed_ui::icons::IconDirectories>();
         let directory = app
             .world()
@@ -47,41 +75,33 @@ impl Plugin for BedCorePlugin {
             .non_send_mut::<bed_ui::icons::Icons>()
             .register_core_defaults(directory.as_deref())
             .expect("valid core icon directory");
-        app.add_plugins(DesktopPlugins {
-            window: self.desktop.window.clone(),
-            wgpu: self.desktop.wgpu.clone(),
-            close_when_requested: self.desktop.close_when_requested,
-        })
-        .add_plugins((bed_runtime::BedRuntimePlugin, DocumentHostPlugin))
-        .configure_sets(
-            PreUpdate,
-            CoreSystems::Services
-                .after(DesktopSystems::Configure)
-                .before(DesktopSystems::Prepare),
-        )
-        .configure_sets(
-            PreUpdate,
-            bed_api::features::FeatureSystems::Prepare
-                .after(DesktopSystems::Prepare)
-                .before(bed_desktop::DesktopCanvasSystems::Prepare),
-        )
-        .configure_sets(
-            PreUpdate,
-            CoreSystems::Requests.in_set(DesktopSystems::AfterUi),
-        )
-        .add_systems(
-            PreUpdate,
-            (
-                route_native_commands.in_set(DesktopSystems::InterceptInput),
-                after_ui
-                    .after(CoreSystems::Requests)
-                    .in_set(DesktopSystems::AfterUi),
-            ),
-        )
-        .add_systems(Update, (report_notices, handle_close_requests));
-        if *app.world().resource::<HostRequestMode>() == HostRequestMode::Core {
-            app.add_plugins(commands::DocumentCommandsPlugin);
-        }
+        app.add_plugins((bed_runtime::BedRuntimePlugin, DocumentHostPlugin))
+            .configure_sets(
+                PreUpdate,
+                CoreSystems::Services
+                    .after(DesktopSystems::Configure)
+                    .before(DesktopSystems::Prepare),
+            )
+            .configure_sets(
+                PreUpdate,
+                bed_api::features::FeatureSystems::Prepare
+                    .after(DesktopSystems::Prepare)
+                    .before(bed_desktop::DesktopCanvasSystems::Prepare),
+            )
+            .configure_sets(
+                PreUpdate,
+                CoreSystems::Requests.in_set(DesktopSystems::AfterUi),
+            )
+            .add_systems(
+                PreUpdate,
+                (
+                    route_native_commands.in_set(DesktopSystems::InterceptInput),
+                    after_ui
+                        .after(CoreSystems::Requests)
+                        .in_set(DesktopSystems::AfterUi),
+                ),
+            )
+            .add_systems(Update, (report_notices, handle_close_requests));
         native::install(app);
         if !app.world().contains_resource::<bed_desktop::DesktopUi>() {
             app.insert_resource(bed_desktop::DesktopUi(draw));
@@ -90,6 +110,12 @@ impl Plugin for BedCorePlugin {
 }
 
 fn draw(world: &mut World, ui: &dear_imgui_rs::Ui) {
+    if let Some(textures) = world.get_resource::<bed_ui::gpu::CanvasTextures>() {
+        let textures = textures.0.clone();
+        world
+            .resource_mut::<api::presentation::PresentationFrame>()
+            .textures = textures;
+    }
     if let Some(_menu) = ui.begin_main_menu_bar() {
         let commands = world
             .resource::<api::workbench::WorkbenchRegistry>()
@@ -172,7 +198,7 @@ fn draw(world: &mut World, ui: &dear_imgui_rs::Ui) {
     world.resource_mut::<bed_desktop::DesktopFrame>().panels = geometry;
 }
 fn route_native_commands(world: &mut World) {
-    if *world.resource::<HostRequestMode>() == HostRequestMode::Application {
+    if *world.resource::<CorePresentationMode>() == CorePresentationMode::Application {
         return;
     }
     let commands = std::mem::take(&mut world.resource_mut::<bed_desktop::DesktopNativeActions>().0);
@@ -205,7 +231,7 @@ fn after_ui(world: &mut World) {
         keyboard: capture.keyboard,
         pointer: capture.pointer,
     };
-    if *world.resource::<HostRequestMode>() == HostRequestMode::Application {
+    if *world.resource::<CorePresentationMode>() == CorePresentationMode::Application {
         return;
     }
     for error in world
@@ -257,7 +283,7 @@ fn report_notices(mut notices: MessageReader<CoreNotice>) {
 }
 
 fn handle_close_requests(world: &mut World) {
-    if *world.resource::<HostRequestMode>() == HostRequestMode::Application {
+    if *world.resource::<CorePresentationMode>() == CorePresentationMode::Application {
         return;
     }
     let closing = world
@@ -265,11 +291,12 @@ fn handle_close_requests(world: &mut World) {
         .drain()
         .next()
         .is_some();
-    if closing {
+    if closing || documents::quit_save_pending(world) {
         match quit(world) {
             Ok(()) => {
                 world.write_message(AppExit::Success);
             }
+            Err(_) if documents::quit_save_pending(world) => {}
             Err(message) => {
                 world.write_message(CoreNotice {
                     source: None,

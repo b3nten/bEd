@@ -310,7 +310,11 @@ pub fn input_is_empty(world: &World, entity: Entity) -> bool {
                 document.path.is_empty() && document.bytes.is_empty() && !document.dirty
             });
     }
-    world.get_resource::<HostFrame>().is_some_and(|frame| {
-        input_is_pristine(&frame.context(), state.document, state.initial_revision)
+    world.get_resource::<DocumentFrame>().is_some_and(|_frame| {
+        input_is_pristine(
+            &FrontendSnapshot::capture(world).context(),
+            state.document,
+            state.initial_revision,
+        )
     })
 }

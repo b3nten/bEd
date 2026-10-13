@@ -3,13 +3,15 @@ use crate::{
     ImagePanel, OPEN_COMMAND, OPEN_FILE_COMMAND, PANEL_ID, PLUGIN_ID, VIEWER_ID, register_metadata,
     supported_path,
 };
+use bed_api::documents::DocumentFrame;
+use bed_api::features::FrontendSnapshot;
 use bed_api::gpu::GpuContext;
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction,
 };
 use bed_api::{
     documents::PanelBinding,
-    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects, HostFrame},
+    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects},
 };
 use bed_editing::identity::DocumentId;
 use bed_ui::gpu::{
@@ -47,7 +49,7 @@ pub struct ImageViewerPlugin;
 
 impl Plugin for ImageViewerPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HostFrame>()
+        app.init_resource::<DocumentFrame>()
             .init_resource::<HostEffects>()
             .init_resource::<FeatureRegistry>()
             .init_non_send::<ImageStates>()
@@ -118,13 +120,13 @@ fn create_image_panel(In(creation): In<PanelCreation>, world: &mut World) -> Pan
 
 fn poll_images(world: &mut World) {
     let outputs = {
+        let frame = FrontendSnapshot::capture(world);
         let mut state = SystemState::<(
-            Res<HostFrame>,
             NonSendMut<ImageStates>,
             Query<&ImageDocument>,
             ResMut<HostEffects>,
         )>::new(world);
-        let (frame, mut states, live, mut intents) = state
+        let (mut states, live, mut intents) = state
             .get_mut(world)
             .expect("Image plugin initialized its preparation resources");
         states.0.retain(|entity, _| live.get(*entity).is_ok());
@@ -165,7 +167,7 @@ fn poll_images(world: &mut World) {
 
 fn image_command(
     In(invocation): In<CommandInvocation>,
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     bindings: Query<&PanelBinding>,
     mut intents: ResMut<HostEffects>,
 ) -> CommandResult {
@@ -250,7 +252,7 @@ impl Panel for ImageFrontend {
             .get(self.entity)
             .map_or_else(
                 || "Image Viewer".into(),
-                |panel| panel.panel_title(&world.resource::<HostFrame>().context()),
+                |panel| panel.panel_title(&FrontendSnapshot::capture(world).context()),
             )
     }
 
@@ -262,13 +264,13 @@ impl Panel for ImageFrontend {
         shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         let output = {
+            let frame = FrontendSnapshot::capture(world);
             let mut state = SystemState::<(
-                Res<HostFrame>,
                 NonSendMut<ImageStates>,
                 Option<NonSend<Icons>>,
                 ResMut<HostEffects>,
             )>::new(world);
-            let (frame, mut states, icons, mut intents) = state
+            let (mut states, icons, mut intents) = state
                 .get_mut(world)
                 .expect("Image plugin initialized its presentation resources");
             let mut requests = Vec::new();
@@ -341,7 +343,7 @@ mod tests {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let mut app = App::new();
         app.add_plugins(ImageViewerPlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents = vec![PluginDocument {
+        app.world_mut().resource_mut::<DocumentFrame>().documents = vec![PluginDocument {
             id: DocumentId(4),
             path: "drawing.svg".into(),
             kind: DocumentKind::Text,
@@ -441,7 +443,7 @@ mod tests {
         assert!(app.world().get::<CanvasRenderer>(entity).is_some());
 
         {
-            let mut frame = app.world_mut().resource_mut::<HostFrame>();
+            let mut frame = app.world_mut().resource_mut::<DocumentFrame>();
             frame.documents[0].revision = (1, 2);
             frame.documents[0].bytes = Arc::from(
                 &br#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="5"/>"#[..],

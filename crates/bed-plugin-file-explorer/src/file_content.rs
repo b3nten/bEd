@@ -1,7 +1,7 @@
 //! On-demand file classification for viewer menus. Filesystem and SSH reads stay
 //! on a worker, and only the prefix used by Bed's text detector is transferred.
 use bed_api::documents::DocumentKind;
-use bed_remote::{LocalBackend, RemoteClient, Request, Response};
+use bed_files::FileServices;
 use std::{
     collections::HashMap,
     sync::mpsc,
@@ -39,7 +39,7 @@ struct Job {
     serial: u64,
     root: String,
     path: String,
-    remote: Option<RemoteClient>,
+    services: FileServices,
 }
 
 struct Completed {
@@ -59,22 +59,11 @@ impl Worker {
         let (results, receiver) = mpsc::channel();
         thread::spawn(move || {
             while let Ok(job) = jobs.recv() {
-                let request = Request::ReadFilePrefix {
-                    root: job.root,
-                    path: job.path.clone(),
-                };
-                let response = match job.remote {
-                    Some(client) => client.call(request),
-                    None => LocalBackend.call(request).map_err(|error| error.into_io()),
-                };
-                let result = response
-                    .map_err(|error| error.to_string())
-                    .and_then(|response| match response {
-                        Response::FilePrefix { path, bytes } => {
-                            Ok((path, bed_files::files::classify_bytes(&bytes)))
-                        }
-                        _ => Err("Unexpected file prefix response".into()),
-                    });
+                let result = job
+                    .services
+                    .read_prefix(&job.root, &job.path)
+                    .map(|(path, bytes)| (path, bed_files::files::classify_bytes(&bytes)))
+                    .map_err(|error| error.to_string());
                 if results
                     .send(Completed {
                         serial: job.serial,
@@ -103,7 +92,7 @@ pub(super) struct FileContent {
     root: String,
     remote: bool,
     connected: bool,
-    client: Option<RemoteClient>,
+    services: FileServices,
     serial: u64,
     worker: Option<Worker>,
     pending: HashMap<String, u64>,
@@ -112,18 +101,13 @@ pub(super) struct FileContent {
 }
 
 impl FileContent {
-    pub fn configure(
-        &mut self,
-        scope: &str,
-        root: &str,
-        remote: bool,
-        client: Option<RemoteClient>,
-    ) {
-        let connected = !remote || client.as_ref().is_some_and(RemoteClient::is_connected);
+    pub fn configure(&mut self, scope: &str, root: &str, remote: bool, services: FileServices) {
+        let connected = !remote || (services.is_remote() && services.connected());
         if self.scope != scope
             || self.root != root
             || self.remote != remote
             || self.connected != connected
+            || !self.services.same_provider(&services)
         {
             self.reset();
             self.scope = scope.into();
@@ -131,7 +115,7 @@ impl FileContent {
             self.remote = remote;
             self.connected = connected;
         }
-        self.client = client;
+        self.services = services;
     }
 
     pub fn reset(&mut self) {
@@ -242,7 +226,7 @@ impl FileContent {
                 serial: self.serial,
                 root: self.root.clone(),
                 path: path.into(),
-                remote: self.client.clone(),
+                services: self.services.clone(),
             };
             let worker = self.worker.get_or_insert_with(Worker::new);
             match worker.sender.try_send(job) {
@@ -310,7 +294,7 @@ mod tests {
         let temp = TempDir::new();
         fs::write(temp.0.join("data.csv"), b"name,value\nfirst,1\n").unwrap();
         let mut content = FileContent::default();
-        content.configure("local", temp.root(), false, None);
+        content.configure("local", temp.root(), false, FileServices::local());
         assert!(content.worker.is_none());
         assert_eq!(content.inspect("data.csv"), ContentStatus::Loading);
         assert_eq!(
@@ -335,7 +319,7 @@ mod tests {
         let temp = TempDir::new();
         fs::write(temp.0.join("readme"), b"local text").unwrap();
         let mut content = FileContent::default();
-        content.configure("remote", temp.root(), true, None);
+        content.configure("remote", temp.root(), true, FileServices::local());
         assert!(matches!(
             content.inspect("readme"),
             ContentStatus::Unavailable(_)
@@ -353,7 +337,7 @@ mod tests {
         fs::write(&target, b"name,value\nfirst,1\n").unwrap();
         std::os::unix::fs::symlink("target.csv", temp.0.join("alias.csv")).unwrap();
         let mut content = FileContent::default();
-        content.configure("local", temp.root(), false, None);
+        content.configure("local", temp.root(), false, FileServices::local());
         assert_eq!(
             await_inspection(&mut content, "alias.csv"),
             ContentStatus::Ready(DocumentKind::Text),
@@ -475,7 +459,12 @@ mod tests {
             !content.cache.contains_key("/project/alias.csv"),
             "a target change invalidates an in-flight symlink prefix"
         );
-        content.configure("another workspace", "/project", false, None);
+        content.configure(
+            "another workspace",
+            "/project",
+            false,
+            FileServices::local(),
+        );
         assert!(content.cache.is_empty());
         assert!(content.pending.is_empty());
         assert!(content.worker.is_none());

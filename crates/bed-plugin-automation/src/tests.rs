@@ -406,6 +406,44 @@ mod documents {
         assert_eq!(read.bytes, b"new");
     }
     #[test]
+    fn unknown_directory_preserves_document_handles_without_saving_a_workspace() {
+        let mut fixture = Fixture::new();
+        let document = fixture.open();
+        let directory = fixture.root.join("temporary");
+        fs::create_dir(&directory).unwrap();
+        fixture
+            .run(AppOperation::OpenDirectory(bed_api::files::FileLocation {
+                provider: bed_api::files::FileProviderId::Local,
+                path: directory.clone(),
+            }))
+            .unwrap();
+        let OperationValue::Document(read) = fixture
+            .run(AppOperation::ReadDocument(document.handle))
+            .unwrap()
+        else {
+            panic!("read")
+        };
+        assert_eq!(read.bytes, b"original");
+        assert_eq!(
+            fixture
+                .app
+                .world()
+                .resource::<bed_api::files::FileContext>()
+                .directory,
+            fs::canonicalize(&directory).unwrap()
+        );
+        assert!(!directory.join(".bed").exists());
+        #[cfg(feature = "workspaces")]
+        assert_eq!(
+            fixture
+                .app
+                .world()
+                .resource::<bed_plugin_workspaces::WorkspaceAttachment>(),
+            &bed_plugin_workspaces::WorkspaceAttachment::Temporary
+        );
+    }
+    #[test]
+    #[cfg(feature = "workspaces")]
     fn attachment_preserves_handles_and_replacement_retires_them() {
         let mut fixture = Fixture::new();
         let document = fixture.open();
@@ -419,10 +457,24 @@ mod documents {
         );
         let replacement = fixture.root.join("other");
         fs::create_dir(&replacement).unwrap();
+        let replacement = bed_plugin_workspaces::WorkspaceSpec::local(
+            fs::canonicalize(replacement).unwrap().to_str().unwrap(),
+        );
         fixture
-            .run(AppOperation::SetWorkspace(
-                bed_api::application::WorkspaceSpec::local(replacement.to_str().unwrap()),
-            ))
+            .app
+            .world_mut()
+            .resource_mut::<bed_plugin_workspaces::WorkspaceRepositoryResource>()
+            .0
+            .commit(
+                replacement.clone(),
+                bed_plugin_workspaces::WorkspaceSnapshot {
+                    layouts: Value::Null,
+                    plugins: serde_json::json!({}),
+                },
+            )
+            .unwrap();
+        fixture
+            .run(AppOperation::SetWorkspace(replacement))
             .unwrap();
         assert_eq!(
             fixture

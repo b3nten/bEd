@@ -4,6 +4,7 @@ use bed_remote::{FileBaseline, RemoteClient, Request, Response, SshTarget};
 use std::{collections::BTreeSet, sync::mpsc, thread};
 
 enum Operation {
+    #[cfg(feature = "ide-services")]
     WorkspaceCheck {
         document: DocumentId,
         baseline: FileBaseline,
@@ -11,13 +12,14 @@ enum Operation {
     Open {
         requested: String,
         kind: Option<DocumentKind>,
-        origin: Option<LspRequestOrigin>,
+        origin: Option<OpenOrigin>,
     },
     Save {
         document: DocumentId,
         path: String,
         generation: u64,
         version: i32,
+        previous: Option<Box<(String, Option<FileBaseline>)>>,
     },
     Read {
         document: DocumentId,
@@ -25,11 +27,13 @@ enum Operation {
         version: i32,
         mode: ReadMode,
     },
+    #[cfg(feature = "ide-services")]
     Git {
         document: DocumentId,
         generation: u64,
         comparison_epoch: u64,
     },
+    #[cfg(feature = "ide-services")]
     GitStatus,
 }
 
@@ -56,11 +60,15 @@ pub(super) struct RemoteSession {
     reading: BTreeSet<DocumentId>,
     exclusive_reads: BTreeSet<DocumentId>,
     opening: BTreeSet<String>,
+    open_errors: BTreeMap<String, io::Error>,
     aliases: BTreeMap<String, DocumentId>,
     modified_paths: BTreeSet<String>,
+    #[cfg(feature = "ide-services")]
     last_git: Option<Instant>,
+    #[cfg(feature = "ide-services")]
     pub(super) comparison_epoch: u64,
     connected: bool,
+    #[cfg(feature = "ide-services")]
     workspace_checks: BTreeMap<DocumentId, Option<Result<(), String>>>,
 }
 
@@ -68,10 +76,11 @@ impl RemoteSession {
     fn new(target: SshTarget, client: RemoteClient, root: String) -> Self {
         let (requests, pending) = mpsc::sync_channel::<(Operation, Request)>(128);
         let (results, completed) = mpsc::channel();
-        let transport = client.clone();
+        let transport = bed_files::FileServices::remote_target(target.clone(), client.clone());
         thread::spawn(move || {
             while let Ok((mut operation, mut request)) = pending.recv() {
                 let result = (|| {
+                    #[cfg(feature = "ide-services")]
                     if let (Operation::WorkspaceCheck { .. }, Request::ReadFile { root, path }) =
                         (&operation, &request)
                     {
@@ -96,10 +105,11 @@ impl RemoteSession {
                         }
                     }
                     if let (
-                        Operation::Save { path, .. },
+                        Operation::Save { path, previous, .. },
                         Request::WriteFile {
                             root,
                             path: destination,
+                            baseline,
                             ..
                         },
                     ) = (&mut operation, &mut request)
@@ -110,6 +120,11 @@ impl RemoteSession {
                             allow_missing: true,
                         })? {
                             Response::Path { path: canonical } => {
+                                if let Some(previous) = previous
+                                    && canonical == previous.0
+                                {
+                                    *baseline = previous.1.clone();
+                                }
                                 path.clone_from(&canonical);
                                 *destination = canonical;
                             }
@@ -139,11 +154,15 @@ impl RemoteSession {
             reading: BTreeSet::new(),
             exclusive_reads: BTreeSet::new(),
             opening: BTreeSet::new(),
+            open_errors: BTreeMap::new(),
             aliases: BTreeMap::new(),
             modified_paths: BTreeSet::new(),
+            #[cfg(feature = "ide-services")]
             last_git: None,
+            #[cfg(feature = "ide-services")]
             comparison_epoch: 0,
             connected: true,
+            #[cfg(feature = "ide-services")]
             workspace_checks: BTreeMap::new(),
         }
     }
@@ -169,6 +188,7 @@ impl RemoteSession {
 }
 
 impl DocumentSession {
+    #[cfg(feature = "ide-services")]
     pub(super) fn remote_workspace_check(&mut self, document: DocumentId) -> io::Result<bool> {
         let path = self.entry(document)?.runtime.state.path.clone();
         let remote = self.remote.as_mut().unwrap();
@@ -223,7 +243,9 @@ impl DocumentSession {
         options.persistent_history = false;
         let mut session = Self::default();
         session.options = options;
+        session.services = bed_files::FileServices::remote_target(target.clone(), client.clone());
         session.remote = Some(RemoteSession::new(target, client, root));
+        #[cfg(feature = "ide-services")]
         session.initialize_lsp();
         Ok(session)
     }
@@ -262,6 +284,21 @@ impl DocumentSession {
         self.remote
             .as_ref()
             .is_some_and(|r| path.to_str().is_some_and(|path| r.opening.contains(path)))
+    }
+
+    /// Consume the result for this exact asynchronous open, without guessing
+    /// from unrelated service errors. A new admission clears the prior result.
+    pub fn take_open_file_error(&mut self, path: &Path) -> Option<io::Error> {
+        self.remote.as_mut()?.open_errors.remove(path.to_str()?)
+    }
+
+    fn record_open_file_error(&mut self, path: &str, error: &io::Error) {
+        self.remote
+            .as_mut()
+            .unwrap()
+            .open_errors
+            .insert(path.into(), io::Error::new(error.kind(), error.to_string()));
+        self.record_error(None, "remote", error);
     }
 
     pub(super) fn remote_alias(&self, path: &Path) -> Option<DocumentId> {
@@ -315,17 +352,23 @@ impl DocumentSession {
         let mut remote = RemoteSession::new(target, client, old.root.clone());
         remote.baselines = old.baselines.clone();
         remote.aliases = old.aliases.clone();
+        self.services =
+            bed_files::FileServices::remote_target(remote.target.clone(), remote.client.clone());
         self.remote = Some(remote);
-        for entry in self.documents.values_mut() {
-            entry.runtime.bind_lsp_client(None);
-        }
-        if let Some(pool) = &mut self.lsp {
-            pool.shutdown();
-        }
-        self.lsp = None;
-        self.initialize_lsp();
-        for id in self.document_ids() {
-            self.attach_lsp(id, None);
+        #[cfg(feature = "ide-services")]
+        {
+            for entry in self.documents.values_mut() {
+                entry.runtime.bind_lsp_client(None);
+            }
+            if let Some(pool) = &mut self.lsp {
+                pool.shutdown();
+            }
+            self.lsp = None;
+            #[cfg(feature = "ide-services")]
+            self.initialize_lsp();
+            for id in self.document_ids() {
+                self.attach_lsp(id, None);
+            }
         }
         for id in self.document_ids() {
             if let Err(error) = self.queue_read(id, ReadMode::Monitor)
@@ -358,7 +401,7 @@ impl DocumentSession {
         &mut self,
         path: &Path,
         kind: Option<DocumentKind>,
-        origin: Option<LspRequestOrigin>,
+        origin: Option<OpenOrigin>,
     ) -> io::Result<Option<DocumentId>> {
         self.ensure_running()?;
         if self.remote.is_none() {
@@ -379,6 +422,7 @@ impl DocumentSession {
         if remote.opening.contains(&path) {
             return Ok(None);
         }
+        remote.open_errors.remove(&path);
         remote.queue(
             Operation::Open {
                 requested: path.clone(),
@@ -400,6 +444,8 @@ impl DocumentSession {
         destination: Option<String>,
     ) -> io::Result<bool> {
         let entry = self.entry(document)?;
+        let destination_requested = destination.is_some();
+        let original_path = entry.runtime.state.path.clone();
         if destination.is_none()
             && (!entry.runtime.state.dirty || entry.runtime.state.path.is_empty())
         {
@@ -450,12 +496,15 @@ impl DocumentSession {
         let baseline = same_path
             .then(|| remote.baselines.get(&document).cloned())
             .flatten();
+        let previous = destination_requested
+            .then(|| Box::new((original_path, remote.baselines.get(&document).cloned())));
         remote.queue(
             Operation::Save {
                 document,
                 path: path.clone(),
                 generation,
                 version,
+                previous,
             },
             Request::WriteFile {
                 root: remote.root.clone(),
@@ -567,7 +616,7 @@ impl DocumentSession {
             Ok(())
         };
         if let Err(error) = result {
-            self.record_error(Some(id), "remote", &error);
+            self.record_error(Some(id), if autosave { "save" } else { "remote" }, &error);
         }
     }
 
@@ -580,9 +629,11 @@ impl DocumentSession {
         }
         options.persistent_history = false;
         let start_autosave = options.autosave.is_some() && self.options.autosave.is_none();
+        #[cfg(feature = "ide-services")]
         let lsp_changed = options.lsp_config != self.options.lsp_config
             || options.lsp_config_mode != self.options.lsp_config_mode
             || options.lsp_file_observations != self.options.lsp_file_observations;
+        #[cfg(feature = "ide-services")]
         if lsp_changed {
             for entry in self.documents.values_mut() {
                 entry.runtime.bind_lsp_client(None);
@@ -593,16 +644,20 @@ impl DocumentSession {
             self.lsp = None;
         }
         self.options = options;
+        #[cfg(feature = "ide-services")]
         self.initialize_lsp();
         for id in self.document_ids() {
             let entry = self.documents.get_mut(&id).unwrap();
-            entry.runtime.highlight.set_enabled(
-                self.options.highlighting && entry.runtime.state.kind == DocumentKind::Text,
-            );
-            entry.runtime.refresh_highlighting();
-            entry.runtime.set_git_changed_lines(
-                self.options.git && entry.runtime.state.kind == DocumentKind::Text,
-            );
+            #[cfg(feature = "ide-services")]
+            {
+                entry.runtime.highlight.set_enabled(
+                    self.options.highlighting && entry.runtime.state.kind == DocumentKind::Text,
+                );
+                entry.runtime.refresh_highlighting();
+                entry.runtime.set_git_changed_lines(
+                    self.options.git && entry.runtime.state.kind == DocumentKind::Text,
+                );
+            }
             if let Some(idle) = self.options.autosave {
                 entry
                     .runtime
@@ -614,6 +669,7 @@ impl DocumentSession {
             } else {
                 entry.runtime.save_service.cancel_pending();
             }
+            #[cfg(feature = "ide-services")]
             if lsp_changed {
                 self.attach_lsp(id, None);
             }
@@ -628,6 +684,16 @@ impl DocumentSession {
             .map(|r| r.completed.try_iter().collect())
             .unwrap_or_default();
         for Completion { operation, result } in completions {
+            let operation_service = if matches!(&operation, Operation::Save { .. }) {
+                "save"
+            } else {
+                "remote"
+            };
+            let open_path = match &operation {
+                Operation::Open { requested, .. } => Some(requested.clone()),
+                _ => None,
+            };
+            #[cfg(feature = "ide-services")]
             if let Operation::WorkspaceCheck {
                 document,
                 baseline: before,
@@ -660,6 +726,7 @@ impl DocumentSession {
                 continue;
             }
             let document = match &operation {
+                #[cfg(feature = "ide-services")]
                 Operation::WorkspaceCheck { .. } => unreachable!(),
                 Operation::Open { requested, .. } => {
                     self.remote.as_mut().unwrap().opening.remove(requested);
@@ -680,9 +747,12 @@ impl DocumentSession {
                     }
                     Some(*document)
                 }
+                #[cfg(feature = "ide-services")]
                 Operation::Git { document, .. } => Some(*document),
+                #[cfg(feature = "ide-services")]
                 Operation::GitStatus => None,
             };
+            #[cfg(feature = "ide-services")]
             if let Operation::Open {
                 origin: Some(origin),
                 ..
@@ -704,8 +774,9 @@ impl DocumentSession {
                         document,
                         generation,
                         ..
-                    }
-                    | Operation::Git {
+                    } => Some((*document, *generation)),
+                    #[cfg(feature = "ide-services")]
+                    Operation::Git {
                         document,
                         generation,
                         ..
@@ -764,6 +835,9 @@ impl DocumentSession {
                         } else {
                             let _ = self.invalidate_removed_path(id);
                         }
+                        if operation_service == "save" {
+                            self.record_error(Some(id), operation_service, &error);
+                        }
                         continue;
                     }
                     if let Some(id) = document
@@ -781,7 +855,11 @@ impl DocumentSession {
                             message: error.to_string(),
                         });
                     }
-                    self.record_error(document, "remote", &error);
+                    if let Some(path) = &open_path {
+                        self.record_open_file_error(path, &error);
+                    } else {
+                        self.record_error(document, operation_service, &error);
+                    }
                     continue;
                 }
             };
@@ -800,7 +878,7 @@ impl DocumentSession {
                 ) => {
                     if let Some(&id) = self.paths.get(Path::new(&path)) {
                         if kind.is_some_and(|kind| kind != self.documents[&id].runtime.state.kind) {
-                            self.record_error(None, "remote", &document_kind_conflict());
+                            self.record_open_file_error(&requested, &document_kind_conflict());
                             continue;
                         }
                         self.remote.as_mut().unwrap().aliases.insert(requested, id);
@@ -811,7 +889,7 @@ impl DocumentSession {
                     if kind == DocumentKind::Text
                         && let Err(error) = bed_files::files::validate_text_bytes(&bytes)
                     {
-                        self.record_error(None, "remote", &error);
+                        self.record_open_file_error(&requested, &error);
                         continue;
                     }
                     let id = DocumentId::next();
@@ -819,12 +897,14 @@ impl DocumentSession {
                     if kind == DocumentKind::Text {
                         runtime.bind_project_undo(Rc::clone(&self.history));
                     }
+                    #[cfg(feature = "ide-services")]
                     runtime.set_git_changed_lines(self.options.git && kind == DocumentKind::Text);
                     runtime.api().open_document_with_kind(&path, &bytes, kind);
                     self.paths.insert(PathBuf::from(path), id);
                     self.remote.as_mut().unwrap().baselines.insert(id, baseline);
                     self.remote.as_mut().unwrap().aliases.insert(requested, id);
                     self.install_entry(id, runtime, FileMonitor::new(), origin);
+                    #[cfg(feature = "ide-services")]
                     self.queue_remote_git(id);
                 }
                 (
@@ -833,6 +913,7 @@ impl DocumentSession {
                         path,
                         generation,
                         version,
+                        ..
                     },
                     Response::Written { baseline },
                 ) => {
@@ -903,11 +984,13 @@ impl DocumentSession {
                         self.queued.push(SessionEvent::Saved { document: id, save });
                     }
                     self.collect_notifications(id, None);
+                    #[cfg(feature = "ide-services")]
                     if self.documents[&id].runtime.document_generation() != generation {
                         self.reopen_lsp(id);
                     } else {
                         self.update_lsp_snapshot(id);
                     }
+                    #[cfg(feature = "ide-services")]
                     self.queue_remote_git(id);
                 }
                 (
@@ -991,11 +1074,13 @@ impl DocumentSession {
                                 view.state.clamp_all(&entry.runtime.state);
                             }
                             let generation = entry.runtime.document_generation();
+                            #[cfg(feature = "ide-services")]
                             self.reopen_lsp(id);
                             self.queued.push(SessionEvent::Reloaded {
                                 document: id,
                                 generation,
                             });
+                            #[cfg(feature = "ide-services")]
                             self.queue_remote_git(id);
                         }
                     } else {
@@ -1003,6 +1088,7 @@ impl DocumentSession {
                         self.remote.as_mut().unwrap().baselines.insert(id, baseline);
                     }
                 }
+                #[cfg(feature = "ide-services")]
                 (
                     Operation::Git {
                         document: id,
@@ -1011,6 +1097,7 @@ impl DocumentSession {
                     },
                     Response::GitBaseline { bytes },
                 ) => {
+                    #[cfg(feature = "ide-services")]
                     if self
                         .remote
                         .as_ref()
@@ -1025,17 +1112,23 @@ impl DocumentSession {
                         );
                     }
                 }
+                #[cfg(feature = "ide-services")]
                 (Operation::GitStatus, Response::GitStatus { entries }) => {
                     self.remote.as_mut().unwrap().modified_paths =
                         entries.into_iter().map(|entry| entry.path).collect();
                 }
-                _ => self.record_error(
-                    document,
-                    "remote",
-                    &io::Error::new(io::ErrorKind::InvalidData, "Unexpected remote response"),
-                ),
+                _ => {
+                    let error =
+                        io::Error::new(io::ErrorKind::InvalidData, "Unexpected remote response");
+                    if let Some(path) = open_path {
+                        self.record_open_file_error(&path, &error);
+                    } else {
+                        self.record_error(document, operation_service, &error);
+                    }
+                }
             }
         }
+        #[cfg(feature = "ide-services")]
         if self.options.git
             && self.remote_connected()
             && self
@@ -1059,6 +1152,7 @@ impl DocumentSession {
         }
     }
 
+    #[cfg(feature = "ide-services")]
     pub(super) fn queue_remote_git(&mut self, document: DocumentId) {
         if !self.options.git || self.documents[&document].runtime.state.kind == DocumentKind::Bytes
         {

@@ -36,14 +36,9 @@ fn resaving_an_active_viewer_keeps_unmounted_viewer_state_and_opaque_extensions(
         })
         .unwrap();
     switch_viewer(original.world_mut(), panel, "bed.json.viewer").unwrap();
-    persist_workspace(original.world_mut()).unwrap();
-    let mut saved = original
-        .world()
-        .non_send::<WorkspacePersistence>()
-        .store
-        .standalone_layout()
-        .unwrap()
-        .clone();
+    let mut saved = layouts::snapshot(original.world_mut()).unwrap()["layouts"]
+        [original.world().resource::<LayoutSlots>().active().key()]
+    .clone();
     let record = saved["panels"]
         .as_array_mut()
         .unwrap()
@@ -60,14 +55,9 @@ fn resaving_an_active_viewer_keeps_unmounted_viewer_state_and_opaque_extensions(
     restore_layout(restored.world_mut(), &saved, false).unwrap();
     // Only the active JSON presentation has been mounted in this new app.
     // Capturing it must merge with inactive serialized presentations.
-    persist_workspace(restored.world_mut()).unwrap();
-    let resaved = restored
-        .world()
-        .non_send::<WorkspacePersistence>()
-        .store
-        .standalone_layout()
-        .unwrap()
-        .clone();
+    let resaved = layouts::snapshot(restored.world_mut()).unwrap()["layouts"]
+        [restored.world().resource::<LayoutSlots>().active().key()]
+    .clone();
     let record = resaved["panels"]
         .as_array()
         .unwrap()

@@ -1,8 +1,9 @@
 //! Query widgets and replacement workers are retained in typed world state.
 use super::*;
+use bed_api::documents::DocumentFrame;
 use bed_api::{
     documents::{DocumentEvent, DocumentReply},
-    features::{FeatureSystems, HostEffects, HostFrame},
+    features::{FeatureSystems, HostEffects},
     workbench::{PanelActionInvocation, PanelActionResult, PanelActions},
 };
 use bed_api::{
@@ -15,6 +16,7 @@ use bed_api::{
     },
 };
 use bed_documents::{DocumentSession, SessionEvent};
+use bed_files::{FileContext, FileServices};
 use bevy::{ecs::system::SystemState, prelude::*};
 
 #[derive(Default)]
@@ -50,7 +52,9 @@ impl Plugin for FileSearchPlugin {
         app.world_mut().init_non_send::<SearchState>();
         app.world_mut().init_non_send::<DocumentSession>();
         app.world_mut().init_non_send::<SearchPanels>();
-        app.init_resource::<HostFrame>()
+        app.init_resource::<FileContext>()
+            .init_resource::<FileServices>()
+            .init_resource::<DocumentFrame>()
             .init_resource::<HostEffects>()
             .init_resource::<bed_api::features::FeatureRegistry>()
             .add_message::<DocumentReply>()
@@ -145,9 +149,9 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
         ("Search", "Enter a query to find text across the project. Use the search options to control matching and scope."),
         ("Results", "Select a match to navigate to it. Replace next or Replace all applies the replacement text; Cancel stops an active search."),
     ]).shortcut_actions(&["bed.edit.find"]));
-    let remote = world.non_send::<SearchState>().remote.clone();
-    let mut panel = SearchPanel::new(remote, &creation.state);
-    panel.search.root = world.resource::<HostFrame>().working_directory.clone();
+    let services = world.resource::<FileServices>().clone();
+    let mut panel = SearchPanel::new(services, &creation.state);
+    panel.search.root = world.resource::<FileContext>().directory_string();
     world
         .non_send_mut::<SearchPanels>()
         .0
@@ -215,26 +219,35 @@ fn prepare(
     mut state: NonSendMut<SearchState>,
     mut panels: NonSendMut<SearchPanels>,
     alive: Query<Entity>,
-    frame: Res<HostFrame>,
+    (context, services): (Res<FileContext>, Res<FileServices>),
     mut documents: NonSendMut<DocumentSession>,
     mut intents: ResMut<HostEffects>,
     mut commands: Commands,
 ) {
     panels.0.retain(|entity, _| alive.contains(*entity));
-    let remote = documents.remote_client();
-    let changed = match (&state.remote, &remote) {
-        (Some(old), Some(new)) => !old.same_connection(new),
-        (None, None) => false,
-        _ => true,
-    };
+    let services = services.for_context(&context);
+    let identity = (
+        context.provider.clone(),
+        context.directory.clone(),
+        context.generation,
+        documents.session_id(),
+    );
+    let changed = !state.services.same_provider(&services)
+        || state
+            .context_identity
+            .as_ref()
+            .is_some_and(|previous| previous != &identity);
+    state.context_identity = Some(identity);
     if changed {
         state.replacement = None;
-        state.remote = remote.clone();
+        state.services = services.clone();
         for panel in panels.0.values_mut() {
-            panel.search.set_remote_client(remote.clone());
+            panel.search.set_file_services(services.clone());
+            panel.search.root = context.directory_string();
             panel.search.invalidate();
         }
     }
+    let root = context.directory_string();
     let mut requests = Vec::new();
     for (entity, panel) in &mut panels.0 {
         if state
@@ -244,11 +257,6 @@ fn prepare(
         {
             continue;
         }
-        let root = if frame.project_root.is_empty() {
-            panel.search.root.clone()
-        } else {
-            frame.project_root.clone()
-        };
         if panel.search.tick(&root, &documents) {
             requests.push(HostAction::Invalidate);
         }
@@ -266,7 +274,7 @@ fn prepare(
     for (entity, panel) in &panels.0 {
         commands
             .entity(*entity)
-            .insert(search_status(panel, &state, &frame, *entity));
+            .insert(search_status(panel, &state, &root, *entity));
     }
     for request in requests {
         intents.push(None, request);
@@ -276,14 +284,9 @@ fn prepare(
 fn search_status(
     panel: &SearchPanel,
     state: &SearchState,
-    frame: &HostFrame,
+    root: &str,
     entity: Entity,
 ) -> SearchStatus {
-    let root = if frame.project_root.is_empty() {
-        &panel.search.root
-    } else {
-        &frame.project_root
-    };
     let mut text = panel.search.status_text(root);
     let replacing = state.replacement.as_ref().filter(|job| job.owns(entity));
     let busy = replacing.is_some() || panel.search.needs_tick();
@@ -307,7 +310,7 @@ fn publish_status(world: &mut World, entity: Entity) {
     let status = search_status(
         panel,
         world.non_send::<SearchState>(),
-        world.resource::<HostFrame>(),
+        &world.resource::<FileContext>().directory_string(),
         entity,
     );
     world.entity_mut(entity).insert(status);
@@ -439,10 +442,10 @@ impl Panel for Frontend {
         let mut state = SystemState::<(
             NonSendMut<SearchPanels>,
             NonSendMut<SearchState>,
-            Res<HostFrame>,
+            Res<FileContext>,
             Option<NonSend<bed_ui::icons::Icons>>,
         )>::new(world);
-        let (mut panels, mut search_state, frame, icons) = state
+        let (mut panels, mut search_state, context, icons) = state
             .get_mut(world)
             .expect("Search frontend resources are installed");
         panels
@@ -459,7 +462,7 @@ impl Panel for Frontend {
                 self.0,
                 &mut search_state,
                 ui,
-                &frame.project_root,
+                &context.directory_string(),
                 icons.as_deref(),
                 &mut requests,
             )
@@ -492,6 +495,65 @@ mod tests {
     use bed_workbench::{WorkbenchPlugin, WorkbenchRequests, commit_close, panel_state};
 
     #[test]
+    fn directory_replacement_cancels_old_replacement_work_before_requesting_edits() {
+        use std::time::{Duration, Instant};
+        let first = crate::test_support::TempDir::new();
+        let second = crate::test_support::TempDir::new();
+        let path = first.write("words.txt", b"alpha");
+        let mut app = App::new();
+        app.insert_resource(FileContext::local(first.root()).unwrap())
+            .add_plugins((WorkbenchPlugin, FileSearchPlugin));
+        app.world_mut()
+            .resource_mut::<WorkbenchRequests>()
+            .push(WorkbenchAction::OpenPanel {
+                panel_type: PANEL_ID.into(),
+                state: json!({"query":"alpha","replacement":"beta"}),
+                area: None,
+            });
+        app.update();
+        let entity = *app
+            .world()
+            .non_send::<SearchPanels>()
+            .0
+            .keys()
+            .next()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            app.update();
+            if !app.world().non_send::<SearchPanels>().0[&entity]
+                .search
+                .needs_tick()
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let job = ReplacementJob::new(
+            entity,
+            &app.world().non_send::<SearchPanels>().0[&entity].search,
+            true,
+        )
+        .unwrap();
+        app.world_mut().non_send_mut::<SearchState>().replacement = Some(job);
+        app.world_mut().resource_mut::<HostEffects>().take();
+        app.world_mut()
+            .resource_mut::<FileContext>()
+            .replace(FileContext::local(second.root()).unwrap());
+        app.update();
+        assert!(!app.world().non_send::<SearchState>().is_replacing());
+        assert_eq!(std::fs::read(path).unwrap(), b"alpha");
+        assert!(
+            app.world_mut()
+                .resource_mut::<HostEffects>()
+                .take()
+                .iter()
+                .all(|effect| matches!(effect.action, HostAction::Invalidate))
+        );
+    }
+
+    #[test]
     fn ambient_search_cancel_captures_its_owner_and_completed_counts_need_focus() {
         use std::time::{Duration, Instant};
         let dir = crate::test_support::TempDir::new();
@@ -500,10 +562,7 @@ mod tests {
         let root = dir.root().to_string_lossy().into_owned();
         let mut app = App::new();
         app.add_plugins((WorkbenchPlugin, FileSearchPlugin));
-        app.world_mut()
-            .resource_mut::<HostFrame>()
-            .working_directory = root.clone();
-        app.world_mut().resource_mut::<HostFrame>().project_root = root;
+        app.insert_resource(FileContext::local(&root).unwrap());
         for query in ["alpha", "beta"] {
             app.world_mut()
                 .resource_mut::<WorkbenchRequests>()
@@ -608,9 +667,7 @@ mod tests {
     fn registered_search_panels_keep_independent_queries_and_release_only_closed_workers() {
         let mut app = App::new();
         app.add_plugins((WorkbenchPlugin, FileSearchPlugin));
-        app.world_mut()
-            .resource_mut::<HostFrame>()
-            .working_directory = "/workspace".into();
+        app.world_mut().resource_mut::<FileContext>().directory = "/workspace".into();
         for query in ["first", "second"] {
             app.world_mut()
                 .resource_mut::<WorkbenchRequests>()
@@ -689,7 +746,7 @@ mod tests {
             .0
             .insert(entity, SearchPanel { search });
         app.world_mut().non_send_mut::<SearchState>().replacement = Some(job);
-        app.world_mut().resource_mut::<HostFrame>().project_root = root.into();
+        app.insert_resource(FileContext::local(root).unwrap());
         app.update();
         let status = app.world().get::<SearchStatus>(entity).unwrap();
         assert!(status.busy);

@@ -1,5 +1,5 @@
 use crate::ImageStates;
-use bed_api::features::HostFrame;
+use bed_api::documents::DocumentFrame;
 use bed_api::{
     status::{StatusContext, StatusDrawContext, StatusItem, StatusItems, StatusText},
     workbench::WorkbenchAction,
@@ -27,7 +27,7 @@ pub(super) fn presentation(world: &World, context: StatusContext) -> Option<Stat
     let panel = world
         .get_non_send::<ImageStates>()?
         .get(context.publisher)?;
-    let frame = world.get_resource::<HostFrame>()?;
+    let frame = world.get_resource::<DocumentFrame>()?;
     let document = frame
         .documents
         .iter()
@@ -35,8 +35,11 @@ pub(super) fn presentation(world: &World, context: StatusContext) -> Option<Stat
     let mut details = format!("{}\n{} bytes", document.path, document.bytes.len());
     let summary = if let Some(decoded) = &panel.decoded {
         let fit = panel.fit.unwrap_or_else(|| {
-            frame.context().settings_for(crate::PLUGIN_ID)["fit_by_default"]
-                .as_bool()
+            world
+                .get_resource::<bed_api::settings::SettingsSnapshot>()
+                .and_then(|settings| {
+                    settings.settings[crate::PLUGIN_ID]["fit_by_default"].as_bool()
+                })
                 .unwrap_or(true)
         });
         let scale = if fit {

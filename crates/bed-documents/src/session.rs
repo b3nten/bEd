@@ -25,10 +25,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(feature = "ide-services")]
+#[cfg(feature = "remote")]
 #[path = "remote_session.rs"]
 mod remote_session;
-#[cfg(feature = "ide-services")]
+#[cfg(feature = "remote")]
 use remote_session::RemoteSession;
 #[cfg(feature = "ide-services")]
 #[path = "workspace_edits.rs"]
@@ -43,6 +43,8 @@ pub use bed_editing::identity::{DocumentId, SessionId, ViewId};
 
 #[cfg(feature = "ide-services")]
 type OpenOrigin = LspRequestOrigin;
+#[cfg(feature = "ide-services")]
+type CapturedDocumentRevisions = BTreeMap<DocumentId, (u64, u64)>;
 #[cfg(not(feature = "ide-services"))]
 type OpenOrigin = ();
 
@@ -227,10 +229,11 @@ struct DocumentEntry {
 /// Main-thread, GUI-independent document registry. Public mutation uses commands
 /// rather than mutable DocumentRuntime/state references, preserving service/view updates.
 pub struct DocumentSession {
-    #[cfg(feature = "ide-services")]
+    #[cfg(feature = "remote")]
     remote: Option<RemoteSession>,
     session_id: SessionId,
     options: SessionOptions,
+    services: bed_files::FileServices,
     documents: BTreeMap<DocumentId, DocumentEntry>,
     paths: BTreeMap<PathBuf, DocumentId>,
     read_only_local_paths: Vec<PathBuf>,
@@ -260,18 +263,19 @@ pub struct DocumentSession {
     #[cfg(feature = "ide-services")]
     pending_workspace_history: Option<PendingWorkspaceHistory>,
     #[cfg(feature = "ide-services")]
-    workspace_request_revisions: Vec<(LspRequestOrigin, BTreeMap<DocumentId, (u64, u64)>)>,
+    workspace_request_revisions: Vec<(LspRequestOrigin, CapturedDocumentRevisions)>,
     #[cfg(feature = "ide-services")]
-    active_lsp_command_revisions: BTreeMap<u64, BTreeMap<DocumentId, (u64, u64)>>,
+    active_lsp_command_revisions: BTreeMap<u64, CapturedDocumentRevisions>,
 }
 
 impl Default for DocumentSession {
     fn default() -> Self {
         Self {
-            #[cfg(feature = "ide-services")]
+            #[cfg(feature = "remote")]
             remote: None,
             session_id: SessionId::next(),
             options: SessionOptions::default(),
+            services: bed_files::FileServices::local(),
             documents: BTreeMap::new(),
             paths: BTreeMap::new(),
             read_only_local_paths: Vec::new(),
@@ -389,9 +393,101 @@ impl DocumentSession {
         Ok(session)
     }
 
+    /// Construct document access from a live directory, without saved-workspace policy.
+    pub fn with_file_services(
+        mut options: SessionOptions,
+        context: &bed_files::FileContext,
+        services: &bed_files::FileServices,
+    ) -> io::Result<Self> {
+        if &context.provider != services.provider_id() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "File context and services use different providers",
+            ));
+        }
+        if context.availability != bed_files::FileAvailability::Available || !services.connected() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "File provider is unavailable",
+            ));
+        }
+        options.project_root = Some(context.directory.clone());
+        if services.is_remote() {
+            #[cfg(feature = "remote")]
+            return Self::with_remote_options(
+                options,
+                services
+                    .ssh_target()
+                    .expect("SSH services retain their target")
+                    .clone(),
+                services
+                    .remote_client()
+                    .expect("SSH services retain their authenticated connection"),
+                context.directory_string(),
+            );
+            #[cfg(not(feature = "remote"))]
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Enable remote document support for SSH file access",
+            ));
+        }
+        let mut session = Self::with_options(options)?;
+        session.services = services.clone();
+        Ok(session)
+    }
+
+    /// Reconfigure services while retaining document identity. Replacing the
+    /// provider or remote directory requires a newly prepared session.
+    pub fn configure_file_services(
+        &mut self,
+        mut options: SessionOptions,
+        context: &bed_files::FileContext,
+        services: &bed_files::FileServices,
+    ) -> io::Result<()> {
+        if &context.provider != services.provider_id() || self.is_remote() != services.is_remote() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Prepare a new document session to replace its provider",
+            ));
+        }
+        if context.availability != bed_files::FileAvailability::Available || !services.connected() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "File provider is unavailable",
+            ));
+        }
+        options.project_root = Some(context.directory.clone());
+        if services.is_remote() {
+            #[cfg(feature = "remote")]
+            {
+                if self.options.project_root.as_ref() != Some(&context.directory) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Prepare a new document session to replace its directory",
+                    ));
+                }
+                if !self.services.same_provider(services) {
+                    self.reconnect_remote_with_target(
+                        services.remote_client().expect("SSH connection"),
+                        services.ssh_target().expect("SSH target").clone(),
+                    )?;
+                }
+            }
+        }
+        self.configure(options)?;
+        self.services = services.clone();
+        Ok(())
+    }
+
     /// Identity of this document container; project attachment does not replace it.
     pub fn session_id(&self) -> SessionId {
         self.session_id
+    }
+
+    /// Whether a file-service request belongs to this document provider.
+    /// Connection identity matters during reconnect as well as host identity.
+    pub fn file_provider_matches(&self, services: &bed_files::FileServices) -> bool {
+        services.connected() && self.services.same_provider(services)
     }
 
     /// Whether this container still accepts document work.
@@ -399,27 +495,32 @@ impl DocumentSession {
         !self.stopped
     }
 
-    #[cfg(not(feature = "ide-services"))]
+    #[cfg(not(feature = "remote"))]
     pub fn is_remote(&self) -> bool {
         false
     }
 
-    #[cfg(not(feature = "ide-services"))]
+    #[cfg(not(feature = "remote"))]
     pub fn save_pending(&self, _document: DocumentId) -> bool {
         false
     }
 
-    #[cfg(not(feature = "ide-services"))]
+    #[cfg(not(feature = "remote"))]
     pub fn open_pending(&self, _path: &Path) -> bool {
         false
     }
 
-    #[cfg(not(feature = "ide-services"))]
+    #[cfg(not(feature = "remote"))]
+    pub fn take_open_file_error(&mut self, _path: &Path) -> Option<io::Error> {
+        None
+    }
+
+    #[cfg(not(feature = "remote"))]
     pub fn request_open_file(&mut self, path: &Path) -> io::Result<Option<DocumentId>> {
         self.open_file(path).map(Some)
     }
 
-    #[cfg(not(feature = "ide-services"))]
+    #[cfg(not(feature = "remote"))]
     pub fn request_open_file_auto(&mut self, path: &Path) -> io::Result<Option<DocumentId>> {
         self.open_file_auto(path).map(Some)
     }
@@ -427,6 +528,23 @@ impl DocumentSession {
     pub fn options(&self) -> &SessionOptions {
         &self.options
     }
+
+    /// Cached Git presentation is optional; callers never start repository I/O here.
+    pub fn git_file_modified(&self, path: &str) -> bool {
+        #[cfg(feature = "ide-services")]
+        return self
+            .documents
+            .values()
+            .any(|entry| entry.runtime.git.borrow().is_file_modified(path));
+        #[cfg(not(feature = "ide-services"))]
+        {
+            let _ = path;
+            false
+        }
+    }
+
+    #[cfg(all(feature = "remote", not(feature = "ide-services")))]
+    pub fn observe_project_file_changes(&mut self, _changes: &[bed_remote::FilesystemChange]) {}
 
     pub fn view_ids(&self, document: DocumentId) -> Vec<ViewId> {
         self.documents
@@ -502,7 +620,7 @@ impl DocumentSession {
     }
 
     pub fn document_for_path(&self, path: &Path) -> Option<DocumentId> {
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         if self.is_remote() {
             return self
                 .paths
@@ -686,7 +804,7 @@ impl DocumentSession {
         origin: Option<OpenOrigin>,
     ) -> io::Result<DocumentId> {
         self.ensure_running()?;
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         if self.is_remote() {
             return self
                 .request_open_mode(path, Some(kind), origin)?
@@ -705,18 +823,14 @@ impl DocumentSession {
             }
             return Ok(id);
         }
-        let raw = if kind == DocumentKind::Text {
-            read_file_raw(&path)?
-        } else {
-            read_file_bytes(&path)?
-        };
+        let raw = self.read_local_file(&path, kind)?;
         self.install_local_file(path, kind, raw.raw, origin)
     }
 
     /// Open using the host's default text/bytes classifier.
     pub fn open_file_auto(&mut self, path: &Path) -> io::Result<DocumentId> {
         self.ensure_running()?;
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         if self.is_remote() {
             return self
                 .request_open_file_auto(path)?
@@ -727,13 +841,50 @@ impl DocumentSession {
         if let Some(&id) = self.paths.get(&path) {
             return Ok(id);
         }
-        let raw = read_file_bytes(&path)?;
+        let raw = self.read_local_file(&path, DocumentKind::Bytes)?;
         self.install_local_file(
             path,
             bed_files::files::classify_bytes(&raw.raw),
             raw.raw,
             None,
         )
+    }
+
+    fn read_local_file(
+        &self,
+        path: &Path,
+        kind: DocumentKind,
+    ) -> io::Result<bed_files::files::ReadFile> {
+        #[cfg(feature = "file-services")]
+        {
+            let metadata = std::fs::metadata(path)?;
+            if metadata.len() > bed_files::files::MAX_FILE_SIZE as u64 {
+                return Err(bed_files::files::file_too_large(path, metadata.len()));
+            }
+            if kind == DocumentKind::Text {
+                // Preserve the bounded binary probe before a full service read.
+                let mut prefix = Vec::new();
+                use std::io::Read;
+                std::fs::File::open(path)?
+                    .take(1024)
+                    .read_to_end(&mut prefix)?;
+                bed_files::files::validate_text_bytes(&prefix)?;
+            }
+            let location = bed_files::FileLocation {
+                provider: bed_files::FileProviderId::Local,
+                path: path.to_path_buf(),
+            };
+            let (raw, _) = self
+                .services
+                .read(path.parent().unwrap_or(Path::new(".")), &location)?;
+            Ok(bed_files::files::ReadFile { raw })
+        }
+        #[cfg(not(feature = "file-services"))]
+        if kind == DocumentKind::Text {
+            read_file_raw(path)
+        } else {
+            read_file_bytes(path)
+        }
     }
 
     fn install_local_file(
@@ -1426,7 +1577,7 @@ impl DocumentSession {
             self.views.remove(view);
         }
         self.paths.retain(|_, id| *id != document);
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         self.forget_remote_document(document, true);
         self.queued.push(SessionEvent::Closed { document });
         Ok(true)
@@ -1442,7 +1593,7 @@ impl DocumentSession {
                 "Comparison documents cannot be saved",
             ));
         }
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         if self.is_remote() {
             return self.queue_remote_save(document, None);
         }
@@ -1488,7 +1639,7 @@ impl DocumentSession {
                 "Comparison documents cannot be saved",
             ));
         }
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         if self.is_remote() {
             return self.queue_remote_save(document, Some(path_string(destination)?.to_owned()));
         }
@@ -1645,7 +1796,7 @@ impl DocumentSession {
         }
         self.paths.retain(|_, id| *id != document);
         self.paths.insert(target, document);
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         self.forget_remote_document(document, false);
         #[cfg(feature = "ide-services")]
         self.attach_lsp(document, None);
@@ -1736,7 +1887,7 @@ impl DocumentSession {
         entry.removal_pending_since = None;
         entry.allow_recreate = false;
         self.paths.retain(|_, id| *id != document);
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         self.forget_remote_document(document, true);
         self.queued.push(SessionEvent::PathChanged {
             document,
@@ -1760,7 +1911,7 @@ impl DocumentSession {
         if self.entry(document)?.removed {
             return self.detach_removed_document(document);
         }
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         if self.is_remote() {
             return self.queue_remote_keep(document);
         }
@@ -1784,7 +1935,7 @@ impl DocumentSession {
                 "Workspace edit is saving",
             ));
         }
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         if self.is_remote() {
             return self.queue_remote_reload(document);
         }
@@ -1890,7 +2041,7 @@ impl DocumentSession {
 
     pub fn tick(&mut self) -> TickReport {
         self.prune_views();
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         self.poll_remote();
         let report = TickReport::default();
         #[cfg(feature = "ide-services")]
@@ -1944,7 +2095,7 @@ impl DocumentSession {
                 .install_highlight_edits(std::mem::take(&mut entry.highlight_edits));
             entry.runtime.poll_document_services();
             entry.runtime.ops.clear_pending();
-            #[cfg(feature = "ide-services")]
+            #[cfg(feature = "remote")]
             if self.is_remote() && !self.is_snapshot_document(id) {
                 self.tick_remote_document(id, monitor);
             }
@@ -2016,7 +2167,7 @@ impl DocumentSession {
     /// waiting for the standalone monitor interval. Missing paths are confirmed
     /// after a short grace period so atomic saves and renames can settle.
     pub fn notify_disk_change(&mut self, document: DocumentId) -> io::Result<()> {
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         if self.is_remote() {
             return self.queue_remote_monitor(document);
         }
@@ -2086,7 +2237,7 @@ impl DocumentSession {
         if let Some(pool) = &mut self.lsp {
             pool.shutdown();
         }
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         if let Some(remote) = &self.remote {
             remote.client.disconnect();
         }
@@ -2096,8 +2247,7 @@ impl DocumentSession {
 
     pub fn configure(&mut self, mut options: SessionOptions) -> io::Result<()> {
         self.ensure_running()?;
-        #[cfg(feature = "ide-services")]
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         if self.is_remote() {
             return self.configure_remote(options);
         }
@@ -2667,7 +2817,7 @@ impl DocumentSession {
 
 impl Drop for DocumentSession {
     fn drop(&mut self) {
-        #[cfg(feature = "ide-services")]
+        #[cfg(feature = "remote")]
         if let Some(remote) = &self.remote {
             remote.client.disconnect();
         }

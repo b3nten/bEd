@@ -3,10 +3,8 @@ use crate::{
     MODULE_ID, OPEN_COMMAND, PANEL_ID, Shared, panel::HttpView, register_metadata, restore_catalog,
     saved_catalog, update_catalog, worker,
 };
-use bed_api::features::{
-    FeatureRegistry, FeatureStateContribution, FeatureStateRestore, FeatureSystems, HostEffects,
-    HostFrame,
-};
+use bed_api::features::{FeatureRegistry, FeatureSystems, HostEffects};
+use bed_api::storage::{FeatureStateContribution, FeatureStateRestore};
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction,
 };
@@ -66,8 +64,7 @@ impl Plugin for HttpClientPlugin {
             .non_send_mut::<bed_ui::icons::Icons>()
             .register(MODULE_ID, &definitions, directory.as_deref())
             .expect("plugin icon contract and configured sources are valid");
-        app.init_resource::<HostFrame>()
-            .init_resource::<HttpPersistence>()
+        app.init_resource::<HttpPersistence>()
             .init_resource::<HostEffects>()
             .init_resource::<FeatureRegistry>()
             .init_non_send::<HttpRuntime>()

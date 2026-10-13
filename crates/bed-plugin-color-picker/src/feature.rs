@@ -1,6 +1,6 @@
 //! Bevy owns color data and commits requests after the frontend returns.
 use super::{ColorDrafts, ColorState, MODULE_ID, OPEN_COMMAND, PANEL_ID, color, read_color, ui};
-use bed_api::features::{HostAction, HostEffects, HostFrame};
+use bed_api::settings::{SettingsRequest, SettingsSnapshot};
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction, register,
 };
@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 pub const APPLY_COMMAND: &str = "bed.color.apply";
 
 /// Optional palette storage for applications without an editor settings resource.
-/// An editor's `HostFrame` and settings reducer remain the palette's owner.
+/// An editor's `SettingsSnapshot` and settings reducer remain the palette's owner.
 #[derive(Resource, Default)]
 pub struct ColorPalette(pub Vec<Value>);
 
@@ -19,7 +19,8 @@ pub struct ColorPickerPlugin;
 
 impl Plugin for ColorPickerPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<bed_api::features::FeatureRegistry>();
+        app.init_resource::<bed_api::features::FeatureRegistry>()
+            .add_message::<SettingsRequest>();
         app.world_mut()
             .resource_mut::<bed_api::features::FeatureRegistry>()
             .register_with(MODULE_ID, |registrar| {
@@ -123,8 +124,8 @@ impl Panel for ColorFrontend {
 }
 
 fn palette(world: &World) -> Vec<Value> {
-    if let Some(frame) = world.get_resource::<HostFrame>() {
-        frame.context().settings_for(MODULE_ID)["swatches"]
+    if let Some(frame) = world.get_resource::<SettingsSnapshot>() {
+        frame.settings[MODULE_ID]["swatches"]
             .as_array()
             .cloned()
             .unwrap_or_default()
@@ -180,16 +181,12 @@ fn apply_color(In(invocation): In<CommandInvocation>, world: &mut World) -> Comm
         selected,
     });
     if let Some(swatches) = swatches {
-        if world.contains_resource::<HostFrame>() {
-            world.init_resource::<HostEffects>();
-            world.resource_mut::<HostEffects>().push(
-                Some(entity),
-                HostAction::SetSetting {
-                    plugin: MODULE_ID.into(),
-                    key: "swatches".into(),
-                    value: Value::Array(swatches),
-                },
-            );
+        if world.contains_resource::<SettingsSnapshot>() {
+            world.write_message(SettingsRequest::new(
+                MODULE_ID,
+                "swatches",
+                Value::Array(swatches),
+            ));
         } else {
             world.insert_resource(ColorPalette(swatches));
         }
@@ -312,7 +309,7 @@ mod tests {
             assert!(apply(&mut app, entity, invalid).is_err());
             assert_eq!(app.world().get::<ColorState>(entity).unwrap(), &original);
             assert!(!app.world().contains_resource::<ColorPalette>());
-            assert!(!app.world().contains_resource::<HostEffects>());
+            assert!(!app.world().contains_resource::<SettingsSnapshot>());
         }
         app.world_mut().despawn(entity);
         assert!(apply(&mut app, entity, Value::Null).is_err());
@@ -328,19 +325,23 @@ mod tests {
         assert_eq!(Value::Array(palette(app.world())), swatches);
         assert!(app.world_mut().remove_resource::<ColorPalette>().is_some());
         let settings = json!({MODULE_ID:{"swatches":[]}});
-        app.insert_resource(HostFrame {
+        app.insert_resource(SettingsSnapshot {
             settings: settings.clone(),
             ..Default::default()
         });
         apply(&mut app, entity, change).unwrap();
         assert!(!app.world().contains_resource::<ColorPalette>());
-        assert_eq!(app.world().resource::<HostFrame>().settings, settings);
-        let intents = app.world_mut().resource_mut::<HostEffects>().take();
-        assert_eq!(intents.len(), 1);
-        assert_eq!(intents[0].source, Some(entity));
-        assert!(matches!(&intents[0].action,
-            HostAction::SetSetting {plugin,key,value}
-                if plugin == MODULE_ID && key == "swatches" && value == &swatches));
+        assert_eq!(
+            app.world().resource::<SettingsSnapshot>().settings,
+            settings
+        );
+        let messages = app.world().resource::<Messages<SettingsRequest>>();
+        let mut cursor = messages.get_cursor();
+        let requests: Vec<_> = cursor.read(messages).collect();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].plugin, MODULE_ID);
+        assert_eq!(requests[0].key, "swatches");
+        assert_eq!(requests[0].value, swatches);
     }
 
     #[test]

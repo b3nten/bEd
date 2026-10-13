@@ -3,13 +3,15 @@ use crate::{
     MarkdownPanel, OPEN_COMMAND, OPEN_FILE_COMMAND, PANEL_ID, PLUGIN_ID, VIEWER_ID,
     register_metadata, supported_path,
 };
+use bed_api::documents::DocumentFrame;
+use bed_api::features::FrontendSnapshot;
 use bed_api::gpu::GpuContext;
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction,
 };
 use bed_api::{
     documents::PanelBinding,
-    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects, HostFrame},
+    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects},
     workbench::{PanelActionInvocation, PanelActionResult, PanelActions},
 };
 use bed_editing::identity::DocumentId;
@@ -50,7 +52,9 @@ pub struct MarkdownPreviewPlugin;
 
 impl Plugin for MarkdownPreviewPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HostFrame>()
+        app.init_resource::<DocumentFrame>()
+            .init_resource::<bed_api::files::FileContext>()
+            .init_resource::<bed_api::files::FileServices>()
             .init_resource::<HostEffects>()
             .init_resource::<FeatureRegistry>()
             .init_non_send::<MarkdownStates>()
@@ -125,34 +129,24 @@ fn create_markdown_panel(In(creation): In<PanelCreation>, world: &mut World) -> 
 }
 
 fn poll_markdowns(world: &mut World) {
-    let workspace = world
-        .get_non_send::<bed_documents::session::DocumentSession>()
-        .map(|session| {
-            (
-                session
-                    .options()
-                    .project_root
-                    .as_ref()
-                    .map(|root| root.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                session.remote_client(),
-            )
-        })
-        .unwrap_or_default();
+    let context = world.resource::<bed_api::files::FileContext>().clone();
+    let services = world
+        .resource::<bed_api::files::FileServices>()
+        .for_context(&context);
     let outputs = {
+        let frame = FrontendSnapshot::capture(world);
         let mut state = SystemState::<(
-            Res<HostFrame>,
             NonSendMut<MarkdownStates>,
             Query<&MarkdownDocument>,
             ResMut<HostEffects>,
         )>::new(world);
-        let (frame, mut states, live, mut intents) = state
+        let (mut states, live, mut intents) = state
             .get_mut(world)
             .expect("Markdown plugin initialized its preparation resources");
         states.0.retain(|entity, _| live.get(*entity).is_ok());
         let host = frame.context();
         for panel in states.0.values_mut() {
-            panel.prepare(&host, &workspace.0, workspace.1.clone());
+            panel.prepare(&host, &context.directory_string(), services.clone());
         }
         if states.0.values().any(MarkdownPanel::pending) {
             intents.push(None, HostAction::Invalidate);
@@ -183,7 +177,7 @@ fn poll_markdowns(world: &mut World) {
 
 fn markdown_command(
     In(invocation): In<CommandInvocation>,
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     bindings: Query<&PanelBinding>,
     mut intents: ResMut<HostEffects>,
 ) -> CommandResult {
@@ -268,7 +262,7 @@ impl Panel for MarkdownFrontend {
             .get(self.entity)
             .map_or_else(
                 || "Markdown Preview".into(),
-                |panel| panel.panel_title(&world.resource::<HostFrame>().context()),
+                |panel| panel.panel_title(&FrontendSnapshot::capture(world).context()),
             )
     }
 
@@ -281,12 +275,10 @@ impl Panel for MarkdownFrontend {
     ) {
         let viewer_menu = bed_api::documents::panel_viewer_menu(world, self.entity, VIEWER_ID);
         let output = {
-            let mut state = SystemState::<(
-                Res<HostFrame>,
-                NonSendMut<MarkdownStates>,
-                ResMut<HostEffects>,
-            )>::new(world);
-            let (frame, mut states, mut intents) = state
+            let frame = FrontendSnapshot::capture(world);
+            let mut state =
+                SystemState::<(NonSendMut<MarkdownStates>, ResMut<HostEffects>)>::new(world);
+            let (mut states, mut intents) = state
                 .get_mut(world)
                 .expect("Markdown plugin initialized its presentation resources");
             let mut requests = Vec::new();
@@ -322,11 +314,20 @@ impl Panel for MarkdownFrontend {
 
 fn markdown_action(
     In(invocation): In<PanelActionInvocation>,
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     mut states: NonSendMut<MarkdownStates>,
     live: Query<&MarkdownDocument>,
     mut intents: ResMut<HostEffects>,
 ) -> PanelActionResult {
+    let frame = FrontendSnapshot {
+        documents: frame.documents.clone(),
+        active_document: frame.active_document,
+        active_view: frame.active_view,
+        session_id: frame.session_id,
+        diagnostics: frame.diagnostics.clone(),
+        ..Default::default()
+    };
+
     if live.get(invocation.entity).is_err() {
         return Ok(false);
     }
@@ -414,7 +415,7 @@ mod ecs_tests {
     fn commands_keep_the_origin_path_and_area() {
         let mut app = App::new();
         app.add_plugins(MarkdownPreviewPlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents =
+        app.world_mut().resource_mut::<DocumentFrame>().documents =
             vec![document(Arc::from(&b"unused"[..]), 1)];
         let (entity, _) = create(&mut app, Value::Null);
         let handler = app
@@ -445,8 +446,7 @@ mod ecs_tests {
     }
 
     #[test]
-    fn preparation_reads_workspace_images_and_actions_keep_document_origin() {
-        use bed_documents::session::{DocumentSession, SessionOptions};
+    fn preparation_reads_directory_images_without_a_session_and_keeps_document_origin() {
         let root = std::env::temp_dir().join(format!(
             "bed-markdown-world-{}-{}",
             std::process::id(),
@@ -456,13 +456,7 @@ mod ecs_tests {
         std::fs::write(root.join("image.svg"), br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"><rect width="2" height="3" fill="red"/></svg>"#).unwrap();
         let mut app = App::new();
         app.add_plugins(MarkdownPreviewPlugin);
-        app.world_mut().insert_non_send(
-            DocumentSession::with_options(SessionOptions {
-                project_root: Some(root.clone()),
-                ..Default::default()
-            })
-            .unwrap(),
-        );
+        app.insert_resource(bed_api::files::FileContext::local(&root).unwrap());
         let mut source = document(
             Arc::from(
                 &b"# Test
@@ -471,7 +465,7 @@ mod ecs_tests {
             1,
         );
         source.path = root.join("readme.md").to_string_lossy().into_owned();
-        app.world_mut().resource_mut::<HostFrame>().documents = vec![source];
+        app.world_mut().resource_mut::<DocumentFrame>().documents = vec![source];
         let (entity, frontend) = create(&mut app, json!({"scroll":[8.0,12.0]}));
         wait(&mut app, entity, |panel| {
             panel.is_ready() && !panel.pending()
@@ -480,7 +474,9 @@ mod ecs_tests {
         assert_eq!(frontend.save(app.world())["scroll"], json!([8.0, 12.0]));
         let action = app.world().get::<PanelActions>(entity).unwrap().0;
         app.world_mut().resource_mut::<HostEffects>().take();
-        app.world_mut().resource_mut::<HostFrame>().active_document = Some(DocumentId(99));
+        app.world_mut()
+            .resource_mut::<DocumentFrame>()
+            .active_document = Some(DocumentId(99));
         assert!(
             app.world_mut()
                 .run_system_with(
@@ -503,7 +499,7 @@ mod ecs_tests {
             }
         ));
         {
-            let mut frame = app.world_mut().resource_mut::<HostFrame>();
+            let mut frame = app.world_mut().resource_mut::<DocumentFrame>();
             frame.documents[0].revision = (1, 2);
             frame.documents[0].bytes = Arc::from(&b"# Image removed"[..]);
         }

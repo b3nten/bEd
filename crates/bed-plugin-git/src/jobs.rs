@@ -1,5 +1,6 @@
+use bed_files::FileServices;
 use bed_git::{Error, Job, Operation, Output};
-use bed_remote::{RemoteClient, Request, Response};
+use bed_remote::{Request, Response};
 use std::{
     path::PathBuf,
     sync::{
@@ -21,17 +22,17 @@ pub(crate) enum Worker {
 }
 
 impl Worker {
-    pub fn start(root: String, operation: Operation, remote: Option<RemoteClient>) -> Self {
-        let Some(client) = remote else {
+    pub fn start(root: String, operation: Operation, services: FileServices) -> Self {
+        if !services.is_remote() {
             return Self::Local(Job::start(PathBuf::from(root), operation));
-        };
+        }
         let (sender, result) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         let cancel = cancelled.clone();
         thread::spawn(move || {
             let mutating = operation.is_mutating();
             let result = (|| {
-                let job_id = match client
+                let job_id = match services
                     .call(Request::GitStart { root, operation })
                     .map_err(|e| e.to_string())?
                 {
@@ -40,9 +41,9 @@ impl Worker {
                 };
                 let outcome = loop {
                     if cancel.load(Ordering::Acquire) {
-                        let _ = client.call(Request::GitCancel { job_id });
+                        let _ = services.call(Request::GitCancel { job_id });
                     }
-                    match client.call(Request::GitPoll { job_id }) {
+                    match services.call(Request::GitPoll { job_id }) {
                         Ok(Response::GitJob {
                             result: Some(result),
                         }) => break result.map_err(display_error),
@@ -63,7 +64,7 @@ impl Worker {
                         }
                     }
                 };
-                let _ = client.call(Request::GitRelease { job_id });
+                let _ = services.call(Request::GitRelease { job_id });
                 outcome
             })();
             let _ = sender.send(result);

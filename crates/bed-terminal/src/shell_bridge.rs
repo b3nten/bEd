@@ -1,4 +1,5 @@
-//! A small, local bridge from shells to companion panels and editor workspaces.
+//! A local command transport. Plugin owners register helper names and handle
+//! their own arguments in the GUI; this module knows no panel identities.
 //!
 //! Each connection sends one newline-terminated JSON request and receives one
 //! JSON acknowledgement. The UI polls nonblocking sockets, so an incomplete or
@@ -26,11 +27,18 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(3);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_ERROR_CHARS: usize = 1024;
 const MAX_PANE_BYTES: usize = 128;
-const HELPERS: &[&str] = &["+open", "+o", "+workspace", "+w", "+ducky"];
+#[cfg(test)]
+const HELPERS: &[&str] = &["+custom", "+alias"];
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Request {
+    Invoke {
+        alias: String,
+        arguments: Vec<Vec<u8>>,
+        directory: PathBuf,
+        pane: Option<String>,
+    },
     Open {
         paths: Vec<PathBuf>,
         pane: Option<String>,
@@ -44,9 +52,64 @@ pub enum Request {
     },
 }
 
+/// The compatibility boundary normalizes historic commands into registered
+/// aliases before any plugin dispatch occurs.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Invocation {
+    pub alias: String,
+    pub arguments: Vec<Vec<u8>>,
+    pub directory: PathBuf,
+    pub pane: Option<String>,
+}
+impl Request {
+    pub fn into_invocation(self) -> Invocation {
+        match self {
+            Self::Invoke {
+                alias,
+                arguments,
+                directory,
+                pane,
+            } => Invocation {
+                alias,
+                arguments,
+                directory,
+                pane,
+            },
+            Self::Open { paths, pane } => Invocation {
+                alias: "+open".into(),
+                arguments: paths
+                    .into_iter()
+                    .map(|path| path.as_os_str().as_bytes().to_vec())
+                    .collect(),
+                directory: PathBuf::from("/"),
+                pane,
+            },
+            Self::Workspace { root, pane } => Invocation {
+                alias: "+workspace".into(),
+                arguments: Vec::new(),
+                directory: root,
+                pane,
+            },
+            Self::Ducky { pane } => Invocation {
+                alias: "+ducky".into(),
+                arguments: Vec::new(),
+                directory: PathBuf::from("/"),
+                pane,
+            },
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum WireRequest {
+    Invoke {
+        alias: String,
+        arguments: Vec<Vec<u8>>,
+        directory: Vec<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pane: Option<String>,
+    },
     Open {
         paths: Vec<Vec<u8>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -100,8 +163,10 @@ impl PrivateDirectory {
 impl Drop for PrivateDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_file(self.socket_path());
-        for helper in HELPERS {
-            let _ = fs::remove_file(self.0.join(helper));
+        if let Ok(entries) = fs::read_dir(&self.0) {
+            for entry in entries.flatten() {
+                let _ = fs::remove_file(entry.path());
+            }
         }
         let _ = fs::remove_dir(&self.0);
     }
@@ -118,9 +183,24 @@ pub struct Bridge {
 
 impl Bridge {
     pub fn new() -> io::Result<Self> {
+        Self::with_aliases(std::iter::empty::<&str>())
+    }
+
+    /// Generate helpers only for the installed host command registrations.
+    pub fn with_aliases(aliases: impl IntoIterator<Item = impl AsRef<str>>) -> io::Result<Self> {
         let directory = PrivateDirectory::new()?;
         let executable = std::env::current_exe()?;
-        for helper in HELPERS {
+        let mut names = std::collections::HashSet::new();
+        for helper in aliases {
+            let helper = helper.as_ref();
+            validate_alias(helper)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+            if !names.insert(helper.to_owned()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Duplicate shell helper alias",
+                ));
+            }
             symlink(&executable, directory.0.join(helper))?;
         }
         let socket_path = directory.socket_path();
@@ -325,6 +405,27 @@ fn decode_request(bytes: &[u8]) -> Result<Request, String> {
     match serde_json::from_slice(bytes)
         .map_err(|error| format!("invalid bed-app-shell request: {error}"))?
     {
+        WireRequest::Invoke {
+            alias,
+            arguments,
+            directory,
+            pane,
+        } => {
+            validate_alias(&alias)?;
+            validate_pane(pane.as_deref())?;
+            if arguments.len() > MAX_PATHS || arguments.iter().any(|argument| argument.contains(&0))
+            {
+                return Err(
+                    "Invalid shell arguments: at most 64 NUL-free arguments are allowed".into(),
+                );
+            }
+            Ok(Request::Invoke {
+                alias,
+                arguments,
+                directory: decode_path(directory)?,
+                pane,
+            })
+        }
         WireRequest::Open { paths, pane } => {
             validate_pane(pane.as_deref())?;
             if paths.is_empty() || paths.len() > MAX_PATHS {
@@ -356,6 +457,20 @@ fn decode_path(bytes: Vec<u8>) -> Result<PathBuf, String> {
         return Err("bed-app-shell paths must be absolute and contain no NUL bytes".into());
     }
     Ok(path)
+}
+
+fn validate_alias(alias: &str) -> Result<(), String> {
+    if alias.strip_prefix('+').is_some_and(|name| {
+        !name.is_empty()
+            && name.len() <= 63
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    }) {
+        Ok(())
+    } else {
+        Err("Invalid shell helper alias".into())
+    }
 }
 
 fn validate_pane(pane: Option<&str>) -> Result<(), String> {
@@ -401,7 +516,8 @@ fn encode_request(paths: Vec<PathBuf>, pane: Option<String>) -> io::Result<Vec<u
 
 fn encode_wire_request(request: WireRequest) -> io::Result<Vec<u8>> {
     let pane = match &request {
-        WireRequest::Open { pane, .. }
+        WireRequest::Invoke { pane, .. }
+        | WireRequest::Open { pane, .. }
         | WireRequest::Workspace { pane, .. }
         | WireRequest::Ducky { pane } => pane,
     };
@@ -416,6 +532,30 @@ fn encode_wire_request(request: WireRequest) -> io::Result<Vec<u8>> {
     }
     bytes.push(b'\n');
     Ok(bytes)
+}
+
+/// Forward bytes without interpreting plugin arguments or touching project files.
+pub fn invoke(
+    alias: &str,
+    arguments: impl IntoIterator<Item = std::ffi::OsString>,
+) -> io::Result<()> {
+    validate_alias(alias).map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let arguments = arguments
+        .into_iter()
+        .map(|argument| argument.into_vec())
+        .collect::<Vec<_>>();
+    if arguments.len() > MAX_PATHS || arguments.iter().any(|argument| argument.contains(&0)) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Invalid shell argument bytes",
+        ));
+    }
+    send_request(encode_wire_request(WireRequest::Invoke {
+        alias: alias.into(),
+        arguments,
+        directory: std::env::current_dir()?.as_os_str().as_bytes().to_vec(),
+        pane: shell_pane()?,
+    })?)
 }
 
 /// Ask the instance that spawned this shell to open existing files.
@@ -500,6 +640,43 @@ mod tests {
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
         stream
+    }
+
+    #[test]
+    fn generic_command_preserves_bytes_and_legacy_commands_normalize_at_boundary() {
+        let arguments = vec![b"argument\xff".to_vec(), Vec::new()];
+        let bytes = encode_wire_request(WireRequest::Invoke {
+            alias: "+third-party".into(),
+            arguments: arguments.clone(),
+            directory: b"/tmp/root\xff".to_vec(),
+            pane: Some("origin".into()),
+        })
+        .unwrap();
+        let request = decode_request(&bytes).unwrap().into_invocation();
+        assert_eq!(request.alias, "+third-party");
+        assert_eq!(request.arguments, arguments);
+        assert_eq!(request.directory.as_os_str().as_bytes(), b"/tmp/root\xff");
+        assert_eq!(request.pane.as_deref(), Some("origin"));
+        assert_eq!(
+            decode_request(br#"{"command":"ducky"}"#)
+                .unwrap()
+                .into_invocation()
+                .alias,
+            "+ducky"
+        );
+        assert_eq!(
+            decode_request(br#"{"command":"workspace","root":[47]}"#)
+                .unwrap()
+                .into_invocation()
+                .alias,
+            "+workspace"
+        );
+        for alias in ["name", "+", "+../escape"] {
+            assert!(Bridge::with_aliases([alias]).is_err());
+        }
+        assert!(Bridge::with_aliases(["+same", "+same"]).is_err());
+        let bridge = Bridge::new().unwrap();
+        assert!(!bridge.helper_directory().join("+workspace").exists());
     }
 
     #[test]
@@ -691,7 +868,7 @@ mod tests {
 
     #[test]
     fn abandoned_clients_expire_and_socket_is_private_and_removed() {
-        let mut bridge = Bridge::new().unwrap();
+        let mut bridge = Bridge::with_aliases(HELPERS.iter().copied()).unwrap();
         let socket = bridge.socket_path().to_owned();
         let directory = socket.parent().unwrap().to_owned();
         let helpers = HELPERS

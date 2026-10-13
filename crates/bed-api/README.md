@@ -7,10 +7,12 @@ This is a linked Rust API; each plugin is an ordinary Bevy `Plugin`.
 | Module | Contracts |
 | --- | --- |
 | `workbench` | Panels, commands, focus, layout requests and `WorkbenchRegistry` |
-| `documents` | Document identities, snapshots, edits, replies, bindings and viewers |
-| `features` | Host context, `HostFrame`, `HostAction`, captured `HostRequest`, `HostEffects`, `FeatureRegistry` and persistence contributions |
-| `application` | Workspace specifications and bEd workspace actions |
-| `settings` | Contributed settings sections |
+| `documents` | Document identities, `DocumentFrame`, revision-bound snapshots, edits, replies, bindings and viewers |
+| `features` | `FeatureRegistry`, captured `HostRequest`, synchronous `HostEffects`, operation barriers and callback-owned `FrontendSnapshot` |
+| `files` | Live `FileContext`, provider-qualified `FileLocation` and shared `FileServices` |
+| `storage` | Scoped plugin snapshots, contributions and application-supplied persistence |
+| `presentation` | Texture bindings and animation preference in `PresentationFrame` |
+| `settings` | Contributed settings sections, `SettingsSnapshot` and ordered `SettingsRequest` messages |
 | `status` | Status items, measurements, drawing and commands |
 | `gpu` | Shared renderer and texture contracts |
 
@@ -19,9 +21,9 @@ This is a linked Rust API; each plugin is an ordinary Bevy `Plugin`.
 those definitions. They serve distinct responsibilities and keep their existing
 registration order.
 
-The default build includes workbench, settings and status contracts without
+The default build includes workbench, file context, storage, settings and status contracts without
 adding document, language-server or GPU services. Enable `documents` for the
-document-dependent contracts in `documents` and `features`. `gpu` adds GPU
+document-dependent contracts in `documents` and `features`. Feature registration and settings contracts do not require documents. `gpu` adds GPU
 contracts independently. `language-services` enables `documents`, LSP contracts
 and `bed-documents/ide-services`; editor panels and widgets have their own
 `language-services` opt-in.
@@ -32,6 +34,15 @@ Bevy message. `HostEffects` collects existing frontend and command effects for
 host admission. The host's controlled request processor owns consequential
 transitions. An in-memory `SessionId` identifies a document session; it is
 independent of a persisted bEd workspace.
+
+Document, settings, file context and rendering observations have separate owners.
+A plugin system reads the domain resources it needs. Frontends can call
+`FrontendSnapshot::capture(world)` at the callback boundary before mutably
+borrowing panel state, then borrow its `HostContext` for widgets. A missing
+optional domain contributes its default observations.
+
+Saved-workspace definitions and actions belong to `bed-plugin-workspaces`.
+Ordinary panels use file context or documents and do not need workspace metadata.
 
 Public Rust names and module paths do not determine stored identities. Command,
 panel and viewer IDs, icon namespaces, settings keys and persistence formats

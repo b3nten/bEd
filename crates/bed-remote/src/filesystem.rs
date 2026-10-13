@@ -15,6 +15,22 @@ type ServiceResult<T> = Result<T, RemoteError>;
 pub struct LocalBackend;
 
 impl LocalBackend {
+    /// Native local document access retains non-UTF-8 paths. Protocol operations
+    /// continue to validate their explicit capability root before these calls.
+    pub fn read_file(&self, path: &Path) -> io::Result<(Vec<u8>, FileBaseline)> {
+        read_file(path).map_err(RemoteError::into_io)
+    }
+
+    /// Atomically save against an observed baseline; None requires a new path.
+    pub fn write_atomic(
+        &self,
+        path: &Path,
+        bytes: &[u8],
+        expected: Option<&FileBaseline>,
+    ) -> io::Result<FileBaseline> {
+        write_file(path, bytes, expected).map_err(RemoteError::into_io)
+    }
+
     pub fn call(&self, request: Request) -> ServiceResult<Response> {
         match request {
             Request::Hello { version } => {

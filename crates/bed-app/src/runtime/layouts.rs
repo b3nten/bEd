@@ -34,28 +34,46 @@ pub(super) fn migrate_default(world: &mut World) -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn load(world: &mut World) -> Option<Value> {
-    let spec = world.resource::<WorkspaceState>().spec.as_ref();
-    let store = &world.non_send::<WorkspacePersistence>().store;
-    let mut saved = store
-        .session_layouts(spec)
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    if saved.is_empty() {
-        let legacy = match spec {
-            Some(spec) => store.layout(spec),
-            None => store.standalone_layout(),
+pub(super) fn load(world: &mut World) -> io::Result<Option<Value>> {
+    let spec = world.resource::<WorkspaceState>().spec.clone();
+    let (mut saved, active) = if let Some(spec) = &spec {
+        let snapshot = world
+            .resource::<WorkspaceRepositoryResource>()
+            .0
+            .load(spec)?;
+        let value = snapshot
+            .map(|snapshot| snapshot.layouts)
+            .unwrap_or(Value::Null);
+        let active = match value.get("active_layout_slot") {
+            Some(value) => LayoutSlot::from_value(value).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "Invalid active layout slot")
+            })?,
+            None => LayoutSlot::default(),
         };
-        if let Some(legacy) = legacy {
+        let mut saved = value["layouts"].as_object().cloned().unwrap_or_default();
+        if saved.is_empty() && value.get("layouts").is_none() && !value.is_null() {
+            saved.insert("1".into(), value);
+        }
+        (saved, active)
+    } else {
+        // Only explicit legacy restoration reads these records; new temporary sessions do not.
+        let store = &world.non_send::<WorkspacePersistence>().store;
+        let mut saved = store
+            .session_layouts(None)
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        if saved.is_empty()
+            && let Some(legacy) = store.standalone_layout()
+        {
             saved.insert("1".into(), legacy.clone());
         }
-    }
-    let active = store.active_layout_slot(spec);
-    let value = saved.get(&active.to_string()).cloned();
-    world.insert_resource(LayoutSlots::from_saved(active, saved));
+        (saved, store.active_layout_slot(None))
+    };
+    let value = saved.get(active.key()).cloned();
+    world.insert_resource(LayoutSlots::from_saved(active, std::mem::take(&mut saved)));
     world.non_send_mut::<WorkspacePersistence>().last_value = None;
-    value
+    Ok(value)
 }
 
 /// A fresh window uses the global template, never a previous standalone session.
@@ -80,7 +98,7 @@ pub(super) fn attach(world: &mut World, terminal: Option<Entity>) -> io::Result<
         }
     }
     clear(world);
-    load(world);
+    load(world)?;
     let mut slot = world.resource::<LayoutSlots>().active();
     if slot == LayoutSlot::Startup {
         slot = LayoutSlot::Layout1;
@@ -363,7 +381,28 @@ pub(super) fn template(world: &World, slot: LayoutSlot) -> Value {
         .non_send::<Settings>()
         .layout_default(slot)
         .cloned()
-        .unwrap_or_else(|| builtin(slot));
+        .unwrap_or_else(|| {
+            let registry = world.resource::<bed_api::workbench::WorkbenchRegistry>();
+            if slot != LayoutSlot::Startup || registry.panel("bed.projects.panel").is_some() {
+                return builtin(slot);
+            }
+            let panel_type = ["bed.editor.text-panel", "bed.terminal.panel"]
+                .into_iter()
+                .find(|panel| registry.panel(panel).is_some());
+            let panels = panel_type
+                .map(|panel| vec![json!({"id":1,"panel_type":panel})])
+                .unwrap_or_default();
+            let mut tiling = TilingState::default();
+            if !panels.is_empty() {
+                tiling.assign(1, 1);
+            }
+            json!({
+                "version":1,
+                "panels":panels,
+                "tiling":tiling.to_value(panel_type.map(|_|1)),
+                "focused":panel_type.map(|_|1)
+            })
+        });
     if let Some(panels) = value["panels"].as_array_mut() {
         for panel in panels {
             panel["state"] = Value::Null;
@@ -538,7 +577,18 @@ mod tests {
             AppRuntimePlugin {
                 options: AppOptions {
                     working_directory: Some(dir.root().to_owned()),
-                    restore_standalone: restore,
+                    workspace: restore
+                        .then(|| {
+                            WorkspaceStore::load(&dir.path("config"))
+                                .unwrap()
+                                .last_workspace()
+                        })
+                        .flatten(),
+                    restore_standalone: restore
+                        && WorkspaceStore::load(&dir.path("config"))
+                            .unwrap()
+                            .last_workspace()
+                            .is_none(),
                     ..Default::default()
                 },
             },
@@ -667,6 +717,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "workspaces")]
     fn slots_roundtrip_and_global_updates_wait_for_workspace_reset() {
         let dir = TempDir::new();
         let mut original = app(&dir, false);
@@ -687,7 +738,7 @@ mod tests {
             .non_send_mut::<Settings>()
             .set_layout_default(LayoutSlot::Layout4, None)
             .unwrap();
-        persist_workspace(original.world_mut()).unwrap();
+        save_current_workspace(original.world_mut(), None).unwrap();
         drop(original);
         let mut restored = app(&dir, true);
         assert_eq!(
@@ -721,6 +772,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "workspaces")]
     fn suspended_startup_terminals_survive_attachment_without_restarting() {
         let dir = TempDir::new();
         let mut app = app(&dir, false);
@@ -874,11 +926,12 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "workspaces")]
     fn persistence_failure_keeps_current_slot_and_panels_active() {
         let dir = TempDir::new();
         let mut app = app(&dir, false);
         let panel = fixture(app.world_mut());
-        persist_workspace(app.world_mut()).unwrap();
+        save_current_workspace(app.world_mut(), None).unwrap();
         let path = dir.path("config/workspaces.json");
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir(&path).unwrap();
@@ -1020,16 +1073,23 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "workspaces")]
     fn persistence_calls_workspace_hooks_once_with_multiple_live_slots() {
         #[derive(Resource, Default)]
         struct Saves(usize);
         let dir = TempDir::new();
         let mut app = app(&dir, false);
         let unavailable = json!({"version":7,"custom":["preserve",{"draft":true}]});
+        let spec = WorkspaceSpec::local(dir.root().canonicalize().unwrap().to_string_lossy());
         app.world_mut()
             .non_send_mut::<WorkspacePersistence>()
             .store
-            .save_standalone_module_settings(json!({"unavailable.feature":unavailable.clone()}))
+            .record_workspace(spec.clone())
+            .unwrap();
+        app.world_mut()
+            .non_send_mut::<WorkspacePersistence>()
+            .store
+            .set_module_settings(&spec, "unavailable.feature", unavailable.clone())
             .unwrap();
         fixture(app.world_mut());
         switch(app.world_mut(), LayoutSlot::Layout4).unwrap();
@@ -1046,20 +1106,20 @@ mod tests {
             save,
             restore,
         });
-        persist_workspace(app.world_mut()).unwrap();
+        save_current_workspace(app.world_mut(), None).unwrap();
         assert_eq!(app.world().resource::<Saves>().0, 1);
         assert_eq!(
             app.world()
                 .non_send::<WorkspacePersistence>()
                 .store
-                .standalone_module_settings("fixture"),
+                .module_settings(&spec, "fixture"),
             Some(&json!({"shared":true}))
         );
         assert_eq!(
             app.world()
                 .non_send::<WorkspacePersistence>()
                 .store
-                .standalone_module_settings("unavailable.feature"),
+                .module_settings(&spec, "unavailable.feature"),
             Some(&unavailable)
         );
         drop(app);
@@ -1069,16 +1129,17 @@ mod tests {
         persist_workspace(restarted.world_mut()).unwrap();
         let store = &restarted.world().non_send::<WorkspacePersistence>().store;
         assert_eq!(
-            store.standalone_module_settings("unavailable.feature"),
+            store.module_settings(&spec, "unavailable.feature"),
             Some(&unavailable)
         );
         assert_eq!(
-            store.standalone_module_settings("fixture"),
+            store.module_settings(&spec, "fixture"),
             Some(&json!({"shared":true}))
         );
     }
 
     #[test]
+    #[cfg(feature = "workspaces")]
     fn workspace_attachment_and_replacement_account_for_inactive_slots() {
         let dir = TempDir::new();
         let mut app = app(&dir, false);

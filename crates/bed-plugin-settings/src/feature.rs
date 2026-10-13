@@ -175,10 +175,9 @@ impl Panel for SettingsFrontend {
             }
         } else if let Some(mut runtime) =
             world.get_non_send_mut::<bed_api::workbench::ShortcutRuntime>()
+            && runtime.recording == Some(self.entity)
         {
-            if runtime.recording == Some(self.entity) {
-                runtime.recording = None;
-            }
+            runtime.recording = None;
         }
         let mut state = world
             .get_mut::<SettingsPanelState>(self.entity)
@@ -189,6 +188,14 @@ impl Panel for SettingsFrontend {
             state.section_points = section_points;
         }
     }
+}
+
+fn show_panel(In(invocation): In<CommandInvocation>) -> CommandResult {
+    Ok(vec![WorkbenchAction::ShowPanel {
+        panel_type: PANEL_ID.into(),
+        state: Value::Null,
+        area: Some(invocation.area),
+    }])
 }
 
 #[cfg(test)]
@@ -306,12 +313,4 @@ mod tests {
         bed_workbench::restore(app.world_mut(), &saved).unwrap();
         assert_eq!(bed_workbench::save(app.world_mut()), saved);
     }
-}
-
-fn show_panel(In(invocation): In<CommandInvocation>) -> CommandResult {
-    Ok(vec![WorkbenchAction::ShowPanel {
-        panel_type: PANEL_ID.into(),
-        state: Value::Null,
-        area: Some(invocation.area),
-    }])
 }

@@ -3,13 +3,15 @@ use crate::{
     GltfPanel, OPEN_COMMAND, OPEN_FILE_COMMAND, PANEL_ID, PLUGIN_ID, VIEWER_ID, register_metadata,
     supported_path,
 };
+use bed_api::documents::DocumentFrame;
+use bed_api::features::FrontendSnapshot;
 use bed_api::gpu::GpuContext;
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction,
 };
 use bed_api::{
     documents::PanelBinding,
-    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects, HostFrame},
+    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects},
 };
 use bed_editing::identity::DocumentId;
 use bed_ui::gpu::{
@@ -57,13 +59,18 @@ pub struct ModelViewerPlugin;
 
 impl Plugin for ModelViewerPlugin {
     fn build(&self, app: &mut App) {
+        if app.is_plugin_added::<bed_desktop::DesktopIntegrationPlugin>()
+            && !app.is_plugin_added::<bed_desktop::DesktopPreviewIntegrationPlugin>()
+        {
+            app.add_plugins(bed_desktop::DesktopPreviewIntegrationPlugin);
+        }
         if !app.is_plugin_added::<ModelAssetsPlugin>() {
             app.add_plugins(ModelAssetsPlugin);
         }
         if !app.is_plugin_added::<crate::skybox_blur::SkyboxBlurPlugin>() {
             app.add_plugins(crate::skybox_blur::SkyboxBlurPlugin);
         }
-        app.init_resource::<HostFrame>()
+        app.init_resource::<DocumentFrame>()
             .init_resource::<HostEffects>()
             .init_resource::<FeatureRegistry>()
             .init_non_send::<GltfStates>()
@@ -134,13 +141,13 @@ fn create_gltf_panel(In(creation): In<PanelCreation>, world: &mut World) -> Pane
 
 fn poll_gltfs(world: &mut World) {
     let outputs = {
+        let frame = FrontendSnapshot::capture(world);
         let mut state = SystemState::<(
-            Res<HostFrame>,
             NonSendMut<GltfStates>,
             Query<&GltfDocument>,
             ResMut<HostEffects>,
         )>::new(world);
-        let (frame, mut states, live, mut intents) = state
+        let (mut states, live, mut intents) = state
             .get_mut(world)
             .expect("Gltf plugin initialized its preparation resources");
         states.0.retain(|entity, _| live.get(*entity).is_ok());
@@ -183,7 +190,7 @@ fn poll_gltfs(world: &mut World) {
 
 fn gltf_command(
     In(invocation): In<CommandInvocation>,
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     bindings: Query<&PanelBinding>,
     mut intents: ResMut<HostEffects>,
 ) -> CommandResult {
@@ -274,7 +281,7 @@ impl Panel for GltfFrontend {
     fn title(&self, world: &World) -> String {
         world.non_send::<GltfStates>().get(self.entity).map_or_else(
             || "Model Viewer".into(),
-            |panel| panel.panel_title(&world.resource::<HostFrame>().context()),
+            |panel| panel.panel_title(&FrontendSnapshot::capture(world).context()),
         )
     }
 
@@ -287,11 +294,10 @@ impl Panel for GltfFrontend {
     ) {
         let viewer_menu = bed_api::documents::panel_viewer_menu(world, self.entity, VIEWER_ID);
         let output = {
+            let frame = FrontendSnapshot::capture(world);
             let mut state =
-                SystemState::<(Res<HostFrame>, NonSendMut<GltfStates>, ResMut<HostEffects>)>::new(
-                    world,
-                );
-            let (frame, mut states, mut intents) = state
+                SystemState::<(NonSendMut<GltfStates>, ResMut<HostEffects>)>::new(world);
+            let (mut states, mut intents) = state
                 .get_mut(world)
                 .expect("Gltf plugin initialized its presentation resources");
             let mut requests = Vec::new();
@@ -396,7 +402,7 @@ mod ecs_tests {
     fn commands_keep_the_origin_path_and_area() {
         let mut app = App::new();
         app.add_plugins(ModelViewerPlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents =
+        app.world_mut().resource_mut::<DocumentFrame>().documents =
             vec![document(Arc::from(&b"unused"[..]), 1)];
         let (entity, _) = create(&mut app, Value::Null);
         let handler = app
@@ -432,7 +438,8 @@ mod ecs_tests {
             Arc::from(include_bytes!("../../../tests/fixtures/gltf/cube.glb").as_slice());
         let mut app = App::new();
         app.add_plugins(ModelViewerPlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents = vec![document(bytes.clone(), 1)];
+        app.world_mut().resource_mut::<DocumentFrame>().documents =
+            vec![document(bytes.clone(), 1)];
         let (entity, frontend) = create(&mut app, json!({"render":{"normals":true}}));
         wait(&mut app, entity, |panel| panel.prepared.is_some());
         assert_eq!(frontend.title(app.world()), "cube.glb");
@@ -451,12 +458,12 @@ mod ecs_tests {
         let output = app.world().get::<CanvasOutput>(entity).unwrap().0;
         assert!(output.depth);
         assert_eq!(output.size, [64, 32]);
-        app.world_mut().resource_mut::<HostFrame>().documents[0] =
+        app.world_mut().resource_mut::<DocumentFrame>().documents[0] =
             document(Arc::from(&b"corrupt glb"[..]), 2);
         app.update();
         assert!(app.world().get::<CanvasOutput>(entity).is_none());
         wait(&mut app, entity, |panel| panel.error.is_some());
-        app.world_mut().resource_mut::<HostFrame>().documents[0] = document(bytes, 3);
+        app.world_mut().resource_mut::<DocumentFrame>().documents[0] = document(bytes, 3);
         wait(&mut app, entity, |panel| panel.prepared.is_some());
         let (sibling, _) = create(&mut app, Value::Null);
         let renderer = app.world().get::<CanvasRenderer>(entity).unwrap().0;
@@ -487,7 +494,8 @@ mod ecs_tests {
             .into();
         let mut app = App::new();
         app.add_plugins(ModelViewerPlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents = vec![document(bytes.clone(), 1)];
+        app.world_mut().resource_mut::<DocumentFrame>().documents =
+            vec![document(bytes.clone(), 1)];
         let (entity, _) = create(&mut app, Value::Null);
         wait(&mut app, entity, |panel| panel.prepared.is_some());
         let (sender, _blocked_worker) = std::sync::mpsc::sync_channel(1);
@@ -511,7 +519,7 @@ mod ecs_tests {
         }
         app.update();
         assert!(app.world().get::<CanvasOutput>(entity).is_some());
-        app.world_mut().resource_mut::<HostFrame>().documents[0] =
+        app.world_mut().resource_mut::<DocumentFrame>().documents[0] =
             document(Arc::from(&b"new bytes"[..]), 2);
         app.update();
         let panel = app.world().non_send::<GltfStates>().get(entity).unwrap();

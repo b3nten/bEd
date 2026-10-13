@@ -1977,8 +1977,10 @@ version = "0.1.0"
 dependencies = [
  "bed-documents",
  "bed-editing",
+ "bed-files",
  "bed-keybindings",
  "bed-lsp",
+ "bed-storage",
  "bed-ui",
  "bevy",
  "dear-imgui-rs",
@@ -1993,6 +1995,7 @@ version = "0.1.0"
 dependencies = [
  "bed-api",
  "bed-app-config",
+ "bed-core",
  "bed-documents",
  "bed-editing",
  "bed-editor-widgets",
@@ -2009,8 +2012,11 @@ dependencies = [
  "bed-plugin-image-viewer",
  "bed-plugin-json-tree",
  "bed-plugin-layouts",
+ "bed-plugin-workspaces",
  "bed-remote",
  "bed-runtime",
+ "bed-storage",
+ "bed-terminal",
  "bed-ui",
  "bed-workbench",
  "bevy",
@@ -2049,8 +2055,11 @@ dependencies = [
  "bed-desktop",
  "bed-documents",
  "bed-editing",
+ "bed-files",
+ "bed-lsp",
  "bed-plugin-layouts",
  "bed-runtime",
+ "bed-storage",
  "bed-ui",
  "bed-workbench",
  "bevy",
@@ -2074,6 +2083,7 @@ name = "bed-desktop"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "bed-runtime",
  "bed-ui",
  "bevy",
  "dear-imgui-rs",
@@ -2148,6 +2158,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "bed-example-game"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
+name = "bed-example-game-editor"
+version = "0.1.0"
+dependencies = [
+ "bed-core",
+ "bed-desktop",
+ "bed-example-game",
+ "bed-ui",
+ "bevy",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-example-game-runtime"
+version = "0.1.0"
+dependencies = [
+ "bed-example-game",
+ "bevy",
+]
+
+[[package]]
 name = "bed-example-layouts"
 version = "0.1.0"
 dependencies = [
@@ -2186,6 +2223,7 @@ version = "0.1.0"
 dependencies = [
  "bed-editing",
  "bed-remote",
+ "bevy",
  "git2",
  "libc",
 ]
@@ -2255,6 +2293,7 @@ dependencies = [
  "bed-documents",
  "bed-editing",
  "bed-plugin-editor",
+ "bed-plugin-workspaces",
  "bed-ui",
  "bed-workbench",
  "bevy",
@@ -2267,7 +2306,6 @@ name = "bed-plugin-color-picker"
 version = "0.1.0"
 dependencies = [
  "bed-api",
- "bed-editing",
  "bed-ui",
  "bed-workbench",
  "bevy",
@@ -2370,7 +2408,6 @@ dependencies = [
  "bed-editing",
  "bed-files",
  "bed-keybindings",
- "bed-remote",
  "bed-ui",
  "bed-workbench",
  "bevy",
@@ -2402,6 +2439,7 @@ dependencies = [
  "bed-documents",
  "bed-editing",
  "bed-editor-widgets",
+ "bed-files",
  "bed-git",
  "bed-remote",
  "bed-ui",
@@ -2485,8 +2523,8 @@ name = "bed-plugin-markdown-preview"
 version = "0.1.0"
 dependencies = [
  "bed-api",
- "bed-documents",
  "bed-editing",
+ "bed-files",
  "bed-plugin-image-viewer",
  "bed-remote",
  "bed-ui",
@@ -2502,6 +2540,7 @@ name = "bed-plugin-mascots"
 version = "0.1.0"
 dependencies = [
  "bed-api",
+ "bed-desktop",
  "bed-documents",
  "bed-runtime",
  "bed-ui",
@@ -2608,8 +2647,11 @@ name = "bed-plugin-workspaces"
 version = "0.1.0"
 dependencies = [
  "bed-api",
+ "bed-core",
  "bed-documents",
+ "bed-files",
  "bed-plugin-mascots",
+ "bed-storage",
  "bed-ui",
  "bed-workbench",
  "bevy",
@@ -2647,6 +2689,14 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "wgpu",
+]
+
+[[package]]
+name = "bed-storage"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "serde_json",
 ]
 
 [[package]]
@@ -3113,6 +3163,7 @@ dependencies = [
  "bevy_render",
  "bevy_shader",
  "bevy_shape",
+ "bevy_sprite_render",
  "bevy_transform",
  "bevy_utils",
  "bytemuck",
@@ -3254,6 +3305,8 @@ dependencies = [
  "bevy_render",
  "bevy_shader",
  "bevy_shape",
+ "bevy_sprite",
+ "bevy_sprite_render",
  "bevy_state",
  "bevy_tasks",
  "bevy_time",
@@ -3626,6 +3679,65 @@ dependencies = [
  "rand_distr",
  "serde",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "bevy_sprite"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24dc4f69160513952a1969a3df5b4a2c729acfe0caf773854acea4a8c71f0918"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_camera",
+ "bevy_color",
+ "bevy_derive",
+ "bevy_ecs",
+ "bevy_image",
+ "bevy_log",
+ "bevy_math",
+ "bevy_mesh",
+ "bevy_reflect",
+ "bevy_transform",
+ "radsort",
+ "tracing",
+ "wgpu-types",
+]
+
+[[package]]
+name = "bevy_sprite_render"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8918649806697740b61d3fd0559cb8c7de2ade5046aacf8abbef20e49ea1de0c"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_camera",
+ "bevy_color",
+ "bevy_core_pipeline",
+ "bevy_derive",
+ "bevy_ecs",
+ "bevy_extract",
+ "bevy_image",
+ "bevy_material",
+ "bevy_math",
+ "bevy_mesh",
+ "bevy_platform",
+ "bevy_reflect",
+ "bevy_render",
+ "bevy_shader",
+ "bevy_shape",
+ "bevy_sprite",
+ "bevy_transform",
+ "bevy_utils",
+ "bitflags 2.13.2",
+ "bytemuck",
+ "derive_more",
+ "fixedbitset",
+ "nonmax",
+ "smallvec",
+ "static_assertions",
+ "tracing",
 ]
 
 [[package]]
@@ -7162,6 +7274,12 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
+name = "radsort"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "019b4b213425016d7d84a153c4c73afb0946fbb4840e4eece7ba8848b9d6da22"
 
 [[package]]
 name = "rand"

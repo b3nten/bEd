@@ -62,8 +62,11 @@ pub enum AppOperation {
         panel: PanelHandle,
         viewer: String,
     },
+    OpenDirectory(bed_api::files::FileLocation),
+    #[cfg(feature = "workspaces")]
     AttachWorkspace(PathBuf),
-    SetWorkspace(bed_api::application::WorkspaceSpec),
+    #[cfg(feature = "workspaces")]
+    SetWorkspace(bed_plugin_workspaces::WorkspaceSpec),
     SetSetting {
         key: String,
         value: Value,
@@ -158,13 +161,18 @@ pub(super) fn start(
             panel: resolve(world, panel)?,
             viewer,
         },
+        AppOperation::OpenDirectory(location) => {
+            AppAction::HostAction(HostAction::OpenDirectory { location })
+        }
+        #[cfg(feature = "workspaces")]
         AppOperation::AttachWorkspace(path) => AppAction::AttachWorkspace(path),
+        #[cfg(feature = "workspaces")]
         AppOperation::SetWorkspace(workspace) => AppAction::SetWorkspace(workspace),
-        AppOperation::SetSetting { key, value } => AppAction::HostAction(HostAction::SetSetting {
+        AppOperation::SetSetting { key, value } => AppAction::Setting {
             plugin: "bed".into(),
             key,
             value,
-        }),
+        },
         AppOperation::Quit => AppAction::Command(WindowCommand::Quit),
     };
     let request = capture_app_request(world, action, PanelTarget::LargestArea);

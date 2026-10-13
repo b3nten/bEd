@@ -6,8 +6,118 @@ use bevy::prelude::*;
 use serde_json::{Value, json};
 
 #[path = "../../../tests/support/temp_dir.rs"]
-mod temp_dir;
+pub(super) mod temp_dir;
 use temp_dir::TempDir;
+fn wait_host_result(world: &mut World, id: HostRequestId) -> Result<HostOutcome, String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        poll_document_services(world);
+        resolve_documents(world);
+        if let Some(result) = take_host_result(world, id) {
+            return result;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "operation did not complete"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn save_admission_validates_every_destination_before_writing_any_document() {
+    let temp = TempDir::new();
+    let path = temp.write("first.txt", b"old");
+    let mut app = app();
+    let world = app.world_mut();
+    let first = world
+        .non_send_mut::<DocumentSession>()
+        .open_file(&path)
+        .unwrap();
+    let untitled = world
+        .non_send_mut::<DocumentSession>()
+        .create_document(b"untitled")
+        .unwrap();
+    let request = edit(world, first, b"new ");
+    apply_document_request(world, capture_host_request(world, None, request)).unwrap();
+    let result = begin_document_save(
+        world,
+        &[
+            DocumentSaveTarget {
+                document: first,
+                destination: None,
+            },
+            DocumentSaveTarget {
+                document: untitled,
+                destination: None,
+            },
+        ],
+    );
+    assert!(result.is_err());
+    assert_eq!(std::fs::read(path).unwrap(), b"old");
+}
+
+#[test]
+fn operation_barrier_orders_requests_and_rechecks_changes_before_replacement() {
+    let mut app = app();
+    let world = app.world_mut();
+    let document = world
+        .non_send_mut::<DocumentSession>()
+        .create_document(b"start")
+        .unwrap();
+    let before = submit_host_request(world, None, edit(world, document, b"before "));
+    let barrier = capture_operation_barrier(world, None);
+    let later = submit_host_request(
+        world,
+        None,
+        HostAction::Notify {
+            message: "after".into(),
+        },
+    );
+    resolve_documents(world);
+    assert_eq!(
+        take_host_result(world, before),
+        Some(Ok(HostOutcome::Applied))
+    );
+    assert!(take_host_result(world, later).is_none());
+    assert_eq!(
+        barrier_status(world, barrier),
+        Some(OperationBarrierStatus::Ready)
+    );
+    assert!(matches!(
+        prepare_document_transition(world, barrier, bed_documents::ClosePolicy::Cancel).unwrap(),
+        OperationBarrierStatus::NeedsDecision(_)
+    ));
+    prepare_document_transition(world, barrier, bed_documents::ClosePolicy::Discard).unwrap();
+    let revision = document_revision(world, document).unwrap();
+    world
+        .non_send_mut::<DocumentSession>()
+        .apply_edits(
+            document,
+            revision,
+            &[ByteEdit {
+                range: 0..0,
+                bytes: b"during prompt ".to_vec(),
+            }],
+        )
+        .unwrap();
+    assert!(validate_document_transition(world, barrier).is_err());
+    assert!(commit_context_change(world, barrier, DocumentSession::new()).is_err());
+    finish_operation_barrier(world, barrier, Err("cancelled".into())).unwrap();
+    resolve_documents(world);
+    assert_eq!(
+        take_host_result(world, later),
+        Some(Ok(HostOutcome::Applied))
+    );
+    assert!(
+        world
+            .non_send::<DocumentSession>()
+            .snapshot(document)
+            .unwrap()
+            .bytes
+            .starts_with(b"during prompt")
+    );
+}
 
 struct EmptyPanel;
 impl api::workbench::Panel for EmptyPanel {
@@ -281,7 +391,7 @@ fn typed_model_close_and_save_use_the_same_document_policy_and_receipts() {
     let save = submit_host_request(world, Some(second), HostAction::Save { document });
     resolve_documents(world);
     assert_eq!(
-        take_host_result(world, save),
+        Some(wait_host_result(world, save)),
         Some(Ok(HostOutcome::Saved {
             documents: vec![document],
             revisions: vec![(0, 1)]
@@ -306,7 +416,7 @@ fn failed_save_keeps_the_model_dirty_and_quit_keeps_documents_alive() {
     edit_model::<Counter>(world, document, 0, 2, "Increment").unwrap();
     let save = submit_host_request(world, None, HostAction::Save { document });
     resolve_documents(world);
-    assert!(take_host_result(world, save).unwrap().is_err());
+    assert!(wait_host_result(world, save).is_err());
     assert!(document_dirty(world, document).unwrap());
     assert!(quit(world).is_err());
     assert!(model::<Counter>(world, document).is_some());
@@ -324,6 +434,39 @@ fn failed_save_keeps_the_model_dirty_and_quit_keeps_documents_alive() {
             .count(),
         0
     );
+}
+
+#[test]
+fn a_model_write_acknowledges_its_snapshot_without_marking_newer_edits_clean() {
+    let temp = TempDir::new();
+    let path = temp.root().join("model.txt");
+    let mut app = app();
+    let world = app.world_mut();
+    let document = create_model_document(world, Counter(0), "Counter", Some(path.clone()));
+    edit_model::<Counter>(world, document, 0, 1, "First").unwrap();
+    let save = begin_document_save(
+        world,
+        &[DocumentSaveTarget {
+            document,
+            destination: None,
+        }],
+    )
+    .unwrap();
+    edit_model::<Counter>(world, document, 1, 2, "Second").unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let saved = loop {
+        if let Some(result) = poll_document_save(world, save) {
+            break result.unwrap();
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    };
+    assert_eq!(saved[0].revision, (0, 1));
+    assert_eq!(std::fs::read(&path).unwrap(), b"1");
+    assert!(document_dirty(world, document).unwrap());
+    undo_document(world, document).unwrap();
+    assert_eq!(model::<Counter>(world, document).unwrap().0, 1);
+    assert!(!document_dirty(world, document).unwrap());
 }
 
 #[derive(Resource, Default)]
@@ -537,7 +680,6 @@ fn previews_replace_clean_tabs_retain_dirty_tabs_and_drops_move_existing_tabs() 
 #[test]
 fn document_commands_use_the_captured_panel_and_tools_do_not_inherit_selection() {
     let mut app = app();
-    app.add_plugins(crate::commands::DocumentCommandsPlugin);
     let world = app.world_mut();
     let document = world
         .non_send_mut::<DocumentSession>()
@@ -552,7 +694,7 @@ fn document_commands_use_the_captured_panel_and_tools_do_not_inherit_selection()
     resolve_documents(world);
     assert!(
         world
-            .resource::<bed_api::features::HostFrame>()
+            .resource::<bed_api::documents::DocumentFrame>()
             .active_document
             .is_none()
     );
@@ -593,8 +735,7 @@ fn native_quit_waits_for_drawing_and_prior_document_operations() {
     let temp = TempDir::new();
     let path = temp.write("quit.txt", b"before");
     let mut app = app();
-    app.add_plugins(crate::commands::DocumentCommandsPlugin)
-        .init_resource::<bed_desktop::DesktopNativeActions>()
+    app.init_resource::<bed_desktop::DesktopNativeActions>()
         .add_message::<AppExit>();
     let world = app.world_mut();
     let document = world
@@ -668,4 +809,383 @@ fn model_mutation_and_persistence_stop_with_the_shared_session() {
     assert!(save_document(world, document).is_err());
     assert!(mark_model_saved(world, document, 0).is_err());
     assert!(!path.exists());
+}
+
+#[test]
+fn opening_a_directory_without_workspaces_retains_live_documents_and_layout() {
+    let temp = TempDir::new();
+    let directory = temp.path("project");
+    std::fs::create_dir(&directory).unwrap();
+    let mut app = app();
+    let world = app.world_mut();
+    let document = world
+        .non_send_mut::<DocumentSession>()
+        .create_document(b"draft")
+        .unwrap();
+    let session = world.non_send::<DocumentSession>().session_id();
+    let panel = open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    let request = edit(world, document, b"unsaved ");
+    apply_document_request(world, capture_host_request(world, Some(panel), request)).unwrap();
+    let generation = world.resource::<bed_files::FileContext>().generation;
+    let id = submit_host_request(
+        world,
+        None,
+        HostAction::OpenDirectory {
+            location: bed_files::FileLocation {
+                provider: bed_files::FileProviderId::Local,
+                path: directory.clone(),
+            },
+        },
+    );
+    assert_eq!(wait_host_result(world, id), Ok(HostOutcome::Applied));
+    assert_eq!(
+        world.resource::<bed_files::FileContext>().directory,
+        std::fs::canonicalize(directory).unwrap()
+    );
+    assert!(world.resource::<bed_files::FileContext>().generation > generation);
+    assert_eq!(world.non_send::<DocumentSession>().session_id(), session);
+    assert_eq!(
+        world
+            .non_send::<DocumentSession>()
+            .snapshot(document)
+            .unwrap()
+            .bytes,
+        b"unsaved draft"
+    );
+    assert!(world.entities().contains(panel));
+    assert!(document_dirty(world, document).unwrap());
+}
+
+#[test]
+fn saving_the_last_model_view_waits_for_storage_before_closing_it() {
+    let temp = TempDir::new();
+    let path = temp.path("counter.txt");
+    let mut app = app();
+    let world = app.world_mut();
+    let document = create_model_document(world, Counter(1), "Counter", Some(path.clone()));
+    let panel = bed_workbench::open_panel(
+        world,
+        json!({"panel_type":"test.panel","state":null}),
+        None,
+        None,
+    )
+    .unwrap();
+    world.entity_mut(panel).insert(DocumentBinding(document));
+    edit_model::<Counter>(world, document, 0, 2, "increment").unwrap();
+    world.resource_mut::<DocumentClosePolicy>().0 = bed_documents::ClosePolicy::Save;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !bed_workbench::request_close_many(world, &[panel]).unwrap() {
+        assert!(world.entities().contains(panel));
+        assert!(std::time::Instant::now() < deadline);
+        poll_document_services(world);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), b"2");
+    assert!(!world.entities().contains(panel));
+    assert!(!model_document(world, document).unwrap().dirty());
+}
+
+#[test]
+fn context_replacement_retires_unbound_typed_documents() {
+    let mut app = app();
+    let world = app.world_mut();
+    let document = create_model_document(world, Counter(1), "Counter", None);
+    let barrier = capture_operation_barrier(world, None);
+    resolve_documents(world);
+    prepare_document_transition(world, barrier, bed_documents::ClosePolicy::Discard).unwrap();
+    validate_document_transition(world, barrier).unwrap();
+    commit_context_change(world, barrier, DocumentSession::new()).unwrap();
+    finish_operation_barrier(world, barrier, Ok(())).unwrap();
+    assert!(model_document(world, document).is_none());
+}
+
+#[test]
+fn settings_requests_use_core_without_application_or_workspace_services() {
+    let mut app = app();
+    let world = app.world_mut();
+    world.write_message(api::settings::SettingsRequest::new(
+        "example.palette",
+        "swatches",
+        json!(["red"]),
+    ));
+    let barrier = capture_operation_barrier(world, None);
+    world.write_message(api::settings::SettingsRequest::new(
+        "example.palette",
+        "swatches",
+        json!(["blue"]),
+    ));
+    resolve_documents(world);
+    assert_eq!(
+        world.resource::<api::settings::SettingsSnapshot>().settings["swatches"],
+        json!(["red"])
+    );
+    finish_operation_barrier(world, barrier, Ok(())).unwrap();
+    resolve_documents(world);
+    assert_eq!(
+        world.resource::<api::settings::SettingsSnapshot>().settings["swatches"],
+        json!(["blue"])
+    );
+}
+
+#[test]
+fn an_aggregate_failure_still_acknowledges_an_earlier_model_write() {
+    let temp = TempDir::new();
+    let model_path = temp.root().join("model.txt");
+    let text_path = temp.write("removed.txt", b"original");
+    let mut app = app();
+    let world = app.world_mut();
+    let model_id = create_model_document(world, Counter(0), "Counter", Some(model_path.clone()));
+    edit_model::<Counter>(world, model_id, 0, 1, "Increment").unwrap();
+    let text_id = world
+        .non_send_mut::<DocumentSession>()
+        .open_file(&text_path)
+        .unwrap();
+    let request = edit(world, text_id, b"changed ");
+    apply_document_request(world, capture_host_request(world, None, request)).unwrap();
+    std::fs::remove_file(&text_path).unwrap();
+
+    // Destination admission succeeds. The text write fails after the lower-ID
+    // model's worker has started, so its checkpoint must still be observed.
+    let save = begin_document_save(
+        world,
+        &[
+            DocumentSaveTarget {
+                document: model_id,
+                destination: None,
+            },
+            DocumentSaveTarget {
+                document: text_id,
+                destination: None,
+            },
+        ],
+    )
+    .unwrap();
+    let mut result = poll_document_save(world, save);
+    if result.is_none() {
+        assert!(
+            save_document(world, model_id)
+                .unwrap_err()
+                .contains("pending save")
+        );
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while result.is_none() {
+        assert!(std::time::Instant::now() < deadline);
+        poll_document_services(world);
+        result = poll_document_save(world, save);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(result.unwrap().is_err());
+    assert_eq!(std::fs::read(model_path).unwrap(), b"1");
+    assert!(!document_dirty(world, model_id).unwrap());
+    assert!(document_dirty(world, text_id).unwrap());
+    assert!(!text_path.exists());
+}
+
+#[test]
+fn a_rejected_typed_model_draft_prevents_local_directory_adoption() {
+    fn reject(In(invocation): In<api::workbench::PanelActionInvocation>) -> Result<bool, String> {
+        assert!(matches!(
+            invocation.action,
+            api::workbench::PanelAction::CommitEdit
+        ));
+        Err("Typed model draft was rejected".into())
+    }
+    let temp = TempDir::new();
+    let next = temp.root().join("next");
+    std::fs::create_dir(&next).unwrap();
+    let original = bed_files::FileContext::local(temp.root()).unwrap();
+    let mut app = app();
+    let world = app.world_mut();
+    world.insert_resource(original.clone());
+    let document = create_model_document(world, Counter(1), "Counter", None);
+    let panel = panel(world);
+    let handler = world.register_system(reject);
+    world.entity_mut(panel).insert((
+        DocumentBinding(document),
+        api::workbench::PanelActions(handler),
+    ));
+    let request = submit_host_request(
+        world,
+        None,
+        HostAction::OpenDirectory {
+            location: bed_files::FileLocation {
+                provider: bed_files::FileProviderId::Local,
+                path: next,
+            },
+        },
+    );
+    assert_eq!(
+        wait_host_result(world, request).unwrap_err(),
+        "Typed model draft was rejected"
+    );
+    assert_eq!(world.resource::<bed_files::FileContext>(), &original);
+    assert!(world.entities().contains(panel));
+    assert_eq!(model::<Counter>(world, document).unwrap().0, 1);
+}
+
+#[test]
+fn command_effects_resume_in_order_between_two_operation_barriers() {
+    #[derive(Resource, Default)]
+    struct CommandBarriers(Option<[OperationBarrierToken; 2]>);
+    fn invoke(
+        _: In<api::workbench::CommandInvocation>,
+        world: &mut World,
+    ) -> api::workbench::CommandResult {
+        let first = create_operation_barrier(world);
+        let second = create_operation_barrier(world);
+        world.resource_mut::<CommandBarriers>().0 = Some([first, second]);
+        for action in [
+            HostAction::OperationBarrier { token: first },
+            HostAction::Notify {
+                message: "first".into(),
+            },
+            HostAction::OperationBarrier { token: second },
+            HostAction::Notify {
+                message: "second".into(),
+            },
+        ] {
+            world
+                .resource_mut::<api::features::HostEffects>()
+                .push(None, action);
+        }
+        Ok(Vec::new())
+    }
+    let mut app = app();
+    let world = app.world_mut();
+    world.init_resource::<CommandBarriers>();
+    api::workbench::register(world, "test.continuations", |registrar| {
+        registrar.command("test.continuations.run", "Continue", invoke);
+    })
+    .unwrap();
+    let invocation = bed_workbench::capture_command(world, "test.continuations.run", Value::Null);
+    let command = world
+        .resource_mut::<WorkbenchRequests>()
+        .submit(api::workbench::WorkbenchAction::Invoke(invocation));
+    let independent = submit_host_request(
+        world,
+        None,
+        HostAction::Notify {
+            message: "independent".into(),
+        },
+    );
+    let mut notices = bevy::ecs::message::MessageCursor::<CoreNotice>::default();
+    resolve_documents(world);
+    let [first, second] = world.resource::<CommandBarriers>().0.unwrap();
+    assert_eq!(active_operation_barrier(world), Some(first));
+    assert_eq!(
+        notices
+            .read(world.resource::<Messages<CoreNotice>>())
+            .count(),
+        0
+    );
+    assert!(
+        world
+            .resource_mut::<WorkbenchRequests>()
+            .take_result(command)
+            .is_none()
+    );
+    assert!(take_host_result(world, independent).is_none());
+
+    finish_operation_barrier(world, first, Ok(())).unwrap();
+    resolve_documents(world);
+    assert_eq!(active_operation_barrier(world), Some(second));
+    assert_eq!(
+        notices
+            .read(world.resource::<Messages<CoreNotice>>())
+            .map(|notice| notice.message.as_str())
+            .collect::<Vec<_>>(),
+        ["first"]
+    );
+    assert!(
+        world
+            .resource_mut::<WorkbenchRequests>()
+            .take_result(command)
+            .is_none()
+    );
+    assert!(take_host_result(world, independent).is_none());
+
+    finish_operation_barrier(world, second, Ok(())).unwrap();
+    resolve_documents(world);
+    assert!(
+        world
+            .resource_mut::<WorkbenchRequests>()
+            .take_result(command)
+            .unwrap()
+            .is_ok()
+    );
+    assert_eq!(
+        take_host_result(world, independent),
+        Some(Ok(HostOutcome::Applied))
+    );
+    assert_eq!(
+        notices
+            .read(world.resource::<Messages<CoreNotice>>())
+            .map(|notice| notice.message.as_str())
+            .collect::<Vec<_>>(),
+        ["second", "independent"]
+    );
+}
+
+#[test]
+fn an_asynchronous_model_failure_does_not_abandon_other_model_checkpoints() {
+    let temp = TempDir::new();
+    let mut app = app();
+    let world = app.world_mut();
+    let failed = create_model_document(
+        world,
+        Counter(0),
+        "Missing destination",
+        Some(temp.root().join("missing/model.txt")),
+    );
+    let saved_path = temp.root().join("saved.txt");
+    let saved = create_model_document(world, Counter(0), "Saved", Some(saved_path.clone()));
+    edit_model::<Counter>(world, failed, 0, 1, "Increment").unwrap();
+    edit_model::<Counter>(world, saved, 0, 2, "Increment").unwrap();
+    let save = begin_document_save(
+        world,
+        &[
+            DocumentSaveTarget {
+                document: failed,
+                destination: None,
+            },
+            DocumentSaveTarget {
+                document: saved,
+                destination: None,
+            },
+        ],
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let result = loop {
+        if let Some(result) = poll_document_save(world, save) {
+            break result;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    };
+    assert!(result.is_err());
+    assert!(document_dirty(world, failed).unwrap());
+    assert!(!document_dirty(world, saved).unwrap());
+    assert_eq!(std::fs::read(saved_path).unwrap(), b"2");
+}
+
+#[test]
+fn a_rejected_typed_model_draft_prevents_quitting_a_clean_model() {
+    fn reject(_: In<api::workbench::PanelActionInvocation>) -> Result<bool, String> {
+        Err("Typed model draft was rejected".into())
+    }
+    let mut app = app();
+    let world = app.world_mut();
+    let document = create_model_document(world, Counter(1), "Counter", None);
+    assert!(!document_dirty(world, document).unwrap());
+    let panel = panel(world);
+    let handler = world.register_system(reject);
+    world.entity_mut(panel).insert((
+        DocumentBinding(document),
+        api::workbench::PanelActions(handler),
+    ));
+    assert_eq!(quit(world).unwrap_err(), "Typed model draft was rejected");
+    assert!(world.non_send::<DocumentSession>().is_running());
+    assert!(world.entities().contains(panel));
 }

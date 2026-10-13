@@ -9,7 +9,9 @@ license.workspace = true
 default = []
 # Existing editor service integration. Local documents, views, edits, saves and
 # in-memory history are available without language servers, Git or SSH.
-ide-services = ["dep:bed-highlight", "dep:bed-lsp", "dep:bed-remote", "dep:git2", "bed-files/workspace-services"]
+file-services = ["bed-files/file-services"]
+remote = ["file-services", "dep:bed-remote"]
+ide-services = ["remote", "dep:bed-highlight", "dep:bed-lsp", "dep:git2", "bed-files/workspace-services"]
 
 [dependencies]
 bed-editing = { workspace = true }
@@ -25,6 +27,12 @@ name = "remote_io"
 path = "tests/remote_io.rs"
 harness = false
 required-features = ["ide-services"]
+
+[[test]]
+name = "remote_documents"
+path = "tests/remote_documents.rs"
+harness = false
+required-features = ["remote"]
 
 [[test]]
 name = "lsp_navigation"

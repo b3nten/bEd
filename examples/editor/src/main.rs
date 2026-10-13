@@ -87,9 +87,8 @@ fn exercise(world: &mut World) {
     let panels = world
         .query::<(Entity, &PanelBinding)>()
         .iter(world)
-        .filter_map(|(entity, binding)| {
-            (binding.document == Some(document)).then(|| (entity, binding.view.unwrap()))
-        })
+        .filter(|(_, binding)| binding.document == Some(document))
+        .map(|(entity, binding)| (entity, binding.view.unwrap()))
         .collect::<Vec<_>>();
     assert_eq!(panels.len(), 2);
     assert_ne!(panels[0].1, panels[1].1);

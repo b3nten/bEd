@@ -19,6 +19,10 @@ mod support;
 use support::TempDir;
 
 fn remote_app(directory: &TempDir, restore: bool) -> App {
+    remote_app_with_target(directory, restore, SshTarget::new("fixture"))
+}
+
+fn remote_app_with_target(directory: &TempDir, restore: bool, target: SshTarget) -> App {
     let mut child = Command::new(std::env::current_exe().unwrap());
     child.arg("--stdio");
     let client = RemoteClient::launch_command(child).unwrap();
@@ -31,7 +35,7 @@ fn remote_app(directory: &TempDir, restore: bool) -> App {
             monitoring: false,
             ..Default::default()
         },
-        SshTarget::new("fixture"),
+        target,
         client,
         root.to_string_lossy().into_owned(),
     )
@@ -130,6 +134,43 @@ fn shutdown(app: &mut App) {
         .non_send_mut::<DocumentSession>()
         .shutdown(ClosePolicy::Discard)
         .unwrap();
+}
+
+fn service_publication_retains_the_authenticated_ssh_target() {
+    let directory = TempDir::new();
+    let target = SshTarget {
+        host: "authenticated-fixture".into(),
+        agent: "/custom/installed/bed-remote-agent".into(),
+    };
+    let mut app = remote_app_with_target(&directory, false, target.clone());
+    let saved = WorkspaceSpec {
+        name: "Saved fixture".into(),
+        target: WorkspaceTarget::Ssh {
+            host: "configured-alias".into(),
+        },
+        root: directory.root().to_string_lossy().into_owned(),
+    };
+    app.world_mut().resource_mut::<WorkspaceState>().spec = Some(saved.clone());
+    let client = app
+        .world()
+        .non_send::<DocumentSession>()
+        .remote_client()
+        .unwrap();
+    app.insert_resource(bed_files::FileServices::remote(target.host.clone(), client));
+    configure_feature_targets(app.world_mut());
+    for _ in 0..3 {
+        app.update();
+        let context = app.world().resource::<bed_files::FileContext>();
+        let services = app.world().resource::<bed_files::FileServices>();
+        assert_eq!(services.ssh_target(), Some(&target));
+        assert_eq!(&context.provider, services.provider_id());
+        assert!(services.for_context(context).connected());
+        assert_eq!(
+            app.world().resource::<WorkspaceState>().spec,
+            Some(saved.clone())
+        );
+    }
+    shutdown(&mut app);
 }
 
 fn captured_destination_and_cancellation() {
@@ -404,6 +445,193 @@ fn save_and_close_receipts_wait_for_acknowledged_bytes() {
     shutdown(&mut app);
 }
 
+fn submit_delayed_save(app: &mut App, panel: Entity, bytes: &[u8]) -> AppRequestId {
+    let document = app
+        .world()
+        .get::<PanelBinding>(panel)
+        .unwrap()
+        .document
+        .unwrap();
+    let snapshot = app
+        .world()
+        .non_send::<DocumentSession>()
+        .snapshot(document)
+        .unwrap();
+    let revision = app
+        .world()
+        .non_send::<DocumentSession>()
+        .document_revision(document)
+        .unwrap();
+    let edit = submit(
+        app,
+        AppAction::ApplyEdits {
+            document,
+            revision,
+            edits: vec![ByteEdit {
+                range: 0..snapshot.bytes.len(),
+                bytes: bytes.to_vec(),
+            }],
+        },
+        Some(panel),
+    );
+    outcome(app, edit);
+    submit(app, AppAction::SaveDocuments(vec![document]), Some(panel))
+}
+
+#[cfg(feature = "workspaces")]
+fn workspace_snapshot_waits_for_an_earlier_write_without_committing_drafts() {
+    let directory = TempDir::new();
+    let path = directory.write("snapshot.txt", b"original");
+    let mut app = remote_app(&directory, false);
+    let panel = open(&mut app, &path, 1);
+    let session = app.world().non_send::<DocumentSession>().session_id();
+    let save = submit_delayed_save(&mut app, panel, b"before snapshot");
+    process_app_requests(app.world_mut()).unwrap();
+    let frontend = panel_presentation(app.world(), panel).unwrap();
+    #[derive(Component)]
+    struct PendingDraft;
+    let commit =
+        app.world_mut()
+            .register_system(|In(_): In<bed_api::workbench::PanelActionInvocation>| {
+                Err::<bool, String>("snapshot must retain this draft".into())
+            });
+    app.world_mut()
+        .entity_mut(frontend)
+        .insert((PendingDraft, bed_api::workbench::PanelActions(commit)));
+    let workspace = submit(
+        &mut app,
+        AppAction::PluginCommand(bed_plugin_workspaces::SAVE_COMMAND.into()),
+        Some(panel),
+    );
+    let later = submit(
+        &mut app,
+        AppAction::Setting {
+            plugin: "test".into(),
+            key: "after_snapshot".into(),
+            value: json!(true),
+        },
+        None,
+    );
+    process_app_requests(app.world_mut()).unwrap();
+    assert!(poll_app_request_result(app.world_mut(), save).is_none());
+    assert!(poll_app_request_result(app.world_mut(), workspace).is_none());
+    assert!(poll_app_request_result(app.world_mut(), later).is_none());
+    assert!(app.world().resource::<WorkspaceState>().spec.is_none());
+    assert_eq!(fs::read(&path).unwrap(), b"original");
+    assert!(
+        app.world().non_send::<bed_app_config::Settings>().settings["after_snapshot"].is_null()
+    );
+    assert!(matches!(
+        outcome(&mut app, workspace),
+        AppRequestOutcome::Applied
+    ));
+    assert!(matches!(
+        outcome(&mut app, save),
+        AppRequestOutcome::Saved { .. }
+    ));
+    assert!(matches!(
+        outcome(&mut app, later),
+        AppRequestOutcome::Applied
+    ));
+    assert_eq!(fs::read(&path).unwrap(), b"before snapshot");
+    assert_eq!(
+        app.world().non_send::<DocumentSession>().session_id(),
+        session
+    );
+    assert!(app.world().get::<PendingDraft>(frontend).is_some());
+    assert!(app.world().resource::<WorkspaceState>().spec.is_some());
+    assert!(!bed_core::operation_barrier_active(app.world()));
+    shutdown(&mut app);
+}
+
+#[cfg(feature = "workspaces")]
+fn workspace_replacement_waits_for_an_earlier_write() {
+    let directory = TempDir::new();
+    let path = directory.write("transition.txt", b"original");
+    let local = directory.path("local");
+    fs::create_dir_all(&local).unwrap();
+    let local = fs::canonicalize(local).unwrap();
+    let mut app = remote_app(&directory, false);
+    let spec = app
+        .world_mut()
+        .resource_mut::<bed_plugin_workspaces::WorkspaceRepositoryResource>()
+        .0
+        .commit(
+            WorkspaceSpec::local(local.to_string_lossy()),
+            bed_plugin_workspaces::WorkspaceSnapshot::default(),
+        )
+        .unwrap();
+    let panel = open(&mut app, &path, 1);
+    let session = app.world().non_send::<DocumentSession>().session_id();
+    let save = submit_delayed_save(&mut app, panel, b"before replacement");
+    let replacement = submit(
+        &mut app,
+        AppAction::Workspace(bed_plugin_workspaces::WorkspaceAction::OpenWorkspace(
+            spec.clone(),
+        )),
+        None,
+    );
+    process_app_requests(app.world_mut()).unwrap();
+    assert!(poll_app_request_result(app.world_mut(), save).is_none());
+    assert!(poll_app_request_result(app.world_mut(), replacement).is_none());
+    assert_eq!(
+        app.world().non_send::<DocumentSession>().session_id(),
+        session
+    );
+    assert!(app.world().entities().contains(panel));
+    assert!(app.world().non_send::<DocumentSession>().is_remote());
+    assert_eq!(fs::read(&path).unwrap(), b"original");
+    assert!(matches!(
+        outcome(&mut app, replacement),
+        AppRequestOutcome::Applied
+    ));
+    assert!(matches!(
+        outcome(&mut app, save),
+        AppRequestOutcome::Saved { .. }
+    ));
+    assert_eq!(fs::read(&path).unwrap(), b"before replacement");
+    assert_ne!(
+        app.world().non_send::<DocumentSession>().session_id(),
+        session
+    );
+    assert!(!app.world().entities().contains(panel));
+    assert!(!app.world().non_send::<DocumentSession>().is_remote());
+    assert_eq!(
+        app.world().resource::<WorkspaceState>().spec.as_ref(),
+        Some(&spec)
+    );
+    assert!(!bed_core::operation_barrier_active(app.world()));
+    shutdown(&mut app);
+}
+
+fn quit_waits_for_an_earlier_write() {
+    let directory = TempDir::new();
+    let path = directory.write("quit.txt", b"original");
+    let mut app = remote_app(&directory, false);
+    let panel = open(&mut app, &path, 1);
+    let save = submit_delayed_save(&mut app, panel, b"before quit");
+    let quit = submit(&mut app, AppAction::Command(WindowCommand::Quit), None);
+    process_app_requests(app.world_mut()).unwrap();
+    assert!(poll_app_request_result(app.world_mut(), save).is_none());
+    assert!(poll_app_request_result(app.world_mut(), quit).is_none());
+    assert!(app.world().entities().contains(panel));
+    assert!(!app.world().resource::<WorkspaceState>().close_requested);
+    assert_eq!(fs::read(&path).unwrap(), b"original");
+    assert!(matches!(
+        outcome(&mut app, quit),
+        AppRequestOutcome::Closed { .. }
+    ));
+    assert!(matches!(
+        outcome(&mut app, save),
+        AppRequestOutcome::Saved { .. }
+    ));
+    assert_eq!(fs::read(&path).unwrap(), b"before quit");
+    assert!(!app.world().entities().contains(panel));
+    assert!(app.world().resource::<WorkspaceState>().close_requested);
+    assert!(!bed_core::operation_barrier_active(app.world()));
+    shutdown(&mut app);
+}
+
 fn preview_selections_and_double_clicks_supersede_pending_remote_opens() {
     let directory = TempDir::new();
     let first = directory.write("first.txt", b"first");
@@ -586,13 +814,20 @@ fn main() {
     if !cfg!(unix) {
         return;
     }
+    service_publication_retains_the_authenticated_ssh_target();
     captured_destination_and_cancellation();
     restoration_keeps_reserved_identity_and_group_selection();
     save_and_close_receipts_wait_for_acknowledged_bytes();
+    #[cfg(feature = "workspaces")]
+    {
+        workspace_snapshot_waits_for_an_earlier_write_without_committing_drafts();
+        workspace_replacement_waits_for_an_earlier_write();
+    }
+    quit_waits_for_an_earlier_write();
     preview_selections_and_double_clicks_supersede_pending_remote_opens();
     location_navigation_replaces_a_remote_preview_and_finishes_the_jump();
     terminal_file_links_finish_the_jump_after_a_remote_read();
     println!(
-        "remote editor: captured destinations, cancellation, shared restoration, delayed save and close receipts, preview supersession and location navigation passed"
+        "remote editor: SSH target retention, captured destinations, cancellation, shared restoration, delayed save and transition receipts, preview supersession and location navigation passed"
     );
 }

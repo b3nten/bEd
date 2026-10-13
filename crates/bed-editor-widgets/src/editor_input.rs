@@ -9,6 +9,8 @@ use bed_editing::{
     text_commands::CursorReveal,
     util::utf8::{prev_utf8_char, snap_to_utf8_char_boundary},
 };
+#[cfg(test)]
+use dear_imgui_rs::Key;
 use dear_imgui_rs::{MouseButton, Ui, WindowHoveredFlags, sys};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1589,6 +1591,3 @@ mod tests {
         assert_eq!(editor.view.column, 0);
     }
 }
-
-#[cfg(test)]
-use dear_imgui_rs::Key;

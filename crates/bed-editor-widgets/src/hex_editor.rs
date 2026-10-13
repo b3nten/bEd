@@ -1,5 +1,7 @@
 //! First-class exact-byte editing over the same session lifecycle as text.
 use bed_documents::{ByteEdit, DocumentId, DocumentKind, DocumentSession};
+#[cfg(test)]
+use dear_imgui_rs::Key;
 use dear_imgui_rs::{FocusedFlags, ListClipper, Ui, WindowFlags};
 use std::{io, ops::Range};
 
@@ -668,6 +670,3 @@ mod tests {
         assert_eq!(editor.state()["insert"], true);
     }
 }
-
-#[cfg(test)]
-use dear_imgui_rs::Key;

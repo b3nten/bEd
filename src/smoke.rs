@@ -1,11 +1,14 @@
 //! Native acceptance scenarios drive the same captured operations as editor clients.
 use crate::startup::SmokeOptions;
 use bed_api::documents::PanelBinding;
-use bed_app::{WorkspaceState, panel_presentation};
-use bed_desktop::{
-    DesktopCanvasTargets, DesktopContext, DesktopGpu, DesktopInjectedEvent, DesktopInputStep,
-    DesktopRenderStatus,
-};
+#[cfg(feature = "terminal")]
+use bed_app::WorkspaceState;
+use bed_app::panel_presentation;
+#[cfg(feature = "editor")]
+use bed_desktop::DesktopContext;
+use bed_desktop::{DesktopCanvasTargets, DesktopGpu, DesktopRenderStatus};
+#[cfg(any(feature = "editor", feature = "terminal"))]
+use bed_desktop::{DesktopInjectedEvent, DesktopInputStep};
 use bed_plugin_automation::{
     AppOperation, AutomationRequests, AutomationResults, CaptureTarget, Operation, OperationId,
     OperationValue, PanelHandle, Readiness, Snapshot,
@@ -13,8 +16,9 @@ use bed_plugin_automation::{
 use bed_ui::{TextureHandle, gpu::CanvasOutput};
 use bevy::{prelude::*, window::PrimaryWindow, winit::WINIT_WINDOWS};
 use serde_json::{Value, json};
+#[cfg(any(feature = "editor", feature = "terminal"))]
+use std::collections::HashSet;
 use std::{
-    collections::HashSet,
     io,
     path::PathBuf,
     time::{Duration, Instant},
@@ -619,9 +623,10 @@ fn fixture_workspace(world: &mut World, smoke: &mut Smoke, name: &str) -> io::Re
     Ok(smoke
         .operation(
             world,
-            Operation::App(AppOperation::SetWorkspace(
-                bed_api::application::WorkspaceSpec::local(root.to_string_lossy()),
-            )),
+            Operation::App(AppOperation::OpenDirectory(bed_api::files::FileLocation {
+                provider: bed_api::files::FileProviderId::Local,
+                path: root,
+            })),
         )?
         .is_some())
 }
@@ -1266,6 +1271,13 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                     }
                 }
                 if done {
+                    // Directory-only fixtures retain Startup. Select a distinct
+                    // current slot before verifying both global template commands.
+                    crate::app::smoke_native_menu(
+                        world,
+                        MenuAction::UseLayout(bed_app_config::LayoutSlot::Layout1),
+                    )?;
+                    bed_app::process_app_requests(world)?;
                     crate::app::smoke_native_menu(world, MenuAction::SetCurrentLayout)?;
                     crate::app::smoke_native_menu(
                         world,

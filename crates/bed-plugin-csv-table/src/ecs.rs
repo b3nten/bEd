@@ -3,12 +3,14 @@ use crate::{
     CsvPanel, OPEN_COMMAND, OPEN_FILE_COMMAND, PANEL_ID, PLUGIN_ID, VIEWER_ID, register_metadata,
     supported_path,
 };
+use bed_api::documents::DocumentFrame;
+use bed_api::features::FrontendSnapshot;
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction,
 };
 use bed_api::{
     documents::{PanelBinding, PanelEditResult, PanelEditSystem, PanelEdits, panel_viewer_menu},
-    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects, HostFrame},
+    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects},
     workbench::{PanelActionInvocation, PanelActionResult, PanelActionSystem, PanelActions},
 };
 use bed_editing::identity::DocumentId;
@@ -71,7 +73,7 @@ struct CsvOperationHandlers {
 
 impl Plugin for CsvTablePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HostFrame>()
+        app.init_resource::<DocumentFrame>()
             .init_resource::<HostEffects>()
             .init_resource::<FeatureRegistry>()
             .init_non_send::<CsvStates>()
@@ -151,12 +153,21 @@ fn create_csv_panel(In(creation): In<PanelCreation>, world: &mut World) -> Panel
 }
 
 fn poll_csv(
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     mut states: NonSendMut<CsvStates>,
     live: Query<&CsvDocument>,
     mut intents: ResMut<HostEffects>,
     mut commands: Commands,
 ) {
+    let frame = FrontendSnapshot {
+        documents: frame.documents.clone(),
+        active_document: frame.active_document,
+        active_view: frame.active_view,
+        session_id: frame.session_id,
+        diagnostics: frame.diagnostics.clone(),
+        ..Default::default()
+    };
+
     // Removing a panel invalidates its bounded worker and releases its table.
     states.0.retain(|entity, _| live.get(*entity).is_ok());
     let host = frame.context();
@@ -175,7 +186,7 @@ fn poll_csv(
 
 fn csv_command(
     In(invocation): In<CommandInvocation>,
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     bindings: Query<&PanelBinding>,
     mut intents: ResMut<HostEffects>,
 ) -> CommandResult {
@@ -227,11 +238,20 @@ fn csv_clipboard(
 
 fn csv_action(
     In(invocation): In<PanelActionInvocation>,
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     mut states: NonSendMut<CsvStates>,
     live: Query<&CsvDocument>,
     mut intents: ResMut<HostEffects>,
 ) -> PanelActionResult {
+    let frame = FrontendSnapshot {
+        documents: frame.documents.clone(),
+        active_document: frame.active_document,
+        active_view: frame.active_view,
+        session_id: frame.session_id,
+        diagnostics: frame.diagnostics.clone(),
+        ..Default::default()
+    };
+
     if live.get(invocation.entity).is_err() {
         return Ok(false);
     }
@@ -266,7 +286,7 @@ impl Panel for CsvFrontend {
     fn title(&self, world: &World) -> String {
         world.non_send::<CsvStates>().get(self.entity).map_or_else(
             || "CSV Table".into(),
-            |panel| panel.panel_title(&world.resource::<HostFrame>().context()),
+            |panel| panel.panel_title(&FrontendSnapshot::capture(world).context()),
         )
     }
 
@@ -278,9 +298,9 @@ impl Panel for CsvFrontend {
         _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         let menu = panel_viewer_menu(world, self.entity, VIEWER_ID);
-        let mut state =
-            SystemState::<(Res<HostFrame>, NonSendMut<CsvStates>, ResMut<HostEffects>)>::new(world);
-        let (frame, mut states, mut intents) = state
+        let frame = FrontendSnapshot::capture(world);
+        let mut state = SystemState::<(NonSendMut<CsvStates>, ResMut<HostEffects>)>::new(world);
+        let (mut states, mut intents) = state
             .get_mut(world)
             .expect("CSV plugin initialized its presentation resources");
         let mut requests = Vec::new();

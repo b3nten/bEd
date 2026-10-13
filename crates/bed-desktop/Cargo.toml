@@ -5,7 +5,12 @@ edition = "2024"
 publish = false
 license.workspace = true
 
+[features]
+default = []
+preview = ["dep:bed-runtime", "bed-runtime/render"]
+
 [dependencies]
+bed-runtime = { workspace = true, optional = true }
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_winit", "keyboard", "mouse", "x11", "wayland"] }
 dear-imgui-rs = { workspace = true }
 dear-imgui-sys = { workspace = true }

@@ -1,6 +1,8 @@
 //! Outline preparation belongs to the world; each surface owns its tree widgets.
 use crate::{OPEN_COMMAND, PANEL_ID, PLUGIN_ID, presentation, register_metadata, sync_outline};
-use bed_api::features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects, HostFrame};
+use bed_api::documents::DocumentFrame;
+use bed_api::features::FrontendSnapshot;
+use bed_api::features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects};
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction,
 };
@@ -19,7 +21,7 @@ pub struct SourceOutlinePlugin;
 
 impl Plugin for SourceOutlinePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HostFrame>()
+        app.init_resource::<DocumentFrame>()
             .init_resource::<HostEffects>()
             .init_resource::<FeatureRegistry>()
             .init_non_send::<StructureOutline>()
@@ -68,12 +70,21 @@ fn create(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
 }
 
 fn prepare(
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     live: Query<Entity, With<StructureSurface>>,
     mut outline: NonSendMut<StructureOutline>,
     mut intents: ResMut<HostEffects>,
     mut commands: Commands,
 ) {
+    let frame = FrontendSnapshot {
+        documents: frame.documents.clone(),
+        active_document: frame.active_document,
+        active_view: frame.active_view,
+        session_id: frame.session_id,
+        diagnostics: frame.diagnostics.clone(),
+        ..Default::default()
+    };
+
     sync_outline(&mut outline.0, &frame.context(), !live.is_empty());
     if outline.0.as_ref().is_some_and(OutlineService::updating) {
         intents.push(None, HostAction::Invalidate);
@@ -110,7 +121,7 @@ impl Panel for StructureFrontend {
         _: &mut Vec<WorkbenchAction>,
         _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
-        let frame = world.resource::<HostFrame>().clone();
+        let frame = FrontendSnapshot::capture(world);
         let host = frame.context();
         let request = {
             let mut outline = world.non_send_mut::<StructureOutline>();
@@ -165,10 +176,12 @@ mod tests {
             text: Some(state.snapshot()),
         };
         app.world_mut()
-            .resource_mut::<HostFrame>()
+            .resource_mut::<DocumentFrame>()
             .documents
             .push(document);
-        app.world_mut().resource_mut::<HostFrame>().active_document = Some(DocumentId(8));
+        app.world_mut()
+            .resource_mut::<DocumentFrame>()
+            .active_document = Some(DocumentId(8));
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             app.update();

@@ -46,7 +46,7 @@ pub(crate) static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(
 #[path = "../../../tests/support/rustup_fixture.rs"]
 pub(crate) mod rustup_fixture;
 #[cfg(test)]
-#[allow(dead_code)]
+#[allow(dead_code, clippy::duplicate_mod)]
 #[path = "../../../tests/support/temp_dir.rs"]
 pub(crate) mod test_support;
 

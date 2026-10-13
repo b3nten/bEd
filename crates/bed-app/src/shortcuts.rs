@@ -11,6 +11,7 @@ pub fn register(world: &mut World) {
         registrar.command("bed.app.NewTerminal", "New Terminal", command);
         registrar.command("bed.app.NewExplorer", "New Explorer", command);
         registrar.command("bed.app.NewSettings", "New Settings", command);
+        #[cfg(feature = "workspaces")]
         registrar.command("bed.app.NewProjects", "New Workspaces Panel", command);
         registrar.command("bed.app.NewDiagnostics", "New Diagnostics", command);
         registrar.command("bed.app.NewStructure", "New Structure", command);
@@ -20,6 +21,7 @@ pub fn register(world: &mut World) {
         registrar.command("bed.app.DuplicateView", "Duplicate View", command);
         registrar.command("bed.app.SplitRight", "Split Right", command);
         registrar.command("bed.app.SplitDown", "Split Down", command);
+        #[cfg(feature = "workspaces")]
         registrar.command("bed.app.Projects", "Workspaces", command);
         registrar.command("bed.app.Diagnostics", "Diagnostics", command);
         registrar.command("bed.app.Structure", "Structure", command);

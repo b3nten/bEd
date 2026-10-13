@@ -1,5 +1,9 @@
 //! Bed files components. Attribution: workspace LICENSE and NOTICE.
 pub mod actions;
+pub mod context;
+#[cfg(feature = "file-services")]
+pub use bed_remote::FileBaseline;
+pub use context::{FileAvailability, FileContext, FileLocation, FileProviderId, FileServices};
 #[cfg(feature = "workspace-services")]
 pub mod content_search;
 #[cfg(feature = "workspace-services")]

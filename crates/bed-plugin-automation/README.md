@@ -38,13 +38,18 @@ if let Some(result) = world.resource_mut::<AutomationResults>().take(open) {
 }
 ```
 
-These document operations require the crate's `app` feature. Capture and
+These document operations require the crate's `app` feature.
+`AppOperation::OpenDirectory` selects a live provider-qualified directory without
+requiring a saved workspace. Enable the separate `workspaces` SDK feature for
+`AttachWorkspace` and `SetWorkspace`, whose specification belongs to
+`bed-plugin-workspaces`. Capture and
 input operations require `DesktopPlugins` in the same app; generic panel commands
 also work in an app without a window.
 
 `Inspect` returns owned panel, command, layout and UI frame observations. With the `app` feature, it also includes workspace/document observations and typed panel readiness. Commands use the same published availability facts as menus. Handles include application and session identity as well as the entity generation; closed panels and replaced sessions cannot accidentally target later content. Attaching a workspace to the existing session preserves handles.
 
-Semantic operations open/focus/split/close panels and invoke registered commands. The optional application API opens and reads files, applies revision-bound byte edits, saves or saves as, undoes/redoes, changes viewers/settings and attaches/replaces workspaces. These requests use the ordinary captured application queue and draft/save barriers.
+Semantic operations open/focus/split/close panels and invoke registered commands. The optional application API opens and reads files, applies revision-bound byte edits, saves or saves as, undoes/redoes, changes viewers/settings and selects directories. The `workspaces` feature adds
+workspace attachment/replacement. These requests use the ordinary captured application queue and draft/save barriers.
 
 `Input` accepts explicit `DesktopInputStep` values: one step per UI frame. Pointer, key, modifier, text and scroll events pass through the native interception, ImGui capture and gameplay routing stages. Key events do not insert text; provide a `Text` event once. Held input is released before the sequence receipt.
 

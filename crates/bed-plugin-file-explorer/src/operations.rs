@@ -42,12 +42,12 @@ pub struct FileOperations {
 struct Active {
     job: OperationJob,
     session_id: Option<u64>,
-    document_remote: Option<RemoteClient>,
+    document_provider: bed_files::FileServices,
     started: Instant,
     paused: Vec<DocumentId>,
     export: bool,
     local_destination: bool,
-    destination_remote: Option<RemoteClient>,
+    destination_provider: bed_files::FileServices,
     kind: OperationKind,
     refresh: Vec<String>,
     replacements: Vec<String>,
@@ -56,7 +56,7 @@ struct Active {
 struct Pending {
     token: SaveToken,
     session_id: Option<u64>,
-    document_remote: Option<RemoteClient>,
+    document_provider: bed_files::FileServices,
     documents: Vec<DocumentId>,
     work: PendingWork,
 }
@@ -80,13 +80,13 @@ struct NameDialog {
 struct SimpleJob {
     receiver: mpsc::Receiver<Result<SimpleResult, String>>,
     session_id: Option<u64>,
-    document_remote: Option<RemoteClient>,
+    document_provider: bed_files::FileServices,
     paused: Vec<DocumentId>,
 }
 
 struct SimpleCommand {
     request: bed_remote::Request,
-    remote: Option<RemoteClient>,
+    services: bed_files::FileServices,
     result: SimpleResult,
 }
 
@@ -98,11 +98,7 @@ enum SimpleResult {
 impl FileOperations {
     /// The host's filesystem target owns transport and queued operation identity.
     pub fn bind_target(&mut self, target: &ExplorerTarget, session: &mut DocumentSession) -> bool {
-        let same_connection = match (&self.target.remote, &target.remote) {
-            (Some(old), Some(new)) => old.same_connection(new),
-            (None, None) => true,
-            _ => false,
-        };
+        let same_connection = self.target.services.same_provider(&target.services);
         if self.target.root == target.root && same_connection {
             return false;
         }
@@ -125,7 +121,7 @@ impl FileOperations {
         session: &DocumentSession,
         path: &str,
     ) -> io::Result<Vec<DocumentId>> {
-        if provider_matches(self.target.remote.as_ref(), session) {
+        if provider_matches(&self.target.services, session) {
             affected_documents(session, path)
         } else {
             Ok(Vec::new())
@@ -190,7 +186,7 @@ impl FileOperations {
         self.pending = Some(Pending {
             token,
             session_id,
-            document_remote: session.remote_client(),
+            document_provider: self.target.services.clone(),
             documents,
             work,
         });
@@ -253,11 +249,7 @@ impl FileOperations {
             .take()
             .expect("the matching document preparation is pending");
         let result = result.as_ref().map_err(Clone::clone).and_then(|saved| {
-            if document_access_changed(
-                pending.session_id,
-                pending.document_remote.as_ref(),
-                session,
-            ) {
+            if document_access_changed(pending.session_id, &pending.document_provider, session) {
                 return Err("Workspace changed while preparing file operation".into());
             }
             if matches!(&pending.work, PendingWork::Replace { .. })
@@ -308,14 +300,14 @@ impl FileOperations {
                 self.summary = None;
                 self.active = Some(Active {
                     session_id: pending.session_id,
-                    document_remote: pending.document_remote,
+                    document_provider: pending.document_provider,
                     started: Instant::now(),
                     paused: pending.documents,
                     export,
                     local_destination: matches!(request.destination, Endpoint::Local { .. }),
-                    destination_remote: match &request.destination {
-                        Endpoint::Remote { client, .. } => Some(client.clone()),
-                        Endpoint::Local { .. } => None,
+                    destination_provider: match &request.destination {
+                        Endpoint::Remote { .. } => self.target.services.clone(),
+                        Endpoint::Local { .. } => bed_files::FileServices::local(),
                     },
                     kind: request.kind,
                     refresh,
@@ -325,11 +317,11 @@ impl FileOperations {
             }
             PendingWork::Replace { path, reply } => {
                 let result = (|| -> io::Result<()> {
-                    if let Some(active) = &mut self.active {
-                        if pending.session_id.is_some() {
-                            active.session_id = pending.session_id;
-                            active.document_remote = pending.document_remote.clone();
-                        }
+                    if let Some(active) = &mut self.active
+                        && pending.session_id.is_some()
+                    {
+                        active.session_id = pending.session_id;
+                        active.document_provider = pending.document_provider.clone();
                     }
                     let moving = self
                         .active
@@ -367,15 +359,10 @@ impl FileOperations {
         session_id: Option<u64>,
         paused: Vec<DocumentId>,
     ) {
-        let document_remote = command.remote.clone();
+        let document_provider = command.services.clone();
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
-            let response = match command.remote {
-                Some(client) => client.call(command.request),
-                None => bed_remote::LocalBackend
-                    .call(command.request)
-                    .map_err(|error| error.into_io()),
-            };
+            let response = command.services.call(command.request);
             let _ = sender.send(
                 response
                     .map(|_| command.result)
@@ -385,7 +372,7 @@ impl FileOperations {
         self.simple = Some(SimpleJob {
             receiver,
             session_id,
-            document_remote,
+            document_provider,
             paused,
         });
     }
@@ -399,15 +386,11 @@ impl FileOperations {
         requests: &mut Vec<HostAction>,
     ) {
         if self.active.as_ref().is_some_and(|active| {
-            document_access_changed(active.session_id, active.document_remote.as_ref(), session)
+            document_access_changed(active.session_id, &active.document_provider, session)
         }) || self.pending.as_ref().is_some_and(|pending| {
-            document_access_changed(
-                pending.session_id,
-                pending.document_remote.as_ref(),
-                session,
-            )
+            document_access_changed(pending.session_id, &pending.document_provider, session)
         }) || self.simple.as_ref().is_some_and(|job| {
-            document_access_changed(job.session_id, job.document_remote.as_ref(), session)
+            document_access_changed(job.session_id, &job.document_provider, session)
         }) {
             self.cancel(session);
         }
@@ -441,7 +424,7 @@ impl FileOperations {
             }
             match result {
                 Ok(SimpleResult::Created(path, file)) => {
-                    if file && provider_matches(self.target.remote.as_ref(), session) {
+                    if file && provider_matches(&self.target.services, session) {
                         requests.push(HostAction::OpenFileIn {
                             path,
                             viewer: None,
@@ -451,7 +434,7 @@ impl FileOperations {
                     explorer.file_explorer.refresh_file_tree();
                 }
                 Ok(SimpleResult::Renamed(from, to)) => {
-                    if provider_matches(self.target.remote.as_ref(), session)
+                    if provider_matches(&self.target.services, session)
                         && let Err(error) = rebind(session, &from, &to)
                     {
                         requests.push(notify(error));
@@ -504,7 +487,7 @@ impl FileOperations {
                 }
                 OperationEvent::BeforeReplace { path, reply } => {
                     let documents = if self.active.as_ref().is_some_and(|active| {
-                        provider_matches(active.destination_remote.as_ref(), session)
+                        provider_matches(&active.destination_provider, session)
                     }) {
                         affected_documents(session, &path)
                     } else {
@@ -530,7 +513,7 @@ impl FileOperations {
                     destination,
                     reply,
                 } => {
-                    let result = if provider_matches(self.target.remote.as_ref(), session) {
+                    let result = if provider_matches(&self.target.services, session) {
                         rebind(session, &source, &destination).map_err(|error| error.to_string())
                     } else {
                         Ok(())
@@ -554,7 +537,7 @@ impl FileOperations {
                             let _ = session.pause_autosave(document, false);
                         }
                         for path in active.replacements {
-                            if provider_matches(active.destination_remote.as_ref(), session)
+                            if provider_matches(&active.destination_provider, session)
                                 && let Ok(documents) = affected_documents(session, &path)
                             {
                                 for document in documents {
@@ -622,7 +605,7 @@ impl FileOperations {
                     | FileTreeAction::OpenMany(_)
                     | FileTreeAction::OpenManyFromMenu(_)
             )
-        ) && !provider_matches(self.target.remote.as_ref(), session)
+        ) && !provider_matches(&self.target.services, session)
         {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -630,10 +613,8 @@ impl FileOperations {
             ));
         }
         let action = match action {
-            ExplorerAction::OpenProjectDialog => {
-                requests.push(HostAction::Workspace(
-                    bed_api::application::WorkspaceAction::OpenFolder,
-                ));
+            ExplorerAction::ChooseDirectory => {
+                requests.push(HostAction::ChooseDirectory);
                 return Ok(());
             }
             ExplorerAction::PreferencesChanged(_) => {
@@ -758,7 +739,7 @@ impl FileOperations {
                         "Native file clipboard unavailable",
                     )
                 })?;
-                if self.target.remote.is_some() {
+                if self.target.services.is_remote() {
                     let directory = std::env::temp_dir().join("bed-file-exports").join(format!(
                         "{}-{}",
                         std::process::id(),
@@ -788,7 +769,7 @@ impl FileOperations {
             }
             FileTreeAction::Cut(paths) => {
                 let paths = top_level_paths(&paths);
-                if self.target.remote.is_none() {
+                if !self.target.services.is_remote() {
                     clipboard
                         .ok_or_else(|| {
                             io::Error::new(
@@ -855,7 +836,7 @@ impl FileOperations {
         protected: &[PathBuf],
         requests: &mut Vec<HostAction>,
     ) -> io::Result<()> {
-        if self.target.remote.is_some() {
+        if self.target.services.is_remote() {
             self.delete = Some(top_level_paths(&paths));
             self.delete_appearing = true;
             Ok(())
@@ -889,7 +870,7 @@ impl FileOperations {
             .into_iter()
             .map(|path| validate_entry(&self.target, &path))
             .collect::<io::Result<Vec<_>>>()?;
-        if kind != OperationKind::Copy && self.target.remote.is_none() {
+        if kind != OperationKind::Copy && !self.target.services.is_remote() {
             for path in &paths {
                 ensure_unprotected(path, protected)?;
             }
@@ -1131,7 +1112,7 @@ impl FileOperations {
             }
             FileTreeAction::Rename(from) => {
                 let from = validate_entry(&self.target, from)?;
-                if self.target.remote.is_none() {
+                if !self.target.services.is_remote() {
                     ensure_unprotected(&from, protected)?;
                 }
                 let to = Path::new(&from)
@@ -1164,7 +1145,7 @@ impl FileOperations {
             session,
             PendingWork::Simple(SimpleCommand {
                 request,
-                remote: self.target.remote.clone(),
+                services: self.target.services.clone(),
                 result,
             }),
             documents,
@@ -1187,13 +1168,7 @@ fn endpoint(target: &ExplorerTarget) -> io::Result<Endpoint> {
             "Open Files to choose a directory first",
         ));
     }
-    Ok(match target.remote.clone() {
-        Some(client) => Endpoint::Remote {
-            root: root.clone(),
-            client,
-        },
-        None => Endpoint::local(root),
-    })
+    target.services.endpoint(&target.root)
 }
 
 fn remote_inside(root: &str, path: &str, allow_root: bool) -> bool {
@@ -1207,7 +1182,7 @@ fn remote_inside(root: &str, path: &str, allow_root: bool) -> bool {
 
 fn validate_entry(target: &ExplorerTarget, path: &str) -> io::Result<String> {
     let root = &target.root;
-    if target.remote.is_some() {
+    if target.services.is_remote() {
         if !remote_inside(root, path, false) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -1226,7 +1201,7 @@ fn validate_entry(target: &ExplorerTarget, path: &str) -> io::Result<String> {
 
 fn validate_directory(target: &ExplorerTarget, path: &str) -> io::Result<String> {
     let root = &target.root;
-    if target.remote.is_some() {
+    if target.services.is_remote() {
         if !remote_inside(root, path, true) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -1259,21 +1234,20 @@ fn affected_documents(session: &DocumentSession, path: &str) -> io::Result<Vec<D
     Ok(result)
 }
 
-pub(crate) fn provider_matches(remote: Option<&RemoteClient>, session: &DocumentSession) -> bool {
-    match (remote, session.remote_client()) {
-        (Some(target), Some(documents)) => target.same_connection(&documents),
-        (None, None) => true,
-        _ => false,
-    }
+pub(crate) fn provider_matches(
+    services: &bed_files::FileServices,
+    session: &DocumentSession,
+) -> bool {
+    session.file_provider_matches(services)
 }
 
 fn document_access_changed(
     session_id: Option<u64>,
-    remote: Option<&RemoteClient>,
+    services: &bed_files::FileServices,
     session: &DocumentSession,
 ) -> bool {
     session_id.is_some_and(|session_id| {
-        session_id != session.session_id().0 || !provider_matches(remote, session)
+        session_id != session.session_id().0 || !provider_matches(services, session)
     })
 }
 
@@ -1285,7 +1259,7 @@ pub(crate) fn guard_document_requests(
     session: &DocumentSession,
     requests: &mut Vec<HostAction>,
 ) {
-    if provider_matches(target.remote.as_ref(), session) {
+    if provider_matches(&target.services, session) {
         return;
     }
     let count = requests.len();
@@ -1353,7 +1327,7 @@ pub(crate) fn reconcile(
     requests: &mut Vec<HostAction>,
 ) {
     for update in explorer.take_filesystem_updates() {
-        if update.root != target.root || !provider_matches(target.remote.as_ref(), session) {
+        if update.root != target.root || !provider_matches(&target.services, session) {
             continue;
         }
         session.observe_project_file_changes(&update.changes);
@@ -1407,7 +1381,7 @@ mod tests {
         operations.bind_target(
             &ExplorerTarget {
                 root: root.into(),
-                remote: None,
+                services: bed_files::FileServices::local(),
             },
             session,
         );
@@ -1607,7 +1581,7 @@ mod tests {
         });
         let replacement = ExplorerTarget {
             root: temp.path("destination").to_string_lossy().into_owned(),
-            remote: None,
+            services: bed_files::FileServices::local(),
         };
         assert!(operations.bind_target(&replacement, &mut session));
         assert!(!operations.busy());
@@ -1643,15 +1617,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn replacing_only_the_remote_connection_cancels_queued_work_and_cut() {
-        let disconnected = || {
-            let client = crate::test_remote_client();
-            client.disconnect();
-            client
-        };
+        let connected = crate::test_remote_client;
         let (temp, mut session, mut explorer, root_directory, _) = fixture();
         let target = ExplorerTarget {
             root: root_directory.clone(),
-            remote: Some(disconnected()),
+            services: bed_files::FileServices::remote("explorer-fixture", connected()),
         };
         let mut operations = FileOperations::default();
         operations.bind_target(&target, &mut session);
@@ -1686,7 +1656,7 @@ mod tests {
         assert!(operations.bind_target(
             &ExplorerTarget {
                 root: root_directory,
-                remote: Some(disconnected())
+                services: bed_files::FileServices::remote("explorer-fixture", connected())
             },
             &mut session
         ));
@@ -2120,7 +2090,7 @@ mod tests {
         let mut operations = local_operations(&mut session, &root_directory);
         let target = ExplorerTarget {
             root: root_directory.clone(),
-            remote: Some(client.clone()),
+            services: bed_files::FileServices::remote("explorer-fixture", client.clone()),
         };
         operations.bind_target(&target, &mut session);
         assert!(
@@ -2273,10 +2243,9 @@ mod tests {
         session = DocumentSession::with_remote_options(
             bed_documents::SessionOptions {
                 autosave: None,
-                lsp_config: None,
                 ..Default::default()
             },
-            bed_remote::SshTarget::new("clipboard-fixture"),
+            bed_remote::SshTarget::new("explorer-fixture"),
             client,
             root_directory.clone(),
         )
@@ -2356,6 +2325,7 @@ mod tests {
     fn actual_plugin_drains_tree_open_and_preferences_without_a_host_module() {
         let mut app = App::new();
         app.add_plugins(super::super::FileExplorerPlugin);
+        app.update(); // Bind the initial live directory before admitting panel actions.
         let state = &mut *app.world_mut().non_send_mut::<ExplorerState>();
         state
             .actions
@@ -2379,7 +2349,7 @@ mod tests {
         assert!(intents.iter().any(|intent| matches!(&intent.action, HostAction::PreviewFileIn { path, target: bed_api::workbench::PanelTarget::LargestArea, .. } if path == "/captured/preview.txt")));
         let changes = app
             .world()
-            .resource::<Messages<bed_api::features::FeatureStateChanged>>();
+            .resource::<Messages<bed_api::storage::FeatureStateChanged>>();
         assert!(
             changes
                 .get_cursor()

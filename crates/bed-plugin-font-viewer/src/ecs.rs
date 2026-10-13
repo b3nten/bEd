@@ -3,13 +3,15 @@ use crate::{
     FontPanel, OPEN_COMMAND, OPEN_FILE_COMMAND, PANEL_ID, PLUGIN_ID, VIEWER_ID, register_metadata,
     supported_path,
 };
+use bed_api::documents::DocumentFrame;
+use bed_api::features::FrontendSnapshot;
 use bed_api::gpu::GpuContext;
 use bed_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction,
 };
 use bed_api::{
     documents::PanelBinding,
-    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects, HostFrame},
+    features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects},
 };
 use bed_editing::identity::DocumentId;
 use bed_ui::gpu::{
@@ -46,7 +48,7 @@ pub struct FontViewerPlugin;
 
 impl Plugin for FontViewerPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HostFrame>()
+        app.init_resource::<DocumentFrame>()
             .init_resource::<HostEffects>()
             .init_resource::<FeatureRegistry>()
             .init_non_send::<FontStates>()
@@ -115,13 +117,13 @@ fn create_font_panel(In(creation): In<PanelCreation>, world: &mut World) -> Pane
 
 fn poll_fonts(world: &mut World) {
     let outputs = {
+        let frame = FrontendSnapshot::capture(world);
         let mut state = SystemState::<(
-            Res<HostFrame>,
             NonSendMut<FontStates>,
             Query<&FontDocument>,
             ResMut<HostEffects>,
         )>::new(world);
-        let (frame, mut states, live, mut intents) = state
+        let (mut states, live, mut intents) = state
             .get_mut(world)
             .expect("Font plugin initialized its preparation resources");
         states.0.retain(|entity, _| live.get(*entity).is_ok());
@@ -162,7 +164,7 @@ fn poll_fonts(world: &mut World) {
 
 fn font_command(
     In(invocation): In<CommandInvocation>,
-    frame: Res<HostFrame>,
+    frame: Res<DocumentFrame>,
     bindings: Query<&PanelBinding>,
     mut intents: ResMut<HostEffects>,
 ) -> CommandResult {
@@ -244,7 +246,7 @@ impl Panel for FontFrontend {
     fn title(&self, world: &World) -> String {
         world.non_send::<FontStates>().get(self.entity).map_or_else(
             || "Font Viewer".into(),
-            |panel| panel.panel_title(&world.resource::<HostFrame>().context()),
+            |panel| panel.panel_title(&FrontendSnapshot::capture(world).context()),
         )
     }
 
@@ -256,11 +258,10 @@ impl Panel for FontFrontend {
         _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         let output = {
+            let frame = FrontendSnapshot::capture(world);
             let mut state =
-                SystemState::<(Res<HostFrame>, NonSendMut<FontStates>, ResMut<HostEffects>)>::new(
-                    world,
-                );
-            let (frame, mut states, mut intents) = state
+                SystemState::<(NonSendMut<FontStates>, ResMut<HostEffects>)>::new(world);
+            let (mut states, mut intents) = state
                 .get_mut(world)
                 .expect("Font plugin initialized its presentation resources");
             let mut requests = Vec::new();
@@ -388,7 +389,7 @@ mod ecs_tests {
     fn commands_keep_the_origin_path_and_area() {
         let mut app = App::new();
         app.add_plugins(FontViewerPlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents =
+        app.world_mut().resource_mut::<DocumentFrame>().documents =
             vec![document(Arc::from(&b"unused"[..]), 1)];
         let (entity, _) = create(&mut app, Value::Null);
         let handler = app
@@ -422,7 +423,7 @@ mod ecs_tests {
     fn preparation_loads_hidden_fonts_rejects_stale_revisions_and_retires_workers() {
         let mut app = App::new();
         app.add_plugins(FontViewerPlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents = vec![document(
+        app.world_mut().resource_mut::<DocumentFrame>().documents = vec![document(
             Arc::from(include_bytes!("../../../tests/fixtures/fonts/DejaVuSans.ttf").as_slice()),
             1,
         )];
@@ -440,12 +441,12 @@ mod ecs_tests {
             app.world().get::<CanvasOutput>(entity).unwrap().0.size,
             [8, 6]
         );
-        app.world_mut().resource_mut::<HostFrame>().documents[0] =
+        app.world_mut().resource_mut::<DocumentFrame>().documents[0] =
             document(Arc::from(&b"corrupt edit"[..]), 2);
         app.update();
         assert!(app.world().get::<CanvasOutput>(entity).is_none());
         wait(&mut app, entity, |panel| panel.error.is_some());
-        app.world_mut().resource_mut::<HostFrame>().documents[0] = document(
+        app.world_mut().resource_mut::<DocumentFrame>().documents[0] = document(
             Arc::from(
                 include_bytes!("../../../tests/fixtures/fonts/SourceCodePro-Regular.ttf")
                     .as_slice(),
@@ -488,7 +489,8 @@ mod ecs_tests {
             .into();
         let mut app = App::new();
         app.add_plugins(FontViewerPlugin);
-        app.world_mut().resource_mut::<HostFrame>().documents = vec![document(bytes.clone(), 1)];
+        app.world_mut().resource_mut::<DocumentFrame>().documents =
+            vec![document(bytes.clone(), 1)];
         let (entity, _) = create(&mut app, Value::Null);
         wait(&mut app, entity, |panel| panel.preview.is_some());
         let (sender, _blocked_worker) = std::sync::mpsc::sync_channel(1);

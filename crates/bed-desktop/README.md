@@ -89,19 +89,41 @@ on that presentation's `CanvasFailure`; siblings continue. `DesktopCanvasErrors`
 provides errors for the application to display. Optional `bed_ui::icons::Icons`
 are borrowed in place and changed images upload on the same device.
 
-Install the base on a fresh `App`, after any plugins that register early asset
-sources and before application feature plugins. It installs Bevy's window,
-renderer and runner; adding another `DefaultPlugins` group is unsupported.
-Application resources supplied before installation are preserved. The group
-contains focused appearance, native and canvas plugins that can be configured
-or disabled through Bevy's plugin-group API.
+Use `DesktopPlugins` on a fresh `App`; it creates the window, renderer and runner
+and then delegates to `DesktopIntegrationPlugin`. To attach bEd to an existing
+application, add `DesktopIntegrationPlugin` after the host's `DefaultPlugins`
+with `PipelinedRenderingPlugin` disabled. Attachment validates the existing
+window, assets, rendering, camera, core pipeline, input and Winit plugins before
+installing desktop resources. It installs no second Bevy stack and retains the
+host's window-close configuration. Insert a custom `RenderErrorHandler` before
+attachment: desktop cleanup wraps that callback and preserves its returned
+policy and recovery configuration.
+
+```rust,no_run
+use bed_desktop::{bevy::prelude::*, DesktopIntegrationPlugin};
+let mut app = App::new();
+app.add_plugins(DefaultPlugins
+    .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>());
+app.add_plugins(DesktopIntegrationPlugin);
+```
+
+The optional `preview` feature exposes `DesktopPreviewIntegrationPlugin`. It
+installs shared preview services and binds their begin/retire lifecycle to desktop
+canvas rendering. Model and mascot plugins add it automatically when attached to
+a desktop, so reusable hosts need no bEd application wiring. Raw/headless adapters
+retain their explicit preview lifecycle.
+Ordinary gameplay cameras/entities are not preview-owned and are never retired
+when a viewport panel closes.
 
 `DesktopPlugins` registers `BedMemoryAssets` before Bevy builds `AssetServer`.
 Optional features can then write bytes into their own namespace and load the
 returned path through `BedMemoryAssets::asset_path`. Its shared `Dir` handle is
 available for worker and loader ownership. Model viewers can be installed after
 the desktop/core group; the foundation does not depend on the model viewer.
-Headless hosts register `BedMemoryAssets` before their own `AssetPlugin`.
+Headless and existing-app hosts register `BedMemoryAssets` before their own
+`AssetPlugin` only when installing a consumer such as the model viewer. Desktop
+attachment itself does not require or register that source. Late consumer
+registration fails clearly rather than silently creating an unusable source.
 
 `DesktopNativePresentation` contains owned menus, toolbar and Dock command
 models. Native objects initialize after the real primary window exists.
@@ -129,6 +151,10 @@ and appearance failures as resource values for the application to report.
 
 Native proofs (run sequentially on a desktop):
 
+- `cargo run -p bed-desktop --example attachment_smoke`: attach to existing
+  Bevy plugins, retain window-close policy and host recovery configuration,
+  render/capture new pixels after actual device replacement.
+
 - `cargo run -p bed-desktop --example native_smoke`: canvas sampling/gamma, PPM,
   skipped frames, resize and two actual device replacements.
 - `cargo run -p bed-desktop --example automation_smoke`: real injected UI events,
@@ -136,8 +162,6 @@ Native proofs (run sequentially on a desktop):
   and fresh captures without an acquired native surface.
 - `cargo run -p bed-desktop --example canvas_smoke`:
   registered targets/icons, resize, isolated panic, retirement and recovery.
-- `cargo run -p bed-desktop --example window_config_smoke`: hidden startup,
-  non-resizable/borderless windows and runtime decoration changes.
 - `cargo run -p bed-desktop --example window_config_smoke`: hidden/unfocused,
   non-resizable and borderless window configuration, native presentation, and
   decoration/visibility changes on the same window.

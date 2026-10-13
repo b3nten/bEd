@@ -1,9 +1,10 @@
 //! Document requests resolve between UI scopes, with retained operation receipts.
-use crate::models::{self, ModelOperation, ModelRegistry};
+use crate::models::{self, ModelRegistry};
 pub use bed_api::features::HostRequest;
 use bed_api::{
+    documents::DocumentFrame,
     documents::{PanelBinding, PanelInput, Revision},
-    features::{HostAction, HostEffects, HostFrame},
+    features::{HostAction, HostEffects},
 };
 use bed_documents::{ClosePolicy, DocumentId, DocumentSession};
 use bed_workbench::{WorkbenchLayout, WorkbenchRequestMode, WorkbenchRequests};
@@ -15,13 +16,21 @@ use std::{
 };
 
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
-pub enum HostRequestMode {
+pub enum CorePresentationMode {
     #[default]
-    Core,
+    Standard,
     Application,
 }
 #[derive(Resource, Default)]
 pub(crate) struct CoreExiting(pub bool);
+#[derive(Resource, Default)]
+struct LifecycleSaves {
+    close: Option<crate::DocumentSaveId>,
+    quit: Option<crate::DocumentSaveId>,
+}
+pub(crate) fn quit_save_pending(world: &World) -> bool {
+    world.resource::<LifecycleSaves>().quit.is_some()
+}
 #[derive(Resource)]
 struct LiveDocumentOrigin(bevy::asset::uuid::Uuid);
 impl Default for LiveDocumentOrigin {
@@ -50,6 +59,8 @@ pub struct HostRequestId(u64);
 pub enum HostOutcome {
     Applied,
     Opened(Entity),
+    Pending(crate::DocumentSaveId),
+    Transition(crate::OperationBarrierToken),
     Saved {
         documents: Vec<DocumentId>,
         revisions: Vec<Revision>,
@@ -61,29 +72,39 @@ pub fn capture_host_request(
     source: Option<Entity>,
     request: HostAction,
 ) -> HostRequest {
+    capture_host_request_area(world, source, request, None)
+}
+fn capture_host_request_area(
+    world: &World,
+    source: Option<Entity>,
+    request: HostAction,
+    area: Option<u32>,
+) -> HostRequest {
     let layout = world.resource::<WorkbenchLayout>();
-    let area = if matches!(
-        &request,
-        HostAction::OpenFileIn {
-            target: bed_api::workbench::PanelTarget::LastFocused,
-            ..
-        } | HostAction::PreviewFileIn {
-            target: bed_api::workbench::PanelTarget::LastFocused,
-            ..
-        } | HostAction::ShowPanelIn {
-            target: bed_api::workbench::PanelTarget::LastFocused,
-            ..
-        } | HostAction::DropFile { .. }
-    ) {
-        source
-            .and_then(|entity| bed_api::workbench::panel_owner(world, entity))
-            .and_then(|owner| world.get::<bed_api::workbench::PanelPresentation>(owner))
-            .and_then(|panel| layout.tiling.area_for(panel.id))
-            .or(layout.focused_area)
-            .unwrap_or_else(|| layout.tiling.layout.largest_area())
-    } else {
-        layout.tiling.layout.largest_area()
-    };
+    let area = area.unwrap_or_else(|| {
+        if matches!(
+            &request,
+            HostAction::OpenFileIn {
+                target: bed_api::workbench::PanelTarget::LastFocused,
+                ..
+            } | HostAction::PreviewFileIn {
+                target: bed_api::workbench::PanelTarget::LastFocused,
+                ..
+            } | HostAction::ShowPanelIn {
+                target: bed_api::workbench::PanelTarget::LastFocused,
+                ..
+            } | HostAction::DropFile { .. }
+        ) {
+            source
+                .and_then(|entity| bed_api::workbench::panel_owner(world, entity))
+                .and_then(|owner| world.get::<bed_api::workbench::PanelPresentation>(owner))
+                .and_then(|panel| layout.tiling.area_for(panel.id))
+                .or(layout.focused_area)
+                .unwrap_or_else(|| layout.tiling.layout.largest_area())
+        } else {
+            layout.tiling.layout.largest_area()
+        }
+    });
     HostRequest::capture(
         world.non_send::<DocumentSession>().session_id(),
         source,
@@ -102,12 +123,25 @@ struct Accepted {
     id: Option<HostRequestId>,
     request: HostRequest,
 }
+struct PendingCommand {
+    id: Option<bed_workbench::WorkbenchRequestId>,
+    outcome: Option<Result<bed_workbench::WorkbenchOutcome, String>>,
+    effects: VecDeque<HostRequest>,
+    saves: Vec<crate::DocumentSaveId>,
+    barrier: Option<crate::OperationBarrierToken>,
+    error: Option<String>,
+}
 #[derive(Resource, Default)]
 pub struct HostRequests {
     next: u64,
     pending: VecDeque<Accepted>,
     results: HashMap<HostRequestId, Result<HostOutcome, String>>,
     cursor: MessageCursor<HostRequest>,
+    settings_cursor: MessageCursor<bed_api::settings::SettingsRequest>,
+    settings: VecDeque<bed_api::settings::SettingsRequest>,
+    saves: Vec<(Option<HostRequestId>, crate::DocumentSaveId)>,
+    commands: Vec<PendingCommand>,
+    transitions: Vec<(Option<HostRequestId>, crate::OperationBarrierToken)>,
 }
 pub fn submit_host_request(
     world: &mut World,
@@ -141,14 +175,26 @@ impl Plugin for DocumentHostPlugin {
             app.add_plugins(bed_workbench::WorkbenchPlugin);
         }
         app.init_non_send::<DocumentSession>()
+            .init_resource::<bed_files::FileContext>()
+            .init_resource::<bed_files::FileServices>()
+            .init_resource::<bed_storage::Storage>()
+            .init_resource::<crate::saves::DocumentSaves>()
+            .init_resource::<crate::transitions::OperationBarriers>()
+            .init_non_send::<DocumentServiceReport>()
+            .init_resource::<crate::files::FileOperations>()
             .init_resource::<ModelRegistry>()
-            .init_resource::<HostFrame>()
+            .init_resource::<DocumentFrame>()
             .init_resource::<HostEffects>()
             .init_resource::<bed_api::features::FeatureRegistry>()
             .init_resource::<bed_api::workbench::CommandPresentations>()
             .init_resource::<HostRequests>()
-            .init_resource::<HostRequestMode>()
+            .init_resource::<CorePresentationMode>()
+            .init_resource::<DocumentRequestScheduling>()
+            .init_resource::<bed_api::settings::SettingsSnapshot>()
+            .init_resource::<bed_api::presentation::PresentationFrame>()
+            .add_message::<bed_api::settings::SettingsRequest>()
             .init_resource::<CoreExiting>()
+            .init_resource::<LifecycleSaves>()
             .init_resource::<LiveDocumentOrigin>()
             .init_resource::<DocumentClosePolicy>()
             .insert_resource(WorkbenchRequestMode::External)
@@ -156,7 +202,7 @@ impl Plugin for DocumentHostPlugin {
             .add_message::<CoreNotice>()
             .add_message::<bed_api::documents::DocumentReply>()
             .add_message::<bed_api::documents::DocumentEvent>()
-            .add_message::<bed_api::features::FeatureStateChanged>()
+            .add_message::<bed_api::storage::FeatureStateChanged>()
             .add_systems(
                 PreUpdate,
                 (
@@ -165,12 +211,12 @@ impl Plugin for DocumentHostPlugin {
                         .in_set(CoreSystems::Frame)
                         .after(CoreSystems::Services)
                         .before(bed_api::features::FeatureSystems::Prepare),
-                    resolve_documents
+                    resolve_scheduled_requests
                         .in_set(CoreSystems::Requests)
                         .after(bed_api::features::FeatureSystems::Prepare),
                 ),
             );
-        if *app.world().resource::<HostRequestMode>() == HostRequestMode::Core
+        if *app.world().resource::<CorePresentationMode>() == CorePresentationMode::Standard
             && !app
                 .world()
                 .contains_resource::<bed_workbench::WorkbenchClosePolicy>()
@@ -189,28 +235,50 @@ impl Plugin for DocumentHostPlugin {
         {
             app.insert_resource(bed_workbench::PanelPreparation(prepare_panel));
         }
+        if !app.is_plugin_added::<crate::commands::DocumentCommandsPlugin>() {
+            app.add_plugins(crate::commands::DocumentCommandsPlugin);
+        }
+        #[cfg(feature = "language-services")]
+        app.init_resource::<crate::format_saves::ExplicitDocumentSaves>();
     }
 }
-fn core_mode(world: &World) -> bool {
-    *world.resource::<HostRequestMode>() == HostRequestMode::Core
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+pub enum DocumentRequestScheduling {
+    #[default]
+    Automatic,
+    External,
+}
+fn resolve_scheduled_requests(world: &mut World) {
+    if *world.resource::<DocumentRequestScheduling>() == DocumentRequestScheduling::Automatic {
+        resolve_documents(world);
+    }
+}
+#[derive(Default)]
+struct DocumentServiceReport(bed_documents::session::TickReport);
+
+pub fn take_document_service_report(world: &mut World) -> bed_documents::session::TickReport {
+    std::mem::take(&mut world.non_send_mut::<DocumentServiceReport>().0)
+}
+pub fn poll_document_services(world: &mut World) {
+    let report = world.non_send_mut::<DocumentSession>().tick();
+    crate::saves::poll_document_saves(world, &report);
+    #[cfg(feature = "language-services")]
+    crate::format_saves::poll_explicit_document_saves(world);
+    crate::transitions::poll_barrier_admission(world);
+    crate::files::poll_file_operations(world);
+    for event in &report.events {
+        world.write_message(bed_api::documents::DocumentEvent(event.clone()));
+    }
+    for error in &report.errors {
+        notice(world, None, error.message.clone());
+    }
+    world.non_send_mut::<DocumentServiceReport>().0 = report;
 }
 fn poll_documents(world: &mut World) {
-    if !core_mode(world) {
-        return;
-    }
-    let report = world.non_send_mut::<DocumentSession>().tick();
-    for event in report.events {
-        world.write_message(bed_api::documents::DocumentEvent(event));
-    }
-    for error in report.errors {
-        notice(world, None, error.message);
-    }
+    poll_document_services(world);
 }
-fn publish_documents(world: &mut World) {
-    if !core_mode(world) {
-        return;
-    }
-    let result = world.resource_scope(|world, mut frame: Mut<HostFrame>| {
+pub fn publish_documents(world: &mut World) {
+    let result = world.resource_scope(|world, mut frame: Mut<DocumentFrame>| {
         frame.session_id = world.non_send::<DocumentSession>().session_id().0;
         frame.refresh_documents(world.non_send::<DocumentSession>())
     });
@@ -277,7 +345,7 @@ fn publish_documents(world: &mut World) {
                     .map(|binding| (binding.0, None))
             })
     });
-    let mut frame = world.resource_mut::<HostFrame>();
+    let mut frame = world.resource_mut::<DocumentFrame>();
     frame.active_document = active.map(|(document, _)| document);
     frame.active_view = active.and_then(|(_, view)| view);
 }
@@ -290,7 +358,11 @@ pub fn quit(world: &mut World) -> Result<(), String> {
         "quit resolves after drawing"
     );
     admit(world);
-    if !world.resource::<HostRequests>().pending.is_empty()
+    if crate::operation_barrier_active(world)
+        || !world.resource::<HostRequests>().saves.is_empty()
+        || !world.resource::<HostRequests>().commands.is_empty()
+        || !world.resource::<HostRequests>().settings.is_empty()
+        || !world.resource::<HostRequests>().pending.is_empty()
         || world
             .resource::<WorkbenchRequests>()
             .next_sequence()
@@ -299,7 +371,14 @@ pub fn quit(world: &mut World) -> Result<(), String> {
     {
         return Err("Wait for pending document and layout operations before quitting".into());
     }
-    let documents = world.non_send::<DocumentSession>().document_ids();
+    if let Some(save) = world.resource::<LifecycleSaves>().quit {
+        let Some(result) = crate::poll_document_save(world, save) else {
+            return Err("Waiting for documents to finish saving".into());
+        };
+        world.resource_mut::<LifecycleSaves>().quit = None;
+        result?;
+    }
+    let documents = crate::transitions::transition_documents(world);
     commit_document_drafts(world, &documents)?;
     let mut dirty = documents
         .into_iter()
@@ -324,8 +403,19 @@ pub fn quit(world: &mut World) -> Result<(), String> {
                 return Err("Save or discard changed documents before quitting".into());
             }
             ClosePolicy::Save => {
-                for document in dirty {
-                    save_document(world, document)?;
+                let targets = dirty
+                    .into_iter()
+                    .map(|document| crate::DocumentSaveTarget {
+                        document,
+                        destination: None,
+                    })
+                    .collect::<Vec<_>>();
+                let save = crate::begin_document_save(world, &targets)?;
+                if let Some(result) = crate::poll_document_save(world, save) {
+                    result?;
+                } else {
+                    world.resource_mut::<LifecycleSaves>().quit = Some(save);
+                    return Err("Waiting for documents to finish saving".into());
                 }
             }
             ClosePolicy::Discard => {}
@@ -340,7 +430,7 @@ pub fn quit(world: &mut World) -> Result<(), String> {
 }
 
 fn prepare_panel(world: &mut World, entity: Entity) -> Result<(), String> {
-    if !core_mode(world) {
+    if *world.resource::<CorePresentationMode>() == CorePresentationMode::Application {
         return Ok(());
     }
     let record = world
@@ -424,8 +514,24 @@ fn admit(world: &mut World) {
             .into_iter()
             .map(|request| Accepted { id: None, request }),
     );
+    let settings = world.resource_scope(|world, mut queue: Mut<HostRequests>| {
+        queue
+            .settings_cursor
+            .read(world.resource::<Messages<bed_api::settings::SettingsRequest>>())
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    world
+        .resource_mut::<HostRequests>()
+        .settings
+        .extend(settings);
+    world
+        .resource_mut::<HostRequests>()
+        .settings
+        .make_contiguous()
+        .sort_by_key(|setting| setting.sequence);
     for intent in world.resource_mut::<HostEffects>().take() {
-        let request = capture_host_request(world, intent.source, intent.action);
+        let request = capture_host_request_area(world, intent.source, intent.action, intent.area);
         world
             .resource_mut::<HostRequests>()
             .pending
@@ -437,23 +543,181 @@ fn admit(world: &mut World) {
         .make_contiguous()
         .sort_by_key(|accepted| accepted.request.sequence());
 }
-pub fn resolve_documents(world: &mut World) {
-    if !core_mode(world) {
-        return;
+fn continue_command(world: &mut World, mut command: PendingCommand) {
+    if command.outcome.is_none()
+        && let Some(id) = command.id
+        && let Some(result) = world.resource_mut::<WorkbenchRequests>().take_result(id)
+    {
+        command.outcome = Some(result);
     }
+    command
+        .saves
+        .retain(|save| match crate::poll_document_save(world, *save) {
+            Some(Ok(_)) => false,
+            Some(Err(error)) => {
+                command.error.get_or_insert(error);
+                false
+            }
+            None => true,
+        });
+    if let Some(token) = command.barrier {
+        match crate::barrier_status(world, token).expect("Admitted command barrier exists") {
+            crate::OperationBarrierStatus::Complete => {
+                crate::files::take_opened(world, token);
+                command.barrier = None;
+            }
+            crate::OperationBarrierStatus::Failed(error) => {
+                command.error.get_or_insert(error);
+                command.barrier = None;
+            }
+            _ => {}
+        }
+    }
+    if command.error.is_some() || command.outcome.as_ref().is_some_and(Result::is_err) {
+        command.effects.clear();
+    }
+    if command.barrier.is_none() && command.saves.is_empty() {
+        while let Some(request) = command.effects.pop_front() {
+            match apply_document_request(world, request) {
+                Ok(HostOutcome::Pending(save)) => {
+                    command.saves.push(save);
+                    break;
+                }
+                Ok(HostOutcome::Transition(token)) => {
+                    command.barrier = Some(token);
+                    break;
+                }
+                Err(error) => {
+                    command.error.get_or_insert(error);
+                    command.effects.clear();
+                    break;
+                }
+                _ => {}
+            }
+            if let Some(token) = crate::active_operation_barrier(world) {
+                command.barrier = Some(token);
+                break;
+            }
+        }
+    }
+    if command.effects.is_empty()
+        && command.saves.is_empty()
+        && command.barrier.is_none()
+        && (command.id.is_none() || command.outcome.is_some())
+    {
+        if let Some(id) = command.id {
+            let outcome = command.error.map_or_else(
+                || command.outcome.expect("Completed command has a result"),
+                Err,
+            );
+            world
+                .resource_mut::<WorkbenchRequests>()
+                .complete(id, outcome);
+        } else if let Some(error) = command.error {
+            notice(world, None, error);
+        }
+    } else {
+        world.resource_mut::<HostRequests>().commands.push(command);
+    }
+}
+
+pub fn resolve_documents(world: &mut World) {
     assert!(
         !bed_workbench::frontend_active(world),
         "document requests run after drawing"
     );
     admit(world);
+    crate::transitions::poll_barrier_admission(world);
+    let transitions = std::mem::take(&mut world.resource_mut::<HostRequests>().transitions);
+    for (receipt, token) in transitions {
+        let result = match crate::barrier_status(world, token) {
+            Some(crate::OperationBarrierStatus::Complete) => {
+                Some(Ok(crate::files::take_opened(world, token)
+                    .map_or(HostOutcome::Applied, HostOutcome::Opened)))
+            }
+            Some(crate::OperationBarrierStatus::Failed(error)) => Some(Err(error)),
+            _ => None,
+        };
+        if let Some(result) = result {
+            if let Some(receipt) = receipt {
+                world
+                    .resource_mut::<HostRequests>()
+                    .results
+                    .insert(receipt, result);
+            } else if let Err(error) = result {
+                notice(world, None, error);
+            }
+        } else {
+            world
+                .resource_mut::<HostRequests>()
+                .transitions
+                .push((receipt, token));
+        }
+    }
     bed_workbench::poll_request_results(world);
-    while !bed_workbench::waiting_for_layout(world) && !world.resource::<CoreExiting>().0 {
+    let commands = std::mem::take(&mut world.resource_mut::<HostRequests>().commands);
+    for command in commands {
+        continue_command(world, command);
+    }
+    let pending = std::mem::take(&mut world.resource_mut::<HostRequests>().saves);
+    for (receipt, save) in pending {
+        if let Some(result) = crate::poll_document_save(world, save) {
+            let result = result.map(|saved| HostOutcome::Saved {
+                documents: saved.iter().map(|saved| saved.document).collect(),
+                revisions: saved.iter().map(|saved| saved.revision).collect(),
+            });
+            if let Some(receipt) = receipt {
+                world
+                    .resource_mut::<HostRequests>()
+                    .results
+                    .insert(receipt, result);
+            } else if let Err(error) = result {
+                notice(world, None, error);
+            }
+        } else {
+            world
+                .resource_mut::<HostRequests>()
+                .saves
+                .push((receipt, save));
+        }
+    }
+    while !bed_workbench::waiting_for_layout(world)
+        && !world.resource::<CoreExiting>().0
+        && !crate::operation_barrier_active(world)
+        && !world
+            .resource::<HostRequests>()
+            .commands
+            .iter()
+            .any(|command| !command.effects.is_empty())
+    {
         let document_sequence = world
             .resource::<HostRequests>()
             .pending
             .front()
             .map(|entry| entry.request.sequence());
         let panel_sequence = world.resource::<WorkbenchRequests>().next_sequence();
+        let setting_sequence = world
+            .resource::<HostRequests>()
+            .settings
+            .front()
+            .map(|setting| setting.sequence);
+        if setting_sequence.is_some_and(|sequence| {
+            document_sequence.is_none_or(|next| sequence < next)
+                && panel_sequence.is_none_or(|next| sequence < next)
+        }) {
+            let setting = world
+                .resource_mut::<HostRequests>()
+                .settings
+                .pop_front()
+                .unwrap();
+            let mut snapshot = world.resource_mut::<bed_api::settings::SettingsSnapshot>();
+            snapshot
+                .settings
+                .as_object_mut()
+                .expect("SettingsSnapshot settings must be an object")
+                .insert(setting.key, setting.value);
+            continue;
+        }
         if panel_sequence.is_some()
             && (document_sequence.is_none() || panel_sequence < document_sequence)
         {
@@ -461,20 +725,45 @@ pub fn resolve_documents(world: &mut World) {
                 .resource_mut::<WorkbenchRequests>()
                 .take_next()
                 .unwrap();
+            let receipt = queued.id;
             bed_workbench::resolve_request(world, queued);
             // The outbox is empty at command entry. Its newly produced effects
             // finish before the next independent command.
-            for intent in world.resource_mut::<HostEffects>().take() {
-                let request = capture_host_request(world, intent.source, intent.action);
-                let source = request.source();
-                if let Err(error) = apply_request(world, request) {
-                    notice(world, source, error);
-                }
-            }
+            let effects = world
+                .resource_mut::<HostEffects>()
+                .take()
+                .into_iter()
+                .map(|intent| {
+                    capture_host_request_area(world, intent.source, intent.action, intent.area)
+                })
+                .collect();
+            let outcome =
+                receipt.and_then(|id| world.resource_mut::<WorkbenchRequests>().take_result(id));
+            continue_command(
+                world,
+                PendingCommand {
+                    id: receipt,
+                    outcome,
+                    effects,
+                    saves: Vec::new(),
+                    barrier: None,
+                    error: None,
+                },
+            );
         } else if let Some(accepted) = world.resource_mut::<HostRequests>().pending.pop_front() {
             let source = accepted.request.source();
-            let result = apply_request(world, accepted.request);
-            if let Some(id) = accepted.id {
+            let result = apply_document_request(world, accepted.request);
+            if let Ok(HostOutcome::Transition(token)) = &result {
+                world
+                    .resource_mut::<HostRequests>()
+                    .transitions
+                    .push((accepted.id, *token));
+            } else if let Ok(HostOutcome::Pending(save)) = &result {
+                world
+                    .resource_mut::<HostRequests>()
+                    .saves
+                    .push((accepted.id, *save));
+            } else if let Some(id) = accepted.id {
                 world
                     .resource_mut::<HostRequests>()
                     .results
@@ -579,7 +868,9 @@ pub fn open_file(
             .preferred_viewer_for_file(
                 &path.to_string_lossy(),
                 kind,
-                &world.resource::<HostFrame>().default_viewers,
+                &world
+                    .resource::<bed_api::settings::SettingsSnapshot>()
+                    .default_viewers,
             )
             .cloned()
     });
@@ -617,6 +908,9 @@ fn open_local_file_panel(
     viewer: &bed_api::documents::FileViewer,
     area: Option<u32>,
 ) -> Result<Entity, String> {
+    if world.resource::<bed_files::FileServices>().is_remote() {
+        return Err("This file viewer requires a local filesystem".into());
+    }
     let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
     if !path.is_file() {
         return Err("File viewer requires a regular file".into());
@@ -694,14 +988,19 @@ pub fn commit_document_drafts(world: &mut World, documents: &[DocumentId]) -> Re
         "drafts commit after drawing"
     );
     let targets = world
-        .query::<(Entity, &PanelBinding, &bed_api::workbench::PanelActions)>()
+        .query::<(
+            Entity,
+            Option<&PanelBinding>,
+            Option<&models::DocumentBinding>,
+            &bed_api::workbench::PanelActions,
+        )>()
         .iter(world)
-        .filter(|(_, binding, _)| {
-            binding
-                .document
+        .filter(|(_, text, model, _)| {
+            text.and_then(|binding| binding.document)
+                .or(model.map(|binding| binding.0))
                 .is_some_and(|document| documents.contains(&document))
         })
-        .map(|(entity, _, handler)| (entity, handler.0))
+        .map(|(entity, _, _, handler)| (entity, handler.0))
         .collect::<Vec<_>>();
     for (entity, handler) in targets {
         let previous = world.resource_mut::<HostEffects>().take();
@@ -731,69 +1030,47 @@ pub fn commit_document_drafts(world: &mut World, documents: &[DocumentId]) -> Re
                     != world
                         .get::<PanelBinding>(entity)
                         .and_then(|binding| binding.document)
+                        .or_else(|| {
+                            world
+                                .get::<models::DocumentBinding>(entity)
+                                .map(|binding| binding.0)
+                        })
             {
                 return Err("Draft commit may only produce its own document edits".into());
             }
             let request = capture_host_request(world, Some(entity), intent.action);
-            apply_request(world, request)?;
+            apply_document_request(world, request)?;
         }
     }
     Ok(())
 }
 
-pub fn save_document(world: &mut World, document: DocumentId) -> Result<(), String> {
-    assert!(
-        !bed_workbench::frontend_active(world),
-        "documents save after drawing"
-    );
-    if let Some(result) = models::run_model_operation(world, document, ModelOperation::Save) {
-        return result;
-    }
-    commit_document_drafts(world, &[document])?;
-    world
-        .non_send_mut::<DocumentSession>()
-        .save(document)
-        .map_err(|error| error.to_string())?;
-    let snapshot = world
-        .non_send::<DocumentSession>()
-        .snapshot(document)
-        .map_err(|error| error.to_string())?;
-    if snapshot.dirty {
-        return Err("Document has not completed saving".into());
-    }
-    Ok(())
+/// Begin an unformatted lifecycle save. Poll the returned receipt for the
+/// revision that reached storage; a later edit may keep the document dirty.
+pub fn save_document(
+    world: &mut World,
+    document: DocumentId,
+) -> Result<crate::DocumentSaveId, String> {
+    crate::begin_document_save(
+        world,
+        &[crate::DocumentSaveTarget {
+            document,
+            destination: None,
+        }],
+    )
 }
 pub fn save_document_as(
     world: &mut World,
     document: DocumentId,
     path: &Path,
-) -> Result<(), String> {
-    assert!(
-        !bed_workbench::frontend_active(world),
-        "documents save after drawing"
-    );
-    if let Some(entity) = models::model_entity(world, document) {
-        let previous = world
-            .get::<models::ModelDocument>(entity)
-            .unwrap()
-            .path
-            .clone();
-        world.get_mut::<models::ModelDocument>(entity).unwrap().path = Some(path.to_owned());
-        if let Err(error) = save_document(world, document) {
-            world.get_mut::<models::ModelDocument>(entity).unwrap().path = previous;
-            return Err(error);
-        }
-    } else {
-        commit_document_drafts(world, &[document])?;
-        world
-            .non_send_mut::<DocumentSession>()
-            .save_as(document, path)
-            .map_err(|error| error.to_string())?;
-        if document_dirty(world, document)? {
-            return Err("Document has not completed saving".into());
-        }
-    }
-    Ok(())
+) -> Result<crate::DocumentSaveId, String> {
+    crate::begin_document_save(
+        world,
+        &[crate::DocumentSaveTarget {
+            document,
+            destination: Some(path.to_owned()),
+        }],
+    )
 }
 
 /// One revision representation for default documents and typed model documents.
@@ -822,6 +1099,48 @@ pub fn document_dirty(world: &World, document: DocumentId) -> Result<bool, Strin
         .map(|document| document.dirty)
         .map_err(|error| error.to_string())
 }
+pub fn document_path(
+    world: &World,
+    document: DocumentId,
+) -> Result<Option<std::path::PathBuf>, String> {
+    if let Some(model) = models::model_document(world, document) {
+        if model.session_id() != world.non_send::<DocumentSession>().session_id() {
+            return Err("Document session was replaced".into());
+        }
+        return Ok(model.path.clone());
+    }
+    let snapshot = world
+        .non_send::<DocumentSession>()
+        .snapshot(document)
+        .map_err(|error| error.to_string())?;
+    Ok((!snapshot.path.is_empty()).then(|| snapshot.path.into()))
+}
+
+/// Retire contents only after the final panel binding has been released.
+/// Save/discard approval belongs to the operation that retired those panels.
+pub fn retire_document(world: &mut World, document: DocumentId) -> Result<bool, String> {
+    assert!(
+        !bed_workbench::frontend_active(world),
+        "documents retire after drawing"
+    );
+    let bound = world
+        .query::<(Option<&PanelBinding>, Option<&models::DocumentBinding>)>()
+        .iter(world)
+        .any(|(binding, model)| {
+            binding.is_some_and(|binding| binding.document == Some(document))
+                || model.is_some_and(|binding| binding.0 == document)
+        });
+    if bound {
+        return Ok(false);
+    }
+    if models::model_entity(world, document).is_some() {
+        return Ok(models::retire_model_document(world, document));
+    }
+    world
+        .non_send_mut::<DocumentSession>()
+        .close_document(document, ClosePolicy::Discard)
+        .map_err(|error| error.to_string())
+}
 
 fn close_panel(world: &mut World, panel: Entity) -> Result<bool, String> {
     let closing =
@@ -834,13 +1153,7 @@ fn close_panel(world: &mut World, panel: Entity) -> Result<bool, String> {
         })
         .map(|(entity, _)| entity)
         .collect::<Vec<_>>();
-    let frontends = world
-        .query::<(Entity, Option<&bed_api::workbench::PanelOwner>)>()
-        .iter(world)
-        .filter(|(entity, owner)| *entity == panel || owner.is_some_and(|owner| owner.0 == panel))
-        .map(|(entity, _)| entity)
-        .collect::<Vec<_>>();
-    let mut documents = frontends
+    let mut documents = closing_frontends
         .iter()
         .filter_map(|entity| {
             world
@@ -857,6 +1170,14 @@ fn close_panel(world: &mut World, panel: Entity) -> Result<bool, String> {
     documents.dedup();
     commit_document_drafts(world, &documents)?;
     let policy = world.resource::<DocumentClosePolicy>().0;
+    if let Some(save) = world.resource::<LifecycleSaves>().close {
+        let Some(result) = crate::poll_document_save(world, save) else {
+            return Ok(false);
+        };
+        world.resource_mut::<LifecycleSaves>().close = None;
+        result?;
+    }
+    let mut dirty_documents = Vec::new();
     for document in documents {
         let remaining = world
             .query::<(
@@ -879,18 +1200,31 @@ fn close_panel(world: &mut World, panel: Entity) -> Result<bool, String> {
                 ClosePolicy::Cancel => {
                     return Err("Save or discard the document before closing".into());
                 }
-                ClosePolicy::Save => save_document(world, document)?,
+                ClosePolicy::Save => dirty_documents.push(document),
                 ClosePolicy::Discard => {}
             }
+        }
+    }
+    if !dirty_documents.is_empty() {
+        let targets = dirty_documents
+            .into_iter()
+            .map(|document| crate::DocumentSaveTarget {
+                document,
+                destination: None,
+            })
+            .collect::<Vec<_>>();
+        let save = crate::begin_document_save(world, &targets)?;
+        if let Some(result) = crate::poll_document_save(world, save) {
+            result?;
+        } else {
+            world.resource_mut::<LifecycleSaves>().close = Some(save);
+            return Ok(false);
         }
     }
     Ok(true)
 }
 
 fn retire_panel(world: &mut World, panel: Entity) {
-    if !core_mode(world) {
-        return;
-    }
     let frontends = world
         .query::<(Entity, Option<&bed_api::workbench::PanelOwner>)>()
         .iter(world)
@@ -898,19 +1232,48 @@ fn retire_panel(world: &mut World, panel: Entity) {
         .map(|(entity, _)| entity)
         .collect::<Vec<_>>();
     for entity in frontends {
-        if let Some(handler) = world.get::<bed_api::workbench::PanelClose>(entity).copied() {
-            if let Err(error) = world
+        if let Some(handler) = world.get::<bed_api::workbench::PanelClose>(entity).copied()
+            && let Err(error) = world
                 .run_system_with(handler.0, entity)
                 .map_err(|error| error.to_string())
                 .and_then(|result| result)
-            {
-                notice(world, Some(entity), error);
-            }
+        {
+            notice(world, Some(entity), error);
         }
+        if let Some(binding) = world.entity_mut(entity).take::<PanelBinding>()
+            && let Some(view) = binding.view
+            && world
+                .non_send::<DocumentSession>()
+                .document_for_view(view)
+                .is_some()
+        {
+            world.non_send_mut::<DocumentSession>().detach_view(view);
+        }
+        world.entity_mut(entity).remove::<models::DocumentBinding>();
     }
 }
 
-fn apply_request(world: &mut World, request: HostRequest) -> Result<HostOutcome, String> {
+/// Apply one revision-checked text or byte edit batch. The shared document
+/// owner preserves I/O error kinds for integrations with typed failure policy.
+pub fn apply_edits(
+    world: &mut World,
+    document: DocumentId,
+    revision: Revision,
+    edits: &[bed_documents::ByteEdit],
+) -> std::io::Result<()> {
+    assert!(
+        !bed_workbench::frontend_active(world),
+        "document edits run after drawing"
+    );
+    world
+        .non_send_mut::<DocumentSession>()
+        .apply_edits(document, revision, edits)
+}
+
+pub fn apply_document_request(
+    world: &mut World,
+    request: HostRequest,
+) -> Result<HostOutcome, String> {
     if request.session_id() != world.non_send::<DocumentSession>().session_id() {
         return Err("Document session was replaced".into());
     }
@@ -937,24 +1300,57 @@ fn apply_request(world: &mut World, request: HostRequest) -> Result<HostOutcome,
     {
         return Err("Originating layout is no longer active".into());
     }
+    #[cfg(feature = "language-services")]
+    if let HostAction::NavigateLocation {
+        origin: Some(origin),
+        ..
+    } = request.action()
+        && !world
+            .non_send::<DocumentSession>()
+            .accepts_lsp_origin(origin)
+    {
+        return Ok(HostOutcome::Applied);
+    }
+    if let Some(token) = crate::files::defer_remote_open(world, &request)? {
+        return Ok(HostOutcome::Transition(token));
+    }
     match request.action().clone() {
+        HostAction::OperationBarrier { token } => {
+            crate::transitions::activate_operation_barrier(world, token)?
+        }
+        HostAction::OpenDirectory { location } => {
+            return crate::files::open_directory(world, location).map(HostOutcome::Transition);
+        }
+        HostAction::ChooseDirectory => {
+            if world.resource::<bed_files::FileServices>().is_remote() {
+                return Err("Choose a remote directory through its filesystem browser".into());
+            }
+            if let Some(path) = rfd::FileDialog::new()
+                .set_directory(&world.resource::<bed_files::FileContext>().directory)
+                .pick_folder()
+            {
+                return crate::files::open_directory(
+                    world,
+                    bed_files::FileLocation {
+                        provider: bed_files::FileProviderId::Local,
+                        path,
+                    },
+                )
+                .map(HostOutcome::Transition);
+            }
+        }
         HostAction::ApplyEdits {
             document,
             revision,
             edits,
-        } => world
-            .non_send_mut::<DocumentSession>()
-            .apply_edits(document, revision, &edits)
-            .map_err(|error| error.to_string())?,
+        } => apply_edits(world, document, revision, &edits).map_err(|error| error.to_string())?,
         HostAction::ApplyEditsWithResult {
             token,
             document,
             revision,
             edits,
         } => {
-            let result = world
-                .non_send_mut::<DocumentSession>()
-                .apply_edits(document, revision, &edits)
+            let result = apply_edits(world, document, revision, &edits)
                 .map_err(|error| error.to_string())
                 .and_then(|_| {
                     world
@@ -987,9 +1383,7 @@ fn apply_request(world: &mut World, request: HostRequest) -> Result<HostOutcome,
             revision,
             edits,
         } => {
-            let result = world
-                .non_send_mut::<DocumentSession>()
-                .apply_edits(document, revision, &edits)
+            let result = apply_edits(world, document, revision, &edits)
                 .map_err(|error| error.to_string())
                 .and_then(|_| {
                     world
@@ -1007,19 +1401,39 @@ fn apply_request(world: &mut World, request: HostRequest) -> Result<HostOutcome,
         HostAction::Undo { document } => models::undo_document(world, document)?,
         HostAction::Redo { document } => models::redo_document(world, document)?,
         HostAction::Save { document } => {
-            save_document(world, document)?;
-            return Ok(HostOutcome::Saved {
-                documents: vec![document],
-                revisions: vec![document_revision(world, document)?],
-            });
+            #[cfg(feature = "language-services")]
+            let save = crate::begin_explicit_document_save(
+                world,
+                document,
+                world
+                    .resource::<bed_api::settings::SettingsSnapshot>()
+                    .settings["lsp_format_on_save"]
+                    .as_bool()
+                    .unwrap_or(true),
+            )?;
+            #[cfg(not(feature = "language-services"))]
+            let save = crate::begin_document_save(
+                world,
+                &[crate::DocumentSaveTarget {
+                    document,
+                    destination: None,
+                }],
+            )?;
+            return document_save_outcome(world, save);
         }
         HostAction::SaveAsDialog { document } => {
+            if world.resource::<bed_files::FileServices>().is_remote() {
+                return Err("Choose an SSH save destination through its filesystem browser".into());
+            }
             if let Some(path) = rfd::FileDialog::new().save_file() {
-                save_document_as(world, document, &path)?;
-                return Ok(HostOutcome::Saved {
-                    documents: vec![document],
-                    revisions: vec![document_revision(world, document)?],
-                });
+                let save = crate::begin_document_save(
+                    world,
+                    &[crate::DocumentSaveTarget {
+                        document,
+                        destination: Some(path),
+                    }],
+                )?;
+                return document_save_outcome(world, save);
             }
         }
         HostAction::SaveDocumentsWithResult {
@@ -1027,22 +1441,27 @@ fn apply_request(world: &mut World, request: HostRequest) -> Result<HostOutcome,
             token,
             documents,
         } => {
-            let result = (|| {
-                commit_document_drafts(world, &documents)?;
-                let mut saved = Vec::new();
-                for document in documents {
-                    save_document(world, document)?;
-                    let revision = document_revision(world, document)?;
-                    saved.push(bed_api::documents::SavedDocument { document, revision });
+            let targets = documents
+                .into_iter()
+                .map(|document| crate::DocumentSaveTarget {
+                    document,
+                    destination: None,
+                })
+                .collect::<Vec<_>>();
+            match crate::begin_document_save(world, &targets) {
+                Ok(save) => {
+                    crate::saves::attach_document_save_reply(world, save, recipient, token);
+                    return document_save_outcome(world, save);
                 }
-                Ok::<_, String>(saved)
-            })();
-            world.write_message(bed_api::documents::DocumentReply::Save {
-                recipient,
-                token,
-                result: result.clone(),
-            });
-            result?;
+                Err(error) => {
+                    world.write_message(bed_api::documents::DocumentReply::Save {
+                        recipient,
+                        token,
+                        result: Err(error.clone()),
+                    });
+                    return Err(error);
+                }
+            }
         }
         HostAction::CommitDocumentsWithResult {
             recipient,
@@ -1083,7 +1502,82 @@ fn apply_request(world: &mut World, request: HostRequest) -> Result<HostOutcome,
             return preview_file(world, Path::new(&path), viewer.as_deref(), request.area())
                 .map(HostOutcome::Opened);
         }
+        HostAction::OpenTerminalFiles { paths } => {
+            for path in paths {
+                open_file(world, &path, None, Some(request.area()))?;
+            }
+        }
+        HostAction::OpenTerminalLink { path, position } => {
+            if let Some((row, column)) = position {
+                return reveal_source(
+                    world,
+                    &path,
+                    (row, column),
+                    true,
+                    false,
+                    request.area(),
+                    false,
+                )
+                .map(HostOutcome::Opened);
+            }
+            return open_file(world, &path, None, Some(request.area())).map(HostOutcome::Opened);
+        }
+        HostAction::RevealSource {
+            path,
+            row,
+            column,
+            center,
+        } => {
+            return reveal_source(
+                world,
+                Path::new(&path),
+                (row, column),
+                center,
+                false,
+                request.area(),
+                false,
+            )
+            .map(HostOutcome::Opened);
+        }
+        HostAction::PreviewSource {
+            path,
+            row,
+            column,
+            center,
+        } => {
+            return reveal_source(
+                world,
+                Path::new(&path),
+                (row, column),
+                center,
+                true,
+                request.area(),
+                false,
+            )
+            .map(HostOutcome::Opened);
+        }
+        #[cfg(feature = "language-services")]
+        HostAction::NavigateLocation {
+            path,
+            row,
+            utf16_column,
+            ..
+        } => {
+            return reveal_source(
+                world,
+                Path::new(&path),
+                (row, utf16_column),
+                true,
+                true,
+                request.area(),
+                true,
+            )
+            .map(HostOutcome::Opened);
+        }
         HostAction::OpenFileDialog { viewer } => {
+            if world.resource::<bed_files::FileServices>().is_remote() {
+                return Err("Open SSH files through their filesystem browser".into());
+            }
             if let Some(path) = rfd::FileDialog::new().pick_file() {
                 return open_file(world, &path, viewer.as_deref(), Some(request.area()))
                     .map(HostOutcome::Opened);
@@ -1176,9 +1670,9 @@ fn apply_request(world: &mut World, request: HostRequest) -> Result<HostOutcome,
                     if intent.source != Some(entity) {
                         return Err("Panel actions may only produce their own effects".into());
                     }
-                    apply_request(
+                    apply_document_request(
                         world,
-                        capture_host_request(world, intent.source, intent.action),
+                        capture_host_request_area(world, intent.source, intent.action, intent.area),
                     )?;
                 }
             }
@@ -1230,7 +1724,7 @@ fn apply_request(world: &mut World, request: HostRequest) -> Result<HostOutcome,
                 .and_then(|binding| binding.view)
                 .or_else(|| {
                     world
-                        .resource::<HostFrame>()
+                        .resource::<DocumentFrame>()
                         .active_view
                         .filter(|view| session.document_for_view(*view) == Some(document))
                 })
@@ -1256,4 +1750,73 @@ fn apply_request(world: &mut World, request: HostRequest) -> Result<HostOutcome,
         _ => return Err("This operation requires an application integration".into()),
     }
     Ok(HostOutcome::Applied)
+}
+
+fn reveal_source(
+    world: &mut World,
+    path: &Path,
+    position: (i32, i32),
+    center: bool,
+    preview: bool,
+    area: u32,
+    utf16: bool,
+) -> Result<Entity, String> {
+    let (row, column) = position;
+    let viewer = world
+        .resource::<bed_api::features::FeatureRegistry>()
+        .default_viewer(bed_documents::DocumentKind::Text)
+        .ok_or("No text viewer is installed")?
+        .id;
+    let panel = if preview {
+        preview_file(world, path, Some(viewer), area)?
+    } else {
+        open_file(world, path, Some(viewer), Some(area))?
+    };
+    let binding = world
+        .get::<PanelBinding>(panel)
+        .ok_or("Source panel has no document binding")?;
+    let view = binding.view.ok_or("Source panel has no text view")?;
+    let column = if utf16 {
+        world
+            .non_send::<DocumentSession>()
+            .with_document(
+                binding.document.ok_or("Source panel has no document")?,
+                |state| {
+                    bed_editing::util::utf8::utf16_to_utf8_byte_offset(&state.line(row), column)
+                },
+            )
+            .map_err(|error| error.to_string())?
+    } else {
+        column
+    };
+    world
+        .non_send_mut::<DocumentSession>()
+        .with_commands(view, |commands| {
+            commands.set_cursor(
+                row,
+                column,
+                false,
+                if center {
+                    bed_editing::text_commands::CursorReveal::Center
+                } else {
+                    bed_editing::text_commands::CursorReveal::Ensure
+                },
+            )
+        })
+        .map_err(|error| error.to_string())?;
+    bed_workbench::focus_panel(world, panel);
+    Ok(panel)
+}
+
+fn document_save_outcome(
+    world: &mut World,
+    save: crate::DocumentSaveId,
+) -> Result<HostOutcome, String> {
+    match crate::poll_document_save(world, save) {
+        Some(result) => result.map(|saved| HostOutcome::Saved {
+            documents: saved.iter().map(|saved| saved.document).collect(),
+            revisions: saved.iter().map(|saved| saved.revision).collect(),
+        }),
+        None => Ok(HostOutcome::Pending(save)),
+    }
 }

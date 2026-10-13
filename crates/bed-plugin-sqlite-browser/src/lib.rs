@@ -29,48 +29,6 @@ fn register_metadata(registrar: &mut FeatureRegistrar<'_>) {
     registrar.command_ref(OPEN_FILE_COMMAND);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn remote_sqlite_requests_fail_before_opening_a_connection() {
-        let mut app = bevy::app::App::new();
-        app.add_plugins(SqliteBrowserPlugin);
-        app.world_mut()
-            .resource_mut::<bed_api::features::HostFrame>()
-            .remote = true;
-        for id in [OPEN_COMMAND, OPEN_FILE_COMMAND] {
-            let command = app
-                .world()
-                .resource::<bed_api::workbench::WorkbenchRegistry>()
-                .command(id)
-                .unwrap()
-                .handler;
-            assert!(
-                app.world_mut()
-                    .run_system_with(
-                        command,
-                        bed_api::workbench::CommandInvocation {
-                            command: id.into(),
-                            source: None,
-                            area: 0,
-                            arguments: serde_json::json!({"path":"/remote/data.sqlite"})
-                        }
-                    )
-                    .unwrap()
-                    .is_err()
-            );
-        }
-        assert!(
-            app.world_mut()
-                .resource_mut::<bed_api::features::HostEffects>()
-                .take()
-                .is_empty()
-        );
-    }
-}
-
 pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::ShortcutAction> {
     vec![
         bed_keybindings::ShortcutAction::new(
@@ -100,4 +58,48 @@ pub(crate) fn default_shortcuts() -> bed_keybindings::ShortcutInput {
         bed_keybindings::Platform::current(),
     ))
     .with_scope(bed_keybindings::Scope::panel(PANEL_ID))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_sqlite_requests_fail_before_opening_a_connection() {
+        let mut app = bevy::app::App::new();
+        app.add_plugins(SqliteBrowserPlugin);
+        app.world_mut()
+            .resource_mut::<bed_api::files::FileContext>()
+            .provider = bed_api::files::FileProviderId::Ssh {
+            host: "fixture".into(),
+        };
+        for id in [OPEN_COMMAND, OPEN_FILE_COMMAND] {
+            let command = app
+                .world()
+                .resource::<bed_api::workbench::WorkbenchRegistry>()
+                .command(id)
+                .unwrap()
+                .handler;
+            assert!(
+                app.world_mut()
+                    .run_system_with(
+                        command,
+                        bed_api::workbench::CommandInvocation {
+                            command: id.into(),
+                            source: None,
+                            area: 0,
+                            arguments: serde_json::json!({"path":"/remote/data.sqlite"})
+                        }
+                    )
+                    .unwrap()
+                    .is_err()
+            );
+        }
+        assert!(
+            app.world_mut()
+                .resource_mut::<bed_api::features::HostEffects>()
+                .take()
+                .is_empty()
+        );
+    }
 }

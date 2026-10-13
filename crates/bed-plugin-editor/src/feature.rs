@@ -1,10 +1,12 @@
 //! The session owns documents and selections; typed main-thread state owns widgets.
 use super::*;
 use crate::lsp::lsp_symbol_info::LspSymbolDocumentation;
+use bed_api::documents::DocumentFrame;
+use bed_api::features::FrontendSnapshot;
 use bed_api::workbench::{Panel, PanelCreation, PanelResult, WorkbenchAction, register};
 use bed_api::{
     documents::PanelBinding,
-    features::{FeatureSystems, HostEffects, HostFrame},
+    features::{FeatureSystems, HostEffects},
     workbench::{PanelActionInvocation, PanelActionResult, PanelActions, PanelClose, PanelFocus},
 };
 use bevy::prelude::*;
@@ -49,7 +51,7 @@ impl Plugin for EditorPlugin {
         app.init_non_send::<EditorViews>()
             .init_non_send::<EditorConfig>()
             .init_non_send::<EditorRuntime>()
-            .init_resource::<HostFrame>()
+            .init_resource::<DocumentFrame>()
             .init_resource::<bed_api::workbench::CommandPresentations>()
             .init_non_send::<bed_editor_widgets::extensions::EditorExtensions>()
             .init_non_send::<bed_editor_widgets::source_intents::SourceRequests>();
@@ -84,13 +86,13 @@ impl Plugin for EditorPlugin {
             .world_mut()
             .register_system(|world: &mut World| save_workspace(world));
         let restore = app.world_mut().register_system(
-            |In(payload): In<bed_api::features::FeatureStateRestore>, world: &mut World| {
+            |In(payload): In<bed_api::storage::FeatureStateRestore>, world: &mut World| {
                 restore_workspace(world, payload.state.as_ref());
                 Ok(())
             },
         );
         app.world_mut()
-            .spawn(bed_api::features::FeatureStateContribution {
+            .spawn(bed_api::storage::FeatureStateContribution {
                 owner: MODULE_ID,
                 save,
                 restore,
@@ -287,8 +289,14 @@ impl Panel for EditorFrontend {
             };
         }
         world
-            .get_resource::<HostFrame>()
-            .map(|frame| document_title(&frame.context(), state.document, state.hex))
+            .get_resource::<DocumentFrame>()
+            .map(|_frame| {
+                document_title(
+                    &FrontendSnapshot::capture(world).context(),
+                    state.document,
+                    state.hex,
+                )
+            })
             .unwrap_or_else(|| "Closed".into())
     }
 
@@ -1447,7 +1455,7 @@ mod tests {
             .project_check = Some(config.clone());
         let contribution = *app
             .world_mut()
-            .query::<&bed_api::features::FeatureStateContribution>()
+            .query::<&bed_api::storage::FeatureStateContribution>()
             .single(app.world())
             .unwrap();
         let saved = app.world_mut().run_system(contribution.save).unwrap();
@@ -1457,7 +1465,7 @@ mod tests {
         app.world_mut()
             .run_system_with(
                 contribution.restore,
-                bed_api::features::FeatureStateRestore { state: Some(saved) },
+                bed_api::storage::FeatureStateRestore { state: Some(saved) },
             )
             .unwrap()
             .unwrap();

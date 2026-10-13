@@ -109,7 +109,25 @@ fn request(world: &mut World, source: Entity, host: HostAction) -> AppRequestOut
     poll_app_request_result(world, id).unwrap().unwrap()
 }
 
+#[cfg(feature = "workspaces")]
+fn workspace_request(
+    world: &mut World,
+    source: Entity,
+    action: WorkspaceAction,
+) -> AppRequestOutcome {
+    let request = capture_app_request_from(
+        world,
+        AppAction::Workspace(action),
+        PanelTarget::LastFocused,
+        Some(source),
+    );
+    let id = submit_app_request(world, request);
+    process_app_requests(world).unwrap();
+    poll_app_request_result(world, id).unwrap().unwrap()
+}
+
 #[test]
+#[cfg(feature = "workspaces")]
 fn promotion_reuses_the_saved_terminal_slot_without_rebuilding_the_calling_frontend() {
     let dir = TempDir::new();
     let file = dir.write("project/dirty.txt", b"before");
@@ -158,11 +176,7 @@ fn promotion_reuses_the_saved_terminal_slot_without_rebuilding_the_calling_front
         "tiling":tiling.to_value([40]),"focused":40
     })).unwrap();
     assert_eq!(
-        request(
-            app.world_mut(),
-            child,
-            HostAction::PromoteWorkspace { root }
-        ),
+        workspace_request(app.world_mut(), child, WorkspaceAction::Promote(root)),
         AppRequestOutcome::Applied
     );
     assert_eq!(
@@ -201,6 +215,7 @@ fn promotion_reuses_the_saved_terminal_slot_without_rebuilding_the_calling_front
 }
 
 #[test]
+#[cfg(feature = "workspaces")]
 fn promotion_uses_default_terminal_placement_and_opens_later_roots_in_another_window() {
     let dir = TempDir::new();
     std::fs::create_dir(dir.path("project")).unwrap();
@@ -225,12 +240,10 @@ fn promotion_uses_default_terminal_placement_and_opens_later_roots_in_another_wi
         .area(default_tiling.area_for(terminal).unwrap())
         .rect;
     let session = app.world().non_send::<DocumentSession>().session_id();
-    request(
+    workspace_request(
         app.world_mut(),
         caller,
-        HostAction::PromoteWorkspace {
-            root: dir.path("project"),
-        },
+        WorkspaceAction::Promote(dir.path("project")),
     );
     let state = app.world().resource::<WorkbenchLayout>();
     let area = state
@@ -239,12 +252,10 @@ fn promotion_uses_default_terminal_placement_and_opens_later_roots_in_another_wi
         .unwrap();
     assert_eq!(state.tiling.layout.area(area).rect, terminal_rect);
     let layout = state.tiling.clone();
-    request(
+    workspace_request(
         app.world_mut(),
         caller,
-        HostAction::PromoteWorkspace {
-            root: dir.path("second"),
-        },
+        WorkspaceAction::Promote(dir.path("second")),
     );
     assert_eq!(app.world().resource::<WorkbenchLayout>().tiling, layout);
     assert_eq!(

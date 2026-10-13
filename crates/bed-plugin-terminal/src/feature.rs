@@ -22,7 +22,7 @@ use std::collections::HashSet;
 
 /// Window observations used for fresh shells, never the focused process's cwd.
 #[derive(Resource, Default, Clone)]
-pub struct TerminalWorkspace {
+pub struct TerminalLaunchContext {
     pub working_directory: String,
     pub project_root: String,
     pub remote: bool,
@@ -102,8 +102,10 @@ impl Plugin for TerminalPlugin {
         if !app.is_plugin_added::<bed_terminal::TerminalCorePlugin>() {
             app.add_plugins(bed_terminal::TerminalCorePlugin);
         }
+        #[cfg(unix)]
+        crate::shell::install(app);
         app.init_resource::<TerminalAppearance>()
-            .init_resource::<TerminalWorkspace>()
+            .init_resource::<TerminalLaunchContext>()
             .init_resource::<TerminalRetentions>()
             .init_resource::<PanelSessions>()
             .init_resource::<bed_api::features::FeatureRegistry>()
@@ -133,8 +135,8 @@ impl Plugin for TerminalPlugin {
     }
 }
 
-/// Connect terminal panels to editor workspace services and executable shell helpers.
-/// Install this only when the host also dispatches `run_helper` before opening a GUI.
+/// Connect terminal panels to shared directory, document, lifecycle and clipboard services.
+/// Shell helper dispatch is separately supplied by the host entrypoint.
 pub struct TerminalAppIntegrationPlugin;
 
 impl Plugin for TerminalAppIntegrationPlugin {
@@ -151,7 +153,7 @@ impl Plugin for TerminalAppIntegrationPlugin {
             .add_systems(
                 PreUpdate,
                 (
-                    update_workspace,
+                    update_launch_context,
                     observations.after(bed_terminal::TerminalCoreSystems::Poll),
                 )
                     .in_set(bed_api::features::FeatureSystems::Prepare),
@@ -174,19 +176,6 @@ impl Plugin for TerminalAppIntegrationPlugin {
             close,
             clipboard,
         });
-
-        #[cfg(unix)]
-        {
-            crate::shell::install(app);
-            register(app.world_mut(), "bed.terminal.editor", |registrar| {
-                registrar.command(
-                    crate::shell::COMMAND,
-                    "Shell Request",
-                    crate::shell::apply_request,
-                );
-            })
-            .expect("TerminalAppIntegrationPlugin is installed once");
-        }
     }
 }
 
@@ -198,34 +187,19 @@ fn open_panel(In(invocation): In<CommandInvocation>) -> CommandResult {
     }])
 }
 
-fn update_workspace(world: &mut World) {
-    let Some(frame) = world.get_resource::<bed_api::features::HostFrame>() else {
+fn update_launch_context(world: &mut World) {
+    let Some(files) = world.get_resource::<bed_api::files::FileContext>() else {
         return;
     };
-    let documents = world.get_non_send::<bed_documents::DocumentSession>();
-    let project_root = documents.map_or_else(
-        || frame.project_root.clone(),
-        |documents| {
-            documents
-                .options()
-                .project_root
-                .as_ref()
-                .map(|root| root.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        },
-    );
-    let working_directory = if project_root.is_empty() {
-        frame.working_directory.clone()
-    } else {
-        project_root.clone()
-    };
-    let remote = documents.map_or(frame.remote, |documents| documents.is_remote());
+    let project_root = files.directory_string();
+    let remote = matches!(files.provider, bed_api::files::FileProviderId::Ssh { .. });
     #[cfg(feature = "remote")]
-    let ssh = documents
+    let ssh = world
+        .get_non_send::<bed_documents::DocumentSession>()
         .and_then(|documents| documents.ssh_target())
         .cloned();
-    *world.resource_mut::<TerminalWorkspace>() = TerminalWorkspace {
-        working_directory,
+    *world.resource_mut::<TerminalLaunchContext>() = TerminalLaunchContext {
+        working_directory: project_root.clone(),
         project_root: project_root.clone(),
         remote,
     };
@@ -252,13 +226,13 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
             return Err("Terminal requires its own panel without a document".into());
         }
         // Editor factories may run before the next published frame.
-        update_workspace(world);
+        update_launch_context(world);
         binding
     } else {
         PanelBinding::default()
     };
-    let workspace = world.resource::<TerminalWorkspace>().clone();
-    if workspace.remote && !cfg!(feature = "remote") {
+    let launch = world.resource::<TerminalLaunchContext>().clone();
+    if launch.remote && !cfg!(feature = "remote") {
         return Err(
             "Remote terminal support requires the bed-plugin-terminal remote feature".into(),
         );
@@ -277,8 +251,8 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
     } else {
         let cwd = shell_directory(
             creation.state["cwd"].as_str(),
-            &workspace.working_directory,
-            workspace.remote,
+            &launch.working_directory,
+            launch.remote,
         );
         match cwd {
             Some(cwd) => terminal.new_session_at(cwd),
@@ -520,6 +494,14 @@ fn observations(
     }
 }
 
+fn show_panel(In(invocation): In<CommandInvocation>) -> CommandResult {
+    Ok(vec![WorkbenchAction::ShowPanel {
+        panel_type: PANEL_ID.into(),
+        state: Value::Null,
+        area: Some(invocation.area),
+    }])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,10 +511,11 @@ mod tests {
     #[test]
     fn status_tracks_its_focused_session_and_labels_remote_launch_directory() {
         let mut app = make_app();
-        let mut terminal = app.world_mut().non_send_mut::<BedTerminal>();
-        terminal.set_ssh_target(Some(bed_remote::SshTarget::new("user@status-fixture")));
-        let session = terminal.new_session_at("/remote/launch");
-        drop(terminal);
+        let session = {
+            let mut terminal = app.world_mut().non_send_mut::<BedTerminal>();
+            terminal.set_ssh_target(Some(bed_remote::SshTarget::new("user@status-fixture")));
+            terminal.new_session_at("/remote/launch")
+        };
         let entity = app
             .world_mut()
             .spawn(TerminalPanelState {
@@ -582,16 +565,12 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_terminal_uses_host_directory_without_editor_services_or_shell_helpers() {
+    fn ordinary_terminal_uses_host_directory_without_document_services() {
         let directory = crate::test_support::TempDir::new();
         let mut app = App::new();
         app.add_plugins((WorkbenchPlugin, TerminalPlugin))
-            .insert_resource(TerminalWorkspace {
+            .insert_resource(TerminalLaunchContext {
                 working_directory: directory.root().to_string_lossy().into_owned(),
-                ..Default::default()
-            })
-            .insert_resource(bed_api::features::HostFrame {
-                working_directory: "/editor-frame-must-not-control-this-terminal".into(),
                 ..Default::default()
             });
         let panel = open(&mut app, Value::Null);
@@ -602,7 +581,7 @@ mod tests {
                 .contains_resource::<bed_api::features::HostEffects>()
         );
         #[cfg(unix)]
-        assert!(!app.world().contains_resource::<crate::shell::ShellBridge>());
+        assert!(app.world().contains_resource::<crate::shell::ShellBridge>());
         let session = app
             .world()
             .get::<TerminalPanelState>(panel)
@@ -624,7 +603,7 @@ mod tests {
     fn a_remote_workspace_without_transport_cannot_start_a_local_shell() {
         let mut app = App::new();
         app.add_plugins((WorkbenchPlugin, TerminalPlugin))
-            .insert_resource(TerminalWorkspace {
+            .insert_resource(TerminalLaunchContext {
                 remote: true,
                 working_directory: "/remote/project".into(),
                 ..Default::default()
@@ -678,7 +657,7 @@ mod tests {
         std::fs::create_dir(&second_dir).unwrap();
         let mut app = make_app();
         app.world_mut()
-            .resource_mut::<TerminalWorkspace>()
+            .resource_mut::<TerminalLaunchContext>()
             .working_directory = second_dir.to_string_lossy().into_owned();
         let first = open(&mut app, json!({"cwd":first_dir}));
         let second = open(&mut app, Value::Null);
@@ -902,12 +881,4 @@ mod tests {
         );
         assert_eq!(frontend.save(app.world())["cwd"], json!("/legacy-shell"));
     }
-}
-
-fn show_panel(In(invocation): In<CommandInvocation>) -> CommandResult {
-    Ok(vec![WorkbenchAction::ShowPanel {
-        panel_type: PANEL_ID.into(),
-        state: Value::Null,
-        area: Some(invocation.area),
-    }])
 }

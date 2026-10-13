@@ -6,6 +6,7 @@ publish = false
 license.workspace = true
 
 [dependencies]
+bed-desktop = { workspace = true, features = ["preview"] }
 bed-ui = { workspace = true, features = ["imgui", "gpu"] }
 bed-api = { workspace = true, features = ["gpu", "documents"] }
 bed-runtime = { workspace = true, features = ["scene"] }

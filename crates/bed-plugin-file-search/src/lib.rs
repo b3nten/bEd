@@ -5,7 +5,7 @@ use bed_api::{
     features::HostAction,
     workbench::{PanelAction, PanelPlacement},
 };
-use bed_remote::RemoteClient;
+use bed_files::FileServices;
 use bevy::prelude::Entity;
 use content_search::{ContentSearch, ContentSearchAction};
 use dear_imgui_rs::Ui;
@@ -21,7 +21,13 @@ pub const CANCEL_COMMAND: &str = "bed.search.cancel";
 #[derive(Default)]
 pub struct SearchState {
     replacement: Option<ReplacementJob>,
-    remote: Option<RemoteClient>,
+    services: FileServices,
+    context_identity: Option<(
+        bed_files::FileProviderId,
+        std::path::PathBuf,
+        u64,
+        bed_documents::SessionId,
+    )>,
 }
 
 impl SearchState {
@@ -41,9 +47,9 @@ impl Drop for SearchPanel {
 }
 
 impl SearchPanel {
-    pub fn new(remote: Option<RemoteClient>, state: &Value) -> Self {
+    pub fn new(services: FileServices, state: &Value) -> Self {
         let mut search = ContentSearch::new_lazy();
-        search.set_remote_client(remote);
+        search.set_file_services(services);
         search.query = state["query"].as_str().unwrap_or_default().into();
         search.case_sensitive = state["case_sensitive"].as_bool().unwrap_or_default();
         search.include_ignored = state["include_ignored"].as_bool().unwrap_or_default();

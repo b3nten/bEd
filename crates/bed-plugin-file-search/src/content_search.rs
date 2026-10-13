@@ -401,10 +401,8 @@ impl ContentSearch {
             ui.checkbox("Include ignored files", &mut self.search.include_ignored);
             self.observe(project_root);
         }
-        if self.needs_tick() {
-            if ui.small_button("Cancel") {
-                action = ContentSearchAction::Cancel;
-            }
+        if self.needs_tick() && ui.small_button("Cancel") {
+            action = ContentSearchAction::Cancel;
         }
         if let Some(error) = &self.validation_error {
             ui.text_wrapped(error);

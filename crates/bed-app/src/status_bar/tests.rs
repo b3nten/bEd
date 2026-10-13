@@ -296,7 +296,7 @@ fn host_information_shows_names_and_keeps_paths_in_details() {
     assert_eq!(host_information(&workspace).0, "code");
     workspace.spec = Some(crate::WorkspaceSpec {
         name: "Remote project".into(),
-        target: bed_api::application::WorkspaceTarget::Ssh {
+        target: bed_plugin_workspaces::WorkspaceTarget::Ssh {
             host: "devbox".into(),
         },
         root: "/srv/code".into(),

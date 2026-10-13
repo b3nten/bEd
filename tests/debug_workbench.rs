@@ -35,7 +35,7 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
         AppRuntimePlugin {
             options: AppOptions {
                 working_directory: Some(root.clone()),
-                workspace: Some(WorkspaceSpec::local(root.to_string_lossy())),
+                initial_layout: Some(LayoutSlot::Layout1),
                 ..Default::default()
             },
         },
@@ -80,7 +80,7 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
         1
     );
 
-    // The default layout keeps Debug below the source area.
+    // Layout 1 keeps Debug below the source area, without requiring a workspace.
     let debug = app
         .world_mut()
         .query::<(Entity, &PanelRecord)>()
@@ -116,7 +116,7 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
         .non_send_mut::<DocumentSession>()
         .replace_content(binding.document.unwrap(), saved)
         .unwrap();
-    publish_host_frame(app.world_mut());
+    publish_app_state(app.world_mut());
 
     let mut context = Context::create();
     context

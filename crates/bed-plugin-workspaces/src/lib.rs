@@ -1,11 +1,14 @@
 //! Workspace picker panels and their concrete workspace action contract.
+mod contracts;
 mod feature;
+mod lifecycle;
+pub use contracts::*;
+pub use lifecycle::*;
 pub mod welcome;
 #[cfg(feature = "mascots")]
 pub use feature::WorkspacesPreview;
 pub use feature::{WorkspacesFrontend, WorkspacesPanelState, WorkspacesPlugin};
 
-use bed_api::application::WorkspaceSpec;
 use welcome::WelcomeAction;
 
 pub const MODULE_ID: &str = "bed.projects";
@@ -14,13 +17,13 @@ pub const NEW_COMMAND: &str = "bed.projects.new";
 
 /// Requests are applied by the native workspace service after panel drawing.
 /// They retain the workspace selected in the originating Workspaces panel.
-pub use bed_api::application::WorkspaceAction;
 
 #[derive(Default, bevy::prelude::Resource)]
 pub struct WorkspacesState {
     pub recent_workspaces: Vec<WorkspaceSpec>,
     pub connecting: bool,
     pub disconnected: bool,
+    pub error: Option<String>,
 }
 
 fn workspace_actions(action: WelcomeAction) -> Vec<WorkspaceAction> {

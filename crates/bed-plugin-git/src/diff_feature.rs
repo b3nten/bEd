@@ -1137,7 +1137,7 @@ mod tests {
         diff(&mut app, entity, "saved", b"staged content\n");
         let restore = app
             .world_mut()
-            .query::<&bed_api::features::FeatureStateContribution>()
+            .query::<&bed_api::storage::FeatureStateContribution>()
             .iter(app.world())
             .find(|contribution| contribution.owner == crate::MODULE_ID)
             .unwrap()
@@ -1145,7 +1145,7 @@ mod tests {
         app.world_mut()
             .run_system_with(
                 restore,
-                bed_api::features::FeatureStateRestore {
+                bed_api::storage::FeatureStateRestore {
                     state: Some(json!({"commit_message":"restored draft"})),
                 },
             )
@@ -1181,7 +1181,7 @@ mod tests {
             .session_id = Some(session);
         let restore = app
             .world_mut()
-            .query::<&bed_api::features::FeatureStateContribution>()
+            .query::<&bed_api::storage::FeatureStateContribution>()
             .iter(app.world())
             .find(|contribution| contribution.owner == crate::MODULE_ID)
             .unwrap()
@@ -1189,7 +1189,7 @@ mod tests {
         app.world_mut()
             .run_system_with(
                 restore,
-                bed_api::features::FeatureStateRestore { state: None },
+                bed_api::storage::FeatureStateRestore { state: None },
             )
             .unwrap()
             .unwrap();

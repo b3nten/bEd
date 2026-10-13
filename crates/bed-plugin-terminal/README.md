@@ -1,7 +1,7 @@
 # bed-plugin-terminal
 
 `TerminalPlugin` contributes ordinary shell panels to the workbench. It owns
-process/input handling, fonts and runtime appearance. `TerminalWorkspace`
+process/input handling, fonts and runtime appearance. `TerminalLaunchContext`
 chooses the directory for new shells; an empty directory inherits the host's
 working directory. Errors are observable through
 `bed_terminal::TerminalActivity`.
@@ -20,12 +20,11 @@ it through the `bed.terminal` entry in
 
 ## Application integration
 
-`TerminalAppIntegrationPlugin` opts into application workspace projection, panel lifecycle
-and clipboard integration, shell commands such as `+open`/`+workspace`, and
-terminal file links. The application host resolves those requests. Add it explicitly
+`TerminalAppIntegrationPlugin` projects the shared `FileContext` into the launch
+context and installs panel lifecycle, clipboard and terminal file-link integration. The application host resolves those requests. Add it explicitly
 alongside `TerminalPlugin`; it can also install `TerminalPlugin` when absent.
 
-Applications using this adapter dispatch `run_helper` before constructing the
+Applications exposing registered shell commands dispatch `run_helper` before constructing the
 GUI, because private helper invocations execute the host binary:
 
 ```rust,no_run
@@ -44,5 +43,14 @@ fn main() {
 }
 ```
 
-Ordinary shell panels need no helper preflight or application request handling. The
-application continues to own command-line parsing, configuration and persistence.
+`TerminalPlugin` owns a local command socket. It creates executable helpers only
+for aliases contributed through `WorkbenchRegistrar::shell_alias`; command owners
+receive raw argument bytes, calling directory and pane via `ShellInvocation`.
+The document owner contributes `+open`/`+o`, workspaces contribute `+workspace`/`+w`,
+and mascots contribute `+ducky`. Third-party aliases use the same transport.
+Missing/disabled commands return errors; acknowledgement waits for the owning
+operation's completion. Historic helper wire messages remain accepted.
+
+Hosts without shell registrations need no helper preflight. The application
+continues to own command-line parsing, configuration and persistence. Remote
+terminal file links remain supported; shell-command transport is local only.

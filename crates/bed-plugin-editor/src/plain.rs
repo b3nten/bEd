@@ -1,9 +1,11 @@
 //! Plain editors reuse the document algorithms and widgets without IDE services.
 use super::*;
+use bed_api::documents::DocumentFrame;
+use bed_api::features::FrontendSnapshot;
 use bed_api::workbench::{Panel, PanelCreation, PanelResult, WorkbenchAction, register};
 use bed_api::{
     documents::PanelBinding,
-    features::{HostEffects, HostFrame},
+    features::HostEffects,
     workbench::{PanelActionInvocation, PanelActionResult, PanelActions, PanelClose, PanelFocus},
 };
 use bevy::{ecs::system::SystemState, prelude::*};
@@ -42,7 +44,7 @@ impl Plugin for EditorPlugin {
             .init_non_send::<EditorConfig>()
             .init_non_send::<bed_editor_widgets::extensions::EditorExtensions>()
             .init_non_send::<bed_editor_widgets::source_intents::SourceRequests>()
-            .init_resource::<HostFrame>()
+            .init_resource::<DocumentFrame>()
             .init_resource::<HostEffects>()
             .init_resource::<bed_api::features::FeatureRegistry>()
             .add_message::<bed_api::features::HostRequest>()

@@ -126,8 +126,8 @@ fn classify_path(target: &str) -> Option<LinkTarget> {
         return None;
     }
     let name = path.rsplit('/').next()?;
-    if !path.contains('/') {
-        if !name
+    if !path.contains('/')
+        && (!name
             .chars()
             .any(|character| character.is_alphabetic() || character == '_')
             || (!name.contains('.')
@@ -141,10 +141,9 @@ fn classify_path(target: &str) -> Option<LinkTarget> {
                         | "README"
                         | "LICENSE"
                         | "NOTICE"
-                ))
-        {
-            return None;
-        }
+                )))
+    {
+        return None;
     }
     Some(LinkTarget::File {
         host: None,

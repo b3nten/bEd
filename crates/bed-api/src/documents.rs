@@ -1,5 +1,6 @@
 //! Document snapshots, identities, edits and viewer capabilities.
-use crate::features::{FeatureRegistry, HostAction, HostFrame};
+pub use crate::document_frame::DocumentFrame;
+use crate::features::{FeatureRegistry, HostAction};
 use bed_editing::buffer::text_buffer::Snapshot;
 pub use bed_editing::{
     document_state::DocumentKind,
@@ -181,7 +182,7 @@ pub fn panel_viewer_menu(
 ) -> Option<ViewerMenu> {
     let binding = world.get::<PanelBinding>(entity)?;
     let document = binding.input.document().or(binding.document)?;
-    let frame = world.get_resource::<HostFrame>()?;
+    let frame = world.get_resource::<DocumentFrame>()?;
     let snapshot = frame
         .documents
         .iter()

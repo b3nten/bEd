@@ -1,5 +1,5 @@
 use crate::{AudioStates, audio};
-use bed_api::features::HostFrame;
+use bed_api::documents::DocumentFrame;
 use bed_api::{
     status::{
         StatusCommand, StatusContext, StatusDrawContext, StatusItem, StatusItems, StatusText,
@@ -49,7 +49,7 @@ pub(super) fn presentation(world: &World, context: StatusContext) -> Option<Stat
     } else if !context.is_focused() || playing {
         return None;
     }
-    let frame = world.get_resource::<HostFrame>()?;
+    let frame = world.get_resource::<DocumentFrame>()?;
     let document = frame
         .documents
         .iter()

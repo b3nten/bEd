@@ -4,6 +4,7 @@ use crate::{
     model::Document,
     worker::{Job, Worker},
 };
+use bed_api::files::FileServices;
 use bed_api::{
     documents::Revision,
     features::{HostAction, HostContext},
@@ -11,7 +12,6 @@ use bed_api::{
     workbench::PanelAction,
 };
 use bed_editing::identity::DocumentId;
-use bed_remote::RemoteClient;
 use bed_ui::gpu::{RenderOutput, RenderTarget};
 use dear_imgui_rs::{Ui, WindowFlags};
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,7 @@ pub struct MarkdownPanel {
     restore_scroll: bool,
     pending_anchor: Option<String>,
     project_root: String,
-    remote: Option<RemoteClient>,
+    services: FileServices,
 }
 
 impl MarkdownPanel {
@@ -74,7 +74,7 @@ impl MarkdownPanel {
             restore_scroll: true,
             pending_anchor: None,
             project_root: String::new(),
-            remote: None,
+            services: FileServices::local(),
         })
     }
 
@@ -129,7 +129,7 @@ impl MarkdownPanel {
             document.revision,
             Some(&document.path),
             &self.project_root,
-            self.remote.clone(),
+            self.services.clone(),
             images,
         );
         self.assets.poll();
@@ -375,14 +375,9 @@ impl MarkdownPanel {
         self.content(ui, host, requests);
     }
 
-    pub(crate) fn prepare(
-        &mut self,
-        host: &HostContext<'_>,
-        root: &str,
-        remote: Option<RemoteClient>,
-    ) {
+    pub(crate) fn prepare(&mut self, host: &HostContext<'_>, root: &str, services: FileServices) {
         self.project_root = root.to_owned();
-        self.remote = remote;
+        self.services = services;
         self.sync(host);
     }
 

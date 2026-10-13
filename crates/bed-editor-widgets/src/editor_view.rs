@@ -9,6 +9,8 @@ use crate::{
     editor_input::{DefinitionRequest, EditorHostAction, EditorInput},
 };
 use bed_documents::session::{ClosePolicy, DocumentId, DocumentSession, SessionId, ViewId};
+#[cfg(test)]
+use dear_imgui_rs::Key;
 use dear_imgui_rs::{ContextId, FocusedFlags, FontId, StyleColor, StyleVar, Ui, WindowFlags};
 use std::{io, rc::Rc};
 
@@ -1546,6 +1548,3 @@ mod tests {
         drop(context.render_legacy());
     }
 }
-
-#[cfg(test)]
-use dear_imgui_rs::Key;

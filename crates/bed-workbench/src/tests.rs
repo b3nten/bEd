@@ -1119,7 +1119,7 @@ fn individual_panel_rendering_refreshes_bindings_each_frame() {
             .overrides
             .replace(
                 &action,
-                Some(0).filter(|_| shortcut == "F11"),
+                (shortcut == "F11").then_some(0),
                 shortcut.parse().unwrap(),
             )
             .unwrap();

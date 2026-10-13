@@ -1,5 +1,5 @@
 //! Native chrome projects the same contribution metadata consumed by the workbench.
-use crate::{CoreSystems, HostRequestMode};
+use crate::{CorePresentationMode, CoreSystems};
 use bed_api::workbench::{CommandPresentations, WorkbenchRegistry};
 use bed_desktop::{
     DesktopAppearance, DesktopMenu, DesktopMenuCommand, DesktopMenuItem, DesktopNativePresentation,
@@ -18,7 +18,7 @@ pub(crate) fn install(app: &mut App) {
 }
 
 fn publish(world: &mut World) {
-    if *world.resource::<HostRequestMode>() != HostRequestMode::Core {
+    if *world.resource::<CorePresentationMode>() != CorePresentationMode::Standard {
         return;
     }
     let name = world
@@ -94,7 +94,7 @@ mod tests {
     #[test]
     fn native_chrome_uses_shared_visibility_label_icon_availability_and_theme() {
         let mut app = App::new();
-        app.init_resource::<HostRequestMode>()
+        app.init_resource::<CorePresentationMode>()
             .init_resource::<DesktopAppearance>()
             .init_resource::<DesktopNativePresentation>()
             .init_resource::<CommandPresentations>();
@@ -151,7 +151,7 @@ mod tests {
             matches!(&native.menus[0].items[0], DesktopMenuItem::Command(command) if command.id == "example.open" && command.label == "Working…" && !command.enabled)
         );
         let saved = native.clone();
-        *app.world_mut().resource_mut::<HostRequestMode>() = HostRequestMode::Application;
+        *app.world_mut().resource_mut::<CorePresentationMode>() = CorePresentationMode::Application;
         app.world_mut()
             .resource_mut::<CommandPresentations>()
             .0

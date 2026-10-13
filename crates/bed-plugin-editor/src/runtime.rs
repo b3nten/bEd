@@ -655,12 +655,12 @@ impl EditorRuntime {
             }
             if ready {
                 for (command, label) in crate::lsp::editor_actions::COMMANDS {
-                    if ui.menu_item_enabled_selected_no_shortcut(label, false, !view.read_only()) {
-                        if let Err(error) = self.request_lsp_command(session, view.id(), command) {
-                            requests.push(HostAction::Notify {
-                                message: error.to_string(),
-                            });
-                        }
+                    if ui.menu_item_enabled_selected_no_shortcut(label, false, !view.read_only())
+                        && let Err(error) = self.request_lsp_command(session, view.id(), command)
+                    {
+                        requests.push(HostAction::Notify {
+                            message: error.to_string(),
+                        });
                     }
                 }
             }

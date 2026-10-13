@@ -454,10 +454,12 @@ impl Active {
 }
 // io::Error is not Clone, so request results use strings at the async boundary.
 
+type ScheduledCompletion = (ViewId, Instant, (u64, u64), (i32, i32));
+
 #[derive(Default)]
 pub(crate) struct Completion {
     active: Option<Active>,
-    scheduled: Option<(ViewId, Instant, (u64, u64), (i32, i32))>,
+    scheduled: Option<ScheduledCompletion>,
     commands: Vec<(ViewId, Value)>,
     error: Option<String>,
 }
@@ -676,10 +678,10 @@ impl Completion {
             self.forget_view(view.id());
             return Ok(());
         }
-        if settings.shortcuts.take(ui, "bed.editor.completion") {
-            if let Err(error) = self.request(session, view.id(), None, false) {
-                self.error = Some(error.to_string());
-            }
+        if settings.shortcuts.take(ui, "bed.editor.completion")
+            && let Err(error) = self.request(session, view.id(), None, false)
+        {
+            self.error = Some(error.to_string());
         }
         if let Some((id, _, revision, position)) = self.scheduled
             && id == view.id()

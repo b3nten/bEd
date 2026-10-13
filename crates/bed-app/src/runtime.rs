@@ -5,16 +5,17 @@ mod layouts;
 pub use layouts::LayoutSlots;
 
 use crate::workspace::store::{WorkspaceSpec, WorkspaceStore, WorkspaceTarget};
+#[cfg(all(test, feature = "workspaces"))]
+use bed_api::storage::{FeatureStateContribution, FeatureStateRestore};
 use bed_api::workbench::{
     CommandInvocation, PanelCreation, PanelOwner, PanelPresentation, WorkbenchAction,
 };
 use bed_api::{
-    application::WorkspaceAction,
     documents::{
         CommandContext, DocumentReply, LspRequestOrigin, PanelBinding, PanelInput, Revision,
         SaveToken, SavedDocument,
     },
-    features::{FeatureStateContribution, FeatureStateRestore, HostAction, HostEffects, HostFrame},
+    features::{HostAction, HostEffects},
     workbench::{
         PanelAction, PanelActionInvocation, PanelActions, PanelClose, PanelFocus, PanelTarget,
     },
@@ -23,6 +24,9 @@ pub use bed_app_config::LayoutSlot;
 use bed_app_config::Settings;
 use bed_documents::session::{
     ByteEdit, ClosePolicy, DocumentId, DocumentSession, SessionOptions, ViewId,
+};
+use bed_plugin_workspaces::{
+    WorkspaceAction, WorkspaceAttachment, WorkspaceRepositoryResource, WorkspaceRequest,
 };
 use bed_workbench::{
     PanelRecord, WorkbenchLayout, WorkbenchOutcome, WorkbenchRequestId, WorkbenchRequests,
@@ -164,6 +168,16 @@ pub fn panel_presentation(world: &World, panel: Entity) -> Option<Entity> {
 
 #[derive(Debug)]
 pub enum AppAction {
+    Workspace(WorkspaceAction),
+    WorkspaceWithBarrier {
+        action: WorkspaceAction,
+        token: bed_api::features::OperationBarrierToken,
+    },
+    Setting {
+        plugin: String,
+        key: String,
+        value: Value,
+    },
     Command(WindowCommand),
     PluginCommand(String),
     WorkbenchAction(WorkbenchAction),
@@ -270,6 +284,22 @@ pub fn capture_app_request_from(
         && let Ok(captured) = bed_api::documents::selection_context(session, view)
     {
         context = captured;
+    }
+    if context.document.is_none() {
+        let model = source
+            .and_then(|entity| world.get::<bed_core::DocumentBinding>(entity))
+            .or_else(|| {
+                presentation.and_then(|entity| world.get::<bed_core::DocumentBinding>(entity))
+            })
+            .or_else(|| panel.and_then(|entity| world.get::<bed_core::DocumentBinding>(entity)));
+        if let Some(model) = model {
+            context.document = Some(model.0);
+            context.revision = bed_core::document_revision(world, model.0).ok();
+            context.path = bed_core::document_path(world, model.0)
+                .ok()
+                .flatten()
+                .map(|path| path.to_string_lossy().into_owned());
+        }
     }
     if context.document.is_none()
         && matches!(
@@ -405,6 +435,8 @@ pub struct AppRequests {
     results: HashMap<AppRequestId, Result<AppRequestOutcome, AppRequestError>>,
     generic: HashMap<AppRequestId, WorkbenchRequestId>,
     documents: bevy::ecs::message::MessageCursor<bed_api::features::HostRequest>,
+    workspaces: bevy::ecs::message::MessageCursor<WorkspaceRequest>,
+    settings: bevy::ecs::message::MessageCursor<bed_api::settings::SettingsRequest>,
 }
 
 impl AppRequests {
@@ -481,12 +513,31 @@ pub struct AppRuntimePlugin {
 
 impl Plugin for AppRuntimePlugin {
     fn build(&self, app: &mut App) {
+        #[cfg(feature = "workspaces")]
+        let supplied_repository = app
+            .world()
+            .contains_resource::<WorkspaceRepositoryResource>();
+        app.insert_resource(bed_core::CorePresentationMode::Application)
+            .insert_resource(bed_core::DocumentRequestScheduling::External);
+        if !app.is_plugin_added::<bed_core::DocumentHostPlugin>() {
+            app.add_plugins(bed_core::DocumentHostPlugin);
+        }
         if !app.is_plugin_added::<bed_workbench::WorkbenchPlugin>() {
             app.add_plugins(bed_workbench::WorkbenchPlugin);
         }
+        #[cfg(feature = "workspaces")]
+        {
+            app.insert_resource(bed_plugin_workspaces::WorkspaceLifecycleMode::Application);
+            if !app.is_plugin_added::<bed_plugin_workspaces::WorkspacesIntegrationPlugin>() {
+                app.add_plugins(bed_plugin_workspaces::WorkspacesIntegrationPlugin);
+            }
+        }
+        app.add_message::<WorkspaceRequest>()
+            .add_message::<bed_api::settings::SettingsRequest>();
         app.insert_resource(bed_workbench::WorkbenchRequestMode::External)
             .init_resource::<bed_api::features::FeatureRegistry>()
-            .init_resource::<HostFrame>()
+            .init_resource::<bed_api::settings::SettingsSnapshot>()
+            .init_resource::<bed_api::presentation::PresentationFrame>()
             .init_resource::<HostEffects>()
             .init_resource::<AppRequests>()
             .init_resource::<DocumentNavigation>()
@@ -496,34 +547,34 @@ impl Plugin for AppRuntimePlugin {
             .add_message::<DocumentReply>()
             .add_message::<bed_api::documents::DocumentEvent>()
             .add_message::<bed_api::features::HostRequest>()
-            .add_message::<bed_api::features::FeatureStateChanged>()
+            .add_message::<bed_api::storage::FeatureStateChanged>()
             .init_resource::<FeatureStateCursor>()
             .init_schedule(AppRequestsSchedule)
             .init_schedule(AppServicesSchedule)
             .add_systems(
                 AppRequestsSchedule,
-                apply_editor_requests.in_set(AppSystems::Requests),
+                apply_app_requests.in_set(AppSystems::Requests),
             )
             .add_systems(
                 AppServicesSchedule,
-                update_editor_services.in_set(AppSystems::Services),
+                (bed_core::poll_document_services, update_app_services)
+                    .chain()
+                    .in_set(AppSystems::Services),
             )
             .add_systems(
                 PreUpdate,
-                update_editor_services
+                update_app_services
                     .in_set(AppSystems::Services)
+                    .after(bed_core::CoreSystems::Services)
                     .before(AppSystems::Frame),
             )
             .add_systems(
                 PreUpdate,
-                publish_host_frame
+                publish_app_state
                     .in_set(AppSystems::Frame)
                     .before(bed_api::features::FeatureSystems::Prepare),
             )
-            .add_systems(
-                PostUpdate,
-                apply_editor_requests.in_set(AppSystems::Requests),
-            );
+            .add_systems(PostUpdate, apply_app_requests.in_set(AppSystems::Requests));
         let world = app.world_mut();
         crate::shortcuts::register(world);
         if !world.contains_non_send::<DocumentSession>() {
@@ -554,17 +605,54 @@ impl Plugin for AppRuntimePlugin {
         world.insert_resource(ActiveSessionId(
             world.non_send::<DocumentSession>().session_id().0,
         ));
+        let (context, services) = if let (Some(target), Some(client)) = (
+            world.non_send::<DocumentSession>().ssh_target().cloned(),
+            world.non_send::<DocumentSession>().remote_client(),
+        ) {
+            let root = world
+                .non_send::<DocumentSession>()
+                .options()
+                .project_root
+                .clone()
+                .unwrap_or_else(|| working_directory.clone());
+            (
+                bed_files::FileContext::remote(target.host.clone(), root)
+                    .expect("injected remote context is canonical"),
+                bed_files::FileServices::remote_target(target, client),
+            )
+        } else {
+            (
+                bed_files::FileContext::local(&working_directory)
+                    .expect("startup directory is valid"),
+                bed_files::FileServices::local(),
+            )
+        };
         world.insert_resource(WorkspaceState {
             spec: None,
-            project_root: String::new(),
-            working_directory,
+            project_root: context.directory_string(),
+            working_directory: context.directory.clone(),
             error: None,
             close_requested: false,
             windows: Vec::new(),
         });
+        if let Some(mut current) = world.get_resource_mut::<bed_files::FileContext>() {
+            current.replace(context);
+        } else {
+            world.insert_resource(context);
+        }
+        world.insert_resource(services);
+        #[cfg(feature = "workspaces")]
+        {
+            let repository = world.non_send::<WorkspacePersistence>().store.repository();
+            let state_store = world.non_send::<WorkspacePersistence>().store.state_store();
+            if !supplied_repository {
+                world.insert_resource(WorkspaceRepositoryResource(Box::new(repository)));
+            }
+            world.insert_resource(bed_storage::Storage(Box::new(state_store)));
+        }
         world.insert_non_send(crate::ui::AppUi::new(self.options.host_mode));
         world.insert_resource(InitialAppOptions(Some(self.options.clone())));
-        app.add_systems(Startup, initialize_editor);
+        app.add_systems(Startup, initialize_app);
     }
 }
 
@@ -572,31 +660,12 @@ impl Plugin for AppRuntimePlugin {
 struct AppInitialized(bool);
 
 #[derive(Resource, Default)]
-struct FeatureStateCursor(
-    bevy::ecs::message::MessageCursor<bed_api::features::FeatureStateChanged>,
-);
+struct FeatureStateCursor(bevy::ecs::message::MessageCursor<bed_api::storage::FeatureStateChanged>);
 
 /// bEd translates its selected project into each installed feature's actual input.
 /// Reusable features can receive the same inputs from any other application.
 pub fn configure_feature_targets(world: &mut World) {
-    let _ = &world;
-    #[cfg(any(feature = "file-explorer", feature = "git", feature = "debugger"))]
-    let (root, directory, session, remote, client) = {
-        let workspace = world.resource::<WorkspaceState>();
-        let documents = world.non_send::<DocumentSession>();
-        (
-            workspace.project_root.clone(),
-            workspace.working_directory.to_string_lossy().into_owned(),
-            documents.session_id(),
-            documents.is_remote(),
-            documents.remote_client(),
-        )
-    };
-    #[cfg(feature = "file-explorer")]
-    if let Some(mut target) = world.get_resource_mut::<bed_plugin_file_explorer::ExplorerTarget>() {
-        target.root = root.clone();
-        target.remote = client;
-    }
+    publish_file_context(world);
     #[cfg(feature = "file-explorer")]
     {
         let settings = &world.non_send::<Settings>().settings["plugins"]["bed.explorer"];
@@ -611,20 +680,29 @@ pub fn configure_feature_targets(world: &mut World) {
         }
     }
     #[cfg(feature = "git")]
-    if let Some(mut target) = world.get_resource_mut::<bed_plugin_git::GitTarget>() {
-        target.root = root.clone();
-        target.working_directory = directory.clone();
-        target.session_id = Some(session);
+    {
+        let session = world.non_send::<DocumentSession>().session_id();
+        if let Some(mut target) = world.get_resource_mut::<bed_plugin_git::GitTarget>() {
+            target.session_id = Some(session);
+        }
     }
     #[cfg(feature = "debugger")]
-    if let Some(mut target) = world.get_resource_mut::<bed_plugin_debugger::DebugTarget>() {
-        target.directory = if root.is_empty() { directory } else { root };
-        target.remote = remote;
+    {
+        let context = world.resource::<bed_files::FileContext>();
+        let directory = context.directory_string();
+        let remote = matches!(context.provider, bed_files::FileProviderId::Ssh { .. });
+        if let Some(mut target) = world.get_resource_mut::<bed_plugin_debugger::DebugTarget>() {
+            target.directory = directory;
+            target.remote = remote;
+        }
     }
     #[cfg(feature = "http-client")]
     {
-        let location = (!world.resource::<WorkspaceState>().project_root.is_empty())
-            .then(|| "in this workspace".to_owned());
+        let location = world
+            .resource::<WorkspaceState>()
+            .spec
+            .as_ref()
+            .map(|_| "in this workspace".to_owned());
         if let Some(mut persistence) =
             world.get_resource_mut::<bed_plugin_http_client::HttpPersistence>()
         {
@@ -633,19 +711,81 @@ pub fn configure_feature_targets(world: &mut World) {
     }
 }
 
+fn publish_file_context(world: &mut World) {
+    let workspace = world.resource::<WorkspaceState>();
+    let session = world.non_send::<DocumentSession>();
+    let (mut context, services) = if let Some(client) = session.remote_client() {
+        let target = session
+            .ssh_target()
+            .expect("remote sessions retain their authenticated SSH target")
+            .clone();
+        let mut context = bed_files::FileContext::remote(
+            target.host.clone(),
+            PathBuf::from(&workspace.project_root),
+        )
+        .expect("connected remote directory is canonical");
+        if !client.is_connected() {
+            context.availability = bed_files::FileAvailability::Disconnected;
+        }
+        (
+            context,
+            bed_files::FileServices::remote_target(target, client),
+        )
+    } else {
+        (
+            bed_files::FileContext {
+                provider: bed_files::FileProviderId::Local,
+                directory: workspace.working_directory.clone(),
+                availability: bed_files::FileAvailability::Available,
+                generation: 1,
+            },
+            bed_files::FileServices::local(),
+        )
+    };
+    if let Some(mut current) = world.get_resource_mut::<bed_files::FileContext>() {
+        context.generation = current.generation;
+        current.replace(context);
+    } else {
+        world.insert_resource(context);
+    }
+    if world
+        .get_resource::<bed_files::FileServices>()
+        .is_none_or(|current| {
+            !current.same_provider(&services) || current.ssh_target() != services.ssh_target()
+        })
+    {
+        world.insert_resource(services);
+    }
+    let connecting = world.non_send::<RemoteOperations>().connection.is_some();
+    if let Some(mut observations) =
+        world.get_resource_mut::<bed_plugin_workspaces::WorkspacesState>()
+    {
+        observations.connecting = connecting;
+    }
+}
+
 #[derive(Resource)]
 struct InitialAppOptions(Option<AppOptions>);
 
-fn initialize_editor(world: &mut World) {
+fn initialize_app(world: &mut World) {
     let Some(options) = world.resource_mut::<InitialAppOptions>().0.take() else {
         return;
     };
     let result = (|| -> io::Result<()> {
         layouts::migrate_default(world)?;
+        let directory = world.resource::<WorkspaceState>().working_directory.clone();
+        let mut session_options = session_options(world, Some(directory));
+        session_options.persistent_history = false;
+        world
+            .non_send_mut::<DocumentSession>()
+            .configure(session_options)?;
         // Initial factories need the configured working directory before the
         // first PreUpdate frame publisher has run.
-        publish_host_frame(world);
+        publish_app_state(world);
         if let Some(spec) = options.workspace {
+            if !cfg!(feature = "workspaces") {
+                return Err(io::Error::other("Workspace support is disabled"));
+            }
             replace_workspace(world, spec)?;
         } else if options.restore_standalone {
             restore_workspace(world)?;
@@ -682,7 +822,7 @@ fn initialize_editor(world: &mut World) {
                 FileOpenMode::Keep,
             )?;
         }
-        publish_host_frame(world);
+        publish_app_state(world);
         Ok(())
     })();
     if let Err(error) = result {
@@ -740,6 +880,7 @@ enum Continuation {
         panels: Vec<Entity>,
     },
     Workspace(WorkspaceSpec),
+    Directory(PathBuf),
     Connected(Box<ConnectedWorkspace>),
     Layout {
         tiling: Value,
@@ -749,9 +890,8 @@ enum Continuation {
 
 struct PendingSave {
     id: Option<AppRequestId>,
-    session_id: u64,
     documents: Vec<SavedDocument>,
-    paths: Vec<String>,
+    save: bed_core::DocumentSaveId,
     reply: Option<(String, SaveToken)>,
     continuation: Option<Continuation>,
 }
@@ -761,6 +901,20 @@ struct PendingOperations {
     saves: Vec<PendingSave>,
     formats: Vec<format_save::PendingFormatSave>,
     batches: Vec<PendingBatch>,
+    barrier: Option<bed_api::features::OperationBarrierToken>,
+    admission: Option<PendingAdmission>,
+}
+
+enum PendingAdmission {
+    Request {
+        request: Box<AppRequest>,
+        id: Option<AppRequestId>,
+    },
+    Close {
+        panels: Vec<Entity>,
+        continuation: Continuation,
+        id: Option<AppRequestId>,
+    },
 }
 
 struct PendingBatch {
@@ -881,7 +1035,7 @@ fn complete(
     }
 }
 
-fn apply_editor_requests(world: &mut World) {
+fn apply_app_requests(world: &mut World) {
     assert!(
         !bed_workbench::frontend_active(world),
         "editor transitions run between frontend scopes"
@@ -889,7 +1043,7 @@ fn apply_editor_requests(world: &mut World) {
     // Both public queues are consumed in submission order by this owner.
     drain_feature_intents(world);
     loop {
-        if layouts::waiting(world) {
+        if layouts::waiting(world) || bed_core::operation_barrier_active(world) {
             break;
         }
         let generic_sequence = world.resource::<WorkbenchRequests>().next_sequence();
@@ -967,7 +1121,7 @@ fn apply_editor_requests(world: &mut World) {
         }
         drain_feature_intents(world);
     }
-    publish_host_frame(world);
+    publish_app_state(world);
 }
 
 fn drain_feature_intents(world: &mut World) {
@@ -999,6 +1153,66 @@ fn drain_feature_intents(world: &mut World) {
                 layout_epoch: envelope
                     .is_layout_scoped()
                     .then_some(envelope.layout_epoch()),
+                id: None,
+                request,
+            });
+    }
+    let workspaces = world.resource_scope(|world, mut queue: Mut<AppRequests>| {
+        queue
+            .workspaces
+            .read(world.resource::<Messages<WorkspaceRequest>>())
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    for envelope in workspaces {
+        let mut request = capture_app_request_from(
+            world,
+            match envelope.barrier {
+                Some(token) => AppAction::WorkspaceWithBarrier {
+                    action: envelope.action,
+                    token,
+                },
+                None => AppAction::Workspace(envelope.action),
+            },
+            PanelTarget::LargestArea,
+            envelope.source,
+        );
+        request.session_id = envelope.session_id;
+        request.area = envelope.area;
+        world
+            .resource_mut::<AppRequests>()
+            .pending
+            .push_back(QueuedRequest {
+                sequence: envelope.sequence,
+                layout_epoch: None,
+                id: None,
+                request,
+            });
+    }
+    let settings = world.resource_scope(|world, mut queue: Mut<AppRequests>| {
+        queue
+            .settings
+            .read(world.resource::<Messages<bed_api::settings::SettingsRequest>>())
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    for setting in settings {
+        let request = capture_app_request_from(
+            world,
+            AppAction::Setting {
+                plugin: setting.plugin,
+                key: setting.key,
+                value: setting.value,
+            },
+            PanelTarget::LargestArea,
+            None,
+        );
+        world
+            .resource_mut::<AppRequests>()
+            .pending
+            .push_back(QueuedRequest {
+                sequence: setting.sequence,
+                layout_epoch: None,
                 id: None,
                 request,
             });
@@ -1058,6 +1272,9 @@ fn apply_request(
         ) | AppAction::ApplyEdits { .. }
             | AppAction::SaveDocuments(_)
             | AppAction::SaveAs { .. }
+            | AppAction::Setting { .. }
+            | AppAction::WorkspaceWithBarrier { .. }
+            | AppAction::Workspace(_)
             | AppAction::SetWorkspace(_)
             | AppAction::AttachWorkspace(_)
     ) || matches!(&request.action, AppAction::HostAction(host) if !host.is_layout_scoped());
@@ -1077,6 +1294,58 @@ fn apply_request(
         AppAction::Command(WindowCommand::NewDocument),
     );
     let outcome = match action {
+        AppAction::Setting {
+            plugin: _,
+            key,
+            value,
+        } => {
+            world.non_send_mut::<Settings>().settings[key] = value;
+            world.non_send_mut::<Settings>().save_settings()?;
+            world.non_send_mut::<Settings>().request_apply();
+            AppRequestOutcome::Applied
+        }
+        AppAction::WorkspaceWithBarrier { action, token } => {
+            if bed_core::active_operation_barrier(world) != Some(token) {
+                return Err(io::Error::other(
+                    "The workspace operation has not reached admission",
+                ));
+            }
+            world.resource_mut::<PendingOperations>().barrier = Some(token);
+            if bed_core::barrier_status(world, token)
+                == Some(bed_core::OperationBarrierStatus::Waiting)
+            {
+                request.action = AppAction::WorkspaceWithBarrier { action, token };
+                let mut pending = world.resource_mut::<PendingOperations>();
+                assert!(pending.admission.is_none(), "one operation owns admission");
+                pending.admission = Some(PendingAdmission::Request {
+                    request: Box::new(request),
+                    id,
+                });
+                return Ok(None);
+            }
+            let result = apply_workspace_action(world, action, &request, id);
+            if !matches!(result, Ok(None)) {
+                release_transition_barrier(
+                    world,
+                    result.as_ref().map(|_| ()).map_err(ToString::to_string),
+                )?;
+            }
+            return result;
+        }
+        AppAction::Workspace(action) => {
+            if matches!(action, WorkspaceAction::SaveCurrent { .. }) {
+                let token = bed_core::create_operation_barrier(world);
+                let barrier = bed_core::capture_host_request(
+                    world,
+                    None,
+                    HostAction::OperationBarrier { token },
+                );
+                bed_core::apply_document_request(world, barrier).map_err(io::Error::other)?;
+                request.action = AppAction::WorkspaceWithBarrier { action, token };
+                return apply_request(world, request, id);
+            }
+            return apply_workspace_action(world, action, &request, id);
+        }
         AppAction::PluginCommand(command) => {
             if world
                 .get_resource::<bed_api::workbench::CommandPresentations>()
@@ -1131,6 +1400,31 @@ fn apply_request(
                     intent.area,
                 )
             }));
+            let workspace_requests = world.resource_scope(|world, mut queue: Mut<AppRequests>| {
+                queue
+                    .workspaces
+                    .read(world.resource::<Messages<WorkspaceRequest>>())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            });
+            for envelope in workspace_requests {
+                let action = match envelope.barrier {
+                    Some(token) => AppAction::WorkspaceWithBarrier {
+                        action: envelope.action,
+                        token,
+                    },
+                    None => AppAction::Workspace(envelope.action),
+                };
+                let mut captured = captured_effect(
+                    world,
+                    &request,
+                    action,
+                    envelope.source,
+                    Some(envelope.area),
+                );
+                captured.session_id = envelope.session_id;
+                requests.push_back(captured);
+            }
             return apply_batch(world, requests, id, AppRequestOutcome::Applied);
         }
         AppAction::WorkbenchAction(action) => match action {
@@ -1316,7 +1610,12 @@ fn apply_request(
                 .unwrap_or(request.area);
             effects.extend(event.paths.into_iter().map(|path| {
                 let action = if path.is_dir() {
-                    AppAction::SetWorkspace(WorkspaceSpec::local(path.to_string_lossy()))
+                    AppAction::HostAction(HostAction::OpenDirectory {
+                        location: bed_files::FileLocation {
+                            provider: bed_files::FileProviderId::Local,
+                            path,
+                        },
+                    })
                 } else {
                     AppAction::OpenFileWithViewer {
                         path,
@@ -1389,9 +1688,7 @@ fn apply_request(
             edits,
         } => {
             commit_documents(world, &HashSet::from([document]))?;
-            world
-                .non_send_mut::<DocumentSession>()
-                .apply_edits(document, revision, &edits)?;
+            bed_core::apply_edits(world, document, revision, &edits)?;
             AppRequestOutcome::Applied
         }
         AppAction::SaveDocuments(documents) => {
@@ -1609,6 +1906,19 @@ pub fn focus_panel(world: &mut World, source: Entity, request_native: bool) -> i
         .get::<PanelBinding>(panel)
         .cloned()
         .unwrap_or_default();
+    let model = panel_presentation(world, panel)
+        .and_then(|entity| world.get::<bed_core::DocumentBinding>(entity))
+        .or_else(|| world.get::<bed_core::DocumentBinding>(panel))
+        .map(|binding| binding.0);
+    let last_model = world
+        .resource::<DocumentNavigation>()
+        .last_document_panel
+        .and_then(|panel| {
+            panel_presentation(world, panel)
+                .and_then(|entity| world.get::<bed_core::DocumentBinding>(entity))
+                .or_else(|| world.get::<bed_core::DocumentBinding>(panel))
+        })
+        .map(|binding| binding.0);
     let last_binding = world
         .resource::<DocumentNavigation>()
         .last_document_panel
@@ -1616,13 +1926,20 @@ pub fn focus_panel(world: &mut World, source: Entity, request_native: bool) -> i
         .cloned();
     {
         let mut navigation = world.resource_mut::<DocumentNavigation>();
-        if binding.document.is_some() {
+        if let Some(document) = model {
+            navigation.active_document = Some(document);
+            navigation.active_view = None;
+            navigation.last_document_panel = Some(panel);
+        } else if binding.document.is_some() {
             navigation.active_view = binding.view;
             navigation.active_document = binding.document;
             navigation.last_document_panel = Some(panel);
         } else if binding.input.local_file().is_some() {
             navigation.active_view = None;
             navigation.active_document = None;
+        } else if let Some(document) = last_model {
+            navigation.active_document = Some(document);
+            navigation.active_view = None;
         } else if let Some(last) = last_binding {
             navigation.active_view = last.view;
             navigation.active_document = last.document;
@@ -2164,76 +2481,27 @@ fn sync_local_file_protections(world: &mut World) {
 }
 
 pub fn commit_documents(world: &mut World, documents: &HashSet<DocumentId>) -> io::Result<()> {
-    let targets = world
-        .query::<(Entity, &PanelBinding, &PanelActions)>()
-        .iter(world)
-        .filter(|(_, binding, _)| {
-            binding
-                .document
-                .is_some_and(|document| documents.contains(&document))
-        })
-        .map(|(entity, _, handler)| (entity, handler.0))
-        .collect::<Vec<_>>();
-    for (entity, handler) in targets {
-        let previous = world.resource_mut::<HostEffects>().take();
-        let result = world
-            .run_system_with(
-                handler,
-                PanelActionInvocation {
-                    entity,
-                    action: PanelAction::CommitEdit,
-                },
-            )
-            .map_err(io::Error::other)
-            .and_then(|result| result.map_err(io::Error::other));
-        let edits = world.resource_mut::<HostEffects>().take();
-        for intent in previous {
-            world.resource_mut::<HostEffects>().push_effect(intent);
-        }
-        result?;
-        if edits.iter().any(|edit| {
-            edit.source != Some(entity)
-                || !matches!(
-                    edit.action,
-                    HostAction::ApplyEdits { .. } | HostAction::ApplyEditsWithResult { .. }
-                )
-        }) {
-            return Err(io::Error::other(
-                "CommitEdit may only queue its own document edits",
-            ));
-        }
-        for edit in edits {
-            apply_panel_edit(world, entity, edit.action)?;
-        }
-    }
-    Ok(())
+    bed_core::commit_document_drafts(world, &documents.iter().copied().collect::<Vec<_>>())
+        .map_err(io::Error::other)
 }
 
-fn apply_panel_edit(world: &mut World, source: Entity, request: HostAction) -> io::Result<()> {
-    let (document, revision, edits, token) = match request {
+fn apply_panel_edit(world: &mut World, source: Entity, action: HostAction) -> io::Result<()> {
+    let (document, revision, edits, token) = match action {
         HostAction::ApplyEdits {
             document,
             revision,
             edits,
         } => (document, revision, edits, None),
         HostAction::ApplyEditsWithResult {
-            token,
             document,
             revision,
             edits,
+            token,
         } => (document, revision, edits, Some(token)),
-        _ => unreachable!("validated panel edit"),
+        _ => unreachable!("panel draft commits emit edits"),
     };
-    let result = world
-        .non_send_mut::<DocumentSession>()
-        .apply_edits(document, revision, &edits)
-        .and_then(|()| {
-            world
-                .non_send::<DocumentSession>()
-                .document_revision(document)
-        })
-        .map_err(|error| error.to_string());
-    publish_host_frame(world);
+    let result = bed_core::apply_edits(world, document, revision, &edits)
+        .and_then(|_| bed_core::document_revision(world, document).map_err(io::Error::other));
     if let Some(token) = token
         && let Some(handler) = world.get::<bed_api::documents::PanelEdits>(source).copied()
     {
@@ -2243,12 +2511,12 @@ fn apply_panel_edit(world: &mut World, source: Entity, request: HostAction) -> i
                 bed_api::documents::PanelEditResult {
                     entity: source,
                     token,
-                    result: result.clone(),
+                    result: result.as_ref().copied().map_err(ToString::to_string),
                 },
             )
             .map_err(io::Error::other)?;
     }
-    result.map(|_| ()).map_err(io::Error::other)
+    result.map(|_| ())
 }
 
 struct SaveTarget {
@@ -2300,150 +2568,93 @@ fn begin_save_as(
 // all affected panels live and acknowledges the exact failed operation.
 fn begin_save_targets(
     world: &mut World,
-    mut targets: Vec<SaveTarget>,
+    targets: Vec<SaveTarget>,
     reply: Option<(String, SaveToken)>,
     continuation: Option<Continuation>,
     id: Option<AppRequestId>,
 ) -> io::Result<Option<AppRequestOutcome>> {
-    targets.sort_by_key(|target| target.document);
-    targets.dedup_by_key(|target| target.document);
-    let result = (|| {
-        commit_documents(
-            world,
-            &targets.iter().map(|target| target.document).collect(),
-        )?;
-        publish_host_frame(world);
-        let session = world.non_send::<DocumentSession>();
-        let mut documents = Vec::new();
-        let mut paths = Vec::new();
-        for target in &mut targets {
-            let snapshot = session.snapshot(target.document)?;
-            if session.is_snapshot_document(target.document) {
-                return Err(io::Error::other("Comparison documents cannot be saved"));
-            }
-            if target.destination.is_none() && snapshot.disk_conflict.is_some() {
-                return Err(io::Error::other("Resolve the disk conflict before saving"));
-            }
-            let path = match &target.destination {
-                Some(path) if session.is_remote() => path.to_string_lossy().into_owned(),
-                Some(path) => {
-                    let path = session.check_rebind_path(target.document, path)?;
-                    target.destination = Some(path.clone());
-                    path.to_string_lossy().into_owned()
-                }
-                None => snapshot.path.clone(),
-            };
-            if path.is_empty() {
-                return Err(io::Error::other(
-                    "Save As is required before saving this document",
-                ));
-            }
-            let mut revision = session.document_revision(target.document)?;
-            if path != snapshot.path {
-                revision = (revision.0.wrapping_add(1), revision.1.wrapping_add(1));
-            }
-            documents.push(SavedDocument {
-                document: target.document,
-                revision,
-            });
-            paths.push(path);
-        }
-        let pending = PendingSave {
-            id,
-            session_id: session.session_id().0,
-            documents,
-            paths,
-            reply: reply.clone(),
-            continuation,
-        };
-        for target in targets {
-            match target.destination {
-                Some(path) => {
-                    world
-                        .non_send_mut::<DocumentSession>()
-                        .save_as(target.document, &path)?;
-                }
-                None => {
-                    world
-                        .non_send_mut::<DocumentSession>()
-                        .save(target.document)?;
-                }
-            }
-        }
-        Ok::<_, io::Error>(pending)
-    })();
-    let pending = match result {
-        Ok(pending) => pending,
+    let targets = targets
+        .into_iter()
+        .map(|target| bed_core::DocumentSaveTarget {
+            document: target.document,
+            destination: target.destination,
+        })
+        .collect::<Vec<_>>();
+    let save = match bed_core::begin_document_save(world, &targets) {
+        Ok(save) => save,
         Err(error) => {
             if let Some((recipient, token)) = reply {
                 world.write_message(DocumentReply::Save {
                     recipient,
                     token,
-                    result: Err(error.to_string()),
+                    result: Err(error.clone()),
                 });
             }
-            return Err(error);
+            return Err(io::Error::other(error));
         }
     };
-    match saved_result(world, &pending) {
-        Ok(false) => {
+    let mut pending = PendingSave {
+        id,
+        documents: Vec::new(),
+        save,
+        reply,
+        continuation,
+    };
+    match bed_core::poll_document_save(world, save) {
+        None => {
             world
                 .resource_mut::<PendingOperations>()
                 .saves
                 .push(pending);
             Ok(None)
         }
-        Ok(true) => finish_save(world, pending).map(Some),
-        Err(error) => {
+        Some(Ok(documents)) => {
+            pending.documents = documents;
+            finish_save(world, pending).map(Some)
+        }
+        Some(Err(error)) => {
             if let Some((recipient, token)) = pending.reply {
                 world.write_message(DocumentReply::Save {
                     recipient,
                     token,
-                    result: Err(error.to_string()),
+                    result: Err(error.clone()),
                 });
             }
-            Err(error)
+            Err(io::Error::other(error))
         }
     }
-}
-
-fn saved_result(world: &World, pending: &PendingSave) -> io::Result<bool> {
-    let session = world.non_send::<DocumentSession>();
-    if session.session_id().0 != pending.session_id {
-        return Err(io::Error::other("Workspace changed while saving"));
-    }
-    if session.is_remote() && !session.remote_connected() {
-        return Err(io::Error::other(
-            "SSH disconnected before the save completed",
-        ));
-    }
-    let mut complete = true;
-    for (saved, path) in pending.documents.iter().zip(&pending.paths) {
-        if session.save_pending(saved.document) {
-            complete = false;
-            continue;
-        }
-        if session.document_revision(saved.document)? != saved.revision {
-            return Err(io::Error::other(
-                "Document changed while saving; save and try again",
-            ));
-        }
-        let snapshot = session.snapshot(saved.document)?;
-        if snapshot.path != *path {
-            return Err(io::Error::other(
-                "Document moved while saving; save and try again",
-            ));
-        }
-        if snapshot.dirty || snapshot.disk_conflict.is_some() {
-            return Err(io::Error::other(
-                "Document was not saved; resolve the file error and try again",
-            ));
-        }
-    }
-    Ok(complete)
 }
 
 fn finish_save(world: &mut World, pending: PendingSave) -> io::Result<AppRequestOutcome> {
+    let transition = pending.continuation.is_some();
+    let result = (|| {
+        if transition {
+            for saved in &pending.documents {
+                if bed_core::document_revision(world, saved.document).map_err(io::Error::other)?
+                    != saved.revision
+                {
+                    return Err(io::Error::other(
+                        "Document changed while saving; prepare the transition again",
+                    ));
+                }
+            }
+            if let Some(token) = world.resource::<PendingOperations>().barrier {
+                bed_core::prepare_document_transition(world, token, ClosePolicy::Discard)
+                    .map_err(io::Error::other)?;
+            }
+        }
+        finish_save_inner(world, pending)
+    })();
+    if transition {
+        release_transition_barrier(
+            world,
+            result.as_ref().map(|_| ()).map_err(ToString::to_string),
+        )?;
+    }
+    result
+}
+
+fn finish_save_inner(world: &mut World, pending: PendingSave) -> io::Result<AppRequestOutcome> {
     if let Some((recipient, token)) = pending.reply {
         world.write_message(DocumentReply::Save {
             recipient,
@@ -2467,6 +2678,10 @@ fn finish_save(world: &mut World, pending: PendingSave) -> io::Result<AppRequest
                 .shutdown(ClosePolicy::Discard)?;
             world.resource_mut::<WorkspaceState>().close_requested = true;
             Ok(AppRequestOutcome::Closed { panels })
+        }
+        Some(Continuation::Directory(root)) => {
+            replace_directory(world, root)?;
+            Ok(AppRequestOutcome::Applied)
         }
         Some(Continuation::Workspace(spec)) => {
             replace_workspace(world, spec)?;
@@ -2522,13 +2737,59 @@ fn begin_close_transition(
     continuation: Continuation,
     id: Option<AppRequestId>,
 ) -> io::Result<Option<AppRequestOutcome>> {
+    if world.resource::<PendingOperations>().barrier.is_none() {
+        let token = bed_core::create_operation_barrier(world);
+        let request =
+            bed_core::capture_host_request(world, None, HostAction::OperationBarrier { token });
+        bed_core::apply_document_request(world, request).map_err(io::Error::other)?;
+        world.resource_mut::<PendingOperations>().barrier = Some(token);
+    }
+    let token = world.resource::<PendingOperations>().barrier.unwrap();
+    if bed_core::barrier_status(world, token) == Some(bed_core::OperationBarrierStatus::Waiting) {
+        let mut pending = world.resource_mut::<PendingOperations>();
+        assert!(pending.admission.is_none(), "one operation owns admission");
+        pending.admission = Some(PendingAdmission::Close {
+            panels,
+            continuation,
+            id,
+        });
+        return Ok(None);
+    }
+    let result = begin_close_transition_inner(world, panels, continuation, id);
+    if !matches!(result, Ok(None)) {
+        let outcome = result.as_ref().map(|_| ()).map_err(ToString::to_string);
+        release_transition_barrier(world, outcome)?;
+    }
+    result
+}
+
+fn release_transition_barrier(world: &mut World, result: Result<(), String>) -> io::Result<()> {
+    if let Some(token) = world.resource_mut::<PendingOperations>().barrier.take() {
+        bed_core::finish_operation_barrier(world, token, result).map_err(io::Error::other)?;
+    }
+    Ok(())
+}
+
+fn begin_close_transition_inner(
+    world: &mut World,
+    panels: Vec<Entity>,
+    continuation: Continuation,
+    id: Option<AppRequestId>,
+) -> io::Result<Option<AppRequestOutcome>> {
+    let replacing = matches!(
+        continuation,
+        Continuation::Directory(_)
+            | Continuation::Workspace(_)
+            | Continuation::Connected(_)
+            | Continuation::Quit(_)
+    );
     let quit = matches!(continuation, Continuation::Quit(_));
     let panels = panels
         .into_iter()
         .filter_map(|source| bed_api::workbench::panel_owner(world, source))
         .filter(|panel| bed_workbench::owns_panel(world, *panel))
         .collect::<HashSet<_>>();
-    if panels.is_empty() {
+    if panels.is_empty() && !replacing {
         if quit {
             persist_workspace(world)?;
             world
@@ -2541,37 +2802,95 @@ fn begin_close_transition(
             bed_workbench::apply_layout(world, &tiling).map_err(io::Error::other)?;
             return Ok(Some(AppRequestOutcome::Applied));
         }
-        if matches!(continuation, Continuation::Promotion { .. }) {
+        if matches!(
+            continuation,
+            Continuation::Promotion { .. }
+                | Continuation::Directory(_)
+                | Continuation::Workspace(_)
+                | Continuation::Connected(_)
+        ) {
             return begin_save_targets(world, Vec::new(), None, Some(continuation), id);
         }
         return Ok(Some(AppRequestOutcome::Ignored));
     }
-    let documents = panels
-        .iter()
-        .filter_map(|panel| {
-            world
-                .get::<PanelBinding>(*panel)
-                .and_then(|binding| binding.document)
-        })
-        .collect::<HashSet<_>>();
-    commit_documents(world, &documents)?;
-    let remaining = world
-        .query::<(Entity, &PanelPresentation, &PanelBinding)>()
+    let mut documents = world
+        .query::<(
+            Entity,
+            Option<&PanelBinding>,
+            Option<&bed_core::DocumentBinding>,
+        )>()
         .iter(world)
-        .filter_map(|(entity, _, binding)| {
-            (!panels.contains(&entity))
-                .then_some(binding.document)
+        .filter_map(|(entity, binding, model)| {
+            let owner = bed_api::workbench::panel_owner(world, entity).unwrap_or(entity);
+            panels
+                .contains(&owner)
+                .then(|| {
+                    binding
+                        .and_then(|binding| binding.document)
+                        .or_else(|| model.map(|binding| binding.0))
+                })
                 .flatten()
         })
         .collect::<HashSet<_>>();
+    if replacing {
+        documents.extend(world.non_send::<DocumentSession>().document_ids());
+        let session = world.non_send::<DocumentSession>().session_id();
+        documents.extend(
+            world
+                .query::<&bed_core::ModelDocument>()
+                .iter(world)
+                .filter(|model| model.session_id() == session)
+                .map(bed_core::ModelDocument::id),
+        );
+    }
+    commit_documents(world, &documents)?;
+    let remaining = if replacing {
+        HashSet::new()
+    } else {
+        world
+            .query::<(
+                Entity,
+                Option<&PanelBinding>,
+                Option<&bed_core::DocumentBinding>,
+            )>()
+            .iter(world)
+            .filter_map(|(entity, binding, model)| {
+                let owner = bed_api::workbench::panel_owner(world, entity).unwrap_or(entity);
+                (!panels.contains(&owner))
+                    .then(|| {
+                        binding
+                            .and_then(|binding| binding.document)
+                            .or_else(|| model.map(|binding| binding.0))
+                    })
+                    .flatten()
+            })
+            .collect::<HashSet<_>>()
+    };
     let mut targets = Vec::new();
     for document in documents.difference(&remaining).copied() {
-        let session = world.non_send::<DocumentSession>();
-        let snapshot = session.snapshot(document)?;
-        if session.is_snapshot_document(document) {
-            continue;
-        }
-        let destination = if snapshot.dirty && snapshot.path.is_empty() {
+        let model = world
+            .query::<&bed_core::ModelDocument>()
+            .iter(world)
+            .find(|model| model.id() == document)
+            .cloned();
+        let (path, dirty) = if let Some(model) = model {
+            (
+                model
+                    .path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                model.dirty(),
+            )
+        } else {
+            let session = world.non_send::<DocumentSession>();
+            if session.is_snapshot_document(document) {
+                continue;
+            }
+            let snapshot = session.snapshot(document)?;
+            (snapshot.path, snapshot.dirty)
+        };
+        let destination = if dirty && path.is_empty() {
             let Some(path) = rfd::FileDialog::new()
                 .set_directory(&world.resource::<WorkspaceState>().working_directory)
                 .save_file()
@@ -2582,7 +2901,7 @@ fn begin_close_transition(
         } else {
             None
         };
-        if destination.is_some() || !snapshot.path.is_empty() {
+        if destination.is_some() || !path.is_empty() {
             targets.push(SaveTarget {
                 document,
                 destination,
@@ -2605,7 +2924,9 @@ fn begin_close_transition(
             terminal,
             panels,
         },
-        _ => unreachable!("close transition"),
+        other @ (Continuation::Directory(_)
+        | Continuation::Workspace(_)
+        | Continuation::Connected(_)) => other,
     };
     begin_save_targets(world, targets, None, Some(continuation), id)
 }
@@ -2736,9 +3057,7 @@ fn replace_pristine_panel(
             .iter(world)
             .any(|(_, binding)| binding.document == Some(old));
         if !retained {
-            world
-                .non_send_mut::<DocumentSession>()
-                .close_document(old, ClosePolicy::Discard)?;
+            bed_core::retire_document(world, old).map_err(io::Error::other)?;
         }
     }
     focus_panel(world, panel, true)?;
@@ -2746,27 +3065,31 @@ fn replace_pristine_panel(
 }
 
 pub fn retire_panels(world: &mut World, panels: &[Entity]) -> io::Result<()> {
-    let documents = panels
-        .iter()
-        .filter_map(|panel| {
-            world
-                .get::<PanelBinding>(*panel)
-                .and_then(|binding| binding.document)
+    let documents = world
+        .query::<(
+            Entity,
+            Option<&PanelBinding>,
+            Option<&bed_core::DocumentBinding>,
+        )>()
+        .iter(world)
+        .filter_map(|(entity, binding, model)| {
+            let owner = bed_api::workbench::panel_owner(world, entity).unwrap_or(entity);
+            panels
+                .contains(&owner)
+                .then(|| {
+                    binding
+                        .and_then(|binding| binding.document)
+                        .or_else(|| model.map(|binding| binding.0))
+                })
+                .flatten()
         })
         .collect::<HashSet<_>>();
     for &panel in panels {
         retire_presentations(world, panel)?;
         bed_workbench::commit_close(world, panel);
     }
-    let retained = world
-        .query::<(&PanelPresentation, &PanelBinding)>()
-        .iter(world)
-        .filter_map(|(_, binding)| binding.document)
-        .collect::<HashSet<_>>();
-    for document in documents.difference(&retained).copied() {
-        world
-            .non_send_mut::<DocumentSession>()
-            .close_document(document, ClosePolicy::Discard)?;
+    for document in documents {
+        bed_core::retire_document(world, document).map_err(io::Error::other)?;
     }
     sync_local_file_protections(world);
     if world
@@ -2799,7 +3122,54 @@ pub fn retire_panels(world: &mut World, panels: &[Entity]) -> io::Result<()> {
     Ok(())
 }
 
-fn update_editor_services(world: &mut World) {
+fn resume_admitted_operation(world: &mut World) {
+    let Some(operation) = world.resource_mut::<PendingOperations>().admission.take() else {
+        return;
+    };
+    let token = world
+        .resource::<PendingOperations>()
+        .barrier
+        .expect("admission belongs to its operation barrier");
+    let status = bed_core::barrier_status(world, token);
+    if status == Some(bed_core::OperationBarrierStatus::Waiting) {
+        world.resource_mut::<PendingOperations>().admission = Some(operation);
+        return;
+    }
+    let id = match &operation {
+        PendingAdmission::Request { id, .. } | PendingAdmission::Close { id, .. } => *id,
+    };
+    let result = match status {
+        Some(bed_core::OperationBarrierStatus::Ready) => match operation {
+            PendingAdmission::Request { request, id } => apply_request(world, *request, id),
+            PendingAdmission::Close {
+                panels,
+                continuation,
+                id,
+            } => begin_close_transition(world, panels, continuation, id),
+        },
+        Some(bed_core::OperationBarrierStatus::Failed(message)) => {
+            world.resource_mut::<PendingOperations>().barrier = None;
+            Err(io::Error::other(message))
+        }
+        _ => Err(io::Error::other(
+            "The admitted operation is no longer available",
+        )),
+    };
+    if !matches!(result, Ok(None)) && world.resource::<PendingOperations>().barrier.is_some() {
+        let outcome = result.as_ref().map(|_| ()).map_err(ToString::to_string);
+        if let Err(error) = release_transition_barrier(world, outcome) {
+            complete(world, id, Err(error.into()));
+            return;
+        }
+    }
+    match result {
+        Ok(Some(outcome)) => complete(world, id, Ok(outcome)),
+        Ok(None) => {}
+        Err(error) => complete(world, id, Err(error.into())),
+    }
+}
+
+fn update_app_services(world: &mut World) {
     let mut options = world.non_send::<DocumentSession>().options().clone();
     let settings = world.non_send::<Settings>();
     options.autosave = settings
@@ -2818,30 +3188,20 @@ fn update_editor_services(world: &mut World) {
         world.resource_mut::<WorkspaceState>().error = Some(error.to_string());
     }
 
-    let report = world.non_send_mut::<DocumentSession>().tick();
+    let report = bed_core::take_document_service_report(world);
     format_save::poll(world);
     let pending = std::mem::take(&mut world.resource_mut::<PendingOperations>().saves);
     for save in pending {
-        let failure = report.errors.iter().find(|error| {
-            (error.document.is_none()
-                || save
-                    .documents
-                    .iter()
-                    .any(|saved| Some(saved.document) == error.document))
-                && matches!(error.service, "remote" | "save" | "autosave")
-        });
-        let result = match failure {
-            Some(error) => Err(io::Error::other(error.message.clone())),
-            None => saved_result(world, &save),
-        };
-        match result {
-            Ok(false) => world.resource_mut::<PendingOperations>().saves.push(save),
-            Ok(true) => {
+        match bed_core::poll_document_save(world, save.save) {
+            None => world.resource_mut::<PendingOperations>().saves.push(save),
+            Some(Ok(documents)) => {
                 let id = save.id;
+                let mut save = save;
+                save.documents = documents;
                 let result = finish_save(world, save).map_err(AppRequestError::from);
                 complete(world, id, result);
             }
-            Err(error) => {
+            Some(Err(error)) => {
                 if let Some((recipient, token)) = save.reply {
                     world.write_message(DocumentReply::Save {
                         recipient,
@@ -2849,13 +3209,18 @@ fn update_editor_services(world: &mut World) {
                         result: Err(error.to_string()),
                     });
                 }
-                complete(world, save.id, Err(error.into()));
+                let message = error.to_string();
+                if save.continuation.is_some() {
+                    let _ = release_transition_barrier(world, Err(message.clone()));
+                }
+                complete(world, save.id, Err(io::Error::other(message).into()));
             }
         }
     }
     if let Err(error) = poll_remote_operations(world, &report.errors) {
         world.resource_mut::<WorkspaceState>().error = Some(error.to_string());
     }
+    resume_admitted_operation(world);
     poll_batches(world);
     layouts::poll(world);
     for event in &report.events {
@@ -2892,16 +3257,13 @@ fn update_editor_services(world: &mut World) {
             }
         }
     }
-    for event in report.events {
-        world.write_message(bed_api::documents::DocumentEvent(event));
-    }
     for error in report.errors {
         world.resource_mut::<WorkspaceState>().error = Some(error.message);
     }
     let state_changed = world.resource_scope(|world, mut cursor: Mut<FeatureStateCursor>| {
         cursor
             .0
-            .read(world.resource::<Messages<bed_api::features::FeatureStateChanged>>())
+            .read(world.resource::<Messages<bed_api::storage::FeatureStateChanged>>())
             .count()
             > 0
     });
@@ -2917,11 +3279,11 @@ fn update_editor_services(world: &mut World) {
     {
         world.resource_mut::<WorkspaceState>().error = Some(error.to_string());
     }
-    publish_host_frame(world);
+    publish_app_state(world);
     configure_feature_targets(world);
 }
 
-pub fn publish_host_frame(world: &mut World) {
+pub fn publish_app_state(world: &mut World) {
     // Document changes are already owned by the editor host. Retain edited
     // previews once, even if autosave subsequently makes them clean again.
     let preview_ids = world
@@ -2948,32 +3310,24 @@ pub fn publish_host_frame(world: &mut World) {
     for id in edited {
         world.resource_mut::<WorkbenchLayout>().tiling.keep_tab(id);
     }
-    world.resource_scope(|world, mut frame: Mut<HostFrame>| {
-        let session = world.non_send::<DocumentSession>();
-        frame.session_id = session.session_id().0;
-        frame.remote = session.is_remote();
-        frame.remote_disconnected = session
-            .remote_client()
-            .is_some_and(|client| !client.is_connected());
-        frame.remote_connecting = world.non_send::<RemoteOperations>().connection.is_some();
-        frame.recent_workspaces = world
-            .non_send::<WorkspacePersistence>()
-            .store
-            .recent_workspaces();
-        if let Err(error) = frame.refresh_documents(session) {
-            world.resource_mut::<WorkspaceState>().error = Some(error.to_string());
-        }
-        let workspace = world.resource::<WorkspaceState>();
-        frame.project_root.clone_from(&workspace.project_root);
-        frame.working_directory = workspace.working_directory.to_string_lossy().into_owned();
-        let navigation = world.resource::<DocumentNavigation>();
+    publish_file_context(world);
+    bed_core::publish_documents(world);
+    let navigation = world.resource::<DocumentNavigation>().clone();
+    {
+        let mut frame = world.resource_mut::<bed_api::documents::DocumentFrame>();
         frame.active_view = navigation.active_view;
         frame.active_document = navigation.active_document;
-        let settings = world.non_send::<Settings>();
-        frame.settings = settings.settings.clone();
-        frame.default_viewers = settings.settings["default_viewers"].clone();
-        frame.animations = settings.bool("ui_animations", true);
-    });
+    }
+    let settings = world.non_send::<Settings>();
+    let snapshot = bed_api::settings::SettingsSnapshot {
+        settings: settings.settings.clone(),
+        default_viewers: settings.settings["default_viewers"].clone(),
+    };
+    let animations = settings.bool("ui_animations", true);
+    world.insert_resource(snapshot);
+    world
+        .resource_mut::<bed_api::presentation::PresentationFrame>()
+        .animations = animations;
 }
 
 fn window_command(
@@ -2994,9 +3348,6 @@ fn window_command(
             .command(command)
             .is_none()
         {
-            return Ok(Some(AppRequestOutcome::Ignored));
-        }
-        if command == "bed.debug.show" && world.resource::<WorkspaceState>().spec.is_none() {
             return Ok(Some(AppRequestOutcome::Ignored));
         }
         let mut captured = capture_app_request_from(
@@ -3046,11 +3397,6 @@ fn window_command(
         {
             return Ok(Some(AppRequestOutcome::Ignored));
         }
-        if kind == "bed.editor.diagnostics-panel"
-            && world.resource::<WorkspaceState>().spec.is_none()
-        {
-            return Ok(Some(AppRequestOutcome::Ignored));
-        }
         let panel = open_panel(
             world,
             kind,
@@ -3089,9 +3435,9 @@ fn window_command(
             let Some(document) = request.context.document else {
                 return Ok(Some(AppRequestOutcome::Ignored));
             };
-            if world
-                .non_send::<DocumentSession>()
-                .with_document(document, |state| state.path.is_empty())?
+            if bed_core::document_path(world, document)
+                .map_err(io::Error::other)?
+                .is_none_or(|path| path.as_os_str().is_empty())
             {
                 return window_command(world, WindowCommand::SaveAs, request, id);
             }
@@ -3101,18 +3447,15 @@ fn window_command(
             let Some(document) = request.context.document else {
                 return Ok(Some(AppRequestOutcome::Ignored));
             };
-            let snapshot = world.non_send::<DocumentSession>().snapshot(document)?;
+            let path = bed_core::document_path(world, document)
+                .map_err(io::Error::other)?
+                .unwrap_or_default();
             let dialog = rfd::FileDialog::new()
                 .set_directory(&world.resource::<WorkspaceState>().working_directory);
-            let dialog = if snapshot.path.is_empty() {
+            let dialog = if path.as_os_str().is_empty() {
                 dialog
             } else {
-                dialog.set_file_name(
-                    Path::new(&snapshot.path)
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy(),
-                )
+                dialog.set_file_name(path.file_name().unwrap_or_default().to_string_lossy())
             };
             let Some(path) = dialog.save_file() else {
                 return Ok(Some(AppRequestOutcome::Ignored));
@@ -3207,12 +3550,7 @@ fn window_command(
             );
         }
         WindowCommand::OpenFolder => {
-            return apply_host_action(
-                world,
-                HostAction::Workspace(WorkspaceAction::OpenFolder),
-                request,
-                id,
-            );
+            return apply_workspace_action(world, WorkspaceAction::OpenFolder, request, id);
         }
         WindowCommand::UseLayout(slot) => return layouts::request_switch(world, slot, id),
         WindowCommand::SetCurrentLayout => {
@@ -3251,6 +3589,99 @@ fn window_command(
     Ok(Some(outcome))
 }
 
+fn apply_workspace_action(
+    world: &mut World,
+    action: WorkspaceAction,
+    request: &AppRequest,
+    id: Option<AppRequestId>,
+) -> io::Result<Option<AppRequestOutcome>> {
+    if !cfg!(feature = "workspaces")
+        && !matches!(
+            action,
+            WorkspaceAction::OpenFolder | WorkspaceAction::OpenLocalWorkspace(_)
+        )
+    {
+        return Err(io::Error::other("Workspace support is disabled"));
+    }
+    let outcome = match action {
+        WorkspaceAction::OpenFolder => {
+            let Some(path) = rfd::FileDialog::new()
+                .set_directory(&world.resource::<WorkspaceState>().working_directory)
+                .pick_folder()
+            else {
+                return Ok(Some(AppRequestOutcome::Ignored));
+            };
+            return begin_directory(world, &path, id);
+        }
+        WorkspaceAction::OpenLocalWorkspace(path) => {
+            return begin_directory(world, &path, id);
+        }
+        WorkspaceAction::OpenWorkspace(spec) => return begin_workspace(world, spec, id),
+        WorkspaceAction::OpenWorkspaceWindow(spec) => {
+            world.resource_mut::<WorkspaceState>().windows.push(spec);
+            AppRequestOutcome::Applied
+        }
+        WorkspaceAction::RemoveRecent(path) => {
+            world
+                .resource_mut::<WorkspaceRepositoryResource>()
+                .0
+                .forget(&WorkspaceSpec::local(path.to_string_lossy()))?;
+            world
+                .non_send_mut::<WorkspacePersistence>()
+                .store
+                .reload()?;
+            AppRequestOutcome::Applied
+        }
+        WorkspaceAction::RemoveWorkspace(spec) => {
+            world
+                .resource_mut::<WorkspaceRepositoryResource>()
+                .0
+                .forget(&spec)?;
+            world
+                .non_send_mut::<WorkspacePersistence>()
+                .store
+                .reload()?;
+            AppRequestOutcome::Applied
+        }
+        WorkspaceAction::RenameWorkspace(spec, name) => {
+            let renamed = bed_plugin_workspaces::rename_workspace(world, &spec, &name)?;
+            world
+                .non_send_mut::<WorkspacePersistence>()
+                .store
+                .reload()?;
+            if world
+                .resource::<WorkspaceState>()
+                .spec
+                .as_ref()
+                .is_some_and(|current| current.identity() == spec.identity())
+            {
+                world.resource_mut::<WorkspaceState>().spec = Some(renamed);
+            }
+            AppRequestOutcome::Applied
+        }
+        WorkspaceAction::SaveCurrent { name } => {
+            save_current_workspace(world, name)?;
+            AppRequestOutcome::Applied
+        }
+        WorkspaceAction::Promote(root) => {
+            return begin_terminal_promotion(world, &root, request, id);
+        }
+        WorkspaceAction::Persist => {
+            persist_workspace(world)?;
+            AppRequestOutcome::Applied
+        }
+        WorkspaceAction::Reconnect => {
+            reconnect_workspace(world, id)?;
+            return Ok(None);
+        }
+        WorkspaceAction::Error(message) => return Err(io::Error::other(message)),
+    };
+    if cfg!(feature = "workspaces") {
+        bed_plugin_workspaces::refresh_workspace_observations(world)?;
+    }
+    Ok(Some(outcome))
+}
+
 fn apply_host_action(
     world: &mut World,
     host: HostAction,
@@ -3259,6 +3690,21 @@ fn apply_host_action(
 ) -> io::Result<Option<AppRequestOutcome>> {
     let relocate_panel = matches!(&host, HostAction::ShowPanelIn { .. });
     let outcome = match host {
+        HostAction::ChooseDirectory => {
+            return apply_workspace_action(world, WorkspaceAction::OpenFolder, request, id);
+        }
+        HostAction::OpenDirectory { location } => match location.provider {
+            bed_files::FileProviderId::Local => return begin_directory(world, &location.path, id),
+            bed_files::FileProviderId::Ssh { host } => {
+                let spec = WorkspaceSpec {
+                    name: bed_plugin_workspaces::default_name(&location.path.to_string_lossy()),
+                    target: WorkspaceTarget::Ssh { host },
+                    root: location.path.to_string_lossy().into_owned(),
+                };
+                start_connection(world, spec, false, id)?;
+                return Ok(None);
+            }
+        },
         HostAction::OpenTerminalFiles { paths } => {
             if world.non_send::<DocumentSession>().is_remote() {
                 return Err(io::Error::other(
@@ -3304,9 +3750,6 @@ fn apply_host_action(
             };
             return apply_host_action(world, host, request, id);
         }
-        HostAction::PromoteWorkspace { root } => {
-            return begin_terminal_promotion(world, &root, request, id);
-        }
         HostAction::Command { command, context } => {
             let mut captured = capture_app_request_from(
                 world,
@@ -3319,61 +3762,6 @@ fn apply_host_action(
             captured.tab_index = request.tab_index;
             return apply_request(world, captured, id);
         }
-        HostAction::Workspace(action) => match action {
-            WorkspaceAction::OpenFolder => {
-                let Some(path) = rfd::FileDialog::new()
-                    .set_directory(&world.resource::<WorkspaceState>().working_directory)
-                    .pick_folder()
-                else {
-                    return Ok(Some(AppRequestOutcome::Ignored));
-                };
-                attach_workspace(world, &path)?;
-                AppRequestOutcome::Applied
-            }
-            WorkspaceAction::OpenLocalWorkspace(path) => {
-                attach_workspace(world, &path)?;
-                AppRequestOutcome::Applied
-            }
-            WorkspaceAction::OpenWorkspace(spec) => return begin_workspace(world, spec, id),
-            WorkspaceAction::OpenWorkspaceWindow(spec) => {
-                world.resource_mut::<WorkspaceState>().windows.push(spec);
-                AppRequestOutcome::Applied
-            }
-            WorkspaceAction::RemoveRecent(path) => {
-                world
-                    .non_send_mut::<WorkspacePersistence>()
-                    .store
-                    .forget_workspace(&WorkspaceSpec::local(path.to_string_lossy()))?;
-                AppRequestOutcome::Applied
-            }
-            WorkspaceAction::RemoveWorkspace(spec) => {
-                world
-                    .non_send_mut::<WorkspacePersistence>()
-                    .store
-                    .forget_workspace(&spec)?;
-                AppRequestOutcome::Applied
-            }
-            WorkspaceAction::RenameWorkspace(spec, name) => {
-                let renamed = world
-                    .non_send_mut::<WorkspacePersistence>()
-                    .store
-                    .rename_workspace(&spec, &name)?;
-                if world
-                    .resource::<WorkspaceState>()
-                    .spec
-                    .as_ref()
-                    .is_some_and(|current| current.identity() == spec.identity())
-                {
-                    world.resource_mut::<WorkspaceState>().spec = Some(renamed);
-                }
-                AppRequestOutcome::Applied
-            }
-            WorkspaceAction::Reconnect => {
-                reconnect_workspace(world, id)?;
-                return Ok(None);
-            }
-            WorkspaceAction::Error(message) => return Err(io::Error::other(message)),
-        },
         HostAction::ClosePanels { panel_type } => {
             let panels = active_panel_entities(world)
                 .into_iter()
@@ -3430,10 +3818,6 @@ fn apply_host_action(
             }
         }
         HostAction::Invalidate => AppRequestOutcome::Applied,
-        HostAction::PersistWorkspace => {
-            persist_workspace(world)?;
-            AppRequestOutcome::Applied
-        }
         HostAction::ShowPanel {
             panel_type,
             document,
@@ -3867,9 +4251,7 @@ fn apply_host_action(
             edits,
         } => {
             commit_documents(world, &HashSet::from([document]))?;
-            world
-                .non_send_mut::<DocumentSession>()
-                .apply_edits(document, revision, &edits)?;
+            bed_core::apply_edits(world, document, revision, &edits)?;
             AppRequestOutcome::Applied
         }
         HostAction::ApplyEditsWithResult {
@@ -3893,27 +4275,9 @@ fn apply_host_action(
             )?;
             AppRequestOutcome::Applied
         }
-        HostAction::ApplyModuleEditsWithResult {
-            recipient,
-            token,
-            document,
-            revision,
-            edits,
-        } => {
-            let result = commit_documents(world, &HashSet::from([document])).and_then(|_| {
-                world
-                    .non_send_mut::<DocumentSession>()
-                    .apply_edits(document, revision, &edits)?;
-                world
-                    .non_send::<DocumentSession>()
-                    .document_revision(document)
-            });
-            world.write_message(DocumentReply::Edit {
-                recipient,
-                token,
-                result: result.as_ref().copied().map_err(ToString::to_string),
-            });
-            result?;
+        action @ HostAction::ApplyModuleEditsWithResult { .. } => {
+            let captured = bed_core::capture_host_request(world, request.source, action);
+            bed_core::apply_document_request(world, captured).map_err(io::Error::other)?;
             AppRequestOutcome::Applied
         }
         HostAction::Save { document } => {
@@ -3927,60 +4291,25 @@ fn apply_host_action(
             captured.context.document = Some(document);
             return window_command(world, WindowCommand::Save, &captured, id);
         }
-        HostAction::CommitDocumentsWithResult {
-            recipient,
-            token,
-            documents,
-        } => {
-            let result =
-                commit_documents(world, &documents.iter().copied().collect()).and_then(|_| {
-                    let session = world.non_send::<DocumentSession>();
-                    documents
-                        .iter()
-                        .map(|document| {
-                            if session.save_pending(*document) {
-                                return Err(io::Error::other("A document save is still pending"));
-                            }
-                            Ok(SavedDocument {
-                                document: *document,
-                                revision: session.document_revision(*document)?,
-                            })
-                        })
-                        .collect::<io::Result<Vec<_>>>()
-                });
-            world.write_message(DocumentReply::Save {
-                recipient,
-                token,
-                result: result.as_ref().cloned().map_err(ToString::to_string),
-            });
-            AppRequestOutcome::Saved { documents: result? }
+        action @ HostAction::CommitDocumentsWithResult { .. } => {
+            let captured = bed_core::capture_host_request(world, request.source, action);
+            bed_core::apply_document_request(world, captured).map_err(io::Error::other)?;
+            AppRequestOutcome::Applied
         }
         HostAction::SaveDocumentsWithResult {
             recipient,
             token,
             documents,
         } => return begin_save(world, documents, Some((recipient, token)), None, id),
-        HostAction::Undo { document } | HostAction::Redo { document } => {
+        action @ (HostAction::Undo { document } | HostAction::Redo { document }) => {
             commit_documents(world, &HashSet::from([document]))?;
-            if matches!(host, HostAction::Undo { .. }) {
-                world
-                    .non_send_mut::<DocumentSession>()
-                    .undo_document(document)?;
-            } else {
-                world
-                    .non_send_mut::<DocumentSession>()
-                    .redo_document(document)?;
-            }
+            let captured = bed_core::capture_host_request(world, request.source, action);
+            bed_core::apply_document_request(world, captured).map_err(io::Error::other)?;
             AppRequestOutcome::Applied
         }
-        HostAction::SetSetting {
-            plugin: _,
-            key,
-            value,
-        } => {
-            world.non_send_mut::<Settings>().settings[key] = value;
-            world.non_send_mut::<Settings>().save_settings()?;
-            world.non_send_mut::<Settings>().request_apply();
+        action @ HostAction::OperationBarrier { .. } => {
+            let captured = bed_core::capture_host_request(world, request.source, action);
+            bed_core::apply_document_request(world, captured).map_err(io::Error::other)?;
             AppRequestOutcome::Applied
         }
         HostAction::Notify { message } => {
@@ -4026,7 +4355,7 @@ fn session_options(world: &World, root: Option<PathBuf>) -> SessionOptions {
         monitoring: true,
         git: settings.bool("git_changed_lines", true),
         highlighting: settings.bool("treesitter", true),
-        persistent_history: project,
+        persistent_history: project && world.resource::<WorkspaceState>().spec.is_some(),
         lsp_config: project.then(|| settings.config_dir.join("lsp.json")),
         lsp_config_mode: bed_documents::LspConfigMode::Layered,
         lsp_file_observations: project,
@@ -4128,84 +4457,85 @@ fn snapshot_layout(
 }
 
 pub fn persist_workspace(world: &mut World) -> io::Result<()> {
-    let value = layouts::snapshot(world)?;
-    let spec = world.resource::<WorkspaceState>().spec.clone();
-    let hooks = world
-        .query::<&FeatureStateContribution>()
-        .iter(world)
-        .copied()
-        .collect::<Vec<_>>();
-    let mut state = {
-        let persistence = world.non_send::<WorkspacePersistence>();
-        let existing = if let Some(spec) = &spec {
-            persistence.store.all_module_settings(spec)
-        } else {
-            persistence.store.all_standalone_module_settings()
-        };
-        existing
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default()
+    let Some(spec) = world.resource::<WorkspaceState>().spec.clone() else {
+        return Ok(());
     };
-    for hook in hooks {
-        let value = world.run_system(hook.save).map_err(io::Error::other)?;
-        state.insert(hook.owner.into(), value);
+    if !cfg!(feature = "workspaces") {
+        return Ok(());
     }
+    let layouts = layouts::snapshot(world)?;
+    let previous = world
+        .resource::<WorkspaceRepositoryResource>()
+        .0
+        .load(&spec)?;
+    let plugins =
+        bed_storage::collect_snapshot(world, previous.as_ref().map(|snapshot| &snapshot.plugins))?;
+    world
+        .resource_mut::<WorkspaceRepositoryResource>()
+        .0
+        .commit(
+            spec,
+            bed_plugin_workspaces::WorkspaceSnapshot {
+                layouts: layouts.clone(),
+                plugins,
+            },
+        )?;
+    world
+        .non_send_mut::<WorkspacePersistence>()
+        .store
+        .reload()?;
     let mut persistence = world.non_send_mut::<WorkspacePersistence>();
-    if persistence.last_value.as_ref() != Some(&value) {
-        persistence
-            .store
-            .save_session_layout(spec.as_ref(), value.clone())?;
-        persistence.last_value = Some(value);
-    }
-    if let Some(spec) = &spec {
-        persistence
-            .store
-            .save_module_settings(spec, Value::Object(state))?;
-    } else {
-        persistence
-            .store
-            .save_standalone_module_settings(Value::Object(state))?;
-    }
+    persistence.last_value = Some(layouts);
     persistence.last_saved = Instant::now();
     Ok(())
 }
 
+/// Saving attaches persistence to the live session without replacing or restoring it.
+pub fn save_current_workspace(
+    world: &mut World,
+    name: Option<String>,
+) -> io::Result<WorkspaceSpec> {
+    if !cfg!(feature = "workspaces") {
+        return Err(io::Error::other("Workspace support is disabled"));
+    }
+    let snapshot = layouts::snapshot(world)?;
+    let spec = bed_plugin_workspaces::save_current_workspace(world, name, snapshot.clone())?;
+    world.resource_mut::<WorkspaceState>().spec = Some(spec.clone());
+    world
+        .non_send_mut::<WorkspacePersistence>()
+        .store
+        .reload()?;
+    let mut options = world.non_send::<DocumentSession>().options().clone();
+    options.persistent_history = !world.non_send::<DocumentSession>().is_remote();
+    world.non_send_mut::<DocumentSession>().configure(options)?;
+    let mut persistence = world.non_send_mut::<WorkspacePersistence>();
+    persistence.last_value = Some(snapshot);
+    persistence.last_saved = Instant::now();
+    Ok(spec)
+}
+
 fn restore_contributions(world: &mut World) -> io::Result<()> {
-    publish_host_frame(world);
+    publish_app_state(world);
     configure_feature_targets(world);
     let spec = world.resource::<WorkspaceState>().spec.clone();
-    let hooks = world
-        .query::<&FeatureStateContribution>()
-        .iter(world)
-        .copied()
-        .collect::<Vec<_>>();
-    for hook in hooks {
-        let state = {
-            let persistence = world.non_send::<WorkspacePersistence>();
-            spec.as_ref()
-                .and_then(|spec| persistence.store.module_settings(spec, hook.owner))
-                .or_else(|| {
-                    if spec.is_none() {
-                        persistence.store.standalone_module_settings(hook.owner)
-                    } else {
-                        None
-                    }
-                })
-                .cloned()
-        };
-        let invocation = FeatureStateRestore { state };
-        world
-            .run_system_with(hook.restore, invocation)
-            .map_err(io::Error::other)?
-            .map_err(io::Error::other)?;
-    }
-    Ok(())
+    let state = match &spec {
+        Some(spec) => world
+            .resource::<WorkspaceRepositoryResource>()
+            .0
+            .load(spec)?
+            .map(|snapshot| snapshot.plugins),
+        None => world
+            .non_send::<WorkspacePersistence>()
+            .store
+            .all_standalone_module_settings()
+            .cloned(),
+    };
+    bed_storage::restore_snapshot(world, state.as_ref())
 }
 
 pub fn restore_workspace(world: &mut World) -> io::Result<()> {
     restore_contributions(world)?;
-    let value = layouts::load(world);
+    let value = layouts::load(world)?;
     match value {
         Some(value) => restore_layout(world, &value, false),
         None => compose_default_layout(world),
@@ -4510,11 +4840,150 @@ pub fn reset_layout(world: &mut World) -> io::Result<()> {
     layouts::reset(world)
 }
 
-fn begin_workspace(
+fn begin_directory(
     world: &mut World,
-    spec: WorkspaceSpec,
+    path: &Path,
     id: Option<AppRequestId>,
 ) -> io::Result<Option<AppRequestOutcome>> {
+    let root = std::fs::canonicalize(path)?;
+    if !root.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Directory must be a folder",
+        ));
+    }
+    if cfg!(feature = "workspaces") {
+        let probe = WorkspaceSpec::local(root.to_string_lossy());
+        if let Some(spec) = world
+            .resource::<WorkspaceRepositoryResource>()
+            .0
+            .find(&probe)?
+        {
+            return begin_workspace(world, spec, id);
+        }
+    }
+    if !world.non_send::<DocumentSession>().is_remote()
+        && world.resource::<WorkspaceState>().working_directory == root
+    {
+        return Ok(Some(AppRequestOutcome::Ignored));
+    }
+    if !world.non_send::<DocumentSession>().is_remote() {
+        adopt_directory(world, root)?;
+        return Ok(Some(AppRequestOutcome::Applied));
+    }
+    let panels = panel_entities(world);
+    begin_close_transition(world, panels, Continuation::Directory(root), id)
+}
+
+fn adopt_directory(world: &mut World, root: PathBuf) -> io::Result<()> {
+    let session = world.non_send::<DocumentSession>().session_id();
+    let mut documents = world.non_send::<DocumentSession>().document_ids();
+    documents.extend(
+        world
+            .query::<&bed_core::ModelDocument>()
+            .iter(world)
+            .filter(|model| model.session_id() == session)
+            .map(bed_core::ModelDocument::id),
+    );
+    commit_documents(world, &documents.into_iter().collect())?;
+    persist_workspace(world)?;
+    let context = bed_files::FileContext::local(&root)?;
+    let services = bed_files::FileServices::local();
+    let mut options = session_options(world, Some(root.clone()));
+    options.persistent_history = false;
+    world
+        .non_send_mut::<DocumentSession>()
+        .configure_file_services(options, &context, &services)?;
+    world
+        .resource_mut::<bed_files::FileContext>()
+        .replace(context);
+    world.insert_resource(services);
+    world.insert_resource(WorkspaceAttachment::Temporary);
+    let mut state = world.resource_mut::<WorkspaceState>();
+    state.spec = None;
+    state.project_root = root.to_string_lossy().into_owned();
+    state.working_directory = root;
+    publish_app_state(world);
+    configure_feature_targets(world);
+    Ok(())
+}
+
+fn install_context_session(world: &mut World, session: DocumentSession) -> io::Result<()> {
+    if let Some(token) = world.resource::<PendingOperations>().barrier {
+        bed_core::commit_context_change(world, token, session).map_err(io::Error::other)
+    } else {
+        // Startup has no prior user operation to hold.
+        world
+            .non_send_mut::<DocumentSession>()
+            .shutdown(ClosePolicy::Discard)?;
+        world.insert_non_send(session);
+        Ok(())
+    }
+}
+
+fn replace_directory(world: &mut World, root: PathBuf) -> io::Result<()> {
+    let mut options = session_options(world, Some(root.clone()));
+    options.persistent_history = false;
+    let context = bed_files::FileContext::local(&root)?;
+    let services = bed_files::FileServices::local();
+    let session = DocumentSession::with_file_services(options, &context, &services)?;
+    persist_workspace(world)?;
+    if let Some(token) = world.resource::<PendingOperations>().barrier {
+        bed_core::validate_document_transition(world, token).map_err(io::Error::other)?;
+    }
+    let panels = panel_entities(world);
+    retire_panels(world, &panels)?;
+    install_context_session(world, session)?;
+    world.insert_resource(ActiveSessionId(
+        world.non_send::<DocumentSession>().session_id().0,
+    ));
+    let context = bed_files::FileContext::local(&root)?;
+    world
+        .resource_mut::<bed_files::FileContext>()
+        .replace(context);
+    world.insert_resource(bed_files::FileServices::local());
+    world.insert_resource(WorkspaceAttachment::Temporary);
+    let mut state = world.resource_mut::<WorkspaceState>();
+    state.spec = None;
+    state.project_root = root.to_string_lossy().into_owned();
+    state.working_directory = root;
+    *world.resource_mut::<DocumentNavigation>() = DocumentNavigation::default();
+    *world.resource_mut::<WorkbenchLayout>() = WorkbenchLayout::default();
+    layouts::clear(world);
+    cancel_foreign_pending(world);
+    // Empty restoration explicitly clears installed plugins, with no disk lookup.
+    bed_storage::restore_snapshot(world, None)?;
+    layouts::initialize(world, LayoutSlot::Startup)?;
+    publish_app_state(world);
+    configure_feature_targets(world);
+    Ok(())
+}
+
+fn begin_workspace(
+    world: &mut World,
+    mut spec: WorkspaceSpec,
+    id: Option<AppRequestId>,
+) -> io::Result<Option<AppRequestOutcome>> {
+    if matches!(spec.target, WorkspaceTarget::Local) {
+        spec.root = std::fs::canonicalize(&spec.root)?
+            .to_str()
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "Workspace path is not UTF-8")
+            })?
+            .to_owned();
+    }
+    if !cfg!(feature = "workspaces") {
+        return Err(io::Error::other("Workspace support is disabled"));
+    }
+    if matches!(spec.target, WorkspaceTarget::Local)
+        && world
+            .resource::<WorkspaceRepositoryResource>()
+            .0
+            .find(&spec)?
+            .is_none()
+    {
+        return begin_directory(world, Path::new(&spec.root), id);
+    }
     if world
         .resource::<WorkspaceState>()
         .spec
@@ -4527,36 +4996,14 @@ fn begin_workspace(
         start_connection(world, spec, false, id)?;
         return Ok(None);
     }
-    if world.resource::<WorkspaceState>().spec.is_none()
-        && !world.non_send::<DocumentSession>().is_remote()
-    {
-        attach_workspace(world, Path::new(&spec.root))?;
-        return Ok(Some(AppRequestOutcome::Applied));
-    }
-    let documents = world.non_send::<DocumentSession>().document_ids();
-    commit_documents(world, &documents.iter().copied().collect())?;
-    let documents = documents
-        .into_iter()
-        .filter(|document| {
-            world
-                .non_send::<DocumentSession>()
-                .snapshot(*document)
-                .is_ok_and(|snapshot| snapshot.dirty)
-                && !world
-                    .non_send::<DocumentSession>()
-                    .is_snapshot_document(*document)
-        })
-        .collect();
-    begin_save(
-        world,
-        documents,
-        None,
-        Some(Continuation::Workspace(spec)),
-        id,
-    )
+    let panels = panel_entities(world);
+    begin_close_transition(world, panels, Continuation::Workspace(spec), id)
 }
 
 pub fn attach_workspace(world: &mut World, path: &Path) -> io::Result<()> {
+    if !cfg!(feature = "workspaces") {
+        return Err(io::Error::other("Workspace support is disabled"));
+    }
     attach_workspace_with_terminal(world, path, None)
 }
 
@@ -4603,6 +5050,15 @@ fn begin_terminal_promotion(
                 "The calling terminal is unavailable",
             )
         })?;
+    #[cfg(feature = "terminal")]
+    if world
+        .get_non_send::<bed_terminal::bed_terminal::BedTerminal>()
+        .is_some_and(|backend| backend.is_remote_session(terminal))
+    {
+        return Err(io::Error::other(
+            "Workspace promotion requires a live local terminal",
+        ));
+    }
     let root = std::fs::canonicalize(root)?;
     if !root.is_dir() {
         return Err(io::Error::new(
@@ -4667,18 +5123,43 @@ fn attach_workspace_with_terminal(
         .collect();
     commit_documents(world, &documents)?;
     persist_workspace(world)?;
+    let probe = WorkspaceSpec::local(root.to_string_lossy());
     let spec = world
+        .resource::<WorkspaceRepositoryResource>()
+        .0
+        .find(&probe)?
+        .unwrap_or(probe);
+    let snapshot = world
+        .resource::<WorkspaceRepositoryResource>()
+        .0
+        .load(&spec)?
+        .unwrap_or_else(|| bed_plugin_workspaces::WorkspaceSnapshot {
+            layouts: Value::Null,
+            plugins: json!({}),
+        });
+    let spec = world
+        .resource_mut::<WorkspaceRepositoryResource>()
+        .0
+        .commit(spec, snapshot)?;
+    world
         .non_send_mut::<WorkspacePersistence>()
         .store
-        .record_workspace(WorkspaceSpec::local(root.to_string_lossy()))?;
-    let options = session_options(world, Some(root.clone()));
+        .reload()?;
+    let mut options = session_options(world, Some(root.clone()));
+    options.persistent_history = true;
     world.non_send_mut::<DocumentSession>().configure(options)?;
     {
         let mut workspace = world.resource_mut::<WorkspaceState>();
-        workspace.spec = Some(spec);
+        workspace.spec = Some(spec.clone());
         workspace.project_root = root.to_string_lossy().into_owned();
         workspace.working_directory = root;
     }
+    let spec = world
+        .resource::<WorkspaceState>()
+        .spec
+        .clone()
+        .expect("workspace attached");
+    world.insert_resource(WorkspaceAttachment::Saved(spec));
     restore_contributions(world)?;
     let launchers = panel_entities(world)
         .into_iter()
@@ -4690,31 +5171,101 @@ fn attach_workspace_with_terminal(
         .collect::<Vec<_>>();
     retire_panels(world, &launchers)?;
     layouts::attach(world, terminal)?;
-    publish_host_frame(world);
+    publish_app_state(world);
     Ok(())
 }
 
-pub fn replace_workspace(world: &mut World, spec: WorkspaceSpec) -> io::Result<()> {
+fn validate_workspace_snapshot(
+    snapshot: &bed_plugin_workspaces::WorkspaceSnapshot,
+) -> io::Result<()> {
+    bed_storage::validate_snapshot(&snapshot.plugins)?;
+    let layout = &snapshot.layouts;
+    if layout.is_null() {
+        return Ok(());
+    }
+    if let Some(slots) = layout.get("layouts") {
+        let active = layout.get("active_layout_slot").ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Missing active layout slot")
+        })?;
+        if LayoutSlot::from_value(active).is_none()
+            || !slots.as_object().is_some_and(|slots| {
+                slots.iter().all(|(slot, value)| {
+                    LayoutSlot::from_key(slot).is_some()
+                        && value["panels"]
+                            .as_array()
+                            .is_some_and(|panels| panels.iter().all(Value::is_object))
+                })
+            })
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid saved workspace layouts",
+            ));
+        }
+    } else if !layout["panels"]
+        .as_array()
+        .is_some_and(|panels| panels.iter().all(Value::is_object))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid saved workspace layout",
+        ));
+    }
+    Ok(())
+}
+
+pub fn replace_workspace(world: &mut World, mut spec: WorkspaceSpec) -> io::Result<()> {
+    if !cfg!(feature = "workspaces") {
+        return Err(io::Error::other("Workspace support is disabled"));
+    }
     if matches!(spec.target, WorkspaceTarget::Ssh { .. }) {
         start_connection(world, spec, false, None)?;
         return Ok(());
     }
     let root = std::fs::canonicalize(&spec.root)?;
-    let options = session_options(world, Some(root.clone()));
-    let session = DocumentSession::with_options(options)?;
+    spec.root = root
+        .to_str()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Workspace path is not UTF-8"))?
+        .to_owned();
+    if world
+        .resource::<WorkspaceRepositoryResource>()
+        .0
+        .find(&spec)?
+        .is_none()
+    {
+        return replace_directory(world, root);
+    }
+    let mut options = session_options(world, Some(root.clone()));
+    options.persistent_history = true;
+    let context = bed_files::FileContext::local(&root)?;
+    let services = bed_files::FileServices::local();
+    let session = DocumentSession::with_file_services(options, &context, &services)?;
     if world.resource::<AppInitialized>().0 {
         persist_workspace(world)?;
     }
-    let panels = panel_entities(world);
-    retire_panels(world, &panels)?;
-    world
-        .non_send_mut::<DocumentSession>()
-        .shutdown(ClosePolicy::Discard)?;
-    world.insert_non_send(session);
+    let snapshot = world
+        .resource::<WorkspaceRepositoryResource>()
+        .0
+        .load(&spec)?
+        .unwrap_or_else(|| bed_plugin_workspaces::WorkspaceSnapshot {
+            layouts: Value::Null,
+            plugins: json!({}),
+        });
+    validate_workspace_snapshot(&snapshot)?;
     let spec = world
+        .resource_mut::<WorkspaceRepositoryResource>()
+        .0
+        .commit(spec, snapshot)?;
+    world
         .non_send_mut::<WorkspacePersistence>()
         .store
-        .record_workspace(spec)?;
+        .reload()?;
+    if let Some(token) = world.resource::<PendingOperations>().barrier {
+        bed_core::validate_document_transition(world, token).map_err(io::Error::other)?;
+    }
+    let panels = panel_entities(world);
+    retire_panels(world, &panels)?;
+    install_context_session(world, session)?;
     world.insert_resource(ActiveSessionId(
         world.non_send::<DocumentSession>().session_id().0,
     ));
@@ -4725,7 +5276,8 @@ pub fn replace_workspace(world: &mut World, spec: WorkspaceSpec) -> io::Result<(
         let mut workspace = world.resource_mut::<WorkspaceState>();
         workspace.project_root = spec.root.clone();
         workspace.working_directory = root;
-        workspace.spec = Some(spec);
+        workspace.spec = Some(spec.clone());
+        world.insert_resource(WorkspaceAttachment::Saved(spec));
     }
     cancel_foreign_pending(world);
     restore_workspace(world)
@@ -4903,40 +5455,83 @@ fn start_connection(
 }
 
 fn reconnect_workspace(world: &mut World, id: Option<AppRequestId>) -> io::Result<()> {
+    let context = world.resource::<bed_files::FileContext>();
+    let bed_files::FileProviderId::Ssh { host } = &context.provider else {
+        return Err(io::Error::other("No remote directory is open"));
+    };
     let spec = world
         .resource::<WorkspaceState>()
         .spec
         .clone()
-        .ok_or_else(|| io::Error::other("No remote workspace is open"))?;
+        .unwrap_or_else(|| WorkspaceSpec {
+            name: bed_plugin_workspaces::default_name(&context.directory_string()),
+            target: WorkspaceTarget::Ssh { host: host.clone() },
+            root: context.directory_string(),
+        });
     start_connection(world, spec, true, id)
 }
 
 fn replace_connected_workspace(world: &mut World, connected: ConnectedWorkspace) -> io::Result<()> {
-    let options = session_options(world, Some(PathBuf::from(&connected.spec.root)));
-    let session = DocumentSession::with_remote_options(
-        options,
-        connected.target,
-        connected.client,
-        connected.spec.root.clone(),
-    )?;
+    let root = connected.spec.root.clone();
+    let WorkspaceTarget::Ssh { host } = &connected.spec.target else {
+        return Err(io::Error::other("Remote context has no host"));
+    };
+    let host = host.clone();
+    let mut saved = if cfg!(feature = "workspaces") {
+        world
+            .resource::<WorkspaceRepositoryResource>()
+            .0
+            .find(&connected.spec)?
+    } else {
+        None
+    };
+    let mut options = session_options(world, Some(PathBuf::from(&root)));
+    options.persistent_history = false;
+    let context = bed_files::FileContext::remote(host.clone(), PathBuf::from(&root))?;
+    let services = bed_files::FileServices::remote_target(connected.target, connected.client);
+    let session = DocumentSession::with_file_services(options, &context, &services)?;
     if world.resource::<AppInitialized>().0 {
         persist_workspace(world)?;
     }
+    if let Some(spec) = saved.take() {
+        let snapshot = world
+            .resource::<WorkspaceRepositoryResource>()
+            .0
+            .load(&spec)?
+            .unwrap_or_else(|| bed_plugin_workspaces::WorkspaceSnapshot {
+                layouts: Value::Null,
+                plugins: json!({}),
+            });
+        validate_workspace_snapshot(&snapshot)?;
+        saved = Some(
+            world
+                .resource_mut::<WorkspaceRepositoryResource>()
+                .0
+                .commit(spec, snapshot)?,
+        );
+        world
+            .non_send_mut::<WorkspacePersistence>()
+            .store
+            .reload()?;
+    }
+    if let Some(token) = world.resource::<PendingOperations>().barrier {
+        bed_core::validate_document_transition(world, token).map_err(io::Error::other)?;
+    }
     let panels = panel_entities(world);
     retire_panels(world, &panels)?;
+    install_context_session(world, session)?;
+    let context = bed_files::FileContext::remote(host, PathBuf::from(&root))?;
     world
-        .non_send_mut::<DocumentSession>()
-        .shutdown(ClosePolicy::Discard)?;
-    world.insert_non_send(session);
-    let spec = world
-        .non_send_mut::<WorkspacePersistence>()
-        .store
-        .record_workspace(connected.spec)?;
+        .resource_mut::<bed_files::FileContext>()
+        .replace(context);
+    world.insert_resource(services);
     {
         let mut workspace = world.resource_mut::<WorkspaceState>();
-        workspace.project_root = spec.root.clone();
-        workspace.spec = Some(spec);
+        workspace.project_root = root.clone();
+        workspace.working_directory = PathBuf::from(&root);
+        workspace.spec = saved.clone();
     }
+    world.insert_resource(saved.map_or(WorkspaceAttachment::Temporary, WorkspaceAttachment::Saved));
     world.insert_resource(ActiveSessionId(
         world.non_send::<DocumentSession>().session_id().0,
     ));
@@ -4944,7 +5539,14 @@ fn replace_connected_workspace(world: &mut World, connected: ConnectedWorkspace)
     *world.resource_mut::<WorkbenchLayout>() = WorkbenchLayout::default();
     layouts::clear(world);
     cancel_foreign_pending(world);
-    restore_workspace(world)
+    if world.resource::<WorkspaceState>().spec.is_some() {
+        restore_workspace(world)
+    } else {
+        bed_storage::restore_snapshot(world, None)?;
+        layouts::initialize(world, LayoutSlot::Startup)?;
+        publish_app_state(world);
+        Ok(())
+    }
 }
 
 fn place_opened_panel(
@@ -4977,6 +5579,8 @@ fn place_opened_panel(
     Ok(())
 }
 
+// Captured document input and destination stay together through asynchronous opening.
+#[allow(clippy::too_many_arguments)]
 fn begin_open_file(
     world: &mut World,
     path: &Path,
@@ -5088,32 +5692,24 @@ fn poll_remote_operations(
                             .reconnect_remote_with_target(connected.client, connected.target)?;
                         return Ok(Some(AppRequestOutcome::Applied));
                     }
-                    let documents = world.non_send::<DocumentSession>().document_ids();
-                    commit_documents(world, &documents.iter().copied().collect())?;
-                    let documents = documents
-                        .into_iter()
-                        .filter(|document| {
-                            world
-                                .non_send::<DocumentSession>()
-                                .snapshot(*document)
-                                .is_ok_and(|snapshot| snapshot.dirty)
-                                && !world
-                                    .non_send::<DocumentSession>()
-                                    .is_snapshot_document(*document)
-                        })
-                        .collect();
-                    begin_save(
+                    let panels = panel_entities(world);
+                    begin_close_transition(
                         world,
-                        documents,
-                        None,
-                        Some(Continuation::Connected(Box::new(connected))),
+                        panels,
+                        Continuation::Connected(Box::new(connected)),
                         connection.id,
                     )
                 })();
                 match result {
-                    Ok(Some(outcome)) => complete(world, connection.id, Ok(outcome)),
+                    Ok(Some(outcome)) => {
+                        release_transition_barrier(world, Ok(()))?;
+                        complete(world, connection.id, Ok(outcome));
+                    }
                     Ok(None) => {}
-                    Err(error) => complete(world, connection.id, Err(error.into())),
+                    Err(error) => {
+                        release_transition_barrier(world, Err(error.to_string()))?;
+                        complete(world, connection.id, Err(error.into()));
+                    }
                 }
             }
         }
@@ -5311,9 +5907,7 @@ fn poll_remote_operations(
                 .iter(world)
                 .any(|binding| binding.document == Some(document))
         {
-            world
-                .non_send_mut::<DocumentSession>()
-                .close_document(document, ClosePolicy::Discard)?;
+            bed_core::retire_document(world, document).map_err(io::Error::other)?;
         }
     }
     Ok(())

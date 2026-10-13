@@ -139,20 +139,21 @@ fn collect(
                 continue;
             }
             let context = context(world, publisher, item.id);
-            let measured = if state.failures.contains_key(&key) {
-                Some(ui.calc_text_size(format!("{}: unavailable", item.label))[0])
-            } else {
-                match callback(ui, || (item.measure)(world, ui, context)) {
-                    Ok(Some(width)) if !width.is_finite() || width < 0.0 => {
-                        state
-                            .failures
-                            .insert(key, "Status width must be finite and nonnegative".into());
-                        Some(ui.calc_text_size(format!("{}: unavailable", item.label))[0])
-                    }
-                    Ok(width) => width,
-                    Err(error) => {
-                        state.failures.insert(key, error);
-                        Some(ui.calc_text_size(format!("{}: unavailable", item.label))[0])
+            let measured = match state.failures.entry(key) {
+                std::collections::hash_map::Entry::Occupied(_) => {
+                    Some(ui.calc_text_size(format!("{}: unavailable", item.label))[0])
+                }
+                std::collections::hash_map::Entry::Vacant(failure) => {
+                    match callback(ui, || (item.measure)(world, ui, context)) {
+                        Ok(Some(width)) if !width.is_finite() || width < 0.0 => {
+                            failure.insert("Status width must be finite and nonnegative".into());
+                            Some(ui.calc_text_size(format!("{}: unavailable", item.label))[0])
+                        }
+                        Ok(width) => width,
+                        Err(error) => {
+                            failure.insert(error);
+                            Some(ui.calc_text_size(format!("{}: unavailable", item.label))[0])
+                        }
                     }
                 }
             };

@@ -20,7 +20,7 @@ fn load(value: &Value) -> Result<Scene, String> {
 fn common_zoom_changes_camera_distance_and_reset_frames_the_model() {
     use bed_keybindings::{Bindings, Overrides, Platform};
     use dear_imgui_rs::{Condition, FramePrepareOptions, Key};
-    let mut frame_data = bed_api::features::HostFrame::default();
+    let mut frame_data = bed_api::features::FrontendSnapshot::default();
     frame_data
         .documents
         .push(bed_api::documents::PluginDocument {

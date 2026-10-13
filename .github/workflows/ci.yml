@@ -72,12 +72,13 @@ jobs:
         run: cargo test --workspace --locked --all-targets --features bed/automation
       - name: Minimal desktop composition
         run: |
-          cargo check --locked -p bed-core -p bed-plugin-layouts
-          cargo check --locked -p bed-example-layouts -p bed-example-terminal -p bed-example-editor -p bed-example-model
+          cargo check --locked -p bed-core -p bed-plugin-layouts -p bed-storage
+          cargo check --locked -p bed-core --no-default-features --features remote
+          cargo check --locked -p bed-example-layouts -p bed-example-terminal -p bed-example-editor -p bed-example-model -p bed-example-game-editor -p bed-example-game-runtime
           cargo check --locked -p bed-ui --no-default-features
           python3 scripts/check-desktop-consumer.py
           cargo check --locked -p bed --no-default-features --bins
-          cargo test --locked -p bed-workbench -p bed-core -p bed-documents -p bed-plugin-layouts
+          cargo test --locked -p bed-workbench -p bed-core -p bed-documents -p bed-plugin-layouts -p bed-storage -p bed-plugin-workspaces
           cargo run --locked -p bed-example-editor -- --headless-smoke
       - name: Shared API feature combinations
         shell: bash
@@ -144,6 +145,9 @@ jobs:
           cargo run --locked -p bed-desktop --example canvas_smoke
           cargo run --locked -p bed-desktop --example automation_smoke
           cargo run --locked -p bed-desktop --example window_config_smoke
+          cargo run --locked -p bed-desktop --example attachment_smoke
+          cargo run --locked -p bed-example-game-editor -- --smoke-test
+          cargo run --locked -p bed-example-game-runtime -- --smoke-test
           cargo run --locked -p bed-example-layouts -- --smoke-test --capture-frame target/native-layout.ppm
           cargo run --locked -p bed-example-editor -- --smoke-test
           cargo run --locked -p bed-example-model -- --smoke-test
