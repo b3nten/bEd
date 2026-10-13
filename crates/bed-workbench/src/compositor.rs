@@ -15,6 +15,7 @@ pub struct WorkbenchAppearance {
     pub background: [f32; 4],
     pub hidden_picker: HashSet<String>,
 }
+
 impl Default for WorkbenchAppearance {
     fn default() -> Self {
         Self {
@@ -25,6 +26,7 @@ impl Default for WorkbenchAppearance {
         }
     }
 }
+
 #[derive(Component, Clone, Copy, Default)]
 pub struct PanelDirty(pub bool);
 
@@ -37,6 +39,7 @@ pub fn tab_bounds(world: &World, panel: Entity) -> Option<([f32; 2], [f32; 2])> 
         .get(&id)
         .copied()
 }
+
 pub fn area_bounds(world: &World, area: u32) -> Option<([f32; 2], [f32; 2])> {
     world
         .non_send::<TilingFrontend>()
@@ -45,6 +48,7 @@ pub fn area_bounds(world: &World, area: u32) -> Option<([f32; 2], [f32; 2])> {
         .get(&area)
         .copied()
 }
+
 pub fn area_at(world: &World, position: [f32; 2], viewport: u32) -> Option<u32> {
     world
         .non_send::<TilingFrontend>()
@@ -65,6 +69,7 @@ pub fn render_ui(world: &mut World, ui: &Ui) {
         resume_unwind(panic);
     }
 }
+
 fn draw(world: &mut World, ui: &Ui) {
     assert!(
         ui.io()

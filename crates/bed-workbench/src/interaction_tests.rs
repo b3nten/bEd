@@ -125,10 +125,12 @@ fn double_clicking_a_preview_tab_keeps_it_and_italic_titles_render_through_the_c
 }
 
 struct Pane;
+
 impl Panel for Pane {
     fn title(&self, _: &World) -> String {
         "Pane".into()
     }
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -139,11 +141,13 @@ impl Panel for Pane {
         ui.text("Live panel");
     }
 }
+
 fn factory(_: In<api::PanelCreation>) -> PanelResult {
     Ok(Box::new(Pane))
 }
 
 const FADE_MARKER: u32 = 0xff4d_99e6;
+
 fn fade_marker(ui: &Ui) {
     let point = ui.cursor_screen_pos();
     ui.get_window_draw_list()
@@ -152,11 +156,14 @@ fn fade_marker(ui: &Ui) {
         .build();
     ui.dummy([28.0, 22.0]);
 }
+
 struct AnimatedPane;
+
 impl Panel for AnimatedPane {
     fn title(&self, _: &World) -> String {
         "Animated pane".into()
     }
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -170,14 +177,17 @@ impl Panel for AnimatedPane {
             .build(ui, || fade_marker(ui));
     }
 }
+
 fn animated_factory(_: In<api::PanelCreation>) -> PanelResult {
     Ok(Box::new(AnimatedPane))
 }
+
 struct Fixture {
     context: Context,
     app: App,
     panels: [Entity; 3],
 }
+
 impl Fixture {
     fn new() -> Self {
         let mut app = App::new();
@@ -235,12 +245,15 @@ impl Fixture {
         fixture.settle();
         fixture
     }
+
     fn layout(&self) -> &TilingState {
         &self.app.world().resource::<WorkbenchLayout>().tiling
     }
+
     fn id(&self, panel: Entity) -> u64 {
         self.app.world().get::<PanelPresentation>(panel).unwrap().id
     }
+
     fn frame(&mut self) {
         self.context.io_mut().set_display_size([1200., 800.]);
         self.context.io_mut().set_delta_time(1. / 60.);
@@ -255,11 +268,13 @@ impl Fixture {
                 .is_empty()
         );
     }
+
     fn settle(&mut self) {
         for _ in 0..6 {
             self.frame();
         }
     }
+
     fn screen(&self, point: [i32; 2]) -> [f32; 2] {
         let chrome = self.app.world().non_send::<tiling_ui::TilingFrontend>();
         [0, 1].map(|axis| {
@@ -267,6 +282,7 @@ impl Fixture {
                 + point[axis] as f32 * chrome.tiling_ui.size[axis] / EXTENT as f32
         })
     }
+
     fn press(&mut self, point: [f32; 2]) {
         self.context.io_mut().add_mouse_pos_event(point);
         self.frame();
@@ -275,18 +291,22 @@ impl Fixture {
             .add_mouse_button_event(MouseButton::Left, true);
         self.frame();
     }
+
     fn press_tab(&mut self, panel: Entity) {
         let (min, max) = tab_bounds(self.app.world(), panel).unwrap();
         self.press([min[0] + (max[0] - min[0]) * 0.4, (min[1] + max[1]) * 0.5]);
     }
+
     fn corner(&mut self) {
         self.press(self.screen([5000, 0]).map(|value| value + 4.));
     }
+
     fn drag(&mut self, point: [i32; 2]) {
         let point = self.screen(point);
         self.context.io_mut().add_mouse_pos_event(point);
         self.frame();
     }
+
     fn release(&mut self) {
         self.context
             .io_mut()
@@ -294,6 +314,7 @@ impl Fixture {
         self.frame();
         self.settle();
     }
+
     fn payload_frame(&mut self, payload_type: &std::ffi::CStr, position: [f32; 2], pressed: bool) {
         self.context.io_mut().add_mouse_pos_event(position);
         self.context
@@ -319,6 +340,7 @@ impl Fixture {
         drop(self.context.render_legacy());
         process_requests(self.app.world_mut());
     }
+
     fn membership(&self) {
         self.context.binding().with_bound_context(|| unsafe {
             for panel in self
@@ -1058,11 +1080,14 @@ fn cancelled_and_outside_payload_drops_leave_layout_unchanged() {
 
 #[derive(Resource, Default)]
 struct WidgetDrops(usize);
+
 struct DropWidget;
+
 impl Panel for DropWidget {
     fn title(&self, _: &World) -> String {
         "Drop widget".into()
     }
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -1092,6 +1117,7 @@ impl Panel for DropWidget {
         }
     }
 }
+
 fn drop_widget_factory(_: In<api::PanelCreation>) -> PanelResult {
     Ok(Box::new(DropWidget))
 }

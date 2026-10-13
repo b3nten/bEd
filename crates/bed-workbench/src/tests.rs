@@ -22,10 +22,12 @@ fn imgui_context() -> dear_imgui_rs::Context {
 }
 
 struct CounterPanel(Entity);
+
 impl Panel for CounterPanel {
     fn title(&self, _world: &World) -> String {
         "Counter".into()
     }
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -37,13 +39,16 @@ impl Panel for CounterPanel {
             requests.push(Action::ClosePanel(self.0));
         }
     }
+
     fn save(&self, _world: &World) -> Value {
         json!({"count":7})
     }
 }
+
 fn factory(In(input): In<PanelCreation>) -> PanelResult {
     Ok(Box::new(CounterPanel(input.entity)))
 }
+
 fn open(In(input): In<CommandInvocation>) -> CommandResult {
     Ok(vec![Action::OpenPanel {
         panel_type: "test.counter".into(),
@@ -51,6 +56,7 @@ fn open(In(input): In<CommandInvocation>) -> CommandResult {
         area: Some(input.area),
     }])
 }
+
 fn app() -> App {
     let mut app = App::new();
     app.add_plugins(WorkbenchPlugin);
@@ -63,6 +69,7 @@ fn app() -> App {
     .unwrap();
     app
 }
+
 fn invoke(app: &mut App, command: &str) {
     let request = capture_command(app.world(), command, Value::Null);
     app.world_mut()
@@ -239,11 +246,13 @@ fn registration_failure_publishes_neither_definitions_nor_system_entities() {
 
 #[derive(Resource, Default)]
 struct Observed(bool);
+
 fn observe(_: In<CommandInvocation>, world: &mut World) -> CommandResult {
     let focused = world.resource::<WorkbenchLayout>().focused.unwrap();
     world.resource_mut::<Observed>().0 = world.get::<PanelRecord>(focused).is_some();
     Ok(Vec::new())
 }
+
 #[test]
 fn command_effects_commit_before_the_next_fifo_command() {
     let mut app = app();
@@ -489,11 +498,14 @@ fn foreign_presentation_targets_cannot_mutate_generic_panels_with_the_same_saved
 
 #[derive(Component)]
 struct WidgetState(i64);
+
 struct MutableWidget(Entity);
+
 impl Panel for MutableWidget {
     fn title(&self, world: &World) -> String {
         format!("Value {}", world.get::<WidgetState>(self.0).unwrap().0)
     }
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -505,6 +517,7 @@ impl Panel for MutableWidget {
         ui.text(self.title(world));
         requests.push(Action::ClosePanel(self.0));
     }
+
     fn save(&self, world: &World) -> Value {
         json!({"value":world.get::<WidgetState>(self.0).unwrap().0})
     }
@@ -560,6 +573,7 @@ struct CloseGate {
     ready: bool,
     calls: Vec<Entity>,
 }
+
 fn wait_for_save(world: &mut World, entity: Entity) -> Result<bool, String> {
     assert!(!world.contains_resource::<UiLoan>());
     let mut gate = world.resource_mut::<CloseGate>();
@@ -620,6 +634,7 @@ struct RestoreCloseGate {
     blocked: Entity,
     calls: Vec<Entity>,
 }
+
 fn restore_close_policy(world: &mut World, entity: Entity) -> Result<bool, String> {
     let mut gate = world.resource_mut::<RestoreCloseGate>();
     gate.calls.push(entity);
@@ -672,10 +687,12 @@ struct PanickingWidget {
     draft: i64,
     draws: Rc<Cell<usize>>,
 }
+
 impl Panel for PanickingWidget {
     fn title(&self, _world: &World) -> String {
         "Draft".into()
     }
+
     fn draw(
         &mut self,
         _ui: &Ui,
@@ -695,6 +712,7 @@ impl Panel for PanickingWidget {
         }
         panic!("widget draw failed");
     }
+
     fn save(&self, _world: &World) -> Value {
         json!({"draft":self.draft})
     }

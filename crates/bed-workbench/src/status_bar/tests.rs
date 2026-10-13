@@ -11,10 +11,12 @@ struct Data {
     drawn: Vec<StatusDrawMode>,
     control: Option<[f32; 2]>,
 }
+
 fn measure(world: &World, _: &Ui, ctx: StatusContext) -> Option<f32> {
     let data = world.get::<Data>(ctx.publisher).unwrap();
     data.enabled.then_some(data.width)
 }
+
 fn draw(world: &mut World, ui: &Ui, ctx: StatusDrawContext, actions: &mut Vec<Action>) {
     world
         .get_mut::<Data>(ctx.context.publisher)
@@ -32,9 +34,11 @@ fn draw(world: &mut World, ui: &Ui, ctx: StatusDrawContext, actions: &mut Vec<Ac
         .unwrap()
         .control = Some([(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5]);
 }
+
 fn tooltip(_: &World, ui: &Ui, _: StatusContext) {
     ui.text("Current custom content");
 }
+
 fn item(id: &'static str, priority: i32, icon: &'static str, prefer_icon: bool) -> StatusItem {
     StatusItem {
         id,
@@ -47,6 +51,7 @@ fn item(id: &'static str, priority: i32, icon: &'static str, prefer_icon: bool) 
         tooltip,
     }
 }
+
 fn publisher(app: &mut App, descriptor: StatusItem, width: f32) -> Entity {
     app.world_mut()
         .spawn((
@@ -61,14 +66,17 @@ fn publisher(app: &mut App, descriptor: StatusItem, width: f32) -> Entity {
         ))
         .id()
 }
+
 fn icons(_: &World, key: &str) -> Option<TextureId> {
     (key == "test").then(|| TextureId::new(1))
 }
+
 struct Fixture {
     context: Context,
     app: App,
     width: f32,
 }
+
 impl Fixture {
     fn new(width: f32) -> Self {
         let mut context = Context::create();
@@ -91,6 +99,7 @@ impl Fixture {
             width,
         }
     }
+
     fn frame(&mut self) {
         self.context
             .prepare_frame(FramePrepareOptions::new([self.width, 300.0], 1.0 / 60.0));
@@ -112,6 +121,7 @@ impl Fixture {
         );
         drop(self.context.render_legacy());
     }
+
     fn click(&mut self, point: [f32; 2]) {
         self.context.io_mut().add_mouse_pos_event(point);
         self.frame();
@@ -205,6 +215,7 @@ fn arbitrary_publishers_order_and_compress_without_panel_filters() {
 fn status_tooltips_wrap_round_and_animate_for_icons_contents_and_host() {
     let _lock = IMGUI_TEST_LOCK.lock().unwrap();
     let mut fixture = Fixture::new(800.0);
+
     fn details(_: &World, ui: &Ui, _: StatusContext) {
         api::StatusText::new(
             "Current status details",
@@ -583,6 +594,7 @@ fn dismissed_compact_popup_stays_closed_and_invalid_measurement_is_isolated() {
 fn failing_widget_discards_actions_and_does_not_interrupt_other_items() {
     let _lock = IMGUI_TEST_LOCK.lock().unwrap();
     let mut fixture = Fixture::new(800.0);
+
     fn broken(_: &mut World, _: &Ui, ctx: StatusDrawContext, actions: &mut Vec<Action>) {
         actions.push(ctx.context.invoke("test.unwanted", Value::Null));
         unsafe {

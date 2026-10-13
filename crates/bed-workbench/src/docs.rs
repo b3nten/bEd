@@ -13,6 +13,7 @@ pub const DOCS_PANEL_ID: &str = "bed.docs.panel";
 pub const SHOW_DOCS_COMMAND: &str = "bed.docs.show";
 
 pub struct DocsPlugin;
+
 impl Plugin for DocsPlugin {
     fn build(&self, app: &mut App) {
         api::register(app.world_mut(), "bed.docs", |r| {
@@ -147,6 +148,7 @@ struct DocsPanel {
     usage_transition: bed_ui::util::transition::ContentTransition<Vec<(String, String)>>,
     key_transitions: [bed_ui::util::transition::ContentTransition<Vec<KeyRow>>; 2],
 }
+
 impl DocsPanel {
     fn from_state(state: &Value) -> Self {
         let zoom = state["zoom"]
@@ -182,6 +184,7 @@ impl DocsPanel {
         }
         panel
     }
+
     fn zoom_by(&mut self, factor: f32) {
         self.zoom = (self.zoom * factor).clamp(0.5, 2.0);
     }
@@ -191,9 +194,11 @@ impl Panel for DocsPanel {
     fn title(&self, _: &World) -> String {
         "Docs".into()
     }
+
     fn save(&self, _: &World) -> Value {
         json!({"zoom": self.zoom, "expanded": self.expanded, "symbol_expanded": self.symbol_expanded})
     }
+
     fn draw(&mut self, ui: &Ui, world: &mut World, _: &mut Vec<Action>, input: &ShortcutInput) {
         let source = target(world);
         let changed = self.source != source;

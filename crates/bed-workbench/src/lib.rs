@@ -3,6 +3,7 @@ mod compositor;
 mod docs;
 pub use docs::{DOCS_PANEL_ID, DocsPlugin, SHOW_DOCS_COMMAND};
 mod shortcuts;
+
 #[derive(Resource, Default)]
 struct PanelFocusHistory(Vec<Entity>);
 pub use shortcuts::{WorkbenchShortcuts, global_shortcuts, prepare_shortcuts};
@@ -16,6 +17,7 @@ pub use compositor::{
 };
 unsafe extern "C" {
     fn bed_imgui_dock_node_clear_background(node: *mut dear_imgui_rs::sys::ImGuiDockNode);
+
     fn bed_imgui_dock_node_select_window(
         node: *mut dear_imgui_rs::sys::ImGuiDockNode,
         window: *mut dear_imgui_rs::sys::ImGuiWindow,
@@ -48,6 +50,7 @@ pub struct WorkbenchLayout {
     pub focused_area: Option<u32>,
     next_id: u64,
 }
+
 impl Default for WorkbenchLayout {
     fn default() -> Self {
         Self {
@@ -69,14 +72,17 @@ pub struct PanelRecord {
 
 #[derive(Component)]
 struct WorkbenchPanel;
+
 pub fn owns_panel(world: &World, entity: Entity) -> bool {
     world.get::<WorkbenchPanel>(entity).is_some()
 }
 
 #[derive(Default)]
 struct PanelUiStore(HashMap<Entity, Box<dyn Panel>>);
+
 #[derive(Resource)]
 struct UiLoan;
+
 pub fn frontend_active(world: &World) -> bool {
     world.contains_resource::<UiLoan>()
 }
@@ -96,10 +102,12 @@ struct FailedPanel {
     state: Value,
     error: String,
 }
+
 impl Panel for FailedPanel {
     fn title(&self, _world: &World) -> String {
         self.title.clone()
     }
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -110,10 +118,12 @@ impl Panel for FailedPanel {
         ui.text_wrapped(&self.error);
         ui.text_wrapped("Close and reopen this panel to try again.");
     }
+
     fn save(&self, _world: &World) -> Value {
         self.state.clone()
     }
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WorkbenchRequestId(pub u64);
 
@@ -143,6 +153,7 @@ pub fn next_request_sequence() -> u64 {
     )
     .expect("request sequence overflow")
 }
+
 pub struct QueuedWorkbenchRequest {
     pub sequence: u64,
     pub id: Option<WorkbenchRequestId>,
@@ -158,6 +169,7 @@ pub struct WorkbenchRequests {
     layouts: Vec<(Option<WorkbenchRequestId>, Value, Vec<Entity>)>,
     errors: Vec<String>,
 }
+
 impl WorkbenchRequests {
     pub fn push(&mut self, action: Action) {
         self.pending.push_back(QueuedWorkbenchRequest {
@@ -166,6 +178,7 @@ impl WorkbenchRequests {
             action,
         });
     }
+
     pub fn submit(&mut self, action: Action) -> WorkbenchRequestId {
         self.next_id = self
             .next_id
@@ -179,22 +192,27 @@ impl WorkbenchRequests {
         });
         id
     }
+
     pub fn take_result(
         &mut self,
         id: WorkbenchRequestId,
     ) -> Option<Result<WorkbenchOutcome, String>> {
         self.results.remove(&id)
     }
+
     pub fn next_sequence(&self) -> Option<u64> {
         self.pending.front().map(|request| request.sequence)
     }
+
     pub fn take_next(&mut self) -> Option<QueuedWorkbenchRequest> {
         self.pending.pop_front()
     }
+
     pub fn complete(&mut self, id: WorkbenchRequestId, result: Result<WorkbenchOutcome, String>) {
         self.waiting.remove(&id);
         self.results.insert(id, result);
     }
+
     pub fn take_errors(&mut self) -> Vec<String> {
         std::mem::take(&mut self.errors)
     }
@@ -204,7 +222,9 @@ impl WorkbenchRequests {
 pub enum WorkbenchSystems {
     Requests,
 }
+
 pub struct WorkbenchPlugin;
+
 impl Plugin for WorkbenchPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Registry>()
@@ -594,6 +614,7 @@ pub fn observe_focus(world: &mut World, entity: Entity) {
             .selected = Some(id);
     }
 }
+
 pub fn focus_area(world: &mut World, area: u32) -> bool {
     let mut layout = world.resource_mut::<WorkbenchLayout>();
     if !layout.tiling.areas.iter().any(|group| group.area == area) {
@@ -634,6 +655,7 @@ fn request_layout(world: &mut World, value: &Value, close: &[Entity]) -> Result<
     apply_layout(world, value)?;
     Ok(true)
 }
+
 pub fn apply_layout(world: &mut World, value: &Value) -> Result<(), String> {
     let ids = world
         .query_filtered::<(&PanelPresentation, &WorkbenchPanel), Without<api::PanelSuspended>>()

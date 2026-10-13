@@ -17,6 +17,7 @@ const CONTENT_PADDING: f32 = 2.0;
 const AREA_ROUNDING: f32 = 5.0;
 const CORNER_SIZE: f32 = 20.0;
 const HANDLE_SIZE: f32 = 8.0;
+
 type Bounds = ([f32; 2], [f32; 2]);
 
 #[derive(Clone, Copy)]
@@ -193,12 +194,14 @@ pub(crate) struct ChromeTab {
     pub title: String,
     pub dirty: bool,
 }
+
 #[derive(Clone)]
 pub(crate) struct ChromePanel {
     pub id: String,
     pub label: String,
     pub allow_empty: bool,
 }
+
 #[derive(Clone, Default)]
 pub(crate) struct ChromeSettings {
     pub animations: bool,
@@ -206,6 +209,7 @@ pub(crate) struct ChromeSettings {
     pub background: [f32; 4],
     pub opacity: f32,
 }
+
 impl ChromeSettings {
     fn bool(&self, key: &str, _default: bool) -> bool {
         match key {
@@ -214,13 +218,16 @@ impl ChromeSettings {
             _ => _default,
         }
     }
+
     fn window_background_color(&self) -> [f32; 4] {
         self.background
     }
+
     fn background_opacity(&self) -> f32 {
         self.opacity
     }
 }
+
 /// Only widget gestures and observations live here. `tiling` and `tabs` are
 /// frame-entry read snapshots; the request reducer owns their world state.
 #[derive(Default)]
@@ -236,6 +243,7 @@ pub(crate) struct TilingFrontend {
     pub requests: Vec<Action>,
     tab_context: Option<u64>,
 }
+
 impl TilingFrontend {
     pub fn refresh(&mut self, tiling: TilingState, tabs: Vec<ChromeTab>) {
         if matches!(&self.tiling_ui.gesture,Some(Gesture::Tab{panel,..}) if !tabs.iter().any(|tab|tab.id==*panel))
@@ -249,17 +257,21 @@ impl TilingFrontend {
         self.tiling = tiling;
         self.tabs = tabs;
     }
+
     fn title(&self, tab: &ChromeTab) -> String {
         tab.title.clone()
     }
+
     fn focused_area(&self) -> Option<u32> {
         self.focused
             .and_then(|id| self.tiling.area_for(id))
             .or(self.focused_area)
     }
+
     fn current_tiling(&self) -> &TilingState {
         &self.tiling
     }
+
     pub(super) fn draw_tab_context_menu(&mut self, ui: &Ui) {
         if ui.is_mouse_released(MouseButton::Right)
             && !self.tiling_ui.suppress_right_picker
@@ -311,11 +323,13 @@ impl TilingFrontend {
             }
         }
     }
+
     fn focus_empty_area(&mut self, area: u32) {
         self.focused = None;
         self.focused_area = Some(area);
         self.requests.push(Action::FocusArea(area));
     }
+
     fn switch_to_tab(&mut self, index: usize) {
         let tab = &self.tabs[index];
         self.focused = Some(tab.id);

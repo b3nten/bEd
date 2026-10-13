@@ -12,6 +12,7 @@ use std::{
 const PADDING: [f32; 2] = [10.0, 4.0];
 const GAP: f32 = 20.0;
 const ICON_GAP: f32 = 6.0;
+
 type Key = (Entity, &'static str);
 
 /// Application-owned information is independent of the contribution collection.
@@ -20,6 +21,7 @@ pub struct StatusBarHost<'a> {
     pub summary: &'a str,
     pub details: &'a str,
 }
+
 pub type StatusIconResolver = fn(&World, &str) -> Option<TextureId>;
 
 #[derive(Resource, Default)]
@@ -43,10 +45,12 @@ struct Entry {
     icon: Option<TextureId>,
     representation: Representation,
 }
+
 impl Entry {
     fn key(&self) -> Key {
         (self.context.publisher, self.item.id)
     }
+
     fn shown_width(&self, icon_width: f32) -> f32 {
         match self.representation {
             Representation::Inline => icon_width + ICON_GAP + self.width,

@@ -383,6 +383,7 @@ struct LegacyNode {
 }
 
 struct LegacyLayout;
+
 impl LegacyLayout {
     fn parse(ini: &str, panel_ids: &[u64]) -> Result<TilingState, &'static str> {
         let mut nodes = Vec::<LegacyNode>::new();

@@ -430,6 +430,7 @@ fn narrow_docs_wraps_and_keyboard_and_captured_pinch_zoom_keep_the_reading_posit
 fn native_pinch_facts_remain_available_to_all_overlays_and_expire_at_frame_end() {
     #[derive(Resource, Default)]
     struct Observations(Vec<usize>);
+
     fn observe(world: &mut World, _: &Ui) {
         let count = world.resource::<api::PinchEvents>().0.len();
         world.resource_mut::<Observations>().0.push(count);
