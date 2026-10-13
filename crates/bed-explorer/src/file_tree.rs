@@ -17,6 +17,7 @@ pub struct FileTreePreferences {
     hide_gitignored_override: Option<bool>,
     hide_hidden_override: Option<bool>,
 }
+
 impl Default for FileTreePreferences {
     fn default() -> Self {
         Self {
@@ -29,6 +30,7 @@ impl Default for FileTreePreferences {
         }
     }
 }
+
 impl FileTreePreferences {
     pub fn from_value(value: &Value) -> Self {
         let defaults = Self::default();
@@ -64,6 +66,7 @@ impl FileTreePreferences {
             hide_hidden_override: visibility_override("hide_hidden"),
         }
     }
+
     pub fn to_value(&self) -> Value {
         let mut value = json!({"visibility_version":1,"include_ignored":self.include_ignored,"hidden_paths":self.hidden_paths});
         if let Some(hidden) = self.hide_hidden_override {
@@ -74,6 +77,7 @@ impl FileTreePreferences {
         }
         value
     }
+
     pub(crate) fn apply_defaults(&mut self, settings: &Value) -> bool {
         let previous = (self.hide_hidden, self.hide_gitignored);
         self.hide_hidden = self
@@ -84,6 +88,7 @@ impl FileTreePreferences {
             .unwrap_or_else(|| settings["hide_gitignored"].as_bool().unwrap_or(true));
         previous != (self.hide_hidden, self.hide_gitignored)
     }
+
     fn manually_hidden(&self, path: &str) -> bool {
         self.hidden_paths.iter().any(|hidden| {
             path == hidden
@@ -93,12 +98,14 @@ impl FileTreePreferences {
         })
     }
 }
+
 fn valid_relative_path(path: &str) -> bool {
     !path.is_empty()
         && path
             .split('/')
             .all(|part| !part.is_empty() && part != "." && part != "..")
 }
+
 fn relative_path(root: &str, path: &str, remote: bool) -> Option<String> {
     let relative = if remote {
         path.strip_prefix(root.trim_end_matches('/'))?
@@ -115,12 +122,14 @@ fn relative_path(root: &str, path: &str, remote: bool) -> Option<String> {
     };
     valid_relative_path(&relative).then_some(relative)
 }
+
 struct Visibility<'a> {
     root: &'a str,
     preferences: &'a FileTreePreferences,
     show_hidden: bool,
     remote: bool,
 }
+
 impl Visibility<'_> {
     fn hidden(&self, node: &FileNode) -> bool {
         let Some(relative) = relative_path(self.root, &node.full_path, self.remote) else {
@@ -142,6 +151,7 @@ pub struct FileNode {
     pub is_gitignored: bool,
     pub children: Vec<FileNode>,
 }
+
 #[derive(Default)]
 pub struct FileTree {
     pub shortcuts: bed_keybindings::ShortcutInput,
@@ -157,11 +167,13 @@ pub struct FileTree {
     pub external_drop_target: Option<String>,
     pub external_drag_position: Option<[f32; 2]>,
 }
+
 #[derive(Default)]
 pub struct FileTreeAnimations {
     hosts: HashMap<u32, TreeHost>,
     drag: Option<TreeDrag>,
 }
+
 #[derive(Default)]
 struct TreeHost {
     motion: TreeAnimation<String>,
@@ -177,6 +189,7 @@ struct TreeHost {
     #[cfg(test)]
     labels: HashMap<String, [f32; 2]>,
 }
+
 /// Selection belongs to a Files panel, independently of the active document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FileTreeSelection {
@@ -184,6 +197,7 @@ pub struct FileTreeSelection {
     pub focused: Option<String>,
     pub anchor: Option<String>,
 }
+
 impl FileTreeSelection {
     pub fn select(&mut self, path: &str, visible: &[String], toggle: bool, range: bool) {
         if range {
@@ -217,6 +231,7 @@ impl FileTreeSelection {
         }
         self.focused = Some(path.to_owned());
     }
+
     pub fn context_selection(&mut self, path: &str) -> Vec<String> {
         if !self.selected.contains(path) {
             self.selected.clear();
@@ -227,6 +242,7 @@ impl FileTreeSelection {
         self.selected.iter().cloned().collect()
     }
 }
+
 /// Screen-space drop rectangles are retained for native drags, whose pointer
 /// updates do not necessarily pass through ImGui's mouse event queue.
 #[derive(Clone, Debug)]
@@ -235,11 +251,13 @@ pub struct FileTreeDropTarget {
     pub max: [f32; 2],
     pub destination: String,
 }
+
 #[derive(Clone, Debug)]
 struct TreeDrag {
     root: String,
     paths: Vec<String>,
 }
+
 /// Remove the workspace root and descendants already represented by an ancestor.
 pub fn mutation_paths(paths: &[String], root: &str) -> Vec<String> {
     let unique: BTreeSet<_> = paths
@@ -262,6 +280,7 @@ pub fn mutation_paths(paths: &[String], root: &str) -> Vec<String> {
         .cloned()
         .collect()
 }
+
 pub fn valid_move_destination(paths: &[String], root: &str, destination: &str) -> bool {
     !paths.is_empty()
         && (destination == root || relative_path(root, destination, true).is_some())
@@ -273,18 +292,21 @@ pub fn valid_move_destination(paths: &[String], root: &str, destination: &str) -
                     .is_some_and(|tail| tail.starts_with('/'))
         })
 }
+
 fn parent_directory(path: &str) -> String {
     path.rsplit_once('/')
         .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
         .unwrap_or("")
         .to_owned()
 }
+
 #[derive(Clone)]
 struct TreeRow {
     path: Vec<usize>,
     depth: i32,
     hidden: bool,
 }
+
 impl FileTree {
     /// Update a directory from its target without probing the local filesystem.
     pub fn apply_directory(&mut self, path: &str, entries: Vec<bed_remote::DirectoryEntry>) {
@@ -321,6 +343,7 @@ impl FileTree {
         });
         node.children = children;
     }
+
     pub fn open_directories(&self) -> Vec<String> {
         fn collect(node: &FileNode, visibility: &Visibility<'_>, paths: &mut Vec<String>) {
             if !visibility.show_hidden && visibility.hidden(node) {
@@ -343,6 +366,7 @@ impl FileTree {
         collect(&self.root_node, &visibility, &mut paths);
         paths
     }
+
     pub fn is_directory(&self, path: &str) -> Option<bool> {
         fn find(node: &FileNode, path: &str) -> Option<bool> {
             if node.full_path == path {
@@ -352,6 +376,7 @@ impl FileTree {
         }
         find(&self.root_node, path)
     }
+
     /// The active Files drag carries these paths independently of its ImGui payload.
     pub fn dragged_paths(&self) -> Option<&[String]> {
         self.animations
@@ -359,6 +384,7 @@ impl FileTree {
             .as_ref()
             .map(|drag| drag.paths.as_slice())
     }
+
     pub fn build_file_tree(path: &Path, node: &mut FileNode) -> io::Result<()> {
         let root = path.to_str().unwrap_or_default();
         let preferences = FileTreePreferences::default();
@@ -370,6 +396,7 @@ impl FileTree {
         };
         Self::build_filtered(path, node, &visibility, &mut None)
     }
+
     fn build_filtered(
         path: &Path,
         node: &mut FileNode,
@@ -391,6 +418,7 @@ impl FileTree {
         }
         result
     }
+
     fn build_directory(
         path: &Path,
         node: &mut FileNode,
@@ -466,6 +494,7 @@ impl FileTree {
         node.children = children;
         result
     }
+
     pub fn refresh_file_tree(&mut self, folder: &str) -> io::Result<()> {
         if folder.is_empty() {
             return Ok(());
@@ -527,11 +556,13 @@ pub enum FileTreeAction {
         hidden: bool,
     },
 }
+
 /// Host-owned extension menu. The path belongs to the popup's source row.
 pub type ExtensionMenu<'a> =
     dyn Fn(&Ui, &str, bool, bool, &[String], &mut Vec<FileTreeAction>) + 'a;
 /// The host provides uploaded upstream icon textures; unavailable icons reserve their space.
 use bed_ui::presentation::FileIcons;
+
 #[derive(Clone, Copy, Debug)]
 pub struct FileTreeStyle {
     pub text_color: [f32; 4],
@@ -539,6 +570,7 @@ pub struct FileTreeStyle {
     pub rainbow_time: f32,
     pub animations: bool,
 }
+
 impl Default for FileTreeStyle {
     fn default() -> Self {
         Self {
@@ -549,6 +581,7 @@ impl Default for FileTreeStyle {
         }
     }
 }
+
 impl FileTree {
     pub(crate) fn visibility_menu(
         ui: &Ui,
@@ -578,6 +611,7 @@ impl FileTree {
             }
         }
     }
+
     /// Returns whether this is a visibility action; callers explicitly persist preferences.
     pub fn apply_visibility_action(&mut self, action: &FileTreeAction, remote: bool) -> bool {
         match action {
@@ -603,6 +637,7 @@ impl FileTree {
         }
         true
     }
+
     pub fn display_file_tree(
         &mut self,
         ui: &Ui,
@@ -617,6 +652,7 @@ impl FileTree {
             _ => None,
         })
     }
+
     pub fn display_actions(
         &mut self,
         ui: &Ui,
@@ -627,6 +663,7 @@ impl FileTree {
     ) -> Vec<FileTreeAction> {
         self.display_backend_actions(ui, current_path, style, icons, modified, false)
     }
+
     pub fn display_backend_actions(
         &mut self,
         ui: &Ui,
@@ -646,6 +683,7 @@ impl FileTree {
             None,
         )
     }
+
     #[allow(clippy::too_many_arguments)]
     pub fn display_backend_actions_with_menu(
         &mut self,
@@ -702,6 +740,7 @@ impl FileTree {
         }
         actions
     }
+
     pub fn drop_targets(&self, ui: &Ui) -> Vec<FileTreeDropTarget> {
         let host_id =
             ui.with_bound_context(|| unsafe { (*dear_imgui_rs::sys::igGetCurrentWindow()).ID });
@@ -711,6 +750,7 @@ impl FileTree {
             .map(|host| host.drop_targets.clone())
             .unwrap_or_default()
     }
+
     fn keyboard_actions(
         ui: &Ui,
         root: &mut FileNode,
@@ -722,6 +762,7 @@ impl FileTree {
         if !ui.is_window_focused() || ui.io().want_text_input() {
             return;
         }
+
         fn find<'a>(node: &'a mut FileNode, path: &str) -> Option<&'a mut FileNode> {
             if node.full_path == path {
                 return Some(node);
@@ -836,6 +877,7 @@ impl FileTree {
             actions.push(FileTreeAction::Refresh);
         }
     }
+
     #[allow(clippy::too_many_arguments)]
     fn draw_rows(
         &mut self,
@@ -875,12 +917,14 @@ impl FileTree {
                 }
             }
         }
+
         fn node_at<'a>(mut node: &'a mut FileNode, path: &[usize]) -> Option<&'a mut FileNode> {
             for index in path {
                 node = node.children.get_mut(*index)?;
             }
             Some(node)
         }
+
         fn valid_row(mut node: &FileNode, path: &[usize], key: &str) -> bool {
             for index in path {
                 let Some(child) = node.children.get(*index) else {
@@ -905,6 +949,7 @@ impl FileTree {
             &visibility,
             &mut rows,
         );
+
         fn collect_loaded(
             node: &FileNode,
             paths: &mut BTreeSet<String>,
@@ -1100,6 +1145,7 @@ impl FileTree {
         host.rows.retain(|key, _| host.motion.contains(key));
         actions
     }
+
     #[allow(clippy::too_many_arguments)] // Recursive upstream row painter and its action output.
     fn draw_node_row(
         node: &mut FileNode,
@@ -1479,6 +1525,7 @@ impl FileTree {
 mod tests {
     use super::*;
     use crate::test_support::TempDir;
+
     #[test]
     fn selection_toggle_ranges_and_popup_capture_are_independent() {
         let visible: Vec<String> = ["/p/a", "/p/b", "/p/c", "/p/d"].map(str::to_owned).to_vec();
@@ -1507,6 +1554,7 @@ mod tests {
         );
         assert_eq!(first.context_selection("/p/c"), ["/p/c"]);
     }
+
     #[test]
     fn ranges_use_visible_order_and_recover_from_a_hidden_anchor() {
         let visible = vec!["/p/a".into(), "/p/d".into(), "/p/f".into()];
@@ -1519,6 +1567,7 @@ mod tests {
         selection.select("/p/d", &visible, false, true);
         assert_eq!(selection.selected, BTreeSet::from(["/p/d".into()]));
     }
+
     #[test]
     fn recursive_operations_deduplicate_descendants_and_reject_invalid_moves() {
         let paths: Vec<String> = [
@@ -1545,11 +1594,13 @@ mod tests {
         }
         assert!(!valid_move_destination(&["/p".into()], "/p", "/p/child"));
     }
+
     #[test]
     fn native_selection_keyboard_and_cross_panel_drag_use_complete_selection() {
         use dear_imgui_rs::{
             Condition, Context, FramePrepareOptions, Key, MouseButton, WindowFlags,
         };
+
         fn frame(context: &mut Context, tree: &mut FileTree) -> Vec<FileTreeAction> {
             context.prepare_frame(FramePrepareOptions::new([740.0, 300.0], 1.0 / 60.0));
             let ui = context.frame();
@@ -1578,6 +1629,7 @@ mod tests {
             drop(context.render_legacy());
             actions
         }
+
         fn click(
             context: &mut Context,
             tree: &mut FileTree,
@@ -1810,9 +1862,11 @@ mod tests {
             "the other panel also clears its selection when it loses focus"
         );
     }
+
     #[test]
     fn branch_motion_eases_height_keeps_current_hit_targets_and_reverses() {
         use dear_imgui_rs::{Condition, Context, FramePrepareOptions, MouseButton, WindowFlags};
+
         fn frame(
             context: &mut Context,
             tree: &mut FileTree,
@@ -1848,6 +1902,7 @@ mod tests {
             drop(context.render_legacy());
             (actions, height, popup)
         }
+
         fn click(
             context: &mut Context,
             tree: &mut FileTree,
@@ -1969,6 +2024,7 @@ mod tests {
         let (_, settled_height, _) = frame(&mut context, &mut tree, 0.2);
         assert!((settled_height - expanded_height).abs() < 0.01);
     }
+
     #[test]
     fn local_tree_refresh_updates_ignore_metadata_and_reveals_ignored_folders() {
         let temp = TempDir::new();
@@ -2024,6 +2080,7 @@ mod tests {
                 .all(|node| !node.is_gitignored)
         );
     }
+
     #[test]
     fn filters_combine_without_discarding_nodes_or_expansion() {
         let temp = TempDir::new();
@@ -2236,6 +2293,7 @@ mod tests {
         tree.apply_visibility_action(&FileTreeAction::SetShowHidden(true), true);
         assert_eq!(tree.open_directories().len(), 2);
     }
+
     #[test]
     fn directories_first_case_sensitive_names_and_no_unconditional_skips() {
         let temp = TempDir::new();
@@ -2279,6 +2337,7 @@ mod tests {
                 .any(|node| node.name == "Thumbs.db")
         );
     }
+
     #[test]
     fn preserves_open_and_loaded_closed_subtrees_until_reopened() {
         let temp = TempDir::new();
@@ -2324,6 +2383,7 @@ mod tests {
             content_inset: [f32; 2],
             content_height: f32,
         }
+
         fn frame(
             context: &mut Context,
             tree: &mut FileTree,

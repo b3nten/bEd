@@ -33,6 +33,7 @@ pub struct FileOperations {
     delete: Option<Vec<String>>,
     delete_appearing: bool,
 }
+
 struct Active {
     job: OperationJob,
     workspace: u64,
@@ -44,12 +45,14 @@ struct Active {
     refresh: Vec<String>,
     replacements: Vec<String>,
 }
+
 struct Pending {
     token: SaveToken,
     workspace: u64,
     documents: Vec<DocumentId>,
     work: PendingWork,
 }
+
 enum PendingWork {
     Start(OperationRequest, bool),
     Replace {
@@ -58,22 +61,26 @@ enum PendingWork {
     },
     Simple(SimpleCommand),
 }
+
 struct NameDialog {
     action: FileTreeAction,
     name: String,
     appearing: bool,
     error: Option<String>,
 }
+
 struct SimpleJob {
     receiver: mpsc::Receiver<Result<SimpleResult, String>>,
     workspace: u64,
     paused: Vec<DocumentId>,
 }
+
 struct SimpleCommand {
     request: bed_remote::Request,
     remote: Option<RemoteClient>,
     result: SimpleResult,
 }
+
 enum SimpleResult {
     Created(String, bool),
     Renamed(String, String),
@@ -83,9 +90,11 @@ impl FileOperations {
     pub fn busy(&self) -> bool {
         self.active.is_some() || self.pending.is_some() || self.simple.is_some()
     }
+
     pub fn modal_visible(&self) -> bool {
         self.dialog.is_some() || self.delete.is_some() || self.conflict.is_some()
     }
+
     pub fn cancel(&mut self, session: &mut EditorSession) {
         if let Some(active) = self.active.take() {
             active.job.cancel();
@@ -109,6 +118,7 @@ impl FileOperations {
         self.dialog = None;
         self.delete = None;
     }
+
     fn queue(
         &mut self,
         session: &EditorSession,
@@ -136,6 +146,7 @@ impl FileOperations {
         });
         Ok(())
     }
+
     fn start(
         &mut self,
         request: OperationRequest,
@@ -164,6 +175,7 @@ impl FileOperations {
             requests,
         )
     }
+
     pub fn reply(
         &mut self,
         reply: &EditorFeatureReply,
@@ -283,6 +295,7 @@ impl FileOperations {
             }
         }
     }
+
     fn start_simple(&mut self, command: SimpleCommand, workspace: u64, paused: Vec<DocumentId>) {
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
@@ -304,6 +317,7 @@ impl FileOperations {
             paused,
         });
     }
+
     pub fn poll(
         &mut self,
         session: &mut EditorSession,
@@ -717,6 +731,7 @@ impl FileOperations {
         requests.push(HostRequest::Invalidate);
         Ok(())
     }
+
     fn delete_paths(
         &mut self,
         paths: Vec<String>,
@@ -789,6 +804,7 @@ impl FileOperations {
             requests,
         )
     }
+
     pub fn draw(
         &mut self,
         ui: &Ui,
@@ -964,6 +980,7 @@ impl FileOperations {
             });
         }
     }
+
     fn submit_name(
         &mut self,
         dialog: &NameDialog,
@@ -1041,11 +1058,13 @@ impl FileOperations {
         )
     }
 }
+
 fn notify(error: io::Error) -> HostRequest {
     HostRequest::Notify {
         message: error.to_string(),
     }
 }
+
 fn endpoint(session: &EditorSession, root: &str) -> io::Result<Endpoint> {
     if root.is_empty() {
         return Err(io::Error::new(
@@ -1061,6 +1080,7 @@ fn endpoint(session: &EditorSession, root: &str) -> io::Result<Endpoint> {
         None => Endpoint::local(root),
     })
 }
+
 fn remote_inside(root: &str, path: &str, allow_root: bool) -> bool {
     (allow_root && path == root)
         || path
@@ -1069,6 +1089,7 @@ fn remote_inside(root: &str, path: &str, allow_root: bool) -> bool {
                 suffix.starts_with('/') && !suffix.split('/').any(|part| part == "..")
             })
 }
+
 fn validate_entry(session: &EditorSession, root: &str, path: &str) -> io::Result<String> {
     if session.is_remote() {
         if !remote_inside(root, path, false) {
@@ -1086,6 +1107,7 @@ fn validate_entry(session: &EditorSession, root: &str, path: &str) -> io::Result
         )
     }
 }
+
 fn validate_directory(session: &EditorSession, root: &str, path: &str) -> io::Result<String> {
     if session.is_remote() {
         if !remote_inside(root, path, true) {
@@ -1107,6 +1129,7 @@ fn validate_directory(session: &EditorSession, root: &str, path: &str) -> io::Re
         Ok(path.to_string_lossy().into_owned())
     }
 }
+
 fn affected_documents(session: &EditorSession, path: &str) -> io::Result<Vec<DocumentId>> {
     let mut result = Vec::new();
     for document in session.document_ids() {
@@ -1118,6 +1141,7 @@ fn affected_documents(session: &EditorSession, path: &str) -> io::Result<Vec<Doc
     }
     Ok(result)
 }
+
 fn rebind(session: &mut EditorSession, from: &str, to: &str) -> io::Result<()> {
     let mut changes = Vec::new();
     for document in affected_documents(session, from)? {
@@ -1138,6 +1162,7 @@ fn rebind(session: &mut EditorSession, from: &str, to: &str) -> io::Result<()> {
     }
     Ok(())
 }
+
 fn ensure_unprotected(path: &str, protected: &[PathBuf]) -> io::Result<()> {
     let entry = Path::new(path);
     let resolved = fs::symlink_metadata(entry)
@@ -1216,6 +1241,7 @@ mod tests {
         explorer.file_explorer.project_root = frame.project_root.clone();
         (temp, session, explorer, frame, document)
     }
+
     fn request_move(
         operations: &mut FileOperations,
         session: &mut EditorSession,
@@ -1246,6 +1272,7 @@ mod tests {
             })
             .expect("move must wait for document preparation")
     }
+
     #[test]
     fn rejected_draft_prevents_file_mutation_and_leaves_the_buffer_attached() {
         let (temp, mut session, mut explorer, frame, document) = fixture();
@@ -1276,6 +1303,7 @@ mod tests {
         );
         assert_eq!(operations.summary.unwrap().errors, ["CSV draft is invalid"]);
     }
+
     #[test]
     fn move_rebinds_dirty_buffer_without_writing_its_unsaved_bytes() {
         let (temp, mut session, mut explorer, frame, document) = fixture();
@@ -1334,6 +1362,7 @@ mod tests {
                 .to_string_lossy()
         );
     }
+
     #[test]
     fn stale_reply_and_workspace_replacement_cannot_start_an_old_file_job() {
         let (temp, mut session, mut explorer, frame, document) = fixture();
@@ -1533,17 +1562,20 @@ mod tests {
         reads: usize,
         writes: usize,
     }
+
     impl FileClipboardService for Clipboard {
         fn read_files(&mut self) -> io::Result<Vec<PathBuf>> {
             self.reads += 1;
             Ok(self.paths.clone())
         }
+
         fn write_files(&mut self, paths: &[PathBuf]) -> io::Result<()> {
             self.writes += 1;
             self.paths = paths.to_vec();
             Ok(())
         }
     }
+
     fn finish_clipboard(
         operations: &mut FileOperations,
         session: &mut EditorSession,
@@ -1602,6 +1634,7 @@ mod tests {
             operations.summary.as_ref().unwrap().errors
         );
     }
+
     #[test]
     fn os_clipboard_paste_copies_and_internal_cut_keeps_dirty_view_identity() {
         let (temp, mut session, mut explorer, frame, document) = fixture();
@@ -1694,6 +1727,7 @@ mod tests {
             .unwrap();
         assert_eq!(session.snapshot(document).unwrap().bytes, b"on disk");
     }
+
     #[test]
     fn clipboard_keep_both_preserves_source_destination_and_previous_clipboard() {
         let (temp, mut session, mut explorer, frame, _) = fixture();
@@ -1733,6 +1767,7 @@ mod tests {
         assert_eq!(clipboard.paths, [upload]);
         assert_eq!(clipboard.writes, 0);
     }
+
     #[cfg(unix)]
     #[test]
     fn remote_clipboard_exports_publish_complete_binary_files_and_paste_and_cut_preserve_identity()
@@ -1924,6 +1959,7 @@ mod tests {
         );
         fs::remove_dir_all(staged.parent().unwrap()).unwrap();
     }
+
     #[test]
     fn actual_plugin_drains_tree_open_and_preferences_without_a_host_module() {
         let mut app = App::new();

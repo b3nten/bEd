@@ -25,6 +25,7 @@ pub(super) enum ContentStatus {
     Ready(DocumentKind),
     Unavailable(String),
 }
+
 impl ContentStatus {
     pub fn kind(&self) -> Option<DocumentKind> {
         match self {
@@ -40,15 +41,18 @@ struct Job {
     path: String,
     remote: Option<RemoteClient>,
 }
+
 struct Completed {
     serial: u64,
     path: String,
     result: Result<(String, DocumentKind), String>,
 }
+
 struct Worker {
     sender: mpsc::SyncSender<Job>,
     receiver: mpsc::Receiver<Completed>,
 }
+
 impl Worker {
     fn new() -> Self {
         let (sender, jobs) = mpsc::sync_channel::<Job>(1);
@@ -106,6 +110,7 @@ pub(super) struct FileContent {
     invalidations: Vec<(String, u64)>,
     cache: HashMap<String, Cached>,
 }
+
 impl FileContent {
     pub fn configure(
         &mut self,
@@ -263,6 +268,7 @@ mod tests {
     };
 
     struct TempDir(std::path::PathBuf);
+
     impl TempDir {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -274,15 +280,18 @@ mod tests {
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }
+
         fn root(&self) -> &str {
             self.0.to_str().unwrap()
         }
     }
+
     impl Drop for TempDir {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+
     fn await_inspection(content: &mut FileContent, path: &str) -> ContentStatus {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {

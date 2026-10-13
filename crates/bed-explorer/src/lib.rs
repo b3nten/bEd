@@ -37,6 +37,7 @@ pub struct TreeMenuContext {
     pub directory: bool,
     pub background: bool,
 }
+
 impl TreeMenuContext {
     pub fn slot(&self) -> MenuSlot {
         if self.background {
@@ -62,6 +63,7 @@ struct RegistryMenus {
     commands: Vec<MenuCommand>,
     viewers: Registry,
 }
+
 impl RegistryMenus {
     fn content_status(
         &self,
@@ -187,6 +189,7 @@ pub struct ExplorerState {
     actions: Vec<ExplorerAction>,
     file_content: FileContent,
 }
+
 impl Default for ExplorerState {
     fn default() -> Self {
         Self {
@@ -197,13 +200,16 @@ impl Default for ExplorerState {
         }
     }
 }
+
 impl ExplorerState {
     pub fn explorer(&self) -> &FileExplorer {
         &self.file_explorer
     }
+
     pub fn explorer_mut(&mut self) -> &mut FileExplorer {
         &mut self.file_explorer
     }
+
     pub fn config(&mut self) -> &mut ExplorerConfig {
         &mut self.config
     }
@@ -211,6 +217,7 @@ impl ExplorerState {
     pub fn take_actions(&mut self) -> Vec<ExplorerAction> {
         std::mem::take(&mut self.actions)
     }
+
     /// Lifecycle consumers drain the same stream used by tree/finder discovery.
     pub fn take_filesystem_updates(&mut self) -> Vec<bed_remote::WorkspaceUpdate> {
         let state = &mut self.file_explorer;
@@ -241,22 +248,27 @@ impl ExplorerState {
         }
         updates
     }
+
     pub fn finder_visible(&self) -> bool {
         self.file_explorer.file_finder.show_ff_window
     }
+
     pub fn toggle_finder(&mut self) {
         self.file_explorer.file_finder.toggle_window();
     }
+
     pub fn reset_finder(&mut self) {
         let state = &mut self.file_explorer;
         state.file_finder.cancel_and_close();
         state.file_finder.set_query("");
     }
+
     pub fn refresh_finder(&mut self) {
         let state = &mut self.file_explorer;
         let root = state.project_root.clone();
         state.file_finder.set_project_dir(&root);
     }
+
     pub fn configure_presentation(
         &mut self,
         tree_style: FileTreeStyle,
@@ -268,6 +280,7 @@ impl ExplorerState {
         config.finder_style = finder_style;
         config.workspace_identity = workspace_identity;
     }
+
     /// Replace a transport only at workspace activation/reconnection. Replacing
     /// it cancels the old generation of discovery work.
     pub fn set_remote_client(&mut self, client: Option<RemoteClient>) {
@@ -278,12 +291,15 @@ impl ExplorerState {
         let root = state.project_root.clone();
         state.file_finder.set_project_dir(&root);
     }
+
     pub fn apply_directory(&mut self, path: &str, entries: Vec<bed_remote::DirectoryEntry>) {
         self.file_explorer.file_tree.apply_directory(path, entries);
     }
+
     pub fn open_directories(&self) -> Vec<String> {
         self.file_explorer.file_tree.open_directories()
     }
+
     /// Expand loaded ancestors. The host's normal remote-directory service
     /// supplies any missing children on its next pass.
     pub fn reveal(&mut self, path: &str) {
@@ -304,6 +320,7 @@ impl ExplorerState {
         self.actions
             .push(ExplorerAction::RefreshRemote { force: false });
     }
+
     /// Adapt registry contributions into a Files-owned menu model. The host
     /// resolves enabled states against the captured path; drawing requires no
     /// reference to the workbench or module runtime.
@@ -354,6 +371,7 @@ impl ExplorerState {
             viewers: registry.clone(),
         };
     }
+
     fn submit(
         &mut self,
         actions: Vec<FileTreeAction>,
@@ -396,6 +414,7 @@ pub struct ExplorerPanel {
     external_destination: Option<String>,
     external_position: Option<[f32; 2]>,
 }
+
 impl ExplorerPanel {
     pub fn drop_destination_at(&self, root: &str, position: [f32; 2]) -> Option<String> {
         let contains = |min: [f32; 2], max: [f32; 2]| {
@@ -420,12 +439,14 @@ impl ExplorerPanel {
         }
         Some(root.to_owned())
     }
+
     pub fn set_external_drop_position(&mut self, root: &str, position: Option<[f32; 2]>) {
         self.external_position = position;
         self.external_destination =
             position.and_then(|position| self.drop_destination_at(root, position));
     }
 }
+
 impl ExplorerPanel {}
 
 impl ExplorerState {
@@ -470,6 +491,7 @@ impl ExplorerState {
             requests.push(HostRequest::Notify { message: error });
         }
     }
+
     pub fn draw_popups(
         &mut self,
         ui: &Ui,
@@ -500,11 +522,13 @@ impl ExplorerState {
         }
     }
 }
+
 impl Default for ExplorerPanel {
     fn default() -> Self {
         Self::new()
     }
 }
+
 impl ExplorerPanel {
     pub fn new() -> Self {
         Self {
@@ -515,6 +539,7 @@ impl ExplorerPanel {
             external_position: None,
         }
     }
+
     pub fn draw_body(
         &mut self,
         controller: &mut ExplorerState,
@@ -550,6 +575,7 @@ impl ExplorerPanel {
             .map(|document| document.path.as_str())
             .unwrap_or_default();
         let remote = documents.is_remote();
+
         fn modified_paths(
             node: &FileNode,
             documents: &mut bed_document_session::EditorSession,
@@ -636,6 +662,7 @@ impl ExplorerPanel {
         controller.submit(actions, remote, requests)
     }
 }
+
 impl ExplorerPanel {
     pub fn external_files(
         &mut self,
@@ -689,6 +716,7 @@ pub(crate) mod test_support;
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn native_drop_destinations_use_pointer_rectangles_and_reject_stale_workspaces() {
         let mut handle = ExplorerState::default();
@@ -738,6 +766,7 @@ mod tests {
         panel.set_external_drop_position(&handle.file_explorer.project_root, None);
         assert!(panel.external_destination.is_none());
     }
+
     #[test]
     fn reveal_expands_only_ancestors_without_changing_preferences() {
         let mut handle = ExplorerState::default();
@@ -1037,6 +1066,7 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
         ),
     ]
 }
+
 pub(crate) fn default_shortcuts() -> bed_keybindings::ShortcutInput {
     bed_keybindings::ShortcutInput::new(bed_keybindings::Bindings::new(
         bed_keybindings::common_actions()

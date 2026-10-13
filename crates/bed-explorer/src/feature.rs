@@ -21,10 +21,12 @@ pub struct ExplorerPresentation {
 
 #[derive(Default)]
 pub struct ExplorerPanels(pub HashMap<Entity, ExplorerPanel>);
+
 impl ExplorerPanels {
     pub fn get(&self, entity: Entity) -> Option<&ExplorerPanel> {
         self.0.get(&entity)
     }
+
     pub fn get_mut(&mut self, entity: Entity) -> Option<&mut ExplorerPanel> {
         self.0.get_mut(&entity)
     }
@@ -32,6 +34,7 @@ impl ExplorerPanels {
 
 #[derive(Resource, Default)]
 struct Transport(Option<RemoteClient>);
+
 #[derive(Resource, Default)]
 struct ReplyCursor(bevy::ecs::message::MessageCursor<EditorFeatureReply>);
 
@@ -42,6 +45,7 @@ struct DropCursor(bevy::ecs::message::MessageCursor<bed_workbench_api::PanelDrop
 struct Drag(bed_editor_api::PanelExternalFilesSystem);
 
 pub struct ExplorerPlugin;
+
 impl Plugin for ExplorerPlugin {
     fn build(&self, app: &mut App) {
         app.world_mut().init_non_send::<ExplorerState>();
@@ -104,6 +108,7 @@ impl Plugin for ExplorerPlugin {
             .add_systems(Last, shutdown.after(bevy::app::OnAppExitSystems));
     }
 }
+
 fn files_settings(ui: &Ui, settings: &mut Value) -> bool {
     let mut changed = false;
     for (key, label) in [
@@ -118,6 +123,7 @@ fn files_settings(ui: &Ui, settings: &mut Value) -> bool {
     }
     changed
 }
+
 fn shutdown(
     mut exit: MessageReader<bevy::app::AppExit>,
     mut handle: NonSendMut<ExplorerState>,
@@ -133,6 +139,7 @@ fn shutdown(
         handle.actions.clear();
     }
 }
+
 fn protected_paths(world: &mut World) -> Vec<std::path::PathBuf> {
     world
         .query::<&EditorPanelBinding>()
@@ -153,6 +160,7 @@ fn protected_paths(world: &mut World) -> Vec<std::path::PathBuf> {
         })
         .collect()
 }
+
 fn prepare(world: &mut World) {
     let alive: std::collections::HashSet<_> = world.query::<Entity>().iter(world).collect();
     world
@@ -273,6 +281,7 @@ fn show(
     );
     Ok(Vec::new())
 }
+
 fn open(In(invocation): In<CommandInvocation>) -> CommandResult {
     Ok(vec![Action::OpenPanel {
         panel_type: PANEL_ID.into(),
@@ -280,6 +289,7 @@ fn open(In(invocation): In<CommandInvocation>) -> CommandResult {
         area: Some(invocation.area),
     }])
 }
+
 fn find(
     In(invocation): In<CommandInvocation>,
     mut handle: NonSendMut<ExplorerState>,
@@ -289,6 +299,7 @@ fn find(
     intents.push(invocation.source, HostRequest::Invalidate);
     Ok(Vec::new())
 }
+
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
         ("Files", "Expand folders and open files from the tree. Use Shift to extend a selection, or Cmd/Ctrl to toggle individual items."),
@@ -305,6 +316,7 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
         .insert((PanelPadding([2.0; 2]), EditorPanelExternalFiles(drag)));
     Ok(Box::new(Frontend(creation.entity)))
 }
+
 fn external_files(
     In(invocation): In<PanelExternalFilesInvocation>,
     world: &mut World,
@@ -328,10 +340,12 @@ fn external_files(
 }
 
 struct Frontend(Entity);
+
 impl Panel for Frontend {
     fn title(&self, _: &World) -> String {
         "Files".into()
     }
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -376,6 +390,7 @@ impl Panel for Frontend {
         }
     }
 }
+
 /// Draw the finder even when no Files panel is open; the application calls this
 /// once during its frontend scope, after feature preparation.
 pub fn draw_popups(world: &mut World, ui: &Ui) {
@@ -433,12 +448,14 @@ fn open_dropped_files(world: &mut World) {
         }
     }
 }
+
 fn save_workspace(handle: NonSendMut<ExplorerState>) -> Value {
     let state = &handle.file_explorer;
     let mut value = state.file_tree.preferences.to_value();
     value["include_ignored"] = Value::Bool(state.file_finder.include_ignored());
     value
 }
+
 fn restore_workspace(
     In(restore): In<EditorWorkspaceRestore>,
     mut handle: NonSendMut<ExplorerState>,
@@ -624,6 +641,7 @@ mod tests {
             HostRequest::CommitDocumentsWithResult { .. }
         )));
     }
+
     #[test]
     fn registered_files_panels_and_prepare_share_the_supplied_controller() {
         let mut app = App::new();
@@ -664,6 +682,7 @@ mod tests {
                 .is_some()
         );
     }
+
     #[test]
     fn registered_workspace_restore_resets_navigation_and_round_trips_preferences() {
         let mut app = App::new();
@@ -761,6 +780,7 @@ mod tests {
             "/new-project"
         );
     }
+
     #[test]
     fn registered_file_settings_update_defaults_without_overwriting_workspace_choices() {
         use dear_imgui_rs::{Condition, Context, FramePrepareOptions, MouseButton};
@@ -894,6 +914,7 @@ mod tests {
         assert!(tree.preferences.hide_hidden);
         assert!(!tree.preferences.hide_gitignored);
     }
+
     #[test]
     fn registered_native_drop_uses_this_presentation_bounds_and_rejects_stale_workspace() {
         let mut app = App::new();

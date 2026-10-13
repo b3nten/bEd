@@ -12,6 +12,7 @@ pub struct FileFinder {
     finder: Finder,
     directory_label: Option<String>,
 }
+
 impl Default for FileFinder {
     fn default() -> Self {
         Self {
@@ -20,30 +21,37 @@ impl Default for FileFinder {
         }
     }
 }
+
 impl Deref for FileFinder {
     type Target = Finder;
+
     fn deref(&self) -> &Finder {
         &self.finder
     }
 }
+
 impl DerefMut for FileFinder {
     fn deref_mut(&mut self) -> &mut Finder {
         &mut self.finder
     }
 }
+
 impl FileFinder {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn set_directory_label(&mut self, directory: Option<String>) {
         self.directory_label = directory;
     }
 }
+
 #[derive(Clone, Copy, Debug)]
 pub struct FileFinderStyle {
     pub background_color: [f32; 4],
     pub embedded_pane: Option<([f32; 2], [f32; 2])>,
 }
+
 impl Default for FileFinderStyle {
     fn default() -> Self {
         Self {
@@ -52,6 +60,7 @@ impl Default for FileFinderStyle {
         }
     }
 }
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum FileFinderAction {
     #[default]
@@ -59,6 +68,7 @@ pub enum FileFinderAction {
     Close,
     Open(String),
 }
+
 impl FileFinder {
     pub fn render_window(
         &mut self,
@@ -191,6 +201,7 @@ impl FileFinder {
             });
         action
     }
+
     fn render_file_list(&self, ui: &Ui, icons: Option<&dyn FileIcons>) {
         let height = ui.text_line_height_with_spacing();
         let visible = (ui.content_region_avail()[1] / height).max(1.0) as usize;

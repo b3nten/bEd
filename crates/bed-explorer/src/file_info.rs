@@ -13,19 +13,23 @@ struct Job {
     root: String,
     remote: Option<RemoteClient>,
 }
+
 struct Completed {
     generation: u64,
     path: String,
     result: Result<FileInfo, String>,
 }
+
 struct Cached {
     updated: Instant,
     result: Result<FileInfo, String>,
 }
+
 struct Worker {
     sender: mpsc::SyncSender<Job>,
     receiver: mpsc::Receiver<Completed>,
 }
+
 impl Worker {
     fn new() -> Self {
         let (sender, jobs) = mpsc::sync_channel::<Job>(1);
@@ -59,6 +63,7 @@ impl Worker {
         Self { sender, receiver }
     }
 }
+
 /// Short-lived bounded cache. All filesystem/Git/SSH work runs on a worker.
 #[derive(Default)]
 pub struct FileInfoHover {
@@ -70,6 +75,7 @@ pub struct FileInfoHover {
     cache: HashMap<String, Cached>,
     pending: HashSet<String>,
 }
+
 impl FileInfoHover {
     pub fn configure(&mut self, scope: String, root: &str, remote: Option<RemoteClient>) {
         if self.scope != scope || self.root != root || self.remote.is_some() != remote.is_some() {
@@ -81,6 +87,7 @@ impl FileInfoHover {
         }
         self.remote = remote;
     }
+
     fn poll(&mut self) {
         let Some(worker) = &self.worker else {
             return;
@@ -108,6 +115,7 @@ impl FileInfoHover {
             );
         }
     }
+
     pub fn draw(&mut self, ui: &Ui, path: &str, root: &str, remote: bool) {
         // Direct tree consumers get local metadata automatically. A remote tree
         // without a configured client never probes a coincident local path.
@@ -184,11 +192,13 @@ impl FileInfoHover {
         });
     }
 }
+
 fn row(ui: &Ui, label: &str, value: &str) {
     ui.text_disabled(format!("{label}:"));
     ui.same_line();
     ui.text(value);
 }
+
 fn size_label(bytes: u64) -> String {
     let mut value = bytes as f64;
     let units = ["B", "KiB", "MiB", "GiB", "TiB"];
