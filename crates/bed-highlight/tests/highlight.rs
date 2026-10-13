@@ -21,6 +21,7 @@ fn document(bytes: &[u8], path: &str, language: &str) -> EditorState {
     state.language_id = language.to_owned();
     state
 }
+
 fn many_c_lines(n: usize) -> Vec<u8> {
     let mut text = String::new();
     for i in 0..n {
@@ -28,6 +29,7 @@ fn many_c_lines(n: usize) -> Vec<u8> {
     }
     text.into_bytes()
 }
+
 fn wait_spans(
     hl: &mut EditorHighlight,
     state: &EditorState,
@@ -45,6 +47,7 @@ fn wait_spans(
     hl.poll(state, ops);
     !hl.spans_for_line(row).is_empty()
 }
+
 #[test]
 fn capture_priority_specific_roles_beat_bare_variable() {
     assert!(capture_priority("variable") < capture_priority("function"));
@@ -54,6 +57,7 @@ fn capture_priority_specific_roles_beat_bare_variable() {
     assert!(capture_priority("function") <= capture_priority("function.builtin"));
     assert!(capture_priority("punctuation.bracket") < capture_priority("function"));
 }
+
 #[test]
 fn theme_key_for_capture_hierarchical_map() {
     for (capture, key) in [
@@ -81,6 +85,7 @@ fn theme_key_for_capture_hierarchical_map() {
     }
     assert!(capture_priority("function.macro") > capture_priority("keyword.exception"));
 }
+
 #[test]
 fn theme_slot_for_key_matches_theme_json_keys() {
     for (key, slot) in [
@@ -104,6 +109,7 @@ fn theme_slot_for_key_matches_theme_json_keys() {
         assert_eq!(theme_slot_for_capture(capture), slot);
     }
 }
+
 #[test]
 fn highlight_queries_compile_for_all_languages() {
     // The enabled, pinned Arborium release. This list is verification data, not
@@ -114,12 +120,14 @@ fn highlight_queries_compile_for_all_languages() {
         .collect();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
 #[test]
 fn highlight_snippet_colors_a_cpp_signature() {
     let spans = TreeSitter::highlight_snippet("cpp", b"int foo(int x);");
     assert!(!spans.is_empty());
     assert!(spans.iter().flatten().any(|s| s.slot != ThemeSlot::Text));
 }
+
 #[test]
 fn full_rebuild_colors_the_prime_window_before_poll() {
     let state = document(&many_c_lines(2000), "test.c", "c");
@@ -137,6 +145,7 @@ fn full_rebuild_colors_the_prime_window_before_poll() {
     assert!(wait_spans(&mut hl, &state, &ops, PRIME_QUERY_LINES));
     assert!(!hl.spans_for_line(PRIME_QUERY_LINES).is_empty());
 }
+
 #[test]
 fn insert_at_end_of_span_keeps_slot_before_recolor() {
     let mut text = b"// hi\n".to_vec();
@@ -171,6 +180,7 @@ fn insert_at_end_of_span_keeps_slot_before_recolor() {
     assert_eq!(after.last().unwrap().slot, ThemeSlot::Comment);
     assert!(after.last().unwrap().end > col);
 }
+
 #[test]
 fn theme_swap_remaps_palette_without_dropping_spans() {
     let state = document(b"int main(void) { return 0; }\n", "test.c", "c");
@@ -186,6 +196,7 @@ fn theme_swap_remaps_palette_without_dropping_spans() {
     assert!(!hl.spans_for_line(0).is_empty());
     assert_eq!(hl.spans_for_line(0)[0].slot, slot);
 }
+
 #[test]
 fn language_switch_replaces_c_spans_with_python_spans() {
     let mut state = document(b"def foo():\n    return 1\n", "test.py", "c");
@@ -212,6 +223,7 @@ fn language_switch_replaces_c_spans_with_python_spans() {
     }
     assert!(saw_keyword);
 }
+
 #[test]
 fn start_background_prewarm_compiles_shipped_queries() {
     TreeSitter::start_background_prewarm();
@@ -227,6 +239,7 @@ fn start_background_prewarm_compiles_shipped_queries() {
     assert!(ts.query_ready("json"));
     assert!(ts.query_ready("py"));
 }
+
 #[test]
 fn empty_buffer_stays_spannless() {
     let state = document(b"", "empty.c", "c");

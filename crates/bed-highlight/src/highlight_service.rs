@@ -36,6 +36,7 @@ pub struct EditorHighlight {
     receiver: mpsc::Receiver<(u64, String, ParseResult)>,
     pending_result: Option<(u64, String, ParseResult)>,
 }
+
 impl Default for EditorHighlight {
     fn default() -> Self {
         let (sender, receiver) = mpsc::channel();
@@ -54,6 +55,7 @@ impl Default for EditorHighlight {
         }
     }
 }
+
 impl Drop for EditorHighlight {
     fn drop(&mut self) {
         self.cancel_highlighting();
@@ -62,25 +64,30 @@ impl Drop for EditorHighlight {
         }
     }
 }
+
 impl EditorHighlight {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn set_enabled(&mut self, enabled: bool) {
         if self.enabled != enabled {
             self.enabled = enabled;
             self.clear();
         }
     }
+
     pub fn start_background_prewarm() {
         TreeSitter::start_background_prewarm();
     }
+
     pub fn cancel_highlighting(&mut self) {
         if let Some(flag) = &self.cancel_flag {
             flag.store(true, Ordering::Relaxed);
         }
         self.reap_tasks();
     }
+
     fn reap_tasks(&mut self) {
         let mut i = 0;
         while i < self.tasks.len() {
@@ -92,10 +99,12 @@ impl EditorHighlight {
             }
         }
     }
+
     pub fn set_theme_colors(&mut self, colors: ThemeColors) {
         self.cached_colors = colors;
         self.visual_gen += 1;
     }
+
     pub fn force_color_update(
         &mut self,
         colors: ThemeColors,
@@ -111,23 +120,29 @@ impl EditorHighlight {
         }
         self.highlight_content(state, operations);
     }
+
     pub fn default_text_color(&self) -> [f32; 4] {
         self.cached_colors.color(ThemeSlot::Text)
     }
+
     pub fn color_for_slot(&self, slot: ThemeSlot) -> [f32; 4] {
         self.cached_colors.color(slot)
     }
+
     pub fn visual_generation(&self) -> u64 {
         self.visual_gen
     }
+
     pub fn spans_for_line(&self, row: i32) -> &[ColorSpan] {
         self.spans.at(row)
     }
+
     fn sync_lens_from_content(&mut self, state: &EditorState) {
         self.spans.lens = (0..state.line_count())
             .map(|row| state.line_length(row))
             .collect();
     }
+
     pub fn clear(&mut self) {
         self.cancel_highlighting();
         self.job_gen += 1;
@@ -136,6 +151,7 @@ impl EditorHighlight {
         self.pending_result = None;
         while self.receiver.try_recv().is_ok() {}
     }
+
     pub fn reset_for_document(&mut self, state: &EditorState, line_count: usize) {
         self.cancel_highlighting();
         self.job_gen += 1;
@@ -148,6 +164,7 @@ impl EditorHighlight {
         self.pending_result = None;
         while self.receiver.try_recv().is_ok() {}
     }
+
     fn morph_spans(&mut self, state: &EditorState, edits: &[PendingEdit]) {
         if self.spans.apply_edits(edits, &state.line_ending) {
             self.visual_gen += 1;
@@ -157,6 +174,7 @@ impl EditorHighlight {
         self.sync_lens_from_content(state);
         self.visual_gen += 1;
     }
+
     fn post_result(&mut self, generation: u64, path: String, result: ParseResult) {
         if result.kind == ParseKind::Failed {
             return;
@@ -176,11 +194,13 @@ impl EditorHighlight {
         }
         self.pending_result = Some((generation, path, result));
     }
+
     fn collect_results(&mut self) {
         while let Ok((generation, path, result)) = self.receiver.try_recv() {
             self.post_result(generation, path, result);
         }
     }
+
     fn apply_parse_result(&mut self, state: &EditorState, result: ParseResult) {
         if result.kind == ParseKind::Full {
             if result.full_colors.len() != result.line_count {
@@ -207,6 +227,7 @@ impl EditorHighlight {
             self.visual_gen += 1;
         }
     }
+
     fn publish_pending(&mut self, state: &EditorState, operations: &EditorOperations) {
         self.collect_results();
         let Some((generation, path, result)) = self.pending_result.take() else {
@@ -218,6 +239,7 @@ impl EditorHighlight {
         }
         self.apply_parse_result(state, result);
     }
+
     fn run_sync(
         &mut self,
         snap: ParseSnapshot,
@@ -243,6 +265,7 @@ impl EditorHighlight {
         }
         self.publish_pending(state, operations);
     }
+
     fn launch_job(&mut self, snap: ParseSnapshot, generation: u64) {
         let canceled = Arc::new(AtomicBool::new(false));
         self.cancel_flag = Some(Arc::clone(&canceled));
@@ -266,6 +289,7 @@ impl EditorHighlight {
             );
         }));
     }
+
     fn recolor(&mut self, state: &EditorState, operations: &EditorOperations, edited: bool) {
         let bytes = state.byte_size();
         if !self.enabled || bytes > SKIP_TREE_SITTER_BYTES {
@@ -287,10 +311,12 @@ impl EditorHighlight {
         }
         self.launch_job(snap, generation);
     }
+
     pub fn poll(&mut self, state: &EditorState, operations: &EditorOperations) {
         self.reap_tasks();
         self.publish_pending(state, operations);
     }
+
     pub fn highlight_content(&mut self, state: &EditorState, operations: &mut EditorOperations) {
         let pending = operations.take_pending();
         let edited = !pending.is_empty();

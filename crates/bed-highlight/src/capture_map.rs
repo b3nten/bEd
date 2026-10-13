@@ -51,6 +51,7 @@ pub const THEME_SLOTS: [ThemeSlot; 14] = [
     ThemeSlot::Punctuation,
     ThemeSlot::Special,
 ];
+
 #[derive(Clone, Copy)]
 struct CaptureRule {
     pattern: &'static str,
@@ -588,6 +589,7 @@ const RULES: &[CaptureRule] = &[
         priority: 100,
     },
 ];
+
 fn match_rule(name: &str) -> Option<&CaptureRule> {
     RULES.iter().find(|r| {
         if r.prefix {
@@ -597,15 +599,19 @@ fn match_rule(name: &str) -> Option<&CaptureRule> {
         }
     })
 }
+
 pub fn capture_priority(name: &str) -> i32 {
     match_rule(name).map_or(30, |r| r.priority)
 }
+
 pub fn theme_slot_for_capture(name: &str) -> ThemeSlot {
     match_rule(name).map_or(ThemeSlot::Text, |r| r.slot)
 }
+
 pub fn theme_key_for_capture(name: &str) -> &'static str {
     THEME_KEYS[theme_slot_for_capture(name) as usize]
 }
+
 pub fn theme_slot_for_key(key: &str) -> ThemeSlot {
     THEME_KEYS
         .iter()

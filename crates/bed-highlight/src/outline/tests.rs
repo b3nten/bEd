@@ -10,11 +10,13 @@ fn key(language: &str) -> OutlineKey {
         language_id: language.into(),
     }
 }
+
 fn snapshot(source: &str) -> Snapshot {
     let mut state = EditorState::new();
     state.set_from_bytes(source.as_bytes());
     state.snapshot()
 }
+
 fn outline(language: &str, source: &str) -> OutlineResult {
     extract(
         &mut Parser::new(),

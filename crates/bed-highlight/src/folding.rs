@@ -30,6 +30,7 @@ struct SourceKey {
     language_id: String,
     kind: DocumentKind,
 }
+
 impl SourceKey {
     fn matches(&self, state: &EditorState, generation: u64, revision: u64) -> bool {
         self.generation == generation
@@ -38,6 +39,7 @@ impl SourceKey {
             && self.language_id == state.language_id
             && self.kind == state.kind
     }
+
     fn same_source(&self, state: &EditorState, generation: u64) -> bool {
         self.generation == generation
             && self.path == state.path
@@ -45,6 +47,7 @@ impl SourceKey {
             && self.kind == state.kind
     }
 }
+
 struct Job {
     token: u64,
     key: SourceKey,
@@ -52,11 +55,13 @@ struct Job {
     text: Snapshot,
     deadline: Instant,
 }
+
 #[derive(Default)]
 struct Mailbox {
     pending: Option<Job>,
     stopped: bool,
 }
+
 struct FoldResult {
     key: SourceKey,
     ranges: Vec<FoldRange>,
@@ -72,6 +77,7 @@ pub struct FoldingService {
     result: Option<FoldResult>,
     supported: bool,
 }
+
 impl Drop for FoldingService {
     fn drop(&mut self) {
         self.token.fetch_add(1, Ordering::Relaxed);
@@ -87,6 +93,7 @@ impl Drop for FoldingService {
         }
     }
 }
+
 impl FoldingService {
     /// Keep the fold gutter stable while new syntax ranges are being parsed.
     pub fn supported(&self) -> bool {
@@ -460,6 +467,7 @@ mod tests {
         state.set_from_bytes(source);
         extract(&mut Parser::new(), language, &state.snapshot(), || false).unwrap()
     }
+
     fn range(start_line: i32, end_line: i32) -> FoldRange {
         FoldRange {
             start_line,

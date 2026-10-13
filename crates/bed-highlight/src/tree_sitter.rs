@@ -15,6 +15,7 @@ use std::{
 pub struct ThemeColors {
     pub slots: [[f32; 4]; 14],
 }
+
 impl Default for ThemeColors {
     fn default() -> Self {
         let mut slots = [[0.85, 0.85, 0.85, 1.0]; 14];
@@ -22,6 +23,7 @@ impl Default for ThemeColors {
         Self { slots }
     }
 }
+
 impl ThemeColors {
     pub fn from_settings(settings: &serde_json::Value) -> Self {
         let mut colors = Self::default();
@@ -79,6 +81,7 @@ impl ThemeColors {
         }
         colors
     }
+
     pub fn color(&self, slot: ThemeSlot) -> [f32; 4] {
         self.slots[slot as usize]
     }
@@ -90,8 +93,11 @@ pub struct ColorSpan {
     pub end: i32,
     pub slot: ThemeSlot,
 }
+
 pub type LineColorSpans = Vec<ColorSpan>;
+
 pub type ColorRangeMap = Vec<LineColorSpans>;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ParseKind {
     #[default]
@@ -99,6 +105,7 @@ pub enum ParseKind {
     Full,
     Partial,
 }
+
 #[derive(Debug, Default)]
 pub struct ParseResult {
     pub kind: ParseKind,
@@ -107,12 +114,14 @@ pub struct ParseResult {
     pub dirty_rows: Vec<i32>,
     pub dirty_spans: Vec<LineColorSpans>,
 }
+
 #[derive(Clone, Debug, Default)]
 pub struct ParseSnapshot {
     pub text: Snapshot,
     pub path: String,
     pub language_id: String,
 }
+
 impl ParseSnapshot {
     pub fn from_document(state: &EditorState) -> Self {
         Self {
@@ -271,6 +280,7 @@ fn line_colors(
 pub struct TreeSitter {
     highlighter: Highlighter,
 }
+
 impl Default for TreeSitter {
     fn default() -> Self {
         Self {
@@ -278,6 +288,7 @@ impl Default for TreeSitter {
         }
     }
 }
+
 impl TreeSitter {
     pub fn new() -> Self {
         Self::default()

@@ -27,6 +27,7 @@ pub struct OutlineKey {
     pub path: String,
     pub language_id: String,
 }
+
 impl OutlineKey {
     fn same_source(&self, other: &Self) -> bool {
         self.document == other.document
@@ -47,6 +48,7 @@ pub struct OutlineNode {
     pub parent: Option<usize>,
     pub depth: usize,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutlineStatus {
     Ready,
@@ -54,18 +56,21 @@ pub enum OutlineStatus {
     TooLarge,
     Failed(String),
 }
+
 #[derive(Clone, Debug)]
 pub struct OutlineResult {
     pub key: OutlineKey,
     pub status: OutlineStatus,
     pub nodes: Vec<OutlineNode>,
 }
+
 struct Job {
     token: u64,
     key: OutlineKey,
     text: Snapshot,
     deadline: Instant,
 }
+
 #[derive(Default)]
 struct Mailbox {
     pending: Option<Job>,
@@ -80,6 +85,7 @@ pub struct OutlineService {
     requested: Option<OutlineKey>,
     result: Option<Arc<OutlineResult>>,
 }
+
 impl Default for OutlineService {
     fn default() -> Self {
         let mailbox = Arc::new((Mutex::new(Mailbox::default()), Condvar::new()));
@@ -130,6 +136,7 @@ impl Default for OutlineService {
         }
     }
 }
+
 impl Drop for OutlineService {
     fn drop(&mut self) {
         self.token.fetch_add(1, Ordering::Relaxed);
@@ -145,18 +152,22 @@ impl Drop for OutlineService {
         }
     }
 }
+
 impl OutlineService {
     pub fn requested(&self) -> Option<&OutlineKey> {
         self.requested.as_ref()
     }
+
     pub fn result(&self) -> Option<&Arc<OutlineResult>> {
         self.result.as_ref()
     }
+
     pub fn updating(&self) -> bool {
         self.requested
             .as_ref()
             .is_some_and(|key| self.result.as_ref().is_none_or(|result| &result.key != key))
     }
+
     pub fn request(&mut self, key: OutlineKey, text: Snapshot) {
         if self.requested.as_ref() == Some(&key) {
             return;
@@ -184,6 +195,7 @@ impl OutlineService {
         });
         wake.notify_one();
     }
+
     pub fn clear(&mut self) {
         if self.requested.take().is_none() {
             return;
@@ -194,6 +206,7 @@ impl OutlineService {
         self.result = None;
         while self.receiver.try_recv().is_ok() {}
     }
+
     pub fn poll(&mut self) {
         while let Ok(result) = self.receiver.try_recv() {
             if self.requested.as_ref() == Some(&result.key) {
@@ -216,6 +229,7 @@ fn query_source(language: &str) -> Option<&'static str> {
         "markdown" => "markdown"
     )
 }
+
 fn compact(text: &[u8]) -> String {
     // Bound labels without cutting UTF-8. Full source ranges remain available for navigation.
     let text = String::from_utf8_lossy(text);
@@ -237,6 +251,7 @@ fn compact(text: &[u8]) -> String {
     }
     label
 }
+
 fn declarator_name(mut node: Node<'_>) -> Node<'_> {
     // C/C++ declarators wrap identifiers in pointer/array/function declarators.
     while let Some(inner) = node.child_by_field_name("declarator") {
@@ -244,6 +259,7 @@ fn declarator_name(mut node: Node<'_>) -> Node<'_> {
     }
     node
 }
+
 fn header_range(node: Node<'_>, source: &[u8]) -> Range<usize> {
     let range = node.byte_range();
     let end = source[range.clone()]
@@ -252,6 +268,7 @@ fn header_range(node: Node<'_>, source: &[u8]) -> Range<usize> {
         .map_or(range.end, |offset| range.start + offset);
     range.start..end
 }
+
 fn local_value(node: Node<'_>) -> bool {
     let mut parent = node.parent();
     while let Some(node) = parent {

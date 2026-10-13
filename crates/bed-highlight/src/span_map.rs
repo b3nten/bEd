@@ -8,15 +8,18 @@ pub struct SpanMap {
     pub lines: ColorRangeMap,
     pub lens: Vec<i32>,
 }
+
 impl SpanMap {
     pub fn clear(&mut self) {
         self.lines.clear();
         self.lens.clear();
     }
+
     pub fn assign_empty(&mut self, line_count: usize) {
         self.lines = vec![Vec::new(); line_count];
         self.lens = vec![0; line_count];
     }
+
     pub fn at(&self, row: i32) -> &[ColorSpan] {
         if row < 0 {
             &[]
@@ -24,6 +27,7 @@ impl SpanMap {
             self.lines.get(row as usize).map_or(&[], Vec::as_slice)
         }
     }
+
     pub fn insert_bytes(spans: &mut LineColorSpans, col: i32, n: i32) {
         if n <= 0 {
             return;
@@ -48,6 +52,7 @@ impl SpanMap {
             }
         }
     }
+
     pub fn delete_bytes(spans: &mut LineColorSpans, col: i32, n: i32) {
         if n <= 0 {
             return;
@@ -83,6 +88,7 @@ impl SpanMap {
         out.retain(|s| s.start < s.end);
         *spans = out;
     }
+
     pub fn insert(&mut self, row: i32, col: i32, text: &[u8], eol: &[u8]) {
         if text.is_empty() || row < 0 {
             return;
@@ -139,6 +145,7 @@ impl SpanMap {
         self.lines.splice(row + 1..row + 1, added);
         self.lens.splice(row + 1..row + 1, added_lens);
     }
+
     pub fn remove(&mut self, row: i32, col: i32, length: i32, sep_len: i32) {
         if length <= 0 || self.lines.is_empty() {
             return;
@@ -174,6 +181,7 @@ impl SpanMap {
             self.lens[row] = col + next_len;
         }
     }
+
     pub fn apply_edits(&mut self, edits: &[PendingEdit], eol: &[u8]) -> bool {
         if edits.is_empty() || self.lens.len() != self.lines.len() || self.lines.is_empty() {
             return false;
@@ -188,6 +196,7 @@ impl SpanMap {
         true
     }
 }
+
 fn split_on_separator<'a>(text: &'a [u8], sep: &[u8]) -> Vec<&'a [u8]> {
     if sep.is_empty() {
         return vec![text];
