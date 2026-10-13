@@ -195,6 +195,7 @@ pub(crate) fn call(request: Request) -> Result<Response, RemoteError> {
 fn no_follow() -> i32 {
     0x100
 }
+
 #[cfg(target_os = "linux")]
 fn no_follow() -> i32 {
     0x20000
@@ -204,6 +205,7 @@ fn no_follow() -> i32 {
 fn non_blocking() -> i32 {
     0x4
 }
+
 #[cfg(target_os = "linux")]
 fn non_blocking() -> i32 {
     0x800
@@ -215,6 +217,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     struct Fixture(PathBuf);
+
     impl Fixture {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -226,12 +229,15 @@ mod tests {
             fs::create_dir_all(&root).unwrap();
             Self(root.canonicalize().unwrap())
         }
+
         fn root(&self) -> String {
             self.0.to_str().unwrap().into()
         }
+
         fn path(&self, name: &str) -> String {
             self.0.join(name).to_str().unwrap().into()
         }
+
         fn write(
             &self,
             name: &str,
@@ -248,6 +254,7 @@ mod tests {
                 mode: Some(0o640),
             })
         }
+
         fn read(&self, name: &str, offset: u64, max_bytes: usize) -> Result<Vec<u8>, RemoteError> {
             match call(Request::ReadFileChunk {
                 root: self.root(),
@@ -260,6 +267,7 @@ mod tests {
             }
         }
     }
+
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);

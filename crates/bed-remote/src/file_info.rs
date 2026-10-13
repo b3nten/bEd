@@ -155,6 +155,7 @@ struct BoundedRead<'a> {
     cache: &'a ReadCache<File>,
     budget: &'a Cell<u64>,
 }
+
 impl BoundedRead<'_> {
     fn charge(self, size: u64) -> Result<(), ()> {
         let remaining = self.budget.get().checked_sub(size).ok_or(())?;
@@ -162,29 +163,35 @@ impl BoundedRead<'_> {
         Ok(())
     }
 }
+
 impl<'a> ReadRef<'a> for BoundedRead<'a> {
     fn len(self) -> Result<u64, ()> {
         self.cache.len()
     }
+
     fn read_bytes_at(self, offset: u64, size: u64) -> Result<&'a [u8], ()> {
         self.charge(size)?;
         self.cache.read_bytes_at(offset, size)
     }
+
     fn read_bytes_at_until(self, range: Range<u64>, delimiter: u8) -> Result<&'a [u8], ()> {
         self.charge((range.end.saturating_sub(range.start)).min(4096))?;
         self.cache.read_bytes_at_until(range, delimiter)
     }
 }
+
 #[derive(Clone, Copy)]
 struct SliceRead<'a> {
     data: BoundedRead<'a>,
     offset: u64,
     size: u64,
 }
+
 impl<'a> ReadRef<'a> for SliceRead<'a> {
     fn len(self) -> Result<u64, ()> {
         Ok(self.size)
     }
+
     fn read_bytes_at(self, offset: u64, size: u64) -> Result<&'a [u8], ()> {
         if offset.checked_add(size).ok_or(())? > self.size {
             return Err(());
@@ -192,6 +199,7 @@ impl<'a> ReadRef<'a> for SliceRead<'a> {
         self.data
             .read_bytes_at(self.offset.checked_add(offset).ok_or(())?, size)
     }
+
     fn read_bytes_at_until(self, range: Range<u64>, delimiter: u8) -> Result<&'a [u8], ()> {
         if range.start > range.end || range.end > self.size {
             return Err(());
@@ -203,6 +211,7 @@ impl<'a> ReadRef<'a> for SliceRead<'a> {
         )
     }
 }
+
 fn object_info<'a>(data: impl ReadRef<'a>) -> Option<BinaryInfo> {
     let object = object::File::parse(data).ok()?;
     let embedded = object.has_debug_symbols();
@@ -227,6 +236,7 @@ fn object_info<'a>(data: impl ReadRef<'a>) -> Option<BinaryInfo> {
         debug_symbols,
     })
 }
+
 fn binary_info(path: &Path) -> Option<BinaryInfo> {
     let cache = ReadCache::new(File::open(path).ok()?);
     let budget = Cell::new(16 * 1024 * 1024);
@@ -282,6 +292,7 @@ fn binary_info(path: &Path) -> Option<BinaryInfo> {
             .join("; "),
     })
 }
+
 fn git_info(root: &Path, path: &Path, directory: bool) -> Option<String> {
     if directory {
         return None;

@@ -921,6 +921,7 @@ mod tests {
     use super::*;
 
     struct Temp(PathBuf);
+
     impl Temp {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -932,10 +933,12 @@ mod tests {
             fs::create_dir_all(&path).unwrap();
             Self(fs::canonicalize(path).unwrap())
         }
+
         fn root(&self) -> String {
             self.0.to_str().unwrap().into()
         }
     }
+
     impl Drop for Temp {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
@@ -1689,6 +1692,7 @@ mod tests {
         bytes[256..256 + names.len()].copy_from_slice(names);
         bytes
     }
+
     #[test]
     fn binary_information_checks_debug_sections_and_reports_architecture() {
         let temp = Temp::new();

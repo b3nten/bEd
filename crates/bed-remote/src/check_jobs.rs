@@ -31,6 +31,7 @@ pub struct CheckJob {
     completed: mpsc::Receiver<Result<CheckOutput, String>>,
     stdout: Arc<Mutex<Vec<u8>>>,
 }
+
 impl CheckJob {
     pub fn start(
         root: PathBuf,
@@ -40,6 +41,7 @@ impl CheckJob {
     ) -> Self {
         Self::start_with_path(root, program, arguments, directory, None)
     }
+
     /// Supply a child-only PATH for checks started by a GUI host. Remote
     /// helpers and ordinary callers retain their inherited PATH with `None`.
     pub fn start_with_path(
@@ -66,14 +68,17 @@ impl CheckJob {
             stdout,
         }
     }
+
     pub fn cancel(&self) {
         self.canceled.store(true, Ordering::Release);
     }
+
     /// Drain newly read stdout without waiting for the check to finish. The
     /// complete bounded output is still returned by `try_result`.
     pub fn take_stdout(&self) -> Vec<u8> {
         std::mem::take(&mut *self.stdout.lock().unwrap())
     }
+
     pub fn try_result(&mut self) -> Option<Result<CheckOutput, String>> {
         match self.completed.try_recv() {
             Ok(result) => Some(result),
@@ -84,6 +89,7 @@ impl CheckJob {
         }
     }
 }
+
 impl Drop for CheckJob {
     fn drop(&mut self) {
         self.cancel();
@@ -118,6 +124,7 @@ fn read_bounded(
         Ok(bytes)
     }
 }
+
 fn run(
     root: PathBuf,
     program: String,
@@ -210,10 +217,12 @@ pub(crate) struct CheckJobs {
     next: u64,
     jobs: HashMap<u64, Entry>,
 }
+
 struct Entry {
     job: CheckJob,
     result: Option<Result<CheckOutput, String>>,
 }
+
 impl CheckJobs {
     pub fn handles(request: &Request) -> bool {
         matches!(
@@ -224,6 +233,7 @@ impl CheckJobs {
                 | Request::CheckRelease { .. }
         )
     }
+
     pub fn call(&mut self, request: Request) -> Result<Response, RemoteError> {
         let missing = || RemoteError::new(ErrorKind::NotFound, "Project check job expired");
         match request {
@@ -282,6 +292,7 @@ impl CheckJobs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn check_rejects_directory_outside_project() {
         let root = std::env::temp_dir();
@@ -296,6 +307,7 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
     }
+
     #[cfg(unix)]
     #[test]
     fn cancel_kills_check_and_descendants_without_blocking() {

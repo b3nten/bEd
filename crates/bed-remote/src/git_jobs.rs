@@ -3,15 +3,18 @@ use crate::{ErrorKind, RemoteError, Request, Response};
 use std::{collections::HashMap, fs};
 
 const MAX_JOBS: usize = 8;
+
 #[derive(Default)]
 pub(crate) struct GitJobs {
     next: u64,
     jobs: HashMap<u64, Entry>,
 }
+
 struct Entry {
     job: bed_git_core::Job,
     result: Option<bed_git_core::Result<bed_git_core::Output>>,
 }
+
 impl GitJobs {
     pub fn handles(request: &Request) -> bool {
         matches!(
@@ -22,6 +25,7 @@ impl GitJobs {
                 | Request::GitRelease { .. }
         )
     }
+
     pub fn call(&mut self, request: Request) -> Result<Response, RemoteError> {
         match request {
             Request::GitStart { root, operation } => {
@@ -75,6 +79,7 @@ impl GitJobs {
         }
     }
 }
+
 impl Drop for GitJobs {
     fn drop(&mut self) {
         for entry in self.jobs.values() {
@@ -82,6 +87,7 @@ impl Drop for GitJobs {
         }
     }
 }
+
 fn expired() -> RemoteError {
     RemoteError::new(
         ErrorKind::NotFound,
@@ -104,6 +110,7 @@ mod tests {
     };
 
     struct Repo(PathBuf);
+
     impl Repo {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -124,6 +131,7 @@ mod tests {
             repo.git(&["commit", "-m", "Initial"]);
             repo
         }
+
         fn git(&self, args: &[&str]) {
             let result = Command::new("git")
                 .arg("-C")
@@ -137,9 +145,11 @@ mod tests {
                 String::from_utf8_lossy(&result.stderr)
             );
         }
+
         fn root(&self) -> String {
             self.0.to_str().unwrap().into()
         }
+
         fn hook(&self) {
             fs::write(self.0.join("a.txt"), b"new\n").unwrap();
             self.git(&["add", "a.txt"]);
@@ -147,6 +157,7 @@ mod tests {
             fs::write(&path, b"#!/bin/sh\ntouch .git/ready\nsleep 30 &\nwait\n").unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
         }
+
         fn ready(&self) {
             let deadline = Instant::now() + Duration::from_secs(5);
             while !self.0.join(".git/ready").exists() {
@@ -155,17 +166,20 @@ mod tests {
             }
         }
     }
+
     impl Drop for Repo {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+
     fn call(stream: &mut UnixStream, request: Request) -> Result<Response, RemoteError> {
         write_frame(stream, &RequestFrame { id: 1, request }).unwrap();
         let response: ResponseFrame = read_frame(stream).unwrap().unwrap();
         assert_eq!(response.id, 1);
         response.response
     }
+
     fn connect() -> (UnixStream, thread::JoinHandle<()>) {
         let (mut client, server) = UnixStream::pair().unwrap();
         client
@@ -187,6 +201,7 @@ mod tests {
         );
         (client, worker)
     }
+
     fn start(stream: &mut UnixStream, root: String, operation: bed_git_core::Operation) -> u64 {
         let Response::GitStarted { job_id } =
             call(stream, Request::GitStart { root, operation }).unwrap()

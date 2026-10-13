@@ -26,11 +26,13 @@ use std::{
 
 const FALLBACK_INTERVAL: Duration = Duration::from_secs(30);
 const REMOTE_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
 fn private_temporary(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.starts_with(".bed-transfer-") || name.starts_with(".bed-save-"))
 }
+
 fn directory_within_workspace(root: &Path, path: &Path) -> bool {
     if !path.starts_with(root)
         || path
@@ -67,6 +69,7 @@ struct Inner {
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
+
 impl Drop for Inner {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
@@ -86,13 +89,16 @@ impl Drop for Inner {
 /// Cheap shared handle. Cloning it never creates another scanner or watcher.
 #[derive(Clone)]
 pub struct WorkspaceFilesystem(Arc<Inner>);
+
 impl WorkspaceFilesystem {
     pub fn local(root: String, include_ignored: bool) -> Self {
         Self::start(root, include_ignored, None)
     }
+
     pub fn remote(root: String, include_ignored: bool, client: RemoteClient) -> Self {
         Self::start(root, include_ignored, Some(client))
     }
+
     fn start(root: String, include_ignored: bool, remote: Option<RemoteClient>) -> Self {
         let (sender, requests) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
@@ -111,20 +117,25 @@ impl WorkspaceFilesystem {
             worker: Mutex::new(Some(worker)),
         }))
     }
+
     pub fn subscribe(&self) -> Receiver<WorkspaceUpdate> {
         let (sender, receiver) = mpsc::channel();
         let _ = self.0.sender.send(Command::Subscribe(sender));
         receiver
     }
+
     pub fn request_directory(&self, path: impl Into<String>) {
         let _ = self.0.sender.send(Command::Directory(path.into()));
     }
+
     pub fn refresh_directory(&self, path: impl Into<String>) {
         let _ = self.0.sender.send(Command::RefreshDirectory(path.into()));
     }
+
     pub fn refresh(&self) {
         let _ = self.0.sender.send(Command::Refresh);
     }
+
     pub fn set_include_ignored(&self, include: bool) {
         let _ = self.0.sender.send(Command::IncludeIgnored(include));
     }
@@ -136,6 +147,7 @@ struct Stamp {
     modified: Option<Duration>,
     identity: (u64, u64),
 }
+
 fn stamp(metadata: &fs::Metadata) -> Stamp {
     #[cfg(unix)]
     let identity = {
@@ -181,6 +193,7 @@ struct NativeState {
     generation: u64,
     stop: Arc<AtomicBool>,
 }
+
 impl NativeState {
     fn set_file(&mut self, path: PathBuf, current: Stamp) {
         if self.files.get(&path) == Some(&current) {
@@ -191,6 +204,7 @@ impl NativeState {
             .or_insert_with(|| self.files.get(&path).cloned());
         self.files.insert(path, current);
     }
+
     fn remove_file(&mut self, path: &Path) {
         if let Some(previous) = self.files.remove(path) {
             self.previous_files
@@ -198,6 +212,7 @@ impl NativeState {
                 .or_insert(Some(previous));
         }
     }
+
     fn changed_files(&self) -> (BTreeMap<PathBuf, Stamp>, BTreeMap<PathBuf, Stamp>) {
         let previous = self
             .previous_files
@@ -215,6 +230,7 @@ impl NativeState {
             .collect();
         (previous, current)
     }
+
     fn set_directory_identity(&mut self, path: &Path) {
         let Ok(metadata) = fs::symlink_metadata(path) else {
             return;
@@ -235,6 +251,7 @@ impl NativeState {
             .or_insert_with(|| self.directory_identities.get(path).cloned());
         self.directory_identities.insert(path.to_owned(), current);
     }
+
     fn directory_renames(&self) -> Vec<FilesystemChange> {
         let previous = self
             .previous_directories
@@ -268,6 +285,7 @@ impl NativeState {
             })
             .collect()
     }
+
     fn update(&mut self) -> WorkspaceUpdate {
         self.generation = self.generation.wrapping_add(1);
         WorkspaceUpdate {
@@ -278,6 +296,7 @@ impl NativeState {
             ..Default::default()
         }
     }
+
     fn snapshot(&self) -> WorkspaceUpdate {
         WorkspaceUpdate {
             root: self.root.to_string_lossy().into_owned(),
@@ -294,6 +313,7 @@ impl NativeState {
             ..Default::default()
         }
     }
+
     fn watch(&mut self, path: &Path) {
         if self.watched.contains(path) {
             return;
@@ -363,10 +383,12 @@ impl NativeState {
             }
         }
     }
+
     fn git_metadata(&self, path: &Path) -> bool {
         path.strip_prefix(&self.root)
             .is_ok_and(|relative| relative.components().any(|p| p.as_os_str() == ".git"))
     }
+
     fn ignored(&self, path: &Path) -> bool {
         if self.git_metadata(path) {
             return true;
@@ -376,9 +398,11 @@ impl NativeState {
         }
         self.gitignored(path)
     }
+
     fn gitignored(&self, path: &Path) -> bool {
         self.ignored_paths.contains(path)
     }
+
     fn interested_in(&self, path: &Path) -> bool {
         self.include_ignored
             || !path
@@ -389,6 +413,7 @@ impl NativeState {
                 .parent()
                 .is_some_and(|parent| self.requested.contains(parent))
     }
+
     fn refresh_repository(&mut self) {
         self.repository = git2::Repository::discover(&self.root).ok();
         self.ignored_paths.clear();
@@ -445,6 +470,7 @@ impl NativeState {
             }
         }
     }
+
     fn listing(&mut self, path: &Path) -> io::Result<DirectoryListing> {
         if !directory_within_workspace(&self.root, path) {
             return Err(io::Error::new(
@@ -521,6 +547,7 @@ impl NativeState {
             warning,
         })
     }
+
     /// Read this directory once. Only newly discovered child directories recurse.
     fn reconcile_directory(&mut self, path: &Path, recursive: bool) -> io::Result<()> {
         if self.stop.load(Ordering::Acquire) {
@@ -578,6 +605,7 @@ impl NativeState {
         }
         Ok(())
     }
+
     fn remove_subtree(&mut self, path: &Path) {
         self.remove_file(path);
         let identities: Vec<_> = self
@@ -622,6 +650,7 @@ impl NativeState {
             self.watched.remove(&directory);
         }
     }
+
     fn rebuild(&mut self) -> io::Result<WorkspaceUpdate> {
         self.previous_files.clear();
         self.previous_directories.clear();
@@ -660,6 +689,7 @@ impl NativeState {
         update.dirty_directories = update.directories.iter().map(|d| d.path.clone()).collect();
         Ok(update)
     }
+
     fn events(&mut self, events: DebounceEventResult) -> io::Result<WorkspaceUpdate> {
         let events = match events {
             Ok(events) => events,
@@ -871,6 +901,7 @@ impl NativeState {
             .collect();
         Ok(update)
     }
+
     fn relevant_events(&self, events: &DebounceEventResult) -> bool {
         match events {
             Err(_) => true,
@@ -905,6 +936,7 @@ fn rename_sources(changes: &[FilesystemChange]) -> BTreeSet<PathBuf> {
         })
         .collect()
 }
+
 fn prioritize_changes(changes: &mut [FilesystemChange]) {
     // A source directory can disappear after its files were relocated into
     // an existing destination. Rebind surviving documents before processing
@@ -916,6 +948,7 @@ fn prioritize_changes(changes: &mut [FilesystemChange]) {
         FilesystemChange::Created { .. } => 3,
     });
 }
+
 fn within_any(path: &Path, roots: &BTreeSet<PathBuf>) -> bool {
     path.ancestors().any(|ancestor| roots.contains(ancestor))
 }
@@ -976,6 +1009,7 @@ fn diff_changes(
 fn publish(subscribers: &mut Vec<Sender<WorkspaceUpdate>>, update: WorkspaceUpdate) {
     subscribers.retain(|subscriber| subscriber.send(update.clone()).is_ok());
 }
+
 fn coalesce_events(
     mut events: DebounceEventResult,
     requests: &Receiver<Command>,
@@ -1003,6 +1037,7 @@ fn coalesce_events(
     }
     events
 }
+
 fn local_worker(
     root: String,
     include_ignored: bool,
@@ -1309,6 +1344,7 @@ struct RemoteWatch {
     filesystem: WorkspaceFilesystem,
     updates: Receiver<WorkspaceUpdate>,
 }
+
 fn watches() -> &'static Mutex<HashMap<u64, RemoteWatch>> {
     static WATCHES: OnceLock<Mutex<HashMap<u64, RemoteWatch>>> = OnceLock::new();
     WATCHES.get_or_init(Mutex::default)
@@ -1393,10 +1429,12 @@ pub(crate) fn call(request: Request) -> Result<Response, crate::RemoteError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     struct Fixture(
         PathBuf,
         #[allow(dead_code)] std::sync::MutexGuard<'static, ()>,
     );
+
     impl Fixture {
         fn new() -> Self {
             // notify's FSEvents teardown purges device events. Keep native
@@ -1414,11 +1452,13 @@ mod tests {
             fs::create_dir_all(&root).unwrap();
             Self(fs::canonicalize(root).unwrap(), guard)
         }
+
         fn write(&self, path: &str, bytes: &[u8]) {
             let path = self.0.join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, bytes).unwrap();
         }
+
         fn start(
             &self,
         ) -> (
@@ -1434,11 +1474,13 @@ mod tests {
             (filesystem, updates, initial)
         }
     }
+
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+
     fn wait(
         receiver: &Receiver<WorkspaceUpdate>,
         predicate: impl Fn(&WorkspaceUpdate) -> bool,
@@ -1453,6 +1495,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn workspace_idle_has_no_recurring_full_scan_and_new_subtrees_are_indexed() {
         let fixture = Fixture::new();
@@ -1478,6 +1521,7 @@ mod tests {
         assert!(update.indexed_files.is_none());
         assert!(update.generation > initial.generation);
     }
+
     #[test]
     fn workspace_external_rename_and_removal_are_distinct_changes() {
         let fixture = Fixture::new();
@@ -1499,6 +1543,7 @@ mod tests {
                 .any(|path| path.ends_with("after.rs"))
         );
     }
+
     #[test]
     fn workspace_external_folder_rename_preserves_the_parent_identity() {
         let fixture = Fixture::new();
@@ -1517,6 +1562,7 @@ mod tests {
                 .any(|path| path.ends_with("after/nested/file.rs"))
         );
     }
+
     #[test]
     fn workspace_ignore_rules_update_the_index_without_removing_existing_documents() {
         let fixture = Fixture::new();
@@ -1558,6 +1604,7 @@ mod tests {
                 .any(|path| path.ends_with("ignored/artifact"))
         });
     }
+
     #[test]
     fn workspace_atomic_replacement_does_not_emit_a_missing_target() {
         let fixture = Fixture::new();
@@ -1575,6 +1622,7 @@ mod tests {
         }
         assert!(saw_target);
     }
+
     #[test]
     fn workspace_requested_ignored_directory_uses_the_shared_background_cache() {
         let fixture = Fixture::new();
@@ -1605,6 +1653,7 @@ mod tests {
             })
         });
     }
+
     #[test]
     fn requested_git_directory_tracks_lock_files_without_indexing_them() {
         let fixture = Fixture::new();
@@ -1652,6 +1701,7 @@ mod tests {
         assert!(created.indexed_added.is_empty());
         assert!(created.changes.is_empty());
     }
+
     #[test]
     fn workspace_explicit_directory_refresh_sends_a_delta_and_hides_incomplete_transfers() {
         let fixture = Fixture::new();
@@ -1691,6 +1741,7 @@ mod tests {
                 .all(|entry| !entry.name.starts_with(".bed-transfer-"))
         );
     }
+
     #[test]
     fn workspace_git_negations_tracked_ignored_files_and_index_changes_follow_git() {
         let fixture = Fixture::new();
@@ -1722,6 +1773,7 @@ mod tests {
                 .any(|path| path.ends_with("src/new.log"))
         });
     }
+
     #[test]
     fn workspace_shutdown_is_bounded_when_a_filesystem_call_is_blocked() {
         let (release, blocked) = mpsc::channel();
@@ -1743,6 +1795,7 @@ mod tests {
             "Shutdown waited {elapsed:?}"
         );
     }
+
     #[test]
     fn workspace_remote_poll_returns_cached_batches_without_rescanning() {
         let fixture = Fixture::new();
