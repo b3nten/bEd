@@ -9,40 +9,50 @@ impl Plugin for DocumentCommandsPlugin {
     fn build(&self, app: &mut App) {
         let standard =
             *app.world().resource::<CorePresentationMode>() == CorePresentationMode::Standard;
-        api::workbench::register(app.world_mut(), "bed.core", |registrar| {
-            registrar.command("bed.core.new", "New document", new_document);
-            registrar.command("bed.core.open", "Open file…", open);
-            registrar.command("bed.core.shell.open", "Open shell files", open_shell_files);
-            registrar.shell_alias("+open", "bed.core.shell.open");
-            registrar.shell_alias("+o", "bed.core.shell.open");
-            registrar.command("bed.core.save", "Save document", save);
-            registrar.command("bed.core.save_as", "Save document as…", save_as);
-            registrar.command("bed.core.undo", "Undo document change", undo);
-            registrar.command("bed.core.redo", "Redo document change", redo);
-            registrar.command("bed.core.close", "Close panel", close);
-            registrar.command("bed.core.quit", "Quit application", quit_application);
-            if standard {
-                registrar.global_shortcut("bed.core.new", &["Primary+N"]);
-                registrar.global_shortcut("bed.core.open", &["Primary+O"]);
-                registrar.global_shortcut("bed.core.save", &["Primary+S"]);
-                registrar.global_shortcut("bed.core.save_as", &["Primary+Shift+S"]);
-                registrar.global_shortcut("bed.core.close", &["Primary+W"]);
+        if standard {
+            api::workbench::register(app.world_mut(), "bed.documents", |registrar| {
+                registrar.command(
+                    "bed.documents.shell.open",
+                    "Open shell files",
+                    open_shell_files,
+                );
+                registrar.shell_alias("+open", "bed.documents.shell.open");
+                registrar.shell_alias("+o", "bed.documents.shell.open");
+                registrar.command("bed.documents.new", "New document", new_document);
+                registrar.command("bed.documents.open_file", "Open file…", open);
+                registrar.command("bed.documents.save", "Save document", save);
+                registrar.command("bed.documents.save_as", "Save document as…", save_as);
+                registrar.command("bed.documents.undo", "Undo document change", undo);
+                registrar.command("bed.documents.redo", "Redo document change", redo);
+                registrar.global_shortcut("bed.documents.new", &["Primary+N"]);
+                registrar.global_shortcut("bed.documents.open_file", &["Primary+O"]);
+                registrar.global_shortcut("bed.documents.save", &["Primary+S"]);
+                registrar.global_shortcut("bed.documents.save_as", &["Primary+Shift+S"]);
                 for id in [
-                    "bed.core.new",
-                    "bed.core.open",
-                    "bed.core.save",
-                    "bed.core.save_as",
-                    "bed.core.undo",
-                    "bed.core.redo",
-                    "bed.core.close",
+                    "bed.documents.new",
+                    "bed.documents.open_file",
+                    "bed.documents.save",
+                    "bed.documents.save_as",
+                    "bed.documents.undo",
+                    "bed.documents.redo",
                 ] {
                     registrar.menu(id);
                 }
+                registrar.command_icon("bed.documents.new", "bed.core.text");
+                registrar.command_icon("bed.documents.save", "bed.core.text");
+            })
+            .expect("shared document commands are registered once");
+        }
+        api::workbench::register(app.world_mut(), "bed.core", |registrar| {
+            registrar.command("bed.core.close", "Close panel", close);
+            registrar.command("bed.core.quit", "Quit application", quit_application);
+            if standard {
+                registrar.global_shortcut("bed.core.close", &["Primary+W"]);
+                registrar.global_shortcut("bed.core.quit", &["Primary+Q"]);
+                registrar.menu("bed.core.close");
             }
-            registrar.command_icon("bed.core.new", "bed.core.text");
-            registrar.command_icon("bed.core.save", "bed.core.text");
         })
-        .expect("core document commands are registered once");
+        .expect("foundation lifecycle commands are registered once");
         app.add_systems(PreUpdate, availability.in_set(CoreSystems::Frame));
     }
 }
@@ -109,27 +119,6 @@ fn document(world: &World, input: &CommandInvocation) -> Option<DocumentId> {
 }
 fn availability(world: &mut World) {
     if *world.resource::<CorePresentationMode>() == CorePresentationMode::Application {
-        for id in [
-            "bed.core.new",
-            "bed.core.open",
-            "bed.core.save",
-            "bed.core.save_as",
-            "bed.core.undo",
-            "bed.core.redo",
-            "bed.core.close",
-        ] {
-            world
-                .resource_mut::<api::workbench::CommandPresentations>()
-                .0
-                .insert(
-                    id.into(),
-                    api::workbench::CommandPresentation {
-                        visible: false,
-                        enabled: false,
-                        ..Default::default()
-                    },
-                );
-        }
         return;
     }
     let has_editor = world
@@ -146,27 +135,27 @@ fn availability(world: &mut World) {
     let has_document = document(world, &input).is_some();
     let local = !world.resource::<bed_files::FileServices>().is_remote();
     let mut facts = world.resource_mut::<api::workbench::CommandPresentations>();
-    for id in ["bed.core.new", "bed.core.open"] {
+    for id in ["bed.documents.new", "bed.documents.open_file"] {
         facts.0.insert(
             id.into(),
             api::workbench::CommandPresentation {
                 visible: has_editor,
-                enabled: has_editor && (id != "bed.core.open" || local),
+                enabled: has_editor && (id != "bed.documents.open_file" || local),
                 ..Default::default()
             },
         );
     }
     for id in [
-        "bed.core.save",
-        "bed.core.save_as",
-        "bed.core.undo",
-        "bed.core.redo",
+        "bed.documents.save",
+        "bed.documents.save_as",
+        "bed.documents.undo",
+        "bed.documents.redo",
     ] {
         facts.0.insert(
             id.into(),
             api::workbench::CommandPresentation {
                 visible: has_editor || has_document,
-                enabled: has_document && (id != "bed.core.save_as" || local),
+                enabled: has_document && (id != "bed.documents.save_as" || local),
                 ..Default::default()
             },
         );

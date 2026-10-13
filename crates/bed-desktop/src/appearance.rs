@@ -1,40 +1,46 @@
 //! Requested appearance is ordinary ECS data; font handles stay on the UI thread.
 use crate::{DesktopContext, DesktopSystems};
-use bed_ui::appearance::UiAppearance;
+use bed_ui::appearance::UiTheme;
 pub use bed_ui::font::UiFonts as DesktopFonts;
 use bevy::prelude::*;
 
 #[derive(Resource, Clone, Default, PartialEq)]
-pub struct DesktopAppearance(pub UiAppearance);
+pub struct DesktopTheme(pub UiTheme);
 
 #[derive(Resource, Default)]
-pub struct DesktopAppearanceErrors(pub Vec<String>);
+pub struct DesktopThemeErrors(pub Vec<String>);
 
-pub struct DesktopAppearancePlugin;
+pub struct DesktopThemePlugin;
 
-impl Plugin for DesktopAppearancePlugin {
+impl Plugin for DesktopThemePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DesktopAppearance>()
+        let runtime = bed_ui::UiRuntime::new(&app.world().non_send::<DesktopContext>().context);
+        let prepared = runtime.frame_context();
+        app.insert_non_send(runtime)
+            .insert_non_send(prepared)
+            .init_resource::<DesktopTheme>()
             .init_non_send::<DesktopFonts>()
-            .init_resource::<DesktopAppearanceErrors>()
+            .init_resource::<DesktopThemeErrors>()
             .add_systems(PreUpdate, prepare.in_set(DesktopSystems::Prepare));
     }
 }
 
 fn prepare(
-    appearance: Res<DesktopAppearance>,
+    appearance: Res<DesktopTheme>,
     mut fonts: NonSendMut<DesktopFonts>,
     mut desktop: NonSendMut<DesktopContext>,
-    mut errors: ResMut<DesktopAppearanceErrors>,
+    mut errors: ResMut<DesktopThemeErrors>,
+    mut runtime: NonSendMut<bed_ui::UiRuntime>,
+    mut prepared: NonSendMut<bed_ui::UiFrameContext>,
 ) {
-    if let Err(error) = fonts.apply(&mut desktop.context, &appearance.0.fonts, false) {
+    if let Err(error) = runtime.prepare(&mut desktop.context, &appearance.0, &mut fonts) {
         let error = error.to_string();
         if errors.0.last() != Some(&error) {
             errors.0.push(error);
         }
         return;
     }
-    bed_ui::appearance::apply_style(&mut desktop.context, &appearance.0, false);
+    *prepared = runtime.frame_context();
 }
 
 #[cfg(test)]
@@ -52,7 +58,7 @@ mod tests {
             platform,
             snapshot_context: None,
         })
-        .add_plugins(DesktopAppearancePlugin);
+        .add_plugins(DesktopThemePlugin);
         app.update();
         let generation = app.world().non_send::<DesktopFonts>().generation;
         let padding = app
@@ -61,11 +67,7 @@ mod tests {
             .context
             .style()
             .frame_padding();
-        app.world_mut()
-            .resource_mut::<DesktopAppearance>()
-            .0
-            .fonts
-            .size = f32::NAN;
+        app.world_mut().resource_mut::<DesktopTheme>().0.fonts.size = f32::NAN;
         app.update();
         assert_eq!(
             app.world().non_send::<DesktopFonts>().generation,
@@ -79,6 +81,6 @@ mod tests {
                 .frame_padding(),
             padding
         );
-        assert_eq!(app.world().resource::<DesktopAppearanceErrors>().0.len(), 1);
+        assert_eq!(app.world().resource::<DesktopThemeErrors>().0.len(), 1);
     }
 }

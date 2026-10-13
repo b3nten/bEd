@@ -26,7 +26,8 @@ impl Drop for Cleanup {
 }
 
 fn existing_user_config() -> PathBuf {
-    let config = bed_app_config::Settings::get_user_config_dir()
+    let config = bed_api::launch::ApplicationPaths::new("bed", None, None)
+        .map(|paths| paths.config_dir)
         .expect("a user settings directory is required for the existing LSP configuration")
         .join("lsp.json");
     assert!(config.is_file(), "existing user LSP configuration required");

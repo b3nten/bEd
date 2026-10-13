@@ -25,7 +25,7 @@ use bevy::{
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use bed_runtime::render::{PreviewView, preview_layers, preview_target};
+use bed_desktop::preview::{PreviewView, preview_layers, preview_target};
 pub(super) const SETTLE_FRAMES: u8 = 16;
 
 fn error_scopes(device: &wgpu::Device) -> [wgpu::ErrorScopeGuard; 3] {
@@ -465,7 +465,7 @@ impl SceneGpu {
         scopes: [wgpu::ErrorScopeGuard; 3],
     ) -> Result<(), String> {
         check_scopes(scopes)?;
-        let status = world.resource::<bed_runtime::render::PreviewPipelineStatus>();
+        let status = world.resource::<bed_desktop::preview::PreviewPipelineStatus>();
         if let Some(error) = &status.error {
             return Err(format!("Could not compile model shader: {error}"));
         }

@@ -7,15 +7,47 @@ use serde_json::Value;
 
 pub use api::ShortcutRuntime as WorkbenchShortcuts;
 
-pub fn prepare_shortcuts(world: &mut World, ui: &Ui) {
+/// One immutable resolved map feeds UI routing, native menus and terminal input.
+pub struct ResolvedKeymap {
+    pub bindings: std::rc::Rc<Bindings>,
+    definition_count: usize,
+    overrides: bed_keybindings::Overrides,
+}
+
+pub fn resolve_keymap(world: &mut World) {
     world.init_non_send::<WorkbenchShortcuts>();
+    let registry = world.resource::<api::WorkbenchRegistry>();
+    let definition_count = registry.commands().len() + registry.shortcuts().len();
+    let overrides = world
+        .get_resource::<bed_api::settings::SettingsSnapshot>()
+        .filter(|snapshot| snapshot.get("bed.workbench", "keybindings").is_some())
+        .map(bed_api::settings::SettingsSnapshot::keybindings)
+        .unwrap_or_else(|| world.non_send::<WorkbenchShortcuts>().overrides.clone());
+    if world
+        .get_non_send::<ResolvedKeymap>()
+        .is_some_and(|map| map.definition_count == definition_count && map.overrides == overrides)
+    {
+        return;
+    }
+    let bindings = std::rc::Rc::new(Bindings::new(
+        registry.shortcuts().to_vec(),
+        &overrides,
+        Platform::current(),
+    ));
+    world.non_send_mut::<WorkbenchShortcuts>().overrides = overrides.clone();
+    world.insert_non_send(ResolvedKeymap {
+        bindings,
+        definition_count,
+        overrides,
+    });
+}
+
+pub fn prepare_shortcuts(world: &mut World, ui: &Ui) {
+    resolve_keymap(world);
     if world.non_send::<WorkbenchShortcuts>().prepared_frame == Some(ui.frame_count()) {
         return;
     }
-    let actions = world
-        .resource::<api::WorkbenchRegistry>()
-        .shortcuts()
-        .to_vec();
+    let bindings = world.non_send::<ResolvedKeymap>().bindings.clone();
     let live_recording = world
         .non_send::<WorkbenchShortcuts>()
         .recording
@@ -26,11 +58,7 @@ pub fn prepare_shortcuts(world: &mut World, ui: &Ui) {
     let mut runtime = world.non_send_mut::<WorkbenchShortcuts>();
     runtime.prepared_frame = Some(ui.frame_count());
     runtime.recording = live_recording;
-    runtime.input.bindings = std::rc::Rc::new(Bindings::new(
-        actions,
-        &runtime.overrides,
-        Platform::current(),
-    ));
+    runtime.input.bindings = bindings;
     runtime.input.begin_frame(ui);
     runtime.focus = None;
     if runtime.recording.is_some()

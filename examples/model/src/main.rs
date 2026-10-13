@@ -1,9 +1,10 @@
 //! A typed model with two views and core document/history coordination.
+use bed_app::bed_core;
 use serde_json::json;
 use std::time::{Duration, Instant};
 use {
-    bed_core::BedCorePlugin, bed_core::DocumentBinding, bed_core::DocumentModel,
-    bed_core::api::workbench::*, bed_core::bed_documents::DocumentId, bed_core::bevy::prelude::*,
+    bed_core::DocumentBinding, bed_core::DocumentModel, bed_core::api::workbench::*,
+    bed_core::bed_documents::DocumentId, bed_core::bevy::prelude::*,
 };
 
 #[derive(Clone)]
@@ -254,17 +255,35 @@ fn smoke(world: &mut World) {
     }
     world.resource_mut::<Smoke>().phase += 1;
 }
-fn main() {
+fn main() -> std::io::Result<()> {
     let smoke_test = std::env::args().any(|argument| argument == "--smoke-test");
-    let mut app = App::new();
-    app.add_plugins((BedCorePlugin::default(), GraphPlugin));
-    if smoke_test {
-        app.insert_resource(Smoke {
-            phase: 0,
-            started: Instant::now(),
-            save: None,
-        })
-        .add_systems(Update, smoke);
+    let launch = match bed_app::Application::new("example.model", "Typed model editor")?
+        .dispatch(std::env::args_os())?
+    {
+        bed_app::LaunchOutcome::Desktop(launch) => *launch,
+        bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+    };
+    let launch = if smoke_test {
+        launch.config_directory(
+            std::env::temp_dir().join(format!("bed-model-example-config-{}", std::process::id())),
+        )
+    } else {
+        launch
+    };
+    let exit = launch.run(|app| {
+        app.add_plugins(GraphPlugin);
+        if smoke_test {
+            app.insert_resource(Smoke {
+                phase: 0,
+                started: Instant::now(),
+                save: None,
+            })
+            .add_systems(Update, smoke);
+        }
+        Ok(())
+    })?;
+    if exit.is_error() {
+        return Err(std::io::Error::other("Model example exited with an error"));
     }
-    app.run();
+    Ok(())
 }

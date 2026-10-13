@@ -7,10 +7,8 @@ license.workspace = true
 
 [dependencies]
 bed-keybindings = { workspace = true }
-bed-documents = { workspace = true }
-bed-app-config = { workspace = true }
 bed-ui = { workspace = true, features = ["imgui"] }
-bed-api = { workspace = true  , features = ["documents"] }
+bed-api = { workspace = true }
 bevy = { workspace = true, features = ["std"] }
 dear-imgui-rs = { workspace = true }
 serde_json = { workspace = true }

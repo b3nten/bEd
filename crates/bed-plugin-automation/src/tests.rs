@@ -1,6 +1,3 @@
-#[cfg(feature = "app")]
-#[path = "../../../tests/support/editor_host.rs"]
-mod editor_host;
 use super::*;
 use bed_api::workbench::{Panel, PanelCreation, PanelResult};
 
@@ -195,7 +192,6 @@ fn exit_completes_waiting_operations_instead_of_leaving_pending_status() {
     assert_eq!(result(&mut app, id).unwrap_err().kind, ErrorKind::Failed);
 }
 
-#[cfg(feature = "app")]
 #[test]
 fn disabled_commands_share_menu_availability_and_do_not_execute() {
     #[derive(Resource, Default)]
@@ -252,236 +248,57 @@ fn disabled_commands_share_menu_availability_and_do_not_execute() {
     assert!(!command.enabled);
 }
 
-#[cfg(feature = "app")]
-mod documents {
-    use super::*;
-    use std::{
-        fs,
-        path::PathBuf,
-        sync::atomic::{AtomicU64, Ordering},
+#[cfg(feature = "documents")]
+#[test]
+fn document_observations_work_without_application_policy_and_reject_retired_handles() {
+    let mut first = app();
+    let mut session = bed_documents::DocumentSession::new();
+    session.create_document(b"observed").unwrap();
+    first.insert_non_send(session);
+    let inspect = submit(&mut first, Operation::Inspect);
+    first.update();
+    let OperationValue::Snapshot(snapshot) = result(&mut first, inspect).unwrap() else {
+        panic!("Document snapshot")
     };
-    struct Fixture {
-        app: App,
-        root: PathBuf,
-    }
-    impl Fixture {
-        fn new() -> Self {
-            static NEXT: AtomicU64 = AtomicU64::new(0);
-            let root = std::env::temp_dir().join(format!(
-                "bed-automation-doc-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir_all(&root).unwrap();
-            let mut app = App::new();
-            editor_host::install(
-                &mut app,
-                bed_app_config::Settings::with_paths(
-                    root.join("config"),
-                    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
-                )
-                .unwrap(),
-            )
-            .unwrap();
-            app.add_plugins(bed_app::AppRuntimePlugin {
-                options: bed_app::AppOptions {
-                    working_directory: Some(root.clone()),
-                    ..default()
-                },
-            })
-            .add_plugins(bed_plugin_editor::EditorPlugin)
-            .add_plugins(AutomationPlugin);
-            app.update();
-            Self { app, root }
-        }
-        fn run(&mut self, operation: AppOperation) -> OperationResult {
-            let id = submit(&mut self.app, Operation::App(operation));
-            self.app.update();
-            result(&mut self.app, id)
-        }
-        fn inspect(&mut self) -> Snapshot {
-            let id = submit(&mut self.app, Operation::Inspect);
-            self.app.update();
-            let OperationValue::Snapshot(snapshot) = result(&mut self.app, id).unwrap() else {
-                panic!("snapshot")
-            };
-            snapshot
-        }
-        fn open(&mut self) -> DocumentInfo {
-            let path = self.root.join("document.txt");
-            fs::write(&path, b"original").unwrap();
-            self.run(AppOperation::OpenFile {
-                path,
-                viewer: None,
-                additional: false,
-            })
-            .unwrap();
-            self.inspect().documents.remove(0)
-        }
-    }
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.root);
-        }
-    }
-    #[test]
-    fn edits_undo_and_save_complete_through_the_same_editor_queue() {
-        let mut fixture = Fixture::new();
-        let document = fixture.open();
-        let snapshot = fixture.inspect();
-        let panel = snapshot
-            .panels
-            .iter()
-            .find(|panel| panel.panel_type == bed_plugin_editor::TEXT_PANEL_TYPE)
-            .expect("text panel");
-        assert!(panel.title.contains("document.txt"));
-        assert_eq!(panel.readiness, Readiness::Ready);
-        fixture
-            .run(AppOperation::ApplyEdits {
-                document: document.handle,
-                revision: document.revision,
-                edits: vec![bed_documents::session::ByteEdit {
-                    range: 0..8,
-                    bytes: b"changed".to_vec(),
-                }],
-            })
-            .unwrap();
-        let OperationValue::Document(read) = fixture
-            .run(AppOperation::ReadDocument(document.handle))
-            .unwrap()
-        else {
-            panic!("read")
-        };
-        assert_eq!(read.bytes, b"changed");
-        assert!(read.info.dirty);
-        let OperationValue::Saved(saved) = fixture
-            .run(AppOperation::Save(vec![document.handle]))
-            .unwrap()
-        else {
-            panic!("actual save receipt")
-        };
-        assert_eq!(saved.len(), 1);
-        assert_eq!(fs::read(&document.path).unwrap(), b"changed");
-        fixture.run(AppOperation::Undo(document.handle)).unwrap();
-        let OperationValue::Document(read) = fixture
-            .run(AppOperation::ReadDocument(document.handle))
-            .unwrap()
-        else {
-            panic!("read")
-        };
-        assert_eq!(read.bytes, b"original");
-        assert!(read.info.dirty);
-    }
-    #[test]
-    fn stale_edits_fail_without_mutating_the_current_document() {
-        let mut fixture = Fixture::new();
-        let document = fixture.open();
-        fixture
-            .run(AppOperation::ApplyEdits {
-                document: document.handle,
-                revision: document.revision,
-                edits: vec![bed_documents::session::ByteEdit {
-                    range: 0..8,
-                    bytes: b"new".to_vec(),
-                }],
-            })
-            .unwrap();
-        let error = fixture
-            .run(AppOperation::ApplyEdits {
-                document: document.handle,
-                revision: document.revision,
-                edits: vec![bed_documents::session::ByteEdit {
-                    range: 0..3,
-                    bytes: b"stale".to_vec(),
-                }],
-            })
-            .unwrap_err();
-        assert_eq!(error.kind, ErrorKind::RevisionConflict);
-        let OperationValue::Document(read) = fixture
-            .run(AppOperation::ReadDocument(document.handle))
-            .unwrap()
-        else {
-            panic!("read")
-        };
-        assert_eq!(read.bytes, b"new");
-    }
-    #[test]
-    fn unknown_directory_preserves_document_handles_without_saving_a_workspace() {
-        let mut fixture = Fixture::new();
-        let document = fixture.open();
-        let directory = fixture.root.join("temporary");
-        fs::create_dir(&directory).unwrap();
-        fixture
-            .run(AppOperation::OpenDirectory(bed_api::files::FileLocation {
-                provider: bed_api::files::FileProviderId::Local,
-                path: directory.clone(),
-            }))
-            .unwrap();
-        let OperationValue::Document(read) = fixture
-            .run(AppOperation::ReadDocument(document.handle))
-            .unwrap()
-        else {
-            panic!("read")
-        };
-        assert_eq!(read.bytes, b"original");
-        assert_eq!(
-            fixture
-                .app
-                .world()
-                .resource::<bed_api::files::FileContext>()
-                .directory,
-            fs::canonicalize(&directory).unwrap()
-        );
-        assert!(!directory.join(".bed").exists());
-        #[cfg(feature = "workspaces")]
-        assert_eq!(
-            fixture
-                .app
-                .world()
-                .resource::<bed_plugin_workspaces::WorkspaceAttachment>(),
-            &bed_plugin_workspaces::WorkspaceAttachment::Temporary
-        );
-    }
-    #[test]
-    #[cfg(feature = "workspaces")]
-    fn attachment_preserves_handles_and_replacement_retires_them() {
-        let mut fixture = Fixture::new();
-        let document = fixture.open();
-        fixture
-            .run(AppOperation::AttachWorkspace(fixture.root.clone()))
-            .unwrap();
-        assert!(
-            fixture
-                .run(AppOperation::ReadDocument(document.handle))
-                .is_ok()
-        );
-        let replacement = fixture.root.join("other");
-        fs::create_dir(&replacement).unwrap();
-        let replacement = bed_plugin_workspaces::WorkspaceSpec::local(
-            fs::canonicalize(replacement).unwrap().to_str().unwrap(),
-        );
-        fixture
-            .app
-            .world_mut()
-            .resource_mut::<bed_plugin_workspaces::WorkspaceRepositoryResource>()
-            .0
-            .commit(
-                replacement.clone(),
-                bed_plugin_workspaces::WorkspaceSnapshot {
-                    layouts: Value::Null,
-                    plugins: serde_json::json!({}),
-                },
-            )
-            .unwrap();
-        fixture
-            .run(AppOperation::SetWorkspace(replacement))
-            .unwrap();
-        assert_eq!(
-            fixture
-                .run(AppOperation::ReadDocument(document.handle))
-                .unwrap_err()
-                .kind,
-            ErrorKind::StaleHandle
-        );
-    }
+    let document = snapshot.documents[0].handle;
+    let read = submit(&mut first, Operation::ReadDocument(document));
+    first.update();
+    let OperationValue::Document(read) = result(&mut first, read).unwrap() else {
+        panic!("Document read receipt")
+    };
+    assert_eq!(read.bytes, b"observed");
+    first.insert_non_send(bed_documents::DocumentSession::new());
+    let stale = submit(&mut first, Operation::ReadDocument(document));
+    first.update();
+    assert_eq!(
+        result(&mut first, stale).unwrap_err().kind,
+        ErrorKind::StaleHandle
+    );
+    let mut other = app();
+    other.insert_non_send(bed_documents::DocumentSession::new());
+    let cross_app = submit(&mut other, Operation::ReadDocument(document));
+    other.update();
+    assert_eq!(
+        result(&mut other, cross_app).unwrap_err().kind,
+        ErrorKind::StaleHandle
+    );
+}
+
+#[test]
+fn readiness_uses_the_registered_frontend_without_application_policy() {
+    let mut app = app();
+    let panel = open(&mut app);
+    let frontend = app
+        .world()
+        .get::<bed_api::workbench::PanelFrontend>(panel.entity())
+        .map_or(panel.entity(), |frontend| frontend.0);
+    app.world_mut()
+        .entity_mut(frontend)
+        .insert(bed_api::workbench::PanelReadiness::Pending);
+    let inspect = submit(&mut app, Operation::Inspect);
+    app.update();
+    let OperationValue::Snapshot(snapshot) = result(&mut app, inspect).unwrap() else {
+        panic!("Snapshot")
+    };
+    assert_eq!(snapshot.panels[0].readiness, Readiness::Pending);
 }

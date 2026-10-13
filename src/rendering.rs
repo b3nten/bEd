@@ -1,7 +1,7 @@
 //! Native render test support; production composition belongs to bed-plugin-effects.
+use bed_desktop::bevy;
 use bed_plugin_effects::desktop::{EffectsState, install};
 use bed_plugin_effects::shader_manager::ShaderSettings;
-use bed_runtime::bevy;
 use bevy::{
     prelude::*,
     render::{
@@ -195,7 +195,7 @@ mod tests {
     }
 
     use super::*;
-    use bed_runtime::render::BedRenderPlugin;
+    use bed_desktop::preview::PreviewRenderPlugin;
     use bed_ui::{
         TextureHandle,
         gpu::{RenderOutput, RenderTarget, renderer_device_descriptor},
@@ -386,8 +386,8 @@ mod tests {
                 .unwrap();
         let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let mut app = App::new();
-        app.add_plugins(bed_runtime::BedRuntimePlugin)
-            .add_plugins(BedRenderPlugin {
+        app.add_plugins((bevy::MinimalPlugins, bevy::input::InputPlugin))
+            .add_plugins(PreviewRenderPlugin {
                 resources: manual_resources(&instance, &adapter, &device, &queue),
             });
         install(&mut app);

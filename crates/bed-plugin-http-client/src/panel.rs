@@ -5,8 +5,8 @@ use crate::{
 };
 use bed_api::features::HostAction;
 use bed_ui::{
+    components::{tooltip, tooltip_text},
     presentation::{fit_text, readable_color, same_line_if_fits},
-    util::popup_style::{controls_style, tooltip, tooltip_text},
 };
 use dear_imgui_rs::{ImString, ListClipper, MouseCursor, StyleColor, StyleVar, Ui};
 use serde::{Deserialize, Serialize};
@@ -108,10 +108,9 @@ impl HttpView {
         data: &Shared,
         requests: &mut Vec<HostAction>,
     ) -> Vec<HttpAction> {
-        let _controls = controls_style(ui);
+        let _controls =
+            bed_ui::components::compact_controls_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         let fs = ui.current_font_size();
-        let _spacing = ui.push_style_var(StyleVar::ItemSpacing([fs * 0.5, fs * 0.3]));
-        let _padding = ui.push_style_var(StyleVar::FramePadding([fs * 0.45, fs * 0.2]));
         let _rounding = ui.push_style_var(StyleVar::ChildRounding(fs * 0.35));
         let style = ui.clone_style();
         let gap = style.item_spacing()[0];
@@ -143,7 +142,7 @@ impl HttpView {
                 Some(location) => format!("Saved {location}. Requests run on this computer."),
                 None => "Requests run on this computer.".into(),
             };
-            tooltip_text(ui, &hint);
+            tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), &hint);
         }
         if let Some(error) = &data.error {
             ui.text_colored(
@@ -259,7 +258,7 @@ impl HttpView {
                             .hint("Request name")
                             .build();
                         if ui.is_item_hovered() {
-                            tooltip_text(ui, "Request name");
+                            tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), "Request name");
                         }
                         let width = ui.content_region_avail()[0].max(1.0);
                         let method_width = (fs * 7.0).min(width);
@@ -599,7 +598,11 @@ fn edit_rows(ui: &Ui, label: &str, rows: &mut Vec<KeyValue>) -> bool {
         let inline = width >= fs * 28.0;
         changed |= ui.checkbox("##enabled", &mut row.enabled);
         if ui.is_item_hovered() {
-            tooltip_text(ui, format!("Include this {label}"));
+            tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                format!("Include this {label}"),
+            );
         }
         ui.same_line();
         let fields_width = (ui.content_region_avail()[0] - remove_width - gap).max(1.0);
@@ -622,7 +625,11 @@ fn edit_rows(ui: &Ui, label: &str, rows: &mut Vec<KeyValue>) -> bool {
             removed = Some(index);
         }
         if ui.is_item_hovered() {
-            tooltip_text(ui, format!("Remove {label}"));
+            tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                format!("Remove {label}"),
+            );
         }
         if !inline {
             ui.set_next_item_width(width);
@@ -677,7 +684,7 @@ fn request_item(ui: &Ui, request: &Request, selected: bool) -> bool {
 }
 
 fn detail_tooltip(ui: &Ui, text: &str) {
-    tooltip(ui, || {
+    tooltip(ui, &bed_ui::UiFrameContext::for_ui(ui), || {
         let _wrap = ui.push_text_wrap_pos(ui.current_font_size() * 36.0);
         ui.text(text);
     });

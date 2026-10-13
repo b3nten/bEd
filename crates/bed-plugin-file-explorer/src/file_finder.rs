@@ -84,7 +84,7 @@ impl FileFinder {
             return FileFinderAction::None;
         }
         let fs = ui.current_font_size();
-        let _controls = bed_ui::util::popup_style::controls_style(ui);
+        let _controls = bed_ui::components::controls_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         let size = [fs * 30.0, fs * 17.5];
         let (position, pivot) = if let Some((pos, pane_size)) = style
             .embedded_pane

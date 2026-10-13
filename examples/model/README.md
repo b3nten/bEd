@@ -1,7 +1,7 @@
 # Model application
 
-A fresh Bevy application with `BedCorePlugin` and one custom panel plugin. Two
-panels share a typed graph document. Moving a node commits one semantic change;
+An application launched through `bed_app::Application` with one custom panel
+plugin. Two panels share a typed graph document. Moving a node commits one semantic change;
 undo/redo updates both panels through the common document commands.
 
 ```sh

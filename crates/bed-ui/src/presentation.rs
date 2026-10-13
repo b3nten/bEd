@@ -58,7 +58,7 @@ pub fn directory_label(ui: &Ui, directory: &str) {
     }
     ui.text_disabled(label);
     if ui.is_item_hovered() {
-        ui.tooltip_text(directory);
+        crate::components::tooltip_text(ui, &crate::UiFrameContext::for_ui(ui), directory);
     }
 }
 

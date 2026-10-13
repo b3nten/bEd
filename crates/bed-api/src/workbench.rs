@@ -1124,12 +1124,9 @@ pub struct PanelType {
     pub singleton: bool,
     /// Placement when constructing the initial workspace layout.
     pub placement: PanelPlacement,
-    /// Legacy runtime placement hint. The tiled workbench chooses destinations
+    /// Runtime placement hint. The tiled workbench chooses destinations
     /// from the action's origin and any explicit area target.
     pub open_placement: PanelPlacement,
-    /// An old persisted panel kind, unique across panel types. New workspace
-    /// state should use the canonical `id` instead.
-    pub legacy_kind: Option<&'static str>,
     pub id: &'static str,
     pub plugin: &'static str,
 }

@@ -92,7 +92,7 @@ impl Plugin for GitPlugin {
                 registrar.menu(MenuSlot::File, DIFF_COMMAND);
                 registrar.menu(MenuSlot::TextSelection, DIFF_COMMAND);
                 registrar.toolbar(SHOW_COMMAND);
-                registrar.panel_options(PANEL_ID, true, PanelPlacement::Sidebar, None);
+                registrar.panel_options(PANEL_ID, true, PanelPlacement::Sidebar);
                 registrar.panel_ref(DIFF_PANEL_ID);
             })
             .expect("Git metadata is registered once");

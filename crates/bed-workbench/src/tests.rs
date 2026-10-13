@@ -21,6 +21,36 @@ fn imgui_context() -> dear_imgui_rs::Context {
     context
 }
 
+// Raw ImGui fixtures explicitly own the same UI lifecycle as a desktop frontend.
+#[derive(Resource, Default)]
+pub(super) struct RequestedUiTheme(pub bed_ui::appearance::UiTheme);
+pub(super) fn prepare_ui(world: &mut World, context: &mut dear_imgui_rs::Context) {
+    world.init_resource::<RequestedUiTheme>();
+    let mut theme = world.resource::<RequestedUiTheme>().0.clone();
+    // Raw fixtures initially leave FontSizeBase at zero; their default font is 13px.
+    theme.fonts.size = context.style().font_size_base().max(13.0);
+    let mut runtime = world
+        .remove_non_send::<bed_ui::UiRuntime>()
+        .unwrap_or_else(|| bed_ui::UiRuntime::new(context));
+    let mut fonts = world
+        .remove_non_send::<bed_ui::font::UiFonts>()
+        .unwrap_or_default();
+    runtime.prepare(context, &theme, &mut fonts).unwrap();
+    context
+        .font_atlas()
+        .try_claim_legacy_renderer()
+        .unwrap()
+        .build();
+    world.insert_non_send(runtime);
+    world.insert_non_send(fonts);
+}
+pub(super) fn draw_with_ui(world: &mut World, ui: &Ui, draw: impl FnOnce(&mut World, &Ui)) {
+    let context = world.non_send::<bed_ui::UiRuntime>().frame_context();
+    world.non_send_mut::<bed_ui::UiRuntime>().begin(ui);
+    context.scope(|| draw(world, ui));
+    world.non_send_mut::<bed_ui::UiRuntime>().end(ui);
+}
+
 struct CounterPanel(Entity);
 
 impl Panel for CounterPanel {

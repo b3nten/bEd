@@ -4,7 +4,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    io::{self, Write},
     path::Path,
+    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 
@@ -12,10 +14,8 @@ use serde_json::{Value, json};
 
 use crate::editing_operations::{OpKind, TextOp};
 
-const UNDO_FILE_NAME: &str = ".undo-redo-bed.json";
 const MAX_STACK: usize = 50;
 const COALESCE: Duration = Duration::from_millis(300);
-const DISK_SAVE_INTERVAL: Duration = Duration::from_millis(3000);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SelectionSnapshot {
@@ -226,11 +226,9 @@ impl FileStack {
 
 #[derive(Clone, Default)]
 pub struct ProjectUndo {
-    pub project_root: String,
     stacks: BTreeMap<String, FileStack>,
     reset_paths: BTreeSet<String>,
     dirty: bool,
-    last_disk_save: Option<Instant>,
     workspace_history_owner: Option<u64>,
 }
 
@@ -256,13 +254,6 @@ impl ProjectUndo {
         self.dirty = true;
     }
 
-    pub fn new(project_root: String) -> Self {
-        Self {
-            project_root,
-            ..Self::default()
-        }
-    }
-
     fn stack_for(&mut self, path: &str) -> Option<&mut FileStack> {
         if path.is_empty() {
             return None;
@@ -277,7 +268,6 @@ impl ProjectUndo {
         if let Some(stack) = self.stack_for(path) {
             stack.commit_pending();
         }
-        self.maybe_save_to_disk();
     }
 
     /// A view boundary seals typing without changing the document or writing disk.
@@ -357,7 +347,6 @@ impl ProjectUndo {
         self.stacks.insert(path.to_owned(), FileStack::default());
         self.reset_paths.insert(path.to_owned());
         self.dirty = true;
-        self.maybe_save_to_disk();
     }
 
     /// Byte edits invalidate earlier text operations, but do not create a
@@ -403,7 +392,6 @@ impl ProjectUndo {
         }
         self.stack_for(path).unwrap().record(edit, Instant::now());
         self.dirty = true;
-        self.maybe_save_to_disk();
     }
 
     pub fn update_pending_cursor(&mut self, path: &str, row: i32, column: i32) {
@@ -559,7 +547,6 @@ impl ProjectUndo {
         }
         let edit = self.stack_for(path)?.undo()?;
         self.dirty = true;
-        self.maybe_save_to_disk();
         Some(edit)
     }
 
@@ -572,33 +559,12 @@ impl ProjectUndo {
         }
         let edit = self.stack_for(path)?.redo()?;
         self.dirty = true;
-        self.maybe_save_to_disk();
         Some(edit)
     }
 
-    pub fn flush(&mut self) {
-        if self.dirty && !self.project_root.is_empty() {
-            self.save_project();
-        }
-    }
-
-    fn maybe_save_to_disk(&mut self) {
-        if !self.dirty || self.project_root.is_empty() {
-            return;
-        }
-        let now = Instant::now();
-        if self
-            .last_disk_save
-            .is_some_and(|last| now.duration_since(last) < DISK_SAVE_INTERVAL)
-        {
-            return;
-        }
-        self.save_project();
-        self.last_disk_save = Some(now);
-    }
-
-    /// Explicit session persistence; commands keep project_root empty.
-    pub fn flush_to(&mut self, root: &Path) -> std::io::Result<()> {
+    /// The document session selects an exact local history destination.
+    /// Mutating commands never write files.
+    pub fn flush_to(&mut self, path: &Path) -> io::Result<()> {
         if !self.dirty {
             return Ok(());
         }
@@ -609,84 +575,82 @@ impl ProjectUndo {
                 continue;
             }
             if stack.has_operations() || self.reset_paths.contains(key) {
-                files.insert(key.clone(), stack.to_json().map_err(std::io::Error::other)?);
+                files.insert(key.clone(), stack.to_json().map_err(io::Error::other)?);
             }
         }
-        if !files.is_empty() {
-            let bytes = serde_json::to_vec_pretty(&json!({"files":files}))
-                .map_err(std::io::Error::other)?;
-            fs::write(root.join(UNDO_FILE_NAME), bytes)?;
+        let parent = path.parent().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "History path requires a parent",
+            )
+        })?;
+        fs::create_dir_all(parent)?;
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path.with_extension("lock"))?;
+        lock.lock()?;
+        static NEXT_WRITE: AtomicU64 = AtomicU64::new(1);
+        let temporary = parent.join(format!(
+            ".history-{}-{}.tmp",
+            std::process::id(),
+            NEXT_WRITE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let result = (|| {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)?;
+            file.write_all(&serde_json::to_vec_pretty(&json!({"files":files}))?)?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&temporary, path)
+        })();
+        if let Err(error) = result {
+            let _ = fs::remove_file(&temporary);
+            return Err(error);
         }
         self.dirty = false;
         self.reset_paths.clear();
         Ok(())
     }
 
-    pub fn merge_project(&mut self, root: &str) {
+    pub fn merge_from(&mut self, path: &Path) -> io::Result<()> {
         let mut loaded = Self::default();
-        loaded.load_project(root);
+        loaded.load_from(path)?;
         for (path, stack) in loaded.stacks {
             self.stacks.entry(path).or_insert(stack);
         }
+        Ok(())
     }
 
-    fn save_project(&mut self) {
-        let path = Path::new(&self.project_root).join(UNDO_FILE_NAME);
-        let mut files = serde_json::Map::new();
-        for (key, stack) in &mut self.stacks {
-            stack.commit_pending();
-            if !stack.has_operations() && !self.reset_paths.contains(key) {
-                continue;
-            }
-            match stack.to_json() {
-                Ok(value) => {
-                    files.insert(key.clone(), value);
-                }
-                Err(error) => eprintln!("Error serializing undo for {key}: {error}"),
-            }
-        }
-        if !files.is_empty() {
-            let value = json!({"files": files});
-            match serde_json::to_vec_pretty(&value)
-                .map_err(std::io::Error::other)
-                .and_then(|bytes| fs::write(path, bytes))
-            {
-                Ok(()) => {}
-                Err(error) => {
-                    eprintln!("Error saving undo state: {error}");
-                    return;
-                }
-            }
-        }
-        self.dirty = false;
-        self.reset_paths.clear();
-    }
-
-    pub fn load_project(&mut self, folder: &str) {
-        if folder.is_empty() {
-            return;
-        }
-        self.stacks.clear();
-        self.reset_paths.clear();
-        self.dirty = false;
-        let path = Path::new(folder).join(UNDO_FILE_NAME);
-        let Ok(bytes) = fs::read(&path) else {
-            return;
+    /// Failed reads leave both existing history and the source file intact.
+    pub fn load_from(&mut self, path: &Path) -> io::Result<()> {
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
         };
-        match serde_json::from_slice::<Value>(&bytes) {
-            Ok(root) => {
-                if let Some(files) = root.get("files").and_then(Value::as_object) {
-                    for (key, value) in files {
-                        self.stacks.insert(key.clone(), FileStack::from_json(value));
-                    }
-                }
-            }
-            Err(error) => {
-                eprintln!("Error loading undo state: {error}");
-                let _ = fs::remove_file(path);
-                self.stacks.clear();
-            }
-        }
+        let value: Value = serde_json::from_slice(&bytes)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let files = value
+            .get("files")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "History files must be an object",
+                )
+            })?;
+        self.stacks = files
+            .iter()
+            .map(|(key, value)| (key.clone(), FileStack::from_json(value)))
+            .collect();
+        self.reset_paths.clear();
+        self.dirty = false;
+        Ok(())
     }
 }
 

@@ -11,9 +11,9 @@ pub use feature::{WorkspacesFrontend, WorkspacesPanelState, WorkspacesPlugin};
 
 use welcome::WelcomeAction;
 
-pub const MODULE_ID: &str = "bed.projects";
-pub const PANEL_ID: &str = "bed.projects.panel";
-pub const NEW_COMMAND: &str = "bed.projects.new";
+pub const MODULE_ID: &str = "bed.workspaces";
+pub const PANEL_ID: &str = "bed.workspaces.panel";
+pub const NEW_COMMAND: &str = "bed.workspaces.new";
 
 /// Requests are applied by the native workspace service after panel drawing.
 /// They retain the workspace selected in the originating Workspaces panel.

@@ -97,7 +97,8 @@ pub struct SessionOptions {
     pub git: bool,
     #[cfg(feature = "ide-services")]
     pub highlighting: bool,
-    pub persistent_history: bool,
+    /// Exact local destination for text history; remote sessions keep history in memory.
+    pub history_path: Option<PathBuf>,
     #[cfg(feature = "ide-services")]
     pub lsp_config: Option<PathBuf>,
     #[cfg(feature = "ide-services")]
@@ -371,10 +372,7 @@ impl DocumentSession {
             options.project_root = Some(canonical_root(root)?);
         }
         #[cfg(feature = "ide-services")]
-        let needs_project = options.persistent_history || options.lsp_config.is_some();
-        #[cfg(not(feature = "ide-services"))]
-        let needs_project = options.persistent_history;
-        if needs_project && options.project_root.is_none() {
+        if options.lsp_config.is_some() && options.project_root.is_none() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Configured services require an explicit project root",
@@ -382,11 +380,8 @@ impl DocumentSession {
         }
         let mut session = Self::default();
         session.options = options;
-        if session.options.persistent_history {
-            session
-                .history
-                .borrow_mut()
-                .load_project(path_string(session.options.project_root.as_ref().unwrap())?);
+        if let Some(path) = &session.options.history_path {
+            session.history.borrow_mut().load_from(path)?;
         }
         #[cfg(feature = "ide-services")]
         session.initialize_lsp();
@@ -2142,13 +2137,12 @@ impl DocumentSession {
             }
             self.collect_notifications(id, None);
         }
-        if self.options.persistent_history
+        if let Some(path) = &self.options.history_path
             && self
                 .last_history
                 .is_none_or(|last| last.elapsed() >= Duration::from_secs(3))
-            && let Some(root) = &self.options.project_root
         {
-            let result = self.history.borrow_mut().flush_to(root);
+            let result = self.history.borrow_mut().flush_to(path);
             match result {
                 Ok(()) => self.last_history = Some(Instant::now()),
                 Err(error) => self.record_error(None, "history", &error),
@@ -2225,10 +2219,8 @@ impl DocumentSession {
                 return Err(error);
             }
         }
-        if self.options.persistent_history
-            && let Some(root) = &self.options.project_root
-        {
-            self.history.borrow_mut().flush_to(root)?;
+        if let Some(path) = &self.options.history_path {
+            self.history.borrow_mut().flush_to(path)?;
         }
         for id in self.document_ids() {
             self.close_document(id, ClosePolicy::Discard)?;
@@ -2255,31 +2247,39 @@ impl DocumentSession {
             options.project_root = Some(canonical_root(root)?);
         }
         #[cfg(feature = "ide-services")]
-        let needs_project = options.persistent_history || options.lsp_config.is_some();
-        #[cfg(not(feature = "ide-services"))]
-        let needs_project = options.persistent_history;
-        if needs_project && options.project_root.is_none() {
+        if options.lsp_config.is_some() && options.project_root.is_none() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Configured services require an explicit project root",
             ));
         }
+        #[cfg(feature = "ide-services")]
         let root_changed = options.project_root != self.options.project_root;
         #[cfg(feature = "ide-services")]
         let highlight_changed = options.highlighting != self.options.highlighting;
         let monitoring_changed = options.monitoring != self.options.monitoring;
         let start_autosave = options.autosave.is_some() && self.options.autosave.is_none();
-        let start_history = options.persistent_history && !self.options.persistent_history;
+        let history_changed = options.history_path != self.options.history_path;
+        let next_history = if history_changed {
+            options
+                .history_path
+                .as_ref()
+                .map(|path| {
+                    let mut history = self.history.borrow().clone();
+                    history.merge_from(path)?;
+                    Ok::<_, io::Error>(history)
+                })
+                .transpose()?
+        } else {
+            None
+        };
         #[cfg(feature = "ide-services")]
         let lsp_changed = root_changed
             || options.lsp_config != self.options.lsp_config
             || options.lsp_config_mode != self.options.lsp_config_mode
             || options.lsp_file_observations != self.options.lsp_file_observations;
-        if root_changed
-            && self.options.persistent_history
-            && let Some(root) = &self.options.project_root
-        {
-            self.history.borrow_mut().flush_to(root)?;
+        if history_changed && let Some(path) = &self.options.history_path {
+            self.history.borrow_mut().flush_to(path)?;
         }
         #[cfg(feature = "ide-services")]
         if lsp_changed {
@@ -2297,10 +2297,11 @@ impl DocumentSession {
         if monitoring_changed {
             self.last_monitor = None;
         }
-        if self.options.persistent_history && (root_changed || start_history) {
-            self.history
-                .borrow_mut()
-                .merge_project(path_string(self.options.project_root.as_ref().unwrap())?);
+        if let Some(history) = next_history {
+            *self.history.borrow_mut() = history;
+        }
+        if history_changed {
+            self.last_history = None;
         }
         #[cfg(feature = "ide-services")]
         self.initialize_lsp();

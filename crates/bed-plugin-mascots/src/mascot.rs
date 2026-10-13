@@ -11,13 +11,13 @@ use std::io::Cursor;
 pub const PANEL_ID: &str = "bed.duck.panel";
 
 pub(crate) fn register_bed_metadata(registrar: &mut FeatureRegistrar<'_>) {
-    registrar.panel_options("bed.mascot.panel", true, PanelPlacement::Sidebar, None);
+    registrar.panel_options("bed.mascot.panel", true, PanelPlacement::Sidebar);
     registrar.command_ref("bed.mascot.open");
     registrar.menu(MenuSlot::Application, "bed.mascot.open");
 }
 
 pub(crate) fn register_duck_metadata(registrar: &mut FeatureRegistrar<'_>) {
-    registrar.panel_options(PANEL_ID, true, PanelPlacement::Sidebar, None);
+    registrar.panel_options(PANEL_ID, true, PanelPlacement::Sidebar);
 }
 
 pub(crate) struct MascotPanel {

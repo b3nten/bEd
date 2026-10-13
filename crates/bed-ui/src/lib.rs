@@ -4,10 +4,18 @@
 //! Default features are empty: color, appearance values and texture identities
 //! require no native UI, GPU, editor, or application configuration. Enable `imgui`
 //! for widgets, icons and atlas helpers, and `gpu` for canvas rendering contracts.
-//! Embedding hosts keep their own context and call `UiFonts::apply` with embedded
-//! mode before a frame, then select the returned main font while drawing.
+//! `UiRuntime` prepares fonts, theme and motion for an ImGui context before a
+//! frame; widgets read its immutable `UiFrameContext` while drawing.
+#[cfg(feature = "imgui")]
+mod animation;
 pub mod appearance;
+#[cfg(feature = "imgui")]
+pub mod context;
+#[cfg(feature = "imgui")]
+pub use context::{UiFrameContext, UiRuntime};
 pub mod color;
+#[cfg(feature = "imgui")]
+pub mod components;
 #[cfg(feature = "imgui")]
 pub mod font;
 #[cfg(feature = "gpu")]

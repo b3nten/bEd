@@ -3,7 +3,7 @@
 //! required and the application gains no test-only CLI modes.
 #[path = "support/editor_host.rs"]
 mod editor_host;
-use bed_app_config::Settings;
+use bed::config::Settings;
 use std::io;
 
 use bed_documents::{
@@ -1858,12 +1858,12 @@ impl NavigationWorkbench {
             bevy::prelude::Entity,
         ),
     ) -> Self {
-        use bed_app::{AppOptions, AppRuntimePlugin, WindowCommand};
+        use bed::application::{AppOptions, AppRuntimePlugin, WindowCommand};
         use bed_editing::text_commands::CursorReveal;
         let fixture = PoolFixture::new(9910, "basic");
         let path = fixture.root.join("navigation.rs");
         fs::write(&path, "é🙂symbol\nline target\nlast\n").unwrap();
-        let mut settings = Settings::with_paths(
+        let settings = Settings::with_paths(
             fixture.root.join("config"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")),
         )
@@ -1874,28 +1874,18 @@ impl NavigationWorkbench {
         if scenario == "navigation-timeout" {
             configuration["language_servers"]["rust"]["timeout_secs"] = json!(1);
         }
+        fs::create_dir_all(&settings.config_dir).unwrap();
         fs::write(
             settings.config_dir.join("lsp.json"),
             serde_json::to_vec(&configuration).unwrap(),
         )
         .unwrap();
-        for key in [
-            "terminal_visible",
-            "sidebar_visible",
-            "treesitter",
-            "git_changed_lines",
-            "minimap",
-        ] {
-            settings.settings[key] = json!(false);
-        }
-        settings.sidebar_visible = false;
-        settings.terminal_visible = false;
         let mut context = dear_imgui_rs::Context::create();
         context.set_ini_filename(None::<PathBuf>).unwrap();
         let mut app = bevy::app::App::new();
         editor_host::install(&mut app, settings).unwrap();
         app.add_plugins((
-            bed_runtime::BedRuntimePlugin,
+            (bevy::MinimalPlugins, bevy::input::InputPlugin),
             AppRuntimePlugin {
                 options: AppOptions {
                     working_directory: Some(fixture.root.clone()),
@@ -1905,19 +1895,44 @@ impl NavigationWorkbench {
             bed_plugin_editor::EditorPlugin,
         ));
         app.update();
+        bed_core::settings::apply_settings_request(
+            app.world_mut(),
+            &bed_api::settings::SettingsRequest::batch(
+                [
+                    "terminal_visible",
+                    "sidebar_visible",
+                    "treesitter",
+                    "git_changed_lines",
+                    "minimap",
+                ]
+                .into_iter()
+                .map(|key| {
+                    bed_api::settings::SettingsChange::set(
+                        bed::config::settings_owner(key),
+                        key,
+                        false,
+                    )
+                })
+                .collect(),
+            ),
+        )
+        .unwrap();
+        bed::config::sync_view(app.world_mut()).unwrap();
+
         editor_host::prepare_ui(app.world_mut(), &mut context).unwrap();
-        let request_tab = bed_app::open_file(app.world_mut(), &path, None, false, None).unwrap();
+        let request_tab =
+            bed::application::open_file(app.world_mut(), &path, None, false, None).unwrap();
         let document = app
             .world()
-            .resource::<bed_app::DocumentNavigation>()
+            .resource::<bed::application::DocumentNavigation>()
             .active_document
             .unwrap();
         let requesting = app
             .world()
-            .resource::<bed_app::DocumentNavigation>()
+            .resource::<bed::application::DocumentNavigation>()
             .active_view
             .unwrap();
-        bed_app::dispatch_app_command(
+        bed::application::dispatch_app_command(
             app.world_mut(),
             WindowCommand::DuplicateView,
             bed_api::workbench::PanelTarget::LastFocused,
@@ -1925,12 +1940,12 @@ impl NavigationWorkbench {
         .unwrap();
         let sibling = app
             .world()
-            .resource::<bed_app::DocumentNavigation>()
+            .resource::<bed::application::DocumentNavigation>()
             .active_view
             .unwrap();
         let sibling_tab = app
             .world()
-            .resource::<bed_app::WorkbenchLayout>()
+            .resource::<bed::application::WorkbenchLayout>()
             .focused
             .unwrap();
         app.world_mut()
@@ -2000,13 +2015,13 @@ impl NavigationWorkbench {
                 [1600.0, 1000.0],
                 1.0 / 60.0,
             ));
-        bed_app::draw_ui(self.app.world_mut(), self.context.frame()).unwrap();
+        bed::application::draw_ui(self.app.world_mut(), self.context.frame()).unwrap();
         assert!(self.context.render_legacy().draw_data().total_vtx_count() > 0);
-        bed_app::process_app_requests(self.app.world_mut()).unwrap();
+        bed::application::process_app_requests(self.app.world_mut()).unwrap();
     }
 
     fn focus(&mut self, tab: bevy::prelude::Entity) {
-        bed_app::focus_panel(self.app.world_mut(), tab, true).unwrap();
+        bed::application::focus_panel(self.app.world_mut(), tab, true).unwrap();
         self.frame();
         self.frame();
     }
@@ -2023,7 +2038,7 @@ impl NavigationWorkbench {
         self.app
             .world_mut()
             .query::<(
-                &bed_app::PanelRecord,
+                &bed::application::PanelRecord,
                 &bed_api::workbench::PanelPresentation,
             )>()
             .iter(self.app.world())
@@ -2034,22 +2049,22 @@ impl NavigationWorkbench {
     fn active_view(&self) -> Option<ViewId> {
         self.app
             .world()
-            .resource::<bed_app::DocumentNavigation>()
+            .resource::<bed::application::DocumentNavigation>()
             .active_view
     }
 
     fn close(&mut self, panel: bevy::prelude::Entity) {
-        let request = bed_app::capture_app_request_from(
+        let request = bed::application::capture_app_request_from(
             self.app.world(),
-            bed_app::AppAction::ClosePanel(panel),
+            bed::application::AppAction::ClosePanel(panel),
             bed_api::workbench::PanelTarget::LastFocused,
             Some(panel),
         );
-        let id = bed_app::submit_app_request(self.app.world_mut(), request);
+        let id = bed::application::submit_app_request(self.app.world_mut(), request);
         self.app.update();
         assert!(matches!(
-            bed_app::poll_app_request(self.app.world_mut(), id),
-            Some(Ok(bed_app::AppRequestOutcome::Closed { .. }))
+            bed::application::poll_app_request(self.app.world_mut(), id),
+            Some(Ok(bed::application::AppRequestOutcome::Closed { .. }))
         ));
     }
 
@@ -2158,7 +2173,7 @@ fn workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs()
         let mut layout = fixture
             .app
             .world_mut()
-            .resource_mut::<bed_app::WorkbenchLayout>();
+            .resource_mut::<bed::application::WorkbenchLayout>();
         let tiling = &mut layout.tiling;
         let source_area = tiling.area_for(source_id).unwrap();
         let rect = tiling.layout.area(source_area).rect;
@@ -2189,7 +2204,7 @@ fn workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs()
     let panel = fixture
         .app
         .world()
-        .resource::<bed_app::WorkbenchLayout>()
+        .resource::<bed::application::WorkbenchLayout>()
         .focused
         .unwrap();
     let id = fixture
@@ -2202,7 +2217,7 @@ fn workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs()
         fixture
             .app
             .world()
-            .resource::<bed_app::WorkbenchLayout>()
+            .resource::<bed::application::WorkbenchLayout>()
             .tiling
             .area_for(id),
         Some(source_area),
@@ -2212,7 +2227,7 @@ fn workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs()
         fixture
             .app
             .world()
-            .resource::<bed_app::WorkbenchLayout>()
+            .resource::<bed::application::WorkbenchLayout>()
             .tiling
             .areas
             .iter()
@@ -2247,7 +2262,7 @@ fn workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs()
         fixture
             .app
             .world()
-            .resource::<bed_app::WorkbenchLayout>()
+            .resource::<bed::application::WorkbenchLayout>()
             .tiling
             .areas
             .iter()
@@ -2277,7 +2292,7 @@ fn workbench_multiple_and_stale_definitions_use_guarded_routes() {
     let active = fixture
         .app
         .world()
-        .resource::<bed_app::WorkbenchLayout>()
+        .resource::<bed::application::WorkbenchLayout>()
         .focused
         .unwrap();
     fixture.close(active);
@@ -2391,7 +2406,7 @@ fn workbench_primary_click_sends_clicked_utf16_position() {
             1.0 / 60.0,
         ));
     let ui = fixture.context.frame();
-    bed_app::draw_ui(fixture.app.world_mut(), ui).unwrap();
+    bed::application::draw_ui(fixture.app.world_mut(), ui).unwrap();
     let name = std::ffi::CString::new(format!(
         "###bed_tab_{}",
         fixture
@@ -2561,14 +2576,14 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
     for action in ["shortcut", "primary click", "context menu"] {
         let mut fixture =
             NavigationWorkbench::with_startup("navigation-cold", |app, context, view, tab| {
-                bed_app::focus_panel(app.world_mut(), tab, true).unwrap();
+                bed::application::focus_panel(app.world_mut(), tab, true).unwrap();
                 let mut point = [0.0; 2];
                 // Draw native focus and hit geometry without polling discovery or the
                 // initialize response. The user acts while the server is not ready.
                 for _ in 0..2 {
                     context.prepare_frame(FramePrepareOptions::new([1600.0, 1000.0], 1.0 / 60.0));
                     let ui = context.frame();
-                    bed_app::draw_ui(app.world_mut(), ui).unwrap();
+                    bed::application::draw_ui(app.world_mut(), ui).unwrap();
                     point = navigation_canvas_point(app.world(), ui, tab);
                     drop(context.render_legacy());
                 }
@@ -2607,7 +2622,7 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
                     context.io_mut().add_key_event(Key::F12, true);
                 }
                 context.prepare_frame(FramePrepareOptions::new([1600.0, 1000.0], 1.0 / 60.0));
-                bed_app::draw_ui(app.world_mut(), context.frame()).unwrap();
+                bed::application::draw_ui(app.world_mut(), context.frame()).unwrap();
                 drop(context.render_legacy());
                 context
                     .io_mut()
@@ -2619,7 +2634,7 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
                 context.io_mut().add_key_event(modifier, false);
                 context.prepare_frame(FramePrepareOptions::new([1600.0, 1000.0], 1.0 / 60.0));
                 let ui = context.frame();
-                bed_app::draw_ui(app.world_mut(), ui).unwrap();
+                bed::application::draw_ui(app.world_mut(), ui).unwrap();
                 let menu_point = (action == "context menu").then(|| {
                     let viewer_menu = bed_api::documents::panel_viewer_menu(
                         app.world(),
@@ -2664,13 +2679,13 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
                         .io_mut()
                         .add_mouse_button_event(MouseButton::Left, true);
                     context.prepare_frame(FramePrepareOptions::new([1600.0, 1000.0], 1.0 / 60.0));
-                    bed_app::draw_ui(app.world_mut(), context.frame()).unwrap();
+                    bed::application::draw_ui(app.world_mut(), context.frame()).unwrap();
                     drop(context.render_legacy());
                     context
                         .io_mut()
                         .add_mouse_button_event(MouseButton::Left, false);
                     context.prepare_frame(FramePrepareOptions::new([1600.0, 1000.0], 1.0 / 60.0));
-                    bed_app::draw_ui(app.world_mut(), context.frame()).unwrap();
+                    bed::application::draw_ui(app.world_mut(), context.frame()).unwrap();
                     drop(context.render_legacy());
                 }
                 let activity = app

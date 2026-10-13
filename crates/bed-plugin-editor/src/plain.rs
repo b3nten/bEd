@@ -17,6 +17,7 @@ pub struct EditorPlugin;
 
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
+        register_settings(app.world_mut());
         if !app.is_plugin_added::<bed_workbench::WorkbenchPlugin>() {
             app.add_plugins(bed_workbench::WorkbenchPlugin);
         }
@@ -102,26 +103,19 @@ impl Plugin for EditorPlugin {
 }
 
 fn register_metadata(registrar: &mut FeatureRegistrar<'_>) {
-    registrar.panel_options(
-        TEXT_PANEL_TYPE,
-        false,
-        PanelPlacement::Center,
-        Some("document"),
-    );
-    registrar.panel_options(HEX_PANEL_TYPE, false, PanelPlacement::Center, Some("hex"));
+    registrar.panel_options(TEXT_PANEL_TYPE, false, PanelPlacement::Center);
+    registrar.panel_options(HEX_PANEL_TYPE, false, PanelPlacement::Center);
     registrar.fallback_viewer(
         TEXT_VIEWER,
         "Text editor",
         TEXT_PANEL_TYPE,
         DocumentKind::Text,
-        &["bed.text"],
     );
     registrar.fallback_viewer(
         HEX_VIEWER,
         "Hex editor",
         HEX_PANEL_TYPE,
         DocumentKind::Bytes,
-        &["bed.hex"],
     );
 }
 
@@ -168,6 +162,9 @@ impl Panel for EditorFrontend {
         shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         let mut config = world.non_send::<EditorConfig>().clone();
+        if let Some(settings) = world.get_resource::<bed_api::settings::SettingsSnapshot>() {
+            apply_settings(&mut config, settings);
+        }
         config.options.shortcuts =
             shortcuts.with_scope(bed_keybindings::Scope::panel(bed_keybindings::EDITOR_SCOPE));
         config.options.extensions = world

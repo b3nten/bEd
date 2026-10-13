@@ -15,7 +15,7 @@ fn exact_byte_document_round_trips_and_groups_multiple_splices_in_memory() {
     let path = temp.write("bytes.bin", original);
     let mut session = DocumentSession::with_options(SessionOptions {
         project_root: Some(temp.root().to_owned()),
-        persistent_history: true,
+        history_path: Some(temp.path("history.json")),
         #[cfg(feature = "ide-services")]
         highlighting: true,
         #[cfg(feature = "ide-services")]
@@ -55,7 +55,7 @@ fn exact_byte_document_round_trips_and_groups_multiple_splices_in_memory() {
     session.save(doc).unwrap();
     assert_eq!(fs::read(&path).unwrap(), edited);
     session.tick();
-    if let Ok(history) = fs::read(temp.path(".undo-redo-bed.json")) {
+    if let Ok(history) = fs::read(temp.path("history.json")) {
         let history: serde_json::Value = serde_json::from_slice(&history).unwrap();
         assert!(history["files"].get(path.to_str().unwrap()).is_none());
     }
@@ -358,7 +358,7 @@ fn byte_edits_invalidate_prior_text_history_in_memory_and_after_restart() {
     let path = temp.write("mode-switch.txt", b"abc");
     let options = SessionOptions {
         project_root: Some(temp.root().to_owned()),
-        persistent_history: true,
+        history_path: Some(temp.path("history.json")),
         ..Default::default()
     };
     let mut session = DocumentSession::with_options(options.clone()).unwrap();
@@ -426,7 +426,7 @@ fn byte_save_as_invalidates_destination_text_history_only_after_success() {
         let target = temp.write("destination.txt", b"target");
         let mut session = DocumentSession::with_options(SessionOptions {
             project_root: Some(temp.root().to_owned()),
-            persistent_history: true,
+            history_path: Some(temp.path("history.json")),
             ..Default::default()
         })
         .unwrap();

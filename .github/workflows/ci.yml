@@ -72,7 +72,7 @@ jobs:
         run: cargo test --workspace --locked --all-targets --features bed/automation
       - name: Minimal desktop composition
         run: |
-          cargo check --locked -p bed-core -p bed-plugin-layouts -p bed-storage
+          cargo check --locked -p bed-app -p bed-core -p bed-plugin-layouts -p bed-plugin-settings -p bed-storage
           cargo check --locked -p bed-core --no-default-features --features remote
           cargo check --locked -p bed-example-layouts -p bed-example-terminal -p bed-example-editor -p bed-example-model -p bed-example-game-editor -p bed-example-game-runtime
           cargo check --locked -p bed-ui --no-default-features
@@ -94,7 +94,7 @@ jobs:
           for feature in editor debugger git file-explorer file-search terminal workspaces color-picker settings effects idle source-outline image-viewer model-viewer font-viewer audio-player csv-table markdown-preview json-tree sqlite-browser http-client mascots automation; do
             cargo check --locked -p bed --no-default-features --features "$feature" --bins
           done
-          cargo test --locked -p bed-plugin-automation --features app
+          cargo test --locked -p bed-plugin-automation --features documents
       - name: Headless services and terminal transport
         run: |
           cargo check --locked -p bed-remote-agent -p bed-documents

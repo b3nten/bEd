@@ -15,7 +15,7 @@ use bevy::{
     },
 };
 
-use bed_runtime::render::{PreviewView, preview_layers, preview_target};
+use bed_desktop::preview::{PreviewView, preview_layers, preview_target};
 
 #[derive(Clone, Copy)]
 enum Motion {

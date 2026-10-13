@@ -114,7 +114,7 @@ impl Plugin for DebuggerPlugin {
                 }
                 registrar.menu(MenuSlot::Application, SHOW_COMMAND);
                 registrar.toolbar(SHOW_COMMAND);
-                registrar.panel_options(PANEL_ID, true, PanelPlacement::Bottom, Some("debug"));
+                registrar.panel_options(PANEL_ID, true, PanelPlacement::Bottom);
             })
             .expect("Debug metadata is registered once");
         register(app.world_mut(), MODULE_ID, |registrar| {

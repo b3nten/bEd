@@ -6,8 +6,8 @@ use bed_lsp::{
     rust_recovery::{RustInstallStatus, RustStartupIssue, RustStartupIssueKind},
     workspace_lsp::{ServerInstanceId, WorkspaceLsp},
 };
+use bed_ui::components::{controls_style, tooltip, tooltip_text};
 use bed_ui::presentation::same_line_if_fits;
-use bed_ui::util::popup_style::{controls_style, tooltip, tooltip_text};
 use dear_imgui_rs::{
     ChildFlags, Condition, Key, MouseButton, StyleColor, StyleVar, TreeNodeFlags, Ui, WindowFlags,
     sys,
@@ -213,7 +213,7 @@ impl LspDashboard {
         for info in &mut self.server_infos {
             info.progress = client.dashboard_progress(info);
         }
-        let _controls = controls_style(ui);
+        let _controls = controls_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         let fs = ui.current_font_size();
         let _padding = ui.push_style_var(StyleVar::WindowPadding([fs * 0.7, fs * 0.6]));
         let _rounding = ui.push_style_var(StyleVar::ChildRounding(fs * 0.45));
@@ -239,7 +239,11 @@ impl LspDashboard {
             self.server_infos = client.dashboard_servers();
         }
         if ui.is_item_hovered() {
-            tooltip_text(ui, "Refresh language server status");
+            tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                "Refresh language server status",
+            );
         }
         same_line_if_fits(ui, button_width(ui, "Reload"));
         if ui.button("Reload") {
@@ -259,7 +263,11 @@ impl LspDashboard {
             self.server_infos = client.dashboard_servers();
         }
         if ui.is_item_hovered() {
-            tooltip_text(ui, "Reload the language server configuration");
+            tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                "Reload the language server configuration",
+            );
         }
         same_line_if_fits(ui, button_width(ui, "Open config"));
         if ui.button("Open config") {
@@ -275,7 +283,11 @@ impl LspDashboard {
             }
         }
         if ui.is_item_hovered() {
-            tooltip_text(ui, "Open the language server configuration file");
+            tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                "Open the language server configuration file",
+            );
         }
         ui.spacing();
         // One scroll region keeps long diagnostics and configuration details
@@ -386,7 +398,11 @@ impl LspDashboard {
                         });
                     }
                     if ui.is_item_hovered() {
-                        tooltip_text(ui, "Restart this language server");
+                        tooltip_text(
+                            ui,
+                            &bed_ui::UiFrameContext::for_ui(ui),
+                            "Restart this language server",
+                        );
                     }
                     drop(restart_disabled);
                     ui.spacing();
@@ -670,7 +686,7 @@ fn button_width(ui: &Ui, label: &str) -> f32 {
 fn path_text(ui: &Ui, path: &str) {
     ui.text(display_path(ui, path, ui.content_region_avail()[0]));
     if ui.is_item_hovered() {
-        tooltip(ui, || {
+        tooltip(ui, &bed_ui::UiFrameContext::for_ui(ui), || {
             let _wrap = ui.push_text_wrap_pos(ui.cursor_pos()[0] + ui.current_font_size() * 36.0);
             // text_wrapped overrides this width with the tooltip's initial right edge.
             ui.text(path);

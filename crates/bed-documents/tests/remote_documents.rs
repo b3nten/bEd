@@ -44,9 +44,17 @@ fn main() {
     let context = bed_files::FileContext::remote("fixture", root.clone()).unwrap();
     let services =
         bed_files::FileServices::remote_target(SshTarget::new("fixture"), client.clone());
-    let mut session =
-        DocumentSession::with_file_services(SessionOptions::default(), &context, &services)
-            .unwrap();
+    let history_path = directory.path("must-stay-in-memory/history.json");
+    let mut session = DocumentSession::with_file_services(
+        SessionOptions {
+            history_path: Some(history_path.clone()),
+            ..Default::default()
+        },
+        &context,
+        &services,
+    )
+    .unwrap();
+    assert!(session.options().history_path.is_none());
     assert_eq!(session.request_open_file_auto(&path).unwrap(), None);
     let deadline = Instant::now() + Duration::from_secs(5);
     let document = loop {
@@ -234,6 +242,7 @@ fn main() {
     );
     assert!(session.document_for_path(Path::new(&path)).is_none());
     session.shutdown(ClosePolicy::Discard).unwrap();
+    assert!(!history_path.exists());
 
     let confirmed_path = directory.write("save-confirmed-disconnect.txt", b"original");
     let client = RemoteClient::launch_local(std::env::current_exe().unwrap()).unwrap();

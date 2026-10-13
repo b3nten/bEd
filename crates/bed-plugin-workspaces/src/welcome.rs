@@ -3,9 +3,9 @@ use crate::{WorkspaceSpec, WorkspaceTarget};
 use bed_api::features::HostContext;
 #[cfg(feature = "mascots")]
 use bed_plugin_mascots::{MascotFrame, MascotKind, MascotView};
+use bed_ui::components::tooltip_text;
 #[cfg(feature = "mascots")]
 use bed_ui::gpu::Canvas;
-use bed_ui::util::popup_style::tooltip_text;
 use dear_imgui_rs::{ChildFlags, StyleColor, StyleVar, Ui, WindowFlags};
 use std::path::PathBuf;
 
@@ -144,7 +144,7 @@ impl Welcome {
         // adjusts its colors for button and checkbox contrast.
         #[cfg(feature = "mascots")]
         let scene_accent = ui.style_color(StyleColor::CheckMark);
-        let _controls = bed_ui::util::popup_style::controls_style(ui);
+        let _controls = bed_ui::components::controls_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         let mut action = WelcomeAction::default();
         let fs = ui.current_font_size();
         let available = ui.content_region_avail();
@@ -276,10 +276,13 @@ impl Welcome {
                     let max = ui.item_rect_max();
                     let location = spec.location();
                     if ui.is_item_hovered() {
-                        tooltip_text(ui, &location);
+                        tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), &location);
                     }
                     {
-                        let _menu_style = bed_ui::util::popup_style::context_menu_style(ui);
+                        let _menu_style = bed_ui::components::context_menu_style(
+                            ui,
+                            &bed_ui::UiFrameContext::for_ui(ui),
+                        );
                         if let Some(_menu) = ui.begin_popup_context_item() {
                             if ui.menu_item("Open") {
                                 action = open_recent(spec, self.workspace_actions);
@@ -314,6 +317,7 @@ impl Welcome {
                             if ui.is_item_hovered() {
                                 tooltip_text(
                                     ui,
+                                    &bed_ui::UiFrameContext::for_ui(ui),
                                     "Remove this saved workspace. Files stay on disk.",
                                 );
                             }
@@ -346,7 +350,7 @@ impl Welcome {
         if begin_rename {
             ui.open_popup("Rename Workspace");
         }
-        let _dialog = bed_ui::util::popup_style::dialog_style(ui);
+        let _dialog = bed_ui::components::dialog_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         if let Some(_popup) = ui
             .begin_modal_popup_config("Open remote folder")
             .flags(WindowFlags::ALWAYS_AUTO_RESIZE)

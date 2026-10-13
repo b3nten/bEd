@@ -29,73 +29,89 @@ struct Proof {
     deadline: Instant,
 }
 
-fn main() {
-    let mut app = App::new();
-    app.add_plugins(DesktopPlugins {
-        window: Window {
-            title: "Desktop canvas proof".into(),
-            resolution: (140, 80).into(),
-            ..default()
-        },
-        ..default()
-    });
-    let mut icons = bed_ui::icons::Icons::default();
-    icons.images.insert(
-        "proof".into(),
-        bed_ui::icons::RgbaImage {
-            width: 1,
-            height: 1,
-            pixels: vec![255, 240, 80, 255],
-        },
-    );
-    app.insert_non_send(icons);
-    let mut canvas = |handle, color| {
-        let entity = app
-            .world_mut()
-            .spawn((
-                CanvasOutput(RenderOutput {
-                    handle: TextureHandle(handle),
-                    size: [16, 16],
-                    depth: false,
-                    revision: 0,
-                }),
-                CanvasVisible(true),
-                Source {
-                    color,
-                    panic: false,
-                    calls: 0,
-                },
-            ))
-            .id();
-        let system = app.world_mut().register_system(clear);
-        app.world_mut()
-            .entity_mut(system.entity())
-            .insert(ChildOf(entity));
-        app.world_mut()
-            .entity_mut(entity)
-            .insert(CanvasRenderer(system));
-        entity
+fn main() -> std::io::Result<()> {
+    let launch = match bed_app::Application::new("bed.proof.canvas-smoke", "Desktop proof")?
+        .dispatch(std::env::args_os())?
+    {
+        bed_app::LaunchOutcome::Desktop(launch) => *launch,
+        bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
     };
-    let first = canvas(1, wgpu::Color::RED);
-    let second = canvas(2, wgpu::Color::GREEN);
-    app.insert_resource(Proof {
-        first,
-        second,
-        phase: 0,
-        entered: DesktopFrameId(0),
-        capture: None,
-        external: None,
-        generation: 0,
-        deadline: Instant::now() + Duration::from_secs(45),
-    })
-    .insert_resource(DesktopUi(draw))
-    .add_systems(
-        PreUpdate,
-        advance
-            .after(DesktopCanvasSystems::Render)
-            .before(DesktopSystems::RouteInput),
-    );
-    app.run();
+    let mut app = launch
+        .options(DesktopPlugins {
+            window: Window {
+                title: "Desktop canvas proof".into(),
+                resolution: (140, 80).into(),
+                ..default()
+            },
+            ..default()
+        })
+        .presentation_mode(bed_app::bed_core::CorePresentationMode::Application)
+        .config_directory(
+            std::env::temp_dir().join(format!("bed.proof.canvas-smoke-{}", std::process::id())),
+        )
+        .build(|app| {
+            let mut icons = bed_ui::icons::Icons::default();
+            icons.images.insert(
+                "proof".into(),
+                bed_ui::icons::RgbaImage {
+                    width: 1,
+                    height: 1,
+                    pixels: vec![255, 240, 80, 255],
+                },
+            );
+            app.insert_non_send(icons);
+            let mut canvas = |handle, color| {
+                let entity = app
+                    .world_mut()
+                    .spawn((
+                        CanvasOutput(RenderOutput {
+                            handle: TextureHandle(handle),
+                            size: [16, 16],
+                            depth: false,
+                            revision: 0,
+                        }),
+                        CanvasVisible(true),
+                        Source {
+                            color,
+                            panic: false,
+                            calls: 0,
+                        },
+                    ))
+                    .id();
+                let system = app.world_mut().register_system(clear);
+                app.world_mut()
+                    .entity_mut(system.entity())
+                    .insert(ChildOf(entity));
+                app.world_mut()
+                    .entity_mut(entity)
+                    .insert(CanvasRenderer(system));
+                entity
+            };
+            let first = canvas(1, wgpu::Color::RED);
+            let second = canvas(2, wgpu::Color::GREEN);
+            app.insert_resource(Proof {
+                first,
+                second,
+                phase: 0,
+                entered: DesktopFrameId(0),
+                capture: None,
+                external: None,
+                generation: 0,
+                deadline: Instant::now() + Duration::from_secs(45),
+            })
+            .insert_resource(DesktopUi(draw))
+            .add_systems(
+                PreUpdate,
+                advance
+                    .after(DesktopCanvasSystems::Render)
+                    .before(DesktopSystems::RouteInput),
+            );
+            Ok(())
+        })?;
+    if app.run().is_error() {
+        return Err(std::io::Error::other("Desktop proof exited with an error"));
+    }
+    Ok(())
 }
 
 fn clear(

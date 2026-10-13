@@ -115,7 +115,7 @@ impl Plugin for TerminalPlugin {
         app.world_mut()
             .resource_mut::<bed_api::features::FeatureRegistry>()
             .register_with(MODULE_ID, |registrar| {
-                registrar.panel_options(PANEL_ID, false, PanelPlacement::Bottom, Some("terminal"));
+                registrar.panel_options(PANEL_ID, false, PanelPlacement::Bottom);
                 registrar.panel_open_placement(PANEL_ID, PanelPlacement::Center);
                 registrar.command_ref(NEW_COMMAND);
                 registrar.toolbar(NEW_COMMAND);

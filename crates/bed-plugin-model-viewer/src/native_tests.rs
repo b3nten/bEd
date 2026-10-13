@@ -80,9 +80,9 @@ impl TestGpu {
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let mut encoder = self.device.create_command_encoder(&Default::default());
         let mut app = bevy::app::App::new();
-        app.add_plugins(bed_runtime::BedRuntimePlugin);
+        app.add_plugins((bevy::prelude::MinimalPlugins, bevy::input::InputPlugin));
         app.add_plugins(super::ModelViewerPlugin);
-        app.add_plugins(bed_runtime::render::BedRenderPlugin {
+        app.add_plugins(bed_desktop::preview::PreviewRenderPlugin {
             resources: self.render_resources(),
         });
         app.finish();
@@ -126,7 +126,7 @@ impl SceneGpu {
         background: [f32; 4],
         settings: Settings,
     ) -> Result<(), String> {
-        bed_runtime::render::begin_preview_frame(self.app.world_mut());
+        bed_desktop::preview::begin_preview_frame(self.app.world_mut());
         let mut context = GpuContext {
             world: Some(self.app.world_mut()),
             instance: gpu.instance,
@@ -290,8 +290,11 @@ fn native_registered_model_renderer_shares_game_world_and_retires_its_view() {
         .into();
     let scene = super::model::load(&bytes).unwrap();
     let mut app = App::new();
-    app.add_plugins((bed_runtime::BedRuntimePlugin, super::ModelViewerPlugin));
-    app.add_plugins(bed_runtime::render::BedRenderPlugin {
+    app.add_plugins((
+        (bevy::prelude::MinimalPlugins, bevy::input::InputPlugin),
+        super::ModelViewerPlugin,
+    ));
+    app.add_plugins(bed_desktop::preview::PreviewRenderPlugin {
         resources: gpu.render_resources(),
     });
     app.finish();
@@ -363,7 +366,7 @@ fn native_registered_model_renderer_shares_game_world_and_retires_its_view() {
     let render = app.world().get::<CanvasRenderer>(entity).unwrap().0;
     let mut settled = 0;
     while settled < SETTLE_FRAMES + 4 {
-        bed_runtime::render::begin_preview_frame(app.world_mut());
+        bed_desktop::preview::begin_preview_frame(app.world_mut());
         let commands = app
             .world_mut()
             .run_system_with(
@@ -419,7 +422,7 @@ fn native_registered_model_renderer_shares_game_world_and_retires_its_view() {
     assert_eq!(app.world().get::<GameState>(game).unwrap().0, 42);
     assert!(
         app.world_mut()
-            .query::<&bed_runtime::render::PreviewView>()
+            .query::<&bed_desktop::preview::PreviewView>()
             .iter(app.world())
             .any(|view| view.0 == output.handle.0)
     );
@@ -431,10 +434,10 @@ fn native_registered_model_renderer_shares_game_world_and_retires_its_view() {
             .get(entity)
             .is_none()
     );
-    bed_runtime::render::retire_previews(app.world_mut(), &Default::default());
+    bed_desktop::preview::retire_previews(app.world_mut(), &Default::default());
     assert_eq!(
         app.world_mut()
-            .query::<&bed_runtime::render::PreviewView>()
+            .query::<&bed_desktop::preview::PreviewView>()
             .iter(app.world())
             .count(),
         0
@@ -1789,7 +1792,7 @@ fn native_skybox_blur_preserves_reflections_and_survives_environment_switching()
 #[test]
 #[ignore = "requires a native GPU adapter"]
 fn native_model_environment_recovers_twice_in_the_same_world() {
-    use bed_runtime::render::PreviewView;
+    use bed_desktop::preview::PreviewView;
     use bevy::{
         app::{AppLabel, SubApps},
         extract::ExtractPlugin,
@@ -2208,7 +2211,7 @@ fn native_model_environment_recovers_twice_in_the_same_world() {
 #[test]
 #[ignore = "requires a native GPU adapter"]
 fn native_shared_views_isolate_lighting_assets_and_closure() {
-    use bed_runtime::render::{PreviewView, begin_preview_frame, retire_previews};
+    use bed_desktop::preview::{PreviewView, begin_preview_frame, retire_previews};
     use bevy::prelude::{Entity, With};
     let gpu = device();
     let bytes = include_bytes!("../../../tests/fixtures/gltf/cube.glb");

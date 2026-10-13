@@ -1,9 +1,11 @@
 # Plain editor application
 
-This application installs `BedCorePlugin` and the default `EditorPlugin`. Two
-text panels share one document, while each keeps its own caret and scroll state.
-The core owns document requests, local saves and shared undo/redo. The host does
-not need bEd configuration, a workspace, Git, LSP, remote storage or syntax services.
+This application launches through `bed_app::Application` and adds the default
+`EditorPlugin`. Two text panels share one document, while each keeps its own
+caret and scroll state.
+The foundation owns document requests, local saves and shared undo/redo. The
+application uses the SDK's standard frontend and settings defaults without a
+workspace, Git, LSP, remote storage or syntax services.
 
 Run the desktop application:
 

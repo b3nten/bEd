@@ -12,12 +12,17 @@ mod files;
 mod format_saves;
 pub mod models;
 mod saves;
+pub mod settings;
 mod transitions;
 #[cfg(feature = "language-services")]
 pub use format_saves::*;
 pub use saves::*;
 pub use transitions::*;
+mod configuration;
 mod native;
+pub use configuration::CoreConfigurationSystems;
+#[cfg(feature = "language-services")]
+pub use configuration::SyntaxAppearance;
 #[cfg(test)]
 mod tests;
 pub use documents::*;
@@ -28,10 +33,11 @@ use bevy::prelude::*;
 
 /// One complete desktop, layout and document foundation. Application configuration
 /// and persistence are supplied by the host; default documents start empty.
-pub struct BedCorePlugin {
+#[doc(hidden)]
+pub struct FoundationPlugin {
     pub desktop: DesktopPlugins,
 }
-impl Default for BedCorePlugin {
+impl Default for FoundationPlugin {
     fn default() -> Self {
         Self {
             desktop: DesktopPlugins {
@@ -42,27 +48,13 @@ impl Default for BedCorePlugin {
     }
 }
 
-impl Plugin for BedCorePlugin {
+impl Plugin for FoundationPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(DesktopPlugins {
             window: self.desktop.window.clone(),
             wgpu: self.desktop.wgpu.clone(),
             close_when_requested: self.desktop.close_when_requested,
-        })
-        .add_plugins(BedCoreIntegrationPlugin);
-    }
-}
-
-/// Attach shared editing and workbench services to an existing Bevy desktop.
-/// DesktopIntegrationPlugin must already be installed; the host owns its
-/// DefaultPlugins, renderer configuration, window and runner.
-pub struct BedCoreIntegrationPlugin;
-impl Plugin for BedCoreIntegrationPlugin {
-    fn build(&self, app: &mut App) {
-        assert!(
-            app.is_plugin_added::<bed_desktop::DesktopIntegrationPlugin>(),
-            "BedCoreIntegrationPlugin requires DesktopIntegrationPlugin"
-        );
+        });
         app.init_non_send::<bed_ui::icons::IconDirectories>();
         let directory = app
             .world()
@@ -75,7 +67,22 @@ impl Plugin for BedCoreIntegrationPlugin {
             .non_send_mut::<bed_ui::icons::Icons>()
             .register_core_defaults(directory.as_deref())
             .expect("valid core icon directory");
-        app.add_plugins((bed_runtime::BedRuntimePlugin, DocumentHostPlugin))
+        app.add_plugins(DocumentHostPlugin)
+            .configure_sets(
+                PreUpdate,
+                (
+                    bed_workbench::WorkbenchSystems::Keymap,
+                    bed_workbench::WorkbenchSystems::InputProjection,
+                )
+                    .chain()
+                    .before(DesktopSystems::InterceptInput),
+            )
+            .add_systems(
+                PreUpdate,
+                settings::refresh_settings
+                    .in_set(bed_workbench::WorkbenchSystems::Keymap)
+                    .before(bed_workbench::resolve_keymap),
+            )
             .configure_sets(
                 PreUpdate,
                 CoreSystems::Services
@@ -102,6 +109,14 @@ impl Plugin for BedCoreIntegrationPlugin {
                 ),
             )
             .add_systems(Update, (report_notices, handle_close_requests));
+        app.add_systems(
+            PreUpdate,
+            configuration::configure
+                .in_set(DesktopSystems::Configure)
+                .in_set(CoreConfigurationSystems::Settings),
+        );
+        #[cfg(feature = "language-services")]
+        app.init_resource::<SyntaxAppearance>();
         native::install(app);
         if !app.world().contains_resource::<bed_desktop::DesktopUi>() {
             app.insert_resource(bed_desktop::DesktopUi(draw));
@@ -226,11 +241,6 @@ fn route_native_commands(world: &mut World) {
     }
 }
 fn after_ui(world: &mut World) {
-    let capture = *world.resource::<bed_desktop::DesktopCapture>();
-    *world.resource_mut::<bed_runtime::InputCapture>() = bed_runtime::InputCapture {
-        keyboard: capture.keyboard,
-        pointer: capture.pointer,
-    };
     if *world.resource::<CorePresentationMode>() == CorePresentationMode::Application {
         return;
     }
@@ -249,11 +259,7 @@ fn after_ui(world: &mut World) {
             message: error.message,
         });
     }
-    for error in std::mem::take(
-        &mut world
-            .resource_mut::<bed_desktop::DesktopAppearanceErrors>()
-            .0,
-    ) {
+    for error in std::mem::take(&mut world.resource_mut::<bed_desktop::DesktopThemeErrors>().0) {
         world.write_message(CoreNotice {
             source: None,
             message: error,

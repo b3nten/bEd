@@ -1,9 +1,9 @@
 //! Application composition. Native adapters produce captured editor requests.
-use bed_api::workbench::PanelTarget;
-use bed_app::{
+use crate::application::{
     AppAction, AppOptions, AppRuntimePlugin, WindowCommand, WorkspaceState, capture_app_request,
 };
-use bed_app_config::Settings;
+use crate::config::Settings;
+use bed_api::workbench::PanelTarget;
 use bed_desktop::{
     DesktopContext, DesktopFrame, DesktopInputEvents, DesktopPlugins, DesktopRenderStatus,
     DesktopSystems, DesktopUi,
@@ -61,7 +61,12 @@ impl Plugin for BedAppPlugin {
         app.init_resource::<NativeFailure>()
             .init_resource::<NativeFileDrag>()
             .insert_resource(DesktopUi(draw))
-            .add_systems(PreUpdate, configure.in_set(DesktopSystems::Configure))
+            .add_systems(
+                PreUpdate,
+                configure
+                    .in_set(DesktopSystems::Configure)
+                    .after(bed_core::CoreConfigurationSystems::Settings),
+            )
             .add_systems(
                 PreUpdate,
                 prepare
@@ -109,7 +114,7 @@ impl Plugin for BedAppPlugin {
         );
         app.configure_sets(
             PreUpdate,
-            bed_app::AppSystems::Services
+            crate::application::AppSystems::Services
                 .after(DesktopSystems::Configure)
                 .before(bed_api::features::FeatureSystems::Prepare),
         );
@@ -138,13 +143,13 @@ fn fail(world: &mut World, error: impl std::fmt::Display) {
 }
 
 fn configure(world: &mut World) {
-    {
-        let mut settings = world.non_send_mut::<Settings>();
-        settings.refresh();
+    bed_core::settings::refresh_settings(world);
+    if let Err(error) = crate::config::sync_view(world) {
+        fail(world, error);
+        return;
     }
     let settings = world.non_send::<Settings>();
     let appearance = settings.appearance();
-    let background = settings.window_background_color();
     let mut hidden_picker = world
         .resource::<bed_api::features::FeatureRegistry>()
         .panels()
@@ -154,14 +159,7 @@ fn configure(world: &mut World) {
         .collect::<std::collections::HashSet<_>>();
     hidden_picker.insert("bed.duck.panel".into());
     let workbench_appearance = bed_workbench::WorkbenchAppearance {
-        animations: settings.bool("ui_animations", true),
         add_button: settings.bool("tab_bar_add_button", false),
-        background: [
-            background[0],
-            background[1],
-            background[2],
-            settings.background_opacity(),
-        ],
         hidden_picker,
     };
 
@@ -170,44 +168,6 @@ fn configure(world: &mut World) {
         background: settings.background_color(),
         foreground: settings.text_color(),
         ansi: settings.theme.terminal,
-    };
-    #[cfg(feature = "terminal")]
-    let terminal_policy = {
-        let bindings = bed_keybindings::Bindings::new(
-            world
-                .resource::<bed_workbench::WorkbenchRegistry>()
-                .shortcuts()
-                .to_vec(),
-            &settings.keybinds.overrides,
-            bed_keybindings::Platform::current(),
-        );
-        let strokes = |id| {
-            bed_plugin_terminal::TerminalInputPolicy::clipboard_shortcuts(
-                &bindings,
-                id,
-                settings.keybinds.overrides.actions.contains_key(id),
-            )
-        };
-        bed_plugin_terminal::TerminalInputPolicy {
-            application_shortcuts: bindings
-                .entries
-                .iter()
-                .filter(|b| {
-                    (b.scope == bed_keybindings::Scope::Global
-                        || b.scope == bed_keybindings::Scope::panel(bed_plugin_terminal::PANEL_ID))
-                        && bindings
-                            .winner(&b.scope, b.shortcut)
-                            .is_some_and(|winner| winner.action == b.action)
-                })
-                .map(|b| b.shortcut)
-                .collect(),
-            copy: strokes("bed.edit.copy"),
-            paste: strokes("bed.edit.paste"),
-            select_all: strokes("bed.edit.select_all"),
-            recording: world
-                .get_non_send::<bed_workbench::WorkbenchShortcuts>()
-                .is_some_and(|runtime| runtime.recording.is_some()),
-        }
     };
     #[cfg(feature = "file-explorer")]
     let explorer = bed_plugin_file_explorer::ExplorerPresentation {
@@ -235,7 +195,7 @@ fn configure(world: &mut World) {
         settings.lsp_autocomplete_enabled(),
         settings.lsp_completion_delay().as_millis() as u64,
     );
-    world.resource_mut::<bed_desktop::DesktopAppearance>().0 = appearance;
+    world.resource_mut::<bed_desktop::DesktopTheme>().0 = appearance;
     *world.resource_mut::<bed_workbench::WorkbenchAppearance>() = workbench_appearance;
     #[cfg(feature = "editor")]
     {
@@ -248,7 +208,6 @@ fn configure(world: &mut World) {
     #[cfg(feature = "terminal")]
     {
         *world.resource_mut::<bed_plugin_terminal::TerminalAppearance>() = terminal_appearance;
-        *world.resource_mut::<bed_plugin_terminal::TerminalInputPolicy>() = terminal_policy;
     }
     #[cfg(feature = "file-explorer")]
     {
@@ -298,7 +257,7 @@ fn prepare(world: &mut World) {
             .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, pressed);
     }
     let top = world.resource::<bed_desktop::DesktopContentInsets>().top;
-    bed_app::set_root_top_inset(world, top);
+    crate::application::set_root_top_inset(world, top);
 }
 
 fn draw(world: &mut World, ui: &Ui) {
@@ -320,7 +279,7 @@ fn draw(world: &mut World, ui: &Ui) {
             }
         });
     }
-    if let Err(error) = bed_app::draw_ui(world, ui) {
+    if let Err(error) = crate::application::draw_ui(world, ui) {
         fail(world, error);
         return;
     }
@@ -338,7 +297,7 @@ fn draw(world: &mut World, ui: &Ui) {
             let Ok(command) = String::from_utf8(drop.data) else {
                 continue;
             };
-            let mut request = bed_app::capture_app_request_from(
+            let mut request = crate::application::capture_app_request_from(
                 world,
                 AppAction::PluginCommand(command),
                 PanelTarget::LargestArea,
@@ -347,7 +306,7 @@ fn draw(world: &mut World, ui: &Ui) {
             request.area = drop.area;
             request.tab_index = drop.tab_index;
             world
-                .resource_mut::<bed_app::AppRequests>()
+                .resource_mut::<crate::application::AppRequests>()
                 .enqueue(request);
         }
         if !ui.is_mouse_down(dear_imgui_rs::MouseButton::Left) {
@@ -355,7 +314,7 @@ fn draw(world: &mut World, ui: &Ui) {
         }
     }
     let geometries = world
-        .query::<(Entity, &bed_app::PanelGeometry)>()
+        .query::<(Entity, &crate::application::PanelGeometry)>()
         .iter(world)
         .map(|(panel, geometry)| bed_desktop::DesktopPanelGeometry {
             panel,
@@ -443,14 +402,11 @@ fn native_input(world: &mut World) {
         for dispatch in dispatches {
             use crate::native_commands::MenuAction;
             if dispatch.keyboard {
-                let bindings = bed_keybindings::Bindings::new(
-                    world
-                        .resource::<bed_workbench::WorkbenchRegistry>()
-                        .shortcuts()
-                        .to_vec(),
-                    &world.non_send::<Settings>().keybinds.overrides,
-                    bed_keybindings::Platform::current(),
-                );
+                bed_workbench::resolve_keymap(world);
+                let bindings = world
+                    .non_send::<bed_workbench::ResolvedKeymap>()
+                    .bindings
+                    .clone();
                 let stroke = if let Some(action) = MenuAction::from_command(&dispatch.command) {
                     crate::native_commands::menu_shortcut(
                         action,
@@ -542,7 +498,7 @@ fn native_input(world: &mut World) {
     for action in actions {
         let request = capture_app_request(world, action, PanelTarget::LargestArea);
         world
-            .resource_mut::<bed_app::AppRequests>()
+            .resource_mut::<crate::application::AppRequests>()
             .enqueue(request);
     }
 }
@@ -642,7 +598,7 @@ fn native_file_events(world: &mut World, events: Vec<WindowEvent>) {
 
 fn native_panel_at(world: &mut World, position: [f32; 2]) -> Option<Entity> {
     world
-        .query::<(Entity, &bed_app::PanelGeometry)>()
+        .query::<(Entity, &crate::application::PanelGeometry)>()
         .iter(world)
         .find(|(_, rect)| {
             rect.visible
@@ -659,15 +615,15 @@ fn submit_native_drag(
     panel: Option<Entity>,
     event: bed_api::workbench::ExternalFileDrag,
 ) {
-    let source = panel.and_then(|panel| bed_app::panel_presentation(world, panel));
-    let request = bed_app::capture_app_request_from(
+    let source = panel.and_then(|panel| crate::application::panel_presentation(world, panel));
+    let request = crate::application::capture_app_request_from(
         world,
         AppAction::ExternalFiles { panel, event },
         PanelTarget::LargestArea,
         source,
     );
     world
-        .resource_mut::<bed_app::AppRequests>()
+        .resource_mut::<crate::application::AppRequests>()
         .enqueue(request);
 }
 
@@ -741,7 +697,7 @@ fn editor_shortcuts_focused(world: &World) -> bool {
     world
         .resource::<bed_workbench::WorkbenchLayout>()
         .focused
-        .and_then(|panel| bed_app::panel_presentation(world, panel))
+        .and_then(|panel| crate::application::panel_presentation(world, panel))
         .and_then(|panel| world.get::<bed_workbench::PanelRecord>(panel))
         .is_some_and(|record| {
             record.panel_type == bed_plugin_editor::TEXT_PANEL_TYPE
@@ -755,12 +711,7 @@ fn editor_shortcuts_focused(_world: &World) -> bool {
 }
 
 fn after_ui(world: &mut World) {
-    let capture = *world.resource::<bed_desktop::DesktopCapture>();
-    *world.resource_mut::<bed_runtime::InputCapture>() = bed_runtime::InputCapture {
-        keyboard: capture.keyboard,
-        pointer: capture.pointer,
-    };
-    if let Err(error) = bed_app::process_app_requests(world) {
+    if let Err(error) = crate::application::process_app_requests(world) {
         world.resource_mut::<WorkspaceState>().error = Some(error.to_string());
     }
     let errors = std::mem::take(&mut world.resource_mut::<bed_desktop::DesktopCanvasErrors>().0);
@@ -773,11 +724,8 @@ fn after_ui(world: &mut World) {
     if world.resource::<WorkspaceState>().close_requested {
         world.write_message(AppExit::Success);
     }
-    let appearance_errors = std::mem::take(
-        &mut world
-            .resource_mut::<bed_desktop::DesktopAppearanceErrors>()
-            .0,
-    );
+    let appearance_errors =
+        std::mem::take(&mut world.resource_mut::<bed_desktop::DesktopThemeErrors>().0);
     for error in appearance_errors {
         fail(world, error);
     }
@@ -796,18 +744,18 @@ fn after_ui(world: &mut World) {
 
 #[cfg(target_os = "macos")]
 fn update_native_presentation(world: &mut World) {
-    let toolbar = bed_app::toolbar_commands(world);
-    let application = bed_app::application_commands(world);
+    let toolbar = crate::application::toolbar_commands(world);
+    let application = crate::application::application_commands(world);
     let available = world.resource::<bed_api::files::FileContext>().availability
         == bed_api::files::FileAvailability::Available;
     let has_document = world
-        .resource::<bed_app::DocumentNavigation>()
+        .resource::<crate::application::DocumentNavigation>()
         .active_document
         .is_some();
     let clipboard_focused = world
-        .resource::<bed_app::WorkbenchLayout>()
+        .resource::<crate::application::WorkbenchLayout>()
         .focused
-        .and_then(|panel| bed_app::panel_presentation(world, panel))
+        .and_then(|panel| crate::application::panel_presentation(world, panel))
         .is_some_and(|panel| {
             world
                 .get::<bed_api::workbench::PanelClipboard>(panel)
@@ -821,15 +769,11 @@ fn update_native_presentation(world: &mut World) {
         .context
         .io()
         .want_text_input();
-    let settings = world.non_send::<Settings>();
-    let bindings = bed_keybindings::Bindings::new(
-        world
-            .resource::<bed_workbench::WorkbenchRegistry>()
-            .shortcuts()
-            .to_vec(),
-        &settings.keybinds.overrides,
-        bed_keybindings::Platform::current(),
-    );
+    bed_workbench::resolve_keymap(world);
+    let bindings = world
+        .non_send::<bed_workbench::ResolvedKeymap>()
+        .bindings
+        .clone();
     let menus = crate::native_commands::menus(
         &bindings,
         &application,
@@ -839,9 +783,10 @@ fn update_native_presentation(world: &mut World) {
             clipboard: clipboard_focused,
             text_input: text_input_focused,
             editor_focused: editor_shortcuts_focused(world),
-            active_layout: world.resource::<bed_app::LayoutSlots>().active(),
+            active_layout: world.resource::<crate::application::LayoutSlots>().active(),
         },
     );
+    let settings = world.non_send::<Settings>();
     let presentation = bed_desktop::DesktopNativePresentation {
         opacity: settings.background_opacity(),
         blur: settings.bool("mac_blur_enabled", true),
@@ -867,27 +812,64 @@ fn update_native_presentation(world: &mut World) {
     *world.resource_mut::<bed_desktop::DesktopNativePresentation>() = presentation;
 }
 
-/// Build a headful app. Embedders can compose the same editor plugins in their own app.
-pub fn build_app(mut options: AppOptions, settings: Settings) -> io::Result<App> {
-    let store = if cfg!(feature = "workspaces") {
-        bed_app::WorkspaceStore::load(&settings.config_dir)?
-    } else {
-        bed_app::WorkspaceStore::empty(&settings.config_dir)
+#[cfg(feature = "terminal")]
+pub(crate) fn run_shell_entrypoint(
+    args: Vec<std::ffi::OsString>,
+    has_socket: bool,
+) -> io::Result<Option<i32>> {
+    if !has_socket {
+        return Ok(None);
+    }
+    let command = args[1]
+        .to_str()
+        .expect("Launch selector is a known UTF-8 command");
+    bed_terminal::shell_bridge::invoke(&format!("+{command}"), args.into_iter().skip(2))?;
+    Ok(Some(0))
+}
+
+/// bEd owns its CLI policy; feature plugins contribute private process handlers.
+pub(crate) fn launcher() -> io::Result<bed_app::Application> {
+    let application = bed_app::Application::new("bed", "bEd")?;
+    #[cfg(feature = "terminal")]
+    let application = application
+        .register(bed_plugin_terminal::launch_registration())
+        .register(bed_app::LaunchRegistration {
+            owner: "bed.application.shell",
+            entrypoints: ["open", "workspace"]
+                .into_iter()
+                .map(|flag| bed_app::ProcessEntrypoint {
+                    selector: bed_app::ProcessSelector::FirstArgument(flag.into()),
+                    run: |args| {
+                        run_shell_entrypoint(args, std::env::var_os("BEDTERM_SOCKET").is_some())
+                    },
+                })
+                .collect(),
+            install: Box::new(|_| {}),
+        });
+    #[cfg(feature = "debugger")]
+    let application = application.register(bed_plugin_debugger::launch_registration());
+    Ok(application)
+}
+
+pub fn build_app(options: AppOptions, settings: Settings) -> io::Result<App> {
+    let bed_app::LaunchOutcome::Desktop(launch) = launcher()?.dispatch(["bed".into()])? else {
+        unreachable!("Normal desktop arguments cannot select a helper")
     };
-    let icons = bed_ui::icons::Icons::load(&settings.resources_root);
+    build_app_with_launch(options, settings, *launch)
+}
+
+fn build_app_with_launch(
+    mut options: AppOptions,
+    settings: Settings,
+    launch: bed_app::DesktopLaunch,
+) -> io::Result<App> {
     if options.working_directory.is_none() {
         options.working_directory = Some(std::env::current_dir()?);
     }
-    let mut app = App::new();
-    app.insert_non_send(settings)
-        .insert_non_send(icons)
-        .insert_non_send(bed_app::WorkspacePersistence::new(store))
-        .insert_resource(bed_app::RemoteHelperDirectory(
-            crate::remote_helpers::helpers_directory(),
-        ));
-    app.insert_resource(bed_core::CorePresentationMode::Application);
-    app.add_plugins(bed_core::BedCorePlugin {
-        desktop: DesktopPlugins {
+    launch
+        .config_directory(settings.config_dir.clone())
+        .presentation_mode(bed_core::CorePresentationMode::Application)
+        .options(DesktopPlugins {
             close_when_requested: false,
             window: bevy::window::Window {
                 title: "bEd".into(),
@@ -906,54 +888,69 @@ pub fn build_app(mut options: AppOptions, settings: Settings) -> io::Result<App>
                 ..default()
             },
             ..default()
-        },
-    })
-    .add_plugins(AppRuntimePlugin { options })
-    .add_plugins(crate::builtins::BedBuiltinPlugins)
-    .add_plugins(BedAppPlugin);
-    #[cfg(any(feature = "model-viewer", feature = "mascots"))]
-    if !app.is_plugin_added::<bed_desktop::DesktopPreviewIntegrationPlugin>() {
-        app.add_plugins(bed_desktop::DesktopPreviewIntegrationPlugin);
-    }
-    #[cfg(feature = "effects")]
-    app.add_plugins(bed_plugin_effects::EffectsPlugin);
-    #[cfg(feature = "idle")]
-    app.add_plugins(bed_plugin_idle::IdlePlugin);
-    #[cfg(feature = "automation")]
-    app.add_plugins(bed_plugin_automation::AutomationPlugin);
-    Ok(app)
+        })
+        .build(move |app| {
+            let paths = app.world().resource::<bed_app::ApplicationPaths>();
+            let store = if cfg!(feature = "workspaces") {
+                crate::application::WorkspaceStore::load(paths)?
+            } else {
+                crate::application::WorkspaceStore::empty(paths)
+            };
+            app.insert_non_send(settings)
+                .insert_non_send(crate::application::WorkspacePersistence::new(store))
+                .insert_resource(crate::application::RemoteHelperDirectory(
+                    crate::remote_helpers::helpers_directory(),
+                ));
+            app.add_plugins(crate::builtins::BedBuiltinPlugins);
+            crate::config::register_app_settings(app.world_mut())?;
+            crate::config::sync_view(app.world_mut())?;
+            app.add_plugins((AppRuntimePlugin { options }, BedAppPlugin));
+            #[cfg(feature = "effects")]
+            app.add_plugins(bed_plugin_effects::EffectsPlugin);
+            #[cfg(feature = "idle")]
+            app.add_plugins(bed_plugin_idle::IdlePlugin);
+            #[cfg(feature = "automation")]
+            {
+                app.add_plugins(bed_plugin_automation::AutomationPlugin);
+                crate::automation::configure(app);
+            }
+            Ok(())
+        })
 }
 
-pub fn run() -> HostResult<()> {
-    let launch = crate::startup::Launch::parse(std::env::args_os().skip(1))?;
-    let Some(mut launch) = launch else {
-        return Ok(());
+pub fn run() -> HostResult<i32> {
+    let launch = match launcher()?.dispatch(std::env::args_os())? {
+        bed_app::LaunchOutcome::Handled(exit) => return Ok(exit),
+        bed_app::LaunchOutcome::Desktop(launch) => launch,
     };
-    if launch.smoke.requested() && !cfg!(feature = "automation") {
+    let Some(mut options) = crate::startup::Launch::parse(launch.arguments().iter().cloned())?
+    else {
+        return Ok(0);
+    };
+    if options.smoke.requested() && !cfg!(feature = "automation") {
         return Err(io::Error::other(
             "smoke and frame capture commands require building with --features automation",
         )
         .into());
     }
-    if launch.smoke.requested() && launch.config_dir.is_none() {
+    if options.smoke.requested() && options.config_dir.is_none() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos();
-        launch.config_dir = Some(
+        options.config_dir = Some(
             std::env::temp_dir().join(format!("bed-smoke-config-{}-{unique}", std::process::id())),
         );
     }
-    let settings = match launch.config_dir.clone() {
-        Some(path) => Settings::with_paths(path, Settings::get_app_resources_path())?,
-        None => Settings::new()?,
-    };
-    let startup = launch
+    let paths = bed_app::ApplicationPaths::new("bed", options.config_dir.clone(), None)?;
+    let settings =
+        Settings::with_paths(paths.config_dir.clone(), Settings::get_app_resources_path())?;
+    let startup = options
         .startup
-        .resolve(launch.paths, std::env::current_dir().ok().as_deref())?;
-    let options = startup.into_options(&settings)?;
-    let mut app = build_app(options, settings)?;
+        .resolve(options.paths, std::env::current_dir().ok().as_deref())?;
+    let app_options = startup.into_options(&paths)?;
+    let mut app = build_app_with_launch(app_options, settings, *launch)?;
     #[cfg(feature = "automation")]
-    app.add_plugins(crate::smoke::SmokePlugin(launch.smoke));
+    app.add_plugins(crate::smoke::SmokePlugin(options.smoke));
     let native_failure = app.world().resource::<NativeFailure>().0.clone();
     #[cfg(feature = "automation")]
     let smoke_failure = app
@@ -973,16 +970,22 @@ pub fn run() -> HostResult<()> {
     if exit.is_error() {
         return Err(io::Error::other("Bevy desktop exited with an error").into());
     }
-    Ok(())
+    Ok(0)
 }
 
 fn new_instance_command(
     executable: &Path,
     config_dir: &Path,
     wait: bool,
-    workspace: Option<&bed_app::WorkspaceSpec>,
+    workspace: Option<&crate::application::WorkspaceSpec>,
 ) -> io::Result<std::process::Command> {
-    let config_dir = std::fs::canonicalize(config_dir)?;
+    // Preferences create their directory on the first write. A fresh window
+    // must still hand its selected configuration location to another process.
+    let config_dir = match std::fs::canonicalize(config_dir) {
+        Ok(path) => path,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => std::path::absolute(config_dir)?,
+        Err(error) => return Err(error),
+    };
     // Launch Services needs -n to start another process for a running bundle.
     // Source builds run the executable directly. Neither path inherits the
     // parent's project arguments or smoke flags.
@@ -1140,9 +1143,9 @@ fn route_native_edit(
         .io()
         .want_text_input();
     let source = world
-        .resource::<bed_app::WorkbenchLayout>()
+        .resource::<crate::application::WorkbenchLayout>()
         .focused
-        .and_then(|panel| bed_app::panel_presentation(world, panel));
+        .and_then(|panel| crate::application::panel_presentation(world, panel));
     if !text_input
         && let Some(panel) = source
         && world
@@ -1155,14 +1158,14 @@ fn route_native_edit(
             _ => None,
         }
     {
-        let request = bed_app::capture_app_request_from(
+        let request = crate::application::capture_app_request_from(
             world,
             AppAction::PanelAction { panel, action },
             PanelTarget::LargestArea,
             Some(panel),
         );
         world
-            .resource_mut::<bed_app::AppRequests>()
+            .resource_mut::<crate::application::AppRequests>()
             .enqueue(request);
         return;
     }
@@ -1235,7 +1238,7 @@ fn route_native_edit(
     );
 }
 
-#[cfg(all(feature = "automation", target_os = "macos"))]
+#[cfg(all(feature = "automation", feature = "editor", target_os = "macos"))]
 pub(crate) fn smoke_native_menu(
     world: &World,
     action: crate::native_commands::MenuAction,
@@ -1248,7 +1251,7 @@ pub(crate) fn smoke_native_menu(
         .perform_for_smoke(&action.command_id())
 }
 
-#[cfg(all(feature = "automation", target_os = "macos"))]
+#[cfg(all(feature = "automation", feature = "editor", target_os = "macos"))]
 pub(crate) fn smoke_native_toolbar(world: &World, command: &str) -> bool {
     world
         .non_send::<bed_desktop::DesktopNativePlatform>()
@@ -1257,7 +1260,7 @@ pub(crate) fn smoke_native_toolbar(world: &World, command: &str) -> bool {
         .is_some_and(|window| window.click_command(command))
 }
 
-#[cfg(all(feature = "automation", target_os = "macos"))]
+#[cfg(all(feature = "automation", feature = "editor", target_os = "macos"))]
 pub(crate) fn smoke_native_chrome(world: &World) -> io::Result<()> {
     let window = world
         .non_send::<bed_desktop::DesktopNativePlatform>()
@@ -1273,7 +1276,10 @@ pub(crate) fn smoke_native_chrome(world: &World) -> io::Result<()> {
     Ok(())
 }
 
-fn spawn_instance(world: &mut World, workspace: Option<&bed_app::WorkspaceSpec>) -> io::Result<()> {
+fn spawn_instance(
+    world: &mut World,
+    workspace: Option<&crate::application::WorkspaceSpec>,
+) -> io::Result<()> {
     let config = world.non_send::<Settings>().config_dir.clone();
     let mut command = new_instance_command(&std::env::current_exe()?, &config, false, workspace)?;
     #[cfg(feature = "automation")]
@@ -1302,7 +1308,7 @@ pub(crate) struct NativeSpawnedInstances(pub Vec<std::process::Child>);
 #[derive(Resource, Default)]
 pub(crate) struct NativeMenuObservations(pub Vec<crate::native_commands::MenuDispatch>);
 
-#[cfg(all(feature = "automation", target_os = "macos"))]
+#[cfg(all(feature = "automation", feature = "editor", target_os = "macos"))]
 pub(crate) fn smoke_native_key_equivalent(
     world: &World,
     characters: &str,
@@ -1317,7 +1323,7 @@ pub(crate) fn smoke_native_key_equivalent(
         .key_equivalent_for_smoke(characters, key_code, shift)
 }
 
-#[cfg(all(feature = "automation", target_os = "macos"))]
+#[cfg(all(feature = "automation", feature = "editor", target_os = "macos"))]
 pub(crate) fn smoke_native_dock_new_window(world: &World) -> io::Result<()> {
     world
         .non_send::<bed_desktop::DesktopNativePlatform>()
@@ -1345,7 +1351,7 @@ pub(crate) fn smoke_focus_window(world: &mut World) {
 #[path = "../tests/unit/native/host_tests.rs"]
 mod tests;
 
-#[cfg(all(feature = "automation", target_os = "macos"))]
+#[cfg(all(feature = "automation", feature = "editor", target_os = "macos"))]
 pub(crate) fn smoke_native_material(world: &World) -> (bool, Option<bool>, Option<f32>) {
     world
         .non_send::<bed_desktop::DesktopNativePlatform>()

@@ -88,10 +88,11 @@ position, payload type and bytes. Smaller widget targets take precedence.
 Features read these messages during the frontend and enqueue their effects through
 the usual request queues.
 
-`WorkbenchAppearance.animations` controls panel and popup opening motion as well
-as tiling gestures. A context-local ImGui render hook fades completed panel and
+The prepared `UiTheme.motion` controls panel and popup opening motion as well as
+tiling gestures. `bed-ui` owns the context-local render hook and frame lifecycle;
+the workbench supplies panel observations. The hook fades completed panel and
 child draw lists, including custom painters, while preserving input and layout
-coordinates. The hook is removed when its workbench resource or context retires.
+coordinates, and retires with its UI runtime or context.
 
 `save` and `restore` run between UI frames. Persistence keeps panel IDs, JSON
 state and tiling membership separate from live entity identity. An unavailable
@@ -110,7 +111,7 @@ A panicking presenter becomes an error surface: its partial intentions are
 discarded, ImGui scopes are recovered, and its last valid saved state remains
 available. Taking and reinstalling that surface preserves its quarantine.
 
-`bed-app` uses the same registry, frontend store, compositor and
+bEd uses the same registry, frontend store, compositor and
 `WorkbenchLayout`. Its document transactions replace the generic request
 driver through `WorkbenchRequestMode::External`, retaining submission order
 across generic and host requests. Document validation and asynchronous saves
@@ -122,7 +123,7 @@ without borrowing the workbench or advancing a separate app.
 
 Plugins attach global defaults to commands with `registrar.global_shortcut(command_id, &["Primary+Shift+E"])`. Every command remains bindable without a default. Declare frontend actions with `registrar.panel_shortcut(action_id, label, panel_type, defaults)`; inside `Panel::draw`, call `shortcuts.take(ui, action_id)` after the focused widget has handled input. The supplied input is scoped to the panel type and shares consumption with embedded widgets and globals. Check focus and action availability before taking a shortcut.
 
-Hosts publish user overrides through `ShortcutRuntime::overrides`. bEd application integration reads `keybindings.json` automatically, using current action IDs directly. Overrides replace the action's full default list; an empty list unbinds it. Removing an override restores defaults. Each alternative records its assignment order. Latest user assignments win within a scope; default ties use stable action IDs. Settings warns about conflicting and overlapping combinations without blocking saves. Global shortcuts with modifiers take priority over local bindings. Shared `bed.edit.*` actions follow the focused widget or panel and are registered once by the workbench. Editor widgets share their keymap wherever embedded; Settings never inspects a panel's contents. Panel-opening shortcuts capture the focused tab area when invoked.
+Core settings publish user overrides through the registered `bed.workbench.keybindings` preference. `resolve_keymap` produces one immutable map shared by frame input, native menus and terminal interception. A workbench without core settings can supply `ShortcutRuntime::overrides` in memory. Overrides replace the action's full default list; an empty list unbinds it. Removing an override restores defaults. Each alternative records its assignment order. Latest user assignments win within a scope; default ties use stable action IDs. Settings warns about conflicting and overlapping combinations without blocking saves. Global shortcuts with modifiers take priority over local bindings. Shared `bed.edit.*` actions follow the focused widget or panel and are registered once by the workbench. Editor widgets share their keymap wherever embedded; Settings never inspects a panel's contents. Panel-opening shortcuts capture the focused tab area when invoked.
 
 `Primary` resolves to Command on macOS and Ctrl elsewhere. Explicit Ctrl and Command stay distinct. Single combinations support exact modifiers and alternative bindings; sequential chords are not supported.
 

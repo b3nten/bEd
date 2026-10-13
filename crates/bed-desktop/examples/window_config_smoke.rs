@@ -16,44 +16,59 @@ struct Proof {
     verified: Arc<AtomicBool>,
 }
 
-fn main() {
+fn main() -> std::io::Result<()> {
     let verified = Arc::new(AtomicBool::new(false));
-    let mut app = App::new();
-    app.insert_resource(DesktopNativePresentation {
-        toolbar: vec![DesktopToolbarItem {
-            id: "proof.command".into(),
-            label: "Proof".into(),
-            icon: None,
-            enabled: true,
-        }],
-        ..default()
-    })
-    .add_plugins(DesktopPlugins {
-        window: Window {
-            title: "Desktop window configuration proof".into(),
-            resolution: (420, 260).into(),
-            visible: false,
-            focused: false,
-            resizable: false,
-            decorations: false,
+    let launch = match bed_app::Application::new("bed.proof.window-config-smoke", "Desktop proof")?
+        .dispatch(std::env::args_os())?
+    {
+        bed_app::LaunchOutcome::Desktop(launch) => *launch,
+        bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+    };
+    let mut app = launch
+        .options(DesktopPlugins {
+            window: Window {
+                title: "Desktop window configuration proof".into(),
+                resolution: (420, 260).into(),
+                visible: false,
+                focused: false,
+                resizable: false,
+                decorations: false,
+                ..default()
+            },
             ..default()
-        },
-        ..default()
-    })
-    .insert_resource(Proof {
-        phase: 0,
-        entered: 0,
-        deadline: Instant::now() + Duration::from_secs(30),
-        verified: Arc::clone(&verified),
-    })
-    .insert_resource(DesktopUi(|_, ui| ui.text("Window configuration proof")))
-    .add_systems(PreUpdate, advance.in_set(DesktopSystems::AfterUi));
+        })
+        .presentation_mode(bed_app::bed_core::CorePresentationMode::Application)
+        .config_directory(std::env::temp_dir().join(format!(
+            "bed.proof.window-config-smoke-{}",
+            std::process::id()
+        )))
+        .build(|app| {
+            app.insert_resource(DesktopNativePresentation {
+                toolbar: vec![DesktopToolbarItem {
+                    id: "proof.command".into(),
+                    label: "Proof".into(),
+                    icon: None,
+                    enabled: true,
+                }],
+                ..default()
+            })
+            .insert_resource(Proof {
+                phase: 0,
+                entered: 0,
+                deadline: Instant::now() + Duration::from_secs(30),
+                verified: Arc::clone(&verified),
+            })
+            .insert_resource(DesktopUi(|_, ui| ui.text("Window configuration proof")))
+            .add_systems(PreUpdate, advance.in_set(DesktopSystems::AfterUi));
+            Ok(())
+        })?;
     assert_eq!(app.run(), AppExit::Success);
     assert!(
         verified.load(Ordering::SeqCst),
         "window proof exited before completion"
     );
     println!("desktop window configuration smoke PASS");
+    Ok(())
 }
 
 fn advance(world: &mut World) {

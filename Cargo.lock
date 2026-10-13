@@ -1922,8 +1922,6 @@ version = "0.1.0"
 dependencies = [
  "bed-api",
  "bed-app",
- "bed-app-config",
- "bed-app-shell",
  "bed-core",
  "bed-debugger",
  "bed-desktop",
@@ -1931,6 +1929,7 @@ dependencies = [
  "bed-editing",
  "bed-editor-widgets",
  "bed-files",
+ "bed-highlight",
  "bed-keybindings",
  "bed-lsp",
  "bed-plugin-audio-player",
@@ -1958,7 +1957,7 @@ dependencies = [
  "bed-plugin-terminal",
  "bed-plugin-workspaces",
  "bed-remote",
- "bed-runtime",
+ "bed-storage",
  "bed-terminal",
  "bed-ui",
  "bed-workbench",
@@ -1966,6 +1965,7 @@ dependencies = [
  "dear-imgui-rs",
  "dear-imgui-sys",
  "dear-imgui-wgpu",
+ "rfd",
  "serde_json",
  "wgpu",
  "winit",
@@ -1994,57 +1994,11 @@ name = "bed-app"
 version = "0.1.0"
 dependencies = [
  "bed-api",
- "bed-app-config",
  "bed-core",
- "bed-documents",
- "bed-editing",
- "bed-editor-widgets",
- "bed-files",
- "bed-keybindings",
- "bed-lsp",
- "bed-plugin-color-picker",
- "bed-plugin-csv-table",
- "bed-plugin-debugger",
- "bed-plugin-editor",
- "bed-plugin-file-explorer",
- "bed-plugin-git",
- "bed-plugin-http-client",
- "bed-plugin-image-viewer",
- "bed-plugin-json-tree",
- "bed-plugin-layouts",
- "bed-plugin-workspaces",
- "bed-remote",
- "bed-runtime",
- "bed-storage",
- "bed-terminal",
+ "bed-desktop",
  "bed-ui",
- "bed-workbench",
  "bevy",
- "dear-imgui-rs",
- "dear-imgui-sys",
- "rfd",
  "serde_json",
-]
-
-[[package]]
-name = "bed-app-config"
-version = "0.1.0"
-dependencies = [
- "bed-effects-config",
- "bed-highlight",
- "bed-keybindings",
- "bed-plugin-layouts",
- "bed-ui",
- "dear-imgui-rs",
- "dear-imgui-sys",
- "serde_json",
-]
-
-[[package]]
-name = "bed-app-shell"
-version = "0.1.0"
-dependencies = [
- "bed-terminal",
 ]
 
 [[package]]
@@ -2056,9 +2010,10 @@ dependencies = [
  "bed-documents",
  "bed-editing",
  "bed-files",
+ "bed-highlight",
+ "bed-keybindings",
  "bed-lsp",
  "bed-plugin-layouts",
- "bed-runtime",
  "bed-storage",
  "bed-ui",
  "bed-workbench",
@@ -2083,7 +2038,7 @@ name = "bed-desktop"
 version = "0.1.0"
 dependencies = [
  "arboard",
- "bed-runtime",
+ "bed-app",
  "bed-ui",
  "bevy",
  "dear-imgui-rs",
@@ -2140,17 +2095,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-effects-config"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "bed-example-editor"
 version = "0.1.0"
 dependencies = [
- "bed-core",
+ "bed-app",
  "bed-editing",
  "bed-plugin-editor",
  "bevy",
@@ -2168,10 +2116,8 @@ dependencies = [
 name = "bed-example-game-editor"
 version = "0.1.0"
 dependencies = [
- "bed-core",
- "bed-desktop",
+ "bed-app",
  "bed-example-game",
- "bed-ui",
  "bevy",
  "serde_json",
 ]
@@ -2189,7 +2135,7 @@ name = "bed-example-layouts"
 version = "0.1.0"
 dependencies = [
  "bed-api",
- "bed-core",
+ "bed-app",
  "bed-desktop",
  "bed-plugin-layouts",
  "bed-workbench",
@@ -2202,7 +2148,7 @@ dependencies = [
 name = "bed-example-model"
 version = "0.1.0"
 dependencies = [
- "bed-core",
+ "bed-app",
  "bevy",
  "serde_json",
 ]
@@ -2211,9 +2157,8 @@ dependencies = [
 name = "bed-example-terminal"
 version = "0.1.0"
 dependencies = [
- "bed-core",
+ "bed-app",
  "bed-plugin-terminal",
- "bed-workbench",
  "serde_json",
 ]
 
@@ -2287,13 +2232,10 @@ name = "bed-plugin-automation"
 version = "0.1.0"
 dependencies = [
  "bed-api",
- "bed-app",
- "bed-app-config",
  "bed-desktop",
  "bed-documents",
  "bed-editing",
  "bed-plugin-editor",
- "bed-plugin-workspaces",
  "bed-ui",
  "bed-workbench",
  "bevy",
@@ -2371,7 +2313,6 @@ name = "bed-plugin-effects"
 version = "0.1.0"
 dependencies = [
  "bed-desktop",
- "bed-effects-config",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-wgpu",
@@ -2500,6 +2441,7 @@ version = "0.1.0"
 dependencies = [
  "bed-api",
  "bed-editing",
+ "bed-ui",
  "bevy",
  "dear-imgui-rs",
  "jsonc-parser",
@@ -2542,7 +2484,6 @@ dependencies = [
  "bed-api",
  "bed-desktop",
  "bed-documents",
- "bed-runtime",
  "bed-ui",
  "bevy",
  "dear-imgui-rs",
@@ -2561,7 +2502,6 @@ dependencies = [
  "bed-desktop",
  "bed-editing",
  "bed-keybindings",
- "bed-runtime",
  "bed-ui",
  "bevy",
  "bevy_stl",
@@ -2581,8 +2521,6 @@ name = "bed-plugin-settings"
 version = "0.1.0"
 dependencies = [
  "bed-api",
- "bed-app-config",
- "bed-documents",
  "bed-keybindings",
  "bed-ui",
  "bed-workbench",
@@ -2612,6 +2550,7 @@ dependencies = [
  "bed-api",
  "bed-editing",
  "bed-keybindings",
+ "bed-ui",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -2625,13 +2564,10 @@ name = "bed-plugin-terminal"
 version = "0.1.0"
 dependencies = [
  "bed-api",
- "bed-app",
- "bed-app-config",
- "bed-app-shell",
+ "bed-core",
  "bed-desktop",
  "bed-documents",
  "bed-keybindings",
- "bed-plugin-editor",
  "bed-remote",
  "bed-terminal",
  "bed-ui",
@@ -2681,14 +2617,6 @@ dependencies = [
  "bed-files",
  "bed-lsp",
  "bed-remote",
-]
-
-[[package]]
-name = "bed-runtime"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "wgpu",
 ]
 
 [[package]]

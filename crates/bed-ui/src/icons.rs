@@ -9,6 +9,7 @@ use std::{
 
 #[path = "bundled_icons.rs"]
 mod bundled_icons;
+#[cfg(test)]
 const ICON_CATALOG: &str = include_str!("../assets/icons/catalog.tsv");
 
 /// One local filename in a plugin's icon contract. A directory can replace its
@@ -30,6 +31,7 @@ impl IconDirectories {
     }
 }
 
+#[cfg(test)]
 fn icon_keys() -> impl Iterator<Item = &'static str> {
     ICON_CATALOG
         .lines()
@@ -145,47 +147,17 @@ impl Icons {
         Ok(())
     }
 
-    /// Legacy application-directory loading; new plugins register their own sources.
-    pub fn load(resources_root: &Path) -> Self {
-        let mut icons = Self::default();
-        for key in icon_keys() {
-            let file = format!("{key}.svg");
-            let source = resolve_icon_path(resources_root, &file)
-                .map(|path| load_svg(&path))
-                .unwrap_or_else(|| {
-                    rasterize_svg(Self::bundled_svg(key).expect("catalog has embedded artwork"))
-                });
-            match source {
-                Ok(mut image) => {
-                    monochrome(&mut image);
-                    icons.images.insert(key.to_owned(), image);
-                }
-                Err(error) => eprintln!("Error loading icon {key}: {error}"),
-            }
-        }
-        icons
-    }
-
     pub fn set_texture(&mut self, key: &str, texture: TextureId) {
         self.textures.insert(key.to_owned(), texture);
     }
 
     pub fn get(&self, name: &str) -> Option<TextureId> {
-        self.find(name).or_else(|| self.find("default"))
+        self.find(name).or_else(|| self.find("bed.core.default"))
     }
 
-    /// Exact plugin keys and legacy shared names; no missing-key artwork fallback.
+    /// Resolve an exact namespaced key; no legacy shorthand is accepted.
     pub fn find(&self, name: &str) -> Option<TextureId> {
-        self.textures
-            .get(name)
-            .or_else(|| {
-                if name.contains('.') {
-                    None
-                } else {
-                    self.textures.get(&format!("bed.core.{name}"))
-                }
-            })
-            .copied()
+        self.textures.get(name).copied()
     }
 
     pub fn get_for_file(&self, filename: &str) -> Option<TextureId> {
@@ -230,139 +202,145 @@ impl FileIcons for Icons {
 
 // Exact filenames take precedence over extension associations.
 const FILE_NAMES: &[(&str, &str)] = &[
-    ("CMakeLists.txt", "cmake"),
-    ("cmake", "cmake"),
-    (".clangd", "llvm"),
-    (".clang-format", "llvm"),
-    ("Dockerfile", "docker"),
-    ("Containerfile", "docker"),
-    (".dockerignore", "docker"),
-    ("docker-compose.yml", "docker"),
-    ("docker-compose.yaml", "docker"),
-    (".gitignore", "git"),
-    (".gitmodules", "git"),
-    (".gitattributes", "git"),
-    (".editorconfig", "editorconfig"),
-    (".env", "config"),
-    ("Cargo.toml", "rust"),
-    ("Cargo.lock", "lock"),
-    ("package.json", "npm"),
-    ("package-lock.json", "lock"),
-    ("yarn.lock", "lock"),
-    ("tsconfig.json", "typescript"),
-    (".babelrc", "babel"),
-    (".eslintrc", "eslint"),
-    ("Makefile", "config"),
-    ("makefile", "config"),
-    ("GNUmakefile", "config"),
-    ("LICENSE", "license"),
-    ("LICENSE.txt", "license"),
-    ("LICENSE.md", "license"),
-    ("COPYING", "license"),
-    ("README", "text"),
-    ("NOTICE", "text"),
+    ("CMakeLists.txt", "bed.core.cmake"),
+    ("cmake", "bed.core.cmake"),
+    (".clangd", "bed.core.llvm"),
+    (".clang-format", "bed.core.llvm"),
+    ("Dockerfile", "bed.core.docker"),
+    ("Containerfile", "bed.core.docker"),
+    (".dockerignore", "bed.core.docker"),
+    ("docker-compose.yml", "bed.core.docker"),
+    ("docker-compose.yaml", "bed.core.docker"),
+    (".gitignore", "bed.core.git"),
+    (".gitmodules", "bed.core.git"),
+    (".gitattributes", "bed.core.git"),
+    (".editorconfig", "bed.core.editorconfig"),
+    (".env", "bed.core.config"),
+    ("Cargo.toml", "bed.core.rust"),
+    ("Cargo.lock", "bed.core.lock"),
+    ("package.json", "bed.core.npm"),
+    ("package-lock.json", "bed.core.lock"),
+    ("yarn.lock", "bed.core.lock"),
+    ("tsconfig.json", "bed.core.typescript"),
+    (".babelrc", "bed.core.babel"),
+    (".eslintrc", "bed.core.eslint"),
+    ("Makefile", "bed.core.config"),
+    ("makefile", "bed.core.config"),
+    ("GNUmakefile", "bed.core.config"),
+    ("LICENSE", "bed.core.license"),
+    ("LICENSE.txt", "bed.core.license"),
+    ("LICENSE.md", "bed.core.license"),
+    ("COPYING", "bed.core.license"),
+    ("README", "bed.core.text"),
+    ("NOTICE", "bed.core.text"),
 ];
 
 // One canonical asset per language/tool or generic file category.
 const FILE_EXTENSIONS: &[(&[&str], &str)] = &[
-    (&["rs", "rust"], "rust"),
-    (&["py", "pyi", "pyw", "python"], "python"),
-    (&["js", "mjs", "cjs", "javascript"], "javascript"),
+    (&["rs", "rust"], "bed.core.rust"),
+    (&["py", "pyi", "pyw", "python"], "bed.core.python"),
+    (&["js", "mjs", "cjs", "javascript"], "bed.core.javascript"),
     (
         &["ts", "mts", "cts", "typescript", "tsconfig"],
-        "typescript",
+        "bed.core.typescript",
     ),
-    (&["jsx", "tsx", "cjsx", "react"], "react"),
-    (&["rb", "ruby"], "ruby"),
-    (&["cmake"], "cmake"),
-    (&["clangd", "clang-format"], "llvm"),
-    (&["docker", "dockerfile"], "docker"),
-    (&["sh", "bash", "zsh", "fish", "shell"], "bash"),
-    (&["c", "h"], "c"),
-    (&["cpp", "cc", "cxx", "hpp", "hh", "hxx"], "cpp"),
+    (&["jsx", "tsx", "cjsx", "react"], "bed.core.react"),
+    (&["rb", "ruby"], "bed.core.ruby"),
+    (&["cmake"], "bed.core.cmake"),
+    (&["clangd", "clang-format"], "bed.core.llvm"),
+    (&["docker", "dockerfile"], "bed.core.docker"),
+    (&["sh", "bash", "zsh", "fish", "shell"], "bed.core.bash"),
+    (&["c", "h"], "bed.core.c"),
+    (&["cpp", "cc", "cxx", "hpp", "hh", "hxx"], "bed.core.cpp"),
     (
         &["cs", "csproj", "c-sharp", "vb", "vbproj", "fsproj"],
-        "dotnet",
+        "bed.core.dotnet",
     ),
-    (&["fs", "fsi", "fsx", "f-sharp"], "fsharp"),
-    (&["r", "rmd"], "r-language"),
-    (&["html", "htm", "xhtml", "html_erb", "cshtml"], "html"),
-    (&["css"], "css"),
-    (&["md", "markdown", "mdx", "mdo"], "markdown"),
-    (&["json", "jsonc", "json5"], "json"),
-    (&["yml", "yaml"], "yaml"),
+    (&["fs", "fsi", "fsx", "f-sharp"], "bed.core.fsharp"),
+    (&["r", "rmd"], "bed.core.r-language"),
+    (
+        &["html", "htm", "xhtml", "html_erb", "cshtml"],
+        "bed.core.html",
+    ),
+    (&["css"], "bed.core.css"),
+    (&["md", "markdown", "mdx", "mdo"], "bed.core.markdown"),
+    (&["json", "jsonc", "json5"], "bed.core.json"),
+    (&["yml", "yaml"], "bed.core.yaml"),
     (
         &["git", "gitignore", "gitmodule", "git_ignore", "git_folder"],
-        "git",
+        "bed.core.git",
     ),
-    (&["github"], "github"),
-    (&["gitlab"], "gitlab"),
-    (&["go", "go2", "mod", "sum"], "go"),
-    (&["gd", "godot", "tscn", "tres"], "godot"),
-    (&["dart"], "dart"),
-    (&["ex", "exs", "elixir", "elixir_script"], "elixir"),
-    (&["elm"], "elm"),
-    (&["eslint"], "eslint"),
-    (&["ethereum", "sol"], "ethereum"),
-    (&["firebase"], "firebase"),
-    (&["firefox"], "firefox"),
-    (&["gradle"], "gradle"),
-    (&["graphql", "gql"], "graphql"),
-    (&["grunt"], "grunt"),
-    (&["gulp"], "gulp"),
-    (&["hs", "lhs", "haskell"], "haskell"),
-    (&["hx", "haxe"], "haxe"),
-    (&["ionic"], "ionic"),
-    (&["jenkins"], "jenkins"),
-    (&["jinja", "jinja2", "j2"], "jinja"),
-    (&["jl", "julia"], "julia"),
-    (&["kt", "kts", "kotlin"], "kotlin"),
-    (&["less"], "less"),
-    (&["lua"], "lua"),
-    (&["maven"], "maven"),
-    (&["nim", "nims"], "nim"),
-    (&["npm", "npm_ignored"], "npm"),
-    (&["nunjucks", "njk"], "nunjucks"),
-    (&["ml", "mli", "ocaml"], "ocaml"),
-    (&["pl", "pm", "perl"], "perl"),
-    (&["php", "phtml", "cake_php"], "php"),
-    (&["platformio"], "platformio"),
-    (&["prisma"], "prisma"),
-    (&["pug", "jade"], "pug"),
-    (&["pp", "puppet"], "puppet"),
-    (&["purs", "purescript"], "purescript"),
-    (&["re", "rei", "reasonml"], "reason"),
-    (&["res", "resi", "rescript"], "rescript"),
-    (&["rollup"], "rollup"),
-    (&["rails", "erb"], "rails"),
-    (&["sass", "scss"], "code"),
-    (&["scala", "sc"], "scala"),
-    (&["spring"], "spring"),
-    (&["stylelint"], "stylelint"),
-    (&["styl", "stylus"], "stylus"),
+    (&["github"], "bed.core.github"),
+    (&["gitlab"], "bed.core.gitlab"),
+    (&["go", "go2", "mod", "sum"], "bed.core.go"),
+    (&["gd", "godot", "tscn", "tres"], "bed.core.godot"),
+    (&["dart"], "bed.core.dart"),
+    (&["ex", "exs", "elixir", "elixir_script"], "bed.core.elixir"),
+    (&["elm"], "bed.core.elm"),
+    (&["eslint"], "bed.core.eslint"),
+    (&["ethereum", "sol"], "bed.core.ethereum"),
+    (&["firebase"], "bed.core.firebase"),
+    (&["firefox"], "bed.core.firefox"),
+    (&["gradle"], "bed.core.gradle"),
+    (&["graphql", "gql"], "bed.core.graphql"),
+    (&["grunt"], "bed.core.grunt"),
+    (&["gulp"], "bed.core.gulp"),
+    (&["hs", "lhs", "haskell"], "bed.core.haskell"),
+    (&["hx", "haxe"], "bed.core.haxe"),
+    (&["ionic"], "bed.core.ionic"),
+    (&["jenkins"], "bed.core.jenkins"),
+    (&["jinja", "jinja2", "j2"], "bed.core.jinja"),
+    (&["jl", "julia"], "bed.core.julia"),
+    (&["kt", "kts", "kotlin"], "bed.core.kotlin"),
+    (&["less"], "bed.core.less"),
+    (&["lua"], "bed.core.lua"),
+    (&["maven"], "bed.core.maven"),
+    (&["nim", "nims"], "bed.core.nim"),
+    (&["npm", "npm_ignored"], "bed.core.npm"),
+    (&["nunjucks", "njk"], "bed.core.nunjucks"),
+    (&["ml", "mli", "ocaml"], "bed.core.ocaml"),
+    (&["pl", "pm", "perl"], "bed.core.perl"),
+    (&["php", "phtml", "cake_php"], "bed.core.php"),
+    (&["platformio"], "bed.core.platformio"),
+    (&["prisma"], "bed.core.prisma"),
+    (&["pug", "jade"], "bed.core.pug"),
+    (&["pp", "puppet"], "bed.core.puppet"),
+    (&["purs", "purescript"], "bed.core.purescript"),
+    (&["re", "rei", "reasonml"], "bed.core.reason"),
+    (&["res", "resi", "rescript"], "bed.core.rescript"),
+    (&["rollup"], "bed.core.rollup"),
+    (&["rails", "erb"], "bed.core.rails"),
+    (&["sass", "scss"], "bed.core.code"),
+    (&["scala", "sc"], "bed.core.scala"),
+    (&["spring"], "bed.core.spring"),
+    (&["stylelint"], "bed.core.stylelint"),
+    (&["styl", "stylus"], "bed.core.stylus"),
     (
         &["sublime", "sublime-project", "sublime-workspace"],
-        "sublime",
+        "bed.core.sublime",
     ),
-    (&["svelte"], "svelte"),
-    (&["swift"], "swift"),
-    (&["tf", "tfvars", "terraform"], "terraform"),
-    (&["tex", "latex", "bib"], "tex"),
-    (&["vala", "vapi"], "code"),
-    (&["vue"], "code"),
-    (&["wasm", "wat"], "wasm"),
-    (&["webpack"], "code"),
-    (&["yarn"], "yarn"),
-    (&["zig", "zon"], "zig"),
-    (&["babel"], "babel"),
-    (&["bazel", "bzl"], "bazel"),
-    (&["bower"], "bower"),
-    (&["coffee", "coffee_erb", "cake"], "coffee"),
-    (&["cr", "crystal", "crystal_embedded"], "crystal"),
-    (&["editorconfig"], "editorconfig"),
-    (&["groovy", "grails"], "groovy"),
-    (&["clj", "cljs", "cljc", "edn", "clojure"], "clojure"),
-    (&["ejs"], "ejs"),
+    (&["svelte"], "bed.core.svelte"),
+    (&["swift"], "bed.core.swift"),
+    (&["tf", "tfvars", "terraform"], "bed.core.terraform"),
+    (&["tex", "latex", "bib"], "bed.core.tex"),
+    (&["vala", "vapi"], "bed.core.code"),
+    (&["vue"], "bed.core.code"),
+    (&["wasm", "wat"], "bed.core.wasm"),
+    (&["webpack"], "bed.core.code"),
+    (&["yarn"], "bed.core.yarn"),
+    (&["zig", "zon"], "bed.core.zig"),
+    (&["babel"], "bed.core.babel"),
+    (&["bazel", "bzl"], "bed.core.bazel"),
+    (&["bower"], "bed.core.bower"),
+    (&["coffee", "coffee_erb", "cake"], "bed.core.coffee"),
+    (&["cr", "crystal", "crystal_embedded"], "bed.core.crystal"),
+    (&["editorconfig"], "bed.core.editorconfig"),
+    (&["groovy", "grails"], "bed.core.groovy"),
+    (
+        &["clj", "cljs", "cljc", "edn", "clojure"],
+        "bed.core.clojure",
+    ),
+    (&["ejs"], "bed.core.ejs"),
     (
         &[
             "ini",
@@ -377,7 +355,7 @@ const FILE_EXTENSIONS: &[(&[&str], &str)] = &[
             "todo",
             "happenings",
         ],
-        "config",
+        "bed.core.config",
     ),
     (
         &[
@@ -428,13 +406,13 @@ const FILE_EXTENSIONS: &[(&[&str], &str)] = &[
             "stl",
             "blend",
         ],
-        "code",
+        "bed.core.code",
     ),
     (
         &[
             "txt", "text", "log", "rst", "rtf", "doc", "docx", "word", "pdf", "argdown",
         ],
-        "text",
+        "bed.core.text",
     ),
     (
         &[
@@ -461,29 +439,32 @@ const FILE_EXTENSIONS: &[(&[&str], &str)] = &[
             "favicon",
             "image",
         ],
-        "image",
+        "bed.core.image",
     ),
     (
         &[
             "mp3", "wav", "flac", "ogg", "m4a", "aac", "aiff", "opus", "audio",
         ],
-        "audio",
+        "bed.core.audio",
     ),
     (
         &["mp4", "mov", "mkv", "avi", "webm", "m4v", "video"],
-        "video",
+        "bed.core.video",
     ),
     (
         &["zip", "tar", "gz", "bz2", "xz", "7z", "rar", "zst"],
-        "archive",
+        "bed.core.archive",
     ),
-    (&["csv", "tsv", "xls", "xlsx", "ods"], "spreadsheet"),
-    (&["ttf", "otf", "woff", "woff2", "font"], "font"),
-    (&["db", "sqlite", "sqlite3", "sql"], "database"),
-    (&["lock"], "lock"),
-    (&["ipynb", "notebook"], "notebook"),
-    (&["license"], "license"),
-    (&["bin", "hex"], "hex"),
+    (
+        &["csv", "tsv", "xls", "xlsx", "ods"],
+        "bed.core.spreadsheet",
+    ),
+    (&["ttf", "otf", "woff", "woff2", "font"], "bed.core.font"),
+    (&["db", "sqlite", "sqlite3", "sql"], "bed.core.database"),
+    (&["lock"], "bed.core.lock"),
+    (&["ipynb", "notebook"], "bed.core.notebook"),
+    (&["license"], "bed.core.license"),
+    (&["bin", "hex"], "bed.core.hex"),
 ];
 
 pub fn icon_key_for_file(filename: &str) -> &'static str {
@@ -506,31 +487,31 @@ pub fn icon_key_for_file(filename: &str) -> &'static str {
                 .iter()
                 .any(|ext| ext.eq_ignore_ascii_case(extension))
         })
-        .map_or("default", |(_, key)| key)
+        .map_or("bed.core.default", |(_, key)| key)
 }
 
 /// Map existing command identifiers to the artwork used in panels.
 pub fn command_icon_key(name: Option<&str>) -> &'static str {
     match name {
-        Some("files" | "filetree" | "sidebar") => "files",
-        Some("terminal") => "terminal",
-        Some("search") => "search",
-        Some("structure") => "structure",
-        Some("diagnostics") => "diagnostics",
-        Some("debug") => "debug",
-        Some("git") => "git-branch",
-        Some("split_right") => "split_right",
-        Some("split_down") => "split_down",
-        Some("gear" | "settings") => "settings",
-        Some("image") => "viewer-image",
-        Some("hex") => "hex",
-        _ => "extension",
+        Some("files" | "filetree" | "sidebar") => "bed.core.files",
+        Some("terminal") => "bed.core.terminal",
+        Some("search") => "bed.core.search",
+        Some("structure") => "bed.core.structure",
+        Some("diagnostics") => "bed.core.diagnostics",
+        Some("debug") => "bed.core.debug",
+        Some("git") => "bed.core.git-branch",
+        Some("split_right") => "bed.core.split_right",
+        Some("split_down") => "bed.core.split_down",
+        Some("gear" | "settings") => "bed.core.settings",
+        Some("image") => "bed.core.viewer-image",
+        Some("hex") => "bed.core.hex",
+        _ => "bed.core.extension",
     }
 }
 
 /// Retain standard button interaction and overlay the shared icon. Text remains
 /// usable in embedding hosts that have not supplied textures.
-pub fn icon_button(
+pub(crate) fn draw_icon_button(
     ui: &Ui,
     icons: Option<&Icons>,
     key: &str,
@@ -571,25 +552,6 @@ pub fn icon_button(
         ink,
     );
     clicked
-}
-
-pub fn resolve_icon_path(resources_root: &Path, filename: &str) -> Option<PathBuf> {
-    let mut roots = vec![
-        resources_root.join("resources/icons"),
-        PathBuf::from("resources/icons"),
-    ];
-    if !cfg!(target_os = "macos") {
-        roots.push(PathBuf::from("/usr/share/Bed/resources/icons"));
-    }
-    roots
-        .into_iter()
-        .map(|dir| dir.join(filename))
-        .find(|path| path.exists())
-}
-
-pub fn load_svg(path: &Path) -> io::Result<RgbaImage> {
-    let bytes = fs::read(path)?;
-    rasterize_svg(&bytes)
 }
 
 fn rasterize_svg(bytes: &[u8]) -> io::Result<RgbaImage> {
@@ -763,13 +725,14 @@ mod tests {
     }
 
     #[test]
-    fn embedded_core_defaults_preserve_legacy_texture_lookups() {
+    fn embedded_core_defaults_require_namespaced_texture_keys() {
         let mut icons = Icons::bundled();
         assert_eq!(icons.images.len(), icon_keys().count());
         assert!(icons.images.contains_key("bed.core.close"));
         icons.set_texture("bed.core.close", TextureId::new(4));
         icons.set_texture("bed.core.default", TextureId::new(5));
-        assert_eq!(icons.find("close"), icons.find("bed.core.close"));
+        assert_eq!(icons.find("close"), None);
+        assert_eq!(icons.find("bed.core.close"), Some(TextureId::new(4)));
         assert_eq!(icons.get("unknown.plugin.icon"), Some(TextureId::new(5)));
         assert_eq!(icons.find("unknown.plugin.icon"), None);
     }
@@ -823,8 +786,9 @@ mod tests {
                             ui.set_cursor_screen_pos([20.0, 40.0]);
                             let _disabled = ui.begin_disabled_with_cond(disabled);
                             let alpha = ui.clone_style().alpha();
-                            clicks += usize::from(icon_button(
+                            clicks += usize::from(crate::components::icon_button(
                                 ui,
+                                &crate::UiFrameContext::for_ui(ui),
                                 loaded.then_some(&icons),
                                 "plus",
                                 "add",
@@ -897,15 +861,15 @@ mod tests {
             ("unknown.xyz", "default"),
             ("no-extension", "default"),
         ] {
-            assert_eq!(icon_key_for_file(file), key, "{file}");
+            assert_eq!(icon_key_for_file(file), format!("bed.core.{key}"), "{file}");
         }
     }
 
     #[test]
     fn textures_fall_back_and_all_file_icons_follow_theme_ink() {
         let mut icons = Icons::default();
-        icons.set_texture("default", TextureId::new(1));
-        icons.set_texture("rust", TextureId::new(2));
+        icons.set_texture("bed.core.default", TextureId::new(1));
+        icons.set_texture("bed.core.rust", TextureId::new(2));
         assert_eq!(icons.get_for_file("lib.rs"), Some(TextureId::new(2)));
         assert_eq!(icons.get("missing"), Some(TextureId::new(1)));
         for ink in [[0.9, 0.9, 0.9, 1.0], [0.1, 0.1, 0.1, 1.0]] {
@@ -919,7 +883,7 @@ mod tests {
     #[test]
     fn catalog_and_associations_have_visible_monochrome_artwork() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let icons = Icons::load(&root);
+        let icons = Icons::bundled();
         let keys: BTreeSet<_> = icon_keys().collect();
         assert_eq!(keys.len(), icon_keys().count(), "duplicate catalog key");
         let assets: BTreeSet<_> = fs::read_dir(root.join("resources/icons"))
@@ -930,7 +894,7 @@ mod tests {
             .collect();
         assert_eq!(assets, keys.iter().map(|key| (*key).to_owned()).collect());
         for key in &keys {
-            let image = &icons.images[*key];
+            let image = &icons.images[&format!("bed.core.{key}")];
             assert_eq!(
                 (image.width, image.height, image.pixels.len()),
                 (32, 32, 4096)
@@ -954,7 +918,10 @@ mod tests {
             .map(|(_, key)| key)
             .chain(FILE_EXTENSIONS.iter().map(|(_, key)| key))
         {
-            assert!(keys.contains(key), "missing association: {key}");
+            assert!(
+                icons.images.contains_key(*key),
+                "missing association: {key}"
+            );
         }
         let mut extensions = BTreeSet::new();
         for (aliases, _) in FILE_EXTENSIONS {
@@ -981,7 +948,7 @@ mod tests {
             "other",
         ] {
             assert!(
-                keys.contains(command_icon_key(Some(name))),
+                icons.images.contains_key(command_icon_key(Some(name))),
                 "missing command: {name}"
             );
         }

@@ -6,11 +6,11 @@ mod editor_host;
 #[path = "support/temp_dir.rs"]
 mod temp_dir;
 
+use bed::application::{AppOptions, AppRuntimePlugin, WorkspaceState};
 use bed_api::{
     documents::PanelBinding,
     features::{HostAction, HostEffects},
 };
-use bed_app::{AppOptions, AppRuntimePlugin, WorkspaceState};
 use bed_documents::DocumentSession;
 use bed_plugin_workspaces::WorkspaceAction;
 use bevy::prelude::*;
@@ -42,7 +42,7 @@ impl Fixture {
         let ui = self.context.frame();
         ui.binding()
             .with_bound_context(|| unsafe { sys::igLogToBuffer(-1) });
-        bed_app::draw_ui(self.app.world_mut(), ui).unwrap();
+        editor_host::draw_ui(self.app.world_mut(), ui).unwrap();
         let id = self
             .app
             .world()
@@ -73,7 +73,7 @@ impl Fixture {
             text
         });
         drop(self.context.render_legacy());
-        bed_app::process_app_requests(self.app.world_mut()).unwrap();
+        bed::application::process_app_requests(self.app.world_mut()).unwrap();
         assert!(
             self.app
                 .world()
@@ -121,7 +121,7 @@ impl Fixture {
     }
 
     fn active_frontend(&self, panel: Entity) -> Entity {
-        bed_app::panel_presentation(self.app.world(), panel).unwrap()
+        bed::application::panel_presentation(self.app.world(), panel).unwrap()
     }
 }
 
@@ -134,11 +134,14 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
     let disk = b"# Saved heading\n\nSaved paragraph.\n";
     directory.write("project/README.md", disk);
     std::fs::write(root.join("data.sqlite"), b"SQLite format 3\0").unwrap();
-    directory.write("config/settings.json", br#"{"autosave":false}"#);
+    directory.write(
+        "config/settings.json",
+        br#"{"version":1,"overrides":{"bed.documents":{"autosave":false}}}"#,
+    );
     let mut app = App::new();
     editor_host::install(
         &mut app,
-        bed_app_config::Settings::with_paths(
+        bed::config::Settings::with_paths(
             directory.path("config"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")),
         )
@@ -146,7 +149,7 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
     )
     .unwrap();
     app.add_plugins((
-        bed_runtime::BedRuntimePlugin,
+        (bevy::MinimalPlugins, bevy::input::InputPlugin),
         AppRuntimePlugin {
             options: AppOptions {
                 working_directory: Some(root.clone()),
@@ -183,7 +186,7 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
         .last()
         .unwrap();
     let files = bed_workbench::api::panel_owner(app.world(), files_frontend).unwrap();
-    let panel = bed_app::open_file(
+    let panel = bed::application::open_file(
         app.world_mut(),
         &markdown,
         Some(bed_plugin_editor::TEXT_VIEWER),
@@ -191,7 +194,7 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
         None,
     )
     .unwrap();
-    let text_frontend = bed_app::panel_presentation(app.world(), panel).unwrap();
+    let text_frontend = bed::application::panel_presentation(app.world(), panel).unwrap();
     let binding = app
         .world()
         .get::<PanelBinding>(text_frontend)
@@ -225,8 +228,12 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
     }
     app.world_mut().resource_mut::<WorkbenchLayout>().tiling = tiling;
     app.world_mut()
-        .resource_mut::<bed_workbench::WorkbenchAppearance>()
-        .animations = false;
+        .write_message(bed_api::settings::SettingsRequest::new(
+            "bed.ui",
+            "ui_animations",
+            false,
+        ));
+    app.update();
     app.world_mut()
         .resource_mut::<bed_plugin_file_explorer::ExplorerPresentation>()
         .tree
@@ -237,8 +244,8 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
         .file_tree
         .preferences
         .hide_hidden = true;
-    bed_app::focus_panel(app.world_mut(), panel, true).unwrap();
-    bed_app::focus_panel(app.world_mut(), files, true).unwrap();
+    bed::application::focus_panel(app.world_mut(), panel, true).unwrap();
+    bed::application::focus_panel(app.world_mut(), files, true).unwrap();
     let mut context = Context::create();
     editor_host::prepare_ui(app.world_mut(), &mut context).unwrap();
     context.io_mut().set_display_size([1200., 800.]);

@@ -5,10 +5,13 @@ and editing services. `WorkspacesIntegrationPlugin` installs lifecycle contracts
 and registered commands; `WorkspacesPlugin` adds the picker panel.
 
 Applications supply `WorkspaceRepositoryResource`. The default repository is
-in-memory. `WorkspaceRepository::commit` atomically saves definition, recents,
-layout snapshot and namespaced plugin contributions. Saving marks attachment
-saved only after the commit succeeds, and never restores contributions or
-replaces live documents/panels. Unknown contributors and unvisited slots survive.
+in-memory. `WorkspaceRepository::commit` saves the authoritative definition,
+layout snapshot and namespaced plugin contributions. A separate recent-location
+index can fail afterward; `take_index_error` reports that failure while the
+workspace remains saved. bEd atomically writes each workspace snapshot. Saving
+marks attachment saved only after the commit succeeds, and never restores
+contributions or replaces live documents/panels. Unknown contributors and
+unvisited slots survive.
 
 An optional `WorkspaceLayoutSnapshot` supplies application layout serialization.
 Opening another workspace requires a `WorkspaceOpenHandler`; the application

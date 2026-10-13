@@ -8,8 +8,7 @@ use std::{
     rc::Rc,
 };
 
-const DURATION: f64 = 0.168;
-const STAGGER: f64 = 0.012;
+use crate::appearance::UiMotion;
 
 #[derive(Clone, Copy, Debug)]
 struct Transition {
@@ -19,8 +18,8 @@ struct Transition {
 }
 
 impl Transition {
-    fn value(self, now: f64) -> f32 {
-        let t = ((now - self.began) / DURATION).clamp(0.0, 1.0) as f32;
+    fn value(self, now: f64, duration: f64) -> f32 {
+        let t = ((now - self.began) / duration).clamp(0.0, 1.0) as f32;
         let eased = t * t * (3.0 - 2.0 * t);
         self.from + (self.to - self.from) * eased
     }
@@ -50,6 +49,7 @@ pub struct TreeAnimation<K> {
     now: f64,
     last_frame: Option<usize>,
     animating: bool,
+    motion: UiMotion,
     offsets: RefCell<Option<(f32, Rc<Vec<f32>>)>>,
 }
 
@@ -62,6 +62,7 @@ impl<K> Default for TreeAnimation<K> {
             now: 0.0,
             last_frame: None,
             animating: false,
+            motion: UiMotion::default(),
             offsets: RefCell::new(None),
         }
     }
@@ -75,10 +76,12 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
         desired: &[K],
         now: f64,
         frame: usize,
-        enabled: bool,
+        motion: &UiMotion,
         animate_mount: bool,
         reset: bool,
     ) {
+        self.motion = motion.clone();
+        let enabled = motion.enabled;
         let mounting = reset
             || self
                 .last_frame
@@ -118,15 +121,16 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
             self.rows.clear();
             self.transitions.clear();
         }
-        self.transitions
-            .retain(|_, state| state.to > 0.0 || state.value(now) > 0.0001);
+        self.transitions.retain(|_, state| {
+            state.to > 0.0 || state.value(now, self.motion.tree_seconds) > 0.0001
+        });
         self.rows.retain(|key| self.transitions.contains_key(key));
         let wanted: HashSet<_> = desired.iter().cloned().collect();
         for (key, state) in &mut self.transitions {
             let target = if wanted.contains(key) { 1.0 } else { 0.0 };
             if state.to != target {
                 *state = Transition {
-                    from: state.value(now),
+                    from: state.value(now, self.motion.tree_seconds),
                     to: target,
                     began: now,
                 };
@@ -135,7 +139,7 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
         let mut entering = 0;
         for key in desired {
             self.transitions.entry(key.clone()).or_insert_with(|| {
-                let began = now + STAGGER * entering.min(5) as f64;
+                let began = now + self.motion.tree_stagger_seconds * entering.min(5) as f64;
                 entering += 1;
                 Transition {
                     from: 0.0,
@@ -154,7 +158,7 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
             } else if self
                 .transitions
                 .get(key)
-                .is_some_and(|state| state.value(now) > 0.0001)
+                .is_some_and(|state| state.value(now, self.motion.tree_seconds) > 0.0001)
             {
                 closing.entry(anchor.clone()).or_default().push(key.clone());
             }
@@ -173,13 +177,13 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
     }
 
     fn advance(&mut self) {
-        self.transitions
-            .retain(|_, state| state.to > 0.0 || state.value(self.now) > 0.0001);
+        self.transitions.retain(|_, state| {
+            state.to > 0.0 || state.value(self.now, self.motion.tree_seconds) > 0.0001
+        });
         self.rows.retain(|key| self.transitions.contains_key(key));
-        self.animating = self
-            .transitions
-            .values()
-            .any(|state| state.from != state.to && self.now < state.began + DURATION);
+        self.animating = self.transitions.values().any(|state| {
+            state.from != state.to && self.now < state.began + self.motion.tree_seconds
+        });
     }
 
     pub fn rows(&self) -> &[K] {
@@ -194,7 +198,7 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
         self.transitions
             .get(key)
             .map_or_else(RowMotion::default, |state| {
-                let value = state.value(self.now);
+                let value = state.value(self.now, self.motion.tree_seconds);
                 RowMotion {
                     alpha: value,
                     height: value,
@@ -319,46 +323,186 @@ mod tests {
     #[test]
     fn collapsing_height_moves_following_rows_continuously_and_reverses() {
         let mut motion = TreeAnimation::default();
-        motion.update(&["root", "child", "sibling"], 0.0, 1, true, false, false);
-        motion.update(&["root", "sibling"], 1.0, 2, true, false, false);
-        motion.update(&["root", "sibling"], 1.084, 3, true, false, false);
+        motion.update(
+            &["root", "child", "sibling"],
+            0.0,
+            1,
+            &UiMotion {
+                enabled: true,
+                ..UiMotion::default()
+            },
+            false,
+            false,
+        );
+        motion.update(
+            &["root", "sibling"],
+            1.0,
+            2,
+            &UiMotion {
+                enabled: true,
+                ..UiMotion::default()
+            },
+            false,
+            false,
+        );
+        motion.update(
+            &["root", "sibling"],
+            1.084,
+            3,
+            &UiMotion {
+                enabled: true,
+                ..UiMotion::default()
+            },
+            false,
+            false,
+        );
         assert_eq!(motion.rows(), &["root", "child", "sibling"]);
         let closing = motion.sample(&"child");
         assert!((closing.height - 0.5).abs() < 0.001);
         assert!(!closing.interactive);
         let sibling_y = (motion.sample(&"root").height + closing.height) * 20.0;
         assert!((sibling_y - 30.0).abs() < 0.001);
-        motion.update(&["root", "child", "sibling"], 1.084, 3, true, false, false);
+        motion.update(
+            &["root", "child", "sibling"],
+            1.084,
+            3,
+            &UiMotion {
+                enabled: true,
+                ..UiMotion::default()
+            },
+            false,
+            false,
+        );
         assert!((motion.sample(&"child").height - closing.height).abs() < 0.001);
         assert!(motion.sample(&"child").interactive);
-        motion.update(&["root", "child", "sibling"], 1.168, 4, true, false, false);
+        motion.update(
+            &["root", "child", "sibling"],
+            1.168,
+            4,
+            &UiMotion {
+                enabled: true,
+                ..UiMotion::default()
+            },
+            false,
+            false,
+        );
         assert!((motion.sample(&"child").height - 0.75).abs() < 0.001);
     }
 
     #[test]
     fn toggle_off_snaps_to_target_and_finished_closures_leave_no_gap() {
         let mut motion = TreeAnimation::default();
-        motion.update(&[1, 2, 3], 0.0, 1, true, false, false);
-        motion.update(&[1, 3], 1.0, 2, true, false, false);
-        motion.update(&[1, 3], 1.02, 3, false, false, false);
+        motion.update(
+            &[1, 2, 3],
+            0.0,
+            1,
+            &UiMotion {
+                enabled: true,
+                ..UiMotion::default()
+            },
+            false,
+            false,
+        );
+        motion.update(
+            &[1, 3],
+            1.0,
+            2,
+            &UiMotion {
+                enabled: true,
+                ..UiMotion::default()
+            },
+            false,
+            false,
+        );
+        motion.update(
+            &[1, 3],
+            1.02,
+            3,
+            &UiMotion {
+                enabled: false,
+                ..UiMotion::default()
+            },
+            false,
+            false,
+        );
         assert_eq!(motion.rows(), &[1, 3]);
         assert_eq!(motion.sample(&1).height, 1.0);
-        motion.update(&[1, 2, 3], 1.03, 4, true, false, false);
+        motion.update(
+            &[1, 2, 3],
+            1.03,
+            4,
+            &UiMotion {
+                enabled: true,
+                ..UiMotion::default()
+            },
+            false,
+            false,
+        );
         assert_eq!(motion.sample(&2).height, 0.0);
-        motion.update(&[1, 3], 1.1, 5, true, false, false);
-        motion.update(&[1, 3], 1.3, 6, true, false, false);
+        motion.update(
+            &[1, 3],
+            1.1,
+            5,
+            &UiMotion {
+                enabled: true,
+                ..UiMotion::default()
+            },
+            false,
+            false,
+        );
+        motion.update(
+            &[1, 3],
+            1.3,
+            6,
+            &UiMotion {
+                enabled: true,
+                ..UiMotion::default()
+            },
+            false,
+            false,
+        );
         assert_eq!(motion.rows(), &[1, 3]);
     }
 
     #[test]
     fn mounts_stagger_and_missing_nodes_can_be_removed_immediately() {
         let mut motion = TreeAnimation::default();
-        motion.update(&[1, 2, 3], 0.0, 1, true, true, false);
-        motion.update(&[1, 2, 3], 0.07, 2, true, true, false);
+        motion.update(
+            &[1, 2, 3],
+            0.0,
+            1,
+            &UiMotion {
+                enabled: true,
+                ..UiMotion::default()
+            },
+            true,
+            false,
+        );
+        motion.update(
+            &[1, 2, 3],
+            0.07,
+            2,
+            &UiMotion {
+                enabled: true,
+                ..UiMotion::default()
+            },
+            true,
+            false,
+        );
         assert!(motion.sample(&1).alpha > motion.sample(&2).alpha);
         motion.retain(|key| *key != 2);
         assert_eq!(motion.rows(), &[1, 3]);
-        motion.update(&[1, 3], 1.0, 9, true, true, false);
+        motion.update(
+            &[1, 3],
+            1.0,
+            9,
+            &UiMotion {
+                enabled: true,
+                ..UiMotion::default()
+            },
+            true,
+            false,
+        );
         assert_eq!(motion.sample(&1).height, 0.0);
     }
 }

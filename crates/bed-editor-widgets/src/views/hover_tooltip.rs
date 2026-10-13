@@ -34,8 +34,13 @@ pub fn hover_popup_style(ui: &Ui) -> HoverPopupStyle<'_> {
             StyleVar::WindowPadding([(fs * 0.6).floor(), (fs * 0.4).floor()]),
             StyleVar::ItemSpacing([fs * 0.35, fs * 0.2]),
             StyleVar::WindowMinSize([1.0; 2]),
-            StyleVar::WindowRounding(bed_ui::util::popup_style::POPUP_ROUNDING),
-            StyleVar::WindowBorderSize(bed_ui::util::popup_style::POPUP_BORDER_SIZE),
+            StyleVar::WindowRounding(
+                bed_ui::UiFrameContext::for_ui(ui)
+                    .theme()
+                    .metrics
+                    .popup_rounding,
+            ),
+            StyleVar::WindowBorderSize(bed_ui::UiFrameContext::for_ui(ui).theme().metrics.border),
             StyleVar::ScrollbarSize((fs * 0.65).floor().max(1.0)),
         ]
         .into_iter()

@@ -6,11 +6,12 @@ mod shortcuts;
 
 #[derive(Resource, Default)]
 struct PanelFocusHistory(Vec<Entity>);
-pub use shortcuts::{WorkbenchShortcuts, global_shortcuts, prepare_shortcuts};
+pub use shortcuts::{
+    ResolvedKeymap, WorkbenchShortcuts, global_shortcuts, prepare_shortcuts, resolve_keymap,
+};
 mod status_bar;
 pub use status_bar::{StatusBarHost, StatusIconResolver, render_status_bar, status_bar_height};
 mod tiling_ui;
-mod ui_animations;
 pub mod workspace;
 pub use compositor::{
     PanelDirty, WorkbenchAppearance, area_at, area_bounds, render_ui, tab_bounds,
@@ -300,6 +301,8 @@ impl WorkbenchRequests {
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WorkbenchSystems {
+    Keymap,
+    InputProjection,
     Requests,
 }
 
@@ -323,7 +326,10 @@ impl Plugin for WorkbenchPlugin {
             .add_message::<bed_api::storage::FeatureStateChanged>()
             .add_systems(
                 PreUpdate,
-                process_requests.in_set(WorkbenchSystems::Requests),
+                (
+                    shortcuts::resolve_keymap.in_set(WorkbenchSystems::Keymap),
+                    process_requests.in_set(WorkbenchSystems::Requests),
+                ),
             );
     }
 }

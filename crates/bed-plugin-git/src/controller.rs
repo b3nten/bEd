@@ -1180,7 +1180,7 @@ mod tests {
             .unwrap();
         assert!(output.status.success() && output.stdout.is_empty());
         assert!(session.options().project_root.is_none());
-        assert!(!session.options().persistent_history);
+        assert!(session.options().history_path.is_none());
     }
 
     #[test]

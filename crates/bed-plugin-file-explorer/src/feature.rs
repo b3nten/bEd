@@ -91,6 +91,19 @@ pub struct FileExplorerPlugin;
 
 impl Plugin for FileExplorerPlugin {
     fn build(&self, app: &mut App) {
+        bed_api::settings::register(
+            app.world_mut(),
+            MODULE_ID,
+            vec![
+                bed_api::settings::SettingDefinition::new("hide_hidden", "Hide hidden files", true),
+                bed_api::settings::SettingDefinition::new(
+                    "hide_gitignored",
+                    "Hide gitignored files",
+                    true,
+                ),
+            ],
+        )
+        .expect("Explorer preferences install once");
         app.init_non_send::<bed_ui::icons::Icons>();
         let directory = app
             .world()
@@ -135,7 +148,7 @@ impl Plugin for FileExplorerPlugin {
                 registrar.command_ref(NEW_COMMAND);
                 registrar.toolbar(NEW_COMMAND);
                 registrar.command_ref(FIND_COMMAND);
-                registrar.panel_options(PANEL_ID, false, PanelPlacement::Sidebar, Some("explorer"));
+                registrar.panel_options(PANEL_ID, false, PanelPlacement::Sidebar);
                 registrar.panel_open_placement(PANEL_ID, PanelPlacement::Center);
                 registrar.settings_ui("bed.explorer.settings", "Files", files_settings);
             })
@@ -224,6 +237,20 @@ fn protected_paths(world: &mut World) -> Vec<std::path::PathBuf> {
 }
 
 fn prepare(world: &mut World) {
+    if let Some(settings) = world.get_resource::<bed_api::settings::SettingsSnapshot>() {
+        let current = *world.resource::<ExplorerDefaults>();
+        let defaults = ExplorerDefaults {
+            hide_hidden: settings
+                .get(MODULE_ID, "hide_hidden")
+                .and_then(Value::as_bool)
+                .unwrap_or(current.hide_hidden),
+            hide_gitignored: settings
+                .get(MODULE_ID, "hide_gitignored")
+                .and_then(Value::as_bool)
+                .unwrap_or(current.hide_gitignored),
+        };
+        *world.resource_mut::<ExplorerDefaults>() = defaults;
+    }
     let alive: std::collections::HashSet<_> = world.query::<Entity>().iter(world).collect();
     world
         .non_send_mut::<ExplorerPanels>()
@@ -724,7 +751,7 @@ mod tests {
         let current = dear_imgui_rs::TextureId::from(148usize);
         let mut app = App::new();
         let mut icons = Icons::default();
-        icons.set_texture("default", old);
+        icons.set_texture("bed.core.default", old);
         app.world_mut().insert_non_send(icons);
         app.add_plugins((WorkbenchPlugin, FileExplorerPlugin));
         app.world_mut()
@@ -764,7 +791,7 @@ mod tests {
         prepare(app.world_mut());
         app.world_mut()
             .non_send_mut::<Icons>()
-            .set_texture("default", current);
+            .set_texture("bed.core.default", current);
         let mut context = dear_imgui_rs::Context::create();
         context
             .set_ini_filename(None::<std::path::PathBuf>)

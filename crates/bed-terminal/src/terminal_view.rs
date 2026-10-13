@@ -363,7 +363,7 @@ impl TerminalView {
         let [col, row] = self.cell_at(ui, terminal, origin);
         if let Some(link) = self.hovered_link(row, col) {
             ui.set_mouse_cursor(Some(dear_imgui_rs::MouseCursor::Hand));
-            ui.tooltip_text(&link.target);
+            bed_ui::components::tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), &link.target);
             let draw = ui.get_window_draw_list();
             for span in &link.spans {
                 let y = origin[1] + BORDER + (span.row + 1) as f32 * self.geometry.ch - 1.0;

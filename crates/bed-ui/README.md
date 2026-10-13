@@ -26,14 +26,17 @@ world.non_send_mut::<Icons>().register(
 )?;
 ```
 
-With `BedCorePlugin`, applications can insert `IconDirectories` before core and
-feature plugins. Each entry chooses a directory for one plugin:
+The owned application launcher accepts `IconDirectories` before installing the
+foundation and feature plugins. Each entry chooses a directory for one plugin:
 
 ```rust,ignore
 let mut directories = IconDirectories::default();
 directories.0.insert("bed.terminal".into(), "my-icons/terminal".into());
 directories.0.insert("bed.core".into(), "my-icons/chrome".into());
-app.insert_non_send(directories);
+launch.icon_directories(directories).run(|app| {
+    app.add_plugins(MyPanelPlugin);
+    Ok(())
+})?;
 ```
 
 A directory file overrides that plugin's embedded default. A missing file keeps
@@ -64,5 +67,34 @@ directory. Panel and command contributions reference these exact keys through
 
 `Icons::images` owns source images. The desktop refreshes native and GPU images
 when those sources change and recreates GPU textures after device replacement.
-Namespaced keys resolve exactly in both ImGui and native toolbars. Unqualified
-shared names remain supported for existing callers.
+Namespaced keys resolve exactly in both ImGui and native toolbars. All lookups use exact namespaced keys such as `bed.core.close`.
+
+## Shared controls and live themes
+
+The application selects its initial `UiTheme` with `DesktopLaunch::theme`, then
+can publish live changes through the desktop's `DesktopTheme` resource.
+Its palette, font options, control metrics and motion policy are prepared before
+opening the frame. Theme selection and disk formats belong to the application.
+`UiRuntime` owns the context-local lifecycle and publishes immutable
+`UiFrameContext` snapshots. Components do not read settings or perform actions.
+
+```rust,ignore
+let context = bed_ui::UiFrameContext::for_ui(ui);
+if bed_ui::components::button(ui, &context, "Save") {
+    // Return the user's intention to the panel's owner.
+}
+if ui.is_item_hovered() {
+    bed_ui::components::tooltip_text(ui, &context, "Save this document");
+}
+```
+
+Controls, compact controls, icon buttons, tooltips, dialog scopes and context-menu
+scopes share the same prepared metrics. Scoped styles restore their caller's
+style on drop. Popup metrics remain consistent inside square panels. A complete
+frontend drawing scope includes third-party and footer popups in opening motion.
+Direct ImGui fixtures without a runtime inherit native colors and the common
+default metrics; `UiRuntime` supplies customized themes without a workbench.
+
+`DesktopLaunch::theme` also establishes font, opacity and motion preference
+defaults. User preferences can override those defaults; applications resolve
+their selected theme before publishing the next frame's `DesktopTheme`.

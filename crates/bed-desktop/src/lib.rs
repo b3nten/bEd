@@ -23,6 +23,8 @@ mod platform;
 mod render;
 pub use memory_assets::{BED_MEMORY_SOURCE, BedMemoryAssets};
 #[cfg(feature = "preview")]
+pub mod preview;
+#[cfg(feature = "preview")]
 mod previews;
 #[cfg(feature = "preview")]
 pub use previews::DesktopPreviewIntegrationPlugin;
@@ -141,11 +143,9 @@ impl Plugin for DesktopHostPlugin {
     }
 }
 
-/// Attach desktop presentation to a host's existing Bevy window and renderer.
-/// Add this after DefaultPlugins with PipelinedRenderingPlugin disabled. The
-/// host retains its runner, window-close configuration and render error policy.
-/// Memory assets are required only by consumers; register BedMemoryAssets before
-/// AssetPlugin when using one of those consumers.
+/// Internal second stage of `DesktopPlugins`, after the host installs its
+/// window, renderer and asset sources.
+#[doc(hidden)]
 pub struct DesktopIntegrationPlugin;
 
 impl Plugin for DesktopIntegrationPlugin {
@@ -204,11 +204,7 @@ impl Plugin for DesktopIntegrationPlugin {
             .add_systems(RenderStartup, publish_device)
             .add_systems(ExtractSchedule, extract_frame);
         render::install(app);
-        app.add_plugins((
-            DesktopAppearancePlugin,
-            DesktopNativePlugin,
-            DesktopCanvasPlugin,
-        ));
+        app.add_plugins((DesktopThemePlugin, DesktopNativePlugin, DesktopCanvasPlugin));
     }
 }
 
@@ -689,6 +685,16 @@ fn draw_frontend(world: &mut World) {
     }
 }
 
+/// Draw one complete frontend with its prepared context and shared motion.
+/// Custom DesktopFrontend transactions call this between BeginFrame and render.
+pub fn draw_ui_frame(world: &mut World, ui: &Ui, draw: impl FnOnce(&mut World, &Ui)) {
+    let context = world.non_send::<bed_ui::UiRuntime>().frame_context();
+    context.assert_matches(ui);
+    world.non_send_mut::<bed_ui::UiRuntime>().begin(ui);
+    context.scope(|| draw(world, ui));
+    world.non_send_mut::<bed_ui::UiRuntime>().end(ui);
+}
+
 fn default_frontend(world: &mut World, desktop: &mut DesktopContext) {
     let primary = world
         .query_filtered::<Entity, With<PrimaryWindow>>()
@@ -724,7 +730,7 @@ fn default_frontend(world: &mut World, desktop: &mut DesktopContext) {
         world.resource_mut::<DesktopFrame>().size = [size.width, size.height];
         let frame = context.begin_frame();
         if let Some(draw) = world.get_resource::<DesktopUi>().map(|draw| draw.0) {
-            draw(world, frame.ui());
+            draw_ui_frame(world, frame.ui(), draw);
         }
         world.insert_resource(DesktopCapture {
             keyboard: frame.ui().io().want_capture_keyboard() || frame.ui().io().want_text_input(),

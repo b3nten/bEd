@@ -6,6 +6,7 @@ publish = false
 license.workspace = true
 
 [dependencies]
+bed-ui = { workspace = true, features = ["imgui"] }
 bed-keybindings = { workspace = true }
 bed-editing = { workspace = true }
 bed-api = { workspace = true  , features = ["documents"] }

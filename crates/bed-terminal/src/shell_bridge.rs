@@ -151,7 +151,7 @@ impl PrivateDirectory {
         }
         Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            "could not create a private bed-app-shell socket directory",
+            "could not create a private terminal shell command socket directory",
         ))
     }
 
@@ -347,7 +347,7 @@ impl Client {
                         if self.input.is_empty() {
                             return false;
                         }
-                        self.reply(Err("incomplete bed-app-shell request".into()));
+                        self.reply(Err("incomplete terminal shell command request".into()));
                         break;
                     }
                     Ok(count) => {
@@ -367,7 +367,7 @@ impl Client {
                             break;
                         }
                         if self.input.len() > MAX_MESSAGE_BYTES {
-                            self.reply(Err("bed-app-shell request is too large".into()));
+                            self.reply(Err("terminal shell command request is too large".into()));
                             break;
                         }
                     }
@@ -400,10 +400,10 @@ impl Client {
 
 fn decode_request(bytes: &[u8]) -> Result<Request, String> {
     if bytes.len() > MAX_MESSAGE_BYTES {
-        return Err("bed-app-shell request is too large".into());
+        return Err("terminal shell command request is too large".into());
     }
     match serde_json::from_slice(bytes)
-        .map_err(|error| format!("invalid bed-app-shell request: {error}"))?
+        .map_err(|error| format!("invalid terminal shell command request: {error}"))?
     {
         WireRequest::Invoke {
             alias,
@@ -454,7 +454,9 @@ fn decode_request(bytes: &[u8]) -> Result<Request, String> {
 fn decode_path(bytes: Vec<u8>) -> Result<PathBuf, String> {
     let path = PathBuf::from(std::ffi::OsString::from_vec(bytes));
     if !path.is_absolute() || path.as_os_str().as_bytes().contains(&0) {
-        return Err("bed-app-shell paths must be absolute and contain no NUL bytes".into());
+        return Err(
+            "terminal shell command paths must be absolute and contain no NUL bytes".into(),
+        );
     }
     Ok(path)
 }
@@ -477,7 +479,7 @@ fn validate_pane(pane: Option<&str>) -> Result<(), String> {
     if pane.is_some_and(|pane| {
         pane.is_empty() || pane.len() > MAX_PANE_BYTES || pane.as_bytes().contains(&0)
     }) {
-        return Err("invalid bed-app-shell pane token".into());
+        return Err("invalid terminal shell command pane token".into());
     }
     Ok(())
 }
@@ -527,7 +529,7 @@ fn encode_wire_request(request: WireRequest) -> io::Result<Vec<u8>> {
     if bytes.len() > MAX_MESSAGE_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "bed-app-shell request is too large",
+            "terminal shell command request is too large",
         ));
     }
     bytes.push(b'\n');
@@ -603,7 +605,7 @@ fn send_request(request: Vec<u8>) -> io::Result<()> {
     let mut stream = UnixStream::connect(PathBuf::from(socket)).map_err(|error| {
         io::Error::new(
             error.kind(),
-            format!("could not connect to bed-app-shell: {error}"),
+            format!("could not connect to terminal shell command: {error}"),
         )
     })?;
     stream.set_read_timeout(Some(COMMAND_TIMEOUT))?;
@@ -620,7 +622,7 @@ fn read_reply(stream: UnixStream) -> io::Result<()> {
     if bytes.len() > MAX_MESSAGE_BYTES || bytes.last() != Some(&b'\n') {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "invalid bed-app-shell acknowledgement",
+            "invalid terminal shell command acknowledgement",
         ));
     }
     let reply: Reply = serde_json::from_slice(&bytes).map_err(io::Error::other)?;

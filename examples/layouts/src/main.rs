@@ -1,5 +1,4 @@
 //! A reusable desktop workbench without editor, terminal or content viewers.
-use bed_core::BedCorePlugin;
 use bed_desktop::DesktopPlugins;
 use bed_plugin_layouts::{
     LayoutId, LayoutIntegration, LayoutSlots, LayoutsPlugin, WorkbenchLayouts,
@@ -435,7 +434,7 @@ fn smoke(world: &mut World) {
         _ => {}
     }
 }
-fn main() {
+fn main() -> io::Result<()> {
     let mut path = None;
     let mut smoke_test = false;
     let mut capture = None;
@@ -463,29 +462,45 @@ fn main() {
             PathBuf::from("layout-app.json")
         }
     });
-    let mut app = App::new();
-    app.add_plugins(BedCorePlugin {
-        desktop: DesktopPlugins {
-            window: Window {
-                title: "Layout workbench".into(),
-                ..default()
-            },
+    let launch = match bed_app::Application::new("example.layouts", "Layout workbench")?
+        .dispatch(std::env::args_os())?
+    {
+        bed_app::LaunchOutcome::Desktop(launch) => *launch,
+        bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+    };
+    let launch = launch.options(DesktopPlugins {
+        window: Window {
+            title: "Layout workbench".into(),
             ..default()
         },
-    })
-    .add_plugins((LayoutsPlugin, LayoutDemoPlugin { slots: 3 }))
-    .insert_resource(LayoutFile(path));
-    if smoke_test {
-        app.insert_resource(Smoke {
-            phase: 0,
-            source: None,
-            expected_count: 0,
-            capture,
-            started: Instant::now(),
-        })
-        .add_systems(Update, smoke);
+        ..default()
+    });
+    let launch = if smoke_test {
+        launch.config_directory(
+            std::env::temp_dir().join(format!("bed-layout-example-config-{}", std::process::id())),
+        )
+    } else {
+        launch
+    };
+    let exit = launch.run(|app| {
+        app.add_plugins((LayoutsPlugin, LayoutDemoPlugin { slots: 3 }))
+            .insert_resource(LayoutFile(path));
+        if smoke_test {
+            app.insert_resource(Smoke {
+                phase: 0,
+                source: None,
+                expected_count: 0,
+                capture,
+                started: Instant::now(),
+            })
+            .add_systems(Update, smoke);
+        }
+        Ok(())
+    })?;
+    if exit.is_error() {
+        return Err(io::Error::other("Layout example exited with an error"));
     }
-    app.run();
+    Ok(())
 }
 
 #[cfg(test)]

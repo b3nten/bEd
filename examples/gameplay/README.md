@@ -1,7 +1,7 @@
 # Same game, editor and runtime
 
-`game` contains a game plugin that depends only on Bevy. `editor` attaches bEd to
-an already configured `DefaultPlugins` app, renders the game camera through a
+`game` contains a game plugin that depends only on Bevy. `editor` launches through
+`bed_app::Application`, renders the game camera through a
 workbench canvas and admits ordinary Bevy input only for its focused viewport.
 `runtime` adds that same game plugin to ordinary Bevy and renders into the window;
 it has no bEd crate dependencies.
@@ -19,7 +19,7 @@ Pause changes the game's own execution resource. The adapter changes only the
 camera target and input admission; closing/reopening or resizing the panel leaves
 its scene and simulation intact. Use **Open game viewport** to reopen it.
 
-The editor intentionally does not register `BedMemoryAssets`: this game consumes
-no assets from that source. A host installing a memory-asset consumer must register
-the source before `AssetPlugin`. Editor/runtime selection is construction-time;
-the example does not unload plugins or implement a gameplay framework.
+The SDK establishes asset sources before Bevy's asset plugin and installs the
+editor foundation before the application adds its game and viewport plugins.
+Editor/runtime selection is construction-time; the example does not unload
+plugins or implement a gameplay framework.

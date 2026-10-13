@@ -1,19 +1,18 @@
 //! A complete desktop with one optional terminal panel.
-use bed_plugin_terminal::TerminalPlugin;
-use serde_json::Value;
-use {bed_core::BedCorePlugin, bed_core::bevy::prelude::*};
-use {bed_workbench::WorkbenchAction, bed_workbench::WorkbenchRequests};
+use serde_json::json;
 
-fn main() {
-    let mut app = App::new();
-    app.add_plugins((BedCorePlugin::default(), TerminalPlugin));
-
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::OpenPanel {
-            panel_type: bed_plugin_terminal::PANEL_ID.into(),
-            state: Value::Null,
-            area: None,
-        });
-    app.run();
+fn main() -> std::io::Result<()> {
+    let exit = bed_app::Application::new("example.terminal", "Terminal application")?
+        .register(bed_plugin_terminal::launch_registration())
+        .run(|app| {
+            bed_app::bed_core::bed_workbench::open_panel(
+                app.world_mut(),
+                json!({"panel_type": bed_plugin_terminal::PANEL_ID}),
+                None,
+                None,
+            )
+            .map_err(std::io::Error::other)?;
+            Ok(())
+        })?;
+    std::process::exit(exit);
 }

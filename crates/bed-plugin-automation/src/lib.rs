@@ -22,10 +22,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(feature = "app")]
-mod app;
-#[cfg(feature = "app")]
-pub use app::{AppOperation, DocumentHandle, DocumentInfo, DocumentRead};
+#[cfg(feature = "documents")]
+mod documents;
+#[cfg(feature = "documents")]
+pub use documents::{DocumentHandle, DocumentInfo, DocumentRead, read_document};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OperationId(pub u64);
@@ -36,6 +36,19 @@ pub struct PanelHandle {
     app: u64,
     session_id: u64,
     entity: Entity,
+}
+
+/// Capture a currently live panel for an application-owned operation.
+pub fn panel_handle(world: &World, entity: Entity) -> Result<PanelHandle, AutomationError> {
+    if !world.contains_resource::<AutomationScope>() {
+        return Err(AutomationError::new(
+            ErrorKind::Unavailable,
+            "automation is not installed",
+        ));
+    }
+    let panel = handle(world, entity);
+    resolve_panel(world, panel)?;
+    Ok(panel)
 }
 
 impl PanelHandle {
@@ -76,8 +89,8 @@ pub enum Operation {
         after: Option<OperationId>,
         timeout: Duration,
     },
-    #[cfg(feature = "app")]
-    App(AppOperation),
+    #[cfg(feature = "documents")]
+    ReadDocument(DocumentHandle),
 }
 
 #[derive(Clone, Debug)]
@@ -114,10 +127,8 @@ pub struct Snapshot {
     pub panels: Vec<PanelInfo>,
     pub commands: Vec<CommandInfo>,
     pub layout: Value,
-    #[cfg(feature = "app")]
+    #[cfg(feature = "documents")]
     pub documents: Vec<DocumentInfo>,
-    #[cfg(feature = "app")]
-    pub workspace: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -129,10 +140,8 @@ pub enum OperationValue {
     Snapshot(Snapshot),
     Input(bed_desktop::DesktopInputReceipt),
     Captured(DesktopCapturedFrame),
-    #[cfg(feature = "app")]
+    #[cfg(feature = "documents")]
     Document(DocumentRead),
-    #[cfg(feature = "app")]
-    Saved(Vec<bed_api::documents::SavedDocument>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -256,8 +265,8 @@ enum Pending {
         deadline: Instant,
         capture: Option<DesktopCaptureId>,
     },
-    #[cfg(feature = "app")]
-    App(app::PendingApp),
+    #[cfg(feature = "documents")]
+    ReadDocument(DocumentHandle),
 }
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -275,16 +284,6 @@ impl Plugin for AutomationPlugin {
             "install the workbench before AutomationPlugin"
         );
         static NEXT_APP: AtomicU64 = AtomicU64::new(1);
-        #[cfg(feature = "app")]
-        app.configure_sets(
-            PreUpdate,
-            AutomationSystems::Ingress.before(bed_app::AppSystems::Services),
-        );
-        #[cfg(feature = "app")]
-        app.configure_sets(
-            PostUpdate,
-            AutomationSystems::Complete.after(bed_app::AppSystems::Requests),
-        );
         let statuses = Arc::default();
         app.insert_resource(AutomationRequests {
             statuses: Arc::clone(&statuses),
@@ -317,7 +316,7 @@ fn frame(world: &World) -> DesktopFrameId {
 }
 
 fn session_id(world: &World) -> u64 {
-    #[cfg(feature = "app")]
+    #[cfg(feature = "documents")]
     if let Some(session) = world.get_non_send::<bed_documents::session::DocumentSession>() {
         return session.session_id().0;
     }
@@ -333,8 +332,11 @@ fn handle(world: &World, entity: Entity) -> PanelHandle {
     }
 }
 
-fn resolve(world: &World, panel: PanelHandle) -> Result<Entity, AutomationError> {
-    if panel.app != world.resource::<AutomationScope>().0
+pub fn resolve_panel(world: &World, panel: PanelHandle) -> Result<Entity, AutomationError> {
+    let scope = world.get_resource::<AutomationScope>().ok_or_else(|| {
+        AutomationError::new(ErrorKind::Unavailable, "automation is not installed")
+    })?;
+    if panel.app != scope.0
         || panel.session_id != session_id(world)
         || world.get::<PanelPresentation>(panel.entity).is_none()
     {
@@ -388,7 +390,7 @@ fn start(world: &mut World, operation: Operation) -> Result<Pending, AutomationE
                 area,
             }
         }
-        Operation::FocusPanel(panel) => WorkbenchAction::FocusPanel(resolve(world, panel)?),
+        Operation::FocusPanel(panel) => WorkbenchAction::FocusPanel(resolve_panel(world, panel)?),
         Operation::SplitPanel { panel, axis, high } => {
             if axis > 1 {
                 return Err(AutomationError::new(
@@ -397,12 +399,12 @@ fn start(world: &mut World, operation: Operation) -> Result<Pending, AutomationE
                 ));
             }
             WorkbenchAction::SplitPanel {
-                panel: resolve(world, panel)?,
+                panel: resolve_panel(world, panel)?,
                 axis,
                 high,
             }
         }
-        Operation::ClosePanel(panel) => WorkbenchAction::ClosePanel(resolve(world, panel)?),
+        Operation::ClosePanel(panel) => WorkbenchAction::ClosePanel(resolve_panel(world, panel)?),
         Operation::InvokeCommand {
             command,
             source,
@@ -418,7 +420,6 @@ fn start(world: &mut World, operation: Operation) -> Result<Pending, AutomationE
                     format!("command is unavailable: {command}"),
                 ));
             }
-            #[cfg(feature = "app")]
             if world
                 .get_resource::<bed_api::workbench::CommandPresentations>()
                 .and_then(|facts| facts.0.get(&command))
@@ -430,7 +431,7 @@ fn start(world: &mut World, operation: Operation) -> Result<Pending, AutomationE
                 ));
             }
             let source = source
-                .map(|panel| resolve(world, panel))
+                .map(|panel| resolve_panel(world, panel))
                 .transpose()?
                 .or_else(|| world.resource::<WorkbenchLayout>().focused);
             let area = source
@@ -470,7 +471,7 @@ fn start(world: &mut World, operation: Operation) -> Result<Pending, AutomationE
             }
             for target in &targets {
                 if let CaptureTarget::Panel(panel) = target {
-                    resolve(world, *panel)?;
+                    resolve_panel(world, *panel)?;
                 }
             }
             let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
@@ -486,15 +487,12 @@ fn start(world: &mut World, operation: Operation) -> Result<Pending, AutomationE
                 capture: None,
             });
         }
-        #[cfg(feature = "app")]
-        Operation::App(operation) => {
-            return app::start(world, operation).map(Pending::App);
+        #[cfg(feature = "documents")]
+        Operation::ReadDocument(document) => {
+            documents::resolve_document(world, document)?;
+            return Ok(Pending::ReadDocument(document));
         }
     };
-    #[cfg(feature = "app")]
-    if world.contains_resource::<bed_app::AppRequests>() {
-        return Ok(Pending::App(app::start_workbench(world, action)));
-    }
     Ok(Pending::Workbench(
         world.resource_mut::<WorkbenchRequests>().submit(action),
     ))
@@ -611,7 +609,7 @@ fn poll(world: &mut World, pending: &mut Pending) -> Option<OperationResult> {
                 .map(|target| match target {
                     CaptureTarget::Window => Ok(DesktopCaptureTarget::Window),
                     CaptureTarget::Panel(panel) => {
-                        resolve(world, *panel).map(DesktopCaptureTarget::Panel)
+                        resolve_panel(world, *panel).map(DesktopCaptureTarget::Panel)
                     }
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -628,8 +626,10 @@ fn poll(world: &mut World, pending: &mut Pending) -> Option<OperationResult> {
             *capture = Some(requests.submit(targets, *deadline, after_frame));
             None
         }
-        #[cfg(feature = "app")]
-        Pending::App(pending) => app::poll(world, pending),
+        #[cfg(feature = "documents")]
+        Pending::ReadDocument(document) => {
+            Some(read_document(world, *document).map(OperationValue::Document))
+        }
     }
 }
 
@@ -653,11 +653,9 @@ fn inspect(world: &mut World) -> Result<Snapshot, AutomationError> {
             .map_err(|error| AutomationError::new(ErrorKind::Failed, error))?;
         let layout = world.resource::<WorkbenchLayout>();
         let readiness = {
-            #[cfg(feature = "app")]
-            let surface = bed_app::panel_presentation(world, entity).unwrap_or(entity);
-            #[cfg(not(feature = "app"))]
-            let surface = entity;
-            #[cfg(feature = "app")]
+            let surface = world
+                .get::<bed_api::workbench::PanelFrontend>(entity)
+                .map_or(entity, |frontend| frontend.0);
             let readiness = world
                 .get::<bed_api::workbench::PanelReadiness>(surface)
                 .map(|readiness| match readiness {
@@ -668,11 +666,6 @@ fn inspect(world: &mut World) -> Result<Snapshot, AutomationError> {
                     }
                 })
                 .unwrap_or(Readiness::Ready);
-            #[cfg(not(feature = "app"))]
-            let readiness = {
-                let _ = surface;
-                Readiness::Ready
-            };
             if available {
                 readiness
             } else {
@@ -703,7 +696,6 @@ fn inspect(world: &mut World) -> Result<Snapshot, AutomationError> {
         .commands()
         .iter()
         .map(|command| {
-            #[cfg(feature = "app")]
             if let Some(fact) = world
                 .get_resource::<bed_api::workbench::CommandPresentations>()
                 .and_then(|facts| facts.0.get(command.id))
@@ -732,10 +724,8 @@ fn inspect(world: &mut World) -> Result<Snapshot, AutomationError> {
         panels,
         commands,
         layout,
-        #[cfg(feature = "app")]
-        documents: app::documents(world)?,
-        #[cfg(feature = "app")]
-        workspace: app::workspace(world),
+        #[cfg(feature = "documents")]
+        documents: documents::documents(world)?,
     })
 }
 

@@ -11,8 +11,8 @@ use bed_api::{
 };
 use bed_editing::identity::DocumentId;
 use bed_ui::TextureHandle;
+use bed_ui::components::tooltip_text;
 use bed_ui::gpu::{Canvas, RenderOutput, RenderTarget};
-use bed_ui::util::popup_style::tooltip_text;
 use dear_imgui_rs::{MouseButton, StyleColor, Ui};
 use serde_json::Value;
 use std::{
@@ -402,7 +402,7 @@ impl GltfPanel {
     }
 
     fn draw_prepared(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostAction>) {
-        let _controls = bed_ui::util::popup_style::controls_style(ui);
+        let _controls = bed_ui::components::controls_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         let frame_all = ui.button("Frame All");
         ui.same_line();
         if ui.button("Info") {
@@ -413,7 +413,8 @@ impl GltfPanel {
             ui.open_popup("model-appearance");
         }
         {
-            let _popup = bed_ui::util::popup_style::context_menu_style(ui);
+            let _popup =
+                bed_ui::components::context_menu_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
             if let Some(_popup) = ui.begin_popup("model-appearance") {
                 let mut display = self.settings.display.index();
                 if ui.combo_simple_string("View", &mut display, &debug_views::DisplayMode::NAMES) {
@@ -421,7 +422,11 @@ impl GltfPanel {
                 }
                 ui.checkbox("Normal vectors", &mut self.settings.normals);
                 if ui.is_item_hovered() {
-                    tooltip_text(ui, "Show vertex normals, sampled to at most 6,000 vectors.");
+                    tooltip_text(
+                        ui,
+                        &bed_ui::UiFrameContext::for_ui(ui),
+                        "Show vertex normals, sampled to at most 6,000 vectors.",
+                    );
                 }
                 if self.settings.normals {
                     ui.slider_config("Normal length", 0.01, 0.3)
@@ -441,6 +446,7 @@ impl GltfPanel {
                     if ui.is_item_hovered() {
                         tooltip_text(
                             ui,
+                            &bed_ui::UiFrameContext::for_ui(ui),
                             "Soften the background while keeping model lighting and reflections sharp.",
                         );
                     }
@@ -449,7 +455,11 @@ impl GltfPanel {
                         .expect("valid horizon format")
                         .build(&mut self.settings.horizon);
                     if ui.is_item_hovered() {
-                        tooltip_text(ui, "Lower values move the background horizon down.");
+                        tooltip_text(
+                            ui,
+                            &bed_ui::UiFrameContext::for_ui(ui),
+                            "Lower values move the background horizon down.",
+                        );
                     }
                 }
                 ui.checkbox("Shadows", &mut self.settings.shadows);
@@ -471,7 +481,8 @@ impl GltfPanel {
         ui.same_line();
         ui.text_disabled("Drag to orbit · Right-drag to pan · Scroll to zoom");
         {
-            let _popup = bed_ui::util::popup_style::context_menu_style(ui);
+            let _popup =
+                bed_ui::components::context_menu_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
             if let Some(_popup) = ui.begin_popup("gltf-information") {
                 if let Some(document) = host.document(self.document) {
                     ui.text_wrapped(&document.path);
@@ -525,7 +536,7 @@ impl GltfPanel {
             {
                 requests.push(HostAction::OpenFile {
                     path: document.path.clone(),
-                    viewer: Some("bed.hex".into()),
+                    viewer: Some("bed.editor.hex".into()),
                 });
             }
             return;

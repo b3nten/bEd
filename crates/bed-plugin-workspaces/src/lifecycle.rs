@@ -8,9 +8,9 @@ use bevy::prelude::*;
 use serde_json::Value;
 use std::io;
 
-pub const SAVE_COMMAND: &str = "bed.workspaces.save";
-pub const ACTION_COMMAND: &str = "bed.workspaces.action";
-pub const PROMOTE_COMMAND: &str = "bed.workspaces.promote";
+pub const SAVE_COMMAND: &str = "bed.workspaces.lifecycle.save";
+pub const ACTION_COMMAND: &str = "bed.workspaces.lifecycle.action";
+pub const PROMOTE_COMMAND: &str = "bed.workspaces.lifecycle.promote";
 
 /// Application integration consumes requests in the same emission order as editing.
 #[derive(Message, Clone, Debug)]
@@ -55,7 +55,7 @@ impl Plugin for WorkspacesIntegrationPlugin {
             .init_resource::<WorkspaceRequestCursor>()
             .add_systems(PostUpdate, process_workspace_requests)
             .add_systems(Startup, initialize_workspace_observations);
-        bed_api::workbench::register(app.world_mut(), "bed.workspaces", |registrar| {
+        bed_api::workbench::register(app.world_mut(), "bed.workspaces.lifecycle", |registrar| {
             registrar.command(SAVE_COMMAND, "Save Workspace", save_command);
             registrar.command(ACTION_COMMAND, "Workspace Action", action_command);
             registrar.command(PROMOTE_COMMAND, "Open Terminal Workspace", promote_command);
@@ -66,7 +66,7 @@ impl Plugin for WorkspacesIntegrationPlugin {
         app.init_resource::<bed_api::features::FeatureRegistry>();
         app.world_mut()
             .resource_mut::<bed_api::features::FeatureRegistry>()
-            .register_with("bed.workspaces", |registrar| {
+            .register_with("bed.workspaces.lifecycle", |registrar| {
                 registrar.command_ref(SAVE_COMMAND);
                 registrar.command_ref(ACTION_COMMAND);
                 registrar.command_ref(PROMOTE_COMMAND);
@@ -89,7 +89,7 @@ pub fn rename_workspace(
     {
         world.insert_resource(WorkspaceAttachment::Saved(renamed.clone()));
     }
-    refresh_workspace_observations(world)?;
+    refresh_after_commit(world);
     Ok(renamed)
 }
 
@@ -97,6 +97,21 @@ pub fn refresh_workspace_observations(world: &mut World) -> io::Result<()> {
     let recent = world.resource::<WorkspaceRepositoryResource>().0.recent()?;
     world.resource_mut::<WorkspacesState>().recent_workspaces = recent;
     Ok(())
+}
+
+fn refresh_after_commit(world: &mut World) {
+    let index_error = world
+        .resource_mut::<WorkspaceRepositoryResource>()
+        .0
+        .take_index_error();
+    if let Some(error) = index_error {
+        world.resource_mut::<WorkspacesState>().error = Some(error);
+    }
+    if let Err(error) = refresh_workspace_observations(world) {
+        world.resource_mut::<WorkspacesState>().error = Some(format!(
+            "Workspace saved, but recent locations could not be refreshed: {error}"
+        ));
+    }
 }
 fn initialize_workspace_observations(world: &mut World) {
     if let Err(error) = refresh_workspace_observations(world) {
@@ -249,10 +264,7 @@ pub fn save_current_workspace(
         .0
         .commit(spec, WorkspaceSnapshot { layouts, plugins })?;
     world.insert_resource(WorkspaceAttachment::Saved(spec.clone()));
-    match world.resource::<WorkspaceRepositoryResource>().0.recent() {
-        Ok(recent) => world.resource_mut::<WorkspacesState>().recent_workspaces = recent,
-        Err(error) => world.resource_mut::<WorkspacesState>().error = Some(error.to_string()),
-    }
+    refresh_after_commit(world);
     Ok(spec)
 }
 
@@ -293,6 +305,10 @@ fn process_workspace_requests(world: &mut World) {
             cursor.pending.extend(requests);
             break;
         }
+        let committed = matches!(
+            &request.action,
+            WorkspaceAction::SaveCurrent { .. } | WorkspaceAction::RenameWorkspace(..)
+        );
         let result = (|| -> io::Result<()> {
             if world
                 .get_resource::<bed_api::documents::DocumentFrame>()
@@ -345,7 +361,9 @@ fn process_workspace_requests(world: &mut World) {
                     ));
                 }
             }
-            refresh_workspace_observations(world)?;
+            if !committed {
+                refresh_workspace_observations(world)?;
+            }
             Ok(())
         })();
         if let Some(token) = request.barrier {

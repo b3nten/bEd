@@ -1470,7 +1470,7 @@ mod tests {
                 state,
                 view: TextViewState::new(),
                 ops: EditingOperations::new(),
-                undo: ProjectUndo::new(String::new()),
+                undo: ProjectUndo::default(),
                 events: EditingEvents::new(),
             }
         }

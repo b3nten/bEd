@@ -17,8 +17,11 @@ fn native_registered_duck_renderer_owns_entities_in_the_shared_world() {
             .unwrap();
     let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut app = App::new();
-    app.add_plugins((bed_runtime::BedRuntimePlugin, DuckMascotPlugin));
-    app.add_plugins(bed_runtime::render::BedRenderPlugin {
+    app.add_plugins((
+        (bevy::prelude::MinimalPlugins, bevy::input::InputPlugin),
+        DuckMascotPlugin,
+    ));
+    app.add_plugins(bed_desktop::preview::PreviewRenderPlugin {
         resources: bevy::render::settings::RenderResources(
             bevy::render::renderer::RenderDevice::from(device.clone()),
             bevy::render::renderer::RenderQueue::new(queue.clone()),
@@ -65,7 +68,7 @@ fn native_registered_duck_renderer_owns_entities_in_the_shared_world() {
     let renderer = app.world().get::<CanvasRenderer>(entity).unwrap().0;
     let deadline = Instant::now() + Duration::from_secs(30);
     let rendered = loop {
-        bed_runtime::render::begin_preview_frame(app.world_mut());
+        bed_desktop::preview::begin_preview_frame(app.world_mut());
         let commands = app
             .world_mut()
             .run_system_with(
@@ -111,17 +114,17 @@ fn native_registered_duck_renderer_owns_entities_in_the_shared_world() {
     assert!(app.world().get::<GameState>(game).is_some());
     assert!(
         app.world_mut()
-            .query::<&bed_runtime::render::PreviewView>()
+            .query::<&bed_desktop::preview::PreviewView>()
             .iter(app.world())
             .any(|view| view.0 == output.handle.0)
     );
     app.world_mut().entity_mut(entity).despawn();
     app.update();
     assert!(app.world().non_send::<MascotStates>().get(entity).is_none());
-    bed_runtime::render::retire_previews(app.world_mut(), &Default::default());
+    bed_desktop::preview::retire_previews(app.world_mut(), &Default::default());
     assert_eq!(
         app.world_mut()
-            .query::<&bed_runtime::render::PreviewView>()
+            .query::<&bed_desktop::preview::PreviewView>()
             .iter(app.world())
             .count(),
         0
@@ -140,8 +143,8 @@ fn native_scenes_render_geometry_and_react_to_mascot_input() {
         bevy::tasks::block_on(adapter.request_device(&renderer_device_descriptor(&adapter)))
             .unwrap();
     let mut app = bevy::app::App::new();
-    app.add_plugins(bed_runtime::BedRuntimePlugin);
-    app.add_plugins(bed_runtime::render::BedRenderPlugin {
+    app.add_plugins((bevy::prelude::MinimalPlugins, bevy::input::InputPlugin));
+    app.add_plugins(bed_desktop::preview::PreviewRenderPlugin {
         resources: bevy::render::settings::RenderResources(
             bevy::render::renderer::RenderDevice::from(device.clone()),
             bevy::render::renderer::RenderQueue::new(queue.clone()),
@@ -731,7 +734,7 @@ impl SceneTestFrame for renderer::SceneRenderer {
         time: f32,
         impulse: f32,
     ) -> Result<(), String> {
-        bed_runtime::render::begin_preview_frame(gpu.app.world_mut());
+        bed_desktop::preview::begin_preview_frame(gpu.app.world_mut());
         self.sync(&mut gpu.context(), target, frame, time, impulse)?;
         gpu.app.update();
         Ok(())

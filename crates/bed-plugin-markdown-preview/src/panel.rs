@@ -147,7 +147,7 @@ impl MarkdownPanel {
         } else if let Some(document) = host.document(self.document) {
             requests.push(HostAction::OpenFile {
                 path: document.path.clone(),
-                viewer: Some("bed.text".into()),
+                viewer: Some("bed.editor.text".into()),
             });
         }
     }
@@ -411,7 +411,7 @@ mod tests {
             document: id,
             current: crate::VIEWER_ID.into(),
             choices: vec![ViewerChoice {
-                id: "bed.text".into(),
+                id: "bed.editor.text".into(),
                 label: "Text Editor".into(),
                 text_editor: true,
             }],
@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(requests.len(), 1);
         panel.edit_as_text(&host, &mut requests);
         assert!(
-            matches!(&requests[1],HostAction::SwitchViewer{tab:12,document,viewer} if *document==id && viewer=="bed.text")
+            matches!(&requests[1],HostAction::SwitchViewer{tab:12,document,viewer} if *document==id && viewer=="bed.editor.text")
         );
     }
 }

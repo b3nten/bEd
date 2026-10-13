@@ -446,7 +446,7 @@ fn drop_never_saves_dirty_file_or_persistent_history() {
         let mut session = DocumentSession::with_options(SessionOptions {
             project_root: Some(temp.0.clone()),
             autosave: Some(Duration::ZERO),
-            persistent_history: true,
+            history_path: Some(temp.0.join("history.json")),
             ..SessionOptions::default()
         })
         .unwrap();
@@ -455,7 +455,7 @@ fn drop_never_saves_dirty_file_or_persistent_history() {
         session.with_commands(view, |c| c.type_text(b"X")).unwrap();
     }
     assert_eq!(fs::read(&path).unwrap(), b"original");
-    assert!(!temp.0.join(".undo-redo-bed.json").exists());
+    assert!(!temp.0.join("history.json").exists());
 }
 
 #[test]
@@ -822,7 +822,7 @@ fn failed_history_flush_is_reported_and_retried_without_starving_save() {
     let options = SessionOptions {
         project_root: Some(root.clone()),
         autosave: Some(Duration::ZERO),
-        persistent_history: true,
+        history_path: Some(root.join("history.json")),
         ..SessionOptions::default()
     };
     let mut session = DocumentSession::with_options(options.clone()).unwrap();
@@ -830,12 +830,14 @@ fn failed_history_flush_is_reported_and_retried_without_starving_save() {
     let view = session.create_view(doc).unwrap();
     session.with_commands(view, |c| c.type_text(b"X")).unwrap();
     fs::remove_dir(&root).unwrap();
+    fs::write(&root, b"history directory is occupied").unwrap();
     let report = session.tick();
     assert_eq!(fs::read(&path).unwrap(), b"Xbase");
     assert!(report.errors.iter().any(|error| error.service == "history"));
+    fs::remove_file(&root).unwrap();
     fs::create_dir(&root).unwrap();
     assert!(session.tick().errors.is_empty());
-    assert!(root.join(".undo-redo-bed.json").is_file());
+    assert!(root.join("history.json").is_file());
     drop(session);
     let mut reopened = DocumentSession::with_options(options).unwrap();
     let doc = reopened.open_file(&path).unwrap();
@@ -939,7 +941,7 @@ fn live_directory_configures_document_services_without_saved_workspace_metadata(
         session.options().project_root.as_ref(),
         Some(&context.directory)
     );
-    assert!(!session.options().persistent_history);
+    assert!(session.options().history_path.is_none());
     session
         .configure_file_services(SessionOptions::default(), &context, &services)
         .unwrap();

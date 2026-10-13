@@ -291,7 +291,7 @@ impl Panel for DocsPanel {
             false,
         );
         let global_keys = key_rows(&input.bindings, None, None, true);
-        let animations = world.resource::<crate::WorkbenchAppearance>().animations;
+        let animations = bed_ui::UiFrameContext::for_ui(ui).theme().motion.enabled;
         let usage = if source.is_none() {
             vec![(String::new(), "Focus a panel to see its docs".into())]
         } else if let Some(docs) = docs.filter(|docs| !docs.sections.is_empty()) {
@@ -329,7 +329,11 @@ impl Panel for DocsPanel {
                 self.symbol_expanded = ui
                     .collapsing_header(format!("{heading}###docs_symbol"), TreeNodeFlags::empty());
                 if ui.is_item_hovered() {
-                    ui.tooltip_text("Symbol");
+                    bed_ui::components::tooltip_text(
+                        ui,
+                        &bed_ui::UiFrameContext::for_ui(ui),
+                        "Symbol",
+                    );
                 }
                 self.disclosures[0].draw(ui, self.symbol_expanded, animations, || {
                     self.symbol_transition
@@ -354,7 +358,11 @@ impl Panel for DocsPanel {
                         TreeNodeFlags::empty(),
                     );
                     if ui.is_item_hovered() {
-                        ui.tooltip_text(label);
+                        bed_ui::components::tooltip_text(
+                            ui,
+                            &bed_ui::UiFrameContext::for_ui(ui),
+                            label,
+                        );
                     }
                     self.disclosures[index + 1].draw(ui, self.expanded[index], animations, || {
                         if index == 0 {
@@ -428,7 +436,11 @@ fn draw_key_row(ui: &Ui, row: &KeyRow, icons: Option<&bed_ui::icons::Icons>) {
                         .tint_color(ink)
                         .build();
                     if ui.is_item_hovered() {
-                        ui.tooltip_text(if part == "Alt" { "Option / Alt" } else { part });
+                        bed_ui::components::tooltip_text(
+                            ui,
+                            &bed_ui::UiFrameContext::for_ui(ui),
+                            if part == "Alt" { "Option / Alt" } else { part },
+                        );
                     }
                 } else {
                     let _color = ui.push_style_color(dear_imgui_rs::StyleColor::Text, ink);

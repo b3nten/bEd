@@ -174,7 +174,7 @@ pub(crate) fn poll_file_operations(world: &mut World) {
                     crate::commit_document_drafts(world, &documents)?;
                     let mut options = world.non_send::<DocumentSession>().options().clone();
                     options.project_root = Some(context.directory.clone());
-                    options.persistent_history = false;
+                    options.history_path = None;
                     let services = world.resource::<FileServices>().clone();
                     world
                         .non_send_mut::<DocumentSession>()
@@ -208,7 +208,7 @@ pub(crate) fn poll_file_operations(world: &mut World) {
                 let context = pending.context.as_ref().unwrap();
                 let mut options = world.non_send::<DocumentSession>().options().clone();
                 options.project_root = Some(context.directory.clone());
-                options.persistent_history = false;
+                options.history_path = None;
                 let session = DocumentSession::with_file_services(
                     options,
                     context,

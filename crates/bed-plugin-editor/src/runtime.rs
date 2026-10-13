@@ -12,8 +12,8 @@ use bed_lsp::{
     workspace_lsp::LspRequestOrigin,
 };
 use bed_ui::{
+    components::{context_menu_style, controls_style, tooltip_text},
     presentation::{fit_text, readable_color, same_line_if_fits},
-    util::popup_style::{context_menu_style, controls_style, tooltip_text},
 };
 use dear_imgui_rs::{MouseButton, StyleColor, StyleVar, TreeNodeFlags, Ui, sys};
 use serde_json::Value;
@@ -637,7 +637,7 @@ impl EditorRuntime {
             self.capture_context(session, view.id())?;
             ui.open_popup(&name);
         }
-        let _menu_style = context_menu_style(ui);
+        let _menu_style = context_menu_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         if let Some(_popup) = ui.begin_popup(&name) {
             if let Some(menu) = self.viewer_menus.get(&view.id()) {
                 menu.draw(ui, requests);
@@ -978,7 +978,7 @@ impl EditorRuntime {
 
     fn draw_diagnostics(&mut self, session: &mut DocumentSession, ui: &Ui) -> Option<LspAction> {
         let snapshot = session.project_diagnostics();
-        let _controls = controls_style(ui);
+        let _controls = controls_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         let fs = ui.current_font_size();
         let _spacing = ui.push_style_var(StyleVar::ItemSpacing([fs * 0.5, fs * 0.3]));
         let _padding = ui.push_style_var(StyleVar::FramePadding([fs * 0.45, fs * 0.2]));
@@ -1008,14 +1008,18 @@ impl EditorRuntime {
             self.project_check = Some(config);
         }
         if ui.is_item_hovered() {
-            tooltip_text(ui, "Automatically check the project after changes");
+            tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                "Automatically check the project after changes",
+            );
         }
         same_line_if_fits(ui, button_width("Setup"));
         if ui.button("Setup") {
             ui.open_popup("diagnostics_check_setup");
         }
         {
-            let _popup_style = context_menu_style(ui);
+            let _popup_style = context_menu_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
             ui.with_bound_context(|| unsafe {
                 sys::igSetNextWindowSize(
                     [(fs * 34.0).min(ui.io().display_size()[0] - fs * 2.0), 0.0].into(),
@@ -1082,7 +1086,11 @@ impl EditorRuntime {
             ui.content_region_avail()[0],
         ));
         if ui.is_item_hovered() {
-            tooltip_text(ui, format!("{status}\n{}", snapshot.status));
+            tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                format!("{status}\n{}", snapshot.status),
+            );
         }
         ui.separator();
         let other = snapshot
@@ -1127,6 +1135,7 @@ impl EditorRuntime {
             if ui.is_item_hovered() {
                 tooltip_text(
                     ui,
+                    &bed_ui::UiFrameContext::for_ui(ui),
                     if *enabled {
                         "Click to hide this severity"
                     } else {
@@ -1182,7 +1191,7 @@ impl EditorRuntime {
                         TreeNodeFlags::DEFAULT_OPEN,
                     );
                     if ui.is_item_hovered() {
-                        tooltip_text(ui, &path);
+                        tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), &path);
                     }
                     if !open {
                         continue;

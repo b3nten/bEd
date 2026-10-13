@@ -26,7 +26,6 @@ impl Plugin for WorkspacesPlugin {
                     PANEL_ID,
                     false,
                     bed_api::workbench::PanelPlacement::Center,
-                    Some("projects"),
                 );
                 registrar.command_ref(NEW_COMMAND);
             })

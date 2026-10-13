@@ -7,7 +7,7 @@ The crate does not load settings, select project roots, or write persistence.
 `LayoutsPlugin` installs `LayoutSlots<LayoutId, ()>` and the workbench if needed.
 `LayoutId::new(number)` accepts any positive `u32`; applications choose their own
 layout count. Applications with named layouts can implement `LayoutKey` on an
-enum. `LayoutSlot` provides the compatibility keys `1` through `9` and `startup`.
+enum. `LayoutSlot` provides the bEd keys `1` through `9` and `startup`.
 
 Call `transition` between UI scopes, after finishing application save barriers:
 

@@ -1,5 +1,5 @@
 //! bEd menu policy. Native construction and activation live in bed-desktop.
-use bed_app_config::LayoutSlot;
+use crate::config::LayoutSlot;
 use bed_desktop::{
     DesktopMenu, DesktopMenuCommand, DesktopMenuItem, DesktopModifiers, DesktopShortcut,
 };
@@ -69,6 +69,11 @@ impl MenuAction {
             SetLayoutDefault(slot) => format!("bed.app.set_layout_{slot}"),
             RestoreBuiltinLayout(slot) => format!("bed.app.restore_layout_{slot}"),
             NewWindow => "bed.desktop.new_window".into(),
+            OpenFile => "bed.documents.open_file".into(),
+            Save => "bed.documents.save".into(),
+            SaveAs => "bed.documents.save_as".into(),
+            SplitRight => "bed.workbench.split_right".into(),
+            SplitDown => "bed.workbench.split_down".into(),
             NewWorkspaces => "bed.app.NewProjects".into(),
             Workspaces => "bed.app.Projects".into(),
             Settings => "bed.settings.show".into(),
@@ -222,7 +227,7 @@ pub struct MenuContext {
 
 pub fn menus(
     bindings: &Bindings,
-    commands: &[bed_app::commands::CommandItem],
+    commands: &[crate::application::commands::CommandItem],
     context: MenuContext,
 ) -> Vec<DesktopMenu> {
     let MenuContext {
@@ -428,7 +433,7 @@ mod tests {
     #[test]
     fn tools_own_panel_creation_and_window_owns_layouts() {
         let bindings = Bindings::new(Vec::new(), &Overrides::default(), Platform::Mac);
-        let commands = vec![bed_app::commands::CommandItem {
+        let commands = vec![crate::application::commands::CommandItem {
             id: "bed.http.open".into(),
             label: "HTTP Client".into(),
             icon: None,
@@ -599,16 +604,16 @@ mod tests {
     #[test]
     fn native_accelerators_preserve_all_modifiers_and_skip_shadowed_or_cleared_bindings() {
         let save = ShortcutAction::new(
-            "bed.app.Save",
+            "bed.documents.save",
             "Save",
-            "bed.app",
+            "bed.documents",
             Scope::Global,
             &["Ctrl+S", "Ctrl+Command+Alt+Shift+F12"],
         );
         let other = ShortcutAction::new(
-            "bed.app.ZOther",
+            "fixture.other",
             "Other",
-            "bed.app",
+            "fixture",
             Scope::Global,
             &["Ctrl+S"],
         );

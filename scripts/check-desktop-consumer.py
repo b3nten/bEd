@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "tests/fixtures/desktop-app/Cargo.toml"
 FORBIDDEN = {
-    "bed", "bed-app-config", "bed-plugin-settings", "bed-app", "bed-core",
+    "bed", "bed-plugin-settings", "bed-app", "bed-core",
     "bed-plugin-editor", "bed-editor-widgets", "bed-editing", "bed-documents",
     "bed-files", "bed-storage", "bed-remote", "bed-lsp", "bed-plugin-git", "bed-git",
     "bed-plugin-terminal", "bed-terminal", "bed-plugin-debugger", "bed-debugger",
@@ -32,7 +32,7 @@ def main(offline=False):
             options += ["--features", features]
         tree = cargo("tree", *options, "--edges", "normal,build", "--prefix", "none", offline=offline)
         names = {line.split()[0] for line in tree.splitlines() if line.strip()}
-        forbidden = FORBIDDEN | ({"bed-plugin-effects", "bed-effects-config"} if "effects" not in features else set())
+        forbidden = FORBIDDEN | ({"bed-plugin-effects"} if "effects" not in features else set())
         if "layout" in features:
             forbidden -= {"bed-files", "bed-storage", "bed-editing"}
         forbidden |= {name for name in names if name.startswith("bed-plugin-")} - ({"bed-plugin-effects"} if "effects" in features else set())

@@ -14,7 +14,7 @@ pub(super) fn draw_controls(
     swatches: &mut Vec<Value>,
 ) -> bool {
     let mut changed = false;
-    let _controls = bed_ui::util::popup_style::controls_style(ui);
+    let _controls = bed_ui::components::controls_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
     let fs = ui.current_font_size();
     let gap = fs * 0.5;
     let _spacing = ui.push_style_var(StyleVar::ItemSpacing([gap, fs * 0.35]));
@@ -179,7 +179,7 @@ pub(super) fn draw_controls(
                     }
                     ui.text_disabled(label);
                     if index == 6 && ui.is_item_hovered() {
-                        ui.tooltip_text("Normalized RGBA components, from 0 to 1");
+                        bed_ui::components::tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), "Normalized RGBA components, from 0 to 1");
                     }
                     let copy_width = ui.calc_text_size("Copied")[0] + fs * 0.8;
                     if stacked_labels {
@@ -219,7 +219,7 @@ pub(super) fn draw_controls(
                         ];
                     }
                     if ui.is_item_hovered() {
-                        ui.tooltip_text(format!("Copy {}", color::outputs(state.rgba)[index]));
+                        bed_ui::components::tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), format!("Copy {}", color::outputs(state.rgba)[index]));
                     }
                     if !stacked_labels {
                         ui.table_set_column_index(1);
@@ -230,7 +230,7 @@ pub(super) fn draw_controls(
                         .build();
                     let finished = ui.is_item_deactivated_after_edit();
                     if ui.is_item_hovered() {
-                        ui.tooltip_text(&drafts.fields[index]);
+                        bed_ui::components::tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), &drafts.fields[index]);
                     }
                     if edited {
                         match color::parse(&drafts.fields[index], index, state.rgba[3]) {
@@ -312,7 +312,7 @@ pub(super) fn draw_controls(
                                 .size([ui.content_region_avail()[0].max(1.0), ui.frame_height()])
                                 .build();
                             if ui.is_item_hovered() {
-                                ui.tooltip_text(format!("{name}\n{}", color::outputs(rgba)[0]));
+                                bed_ui::components::tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), format!("{name}\n{}", color::outputs(rgba)[0]));
                             }
                             if clicked || selected {
                                 drafts.choose(state, rgba);
@@ -339,7 +339,7 @@ pub(super) fn draw_controls(
                 changed = true;
             }
             if ui.is_item_hovered() {
-                ui.tooltip_text("Save as a new swatch");
+                bed_ui::components::tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), "Save as a new swatch");
             }
             if let Some(index) = state.selected.filter(|index| *index < swatches.len()) {
                 let button_width = (ui.content_region_avail()[0] - gap) * 0.5;
@@ -348,7 +348,7 @@ pub(super) fn draw_controls(
                     changed = true;
                 }
                 if ui.is_item_hovered() {
-                    ui.tooltip_text("Update the selected swatch with this color and name");
+                    bed_ui::components::tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), "Update the selected swatch with this color and name");
                 }
                 ui.same_line();
                 if ui.button_with_size("Delete", [button_width, 0.0]) {

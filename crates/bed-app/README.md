@@ -1,32 +1,57 @@
 # bed-app
 
-bEd application policy sits above [`bed-core`](../bed-core/README.md): native window
-handoff, startup decisions, directory/workspace transitions and numbered layouts.
-The binary keeps configuration, helper/debugger entrypoints and smoke commands.
+Owned startup for Bevy desktop applications. `Application` dispatches registered
+process entrypoints before configuration, native windows or Bevy construction.
+Its desktop path installs windowing, rendering, ImGui, themes, fonts, icons,
+workbench panels, editing, settings and shared asset sources in a fixed order.
+Applications add optional feature plugins and their own policy afterward.
 
-The application coordinates its ordered workbench requests with core's shared
-editing owner. Drafts, edits, history, asynchronous saves and service polling run
-through core. Context transitions hold an operation barrier while saving and
-revalidate document revisions before retirement.
+```rust,no_run
+fn main() -> std::io::Result<()> {
+    let exit = bed_app::Application::new("example", "Example")?
+        .register(bed_plugin_terminal::launch_registration())
+        .run(|app| {
+            app.add_plugins(bed_plugin_settings::SettingsPlugin);
+            Ok(())
+        })?;
+    std::process::exit(exit);
+}
+```
 
-A live `FileContext` supplies the directory/provider for Documents, Search,
-Explorer and Git. A saved workspace is optional. Unknown directories and remote
-roots stay temporary until Save Workspace; their layouts/plugin state cause no
-automatic disk writes. Saving attaches persistence without restoring an older
-arrangement or replacing documents, undo, panels, suspended layouts or terminals.
+A `LaunchRegistration` has one owner, optional early selectors and a deferred
+normal plugin installer. Terminal helpers match the executable's `+` prefix;
+debugger helpers match their first argument. Executable selectors precede flag
+selectors, so opaque helper arguments belong to their handler. Duplicate owners,
+empty selectors and overlapping selectors fail before any handler runs.
+Early handlers can return an exit code without constructing a GUI.
 
-The `workspaces` feature installs optional workspace lifecycle and commands.
-`bed-plugin-workspaces` owns its contracts and an injectable repository; bEd's
-adapter retains the version-2 `workspaces.json` format, file lock, atomic writes,
-unknown plugin blobs and unvisited layout slots. Remote UI state remains local.
-Without this feature bEd opens temporary directories and does not read saved
-workspace state. Explicit legacy standalone restoration remains available.
+For application-specific CLI parsing, call `dispatch(std::env::args_os())` and
+match `LaunchOutcome`. A `DesktopLaunch` exposes arguments and accepts desktop
+options, theme, per-plugin icon directories, configuration directory and
+workspace directory name. `build` returns the configured Bevy `App`; `run`
+uses its normal runner and Bevy plugin readiness/finish/cleanup lifecycle.
+The callback runs after foundation and registered plugin installation, before
+settings registration is sealed.
 
-Plugin snapshots use [`bed-storage`](../bed-storage/README.md), exposed through
-`bed_api::storage`. Global preferences/layout templates remain independent of
-workspace persistence. Numbered layout retention lives in `bed-plugin-layouts`.
+`ApplicationPaths` defaults global configuration to
+`~/.config/<app_id>` and the local workspace directory name to `.<app_id>`.
+Applications choose whether and when workspace storage is attached. bEd stores
+remote snapshots in its client-local configuration directory's `remote`
+subdirectory. Core
+settings use the versioned `settings.json` store; applications and plugins
+register defaults and validators before launch finalization. A malformed store
+fails launch without replacing its contents.
 
-Terminal launch context follows file context; plugin owners register shell
-commands. Workspace integration contributes `+workspace`/`+w`, preserving their
-calling-terminal promotion and window-handoff behavior. Save Workspace is a
-separate operation.
+`bed_core` remains the service implementation and is re-exported for document,
+model and transaction APIs. Its foundation plugin is an internal composition
+step, rather than an application setup requirement. `CorePresentationMode::Application`
+lets an application supply its own chrome and command policy.
+
+bEd-specific startup, settings view, workspace transitions and native instance
+handoff are implemented in the root application's `src/application`, `src/config`
+and `src/settings_view`. The reusable launcher has no dependency on those modules
+or optional panels.
+
+The [gameplay example](../../examples/gameplay/README.md) shares an ordinary Bevy
+game plugin between an owned editor launcher and a runtime whose dependency
+graph excludes Bed. Games do not depend on the editor's services or entrypoint.

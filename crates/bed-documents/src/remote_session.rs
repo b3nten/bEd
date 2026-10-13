@@ -240,7 +240,7 @@ impl DocumentSession {
             ));
         }
         options.project_root = Some(PathBuf::from(&root));
-        options.persistent_history = false;
+        options.history_path = None;
         let mut session = Self::default();
         session.options = options;
         session.services = bed_files::FileServices::remote_target(target.clone(), client.clone());
@@ -627,7 +627,7 @@ impl DocumentSession {
                 "Open a new session to change remote roots",
             ));
         }
-        options.persistent_history = false;
+        options.history_path = None;
         let start_autosave = options.autosave.is_some() && self.options.autosave.is_none();
         #[cfg(feature = "ide-services")]
         let lsp_changed = options.lsp_config != self.options.lsp_config

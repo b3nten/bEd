@@ -706,7 +706,8 @@ impl FileTree {
         // SAFETY: This call is inside the live Ui context and its matching End
         // runs synchronously without retaining an ImGui pointer.
         {
-            let _menu_style = bed_ui::util::popup_style::context_menu_style(ui);
+            let _menu_style =
+                bed_ui::components::context_menu_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
             unsafe {
                 if dear_imgui_rs::sys::igBeginPopupContextWindow(
                     c"##tree_background".as_ptr(),
@@ -998,8 +999,13 @@ impl FileTree {
             host.interaction.focused = None;
         }
         host.rows.extend(rows);
+        let context = bed_ui::UiFrameContext::for_ui(ui);
+        let motion = bed_ui::appearance::UiMotion {
+            enabled: style.animations && context.theme().motion.enabled,
+            ..context.theme().motion.clone()
+        };
         host.motion
-            .update(&desired, ui.time(), frame, style.animations, false, reset);
+            .update(&desired, ui.time(), frame, &motion, false, reset);
         if host.motion.rows().len() != desired.len() {
             host.motion.retain(|key| {
                 host.rows
@@ -1193,8 +1199,8 @@ impl FileTree {
                     } else {
                         "folder"
                     })
-                    .or_else(|| icons.get("folder"))
-                    .or_else(|| icons.get("default"))
+                    .or_else(|| icons.get("bed.core.folder"))
+                    .or_else(|| icons.get("bed.core.default"))
             } else {
                 icons.get_for_file(&node.name)
             }
@@ -1353,7 +1359,8 @@ impl FileTree {
             if ui.is_item_clicked_with_button(dear_imgui_rs::MouseButton::Right) {
                 *popup_selection = selection.context_selection(&node.full_path);
             }
-            let _menu_style = bed_ui::util::popup_style::context_menu_style(ui);
+            let _menu_style =
+                bed_ui::components::context_menu_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
             if let Some(_menu) = ui.begin_popup_context_item() {
                 let captured = popup_selection.clone();
                 let mutating = mutation_paths(&captured, visibility.root);

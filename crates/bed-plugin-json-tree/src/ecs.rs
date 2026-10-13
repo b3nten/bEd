@@ -394,7 +394,6 @@ mod tests {
                     "Text Editor",
                     "fixture.text-panel",
                     DocumentKind::Text,
-                    &[],
                 );
             })
             .unwrap();

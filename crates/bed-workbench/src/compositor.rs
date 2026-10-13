@@ -1,30 +1,17 @@
 //! The generic tiling frontend reads one frame-entry layout and returns intents.
 //! It owns gesture state, never panel membership or authoritative geometry.
 use super::*;
+use bed_ui::UiRuntime;
 use bevy::ecs::system::SystemState;
 use dear_imgui_rs::{FocusedFlags, StyleVar, sys};
 use tiling_ui::{
     ChromePanel, ChromeSettings, ChromeTab, TabPlacement, TilingAction, TilingFrontend,
 };
-use ui_animations::UiAnimations;
 
-#[derive(Resource, Clone, Debug)]
+#[derive(Resource, Clone, Debug, Default)]
 pub struct WorkbenchAppearance {
-    pub animations: bool,
     pub add_button: bool,
-    pub background: [f32; 4],
     pub hidden_picker: HashSet<String>,
-}
-
-impl Default for WorkbenchAppearance {
-    fn default() -> Self {
-        Self {
-            animations: true,
-            add_button: false,
-            background: [0.08, 0.08, 0.08, 1.0],
-            hidden_picker: HashSet::new(),
-        }
-    }
 }
 
 #[derive(Component, Clone, Copy, Default)]
@@ -100,15 +87,10 @@ fn draw(world: &mut World, ui: &Ui) {
         })
         .collect::<Vec<_>>();
     let appearance = world.resource::<WorkbenchAppearance>().clone();
-    if world
-        .get_non_send::<UiAnimations>()
-        .is_none_or(|animations| !animations.matches_context(ui))
-    {
-        world.insert_non_send(UiAnimations::new(ui.binding()));
-    }
-    world
-        .non_send_mut::<UiAnimations>()
-        .begin(ui, appearance.animations);
+    let context = bed_ui::UiFrameContext::for_ui(ui);
+    let theme = context.theme();
+    let mut background = theme.palette.window_background;
+    background[3] = theme.opacity;
     let definitions = world
         .resource::<WorkbenchRegistry>()
         .panels()
@@ -133,11 +115,7 @@ fn draw(world: &mut World, ui: &Ui) {
     if inset > 0.0 {
         // Full-size native windows expose these pixels behind the title bar.
         ui.get_background_draw_list()
-            .add_rect(
-                origin,
-                [origin[0] + size[0], origin[1] + inset],
-                appearance.background,
-            )
+            .add_rect(origin, [origin[0] + size[0], origin[1] + inset], background)
             .filled(true)
             .build();
     }
@@ -153,7 +131,7 @@ fn draw(world: &mut World, ui: &Ui) {
         .and_then(|fonts| fonts.italic);
     let docks = {
         let mut state =
-            SystemState::<(NonSendMut<TilingFrontend>, NonSendMut<UiAnimations>)>::new(world);
+            SystemState::<(NonSendMut<TilingFrontend>, Option<NonSendMut<UiRuntime>>)>::new(world);
         let (mut chrome, mut animations) = state
             .get_mut(world)
             .expect("tiling frontend and opening animations are installed");
@@ -167,10 +145,10 @@ fn draw(world: &mut World, ui: &Ui) {
         chrome.focused_area = layout.focused_area;
         chrome.definitions = definitions;
         chrome.settings = ChromeSettings {
-            animations: appearance.animations,
+            animations: theme.motion.enabled,
             add_button: appearance.add_button,
-            background: appearance.background,
-            opacity: appearance.background[3],
+            background,
+            opacity: theme.opacity,
         };
         let _padding = ui.push_style_var(StyleVar::WindowPadding([0.0; 2]));
         let _border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
@@ -187,7 +165,9 @@ fn draw(world: &mut World, ui: &Ui) {
                     | WindowFlags::NO_NAV_FOCUS,
             )
             .build(|| {
-                animations.exclude_current(ui);
+                if let Some(animations) = &mut animations {
+                    animations.exclude_current(ui);
+                }
                 chrome.draw_tiling(ui, origin, size);
             });
         chrome.tiling_ui.docks.clone()
@@ -230,7 +210,9 @@ fn draw(world: &mut World, ui: &Ui) {
             .flags(flags)
             .size([700.0, 520.0], Condition::FirstUseEver)
             .build(|| {
-                world.non_send_mut::<UiAnimations>().register_panel(ui);
+                if let Some(mut runtime) = world.get_non_send_mut::<UiRuntime>() {
+                    runtime.register_panel(ui);
+                }
                 if ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS)
                     && requested.is_none_or(|requested| requested == tab.entity)
                     && layout.focused != Some(tab.entity)
@@ -314,9 +296,6 @@ fn draw(world: &mut World, ui: &Ui) {
         }
     }
     world.resource_mut::<api::PinchEvents>().0.clear();
-    world
-        .non_send_mut::<UiAnimations>()
-        .end(ui, appearance.animations);
 }
 
 fn resolve_gestures(

@@ -1,4 +1,5 @@
 //! Text editing and shared undo without bEd configuration or a workspace.
+use bed_app::bed_core;
 use bed_core::api::{documents::PanelBinding, features::HostAction};
 use bed_plugin_editor::EditorPlugin;
 use serde_json::Value;
@@ -7,9 +8,8 @@ use std::{
     time::{Duration, Instant},
 };
 use {
-    bed_core::BedCorePlugin, bed_core::bed_documents::ByteEdit,
-    bed_core::bed_documents::DocumentId, bed_core::bed_documents::DocumentSession,
-    bed_core::bevy::prelude::*,
+    bed_core::bed_documents::ByteEdit, bed_core::bed_documents::DocumentId,
+    bed_core::bed_documents::DocumentSession, bed_core::bevy::prelude::*,
 };
 
 const CONTENT: &[u8] = b"A shared document.\nEdit either view; both use the same history.\n";
@@ -234,10 +234,29 @@ struct Smoke {
     completed_at: u64,
 }
 fn smoke(world: &mut World) {
-    assert!(
-        world.resource::<Smoke>().started.elapsed() < Duration::from_secs(30),
-        "editor smoke timed out"
-    );
+    if world.resource::<Smoke>().started.elapsed() >= Duration::from_secs(30) {
+        let status = world
+            .resource::<bed_core::bed_desktop::DesktopRenderStatus>()
+            .read();
+        let frame = world.resource::<bed_core::bed_desktop::DesktopFrameInfo>();
+        panic!(
+            "editor smoke timed out: presented {}, UI {}, GPU {}, render error {:?}",
+            status.completed_frames, frame.frame.0, frame.generation, status.error
+        );
+    }
+    // A smoke window must present even when launched behind the active app.
+    if !world.resource::<Smoke>().exercised {
+        let primary = world
+            .query_filtered::<Entity, With<bed_core::bevy::window::PrimaryWindow>>()
+            .iter(world)
+            .next();
+        bed_core::bevy::winit::WINIT_WINDOWS.with(|windows| {
+            let windows = windows.borrow();
+            if let Some(window) = primary.and_then(|entity| windows.get_window(entity)) {
+                window.focus_window();
+            }
+        });
+    }
     let frames = world
         .resource::<bed_core::bed_desktop::DesktopRenderStatus>()
         .read()
@@ -266,25 +285,42 @@ fn headless_smoke() {
     println!("Headless editor smoke passed");
 }
 
-fn main() {
+fn main() -> std::io::Result<()> {
     if std::env::args().any(|argument| argument == "--headless-smoke") {
         headless_smoke();
-        return;
+        return Ok(());
     }
     let smoke_test = std::env::args().any(|argument| argument == "--smoke-test");
-    let mut app = App::new();
-    app.add_plugins((BedCorePlugin::default(), EditorPlugin))
-        .add_systems(Startup, start);
-    if smoke_test {
-        app.insert_resource(smoke_file())
-            .insert_resource(Smoke {
-                started: Instant::now(),
-                exercised: false,
-                completed_at: 0,
-            })
-            .add_systems(Update, smoke);
+    let launch = match bed_app::Application::new("example.editor", "Shared document editor")?
+        .dispatch(std::env::args_os())?
+    {
+        bed_app::LaunchOutcome::Desktop(launch) => *launch,
+        bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+    };
+    let launch = if smoke_test {
+        launch.config_directory(
+            std::env::temp_dir().join(format!("bed-editor-example-config-{}", std::process::id())),
+        )
+    } else {
+        launch
+    };
+    let exit = launch.run(|app| {
+        app.add_plugins(EditorPlugin).add_systems(Startup, start);
+        if smoke_test {
+            app.insert_resource(smoke_file())
+                .insert_resource(Smoke {
+                    started: Instant::now(),
+                    exercised: false,
+                    completed_at: 0,
+                })
+                .add_systems(Update, smoke);
+        }
+        Ok(())
+    })?;
+    if exit.is_error() {
+        return Err(std::io::Error::other("Editor example exited with an error"));
     }
-    app.run();
+    Ok(())
 }
 
 #[cfg(test)]

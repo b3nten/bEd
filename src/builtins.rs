@@ -1,57 +1,99 @@
-//! The default editor is a composition of ordinary, removable Bevy plugins.
-use bevy::{app::PluginGroupBuilder, prelude::*};
+//! bEd chooses its installed reusable features here.
+use bevy::prelude::*;
 
 pub struct BedBuiltinPlugins;
 
-impl PluginGroup for BedBuiltinPlugins {
-    fn build(self) -> PluginGroupBuilder {
-        let group = PluginGroupBuilder::start::<Self>();
-        let group = group.add(DocsPlugin);
+impl Plugin for BedBuiltinPlugins {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(DocsPlugin);
         #[cfg(feature = "editor")]
-        let group = group.add(bed_plugin_editor::EditorPlugin);
+        if !app.is_plugin_added::<bed_plugin_editor::EditorPlugin>() {
+            app.add_plugins(bed_plugin_editor::EditorPlugin);
+        }
         #[cfg(feature = "terminal")]
-        let group = group
-            .add(bed_plugin_terminal::TerminalPlugin)
-            .add(bed_plugin_terminal::TerminalAppIntegrationPlugin);
+        if !app.is_plugin_added::<bed_plugin_terminal::TerminalPlugin>() {
+            app.add_plugins(bed_plugin_terminal::TerminalPlugin);
+        }
+        #[cfg(feature = "terminal")]
+        if !app.is_plugin_added::<bed_plugin_terminal::TerminalAppIntegrationPlugin>() {
+            app.add_plugins(bed_plugin_terminal::TerminalAppIntegrationPlugin);
+        }
         #[cfg(feature = "file-explorer")]
-        let group = group.add(bed_plugin_file_explorer::FileExplorerPlugin);
+        if !app.is_plugin_added::<bed_plugin_file_explorer::FileExplorerPlugin>() {
+            app.add_plugins(bed_plugin_file_explorer::FileExplorerPlugin);
+        }
         #[cfg(feature = "file-search")]
-        let group = group.add(bed_plugin_file_search::FileSearchPlugin);
+        if !app.is_plugin_added::<bed_plugin_file_search::FileSearchPlugin>() {
+            app.add_plugins(bed_plugin_file_search::FileSearchPlugin);
+        }
         #[cfg(feature = "debugger")]
-        let group = group.add(bed_plugin_debugger::DebuggerPlugin);
+        if !app.is_plugin_added::<bed_plugin_debugger::DebuggerPlugin>() {
+            app.add_plugins(bed_plugin_debugger::DebuggerPlugin);
+        }
         #[cfg(feature = "git")]
-        let group = group.add(bed_plugin_git::GitPlugin);
+        if !app.is_plugin_added::<bed_plugin_git::GitPlugin>() {
+            app.add_plugins(bed_plugin_git::GitPlugin);
+        }
         #[cfg(feature = "workspaces")]
-        let group = group.add(bed_plugin_workspaces::WorkspacesPlugin);
+        if !app.is_plugin_added::<bed_plugin_workspaces::WorkspacesPlugin>() {
+            app.add_plugins(bed_plugin_workspaces::WorkspacesPlugin);
+        }
         #[cfg(feature = "color-picker")]
-        let group = group.add(bed_plugin_color_picker::ColorPickerPlugin);
+        if !app.is_plugin_added::<bed_plugin_color_picker::ColorPickerPlugin>() {
+            app.add_plugins(bed_plugin_color_picker::ColorPickerPlugin);
+        }
         #[cfg(feature = "mascots")]
-        let group = group
-            .add(bed_plugin_mascots::BedMascotPlugin)
-            .add(bed_plugin_mascots::DuckMascotPlugin);
+        if !app.is_plugin_added::<bed_plugin_mascots::BedMascotPlugin>() {
+            app.add_plugins(bed_plugin_mascots::BedMascotPlugin);
+        }
+        #[cfg(feature = "mascots")]
+        if !app.is_plugin_added::<bed_plugin_mascots::DuckMascotPlugin>() {
+            app.add_plugins(bed_plugin_mascots::DuckMascotPlugin);
+        }
         #[cfg(feature = "source-outline")]
-        let group = group.add(bed_plugin_source_outline::SourceOutlinePlugin);
+        if !app.is_plugin_added::<bed_plugin_source_outline::SourceOutlinePlugin>() {
+            app.add_plugins(bed_plugin_source_outline::SourceOutlinePlugin);
+        }
         #[cfg(feature = "image-viewer")]
-        let group = group.add(bed_plugin_image_viewer::ImageViewerPlugin);
+        if !app.is_plugin_added::<bed_plugin_image_viewer::ImageViewerPlugin>() {
+            app.add_plugins(bed_plugin_image_viewer::ImageViewerPlugin);
+        }
         #[cfg(feature = "model-viewer")]
-        let group = group.add(bed_plugin_model_viewer::ModelViewerPlugin);
+        if !app.is_plugin_added::<bed_plugin_model_viewer::ModelViewerPlugin>() {
+            app.add_plugins(bed_plugin_model_viewer::ModelViewerPlugin);
+        }
         #[cfg(feature = "font-viewer")]
-        let group = group.add(bed_plugin_font_viewer::FontViewerPlugin);
+        if !app.is_plugin_added::<bed_plugin_font_viewer::FontViewerPlugin>() {
+            app.add_plugins(bed_plugin_font_viewer::FontViewerPlugin);
+        }
         #[cfg(feature = "audio-player")]
-        let group = group.add(bed_plugin_audio_player::AudioPlayerPlugin);
+        if !app.is_plugin_added::<bed_plugin_audio_player::AudioPlayerPlugin>() {
+            app.add_plugins(bed_plugin_audio_player::AudioPlayerPlugin);
+        }
         #[cfg(feature = "csv-table")]
-        let group = group.add(bed_plugin_csv_table::CsvTablePlugin);
+        if !app.is_plugin_added::<bed_plugin_csv_table::CsvTablePlugin>() {
+            app.add_plugins(bed_plugin_csv_table::CsvTablePlugin);
+        }
         #[cfg(feature = "markdown-preview")]
-        let group = group.add(bed_plugin_markdown_preview::MarkdownPreviewPlugin);
+        if !app.is_plugin_added::<bed_plugin_markdown_preview::MarkdownPreviewPlugin>() {
+            app.add_plugins(bed_plugin_markdown_preview::MarkdownPreviewPlugin);
+        }
         #[cfg(feature = "json-tree")]
-        let group = group.add(bed_plugin_json_tree::JsonTreePlugin);
+        if !app.is_plugin_added::<bed_plugin_json_tree::JsonTreePlugin>() {
+            app.add_plugins(bed_plugin_json_tree::JsonTreePlugin);
+        }
         #[cfg(feature = "sqlite-browser")]
-        let group = group.add(bed_plugin_sqlite_browser::SqliteBrowserPlugin);
+        if !app.is_plugin_added::<bed_plugin_sqlite_browser::SqliteBrowserPlugin>() {
+            app.add_plugins(bed_plugin_sqlite_browser::SqliteBrowserPlugin);
+        }
         #[cfg(feature = "http-client")]
-        let group = group.add(bed_plugin_http_client::HttpClientPlugin);
+        if !app.is_plugin_added::<bed_plugin_http_client::HttpClientPlugin>() {
+            app.add_plugins(bed_plugin_http_client::HttpClientPlugin);
+        }
         #[cfg(feature = "settings")]
-        let group = group.add(bed_plugin_settings::SettingsPlugin);
-        group
+        if !app.is_plugin_added::<crate::settings_view::SettingsPlugin>() {
+            app.add_plugins(crate::settings_view::SettingsPlugin);
+        }
     }
 }
 

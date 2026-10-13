@@ -21,7 +21,7 @@ pub const PANEL_ID: &str = "bed.http.panel";
 pub const OPEN_COMMAND: &str = "bed.http.open";
 
 fn register_metadata(registrar: &mut FeatureRegistrar<'_>) {
-    registrar.panel_options(PANEL_ID, true, PanelPlacement::Center, None);
+    registrar.panel_options(PANEL_ID, true, PanelPlacement::Center);
     registrar.command_ref(OPEN_COMMAND);
     registrar.menu(MenuSlot::Application, OPEN_COMMAND);
 }

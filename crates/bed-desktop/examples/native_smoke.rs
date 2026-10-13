@@ -19,32 +19,48 @@ struct Proof {
     deadline: Instant,
 }
 
-fn main() {
+fn main() -> std::io::Result<()> {
     let directory = std::env::temp_dir().join(format!("bed-desktop-proof-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
-    let mut app = App::new();
-    app.add_plugins(DesktopPlugins {
-        window: Window {
-            title: "Bed desktop GPU proof".into(),
-            resolution: (180, 100).into(),
+    let launch = match bed_app::Application::new("bed.proof.native-smoke", "Desktop proof")?
+        .dispatch(std::env::args_os())?
+    {
+        bed_app::LaunchOutcome::Desktop(launch) => *launch,
+        bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+    };
+    let mut app = launch
+        .options(DesktopPlugins {
+            window: Window {
+                title: "Bed desktop GPU proof".into(),
+                resolution: (180, 100).into(),
+                ..default()
+            },
             ..default()
-        },
-        ..default()
-    })
-    .insert_resource(Proof {
-        phase: 0,
-        entered: 0,
-        scale: [1.; 2],
-        generation: 0,
-        pending_loss: false,
-        image: None,
-        directory,
-        deadline: Instant::now() + Duration::from_secs(45),
-    })
-    .insert_resource(DesktopUi(draw))
-    .add_systems(First, inject_loss_before_ui)
-    .add_systems(PreUpdate, advance.in_set(DesktopSystems::AfterUi));
-    app.run();
+        })
+        .presentation_mode(bed_app::bed_core::CorePresentationMode::Application)
+        .config_directory(
+            std::env::temp_dir().join(format!("bed.proof.native-smoke-{}", std::process::id())),
+        )
+        .build(|app| {
+            app.insert_resource(Proof {
+                phase: 0,
+                entered: 0,
+                scale: [1.; 2],
+                generation: 0,
+                pending_loss: false,
+                image: None,
+                directory,
+                deadline: Instant::now() + Duration::from_secs(45),
+            })
+            .insert_resource(DesktopUi(draw))
+            .add_systems(First, inject_loss_before_ui)
+            .add_systems(PreUpdate, advance.in_set(DesktopSystems::AfterUi));
+            Ok(())
+        })?;
+    if app.run().is_error() {
+        return Err(std::io::Error::other("Desktop proof exited with an error"));
+    }
+    Ok(())
 }
 
 fn draw(world: &mut World, ui: &Ui) {

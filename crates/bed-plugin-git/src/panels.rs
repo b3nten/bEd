@@ -22,7 +22,7 @@ impl GitPanel {
         icons: Option<&bed_ui::icons::Icons>,
         requests: &mut Vec<HostAction>,
     ) -> io::Result<()> {
-        let _controls = bed_ui::util::popup_style::controls_style(ui);
+        let _controls = bed_ui::components::controls_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         let fs = ui.text_line_height();
         // Keep cancellation reachable without moving the repository controls.
         let body_origin = ui.cursor_pos();
@@ -75,7 +75,11 @@ impl GitPanel {
                 }
             }
             if ui.is_item_hovered() {
-                ui.tooltip_text(format!("{branch}\nSwitch or create a branch"));
+                bed_ui::components::tooltip_text(
+                    ui,
+                    &bed_ui::UiFrameContext::for_ui(ui),
+                    format!("{branch}\nSwitch or create a branch"),
+                );
             }
             for (key, id, fallback, tooltip, operation) in [
                 (
@@ -118,7 +122,15 @@ impl GitPanel {
                 let _disabled = ui.begin_disabled_with_cond(
                     operation.is_some() && (!state.writable() || state.mutation_pending()),
                 );
-                if bed_ui::icons::icon_button(ui, icons, key, id, fallback, [action_width, 0.0]) {
+                if bed_ui::components::icon_button(
+                    ui,
+                    &bed_ui::UiFrameContext::for_ui(ui),
+                    icons,
+                    key,
+                    id,
+                    fallback,
+                    [action_width, 0.0],
+                ) {
                     if let Some(operation) = operation {
                         state.mutate(operation, documents, requests);
                     } else {
@@ -126,12 +138,17 @@ impl GitPanel {
                     }
                 }
                 if ui.is_item_hovered() {
-                    ui.tooltip_text(tooltip);
+                    bed_ui::components::tooltip_text(
+                        ui,
+                        &bed_ui::UiFrameContext::for_ui(ui),
+                        tooltip,
+                    );
                 }
             }
         }
         {
-            let _popup_style = bed_ui::util::popup_style::context_menu_style(ui);
+            let _popup_style =
+                bed_ui::components::context_menu_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
             ui.with_bound_context(|| unsafe {
                 dear_imgui_rs::sys::igSetNextWindowSize(
                     [fs * 24.0, 0.0].into(),
@@ -451,11 +468,15 @@ fn draw_group(
             );
         }
         if ui.is_item_hovered() {
-            ui.tooltip_text(if staging == StagingState::Staged {
-                "Unstage all files in this section"
-            } else {
-                "Stage all files in this section"
-            });
+            bed_ui::components::tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                if staging == StagingState::Staged {
+                    "Unstage all files in this section"
+                } else {
+                    "Stage all files in this section"
+                },
+            );
         }
     }
     ui.dummy([0.0, fs * 0.15]);
@@ -511,7 +532,8 @@ fn draw_group(
             }
         }
         {
-            let _menu_style = bed_ui::util::popup_style::context_menu_style(ui);
+            let _menu_style =
+                bed_ui::components::context_menu_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
             if let Some(_popup) = ui.begin_popup_context_item() {
                 if ui.menu_item("Open file") {
                     requests.push(HostAction::OpenFileIn {
@@ -582,7 +604,11 @@ fn draw_group(
                 StagingState::Partial => "Partially staged",
                 StagingState::Staged => "Staged",
             };
-            ui.tooltip_text(format!("{}\n{description} · {staging_label}", entry.path));
+            bed_ui::components::tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                format!("{}\n{description} · {staging_label}", entry.path),
+            );
         }
 
         // File name and directory share one selectable and one line.
@@ -643,19 +669,23 @@ fn draw_group(
                 );
             }
             if ui.is_item_hovered() {
-                ui.tooltip_text(match staging {
-                    StagingState::Partial => {
-                        "Partially staged. Click to stage the remaining changes."
-                    }
-                    StagingState::Staged => "Remove this file from staging",
-                    StagingState::Unstaged => {
-                        if entry.conflicted {
-                            "Resolve this conflict in the diff before staging"
-                        } else {
-                            "Include this file in the commit"
+                bed_ui::components::tooltip_text(
+                    ui,
+                    &bed_ui::UiFrameContext::for_ui(ui),
+                    match staging {
+                        StagingState::Partial => {
+                            "Partially staged. Click to stage the remaining changes."
                         }
-                    }
-                });
+                        StagingState::Staged => "Remove this file from staging",
+                        StagingState::Unstaged => {
+                            if entry.conflicted {
+                                "Resolve this conflict in the diff before staging"
+                            } else {
+                                "Include this file in the commit"
+                            }
+                        }
+                    },
+                );
             }
         }
         ui.set_cursor_pos([

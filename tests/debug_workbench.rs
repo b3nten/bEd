@@ -5,9 +5,9 @@ mod editor_host;
 #[path = "support/temp_dir.rs"]
 mod temp_dir;
 
+use bed::application::*;
+use bed::config::Settings;
 use bed_api::{documents::PanelBinding, workbench::PanelTarget};
-use bed_app::*;
-use bed_app_config::Settings;
 use bed_documents::DocumentSession;
 use bed_plugin_debugger::{DebugState, DebuggerPlugin};
 use bevy::prelude::*;
@@ -31,7 +31,7 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
     )
     .unwrap();
     app.add_plugins((
-        bed_runtime::BedRuntimePlugin,
+        (bevy::MinimalPlugins, bevy::input::InputPlugin),
         AppRuntimePlugin {
             options: AppOptions {
                 working_directory: Some(root.clone()),

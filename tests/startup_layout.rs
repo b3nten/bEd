@@ -5,9 +5,9 @@ mod editor_host;
 #[path = "support/temp_dir.rs"]
 mod temp_dir;
 
+use bed::application::*;
+use bed::config::{LayoutSlot, Settings};
 use bed_api::{documents::PanelBinding, workbench::PanelTarget};
-use bed_app::*;
-use bed_app_config::{LayoutSlot, Settings};
 use bed_documents::{ByteEdit, DocumentSession};
 use bevy::prelude::*;
 use serde_json::json;
@@ -25,7 +25,7 @@ fn app(dir: &TempDir, options: AppOptions) -> App {
     )
     .unwrap();
     app.add_plugins((
-        bed_runtime::BedRuntimePlugin,
+        (bevy::MinimalPlugins, bevy::input::InputPlugin),
         AppRuntimePlugin {
             options: AppOptions {
                 working_directory: Some(dir.root().to_owned()),
@@ -73,12 +73,14 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
     command(&mut original, WindowCommand::NewDocument);
     command(&mut original, WindowCommand::SplitDown);
     command(&mut original, WindowCommand::SetCurrentLayout);
-    let template = original
-        .world()
-        .non_send::<Settings>()
-        .layout_default(LayoutSlot::Startup)
-        .unwrap()
-        .clone();
+    let template = WorkspaceStore::load(
+        original
+            .world()
+            .resource::<bed_api::launch::ApplicationPaths>(),
+    )
+    .unwrap()
+    .layout_default(LayoutSlot::Startup)
+    .unwrap();
     assert!(
         template["panels"]
             .as_array()
@@ -87,22 +89,28 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
             .any(|panel| panel["panel_type"] == bed_plugin_workspaces::PANEL_ID)
     );
     assert!(
-        original
-            .world()
-            .non_send::<Settings>()
-            .layout_default(LayoutSlot::Layout1)
-            .is_none()
+        WorkspaceStore::load(
+            original
+                .world()
+                .resource::<bed_api::launch::ApplicationPaths>()
+        )
+        .unwrap()
+        .layout_default(LayoutSlot::Layout1)
+        .is_none()
     );
     command(
         &mut original,
         WindowCommand::SetLayoutDefault(LayoutSlot::Layout9),
     );
     assert_eq!(
-        original
-            .world()
-            .non_send::<Settings>()
-            .layout_default(LayoutSlot::Layout9),
-        Some(&template)
+        WorkspaceStore::load(
+            original
+                .world()
+                .resource::<bed_api::launch::ApplicationPaths>()
+        )
+        .unwrap()
+        .layout_default(LayoutSlot::Layout9),
+        Some(template.clone())
     );
     command(&mut original, WindowCommand::UseLayout(LayoutSlot::Layout4));
     persist_workspace(original.world_mut()).unwrap();
@@ -160,11 +168,14 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
         WindowCommand::RestoreBuiltinLayout(LayoutSlot::Startup),
     );
     assert!(
-        fresh
-            .world()
-            .non_send::<Settings>()
-            .layout_default(LayoutSlot::Startup)
-            .is_none()
+        WorkspaceStore::load(
+            fresh
+                .world()
+                .resource::<bed_api::launch::ApplicationPaths>()
+        )
+        .unwrap()
+        .layout_default(LayoutSlot::Startup)
+        .is_none()
     );
     assert_eq!(active_panel_entities(fresh.world_mut()), panels);
     command(&mut fresh, WindowCommand::ResetLayout);
@@ -233,11 +244,15 @@ fn startup_switches_preserve_dirty_documents_and_attachment_adopts_workspace_sel
     std::fs::create_dir(&root).unwrap();
     let root = root.canonicalize().unwrap();
     let spec = WorkspaceSpec::local(root.to_string_lossy());
-    let empty = json!({"panels":[],"tiling":bed_workbench::workspace::tiling_state::TilingState::default().to_value([])});
-    WorkspaceStore::load(&dir.path("config"))
-        .unwrap()
+    let empty = json!({"version":2,"panels":[],"tiling":bed_workbench::workspace::tiling_state::TilingState::default().to_value([])});
+    let mut saved_store = WorkspaceStore::load(
+        &bed_api::launch::ApplicationPaths::new("bed", Some(dir.path("config")), None).unwrap(),
+    )
+    .unwrap();
+    saved_store.record_workspace(spec.clone()).unwrap();
+    saved_store
         .save_session_layout(
-            Some(&spec),
+            &spec,
             json!({
                 "active_layout_slot":4,"layouts":{"4":empty}
             }),

@@ -29,7 +29,7 @@ impl Fixture {
         let mut session = DocumentSession::with_options(SessionOptions {
             project_root: Some(temp.root().to_owned()),
             monitoring: true,
-            persistent_history: true,
+            history_path: Some(temp.root().join("history.json")),
             ..Default::default()
         })
         .unwrap();
@@ -431,9 +431,10 @@ fn external_reload_resets_old_undo_and_persists_empty_history() {
     fx.edit(|c| c.type_text(b"local "));
     fx.save().unwrap();
     fx.poll();
-    let root = fx.temp.root().to_str().unwrap().to_owned();
-    let mut prior = bed_editing::project_undo::ProjectUndo::new(root.clone());
-    prior.load_project(&root);
+    let mut prior = bed_editing::project_undo::ProjectUndo::default();
+    prior
+        .load_from(&fx.temp.root().join("history.json"))
+        .unwrap();
     assert!(prior.undo(&fx.snapshot().path).is_some());
     fx.external(b"external");
     assert!(fx.reloaded());
@@ -447,7 +448,7 @@ fn external_reload_resets_old_undo_and_persists_empty_history() {
         .unwrap();
     let mut restored = DocumentSession::with_options(SessionOptions {
         project_root: Some(fx.temp.root().to_owned()),
-        persistent_history: true,
+        history_path: Some(fx.temp.root().join("history.json")),
         ..Default::default()
     })
     .unwrap();

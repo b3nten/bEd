@@ -103,22 +103,25 @@ impl Fixture {
     fn frame(&mut self) {
         self.context
             .prepare_frame(FramePrepareOptions::new([self.width, 300.0], 1.0 / 60.0));
+        crate::tests::prepare_ui(self.app.world_mut(), &mut self.context);
         let ui = self.context.frame();
         self.app
             .world_mut()
             .resource_mut::<WorkbenchViewport>()
             .bottom_inset = status_bar_height(ui);
-        crate::render_ui(self.app.world_mut(), ui);
-        render_status_bar(
-            self.app.world_mut(),
-            ui,
-            StatusBarHost {
-                icon: "test",
-                summary: "workspace",
-                details: "Workspace path",
-            },
-            icons,
-        );
+        crate::tests::draw_with_ui(self.app.world_mut(), ui, |world, ui| {
+            crate::render_ui(world, ui);
+            render_status_bar(
+                world,
+                ui,
+                StatusBarHost {
+                    icon: "test",
+                    summary: "workspace",
+                    details: "Workspace path",
+                },
+                icons,
+            );
+        });
         drop(self.context.render_legacy());
     }
 
@@ -159,6 +162,7 @@ fn arbitrary_publishers_order_and_compress_without_panel_filters() {
     fixture
         .context
         .prepare_frame(FramePrepareOptions::new([800.0, 300.0], 1.0 / 60.0));
+    crate::tests::prepare_ui(fixture.app.world_mut(), &mut fixture.context);
     let ui = fixture.context.frame();
     let mut state = StatusBarState::default();
     let mut entries = collect(fixture.app.world_mut(), ui, icons, &mut state);
@@ -261,8 +265,14 @@ fn status_tooltips_wrap_round_and_animate_for_icons_contents_and_host() {
                     window.Size.x
                 );
                 assert!(window.Size.y < 200.0, "tooltip height: {}", window.Size.y);
-                assert_eq!(window.WindowRounding, popup_style::POPUP_ROUNDING);
-                assert_eq!(window.WindowBorderSize, popup_style::POPUP_BORDER_SIZE);
+                assert_eq!(
+                    window.WindowRounding,
+                    bed_ui::appearance::UiMetrics::default().popup_rounding
+                );
+                assert_eq!(
+                    window.WindowBorderSize,
+                    bed_ui::appearance::UiMetrics::default().border
+                );
                 assert_eq!(
                     [window.WindowPadding.x, window.WindowPadding.y],
                     [12.0, 10.0]
@@ -375,6 +385,7 @@ fn low_priority_item_overflows_before_high_priority_item_compacts() {
     fixture
         .context
         .prepare_frame(FramePrepareOptions::new([800.0, 300.0], 1.0 / 60.0));
+    crate::tests::prepare_ui(fixture.app.world_mut(), &mut fixture.context);
     let ui = fixture.context.frame();
     let mut state = StatusBarState::default();
     let mut entries = collect(fixture.app.world_mut(), ui, icons, &mut state);

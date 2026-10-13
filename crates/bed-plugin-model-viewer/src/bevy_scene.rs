@@ -277,7 +277,7 @@ impl SceneLoading {
             if let Some(layers) = &self.layers {
                 world
                     .entity_mut(self.root.unwrap())
-                    .insert((bed_runtime::render::PreviewView(self.view), layers.clone()));
+                    .insert((bed_desktop::preview::PreviewView(self.view), layers.clone()));
             }
             return Ok(None);
         }
@@ -295,7 +295,7 @@ impl SceneLoading {
             for entity in &entities {
                 world
                     .entity_mut(*entity)
-                    .insert((bed_runtime::render::PreviewView(self.view), layers.clone()));
+                    .insert((bed_desktop::preview::PreviewView(self.view), layers.clone()));
             }
         }
         let InspectionSnapshot {

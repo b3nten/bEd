@@ -4,17 +4,27 @@ use dear_imgui_rs::{Context, Key, MouseButton, sys};
 use std::ffi::CString;
 use workspace::tiling::{EXTENT, Layout, Rect};
 
+fn render_ui(world: &mut World, ui: &Ui) {
+    tests::draw_with_ui(world, ui, crate::render_ui);
+}
+
 #[test]
 fn tab_bar_tooltips_are_styled_and_animate_when_the_hover_target_changes() {
     let _lock = tests::IMGUI_TEST_LOCK.lock().unwrap();
     let mut fixture = Fixture::new();
     {
-        let mut appearance = fixture
+        fixture
             .app
             .world_mut()
-            .resource_mut::<WorkbenchAppearance>();
-        appearance.animations = true;
-        appearance.add_button = true;
+            .resource_mut::<WorkbenchAppearance>()
+            .add_button = true;
+        fixture
+            .app
+            .world_mut()
+            .resource_mut::<tests::RequestedUiTheme>()
+            .0
+            .motion
+            .enabled = true;
     }
     fixture.settle();
     let tab_points = fixture.panels[..2]
@@ -50,11 +60,11 @@ fn tab_bar_tooltips_are_styled_and_animate_when_the_hover_target_changes() {
                 })?;
                 assert_eq!(
                     window.WindowRounding,
-                    bed_ui::util::popup_style::POPUP_ROUNDING
+                    bed_ui::appearance::UiMetrics::default().popup_rounding
                 );
                 assert_eq!(
                     window.WindowBorderSize,
-                    bed_ui::util::popup_style::POPUP_BORDER_SIZE
+                    bed_ui::appearance::UiMetrics::default().border
                 );
                 assert_eq!(
                     [window.WindowPadding.x, window.WindowPadding.y],
@@ -196,9 +206,12 @@ impl Fixture {
             registry.panel("gesture.pane", "Pane", factory);
         })
         .unwrap();
+        app.init_resource::<tests::RequestedUiTheme>();
         app.world_mut()
-            .resource_mut::<WorkbenchAppearance>()
-            .animations = false;
+            .resource_mut::<tests::RequestedUiTheme>()
+            .0
+            .motion
+            .enabled = false;
         let panels = std::array::from_fn(|_| {
             open_panel(
                 app.world_mut(),
@@ -257,6 +270,7 @@ impl Fixture {
     fn frame(&mut self) {
         self.context.io_mut().set_display_size([1200., 800.]);
         self.context.io_mut().set_delta_time(1. / 60.);
+        tests::prepare_ui(self.app.world_mut(), &mut self.context);
         render_ui(self.app.world_mut(), self.context.frame());
         drop(self.context.render_legacy());
         process_requests(self.app.world_mut());
@@ -321,6 +335,7 @@ impl Fixture {
             .io_mut()
             .add_mouse_button_event(MouseButton::Left, pressed);
         self.context.io_mut().set_delta_time(1. / 60.);
+        tests::prepare_ui(self.app.world_mut(), &mut self.context);
         let ui = self.context.frame();
         ui.with_bound_context(|| unsafe {
             assert!(sys::igBeginDragDropSource(
@@ -377,8 +392,10 @@ fn newly_opened_panels_and_custom_child_content_fade_without_moving_layout() {
     fixture
         .app
         .world_mut()
-        .resource_mut::<WorkbenchAppearance>()
-        .animations = true;
+        .resource_mut::<tests::RequestedUiTheme>()
+        .0
+        .motion
+        .enabled = true;
     let panel = open_panel(
         fixture.app.world_mut(),
         json!({"panel_type":"fade.pane"}),
@@ -391,6 +408,7 @@ fn newly_opened_panels_and_custom_child_content_fade_without_moving_layout() {
     for _ in 0..28 {
         fixture.context.io_mut().set_display_size([1200., 800.]);
         fixture.context.io_mut().set_delta_time(1. / 60.);
+        tests::prepare_ui(fixture.app.world_mut(), &mut fixture.context);
         let ui = fixture.context.frame();
         ui.window("Embedding host")
             .position([1200., 0.], Condition::Always)
@@ -508,10 +526,19 @@ fn native_titlebar_inset_receives_the_current_theme_background() {
         fixture
             .app
             .world_mut()
-            .resource_mut::<WorkbenchAppearance>()
-            .background = background;
+            .resource_mut::<tests::RequestedUiTheme>()
+            .0
+            .palette
+            .window_background = background;
+        fixture
+            .app
+            .world_mut()
+            .resource_mut::<tests::RequestedUiTheme>()
+            .0
+            .opacity = background[3];
         fixture.context.io_mut().set_display_size([1200., 800.]);
         fixture.context.io_mut().set_delta_time(1. / 60.);
+        tests::prepare_ui(fixture.app.world_mut(), &mut fixture.context);
         render_ui(fixture.app.world_mut(), fixture.context.frame());
         let covered = fixture.context.binding().with_bound_context(|| unsafe {
             let draw = &*sys::igGetBackgroundDrawList(sys::igGetMainViewport());
@@ -883,6 +910,7 @@ fn native_toolbar_payloads_use_the_same_occupied_and_empty_area_drop_targets() {
                 .io_mut()
                 .add_mouse_button_event(MouseButton::Left, pressed);
             fixture.context.io_mut().set_delta_time(1. / 60.);
+            tests::prepare_ui(fixture.app.world_mut(), &mut fixture.context);
             let ui = fixture.context.frame();
             ui.with_bound_context(|| unsafe {
                 assert!(sys::igBeginDragDropSource(
@@ -994,8 +1022,10 @@ fn incoming_panel_content_uses_tab_insertion_and_animated_preview_transitions() 
     fixture
         .app
         .world_mut()
-        .resource_mut::<WorkbenchAppearance>()
-        .animations = true;
+        .resource_mut::<tests::RequestedUiTheme>()
+        .0
+        .motion
+        .enabled = true;
     let position = fixture.screen([7500, 7500]);
     fixture.context.io_mut().add_mouse_pos_event(position);
     fixture.frame();

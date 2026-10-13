@@ -7,14 +7,14 @@ pub fn actions() -> Vec<ShortcutAction> {
     let scope = Scope::panel(EDITOR_SCOPE);
     let mut result = bed_keybindings::common_actions();
     for (id, label, keys) in [
-        ("bed.app.Save", "Save", vec!["Primary+S"]),
-        ("bed.app.SaveAs", "Save As", vec!["Primary+Shift+S"]),
-        ("bed.app.OpenFile", "Open File", vec!["Primary+O"]),
+        ("bed.documents.save", "Save", vec!["Primary+S"]),
+        ("bed.documents.save_as", "Save As", vec!["Primary+Shift+S"]),
+        ("bed.documents.open_file", "Open File", vec!["Primary+O"]),
     ] {
         result.push(ShortcutAction::new(
             id,
             label,
-            "bed.app",
+            "bed.documents",
             Scope::Focused,
             &keys,
         ));

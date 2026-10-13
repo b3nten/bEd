@@ -52,11 +52,11 @@ cargo run -p bed
 
 ## Build another desktop application
 
-[`BedCorePlugin`](crates/bed-core/README.md) installs the window, renderer,
-Dear ImGui, theme, fonts, icons, panel/layout system and shared document editing.
-Add feature plugins to a fresh Bevy `App`; the host owns startup, configuration
-and persistence. bEd adds its workspace selection, MRU, SSH orchestration and
-application integration on top of that foundation.
+[`bed-app::Application`](crates/bed-app/README.md) owns startup and installs the
+window, renderer, Dear ImGui, theme, fonts, icons, workbench and shared document
+editing before feature plugins. Register plugin entrypoints before dispatch;
+the desktop callback adds panels and application behavior. bEd keeps its CLI,
+configuration projection, workspace policy and smoke commands in `src`.
 
 The examples show the supported composition boundaries:
 
@@ -92,22 +92,32 @@ supply panels and commands. Example applications use `bed-example-*`.
 | Host | Application supplying services and resolving registered requests |
 | File context | Selected directory, provider identity and connection availability |
 | Workspace | Optional saved arrangement and plugin state associated with a location |
-| App | bEd startup, native windows, configuration and persistence policy |
+| Application | Reusable owned launcher in `bed-app`; bEd policy in `src/application` |
 
 [`bed-api`](crates/bed-api/README.md) holds shared contracts in `workbench`,
 `documents`, `features`, `files`, `storage`, `settings`, `presentation`, `status`
 and `gpu` modules.
-Use `bed_core::api` when building on core. The API's default build supports a
+Use `bed_app::api` when building an application. The API's default build supports a
 workbench without document services; its `documents` feature adds document
 contracts. `gpu` and `language-services` are separate opt-ins.
 
-[`bed-app`](crates/bed-app/README.md), `bed-app-config` and `bed-app-shell` own
-bEd's application policy. The Workspaces and Settings panels are named
-`bed-plugin-workspaces` and `bed-plugin-settings` because they are Bevy plugins,
-and the workspace plugin accepts an application-supplied repository. Documents,
-Search, Explorer and Git use the live file context without requiring a saved
-workspace. New directories stay temporary until explicitly saved; global
-preferences remain persistent.
+The optional Workspaces plugin accepts an application-supplied repository.
+Documents, Search, Explorer and Git use the live file context without requiring a
+saved workspace. New directories stay temporary until explicitly saved. bEd
+stores saved local workspace snapshots and document history in `<root>/.bed`,
+remote snapshots locally in `~/.config/bed/remote`, and recent locations and
+layout templates in its global configuration directory.
+The workspace directory name is application-configurable. Local `workspace.json`
+holds layouts and plugin state; `history.json` holds text undo history. The client
+index is `registry.json`, and shared layout templates are `layouts.json`. Remote,
+byte-document and typed-model undo histories remain in memory.
+
+Core owns registered, namespaced preferences in
+`~/.config/<app_id>/settings.json`, including keybindings. The optional
+[`SettingsPlugin`](crates/bed-plugin-settings/README.md) renders those definitions;
+bEd supplies its own richer Settings frontend in `src/settings_view`. Preferences
+remain global and independent of saved workspace state. Old preferences,
+keybinding, workspace and history formats are not imported.
 
 [`bed-storage`](crates/bed-storage/README.md) holds app-neutral plugin snapshots.
 The application chooses their persistence scope and storage implementation.

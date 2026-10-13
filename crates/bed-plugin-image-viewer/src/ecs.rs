@@ -49,6 +49,16 @@ pub struct ImageViewerPlugin;
 
 impl Plugin for ImageViewerPlugin {
     fn build(&self, app: &mut App) {
+        bed_api::settings::register(
+            app.world_mut(),
+            PLUGIN_ID,
+            vec![bed_api::settings::SettingDefinition::new(
+                "fit_by_default",
+                "Fit images to panel by default",
+                true,
+            )],
+        )
+        .expect("Image preferences install once");
         app.init_resource::<DocumentFrame>()
             .init_resource::<HostEffects>()
             .init_resource::<FeatureRegistry>()

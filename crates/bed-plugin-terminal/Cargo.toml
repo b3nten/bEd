@@ -21,12 +21,9 @@ dear-imgui-rs = { workspace = true }
 serde_json = { workspace = true }
 
 bed-workbench = { workspace = true }
-bed-app-shell = { path = "../bed-app-shell" }
 bed-desktop = { workspace = true, optional = true }
 winit = { workspace = true, optional = true }
 
 [dev-dependencies]
 bed-remote = { workspace = true }
-bed-app-config = { workspace = true }
-bed-app = { workspace = true, features = ["workspaces", "terminal"] }
-bed-plugin-editor = { workspace = true }
+bed-core = { workspace = true }

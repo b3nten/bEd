@@ -7,10 +7,11 @@ license.workspace = true
 
 [features]
 default = []
-preview = ["dep:bed-runtime", "bed-runtime/render"]
+preview = ["bevy/reflect_auto_register", "bevy/bevy_anti_alias", "bevy/bevy_log", "bevy/png", "bevy/jpeg", "bevy/webp"]
+# Exact component names are needed for Bevy GPU recovery.
+scene = ["preview", "bevy/debug", "bevy/bevy_pbr", "bevy/bevy_mikktspace", "bevy/bevy_gltf"]
 
 [dependencies]
-bed-runtime = { workspace = true, optional = true }
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_winit", "keyboard", "mouse", "x11", "wayland"] }
 dear-imgui-rs = { workspace = true }
 dear-imgui-sys = { workspace = true }
@@ -30,3 +31,6 @@ objc2 = { workspace = true }
 objc2-foundation = { workspace = true, features = ["NSData"] }
 objc2-app-kit = { workspace = true }
 objc2-quartz-core = { workspace = true }
+
+[dev-dependencies]
+bed-app = { workspace = true }

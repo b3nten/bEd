@@ -38,7 +38,7 @@ pub(super) fn presentation(world: &World, context: StatusContext) -> Option<Stat
             world
                 .get_resource::<bed_api::settings::SettingsSnapshot>()
                 .and_then(|settings| {
-                    settings.settings[crate::PLUGIN_ID]["fit_by_default"].as_bool()
+                    settings.for_owner(crate::PLUGIN_ID)["fit_by_default"].as_bool()
                 })
                 .unwrap_or(true)
         });

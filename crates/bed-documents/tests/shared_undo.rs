@@ -95,18 +95,18 @@ fn one_disk_store_keeps_both_tabs_and_project_open_loads_it_once() {
     let temp = TempDir::new();
     let first_path = temp.write("a.txt", b"A");
     let second_path = temp.write("b.txt", b"B");
-    let shared = Rc::new(RefCell::new(ProjectUndo::new(
-        temp.0.to_str().unwrap().to_owned(),
-    )));
+    let shared = Rc::new(RefCell::new(ProjectUndo::default()));
     let mut first = tab(&shared, first_path.to_str().unwrap(), b"A");
     let mut second = tab(&shared, second_path.to_str().unwrap(), b"B");
     first.commands().type_text(b"1");
     second.commands().type_text(b"2");
     first.save().unwrap();
     second.save().unwrap();
-    first.with_project_undo(ProjectUndo::flush);
+    first
+        .with_project_undo(|history| history.flush_to(&temp.0.join("history.json")))
+        .unwrap();
     let serialized: serde_json::Value =
-        serde_json::from_slice(&fs::read(temp.0.join(".undo-redo-bed.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(temp.0.join("history.json")).unwrap()).unwrap();
     assert_eq!(serialized["files"].as_object().unwrap().len(), 2);
     assert!(
         serialized["files"]
@@ -121,7 +121,7 @@ fn one_disk_store_keeps_both_tabs_and_project_open_loads_it_once() {
 
     let options = SessionOptions {
         project_root: Some(temp.0.clone()),
-        persistent_history: true,
+        history_path: Some(temp.0.join("history.json")),
         ..Default::default()
     };
     let mut session = DocumentSession::with_options(options.clone()).unwrap();

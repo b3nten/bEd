@@ -62,6 +62,69 @@ pub const SHOW_LSP_COMMAND: &str = "bed.editor.show_language_servers";
 pub const REFERENCES_PANEL_TYPE: &str = "bed.editor.references-panel";
 pub const LSP_DASHBOARD_PANEL_TYPE: &str = "bed.editor.language-servers-panel";
 
+fn register_settings(world: &mut bevy::prelude::World) {
+    use bed_api::settings::SettingDefinition;
+    let definitions = vec![
+        SettingDefinition::new("word_wrap", "Wrap long lines", true),
+        SettingDefinition::new("minimap", "Show minimap", true),
+        SettingDefinition::new("rainbow", "Rainbow text", true),
+    ];
+    #[cfg(feature = "language-services")]
+    let definitions = definitions
+        .into_iter()
+        .chain([
+            SettingDefinition::new("lsp_autocomplete", "Language server autocomplete", true),
+            SettingDefinition::new("lsp_completion_delay_ms", "Completion delay (ms)", 150.0)
+                .validated_by(completion_delay),
+            SettingDefinition::new("lsp_format_on_save", "Format on save", true),
+            SettingDefinition::new("git_changed_lines", "Show changed lines", true),
+            SettingDefinition::new("treesitter", "Syntax highlighting", true),
+        ])
+        .collect();
+    bed_api::settings::register(world, MODULE_ID, definitions)
+        .expect("Editor preferences install once");
+}
+
+#[cfg(feature = "language-services")]
+fn completion_delay(value: &Value) -> Result<(), String> {
+    if value
+        .as_f64()
+        .is_some_and(|value| (0.0..u64::MAX as f64).contains(&value))
+    {
+        Ok(())
+    } else {
+        Err("Completion delay must be nonnegative and fit in milliseconds".into())
+    }
+}
+
+fn apply_settings(config: &mut EditorConfig, snapshot: &bed_api::settings::SettingsSnapshot) {
+    let settings = snapshot.for_owner(MODULE_ID);
+    if let Some(value) = settings["word_wrap"].as_bool() {
+        config.options.soft_wrap = value;
+    }
+    if let Some(value) = settings["minimap"].as_bool() {
+        config.options.minimap_enabled = value;
+    }
+    if let Some(value) = settings["rainbow"].as_bool() {
+        config.options.rainbow_mode = value;
+    }
+    if let Some(value) = snapshot
+        .get("bed.ui", "ui_animations")
+        .and_then(Value::as_bool)
+    {
+        config.navigation_animations = value;
+    }
+    #[cfg(feature = "language-services")]
+    {
+        if let Some(value) = settings["lsp_autocomplete"].as_bool() {
+            config.lsp.autocomplete = value;
+        }
+        if let Some(value) = settings["lsp_completion_delay_ms"].as_f64() {
+            config.lsp.completion_delay_ms = value as u64;
+        }
+    }
+}
+
 /// Application presentation settings shared by existing and newly created views.
 /// Editor-specific feature contributions are registered in `options.extensions`.
 #[derive(Clone, Debug)]

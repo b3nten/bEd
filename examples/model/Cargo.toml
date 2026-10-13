@@ -6,6 +6,6 @@ publish = false
 license.workspace = true
 
 [dependencies]
-bed-core = { workspace = true }
+bed-app = { workspace = true }
 bevy = { workspace = true }
 serde_json = { workspace = true }

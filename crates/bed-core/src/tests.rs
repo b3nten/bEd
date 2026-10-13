@@ -585,7 +585,6 @@ fn viewers(world: &mut World) {
                 "Text",
                 "test.panel",
                 bed_documents::DocumentKind::Text,
-                &[],
             );
         })
         .unwrap();
@@ -689,7 +688,7 @@ fn document_commands_use_the_captured_panel_and_tools_do_not_inherit_selection()
     let request = edit(world, document, b"changed ");
     submit_host_request(world, Some(editor), request);
     resolve_documents(world);
-    let captured = bed_workbench::capture_command(world, "bed.core.undo", Value::Null);
+    let captured = bed_workbench::capture_command(world, "bed.documents.undo", Value::Null);
     let tool = panel(world);
     resolve_documents(world);
     assert!(
@@ -713,14 +712,14 @@ fn document_commands_use_the_captured_panel_and_tools_do_not_inherit_selection()
     );
     let handler = world
         .resource::<api::workbench::WorkbenchRegistry>()
-        .command("bed.core.undo")
+        .command("bed.documents.undo")
         .unwrap()
         .handler;
     let result = world
         .run_system_with(
             handler,
             api::workbench::CommandInvocation {
-                command: "bed.core.undo".into(),
+                command: "bed.documents.undo".into(),
                 source: Some(tool),
                 area: 1,
                 arguments: Value::Null,
@@ -903,6 +902,16 @@ fn context_replacement_retires_unbound_typed_documents() {
 fn settings_requests_use_core_without_application_or_workspace_services() {
     let mut app = app();
     let world = app.world_mut();
+    api::settings::register(
+        world,
+        "example.palette",
+        vec![api::settings::SettingDefinition::new(
+            "swatches",
+            "Swatches",
+            json!([]),
+        )],
+    )
+    .unwrap();
     world.write_message(api::settings::SettingsRequest::new(
         "example.palette",
         "swatches",
@@ -916,13 +925,13 @@ fn settings_requests_use_core_without_application_or_workspace_services() {
     ));
     resolve_documents(world);
     assert_eq!(
-        world.resource::<api::settings::SettingsSnapshot>().settings["swatches"],
+        world.resource::<api::settings::SettingsSnapshot>().settings["example.palette"]["swatches"],
         json!(["red"])
     );
     finish_operation_barrier(world, barrier, Ok(())).unwrap();
     resolve_documents(world);
     assert_eq!(
-        world.resource::<api::settings::SettingsSnapshot>().settings["swatches"],
+        world.resource::<api::settings::SettingsSnapshot>().settings["example.palette"]["swatches"],
         json!(["blue"])
     );
 }

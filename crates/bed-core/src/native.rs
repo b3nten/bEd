@@ -2,8 +2,8 @@
 use crate::{CorePresentationMode, CoreSystems};
 use bed_api::workbench::{CommandPresentations, WorkbenchRegistry};
 use bed_desktop::{
-    DesktopAppearance, DesktopMenu, DesktopMenuCommand, DesktopMenuItem, DesktopNativePresentation,
-    DesktopNativeSystems, DesktopShortcut, DesktopSystems, DesktopToolbarItem,
+    DesktopMenu, DesktopMenuCommand, DesktopMenuItem, DesktopNativePresentation,
+    DesktopNativeSystems, DesktopShortcut, DesktopSystems, DesktopTheme, DesktopToolbarItem,
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 
@@ -21,6 +21,40 @@ fn publish(world: &mut World) {
     if *world.resource::<CorePresentationMode>() != CorePresentationMode::Standard {
         return;
     }
+    bed_workbench::resolve_keymap(world);
+    let bindings = world
+        .non_send::<bed_workbench::ResolvedKeymap>()
+        .bindings
+        .clone();
+    let focused_scope = world
+        .resource::<bed_workbench::WorkbenchLayout>()
+        .focused
+        .and_then(|panel| world.get::<bed_workbench::PanelRecord>(panel))
+        .map(|record| bed_keybindings::Scope::panel(&record.panel_type));
+    let shortcut = |id: &str| {
+        bindings
+            .for_action(id)
+            .into_iter()
+            .find(|binding| {
+                let scope = focused_scope
+                    .as_ref()
+                    .unwrap_or(&bed_keybindings::Scope::Global);
+                (binding.scope == bed_keybindings::Scope::Global
+                    || focused_scope.as_ref() == Some(&binding.scope))
+                    && bindings
+                        .active_winner(scope, binding.shortcut)
+                        .is_some_and(|winner| winner.action == id)
+            })
+            .map(|binding| DesktopShortcut {
+                key: binding.shortcut.key,
+                modifiers: bed_desktop::DesktopModifiers {
+                    ctrl: binding.shortcut.modifiers.ctrl,
+                    shift: binding.shortcut.modifiers.shift,
+                    alt: binding.shortcut.modifiers.alt,
+                    super_key: binding.shortcut.modifiers.super_key,
+                },
+            })
+    };
     let name = world
         .query_filtered::<&Window, With<PrimaryWindow>>()
         .iter(world)
@@ -40,7 +74,7 @@ fn publish(world: &mut World) {
                 id: command.id.into(),
                 label: command.label.into(),
                 enabled: command.enabled,
-                shortcut: None,
+                shortcut: shortcut(command.id),
             })
         })
         .collect::<Vec<_>>();
@@ -51,14 +85,7 @@ fn publish(world: &mut World) {
         id: "bed.core.quit".into(),
         label: format!("Quit {name}"),
         enabled: true,
-        shortcut: Some(DesktopShortcut {
-            key: dear_imgui_rs::Key::Q,
-            modifiers: bed_desktop::DesktopModifiers {
-                super_key: cfg!(target_os = "macos"),
-                ctrl: !cfg!(target_os = "macos"),
-                ..Default::default()
-            },
-        }),
+        shortcut: shortcut("bed.core.quit"),
     }));
     let toolbar = registry
         .toolbar()
@@ -73,7 +100,7 @@ fn publish(world: &mut World) {
             enabled: command.enabled,
         })
         .collect();
-    let appearance = world.resource::<DesktopAppearance>().0.clone();
+    let appearance = world.resource::<DesktopTheme>().0.clone();
     let mut presentation = world.resource_mut::<DesktopNativePresentation>();
     presentation.menus = vec![DesktopMenu {
         label: name,
@@ -95,7 +122,8 @@ mod tests {
     fn native_chrome_uses_shared_visibility_label_icon_availability_and_theme() {
         let mut app = App::new();
         app.init_resource::<CorePresentationMode>()
-            .init_resource::<DesktopAppearance>()
+            .init_resource::<DesktopTheme>()
+            .init_resource::<bed_workbench::WorkbenchLayout>()
             .init_resource::<DesktopNativePresentation>()
             .init_resource::<CommandPresentations>();
         bed_api::workbench::register(app.world_mut(), "example", |registrar| {
@@ -133,7 +161,7 @@ mod tests {
             );
         }
         {
-            let mut appearance = app.world_mut().resource_mut::<DesktopAppearance>();
+            let mut appearance = app.world_mut().resource_mut::<DesktopTheme>();
             appearance.0.palette.text = [0.2, 0.3, 0.4, 1.0];
             appearance.0.opacity = 0.5;
         }
@@ -158,5 +186,88 @@ mod tests {
             .clear();
         app.update();
         assert_eq!(*app.world().resource::<DesktopNativePresentation>(), saved);
+    }
+    #[test]
+    fn native_accelerators_follow_live_preference_remaps_and_unbinding() {
+        use bed_api::settings::SettingsRequest;
+        let mut app = App::new();
+        app.init_resource::<CorePresentationMode>()
+            .init_resource::<DesktopTheme>()
+            .init_resource::<bed_workbench::WorkbenchLayout>()
+            .init_resource::<DesktopNativePresentation>();
+        bed_api::workbench::register(app.world_mut(), "fixture", |r| {
+            for id in ["fixture.a", "fixture.b"] {
+                r.command(id, id, |_: In<CommandInvocation>| Ok(Vec::new()));
+                r.global_shortcut(id, &["Primary+S"]);
+                r.menu(id);
+            }
+        })
+        .unwrap();
+        crate::settings::initialize_settings(app.world_mut(), None).unwrap();
+        crate::settings::finalize_settings(app.world_mut()).unwrap();
+        let accelerator = |world: &World, id: &str| {
+            world.resource::<DesktopNativePresentation>().menus[0]
+                .items
+                .iter()
+                .find_map(|item| match item {
+                    DesktopMenuItem::Command(command) if command.id == id => {
+                        Some(command.shortcut.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap()
+        };
+        publish(app.world_mut());
+        assert!(accelerator(app.world(), "fixture.a").is_none());
+        assert!(accelerator(app.world(), "fixture.b").is_some());
+        crate::settings::apply_settings_request(
+            app.world_mut(),
+            &SettingsRequest::new(
+                "bed.workbench",
+                "keybindings",
+                serde_json::json!({
+                    "version": 1, "actions": {"fixture.a": [{"shortcut": "Primary+R", "order": 1}]}
+                }),
+            ),
+        )
+        .unwrap();
+        publish(app.world_mut());
+        assert_eq!(
+            accelerator(app.world(), "fixture.a").unwrap().key,
+            dear_imgui_rs::Key::R
+        );
+        assert_eq!(
+            accelerator(app.world(), "fixture.b").unwrap().key,
+            dear_imgui_rs::Key::S
+        );
+        let map = app
+            .world()
+            .non_send::<bed_workbench::ResolvedKeymap>()
+            .bindings
+            .clone();
+        publish(app.world_mut());
+        assert!(std::rc::Rc::ptr_eq(
+            &map,
+            &app.world()
+                .non_send::<bed_workbench::ResolvedKeymap>()
+                .bindings
+        ));
+        crate::settings::apply_settings_request(
+            app.world_mut(),
+            &SettingsRequest::new(
+                "bed.workbench",
+                "keybindings",
+                serde_json::json!({
+                    "version": 1, "actions": {"fixture.b": []}
+                }),
+            ),
+        )
+        .unwrap();
+        publish(app.world_mut());
+        assert_eq!(
+            accelerator(app.world(), "fixture.a").unwrap().key,
+            dear_imgui_rs::Key::S
+        );
+        assert!(accelerator(app.world(), "fixture.b").is_none());
     }
 }

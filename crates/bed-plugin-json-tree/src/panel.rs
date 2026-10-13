@@ -217,7 +217,7 @@ impl JsonPanel {
         } else if let Some(document) = host.document(self.document) {
             requests.push(HostAction::OpenFile {
                 path: document.path.clone(),
-                viewer: Some("bed.text".into()),
+                viewer: Some("bed.editor.text".into()),
             });
         }
     }
@@ -283,7 +283,11 @@ impl JsonPanel {
                     if ui.is_item_hovered() && !node.kind.container() {
                         let raw = std::str::from_utf8(&tree.bytes[node.range.clone()])
                             .expect("JSON nodes reference valid UTF-8 source");
-                        ui.tooltip_text(model::preview(raw));
+                        bed_ui::components::tooltip_text(
+                            ui,
+                            &bed_ui::UiFrameContext::for_ui(ui),
+                            model::preview(raw),
+                        );
                     }
                 }
                 if let Some(_popup) = ui.begin_popup_context_window() {

@@ -303,9 +303,6 @@ pub struct FileViewer {
     /// The default for this document kind when no file extension matches. At
     /// most one module can provide a fallback for each kind.
     pub fallback: bool,
-    /// Explicit persisted viewer names accepted alongside `id`. These may be
-    /// outside the module namespace, but cannot shadow any contribution ID.
-    pub aliases: &'static [&'static str],
     pub id: &'static str,
     pub plugin: &'static str,
     pub label: &'static str,

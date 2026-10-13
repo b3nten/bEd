@@ -602,7 +602,7 @@ impl FontPanel {
     }
 
     fn draw_prepared(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostAction>) {
-        let _controls = bed_ui::util::popup_style::controls_style(ui);
+        let _controls = bed_ui::components::controls_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         let Some(document) = host.document(self.document) else {
             self.preview = None;
             self.canvas = None;
@@ -652,7 +652,7 @@ impl FontPanel {
             if ui.button("Open in Hex Editor") {
                 requests.push(HostAction::OpenFile {
                     path: document.path.clone(),
-                    viewer: Some("bed.hex".into()),
+                    viewer: Some("bed.editor.hex".into()),
                 });
             }
             return;

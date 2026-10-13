@@ -24,6 +24,7 @@ pub struct EditorPlugin;
 
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
+        register_settings(app.world_mut());
         app.init_non_send::<bed_ui::icons::Icons>();
         let directory = app
             .world()
@@ -308,6 +309,9 @@ impl Panel for EditorFrontend {
         _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         let mut config = world.non_send::<EditorConfig>().clone();
+        if let Some(settings) = world.get_resource::<bed_api::settings::SettingsSnapshot>() {
+            apply_settings(&mut config, settings);
+        }
         config.options.shortcuts =
             _shortcuts.with_scope(bed_keybindings::Scope::panel(bed_keybindings::EDITOR_SCOPE));
         config.lsp.shortcuts = config.options.shortcuts.clone();
@@ -679,33 +683,26 @@ pub(crate) fn register_metadata(registrar: &mut FeatureRegistrar<'_>) {
     for (id, _) in crate::lsp::editor_actions::COMMANDS {
         registrar.command_ref(id);
     }
-    registrar.panel_options(
-        TEXT_PANEL_TYPE,
-        false,
-        PanelPlacement::Center,
-        Some("document"),
-    );
-    registrar.panel_options(HEX_PANEL_TYPE, false, PanelPlacement::Center, Some("hex"));
+    registrar.panel_options(TEXT_PANEL_TYPE, false, PanelPlacement::Center);
+    registrar.panel_options(HEX_PANEL_TYPE, false, PanelPlacement::Center);
     registrar.fallback_viewer(
         TEXT_VIEWER,
         "Text editor",
         TEXT_PANEL_TYPE,
         DocumentKind::Text,
-        &["bed.text"],
     );
     registrar.fallback_viewer(
         HEX_VIEWER,
         "Hex editor",
         HEX_PANEL_TYPE,
         DocumentKind::Bytes,
-        &["bed.hex"],
     );
-    for (kind, legacy) in [
-        (DIAGNOSTICS_PANEL_TYPE, "diagnostics"),
-        (REFERENCES_PANEL_TYPE, "references"),
-        (LSP_DASHBOARD_PANEL_TYPE, "lsp"),
+    for kind in [
+        DIAGNOSTICS_PANEL_TYPE,
+        REFERENCES_PANEL_TYPE,
+        LSP_DASHBOARD_PANEL_TYPE,
     ] {
-        registrar.panel_options(kind, false, PanelPlacement::Center, Some(legacy));
+        registrar.panel_options(kind, false, PanelPlacement::Center);
     }
 }
 

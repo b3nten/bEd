@@ -1,7 +1,7 @@
 //! The game shares this Bevy World with the editor. This adapter owns output
 //! attachments and input admission; the game has no knowledge of its panels.
-use bed_core::api::workbench::*;
-use bed_desktop::{DesktopCapture, DesktopIntegrationPlugin, DesktopSystems};
+use bed_app::{api::workbench::*, bed_core, bed_desktop, ui as bed_ui};
+use bed_desktop::{DesktopCapture, DesktopSystems};
 use bed_example_game::{ExampleGamePlugin, GameCamera, GameExecution, GameProgress};
 use bed_ui::{TextureHandle, gpu::*};
 use bevy::{
@@ -202,57 +202,57 @@ impl Plugin for GameEditorPlugin {
 fn start(world: &mut World) {
     bed_core::bed_workbench::open_panel(world, json!({"panel_type":PANEL}), None, None).unwrap();
 }
-fn main() {
-    let mut app = App::new();
-    app.add_plugins(
-        DefaultPlugins
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Game editor — same Bevy World".into(),
-                    resolution: (1000, 700).into(),
-                    ..default()
-                }),
+fn main() -> std::io::Result<()> {
+    let smoke_test = std::env::args().any(|arg| arg == "--smoke-test");
+    let launch =
+        match bed_app::Application::new("example.game.editor", "Game editor — same Bevy World")?
+            .dispatch(std::env::args_os())?
+        {
+            bed_app::LaunchOutcome::Desktop(launch) => *launch,
+            bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+        };
+    let mut theme = bed_ui::appearance::UiTheme::default();
+    // Pixel assertions inspect viewport content independently of opening motion.
+    theme.motion.enabled = !smoke_test;
+    let launch = launch
+        .options(bed_desktop::DesktopPlugins {
+            window: Window {
+                title: "Game editor — same Bevy World".into(),
+                resolution: (1000, 700).into(),
                 ..default()
-            })
-            .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>(),
-    );
-    // Recovery remains a host decision even when desktop UI is attached.
-    app.insert_resource(bevy::render::error_handler::RenderErrorHandler(
-        |error, world, _| {
-            use bevy::render::error_handler::{ErrorType, RenderErrorPolicy};
-            if error.ty == ErrorType::DeviceLost {
-                RenderErrorPolicy::Recover(bevy::render::settings::WgpuSettings::default().into())
-            } else {
-                world.write_message(AppExit::error());
-                RenderErrorPolicy::StopRendering
-            }
-        },
-    ));
-    app.add_plugins((
-        DesktopIntegrationPlugin,
-        bed_core::BedCoreIntegrationPlugin,
-        ExampleGamePlugin,
-        GameEditorPlugin,
-    ));
-    if std::env::args().any(|arg| arg == "--smoke-test") {
-        // Pixel assertions concern viewport content, independently of the
-        // workbench's time-based opening fade.
-        app.world_mut()
-            .resource_mut::<bed_core::bed_workbench::WorkbenchAppearance>()
-            .animations = false;
-        app.insert_resource(Smoke {
-            phase: 0,
-            ticks: 0,
-            camera: None,
-            started: std::time::Instant::now(),
-            size: UVec2::ZERO,
-            input: None,
-            capture: None,
+            },
+            ..default()
         })
-        .add_systems(Update, smoke.after(bed_example_game::GameSystems));
+        .theme(theme);
+    let launch = if smoke_test {
+        launch.config_directory(
+            std::env::temp_dir().join(format!("bed-game-editor-proof-{}", std::process::id())),
+        )
+    } else {
+        launch
+    };
+    let exit = launch.run(|app| {
+        app.add_plugins((ExampleGamePlugin, GameEditorPlugin));
+        if smoke_test {
+            app.insert_resource(Smoke {
+                phase: 0,
+                ticks: 0,
+                camera: None,
+                started: std::time::Instant::now(),
+                size: UVec2::ZERO,
+                input: None,
+                capture: None,
+            })
+            .add_systems(Update, smoke.after(bed_example_game::GameSystems));
+        }
+        Ok(())
+    })?;
+    if exit.is_error() {
+        return Err(std::io::Error::other("Game editor exited with an error"));
     }
-    app.run();
+    Ok(())
 }
+
 #[derive(Resource)]
 struct Smoke {
     phase: u8,
@@ -292,7 +292,7 @@ fn smoke(world: &mut World) {
     let phase = world.resource::<Smoke>().phase;
     match phase {
         0 => {
-            assert!(!world.contains_resource::<bed_desktop::BedMemoryAssets>());
+            assert!(world.contains_resource::<bed_desktop::BedMemoryAssets>());
             assert_eq!(
                 world
                     .query_filtered::<Entity, With<bevy::window::PrimaryWindow>>()

@@ -1,7 +1,7 @@
 //! Source outline presentation. Workbench owns document targeting and navigation.
 use bed_editing::identity::DocumentId;
 use bed_highlight::outline::{OutlineKey, OutlineResult, OutlineService, OutlineStatus};
-use bed_ui::util::popup_style::tooltip_text;
+use bed_ui::components::tooltip_text;
 use bed_ui::util::tree_animation::TreeAnimation;
 use dear_imgui_rs::{Condition, StyleVar, Ui};
 use std::collections::{HashMap, HashSet};
@@ -32,7 +32,7 @@ impl StructurePanel {
         service: &OutlineService,
         animations: bool,
     ) -> Option<StructureJump> {
-        let _controls = bed_ui::util::popup_style::controls_style(ui);
+        let _controls = bed_ui::components::controls_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         let Some(key) = service.requested() else {
             ui.text_disabled("Select a document to view its structure");
             return None;
@@ -45,7 +45,7 @@ impl StructurePanel {
             .unwrap_or("Untitled");
         ui.text(filename);
         if ui.is_item_hovered() && !key.path.is_empty() {
-            tooltip_text(ui, &key.path);
+            tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), &key.path);
         }
         ui.same_line();
         ui.text_disabled(&key.language_id);
@@ -84,11 +84,16 @@ impl StructurePanel {
             self.animation
                 .retain(|id| self.node_indices.contains_key(id));
         }
+        let context = bed_ui::UiFrameContext::for_ui(ui);
+        let motion = bed_ui::appearance::UiMotion {
+            enabled: animations && context.theme().motion.enabled,
+            ..context.theme().motion.clone()
+        };
         self.animation.update(
             &self.visible,
             ui.time(),
             ui.frame_count(),
-            animations,
+            &motion,
             true,
             reset,
         );
@@ -175,7 +180,11 @@ impl StructurePanel {
                             .push((node.id, ui.item_rect_min(), ui.item_rect_max()));
                     }
                     if motion.interactive && ui.is_item_hovered() {
-                        tooltip_text(ui, format!("{} · {}", node.kind, node.label));
+                        tooltip_text(
+                            ui,
+                            &bed_ui::UiFrameContext::for_ui(ui),
+                            format!("{} · {}", node.kind, node.label),
+                        );
                     }
                     if indent > 0.0 {
                         ui.unindent_by(indent);

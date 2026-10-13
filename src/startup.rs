@@ -1,7 +1,8 @@
 //! Standalone windows use the Startup layout.
 //! Explicit launch paths take precedence and only exact saved roots attach.
-use bed_app::{WorkspaceSpec, WorkspaceTarget};
-use bed_app_config::{LayoutSlot, Settings};
+use crate::application::WorkspaceSpec;
+use crate::config::LayoutSlot;
+use bed_api::launch::ApplicationPaths;
 use std::{
     io,
     path::{Path, PathBuf},
@@ -75,12 +76,15 @@ pub(crate) struct Startup {
 }
 
 impl Startup {
-    pub fn into_options(self, settings: &Settings) -> io::Result<bed_app::AppOptions> {
-        use bed_app::{AppOptions, OpenFileOptions};
+    pub fn into_options(
+        self,
+        paths: &ApplicationPaths,
+    ) -> io::Result<crate::application::AppOptions> {
+        use crate::application::{AppOptions, OpenFileOptions};
         let store = if cfg!(feature = "workspaces") {
-            crate::app_runtime::workspace::store::WorkspaceStore::load(&settings.config_dir)?
+            crate::application::workspace::store::WorkspaceStore::load(paths)?
         } else {
-            crate::app_runtime::workspace::store::WorkspaceStore::empty(&settings.config_dir)
+            crate::application::workspace::store::WorkspaceStore::empty(paths)
         };
         let workspace = if !cfg!(feature = "workspaces") {
             if self.requested_workspace.is_some() {
@@ -89,12 +93,9 @@ impl Startup {
             None
         } else if let Some(spec) = self.requested_workspace {
             Some(spec)
-        } else if let Some(root) = self.workspace {
-            store.recent_workspaces().into_iter().find(|spec| {
-                matches!(spec.target, WorkspaceTarget::Local) && Path::new(&spec.root) == root
-            })
         } else {
-            None
+            let root = self.workspace.as_ref().unwrap_or(&self.directory);
+            store.stored_spec(&WorkspaceSpec::local(root.to_string_lossy()))?
         };
         let initial_layout = workspace.is_none().then_some(LayoutSlot::Startup);
         let options = AppOptions {
@@ -119,7 +120,9 @@ impl Startup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_runtime::workspace::store::WorkspaceStore;
+    use crate::application::WorkspaceTarget;
+    use crate::application::workspace::store::WorkspaceStore;
+    use crate::config::Settings;
     use std::sync::atomic::{AtomicU64, Ordering};
     struct Fixture {
         root: PathBuf,
@@ -142,20 +145,31 @@ mod tests {
         fn project(&self, name: &str) -> WorkspaceSpec {
             let root = self.root.join(name);
             std::fs::create_dir_all(&root).unwrap();
-            let mut store = WorkspaceStore::load(&self.settings.config_dir).unwrap();
+            let mut store = WorkspaceStore::load(
+                &ApplicationPaths::new("bed", Some(self.settings.config_dir.clone()), None)
+                    .unwrap(),
+            )
+            .unwrap();
             let spec = store
                 .record_workspace(WorkspaceSpec::local(root.to_str().unwrap()))
                 .unwrap();
             store
-                .save_session_layout(Some(&spec), serde_json::json!({"panels":[]}))
+                .set_layout(&spec, serde_json::json!({"version":2,"panels":[]}))
                 .unwrap();
             spec
         }
-        fn options(&self, options: StartupOptions, paths: Vec<PathBuf>) -> bed_app::AppOptions {
+        fn options(
+            &self,
+            options: StartupOptions,
+            paths: Vec<PathBuf>,
+        ) -> crate::application::AppOptions {
             options
                 .resolve(paths, Some(&self.root))
                 .unwrap()
-                .into_options(&self.settings)
+                .into_options(
+                    &ApplicationPaths::new("bed", Some(self.settings.config_dir.clone()), None)
+                        .unwrap(),
+                )
                 .unwrap()
         }
     }
@@ -173,11 +187,10 @@ mod tests {
         let nested = root.join("nested");
         std::fs::create_dir(&nested).unwrap();
         let options = fixture.options(StartupOptions::default(), vec![root.clone()]);
-        assert_eq!(options.workspace, Some(saved));
+        assert_eq!(options.workspace, Some(saved.clone()));
         for paths in [vec![nested], vec![root.join("file.txt")], vec![]] {
             let options = fixture.options(StartupOptions::default(), paths);
             assert!(options.workspace.is_none());
-            assert!(!options.restore_standalone);
         }
         let options = fixture.options(
             StartupOptions {
@@ -186,7 +199,7 @@ mod tests {
             },
             vec![],
         );
-        assert!(options.workspace.is_none());
+        assert_eq!(options.workspace, Some(saved));
     }
     #[test]
     fn last_folder_selects_directory_and_preserves_file_order() {
@@ -232,7 +245,6 @@ mod tests {
                 assert!(options.workspace.is_none());
                 assert_eq!(options.initial_layout, Some(LayoutSlot::Startup));
                 assert!(options.startup_panel.is_none());
-                assert!(!options.restore_standalone);
             }
         }
         let options = fixture.options(
@@ -244,7 +256,7 @@ mod tests {
         let saved = fixture.project("explicit");
         let options = fixture.options(StartupOptions::default(), vec![PathBuf::from(&saved.root)]);
         if cfg!(feature = "workspaces") {
-            assert_eq!(options.workspace, Some(saved));
+            assert_eq!(options.workspace, Some(saved.clone()));
             assert!(options.initial_layout.is_none());
         } else {
             assert!(options.workspace.is_none());
@@ -277,7 +289,7 @@ mod tests {
     fn disabled_workspace_integration_ignores_unusable_saved_workspace_state() {
         let fixture = Fixture::new();
         std::fs::write(
-            fixture.settings.config_dir.join("workspaces.json"),
+            fixture.settings.config_dir.join("registry.json"),
             b"not valid JSON",
         )
         .unwrap();

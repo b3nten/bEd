@@ -17,6 +17,7 @@ impl Default for UiFontOptions {
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiPalette {
     pub background: [f32; 4],
+    pub window_background: [f32; 4],
     pub tab_bar: [f32; 4],
     pub surface: [f32; 4],
     pub text: [f32; 4],
@@ -34,9 +35,11 @@ impl Default for UiPalette {
                 1.0,
             ]
         };
+        let background = rgb(0x1au8, 0x1b, 0x26);
         Self {
-            background: rgb(0x1au8, 0x1b, 0x26),
-            tab_bar: rgb(0x1a, 0x1b, 0x26),
+            background,
+            window_background: background,
+            tab_bar: background,
             surface: rgb(0x16, 0x16, 0x1e),
             text: rgb(0xc0, 0xca, 0xf5),
             accent: rgb(0x7a, 0xa2, 0xf7),
@@ -45,17 +48,96 @@ impl Default for UiPalette {
     }
 }
 
+/// Shared dimensions. Control values scale with the current font size; popup
+/// dimensions are logical pixels. Compact controls are for dense lists/toolbars.
 #[derive(Clone, Debug, PartialEq)]
-pub struct UiAppearance {
+pub struct UiMetrics {
+    pub control_padding: [f32; 2],
+    pub control_spacing: [f32; 2],
+    pub compact_padding: [f32; 2],
+    pub compact_spacing: [f32; 2],
+    pub control_rounding: f32,
+    pub border: f32,
+    pub grab_rounding: f32,
+    pub grab_min_size: f32,
+    pub window_rounding: f32,
+    pub scrollbar_rounding: f32,
+    pub scrollbar_size: f32,
+    pub dialog_padding: [f32; 2],
+    pub popup_rounding: f32,
+    pub dialog_rounding: f32,
+    pub tooltip_padding: [f32; 2],
+    pub tooltip_wrap_em: f32,
+    pub menu_padding: [f32; 2],
+    pub menu_spacing: [f32; 2],
+    pub disabled_alpha: f32,
+}
+impl Default for UiMetrics {
+    fn default() -> Self {
+        Self {
+            control_padding: [0.55, 0.30],
+            control_spacing: [0.6, 0.4],
+            compact_padding: [0.45, 0.20],
+            compact_spacing: [0.5, 0.3],
+            control_rounding: 0.25,
+            border: 1.0,
+            grab_rounding: 0.2,
+            grab_min_size: 0.5,
+            window_rounding: 0.4,
+            scrollbar_rounding: 0.3,
+            scrollbar_size: 0.55,
+            dialog_padding: [0.85, 0.7],
+            popup_rounding: 7.0,
+            dialog_rounding: 8.0,
+            tooltip_padding: [12.0, 10.0],
+            tooltip_wrap_em: 36.0,
+            menu_padding: [8.0, 6.0],
+            menu_spacing: [6.0, 4.0],
+            disabled_alpha: 0.75,
+        }
+    }
+}
+
+/// Motion is a presentation policy shared by controls and panel content.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UiMotion {
+    pub enabled: bool,
+    pub panel_seconds: f64,
+    pub popup_seconds: f64,
+    pub transition_seconds: f64,
+    pub tree_seconds: f64,
+    pub tree_stagger_seconds: f64,
+    pub popup_initial_scale: f32,
+}
+impl Default for UiMotion {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            panel_seconds: 0.300,
+            popup_seconds: 0.150,
+            transition_seconds: 0.120,
+            tree_seconds: 0.168,
+            tree_stagger_seconds: 0.012,
+            popup_initial_scale: 0.96,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct UiTheme {
     pub fonts: UiFontOptions,
+    pub metrics: UiMetrics,
+    pub motion: UiMotion,
     pub palette: UiPalette,
     pub opacity: f32,
 }
 
-impl Default for UiAppearance {
+impl Default for UiTheme {
     fn default() -> Self {
         Self {
             fonts: UiFontOptions::default(),
+            metrics: UiMetrics::default(),
+            motion: UiMotion::default(),
             palette: UiPalette::default(),
             opacity: 1.0,
         }
@@ -65,11 +147,7 @@ impl Default for UiAppearance {
 /// Apply runtime styling before beginning a frame. Embedded users preserve host
 /// background and sizing; their main font is selected explicitly while drawing.
 #[cfg(feature = "imgui")]
-pub fn apply_style(
-    context: &mut dear_imgui_rs::Context,
-    appearance: &UiAppearance,
-    embedded: bool,
-) {
+pub fn apply_style(context: &mut dear_imgui_rs::Context, appearance: &UiTheme, embedded: bool) {
     use crate::color::{blend, ensure_contrast};
     use dear_imgui_rs::StyleColor;
     let style = context.style_mut();
@@ -118,25 +196,24 @@ pub fn apply_style(
         style.set_color(slot, [0.0; 4]);
     }
     style.set_color(StyleColor::TabHovered, [text[0], text[1], text[2], 0.12]);
-    for (slot, color) in
-        crate::util::popup_style::control_colors(palette.surface, text, palette.accent)
-    {
+    for (slot, color) in crate::components::control_colors(palette.surface, text, palette.accent) {
         style.set_color(slot, color);
     }
     style.set_color(StyleColor::TextSelectedBg, palette.selection);
     let fs = appearance.fonts.size;
-    style.set_frame_rounding(fs * 0.25);
-    style.set_frame_border_size(1.0);
-    style.set_frame_padding([fs * 0.55, fs * 0.30]);
-    style.set_grab_rounding(fs * 0.2);
-    style.set_grab_min_size(fs * 0.5);
-    style.set_popup_rounding(crate::util::popup_style::POPUP_ROUNDING);
-    style.set_popup_border_size(crate::util::popup_style::POPUP_BORDER_SIZE);
-    style.set_window_rounding(fs * 0.4);
-    style.set_scrollbar_rounding(fs * 0.3);
-    style.set_scrollbar_size(fs * 0.55);
+    style.set_frame_rounding(fs * appearance.metrics.control_rounding);
+    style.set_frame_border_size(appearance.metrics.border);
+    style.set_frame_padding(appearance.metrics.control_padding.map(|value| value * fs));
+    style.set_item_spacing(appearance.metrics.control_spacing.map(|value| value * fs));
+    style.set_grab_rounding(fs * appearance.metrics.grab_rounding);
+    style.set_grab_min_size(fs * appearance.metrics.grab_min_size);
+    style.set_popup_rounding(appearance.metrics.popup_rounding);
+    style.set_popup_border_size(appearance.metrics.border);
+    style.set_window_rounding(fs * appearance.metrics.window_rounding);
+    style.set_scrollbar_rounding(fs * appearance.metrics.scrollbar_rounding);
+    style.set_scrollbar_size(fs * appearance.metrics.scrollbar_size);
     style.set_tab_bar_border_size(0.0);
-    style.set_disabled_alpha(0.75);
+    style.set_disabled_alpha(appearance.metrics.disabled_alpha);
 }
 
 #[cfg(all(test, feature = "imgui"))]
@@ -152,7 +229,7 @@ mod tests {
         let mut context = Context::create();
         context.set_ini_filename(None::<PathBuf>).unwrap();
         let mut fonts = UiFonts::default();
-        let mut appearance = UiAppearance::default();
+        let mut appearance = UiTheme::default();
         assert!(fonts.apply(&mut context, &appearance.fonts, false).unwrap());
         let main = fonts.main;
         let generation = fonts.generation;
@@ -204,7 +281,7 @@ mod tests {
             .set_color(StyleColor::WindowBg, background);
         context.style_mut().set_color(StyleColor::ChildBg, child);
         let mut fonts = UiFonts::default();
-        let appearance = UiAppearance::default();
+        let appearance = UiTheme::default();
         fonts.apply(&mut context, &appearance.fonts, true).unwrap();
         apply_style(&mut context, &appearance, true);
         assert_eq!(host.reference_size(), Some(13.0));

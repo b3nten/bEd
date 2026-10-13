@@ -194,9 +194,9 @@ impl EditorInput {
             .collect::<Vec<_>>();
         for id in ids {
             let command = match id.as_str() {
-                "bed.app.Save" => "save",
-                "bed.app.SaveAs" => "save_as",
-                "bed.app.OpenFile" => "open",
+                "bed.documents.save" => "save",
+                "bed.documents.save_as" => "save_as",
+                "bed.documents.open_file" => "open",
                 _ => id
                     .strip_prefix("bed.editor.")
                     .or_else(|| id.strip_prefix("bed.edit."))

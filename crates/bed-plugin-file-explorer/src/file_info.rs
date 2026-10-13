@@ -132,12 +132,13 @@ impl FileInfoHover {
                 self.pending.insert(path.into());
             }
         }
-        let _style = bed_ui::util::popup_style::context_menu_style(ui);
+        let _style =
+            bed_ui::components::context_menu_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         let padding = [12.0, 10.0];
         let wrap_width = (ui.current_font_size() * 36.0)
             .min((ui.window_viewport().work_size()[0] - padding[0] * 4.0).max(1.0));
         let _padding = ui.push_style_var(StyleVar::WindowPadding(padding));
-        bed_ui::util::popup_style::tooltip(ui, || {
+        bed_ui::components::tooltip(ui, &bed_ui::UiFrameContext::for_ui(ui), || {
             // text_wrapped() resets wrapping to the current window width,
             // preventing an auto-sized tooltip from growing past a narrow one.
             let _wrap = ui.push_text_wrap_pos(ui.cursor_pos()[0] + wrap_width);

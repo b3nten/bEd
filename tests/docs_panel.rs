@@ -5,8 +5,8 @@ mod editor_host;
 #[allow(dead_code)]
 mod temp_dir;
 
+use bed::application::{AppOptions, AppRuntimePlugin};
 use bed_api::documents::PanelInput;
-use bed_app::{AppOptions, AppRuntimePlugin};
 use bevy::prelude::*;
 use serde_json::Value;
 use {
@@ -20,7 +20,7 @@ fn builtins_publish_usage_notes_and_show_docs_is_available_and_reuses_the_panel(
     let mut app = App::new();
     editor_host::install(
         &mut app,
-        bed_app_config::Settings::with_paths(
+        bed::config::Settings::with_paths(
             directory.path("config"),
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
         )
@@ -28,11 +28,10 @@ fn builtins_publish_usage_notes_and_show_docs_is_available_and_reuses_the_panel(
     )
     .unwrap();
     app.add_plugins((
-        bed_runtime::BedRuntimePlugin,
+        (bevy::MinimalPlugins, bevy::input::InputPlugin),
         AppRuntimePlugin {
             options: AppOptions {
                 working_directory: Some(directory.root().to_owned()),
-                restore_standalone: false,
                 ..Default::default()
             },
         },
@@ -40,7 +39,7 @@ fn builtins_publish_usage_notes_and_show_docs_is_available_and_reuses_the_panel(
     .add_plugins(bed::builtins::BedBuiltinPlugins);
     app.update();
     assert!(
-        bed_app::application_commands(app.world())
+        bed::application::application_commands(app.world())
             .iter()
             .any(|command| command.id == SHOW_DOCS_COMMAND)
     );
@@ -53,7 +52,7 @@ fn builtins_publish_usage_notes_and_show_docs_is_available_and_reuses_the_panel(
         .collect::<Vec<_>>();
     let mut docs_panel = None;
     for kind in panels {
-        let panel = bed_app::open_panel(
+        let panel = bed::application::open_panel(
             app.world_mut(),
             kind,
             PanelInput::None,
@@ -63,7 +62,7 @@ fn builtins_publish_usage_notes_and_show_docs_is_available_and_reuses_the_panel(
             false,
         )
         .unwrap();
-        let frontend = bed_app::panel_presentation(app.world(), panel).unwrap();
+        let frontend = bed::application::panel_presentation(app.world(), panel).unwrap();
         let docs = app
             .world()
             .get::<api::PanelDocumentation>(frontend)
@@ -80,7 +79,7 @@ fn builtins_publish_usage_notes_and_show_docs_is_available_and_reuses_the_panel(
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()
         .push(api::WorkbenchAction::Invoke(invocation));
-    bed_app::process_app_requests(app.world_mut()).unwrap();
+    bed::application::process_app_requests(app.world_mut()).unwrap();
     assert_eq!(
         app.world()
             .resource::<bed_workbench::WorkbenchLayout>()

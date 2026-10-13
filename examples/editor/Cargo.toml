@@ -6,7 +6,7 @@ publish = false
 license.workspace = true
 
 [dependencies]
-bed-core = { workspace = true }
+bed-app = { workspace = true }
 bed-plugin-editor = { workspace = true }
 bed-editing = { workspace = true }
 bevy = { workspace = true, features = ["std"] }

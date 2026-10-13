@@ -257,7 +257,6 @@ fn per_file_stacks_remain_independent_and_disk_history_reloads() {
     let file_a = temp.file("a.txt");
     let file_b = temp.file("b.txt");
     let mut runtime = document(b"A", &file_a);
-    runtime.undo.project_root = temp.0.to_str().unwrap().to_owned();
     runtime.commands().set_cursor(
         0,
         1,
@@ -271,12 +270,12 @@ fn per_file_stacks_remain_independent_and_disk_history_reloads() {
     runtime.commands().type_text(b"2");
     runtime.commands().undo();
     assert_eq!(runtime.state.join(), b"B");
-    runtime.undo.flush();
+    runtime.undo.flush_to(&temp.0.join("history.json")).unwrap();
     let mut restored = document(b"A1", &file_a);
-    restored.undo.project_root = temp.0.to_str().unwrap().to_owned();
     restored
         .undo
-        .load_project(&restored.undo.project_root.clone());
+        .load_from(&temp.0.join("history.json"))
+        .unwrap();
     restored.commands().undo();
     assert_eq!(restored.state.join(), b"A");
     assert_eq!(restored.view.column, 1);

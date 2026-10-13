@@ -31,7 +31,7 @@ impl Fixture {
     fn session(&self, history: bool) -> DocumentSession {
         DocumentSession::with_options(SessionOptions {
             project_root: Some(self.0.clone()),
-            persistent_history: history,
+            history_path: history.then(|| self.0.join("history.json")),
             ..Default::default()
         })
         .unwrap()

@@ -182,6 +182,15 @@ impl FrontendSnapshot {
             .get_resource::<crate::presentation::PresentationFrame>()
             .cloned()
             .unwrap_or_default();
+        let animations = world.get_non_send::<bed_ui::UiFrameContext>().map_or_else(
+            || {
+                settings
+                    .get("bed.ui", "ui_animations")
+                    .and_then(Value::as_bool)
+                    .unwrap_or_else(|| bed_ui::appearance::UiTheme::default().motion.enabled)
+            },
+            |context| context.theme().motion.enabled,
+        );
         Self {
             remote: world
                 .get_resource::<bed_files::FileContext>()
@@ -196,7 +205,7 @@ impl FrontendSnapshot {
             settings: settings.settings,
             default_viewers: settings.default_viewers,
             textures: presentation.textures,
-            animations: presentation.animations,
+            animations,
         }
     }
     pub fn context(&self) -> HostContext<'_> {
@@ -536,16 +545,6 @@ impl FeatureRegistry {
         let ids = ids.chain(self.viewers.iter().map(|entry| entry.id));
         ids
     }
-    fn viewer_aliases(&self) -> impl Iterator<Item = &'static str> + '_ {
-        #[cfg(feature = "documents")]
-        return self
-            .viewers
-            .iter()
-            .flat_map(|viewer| viewer.aliases.iter().copied());
-        #[cfg(not(feature = "documents"))]
-        std::iter::empty()
-    }
-
     /// Publish one complete contribution batch after validating every entry.
     /// Invalid contributions leave this registry unchanged.
     pub fn register_with(
@@ -565,15 +564,11 @@ impl FeatureRegistry {
             registry: &mut pending,
         });
         // Validate the entire contribution before changing the registry.
-        #[cfg(feature = "documents")]
-        let mut ids = std::collections::HashSet::new();
         crate::workbench::validate_contribution_ids(
             owner,
             pending.contribution_ids(),
-            self.contribution_ids().chain(self.viewer_aliases()),
+            self.contribution_ids(),
         )?;
-        #[cfg(feature = "documents")]
-        ids.extend(pending.contribution_ids());
         for command in pending
             .menus
             .iter()
@@ -591,7 +586,6 @@ impl FeatureRegistry {
                     return Err(format!("Missing viewer panel: {}", viewer.panel_type));
                 }
             }
-            let mut aliases = std::collections::HashSet::new();
             let mut fallback_kinds = Vec::new();
             for viewer in &pending.viewers {
                 if viewer.fallback {
@@ -603,41 +597,6 @@ impl FeatureRegistry {
                     }
                     fallback_kinds.push(kind);
                 }
-                for &alias in viewer.aliases {
-                    if !valid_id(alias)
-                        || ids.contains(alias)
-                        || !aliases.insert(alias)
-                        || self.contribution_ids().any(|existing| existing == alias)
-                        || self.viewer(alias).is_some()
-                    {
-                        return Err(format!("Invalid or duplicate viewer alias: {alias}"));
-                    }
-                }
-            }
-        }
-        let mut legacy_kinds = std::collections::HashSet::new();
-        for panel in &pending.panels {
-            if self
-                .panels
-                .iter()
-                .any(|existing| existing.legacy_kind == Some(panel.id))
-            {
-                return Err(format!(
-                    "Panel ID conflicts with a legacy panel kind: {}",
-                    panel.id
-                ));
-            }
-            if let Some(legacy_kind) = panel.legacy_kind
-                && (!valid_id(legacy_kind)
-                    || !legacy_kinds.insert(legacy_kind)
-                    || pending.panels.iter().any(|other| other.id == legacy_kind)
-                    || self.panels.iter().any(|other| {
-                        other.id == legacy_kind || other.legacy_kind == Some(legacy_kind)
-                    }))
-            {
-                return Err(format!(
-                    "Invalid or duplicate legacy panel kind: {legacy_kind}"
-                ));
             }
         }
         self.commands.extend(pending.commands);
@@ -661,9 +620,7 @@ impl FeatureRegistry {
 
     #[cfg(feature = "documents")]
     pub fn viewer(&self, id: &str) -> Option<&FileViewer> {
-        self.viewers
-            .iter()
-            .find(|entry| entry.id == id || entry.aliases.contains(&id))
+        self.viewers.iter().find(|entry| entry.id == id)
     }
 
     #[cfg(feature = "documents")]
@@ -813,28 +770,20 @@ impl FeatureRegistrar<'_> {
             singleton: false,
             placement: PanelPlacement::Center,
             open_placement: PanelPlacement::Center,
-            legacy_kind: None,
             id,
             plugin: self.owner,
         });
     }
 
-    pub fn panel_options(
-        &mut self,
-        id: &'static str,
-        singleton: bool,
-        placement: PanelPlacement,
-        legacy_kind: Option<&'static str>,
-    ) {
+    pub fn panel_options(&mut self, id: &'static str, singleton: bool, placement: PanelPlacement) {
         self.panel_ref(id);
         let panel = self.registry.panels.last_mut().unwrap();
         panel.singleton = singleton;
         panel.placement = placement;
         panel.open_placement = placement;
-        panel.legacy_kind = legacy_kind;
     }
 
-    /// Override the legacy runtime placement hint without changing the initial layout.
+    /// Require document or file input before creating this panel.
     pub fn panel_requires_input(&mut self, id: &'static str) {
         self.registry
             .panels
@@ -861,12 +810,10 @@ impl FeatureRegistrar<'_> {
         label: &'static str,
         panel_type: &'static str,
         kind: DocumentKind,
-        aliases: &'static [&'static str],
     ) {
         self.viewer(id, label, panel_type, &[], kind);
         let viewer = self.registry.viewers.last_mut().unwrap();
         viewer.fallback = true;
-        viewer.aliases = aliases;
     }
 
     #[cfg(feature = "documents")]
@@ -880,7 +827,6 @@ impl FeatureRegistrar<'_> {
     ) {
         self.registry.viewers.push(FileViewer {
             fallback: false,
-            aliases: &[],
             id,
             plugin: self.owner,
             label,
@@ -906,7 +852,6 @@ impl FeatureRegistrar<'_> {
     ) {
         self.registry.viewers.push(FileViewer {
             fallback: false,
-            aliases: &[],
             id,
             plugin: self.owner,
             label,
@@ -1023,14 +968,12 @@ mod tests {
                     "Text",
                     "editor.text",
                     DocumentKind::Text,
-                    &["bed.text"],
                 );
                 registrar.fallback_viewer(
                     "editor.hex-viewer",
                     "Hex",
                     "editor.hex",
                     DocumentKind::Bytes,
-                    &["bed.hex"],
                 );
             }))
             .unwrap();
@@ -1042,11 +985,8 @@ mod tests {
             registry.default_viewer(DocumentKind::Bytes).unwrap().id,
             "editor.hex-viewer"
         );
-        assert_eq!(
-            registry.viewer("bed.text").unwrap().id,
-            "editor.text-viewer"
-        );
-        assert_eq!(registry.viewer("bed.hex").unwrap().id, "editor.hex-viewer");
+        assert!(registry.viewer("bed.text").is_none());
+        assert!(registry.viewer("bed.hex").is_none());
         assert!(registry.viewer_for_path("unknown.ext").is_none());
         for kind in [DocumentKind::Text, DocumentKind::Bytes] {
             assert_rejected_atomically(
@@ -1061,7 +1001,6 @@ mod tests {
                         "Alternative",
                         "alternative.panel",
                         kind,
-                        &[],
                     );
                 }),
             );
@@ -1100,235 +1039,13 @@ mod tests {
                     "First",
                     "editor.panel",
                     DocumentKind::Text,
-                    &[],
                 );
                 registrar.fallback_viewer(
                     "editor.second",
                     "Second",
                     "editor.panel",
                     DocumentKind::Text,
-                    &[],
                 );
-            }),
-        );
-    }
-
-    #[test]
-    fn viewer_aliases_cannot_shadow_contributions_in_the_same_registration() {
-        for alias in [
-            "owner.panel",
-            "owner.viewer",
-            "owner.open",
-            "owner.settings",
-        ] {
-            let mut registry = FeatureRegistry::default();
-            assert_rejected_atomically(
-                &mut registry,
-                &module("owner", move |registrar| {
-                    registrar.panel_ref("owner.panel");
-                    registrar.command_ref("owner.open");
-                    registrar.settings("owner.settings", "Owner");
-                    // Test aliases are static; each slice is stored by the descriptor.
-                    let aliases: &'static [&'static str] = match alias {
-                        "owner.panel" => &["owner.panel"],
-                        "owner.viewer" => &["owner.viewer"],
-                        "owner.open" => &["owner.open"],
-                        _ => &["owner.settings"],
-                    };
-                    registrar.fallback_viewer(
-                        "owner.viewer",
-                        "Owner",
-                        "owner.panel",
-                        DocumentKind::Text,
-                        aliases,
-                    );
-                }),
-            );
-        }
-    }
-
-    #[test]
-    fn viewer_alias_collisions_are_rejected_in_either_registration_order() {
-        for contribution in ["panel", "viewer", "command", "settings"] {
-            let canonical = module("target", move |registrar| match contribution {
-                "panel" => registrar.panel_ref("target.shared"),
-                "viewer" => {
-                    registrar.panel_ref("target.panel");
-                    registrar.viewer(
-                        "target.shared",
-                        "Target",
-                        "target.panel",
-                        &["x"],
-                        DocumentKind::Bytes,
-                    );
-                }
-                "command" => registrar.command_ref("target.shared"),
-                _ => registrar.settings("target.shared", "Target"),
-            });
-            let alias = module("legacy", |registrar| {
-                registrar.panel_ref("legacy.panel");
-                registrar.fallback_viewer(
-                    "legacy.viewer",
-                    "Legacy",
-                    "legacy.panel",
-                    DocumentKind::Text,
-                    &["target.shared"],
-                );
-            });
-            let mut registry = FeatureRegistry::default();
-            registry.register(&canonical).unwrap();
-            assert_rejected_atomically(&mut registry, &alias);
-            let mut registry = FeatureRegistry::default();
-            registry.register(&alias).unwrap();
-            assert_rejected_atomically(&mut registry, &canonical);
-            assert_eq!(
-                registry.viewer("target.shared").unwrap().id,
-                "legacy.viewer"
-            );
-        }
-    }
-
-    #[test]
-    fn viewer_aliases_are_unique_within_and_between_modules() {
-        let mut registry = FeatureRegistry::default();
-        assert_rejected_atomically(
-            &mut registry,
-            &module("owner", |registrar| {
-                registrar.panel_ref("owner.panel");
-                registrar.fallback_viewer(
-                    "owner.viewer",
-                    "Owner",
-                    "owner.panel",
-                    DocumentKind::Text,
-                    &["old.viewer", "old.viewer"],
-                );
-            }),
-        );
-        assert_rejected_atomically(
-            &mut registry,
-            &module("owner", |registrar| {
-                registrar.panel_ref("owner.panel");
-                registrar.fallback_viewer(
-                    "owner.first",
-                    "First",
-                    "owner.panel",
-                    DocumentKind::Text,
-                    &["old.viewer"],
-                );
-                registrar.fallback_viewer(
-                    "owner.second",
-                    "Second",
-                    "owner.panel",
-                    DocumentKind::Bytes,
-                    &["old.viewer"],
-                );
-            }),
-        );
-        registry
-            .register(&module("owner", |registrar| {
-                registrar.panel_ref("owner.panel");
-                registrar.fallback_viewer(
-                    "owner.viewer",
-                    "Owner",
-                    "owner.panel",
-                    DocumentKind::Text,
-                    &["old.viewer"],
-                );
-            }))
-            .unwrap();
-        assert_rejected_atomically(
-            &mut registry,
-            &module("other", |registrar| {
-                registrar.panel_ref("other.panel");
-                registrar.fallback_viewer(
-                    "other.viewer",
-                    "Other",
-                    "other.panel",
-                    DocumentKind::Bytes,
-                    &["old.viewer"],
-                );
-            }),
-        );
-    }
-
-    #[test]
-    fn legacy_panel_kinds_are_unique_and_cannot_shadow_panel_ids() {
-        let mut registry = FeatureRegistry::default();
-        registry
-            .register(&module("original", |registrar| {
-                registrar.panel_options(
-                    "original.panel",
-                    true,
-                    PanelPlacement::Bottom,
-                    Some("legacy"),
-                );
-            }))
-            .unwrap();
-        assert_rejected_atomically(
-            &mut registry,
-            &module("other", |registrar| {
-                registrar.panel_options(
-                    "other.panel",
-                    true,
-                    PanelPlacement::Sidebar,
-                    Some("legacy"),
-                );
-            }),
-        );
-        assert_rejected_atomically(
-            &mut registry,
-            &module("other", |registrar| {
-                registrar.panel_options(
-                    "other.panel",
-                    false,
-                    PanelPlacement::Center,
-                    Some("original.panel"),
-                );
-            }),
-        );
-        assert_rejected_atomically(
-            &mut registry,
-            &module("other", |registrar| {
-                registrar.panel_options(
-                    "other.first",
-                    false,
-                    PanelPlacement::Center,
-                    Some("duplicate"),
-                );
-                registrar.panel_options(
-                    "other.second",
-                    false,
-                    PanelPlacement::Center,
-                    Some("duplicate"),
-                );
-            }),
-        );
-        assert_rejected_atomically(
-            &mut registry,
-            &module("other", |registrar| {
-                registrar.panel_options(
-                    "other.first",
-                    false,
-                    PanelPlacement::Center,
-                    Some("other.second"),
-                );
-                registrar.panel_ref("other.second");
-            }),
-        );
-        registry
-            .register(&module("earlier", |registrar| {
-                registrar.panel_options(
-                    "earlier.panel",
-                    false,
-                    PanelPlacement::Center,
-                    Some("later.panel"),
-                );
-            }))
-            .unwrap();
-        assert_rejected_atomically(
-            &mut registry,
-            &module("later", |registrar| {
-                registrar.panel_ref("later.panel");
             }),
         );
     }
@@ -1369,52 +1086,6 @@ mod tests {
                 registrar.panel_ref("owner.child.valid-panel_1");
             }))
             .unwrap();
-    }
-
-    #[test]
-    fn malformed_aliases_and_legacy_kinds_are_rejected() {
-        for aliases in [
-            &[""][..],
-            &["legacy..viewer"][..],
-            &["legacy/viewer"][..],
-            &["legacy viewer"][..],
-        ] {
-            let mut registry = FeatureRegistry::default();
-            assert_rejected_atomically(
-                &mut registry,
-                &module("owner", move |registrar| {
-                    registrar.panel_ref("owner.panel");
-                    registrar.fallback_viewer(
-                        "owner.viewer",
-                        "Owner",
-                        "owner.panel",
-                        DocumentKind::Text,
-                        aliases,
-                    );
-                }),
-            );
-        }
-        for kind in [
-            "",
-            ".legacy",
-            "legacy.",
-            "legacy..panel",
-            "legacy/panel",
-            "legacy panel",
-        ] {
-            let mut registry = FeatureRegistry::default();
-            assert_rejected_atomically(
-                &mut registry,
-                &module("owner", move |registrar| {
-                    registrar.panel_options(
-                        "owner.panel",
-                        true,
-                        PanelPlacement::Center,
-                        Some(kind),
-                    );
-                }),
-            );
-        }
     }
 
     #[test]
@@ -1512,20 +1183,8 @@ mod tests {
         registry
             .register(&module("views", |registrar| {
                 registrar.panel_ref("views.panel");
-                registrar.fallback_viewer(
-                    "views.text",
-                    "Text",
-                    "views.panel",
-                    DocumentKind::Text,
-                    &[],
-                );
-                registrar.fallback_viewer(
-                    "views.hex",
-                    "Hex",
-                    "views.panel",
-                    DocumentKind::Bytes,
-                    &[],
-                );
+                registrar.fallback_viewer("views.text", "Text", "views.panel", DocumentKind::Text);
+                registrar.fallback_viewer("views.hex", "Hex", "views.panel", DocumentKind::Bytes);
                 registrar.viewer(
                     "views.table",
                     "Table",

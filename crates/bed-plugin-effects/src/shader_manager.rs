@@ -5,7 +5,7 @@ use crate::{
     shader_types::{AccumulationBuffers, FramebufferState, OFFSCREEN_FORMAT, ShaderQuad},
 };
 
-pub use bed_effects_config::ShaderSettings;
+pub use crate::settings::ShaderSettings;
 
 struct TemporalBuffers {
     accum: AccumulationBuffers,

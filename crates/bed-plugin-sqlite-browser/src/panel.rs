@@ -420,7 +420,11 @@ impl SqlitePanel {
                     selected = Some(object.name.clone());
                 }
                 if ui.is_item_hovered() {
-                    ui.tooltip_text(format!("{kind}: {}", object.name));
+                    bed_ui::components::tooltip_text(
+                        ui,
+                        &bed_ui::UiFrameContext::for_ui(ui),
+                        format!("{kind}: {}", object.name),
+                    );
                 }
             }
         } else if self.pending.is_some() {
@@ -953,12 +957,16 @@ impl SqlitePanel {
                 }
                 drop(color);
                 if ui.is_item_hovered() {
-                    ui.tooltip_text(format!(
-                        "{} · {}\n{}",
-                        data.columns[column],
-                        cell.kind_name(),
-                        cell_preview(cell)
-                    ));
+                    bed_ui::components::tooltip_text(
+                        ui,
+                        &bed_ui::UiFrameContext::for_ui(ui),
+                        format!(
+                            "{} · {}\n{}",
+                            data.columns[column],
+                            cell.kind_name(),
+                            cell_preview(cell)
+                        ),
+                    );
                 }
                 if let Some(_popup) = ui.begin_popup_context_item_with_label(Some("cell-menu")) {
                     self.selection = Some([row, column]);

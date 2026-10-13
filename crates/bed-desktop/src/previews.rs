@@ -9,8 +9,8 @@ impl Plugin for DesktopPreviewIntegrationPlugin {
             app.is_plugin_added::<crate::DesktopIntegrationPlugin>(),
             "DesktopPreviewIntegrationPlugin requires DesktopIntegrationPlugin"
         );
-        if !app.is_plugin_added::<bed_runtime::render::BedPreviewPlugin>() {
-            app.add_plugins(bed_runtime::render::BedPreviewPlugin);
+        if !app.is_plugin_added::<crate::preview::PreviewPlugin>() {
+            app.add_plugins(crate::preview::PreviewPlugin);
         }
         app.add_systems(PreUpdate, begin.before(DesktopSystems::Ui))
             .add_systems(
@@ -22,7 +22,7 @@ impl Plugin for DesktopPreviewIntegrationPlugin {
     }
 }
 fn begin(world: &mut World) {
-    bed_runtime::render::begin_preview_frame(world);
+    crate::preview::begin_preview_frame(world);
 }
 fn retire(world: &mut World) {
     let live = world
@@ -30,5 +30,5 @@ fn retire(world: &mut World) {
         .iter(world)
         .map(|output| output.0.handle.0)
         .collect();
-    bed_runtime::render::retire_previews(world, &live);
+    crate::preview::retire_previews(world, &live);
 }

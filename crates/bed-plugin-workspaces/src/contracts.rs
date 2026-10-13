@@ -119,7 +119,8 @@ impl Default for WorkspaceSnapshot {
 }
 
 /// Applications choose where workspace definitions and snapshots are persisted.
-/// A commit atomically updates definition, state and recents.
+/// A successful commit establishes the saved definition and snapshot. Updating
+/// a separate recent-location index may fail afterwards without undoing that save.
 pub trait WorkspaceRepository: Send + Sync + 'static {
     fn recent(&self) -> std::io::Result<Vec<WorkspaceSpec>>;
     fn find(&self, location: &WorkspaceSpec) -> std::io::Result<Option<WorkspaceSpec>>;
@@ -131,6 +132,9 @@ pub trait WorkspaceRepository: Send + Sync + 'static {
     ) -> std::io::Result<WorkspaceSpec>;
     fn forget(&mut self, spec: &WorkspaceSpec) -> std::io::Result<()>;
     fn rename(&mut self, spec: &WorkspaceSpec, name: &str) -> std::io::Result<WorkspaceSpec>;
+    fn take_index_error(&mut self) -> Option<String> {
+        None
+    }
 }
 
 #[derive(bevy::prelude::Resource)]

@@ -13,7 +13,7 @@ use bed_api::{
 };
 use bed_documents::session::ByteEdit;
 use bed_editing::identity::DocumentId;
-use bed_ui::util::popup_style::tooltip_text;
+use bed_ui::components::tooltip_text;
 use dear_imgui_rs::{
     FocusedFlags, InputTextCallback, InputTextFlags, Key, ListClipper, MouseButton, StyleVar,
     TableColumnFlags, TableColumnWidth, TableFlags, TableRowFlags, Ui,
@@ -1251,6 +1251,7 @@ impl CsvPanel {
             if ui.is_item_hovered() {
                 tooltip_text(
                     ui,
+                    &bed_ui::UiFrameContext::for_ui(ui),
                     format!("{}\nClick to sort; right-click for column operations", name),
                 );
             }
@@ -1397,7 +1398,7 @@ impl CsvPanel {
                         self.select(row, column, true);
                     }
                     if hovered && (cell.len() > 50 || cell.contains(['\r', '\n'])) {
-                        tooltip_text(ui, cell.as_ref());
+                        tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), cell.as_ref());
                     }
                     if let Some(_popup) = ui.begin_popup_context_item_with_label(Some("cell-menu"))
                     {
@@ -1540,7 +1541,7 @@ impl CsvPanel {
                 } else {
                     requests.push(HostAction::OpenFile {
                         path: document.path.clone(),
-                        viewer: Some("bed.text".into()),
+                        viewer: Some("bed.editor.text".into()),
                     });
                 }
             }

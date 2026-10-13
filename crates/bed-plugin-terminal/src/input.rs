@@ -49,14 +49,53 @@ pub(crate) fn install(app: &mut App) {
         )
         .add_systems(
             PreUpdate,
+            project_keymap
+                .in_set(bed_workbench::WorkbenchSystems::InputProjection)
+                .after(bed_workbench::WorkbenchSystems::Keymap)
+                .before(DesktopSystems::InterceptInput),
+        )
+        .add_systems(
+            PreUpdate,
             intercept
                 .in_set(DesktopSystems::InterceptInput)
                 .in_set(TerminalInputSystems::Intercept),
         );
 }
 
-/// Application chord keys reserved before terminal input. Hosts may replace
-/// this policy without depending on a configuration storage implementation.
+fn project_keymap(world: &mut World) {
+    let Some(map) = world.get_non_send::<bed_workbench::ResolvedKeymap>() else {
+        return;
+    };
+    let bindings = map.bindings.clone();
+    let shortcuts = world.non_send::<bed_workbench::WorkbenchShortcuts>();
+    let overrides = shortcuts.overrides.clone();
+    let recording = shortcuts.recording.is_some();
+    let clipboard = |id| {
+        TerminalInputPolicy::clipboard_shortcuts(&bindings, id, overrides.actions.contains_key(id))
+    };
+    let policy = TerminalInputPolicy {
+        application_shortcuts: bindings
+            .entries
+            .iter()
+            .filter(|binding| {
+                (binding.scope == bed_keybindings::Scope::Global
+                    || binding.scope == bed_keybindings::Scope::panel(crate::PANEL_ID))
+                    && bindings
+                        .winner(&binding.scope, binding.shortcut)
+                        .is_some_and(|winner| winner.action == binding.action)
+            })
+            .map(|binding| binding.shortcut)
+            .collect(),
+        copy: clipboard("bed.edit.copy"),
+        paste: clipboard("bed.edit.paste"),
+        select_all: clipboard("bed.edit.select_all"),
+        recording,
+    };
+    *world.resource_mut::<TerminalInputPolicy>() = policy;
+}
+
+/// Effective application and clipboard chords projected from the shared keymap
+/// before native input interception. Configure bindings through workbench settings.
 #[derive(Resource, Clone, Debug)]
 pub struct TerminalInputPolicy {
     pub application_shortcuts: Vec<bed_keybindings::Stroke>,
@@ -872,6 +911,104 @@ mod tests {
             !TerminalInputPolicy::clipboard_shortcuts(&conflicting, &copy.id, true)
                 .contains(&"Ctrl+K".parse().unwrap())
         );
+    }
+
+    #[test]
+    fn live_preferences_project_common_global_and_panel_chords_before_interception() {
+        use bed_api::settings::SettingsRequest;
+        use bed_keybindings::{Scope, ShortcutAction, Stroke};
+        let mut app = App::new();
+        app.add_plugins((bed_workbench::WorkbenchPlugin, crate::TerminalPlugin));
+        bed_workbench::register(app.world_mut(), "fixture", |registrar| {
+            registrar.command(
+                "fixture.global",
+                "Global",
+                |_: In<bed_workbench::CommandInvocation>| Ok(Vec::new()),
+            );
+            registrar.global_shortcut("fixture.global", &["Ctrl+K"]);
+            registrar.panel_shortcut("fixture.panel", "Panel", crate::PANEL_ID, &["Ctrl+L"]);
+        })
+        .unwrap();
+        bed_core::settings::initialize_settings(app.world_mut(), None).unwrap();
+        bed_core::settings::finalize_settings(app.world_mut()).unwrap();
+        let stroke = |text: &str| {
+            text.parse::<Stroke>()
+                .unwrap()
+                .resolved(bed_keybindings::Platform::current())
+        };
+        let event = |text: &str| {
+            let stroke = stroke(text);
+            TerminalKeyEvent {
+                key: TerminalKey::Character(
+                    bed_keybindings::key_name(stroke.key)
+                        .unwrap()
+                        .to_ascii_lowercase(),
+                ),
+                modifiers: TerminalModifiers {
+                    control: stroke.modifiers.ctrl,
+                    alt: stroke.modifiers.alt,
+                    shift: stroke.modifiers.shift,
+                    super_key: stroke.modifiers.super_key,
+                    ..default()
+                },
+                state: KeyState::Press,
+                ..default()
+            }
+        };
+        let publish = |world: &mut World, value| {
+            bed_core::settings::apply_settings_request(
+                world,
+                &SettingsRequest::new("bed.workbench", "keybindings", value),
+            )
+            .unwrap();
+            bed_workbench::resolve_keymap(world);
+            project_keymap(world);
+        };
+        let copy = ShortcutAction::new("bed.edit.copy", "Copy", "bed.edit", Scope::Focused, &[]);
+        let mut overrides = bed_keybindings::Overrides::default();
+        overrides.replace(&copy, None, stroke("Ctrl+K")).unwrap();
+        publish(app.world_mut(), serde_json::to_value(&overrides).unwrap());
+        let policy = app.world().resource::<TerminalInputPolicy>();
+        assert!(application_shortcut(&event("Ctrl+K"), policy));
+        assert_eq!(
+            clipboard_key(&event("Ctrl+K"), policy),
+            None,
+            "global winner reserves the common clipboard override"
+        );
+        assert!(
+            application_shortcut(&event("Ctrl+L"), policy),
+            "panel defaults are reserved before interception"
+        );
+        let global = ShortcutAction::new("fixture.global", "Global", "fixture", Scope::Global, &[]);
+        overrides.replace(&global, None, stroke("Ctrl+M")).unwrap();
+        overrides.actions.insert("fixture.panel".into(), Vec::new());
+        overrides
+            .actions
+            .insert("bed.edit.paste".into(), Vec::new());
+        publish(app.world_mut(), serde_json::to_value(&overrides).unwrap());
+        let policy = app.world().resource::<TerminalInputPolicy>();
+        assert_eq!(clipboard_key(&event("Ctrl+K"), policy), Some("copy"));
+        assert!(!application_shortcut(&event("Ctrl+K"), policy));
+        assert!(application_shortcut(&event("Ctrl+M"), policy));
+        assert!(!application_shortcut(&event("Ctrl+L"), policy));
+        assert!(
+            policy.paste.is_empty(),
+            "explicit unbinding removes clipboard alternatives"
+        );
+        overrides.actions.insert("bed.edit.copy".into(), Vec::new());
+        overrides
+            .actions
+            .insert("fixture.global".into(), Vec::new());
+        publish(app.world_mut(), serde_json::to_value(&overrides).unwrap());
+        let policy = app.world().resource::<TerminalInputPolicy>();
+        assert_eq!(clipboard_key(&event("Ctrl+K"), policy), None);
+        assert!(!application_shortcut(&event("Ctrl+M"), policy));
+        let recorder = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .non_send_mut::<bed_workbench::WorkbenchShortcuts>()
+            .recording = Some(recorder);
+        project_keymap(app.world_mut());
+        assert!(app.world().resource::<TerminalInputPolicy>().recording);
     }
 
     #[test]

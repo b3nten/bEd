@@ -52,7 +52,7 @@ impl DebugViews {
         surfaces: &[Entity],
         normalization: Transform,
         ownership: Option<(
-            bed_runtime::render::PreviewView,
+            bed_desktop::preview::PreviewView,
             bevy::camera::visibility::RenderLayers,
         )>,
     ) -> Self {

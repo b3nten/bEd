@@ -174,6 +174,7 @@ impl Plugin for DocumentHostPlugin {
         if !app.is_plugin_added::<bed_workbench::WorkbenchPlugin>() {
             app.add_plugins(bed_workbench::WorkbenchPlugin);
         }
+        crate::settings::install_settings(app.world_mut());
         app.init_non_send::<DocumentSession>()
             .init_resource::<bed_files::FileContext>()
             .init_resource::<bed_files::FileServices>()
@@ -260,6 +261,9 @@ pub fn take_document_service_report(world: &mut World) -> bed_documents::session
     std::mem::take(&mut world.non_send_mut::<DocumentServiceReport>().0)
 }
 pub fn poll_document_services(world: &mut World) {
+    crate::settings::refresh_settings(world);
+    #[cfg(feature = "language-services")]
+    crate::configuration::configure_syntax(world);
     let report = world.non_send_mut::<DocumentSession>().tick();
     crate::saves::poll_document_saves(world, &report);
     #[cfg(feature = "language-services")]
@@ -710,12 +714,9 @@ pub fn resolve_documents(world: &mut World) {
                 .settings
                 .pop_front()
                 .unwrap();
-            let mut snapshot = world.resource_mut::<bed_api::settings::SettingsSnapshot>();
-            snapshot
-                .settings
-                .as_object_mut()
-                .expect("SettingsSnapshot settings must be an object")
-                .insert(setting.key, setting.value);
+            if let Err(error) = crate::settings::apply_settings_request(world, &setting) {
+                notice(world, None, error);
+            }
             continue;
         }
         if panel_sequence.is_some()
@@ -1407,7 +1408,7 @@ pub fn apply_document_request(
                 document,
                 world
                     .resource::<bed_api::settings::SettingsSnapshot>()
-                    .settings["lsp_format_on_save"]
+                    .settings["bed.editor"]["lsp_format_on_save"]
                     .as_bool()
                     .unwrap_or(true),
             )?;

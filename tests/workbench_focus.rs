@@ -3,8 +3,8 @@
 #[path = "support/editor_host.rs"]
 mod editor_host;
 #[cfg(feature = "settings")]
-use bed_app::dispatch_app_command;
-use bed_app::{
+use bed::application::dispatch_app_command;
+use bed::application::{
     AppAction, AppOptions, AppRequestOutcome, AppRuntimePlugin, DocumentNavigation, WindowCommand,
     WorkbenchLayout, capture_app_request, capture_app_request_from, poll_app_request,
     process_app_requests, submit_app_request,
@@ -44,7 +44,7 @@ impl Fixture {
         let mut app = App::new();
         editor_host::install(
             &mut app,
-            bed_app_config::Settings::with_paths(
+            bed::config::Settings::with_paths(
                 root.join("config"),
                 PathBuf::from(env!("CARGO_MANIFEST_DIR")),
             )
@@ -59,7 +59,7 @@ impl Fixture {
         });
         app.add_plugins(bed_plugin_editor::EditorPlugin);
         #[cfg(feature = "settings")]
-        app.add_plugins(bed_plugin_settings::SettingsPlugin);
+        app.add_plugins(bed::settings_view::SettingsPlugin);
         #[cfg(feature = "file-explorer")]
         app.add_plugins(bed_plugin_file_explorer::FileExplorerPlugin);
         app.update();
@@ -123,7 +123,7 @@ impl Fixture {
     }
 
     fn frame(&mut self, context: &mut Context) {
-        bed_app::tick_app_services(self.app.world_mut()).unwrap();
+        bed::application::tick_app_services(self.app.world_mut()).unwrap();
         editor_host::prepare_ui(self.app.world_mut(), context).unwrap();
         context
             .font_atlas()
@@ -131,7 +131,7 @@ impl Fixture {
             .unwrap()
             .build();
         context.prepare_frame(FramePrepareOptions::new([1200.0, 800.0], 1.0 / 60.0));
-        bed_app::draw_ui(self.app.world_mut(), context.frame()).unwrap();
+        bed::application::draw_ui(self.app.world_mut(), context.frame()).unwrap();
         assert!(context.render_legacy().draw_data().total_vtx_count() > 0);
         process_app_requests(self.app.world_mut()).unwrap();
     }
@@ -337,7 +337,7 @@ fn closed_source_requests_do_not_retarget_current_document() {
     let id = submit_app_request(fixture.app.world_mut(), request);
     process_app_requests(fixture.app.world_mut()).unwrap();
     assert_eq!(
-        bed_app::poll_app_request_result(fixture.app.world_mut(), id)
+        bed::application::poll_app_request_result(fixture.app.world_mut(), id)
             .unwrap()
             .unwrap_err()
             .kind,
@@ -435,7 +435,7 @@ fn presentation_drawing_keeps_session_settings_and_registry_installed() {
         fixture
             .app
             .world()
-            .contains_non_send::<bed_app_config::Settings>()
+            .contains_non_send::<bed::config::Settings>()
     );
     assert!(
         fixture
@@ -463,11 +463,11 @@ fn workspace_restore_focus_survives_first_presentation_frames() {
         .get::<PanelPresentation>(first)
         .unwrap()
         .id;
-    bed_app::persist_workspace(fixture.app.world_mut()).unwrap();
+    bed::application::persist_workspace(fixture.app.world_mut()).unwrap();
     let mut restored = App::new();
     editor_host::install(
         &mut restored,
-        bed_app_config::Settings::with_paths(
+        bed::config::Settings::with_paths(
             fixture.root.join("config"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")),
         )
@@ -506,7 +506,7 @@ fn workspace_restore_focus_survives_first_presentation_frames() {
         .unwrap()
         .build();
     context.prepare_frame(FramePrepareOptions::new([1200.0, 800.0], 1.0 / 60.0));
-    bed_app::draw_ui(restored.world_mut(), context.frame()).unwrap();
+    bed::application::draw_ui(restored.world_mut(), context.frame()).unwrap();
     drop(context.render_legacy());
     process_app_requests(restored.world_mut()).unwrap();
     assert_eq!(
@@ -564,7 +564,7 @@ fn application_tab_shortcut_restores_editor_focus_from_a_tool() {
     .unwrap();
     fixture.frame(&mut context);
     fixture.frame(&mut context);
-    let panels = bed_app::panel_entities(fixture.app.world_mut());
+    let panels = bed::application::panel_entities(fixture.app.world_mut());
     let index = panels
         .iter()
         .position(|candidate| *candidate == panel)

@@ -10,7 +10,6 @@ license.workspace = true
 [workspace]
 members = [
     "crates/bed-keybindings",
-    "crates/bed-runtime",
     "crates/bed-plugin-automation",
     "crates/bed-plugin-idle",
     "crates/bed-editing",
@@ -24,8 +23,6 @@ members = [
     "crates/bed-ui",
     "crates/bed-editor-widgets",
     "crates/bed-terminal",
-    "crates/bed-app-config",
-    "crates/bed-effects-config",
     "crates/bed-plugin-effects",
     "crates/bed-api",
     "crates/bed-workbench",
@@ -62,9 +59,8 @@ members = [
     "crates/bed-plugin-sqlite-browser",
     "crates/bed-plugin-http-client",
     "crates/bed-app",
-    "crates/bed-app-shell",
 ]
-default-members = [".", "crates/bed-app-shell"]
+default-members = ["."]
 exclude = ["vendor/arboard", "vendor/dear-imgui-sys", "vendor/dear-imgui-winit", "vendor/dear-imgui-wgpu", "vendor/freetype-sys", "vendor/bevy_stl", "vendor/rio-vt"]
 resolver = "3"
 
@@ -86,15 +82,12 @@ bed-storage = { path = "crates/bed-storage" }
 bed-plugin-layouts = { path = "crates/bed-plugin-layouts" }
 bed-workbench = { path = "crates/bed-workbench" }
 bed-api = { path = "crates/bed-api", default-features = false }
-bed-runtime = { path = "crates/bed-runtime" }
 bed-plugin-color-picker = { path = "crates/bed-plugin-color-picker" }
 bed-plugin-mascots = { path = "crates/bed-plugin-mascots" }
 bed-git = { path = "crates/bed-git" }
 bed-plugin-git = { path = "crates/bed-plugin-git" }
-bed-effects-config = { path = "crates/bed-effects-config" }
 bed-app = { path = "crates/bed-app" }
 bed-editor-widgets = { path = "crates/bed-editor-widgets" }
-bed-app-config = { path = "crates/bed-app-config" }
 bed-plugin-file-explorer = { path = "crates/bed-plugin-file-explorer" }
 bed-plugin-file-search = { path = "crates/bed-plugin-file-search" }
 bed-plugin-terminal = { path = "crates/bed-plugin-terminal" }
@@ -174,54 +167,57 @@ automation = ["dep:bed-plugin-automation"]
 default = ["tools", "effects", "idle", "viewers", "mascots"]
 tools = ["editor", "debugger", "git", "file-explorer", "file-search", "terminal", "workspaces", "color-picker", "settings"]
 editor = ["dep:bed-plugin-editor", "bed-plugin-editor/language-services"]
-debugger = ["dep:bed-plugin-debugger", "dep:bed-debugger", "bed-app/debugger"]
-git = ["dep:bed-plugin-git", "bed-app/git"]
-file-explorer = ["dep:bed-plugin-file-explorer", "bed-app/file-explorer"]
+debugger = ["dep:bed-plugin-debugger", "dep:bed-debugger"]
+git = ["dep:bed-plugin-git"]
+file-explorer = ["dep:bed-plugin-file-explorer"]
 file-search = ["dep:bed-plugin-file-search"]
-terminal = ["dep:bed-plugin-terminal", "bed-plugin-terminal/desktop", "bed-plugin-terminal/remote", "dep:bed-terminal", "dep:bed-app-shell", "bed-app/terminal"]
-workspaces = ["dep:bed-plugin-workspaces", "bed-app/workspaces", "bed-plugin-automation?/workspaces"]
+terminal = ["dep:bed-plugin-terminal", "bed-plugin-terminal/desktop", "bed-plugin-terminal/remote", "dep:bed-terminal"]
+workspaces = []
 color-picker = ["dep:bed-plugin-color-picker"]
 settings = ["dep:bed-plugin-settings"]
-effects = ["dep:bed-plugin-effects"]
+effects = ["bed-plugin-effects/desktop"]
 idle = ["dep:bed-plugin-idle"]
 viewers = ["source-outline", "image-viewer", "model-viewer", "font-viewer", "audio-player", "csv-table", "markdown-preview", "json-tree", "sqlite-browser", "http-client"]
 source-outline = ["dep:bed-plugin-source-outline"]
 image-viewer = ["dep:bed-plugin-image-viewer"]
-model-viewer = ["dep:bed-plugin-model-viewer", "bed-runtime/scene", "bed-desktop/preview"]
+model-viewer = ["dep:bed-plugin-model-viewer", "bed-desktop/scene", "bed-desktop/preview"]
 font-viewer = ["dep:bed-plugin-font-viewer"]
 audio-player = ["dep:bed-plugin-audio-player"]
 csv-table = ["dep:bed-plugin-csv-table"]
 markdown-preview = ["dep:bed-plugin-markdown-preview"]
 json-tree = ["dep:bed-plugin-json-tree"]
 sqlite-browser = ["dep:bed-plugin-sqlite-browser"]
-http-client = ["dep:bed-plugin-http-client", "bed-app/http-client"]
-mascots = ["dep:bed-plugin-mascots", "bed-runtime/scene", "bed-desktop/preview", "bed-plugin-workspaces?/mascots", "bed-plugin-idle?/mascots"]
+http-client = ["dep:bed-plugin-http-client"]
+mascots = ["dep:bed-plugin-mascots", "bed-desktop/scene", "bed-desktop/preview", "bed-plugin-workspaces/mascots", "bed-plugin-idle?/mascots"]
 
 [dependencies]
+bed-storage = { workspace = true }
+bed-files = { workspace = true, features = ["workspace-services"] }
+bed-lsp = { workspace = true }
+bed-highlight = { workspace = true }
+bed-remote = { workspace = true }
+rfd = { workspace = true }
 bed-keybindings = { workspace = true }
 bed-workbench = { workspace = true }
 bed-documents = { workspace = true, features = ["ide-services"] }
 bed-plugin-idle = { workspace = true, optional = true }
-bed-plugin-automation = { workspace = true, features = ["app"], optional = true }
+bed-plugin-automation = { workspace = true, features = ["documents"], optional = true }
 bed-desktop = { workspace = true }
-bed-core = { workspace = true }
+bed-core = { workspace = true, features = ["language-services", "remote"] }
 bed-plugin-layouts = { workspace = true }
-bed-runtime = { workspace = true, features = ["render"] }
 bevy = { workspace = true, features = ["std"] }
 bed-plugin-color-picker = { workspace = true, optional = true }
 bed-plugin-mascots = { workspace = true, optional = true }
-bed-app-shell = { path = "crates/bed-app-shell", optional = true }
 bed-plugin-git = { workspace = true, optional = true }
-bed-app = { workspace = true }
-bed-editor-widgets = { workspace = true }
+bed-app = { workspace = true, features = ["language-services", "remote"] }
+bed-editor-widgets = { workspace = true, features = ["language-services"] }
 bed-terminal = { workspace = true, optional = true }
-bed-app-config = { workspace = true }
 bed-plugin-file-explorer = { workspace = true, optional = true }
 bed-plugin-file-search = { workspace = true, optional = true }
 bed-plugin-terminal = { workspace = true, optional = true }
-bed-plugin-workspaces = { workspace = true, optional = true }
+bed-plugin-workspaces = { workspace = true }
 bed-plugin-settings = { workspace = true, optional = true }
-bed-api = { workspace = true, features = ["gpu", "documents"] }
+bed-api = { workspace = true, features = ["gpu", "language-services", "documents"] }
 bed-plugin-editor = { workspace = true, optional = true }
 bed-plugin-debugger = { workspace = true, optional = true }
 bed-plugin-source-outline = { workspace = true, optional = true }
@@ -237,13 +233,19 @@ bed-plugin-http-client = { workspace = true, optional = true }
 bed-editing = { workspace = true }
 bed-ui = { workspace = true, features = ["imgui", "gpu"] }
 bed-debugger = { workspace = true, optional = true }
-bed-plugin-effects = { workspace = true, features = ["desktop"], optional = true }
+bed-plugin-effects = { workspace = true }
 dear-imgui-rs = { workspace = true }
 dear-imgui-sys = { workspace = true }
 dear-imgui-wgpu = { workspace = true }
 winit = { workspace = true }
 wgpu = { workspace = true }
 serde_json = { workspace = true }
+
+[[test]]
+name = "app_remote_editor"
+path = "tests/app_remote_editor.rs"
+harness = false
+required-features = ["editor", "workspaces"]
 
 [[test]]
 name = "lsp_transport"
@@ -259,6 +261,7 @@ dear-imgui-wgpu = { path = "vendor/dear-imgui-wgpu" }
 bevy_stl = { path = "vendor/bevy_stl" }
 
 [dev-dependencies]
+bed-plugin-csv-table = { workspace = true, features = ["test-support"] }
 bed-remote = { workspace = true }
 bed-files = { workspace = true }
 bed-lsp = { workspace = true }
@@ -269,7 +272,6 @@ bed-plugin-image-viewer = { workspace = true }
 bed-plugin-model-viewer = { workspace = true }
 bed-plugin-font-viewer = { workspace = true }
 bed-plugin-audio-player = { workspace = true }
-bed-plugin-csv-table = { workspace = true }
 bed-plugin-markdown-preview = { workspace = true }
 bed-plugin-json-tree = { workspace = true }
 bed-plugin-sqlite-browser = { workspace = true }

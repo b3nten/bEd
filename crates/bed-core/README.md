@@ -1,49 +1,16 @@
 # bed-core
 
-`BedCorePlugin` composes the desktop window, Bevy renderer, Dear ImGui, fonts,
-theming, icons, workbench panels and shared documents. Install it on a fresh
-`App`, then add the panels your application needs. The application owns its
-configuration, startup choices and persistence.
+Service implementation beneath the owned [`bed-app`](../bed-app/README.md)
+launcher: workbench composition, document/model editing, ordered requests,
+settings and configuration projection. Applications use the launcher to install
+the desktop foundation; `DocumentHostPlugin` supports ordinary headless Bevy
+tests of shared editing services.
 
-```rust,no_run
-use bed_core::{BedCorePlugin, bevy::prelude::*};
-use bed_plugin_terminal::TerminalPlugin;
-
-fn main() {
-    App::new()
-        .add_plugins(BedCorePlugin::default())
-        .add_plugins(TerminalPlugin)
-        .run();
-}
-```
-
-The shared contracts are organized in [`bed-api`](../bed-api/README.md),
-re-exported as `bed_core::api`. Features contribute panels and commands through `bed_core::api::workbench::register`.
-Each contribution supplies its label and handler once. `panel_icon`,
-`command_icon`, `menu` and `toolbar` attach presentation metadata to those
-definitions. `CommandPresentations` supplies current visibility, enabled state
-and optional label overrides. ImGui menus, native menus/toolbars and application
-adapters resolve those facts with `CommandDefinition::presentation`.
-
-The default frontend draws the workbench, command menu and contributed status
-items. A host may supply `DesktopUi` before installing core to draw its own
-frontend. `CorePresentationMode::Application` delegates native presentation and
-application command registration to the host. Shared document processing remains
-owned by core in either presentation mode.
-
-## Integration with an existing Bevy application
-
-For a host that already owns its window and renderer, install
-`bed_desktop::DesktopIntegrationPlugin` followed by `BedCoreIntegrationPlugin`.
-This path adds workbench and editing services without adding `DefaultPlugins`,
-a second window, runner or renderer. Register `BedMemoryAssets` before Bevy's
-asset plugin only when an installed plugin consumes that asset source.
-
-The [gameplay example](../../examples/gameplay/README.md) shares one ordinary
-Bevy game plugin between an editor viewport target and a runtime target whose
-dependency graph excludes bEd foundations. Gameplay entities and camera ownership
-stay with the game; its editor adapter owns viewport routing, input admission and
-play/pause controls.
+Feature plugins register panels and commands through `api::workbench::register`.
+The workbench owns handlers and presentation metadata; core resolves document
+requests and close/save barriers. `CorePresentationMode::Application` delegates
+chrome and application command policy to the application while retaining core's
+shared editing owner.
 
 ## Documents and editing
 
@@ -104,7 +71,7 @@ Model mutation and persistence stop when the shared session shuts down.
 
 The default `DocumentClosePolicy` rejects closing the last view of a dirty
 document or quitting with unsaved changes. Applications can select Save or
-Discard, or install their own `WorkbenchClosePolicy` before core. A failed save
+Discard, or replace `WorkbenchClosePolicy` in the launch callback. A failed save
 retains the panel and document. Core does not select workspace storage or display
 application-specific save prompts.
 Close approval never retires a frontend. `closing_panels(world)` exposes the
@@ -112,115 +79,66 @@ complete set during an aggregate layout/restore preflight, so other closing
 views cannot be mistaken for surviving views. Retirement hooks run only at the
 workbench's actual close commit.
 
-Settings readers consume `api::settings::SettingsSnapshot` and submit
-`SettingsRequest` messages. Core applies them in memory; the application chooses
-when and where to persist preferences. A plugin therefore needs no saved
-workspace to read or change settings.
+## Global settings
+
+Plugins register `SettingDefinition` values under an owner namespace before
+launch finalization. Definitions supply keys, labels, defaults and optional
+validators. `SettingsSnapshot::get(owner, key)` and `for_owner(owner)` expose
+effective values. Frontends send `SettingsRequest::new`, `reset` or `batch` as
+Bevy messages; `.tracked()` requests return an exact revision/error receipt via
+`SettingsResults`.
+
+The settings owner applies ordered batches atomically: validate, lock the stable
+sidecar, reload current disk values, merge known changes, atomically replace the
+file, then publish. Unknown or absent plugins' overrides survive. Invalid or
+failed batches publish no partial values. Malformed startup/reload data retains
+the previous valid snapshot, records the error and is never overwritten.
+The launcher selects `~/.config/<app_id>/settings.json`; headless tests can use
+`initialize_settings(world, None)` for memory-only preferences. The on-disk
+format is `{ "version": 1, "overrides": { "owner": { "key": value } } }`.
+Old formats are not imported.
+
+Shared definitions belong to `bed.ui` (font, size, opacity and motion),
+`bed.documents` (autosave and viewer selection), and `bed.workbench`
+(keybindings and tab controls). Optional plugins register their own namespace.
+Applications can override registered defaults through `set_application_defaults`
+before `finalize_settings` seals registration. Keybindings are the ordinary
+`bed.workbench.keybindings` setting. Core projects preferences before rendering;
+workbench resolution supplies one immutable keymap. Terminal input receives it
+before interception, and native menus receive it during preparation before UI.
+
+[`bed-plugin-settings`](../bed-plugin-settings/README.md) is an optional generic
+frontend. Applications can replace it without replacing the settings service.
 
 ## Layout and feature persistence
 
-Core supplies one active workbench layout. Add
-[`LayoutsPlugin`](../bed-plugin-layouts/README.md) for an application-selected collection
-of numbered or named layouts. The layout crate retains suspended panels and
-returns serializable snapshots; the host supplies its storage.
-
+Core supplies one active workbench layout. Optional
+[`LayoutsPlugin`](../bed-plugin-layouts/README.md) retains numbered or named
+layouts and returns snapshots; applications choose templates and persistence.
 [`bed-storage`](../bed-storage/README.md), exposed as `api::storage`, owns
-`FeatureStateContribution`, `FeatureStateChanged`, snapshot collection and
-restoration. Core initializes an in-memory `Storage`; the host supplies a
-`StateStore` and selects an opaque `StateScope` when persistence is wanted.
-Collecting snapshots preserves absent plugins' state. It writes nothing unless
-the host explicitly saves it. See the
-[bEd adapter](../bed-app/README.md) for workspace policy.
+plugin-state contributions and snapshot collection/restoration. Core initializes
+memory-only storage. Applications choose `StateStore` and `StateScope` when
+persistence is wanted; collecting snapshots preserves absent plugins and writes
+nothing by itself. A saved workspace is optional.
 
-## Plugin icon sources
+## Icons, themes and assets
 
-A plugin declares its own local filenames and registers them in its namespace.
-For example, `example.graph` can require `node.svg`; its resolved icon key is
-`example.graph.node`. Another plugin may also use a local `node.svg` without
-sharing artwork or configuration.
+Plugins register exact namespaced icon contracts and embedded defaults through
+[`bed-ui`](../bed-ui/README.md). `DesktopLaunch::icon_directories` selects per-owner
+artwork directories before installers run. Core fills its embedded `bed.core.*`
+artwork without discovering bEd configuration or resources.
 
-```rust,no_run
-use bed_core::{api, bevy::prelude::*, bed_ui::icons::{IconDefinition, IconDirectories, Icons}};
+The launcher accepts one `UiTheme`. The desktop prepares a complete
+`UiFrameContext` snapshot for shared controls and custom frontends. The desktop
+also registers the shared memory asset source before Bevy creates `AssetServer`;
+optional model/preview consumers can load namespaced bytes after installation.
+Native and GPU realization remain desktop-owned.
 
-struct GraphPlugin;
-impl Plugin for GraphPlugin {
-    fn build(&self, app: &mut App) {
-        let directory = app.world().non_send::<IconDirectories>()
-            .get("example.graph").map(std::path::Path::to_path_buf);
-        app.world_mut().non_send_mut::<Icons>().register(
-            "example.graph",
-            &[IconDefinition {
-                name: "node",
-                filename: "node.svg",
-                embedded_svg: Some(include_bytes!("assets/node.svg")),
-            }],
-            directory.as_deref(),
-        ).expect("valid graph icon source");
-        // Register the panel/command, then reference "example.graph.node"
-        // with registrar.panel_icon(...) or registrar.command_icon(...).
-    }
-}
-```
+## Terminal and debugger entrypoints
 
-Applications insert the non-send `IconDirectories` before installing core and
-feature plugins. Each map entry selects a directory for one plugin:
-
-```rust,no_run
-use bed_core::{BedCorePlugin, bevy::prelude::*, bed_ui::icons::IconDirectories};
-
-let mut directories = IconDirectories::default();
-directories.0.insert("bed.terminal".into(), "my-icons/terminal".into());
-directories.0.insert("bed.core".into(), "my-icons/chrome".into());
-let mut app = App::new();
-app.insert_non_send(directories).add_plugins(BedCorePlugin::default());
-```
-
-Directory files override that plugin's embedded defaults. Missing files retain
-their embedded default; a required file without a default, malformed SVG or
-invalid/duplicate contract returns a registration error before any of that
-contribution is published. Third-party SVG sets can be packaged as embedded
-bytes or supplied in a directory using the plugin's filenames. SVG silhouettes
-are rasterized to monochrome images and tinted using the current theme.
-
-Core supplies embedded `bed.core.*` artwork without discovering bEd assets or
-configuration. Hosts may supply source images before core installation; those
-images are preserved when shared defaults are filled. The desktop owns native
-and GPU realization, refreshes changed source images, and recreates GPU textures
-after device replacement. Exact namespaced keys work in both ImGui and native
-toolbars. Unqualified shared names remain supported while existing callers
-migrate.
-
-## Terminal launch integration
-
-`TerminalPlugin` supplies ordinary shell panels, process/input handling, fonts
-and runtime appearance. Set `TerminalLaunchContext` to choose the directory for new
-shells. Its errors are observable through `bed_terminal::TerminalActivity`;
-ordinary hosts need no executable helper dispatch or application request queue.
-
-`TerminalAppIntegrationPlugin` adds panel lifecycle, clipboard and terminal file
-link integration. Plugin owners register shell aliases through the workbench;
-document integration contributes `+open`, workspace integration contributes
-`+workspace`, and mascots contribute `+ducky`. Terminal owns forwarding and
-operation acknowledgements while command handlers own their behavior. Install it after
-`TerminalPlugin` and dispatch `bed_plugin_terminal::run_helper` before constructing the
-GUI, because private helper invocations execute the host binary:
-
-```rust,no_run
-fn main() {
-    if let Some(result) = bed_plugin_terminal::run_helper(
-        std::env::args_os(),
-        std::env::var_os("BEDTERM_SOCKET").is_some(),
-    ) {
-        if let Err(error) = result {
-            eprintln!("{error}");
-            std::process::exit(1);
-        }
-        return;
-    }
-    // Build the application and explicitly add TerminalAppIntegrationPlugin.
-}
-```
-
-Debugger launch preflight likewise belongs before GUI startup when an
-application installs the debugger integration. bEd keeps its command-line
-parsing, configuration and smoke commands in its own binary.
+Register `bed_plugin_terminal::launch_registration()` and/or the debugger's
+launch registration before dispatch. Their early process handlers run before
+GUI startup and their deferred installers run after the desktop foundation.
+Terminal owns command forwarding and acknowledgements; the document,
+workspace and mascot command owners supply `+open`, `+workspace` and `+ducky`
+behavior through registered workbench commands.

@@ -19,17 +19,22 @@ pub struct ColorPickerPlugin;
 
 impl Plugin for ColorPickerPlugin {
     fn build(&self, app: &mut App) {
+        bed_api::settings::register(
+            app.world_mut(),
+            MODULE_ID,
+            vec![bed_api::settings::SettingDefinition::new(
+                "swatches",
+                "Swatches",
+                json!([]),
+            )],
+        )
+        .expect("Color preferences install once");
         app.init_resource::<bed_api::features::FeatureRegistry>()
             .add_message::<SettingsRequest>();
         app.world_mut()
             .resource_mut::<bed_api::features::FeatureRegistry>()
             .register_with(MODULE_ID, |registrar| {
-                registrar.panel_options(
-                    PANEL_ID,
-                    true,
-                    bed_api::workbench::PanelPlacement::Center,
-                    None,
-                );
+                registrar.panel_options(PANEL_ID, true, bed_api::workbench::PanelPlacement::Center);
                 registrar.command_ref(OPEN_COMMAND);
                 registrar.menu(bed_api::features::MenuSlot::Application, OPEN_COMMAND);
             })
@@ -125,7 +130,7 @@ impl Panel for ColorFrontend {
 
 fn palette(world: &World) -> Vec<Value> {
     if let Some(frame) = world.get_resource::<SettingsSnapshot>() {
-        frame.settings[MODULE_ID]["swatches"]
+        frame.for_owner(MODULE_ID)["swatches"]
             .as_array()
             .cloned()
             .unwrap_or_default()
@@ -339,9 +344,12 @@ mod tests {
         let mut cursor = messages.get_cursor();
         let requests: Vec<_> = cursor.read(messages).collect();
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].plugin, MODULE_ID);
-        assert_eq!(requests[0].key, "swatches");
-        assert_eq!(requests[0].value, swatches);
+        assert_eq!(
+            requests[0].changes,
+            vec![bed_api::settings::SettingsChange::set(
+                MODULE_ID, "swatches", swatches
+            )]
+        );
     }
 
     #[test]

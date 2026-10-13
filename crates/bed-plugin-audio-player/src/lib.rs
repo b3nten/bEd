@@ -6,8 +6,8 @@ use bed_api::{
 };
 use bed_editing::identity::DocumentId;
 use bed_ui::TextureHandle;
+use bed_ui::components::tooltip_text;
 use bed_ui::gpu::{RenderOutput, RenderTarget};
-use bed_ui::util::popup_style::tooltip_text;
 use dear_imgui_rs::{Condition, MouseButton, StyleColor, TreeNodeFlags, Ui};
 use rodio::{OutputStream, OutputStreamBuilder, Sink};
 use serde_json::{Value, json};
@@ -440,7 +440,11 @@ impl AudioPanel {
             );
         }
         if ui.is_item_hovered() {
-            tooltip_text(ui, "Click or drag to seek");
+            tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                "Click or drag to seek",
+            );
         }
         let draw = ui.get_window_draw_list();
         let max = [min[0] + size[0], min[1] + size[1]];
@@ -580,7 +584,11 @@ impl AudioPanel {
             .build();
         }
         if ui.is_item_hovered() {
-            tooltip_text(ui, "Logarithmic frequency · dBFS · mean channel power");
+            tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                "Logarithmic frequency · dBFS · mean channel power",
+            );
         }
     }
 
@@ -660,6 +668,7 @@ impl AudioPanel {
                 * (analysis.maximum_hz / analysis.minimum_hz).powf(1.0 - fraction);
             tooltip_text(
                 ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
                 format!("{} · click or drag to seek", frequency_label(hz)),
             );
         }

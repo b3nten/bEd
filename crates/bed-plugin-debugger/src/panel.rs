@@ -1,8 +1,8 @@
 //! Immediate-mode debugger presentation. Actions are applied after drawing.
 use super::*;
 use bed_ui::{
+    components::{controls_style, tooltip_text},
     presentation::{fit_text, readable_color, same_line_if_fits},
-    util::popup_style::{controls_style, tooltip_text},
 };
 use dear_imgui_rs::{
     Condition, InputTextFlags, StyleColor, StyleVar, TabBarFittingPolicy, TabBarOptions,
@@ -12,7 +12,7 @@ use dear_imgui_rs::{
 impl Debugger {
     pub(crate) fn draw(&mut self, ui: &Ui, root: &Path) -> Vec<DebuggerAction> {
         let mut actions = Vec::new();
-        let _controls = controls_style(ui);
+        let _controls = controls_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         let fs = ui.current_font_size();
         let _spacing = ui.push_style_var(StyleVar::ItemSpacing([fs * 0.5, fs * 0.3]));
         let _padding = ui.push_style_var(StyleVar::FramePadding([fs * 0.45, fs * 0.2]));
@@ -55,6 +55,7 @@ impl Debugger {
             if ui.is_item_hovered() {
                 tooltip_text(
                     ui,
+                    &bed_ui::UiFrameContext::for_ui(ui),
                     "Program input and output. Debugger expressions and LLDB messages appear in the Console tab.",
                 );
             }
@@ -72,7 +73,7 @@ impl Debugger {
             if let Some(message) = message {
                 ui.text_colored(color, fit_text(ui, message, ui.content_region_avail()[0]));
                 if ui.is_item_hovered() {
-                    bed_ui::util::popup_style::tooltip(ui, || {
+                    bed_ui::components::tooltip(ui, &bed_ui::UiFrameContext::for_ui(ui), || {
                         let _wrap = ui.push_text_wrap_pos(fs * 36.0);
                         ui.text(message);
                     });
@@ -127,7 +128,7 @@ impl Debugger {
                 }
             }
             if ui.is_item_hovered_with_flags(dear_imgui_rs::ItemHoveredFlags::ALLOW_WHEN_DISABLED) {
-                tooltip_text(ui, hint);
+                tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), hint);
             }
         }
         if self.configure {
@@ -371,13 +372,18 @@ impl Debugger {
         if ui.is_item_hovered() {
             tooltip_text(
                 ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
                 "Pause before main, which can stop in loader or startup code without source. Continue (F5) to reach your breakpoints.",
             );
         }
         ui.separator();
         ui.text("Arguments");
         if ui.is_item_hovered() {
-            tooltip_text(ui, "One literal program argument per row");
+            tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                "One literal program argument per row",
+            );
         }
         let mut remove = None;
         for (i, arg) in profile.args.iter_mut().enumerate() {
@@ -426,6 +432,7 @@ impl Debugger {
             if ui.is_item_hovered() {
                 tooltip_text(
                     ui,
+                    &bed_ui::UiFrameContext::for_ui(ui),
                     "Automatic enables readable Rust values for Cargo profiles and Rust workspaces. Choose Enabled for a standalone Rust executable. Pretty printers follow the project's Rust toolchain.",
                 );
             }
@@ -531,7 +538,7 @@ impl Debugger {
                             actions.push(DebuggerAction::Frame(frame.id));
                         }
                         if ui.is_item_hovered() {
-                            tooltip_text(ui, &frame.name);
+                            tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), &frame.name);
                         }
                         if let Some(path) = &frame.source {
                             let location = format!(
@@ -544,7 +551,7 @@ impl Debugger {
                             );
                             ui.text_disabled(fit_text(ui, &location, ui.content_region_avail()[0]));
                             if ui.is_item_hovered() {
-                                tooltip_text(ui, format!("{path}:{}", frame.line));
+                                tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), format!("{path}:{}", frame.line));
                             }
                             if self.source_paths.get(&frame.id)
                                 .and_then(|path| path.to_str())
@@ -619,7 +626,7 @@ impl Debugger {
                             .max(1.0),
                     ));
                     if ui.is_item_hovered() {
-                        tooltip_text(ui, expression);
+                        tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), expression);
                     }
                     same_line_if_fits(ui, remove_width);
                     if ui.small_button("Remove") {
@@ -673,7 +680,11 @@ impl Debugger {
                 .sum::<usize>()
         ));
         if ui.is_item_hovered() {
-            tooltip_text(ui, "Breakpoints last until you switch projects or quit.");
+            tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                "Breakpoints last until you switch projects or quit.",
+            );
         }
         same_line_if_fits(ui, button_width("Clear All"));
         let _disabled = ui.begin_disabled_with_cond(self.source.breakpoints.is_empty());
@@ -698,7 +709,7 @@ impl Debugger {
             let open =
                 ui.collapsing_header(format!("{heading}###file"), TreeNodeFlags::DEFAULT_OPEN);
             if ui.is_item_hovered() {
-                tooltip_text(ui, path);
+                tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), path);
             }
             if !open {
                 continue;
@@ -798,7 +809,7 @@ fn draw_variables(
             None
         };
         if ui.is_item_hovered() {
-            bed_ui::util::popup_style::tooltip(ui, || {
+            bed_ui::components::tooltip(ui, &bed_ui::UiFrameContext::for_ui(ui), || {
                 let _wrap = ui.push_text_wrap_pos(ui.current_font_size() * 36.0);
                 if let Some(type_name) = &variable.type_name {
                     ui.text_disabled(type_name);

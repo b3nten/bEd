@@ -230,7 +230,7 @@ impl ImagePanel {
         requests: &mut Vec<HostAction>,
         icons: Option<&bed_ui::icons::Icons>,
     ) {
-        let _controls = bed_ui::util::popup_style::controls_style(ui);
+        let _controls = bed_ui::components::controls_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         let fit = self.fit.get_or_insert_with(|| {
             host.settings_for(PLUGIN_ID)["fit_by_default"]
                 .as_bool()
@@ -247,27 +247,44 @@ impl ImagePanel {
             self.pan = [0.0; 2];
         }
         ui.same_line();
-        if bed_ui::icons::icon_button(ui, icons, "minus", "zoom-out", "−", [0.0; 2]) {
+        if bed_ui::components::icon_button(
+            ui,
+            &bed_ui::UiFrameContext::for_ui(ui),
+            icons,
+            "bed.core.minus",
+            "zoom-out",
+            "−",
+            [0.0; 2],
+        ) {
             *fit = false;
             self.zoom = (self.zoom / 1.25).max(0.01);
         }
         if ui.is_item_hovered() {
-            ui.tooltip_text("Zoom out");
+            bed_ui::components::tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), "Zoom out");
         }
         ui.same_line();
-        if bed_ui::icons::icon_button(ui, icons, "plus", "zoom-in", "+", [0.0; 2]) {
+        if bed_ui::components::icon_button(
+            ui,
+            &bed_ui::UiFrameContext::for_ui(ui),
+            icons,
+            "bed.core.plus",
+            "zoom-in",
+            "+",
+            [0.0; 2],
+        ) {
             *fit = false;
             self.zoom = (self.zoom * 1.25).min(32.0);
         }
         if ui.is_item_hovered() {
-            ui.tooltip_text("Zoom in");
+            bed_ui::components::tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), "Zoom in");
         }
         ui.same_line();
         if ui.button("Info") {
             ui.open_popup("image-information");
         }
         {
-            let _popup_style = bed_ui::util::popup_style::context_menu_style(ui);
+            let _popup_style =
+                bed_ui::components::context_menu_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
             if let Some(_popup) = ui.begin_popup("image-information") {
                 if let Some(document) = host.document(self.document) {
                     ui.text_wrapped(&document.path);
@@ -291,7 +308,7 @@ impl ImagePanel {
             {
                 requests.push(HostAction::OpenFile {
                     path: document.path.clone(),
-                    viewer: Some("bed.hex".into()),
+                    viewer: Some("bed.editor.hex".into()),
                 });
             }
             return;

@@ -578,7 +578,11 @@ impl Layout {
                         .build();
                         if ui.is_window_hovered() && ui.is_mouse_hovering_rect(pos, end) {
                             ui.set_mouse_cursor(Some(MouseCursor::Hand));
-                            ui.tooltip_text(target);
+                            bed_ui::components::tooltip_text(
+                                ui,
+                                &bed_ui::UiFrameContext::for_ui(ui),
+                                target,
+                            );
                             if ui.is_mouse_clicked(MouseButton::Left) {
                                 clicked = Some(target.clone());
                             }
@@ -618,7 +622,11 @@ impl Layout {
                         draw.add_image(texture, pos, end, *uv0, *uv1, [1.0; 4]);
                     }
                     if ui.is_window_hovered() && ui.is_mouse_hovering_rect(pos, end) {
-                        ui.tooltip_text(if alt.is_empty() { source } else { alt });
+                        bed_ui::components::tooltip_text(
+                            ui,
+                            &bed_ui::UiFrameContext::for_ui(ui),
+                            if alt.is_empty() { source } else { alt },
+                        );
                         if let Some(target) = link {
                             ui.set_mouse_cursor(Some(MouseCursor::Hand));
                             if ui.is_mouse_clicked(MouseButton::Left) {

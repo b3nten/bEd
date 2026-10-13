@@ -66,7 +66,7 @@ impl Plugin for FileSearchPlugin {
                 registrar.command_ref(NEW_COMMAND);
                 registrar.command_ref(CANCEL_COMMAND);
                 registrar.toolbar(NEW_COMMAND);
-                registrar.panel_options(PANEL_ID, false, PanelPlacement::Center, Some("search"));
+                registrar.panel_options(PANEL_ID, false, PanelPlacement::Center);
             })
             .expect("Search metadata is registered once");
         register(app.world_mut(), MODULE_ID, |registrar| {

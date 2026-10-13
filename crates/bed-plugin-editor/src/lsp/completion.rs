@@ -985,7 +985,12 @@ impl Completion {
                 });
                 let selected_row = active
                     .selection_motion
-                    .sample(active.selected as f32, ui.time(), animations)
+                    .sample(
+                        active.selected as f32,
+                        ui.time(),
+                        animations,
+                        &bed_ui::UiFrameContext::for_ui(ui).theme().motion,
+                    )
                     .clamp(0.0, (active.filtered.len() - 1) as f32);
                 let pos = ui.cursor_screen_pos();
                 let lower = selected_row.floor() as usize;
@@ -2108,12 +2113,12 @@ mod tests {
             assert!(list.Active && docs.Active);
             assert_eq!(
                 list.WindowRounding,
-                bed_ui::util::popup_style::POPUP_ROUNDING
+                bed_ui::appearance::UiMetrics::default().popup_rounding
             );
             assert_eq!(docs.WindowRounding, list.WindowRounding);
             assert_eq!(
                 list.WindowBorderSize,
-                bed_ui::util::popup_style::POPUP_BORDER_SIZE
+                bed_ui::appearance::UiMetrics::default().border
             );
             assert_eq!(docs.WindowBorderSize, list.WindowBorderSize);
             assert!(list.WindowPadding.x > 0.0 && list.WindowPadding.y > 0.0);

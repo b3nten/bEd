@@ -2,7 +2,7 @@
 
 Shared contracts for the desktop foundation and optional Bevy feature plugins.
 This is a linked Rust API; each plugin is an ordinary Bevy `Plugin`.
-`bed-core` re-exports this crate as `bed_core::api`.
+The owned launcher re-exports this crate as `bed_app::api`.
 
 | Module | Contracts |
 | --- | --- |
@@ -11,8 +11,9 @@ This is a linked Rust API; each plugin is an ordinary Bevy `Plugin`.
 | `features` | `FeatureRegistry`, captured `HostRequest`, synchronous `HostEffects`, operation barriers and callback-owned `FrontendSnapshot` |
 | `files` | Live `FileContext`, provider-qualified `FileLocation` and shared `FileServices` |
 | `storage` | Scoped plugin snapshots, contributions and application-supplied persistence |
-| `presentation` | Texture bindings and animation preference in `PresentationFrame` |
-| `settings` | Contributed settings sections, `SettingsSnapshot` and ordered `SettingsRequest` messages |
+| `presentation` | Texture bindings in `PresentationFrame` |
+| `settings` | Registered owner/key definitions, effective snapshots, transactional requests/receipts and optional frontend sections |
+| `launch` | Application identity/paths, process selectors and deferred plugin installers |
 | `status` | Status items, measurements, drawing and commands |
 | `gpu` | Shared renderer and texture contracts |
 
@@ -44,6 +45,7 @@ optional domain contributes its default observations.
 Saved-workspace definitions and actions belong to `bed-plugin-workspaces`.
 Ordinary panels use file context or documents and do not need workspace metadata.
 
-Public Rust names and module paths do not determine stored identities. Command,
-panel and viewer IDs, icon namespaces, settings keys and persistence formats
-remain stable when packages and APIs are renamed.
+Public IDs identify their owning semantic domain. Document commands use
+`bed.documents.*`, split and workbench commands use `bed.workbench.*`, and code editor
+features use `bed.editor.*`. Stored formats are versioned; old bEd settings,
+keybindings, workspaces and history are not imported.

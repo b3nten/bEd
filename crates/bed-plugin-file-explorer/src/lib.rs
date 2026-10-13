@@ -181,7 +181,11 @@ impl RegistryMenus {
                     ContentStatus::Unavailable(error) => {
                         ui.text_disabled("File type unavailable");
                         if ui.is_item_hovered() {
-                            ui.tooltip_text(error);
+                            bed_ui::components::tooltip_text(
+                                ui,
+                                &bed_ui::UiFrameContext::for_ui(ui),
+                                error,
+                            );
                         }
                     }
                     ContentStatus::Ready(_) => {}
@@ -668,7 +672,11 @@ impl ExplorerPanel {
             if let Some(status) = &state.file_finder.discovery_status {
                 ui.text_disabled("File watching degraded — periodic refresh active");
                 if ui.is_item_hovered() {
-                    ui.tooltip_text(status);
+                    bed_ui::components::tooltip_text(
+                        ui,
+                        &bed_ui::UiFrameContext::for_ui(ui),
+                        status,
+                    );
                 }
             }
             state.file_tree.file_info.configure(

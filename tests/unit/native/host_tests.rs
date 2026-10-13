@@ -3,6 +3,16 @@ use super::*;
 use std::time::{Duration, Instant};
 
 #[test]
+fn new_window_accepts_a_configuration_directory_before_the_first_preference_write() {
+    let directory = crate::test_support::TempDir::new();
+    let config = directory.path("unwritten-config");
+    let command = new_instance_command(Path::new("/tmp/bed"), &config, false, None).unwrap();
+    let arguments = command.get_args().collect::<Vec<_>>();
+    assert_eq!(arguments[2], config.as_os_str());
+    assert!(!config.exists());
+}
+
+#[test]
 fn native_file_drops_enqueue_editor_requests_and_clear_the_hover() {
     let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
     let mut context = Context::create();
@@ -16,8 +26,8 @@ fn native_file_drops_enqueue_editor_requests_and_clear_the_hover() {
     });
     world.insert_non_send(bed_documents::DocumentSession::new());
     world.init_resource::<bed_workbench::WorkbenchLayout>();
-    world.init_resource::<bed_app::LayoutSlots>();
-    world.init_resource::<bed_app::AppRequests>();
+    world.init_resource::<crate::application::LayoutSlots>();
+    world.init_resource::<crate::application::AppRequests>();
     world.init_resource::<NativeFileDrag>();
     #[cfg(target_os = "macos")]
     world.init_resource::<bed_desktop::DesktopNativeActions>();
@@ -43,7 +53,11 @@ fn native_file_drops_enqueue_editor_requests_and_clear_the_hover() {
 
     native_input(&mut world);
 
-    assert!(!world.resource::<bed_app::AppRequests>().is_empty());
+    assert!(
+        !world
+            .resource::<crate::application::AppRequests>()
+            .is_empty()
+    );
     assert!(
         world
             .resource::<DesktopInputEvents>()

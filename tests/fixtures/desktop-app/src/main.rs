@@ -175,9 +175,9 @@ fn advance(world: &mut World) {
         world.resource::<DesktopNativeErrors>().0
     );
     assert!(
-        world.resource::<DesktopAppearanceErrors>().0.is_empty(),
+        world.resource::<DesktopThemeErrors>().0.is_empty(),
         "appearance errors: {:?}",
-        world.resource::<DesktopAppearanceErrors>().0
+        world.resource::<DesktopThemeErrors>().0
     );
     let info = world.resource::<DesktopFrameInfo>().clone();
     match smoke.phase {
@@ -290,7 +290,7 @@ fn advance(world: &mut World) {
                             .any(|pixel| pixel[0] != pixel[1])
                     );
                 }
-                world.resource_mut::<DesktopAppearance>().0.palette.accent = [0.8, 0.2, 0.4, 1.0];
+                world.resource_mut::<DesktopTheme>().0.palette.accent = [0.8, 0.2, 0.4, 1.0];
                 smoke.phase = 4;
             }
         }
@@ -300,7 +300,7 @@ fn advance(world: &mut World) {
                 smoke.font_generation,
                 "palette-only update rebuilt atlas"
             );
-            world.resource_mut::<DesktopAppearance>().0.fonts.size += 2.0;
+            world.resource_mut::<DesktopTheme>().0.fonts.size += 2.0;
             smoke.phase = 5;
         }
         5 if world.non_send::<DesktopFonts>().generation > smoke.font_generation => {
@@ -396,10 +396,7 @@ fn install_layout(app: &mut App) {
 #[cfg(feature = "layout")]
 fn layout_presentation(
     insets: Res<DesktopContentInsets>,
-    appearance: Res<DesktopAppearance>,
     mut viewport: ResMut<bed_workbench::WorkbenchViewport>,
-    mut layout: ResMut<bed_workbench::WorkbenchAppearance>,
 ) {
     viewport.top_inset = insets.top;
-    layout.background = appearance.0.palette.background;
 }

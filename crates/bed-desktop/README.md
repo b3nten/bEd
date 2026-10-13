@@ -5,12 +5,18 @@ single window camera runs `DesktopGraph` after offscreen preview cameras. Dear
 ImGui `Context` remains on the UI thread; only owned `FrameSnapshot` values,
 geometry observations and GPU handles cross extraction.
 
+Applications start through the owned [`bed-app`](../bed-app/README.md) launcher;
+this crate implements its native rendering and input lifecycle.
+
 ```rust,no_run
-use bed_desktop::{bevy::prelude::*, dear_imgui_rs::Ui, DesktopPlugins, DesktopUi};
-fn draw(world: &mut World, ui: &Ui) { ui.text("A desktop without editor modules"); }
-fn main() {
-    App::new().add_plugins(DesktopPlugins::default())
-        .insert_resource(DesktopUi(draw)).run();
+use bed_desktop::{bevy::prelude::World, dear_imgui_rs::Ui, DesktopUi};
+fn draw(_world: &mut World, ui: &Ui) { ui.text("A desktop application"); }
+fn main() -> std::io::Result<()> {
+    let exit = bed_app::Application::new("example", "Example")?.run(|app| {
+        app.insert_resource(DesktopUi(draw));
+        Ok(())
+    })?;
+    std::process::exit(exit);
 }
 ```
 
@@ -31,10 +37,13 @@ Held synthetic keys/buttons/modifiers are released in a final UI frame before
 preserves concurrently held native inputs. Focus loss/cancellation returns an
 error after cleanup. Sequences pause while a UI frame cannot be produced.
 
-Applications project configuration into `DesktopAppearance` and
+Applications project configuration into `DesktopTheme` and
 `DesktopNativePresentation` in `DesktopSystems::Configure`. Preparation applies
 appearance and native presentation before the frame opens, while
-`DesktopContext` stays installed. `DesktopFonts` is an alias for the portable
+`DesktopContext` stays installed. `bed_ui::UiRuntime` prepares one `UiFrameContext` snapshot for the complete draw,
+including workbench content, footer, dialogs and third-party UI. Shared
+`bed_ui::components` consume that context for colors, sizes, rounding and motion.
+`DesktopFonts` is an alias for the portable
 main-thread `bed_ui::font::UiFonts`; it owns font handles, resolved sources,
 warnings and atlas generation. Palette changes preserve the atlas. Font changes
 rebuild it and advance the generation before feature preparation. Paper Mono is
@@ -89,23 +98,10 @@ on that presentation's `CanvasFailure`; siblings continue. `DesktopCanvasErrors`
 provides errors for the application to display. Optional `bed_ui::icons::Icons`
 are borrowed in place and changed images upload on the same device.
 
-Use `DesktopPlugins` on a fresh `App`; it creates the window, renderer and runner
-and then delegates to `DesktopIntegrationPlugin`. To attach bEd to an existing
-application, add `DesktopIntegrationPlugin` after the host's `DefaultPlugins`
-with `PipelinedRenderingPlugin` disabled. Attachment validates the existing
-window, assets, rendering, camera, core pipeline, input and Winit plugins before
-installing desktop resources. It installs no second Bevy stack and retains the
-host's window-close configuration. Insert a custom `RenderErrorHandler` before
-attachment: desktop cleanup wraps that callback and preserves its returned
-policy and recovery configuration.
-
-```rust,no_run
-use bed_desktop::{bevy::prelude::*, DesktopIntegrationPlugin};
-let mut app = App::new();
-app.add_plugins(DefaultPlugins
-    .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>());
-app.add_plugins(DesktopIntegrationPlugin);
-```
+`DesktopPlugins` creates the window, renderer, runner and UI lifecycle on a
+fresh application. The owned application runner installs this foundation. The
+integration implementation is internal; applications do not attach it to an
+already initialized renderer.
 
 The optional `preview` feature exposes `DesktopPreviewIntegrationPlugin`. It
 installs shared preview services and binds their begin/retire lifecycle to desktop
@@ -118,11 +114,14 @@ when a viewport panel closes.
 `DesktopPlugins` registers `BedMemoryAssets` before Bevy builds `AssetServer`.
 Optional features can then write bytes into their own namespace and load the
 returned path through `BedMemoryAssets::asset_path`. Its shared `Dir` handle is
-available for worker and loader ownership. Model viewers can be installed after
+available for worker and loader ownership. `bed_desktop::preview` owns preview layers, cameras, targets and recovery. Its
+windowless `PreviewRenderPlugin` supports isolated renderer tests; `PreviewPlugin`
+adds ownership to an existing foundation without affecting gameplay entities.
+
+Model viewers can be installed after
 the desktop/core group; the foundation does not depend on the model viewer.
-Headless and existing-app hosts register `BedMemoryAssets` before their own
-`AssetPlugin` only when installing a consumer such as the model viewer. Desktop
-attachment itself does not require or register that source. Late consumer
+Headless hosts register `BedMemoryAssets` before their own
+`AssetPlugin` only when installing a consumer such as the model viewer. Late consumer
 registration fails clearly rather than silently creating an unusable source.
 
 `DesktopNativePresentation` contains owned menus, toolbar and Dock command
@@ -150,10 +149,6 @@ its native drag-pointer helpers and clipboard integration. The base emits native
 and appearance failures as resource values for the application to report.
 
 Native proofs (run sequentially on a desktop):
-
-- `cargo run -p bed-desktop --example attachment_smoke`: attach to existing
-  Bevy plugins, retain window-close policy and host recovery configuration,
-  render/capture new pixels after actual device replacement.
 
 - `cargo run -p bed-desktop --example native_smoke`: canvas sampling/gamma, PPM,
   skipped frames, resize and two actual device replacements.

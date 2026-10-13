@@ -52,53 +52,69 @@ fn withhold_output(
     }
 }
 
-fn main() {
-    let mut app = App::new();
-    app.add_plugins(DesktopPlugins {
-        window: Window {
-            title: "Desktop automation proof".into(),
-            resolution: (320, 180).into(),
+fn main() -> std::io::Result<()> {
+    let launch = match bed_app::Application::new("bed.proof.automation-smoke", "Desktop proof")?
+        .dispatch(std::env::args_os())?
+    {
+        bed_app::LaunchOutcome::Desktop(launch) => *launch,
+        bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+    };
+    let mut app = launch
+        .options(DesktopPlugins {
+            window: Window {
+                title: "Desktop automation proof".into(),
+                resolution: (320, 180).into(),
+                ..default()
+            },
             ..default()
-        },
-        ..default()
-    });
-    let absent = AbsentOutput::default();
-    app.insert_resource(absent.clone());
-    app.sub_app_mut(bevy::render::RenderApp)
-        .insert_resource(absent)
-        .add_systems(
-            bevy::render::Render,
-            withhold_output
-                .in_set(bevy::render::RenderSystems::PrepareViews)
-                .after(bevy::render::view::prepare_windows)
-                .before(bevy::render::view::prepare_view_attachments)
-                .before(bevy::render::view::prepare_view_targets),
-        );
-    let panel = app.world_mut().spawn_empty().id();
-    app.insert_resource(Proof {
-        panel,
-        phase: 0,
-        clicks: 0,
-        text: String::new(),
-        button: [0.; 2],
-        field: [0.; 2],
-        held_b: false,
-        ctrl: false,
-        input: None,
-        capture: None,
-        generation: 0,
-        presented_frames: 0,
-        capture_after: DesktopFrameId(0),
-        deadline: Instant::now() + Duration::from_secs(45),
-    })
-    .insert_resource(DesktopUi(draw))
-    .add_systems(
-        PreUpdate,
-        advance
-            .after(DesktopSystems::AfterUi)
-            .before(DesktopSystems::RouteInput),
-    );
-    app.run();
+        })
+        .presentation_mode(bed_app::bed_core::CorePresentationMode::Application)
+        .config_directory(
+            std::env::temp_dir().join(format!("bed.proof.automation-smoke-{}", std::process::id())),
+        )
+        .build(|app| {
+            let absent = AbsentOutput::default();
+            app.insert_resource(absent.clone());
+            app.sub_app_mut(bevy::render::RenderApp)
+                .insert_resource(absent)
+                .add_systems(
+                    bevy::render::Render,
+                    withhold_output
+                        .in_set(bevy::render::RenderSystems::PrepareViews)
+                        .after(bevy::render::view::prepare_windows)
+                        .before(bevy::render::view::prepare_view_attachments)
+                        .before(bevy::render::view::prepare_view_targets),
+                );
+            let panel = app.world_mut().spawn_empty().id();
+            app.insert_resource(Proof {
+                panel,
+                phase: 0,
+                clicks: 0,
+                text: String::new(),
+                button: [0.; 2],
+                field: [0.; 2],
+                held_b: false,
+                ctrl: false,
+                input: None,
+                capture: None,
+                generation: 0,
+                presented_frames: 0,
+                capture_after: DesktopFrameId(0),
+                deadline: Instant::now() + Duration::from_secs(45),
+            })
+            .insert_resource(DesktopUi(draw))
+            .add_systems(
+                PreUpdate,
+                advance
+                    .after(DesktopSystems::AfterUi)
+                    .before(DesktopSystems::RouteInput),
+            );
+            Ok(())
+        })?;
+    if app.run().is_error() {
+        return Err(std::io::Error::other("Desktop proof exited with an error"));
+    }
+    Ok(())
 }
 
 fn draw(world: &mut World, ui: &Ui) {

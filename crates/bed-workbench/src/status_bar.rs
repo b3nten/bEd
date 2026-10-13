@@ -2,7 +2,7 @@
 use super::{UiLoan, WorkbenchLayout, WorkbenchRequests, WorkbenchViewport, api};
 use api::WorkbenchAction;
 use bed_api::status::{StatusContext, StatusDrawContext, StatusDrawMode, StatusItem, StatusItems};
-use bed_ui::util::popup_style;
+use bed_ui::components;
 use bevy::prelude::*;
 use dear_imgui_rs::{Condition, StyleColor, StyleVar, TextureId, Ui, WindowFlags, sys};
 use std::{
@@ -279,15 +279,7 @@ fn tooltip(world: &World, ui: &Ui, entry: &Entry, state: &mut StatusBarState) {
 }
 
 fn status_tooltip(ui: &Ui, contents: impl FnOnce()) {
-    let _style = popup_style::context_menu_style(ui);
-    let padding = [12.0, 10.0];
-    let wrap_width = (ui.current_font_size() * 36.0)
-        .min((ui.window_viewport().work_size()[0] - padding[0] * 4.0).max(1.0));
-    let _padding = ui.push_style_var(StyleVar::WindowPadding(padding));
-    popup_style::tooltip(ui, || {
-        let _wrap = ui.push_text_wrap_pos(ui.cursor_pos()[0] + wrap_width);
-        contents();
-    });
+    components::tooltip(ui, &bed_ui::UiFrameContext::for_ui(ui), contents);
 }
 
 fn separator(ui: &Ui, x: f32, y: f32, height: f32) {
@@ -390,8 +382,7 @@ fn draw(
                 | WindowFlags::NO_NAV,
         )
         .build(|| {
-            if let Some(mut animations) =
-                world.get_non_send_mut::<super::ui_animations::UiAnimations>()
+            if let Some(mut animations) = world.get_non_send_mut::<bed_ui::UiRuntime>()
                 && animations.matches_context(ui)
             {
                 animations.exclude_current(ui);
@@ -530,7 +521,8 @@ fn draw(
             if open_widget {
                 ui.open_popup("status-widget");
             }
-            let _popup_style = popup_style::context_menu_style(ui);
+            let _popup_style =
+                components::context_menu_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
             popup_constraints(size);
             if let Some(_popup) = ui.begin_popup("status-widget") {
                 let _wrap =
@@ -597,14 +589,6 @@ fn draw(
             }
         });
     world.insert_resource(state);
-    // The footer is drawn after render_ui, so include its transient windows
-    // in the same opening animation pass as panel tooltips and menus.
-    let enabled = world.resource::<super::WorkbenchAppearance>().animations;
-    if let Some(mut animations) = world.get_non_send_mut::<super::ui_animations::UiAnimations>()
-        && animations.matches_context(ui)
-    {
-        animations.end(ui, enabled);
-    }
     actions
 }
 

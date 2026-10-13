@@ -1144,11 +1144,15 @@ impl EditorRenderFrame {
                             });
                         }
                         if ui.is_item_hovered() {
-                            ui.tooltip_text(match choice {
-                                ConflictChoice::Current => &conflict.current_label,
-                                ConflictChoice::Incoming => &conflict.incoming_label,
-                                ConflictChoice::Both => &conflict.label,
-                            });
+                            bed_ui::components::tooltip_text(
+                                ui,
+                                &bed_ui::UiFrameContext::for_ui(ui),
+                                match choice {
+                                    ConflictChoice::Current => &conflict.current_label,
+                                    ConflictChoice::Incoming => &conflict.incoming_label,
+                                    ConflictChoice::Both => &conflict.label,
+                                },
+                            );
                         }
                         ui.same_line();
                     }

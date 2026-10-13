@@ -276,7 +276,7 @@ impl ContentSearch {
         replacing: bool,
         icons: Option<&bed_ui::icons::Icons>,
     ) -> ContentSearchAction {
-        let _controls = bed_ui::util::popup_style::controls_style(ui);
+        let _controls = bed_ui::components::controls_style(ui, &bed_ui::UiFrameContext::for_ui(ui));
         self.observe(project_root);
         let mut action = ContentSearchAction::None;
         if self.should_focus {
@@ -330,18 +330,42 @@ impl ContentSearch {
         );
         same_line_if_room(ui, fs * 4.0);
         let disabled = ui.begin_disabled_with_cond(self.results.is_empty() || self.stale);
-        if bed_ui::icons::icon_button(ui, icons, "chevron-left", "Previous", "<", [0.0; 2]) {
+        if bed_ui::components::icon_button(
+            ui,
+            &bed_ui::UiFrameContext::for_ui(ui),
+            icons,
+            "bed.core.chevron-left",
+            "Previous",
+            "<",
+            [0.0; 2],
+        ) {
             action = self.step(-1);
         }
         if ui.is_item_hovered() {
-            ui.tooltip_text("Previous match (Shift+F3)");
+            bed_ui::components::tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                "Previous match (Shift+F3)",
+            );
         }
         same_line_if_room(ui, fs * 4.0);
-        if bed_ui::icons::icon_button(ui, icons, "chevron-right", "Next", ">", [0.0; 2]) {
+        if bed_ui::components::icon_button(
+            ui,
+            &bed_ui::UiFrameContext::for_ui(ui),
+            icons,
+            "bed.core.chevron-right",
+            "Next",
+            ">",
+            [0.0; 2],
+        ) {
             action = self.step(1);
         }
         if ui.is_item_hovered() {
-            ui.tooltip_text("Next match (F3)");
+            bed_ui::components::tooltip_text(
+                ui,
+                &bed_ui::UiFrameContext::for_ui(ui),
+                "Next match (F3)",
+            );
         }
         drop(disabled);
         let counter = format!(
@@ -376,8 +400,15 @@ impl ContentSearch {
                 .hint("Replace in project…")
                 .build();
             if ui.is_item_hovered() {
-                ui.tooltip_text(if self.regex { "Regex captures: $1, ${name}; $$ inserts a dollar sign. Empty text deletes matches." }
-                    else { "Replacement is literal. Empty text deletes matches." });
+                bed_ui::components::tooltip_text(
+                    ui,
+                    &bed_ui::UiFrameContext::for_ui(ui),
+                    if self.regex {
+                        "Regex captures: $1, ${name}; $$ inserts a dollar sign. Empty text deletes matches."
+                    } else {
+                        "Replacement is literal. Empty text deletes matches."
+                    },
+                );
             }
             let disabled = ui.begin_disabled_with_cond(replacing || !self.can_replace());
             if ui.button("Replace next") {
@@ -478,7 +509,7 @@ fn toggle(ui: &Ui, label: &str, hint: &str, active: &mut bool) -> bool {
     let clicked = ui.button(label);
     drop(color);
     if ui.is_item_hovered() {
-        ui.tooltip_text(hint);
+        bed_ui::components::tooltip_text(ui, &bed_ui::UiFrameContext::for_ui(ui), hint);
     }
     if clicked {
         *active = !*active;

@@ -1,7 +1,7 @@
 //! Short, interruptible transitions for selection and changing documentation.
 use dear_imgui_rs::{Ui, sys};
 
-const SECONDS: f64 = 0.120;
+use crate::appearance::UiMotion;
 
 #[derive(Default)]
 pub struct Motion {
@@ -9,14 +9,14 @@ pub struct Motion {
 }
 
 impl Motion {
-    pub fn sample(&mut self, target: f32, now: f64, enabled: bool) -> f32 {
+    pub fn sample(&mut self, target: f32, now: f64, enabled: bool, motion: &UiMotion) -> f32 {
         let Some((from, to, began)) = self.transition else {
             self.transition = Some((target, target, now));
             return target;
         };
-        let t = ((now - began) / SECONDS).clamp(0.0, 1.0) as f32;
+        let t = ((now - began) / motion.transition_seconds).clamp(0.0, 1.0) as f32;
         let value = from + (to - from) * (1.0 - (1.0 - t).powi(3));
-        if !enabled {
+        if !enabled || !motion.enabled {
             self.transition = Some((target, target, now));
             target
         } else if target != to {
@@ -39,18 +39,20 @@ impl<T: Clone + PartialEq> ContentTransition<T> {
     /// Crossfade both documents at the same origin. Layout and scrolling belong
     /// to the new content; fading the actual vertices also covers syntax painters.
     pub fn draw(&mut self, ui: &Ui, content: &T, enabled: bool, draw: impl Fn(&Ui, &T)) {
+        let context = crate::UiFrameContext::for_ui(ui);
+        let motion = &context.theme().motion;
         let now = ui.time();
         if self.current.as_ref() != Some(content) {
             let previous = self.current.replace(content.clone());
             // Rapid keyboard repeats and late resolve replies update the incoming
             // document without repeatedly restarting its opacity at zero.
-            if self.outgoing.is_none() || now - self.began >= SECONDS {
+            if self.outgoing.is_none() || now - self.began >= motion.transition_seconds {
                 self.outgoing = previous;
                 self.began = now;
             }
         }
-        let t = if enabled {
-            ((now - self.began) / SECONDS).clamp(0.0, 1.0) as f32
+        let t = if enabled && motion.enabled {
+            ((now - self.began) / motion.transition_seconds).clamp(0.0, 1.0) as f32
         } else {
             1.0
         };
@@ -95,9 +97,12 @@ pub struct Disclosure {
 
 impl Disclosure {
     pub fn draw(&mut self, ui: &Ui, open: bool, enabled: bool, draw: impl FnOnce()) {
-        let amount = self
-            .motion
-            .sample(if open { 1.0 } else { 0.0 }, ui.time(), enabled);
+        let amount = self.motion.sample(
+            if open { 1.0 } else { 0.0 },
+            ui.time(),
+            enabled,
+            &crate::UiFrameContext::for_ui(ui).theme().motion,
+        );
         if amount <= 0.0 {
             return;
         }
@@ -168,13 +173,16 @@ mod tests {
     #[test]
     fn selection_retargets_from_its_visible_position_and_disabled_motion_snaps() {
         let mut motion = Motion::default();
-        assert_eq!(motion.sample(0.0, 0.0, true), 0.0);
-        assert_eq!(motion.sample(1.0, 1.0, true), 0.0);
-        let halfway = motion.sample(1.0, 1.06, true);
+        assert_eq!(motion.sample(0.0, 0.0, true, &UiMotion::default()), 0.0);
+        assert_eq!(motion.sample(1.0, 1.0, true, &UiMotion::default()), 0.0);
+        let halfway = motion.sample(1.0, 1.06, true, &UiMotion::default());
         assert!(halfway > 0.0 && halfway < 1.0);
-        assert_eq!(motion.sample(2.0, 1.06, true), halfway);
-        assert!(motion.sample(2.0, 1.12, true) > halfway);
-        assert_eq!(motion.sample(3.0, 1.12, false), 3.0);
+        assert_eq!(
+            motion.sample(2.0, 1.06, true, &UiMotion::default()),
+            halfway
+        );
+        assert!(motion.sample(2.0, 1.12, true, &UiMotion::default()) > halfway);
+        assert_eq!(motion.sample(3.0, 1.12, false, &UiMotion::default()), 3.0);
     }
 
     #[test]

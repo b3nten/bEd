@@ -1,22 +1,43 @@
 //! Native acceptance scenarios drive the same captured operations as editor clients.
-use crate::startup::SmokeOptions;
-use bed_api::documents::PanelBinding;
 #[cfg(feature = "terminal")]
-use bed_app::WorkspaceState;
-use bed_app::panel_presentation;
-#[cfg(feature = "editor")]
+use crate::application::WorkspaceState;
+#[cfg(any(
+    all(feature = "image-viewer", feature = "model-viewer"),
+    all(target_os = "macos", feature = "editor"),
+    feature = "git",
+    feature = "terminal"
+))]
+use crate::application::panel_presentation;
+use crate::startup::SmokeOptions;
+#[cfg(any(
+    all(target_os = "macos", feature = "editor"),
+    feature = "git",
+    feature = "terminal"
+))]
+use bed_api::documents::PanelBinding;
+#[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
+use bed_desktop::DesktopCanvasTargets;
+#[cfg(all(target_os = "macos", feature = "editor"))]
 use bed_desktop::DesktopContext;
-use bed_desktop::{DesktopCanvasTargets, DesktopGpu, DesktopRenderStatus};
-#[cfg(any(feature = "editor", feature = "terminal"))]
+use bed_desktop::{DesktopGpu, DesktopRenderStatus};
+#[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
 use bed_desktop::{DesktopInjectedEvent, DesktopInputStep};
+#[cfg(any(
+    all(feature = "image-viewer", feature = "model-viewer"),
+    feature = "git",
+    feature = "terminal"
+))]
+use bed_plugin_automation::Readiness;
 use bed_plugin_automation::{
-    AppOperation, AutomationRequests, AutomationResults, CaptureTarget, Operation, OperationId,
-    OperationValue, PanelHandle, Readiness, Snapshot,
+    AutomationRequests, AutomationResults, CaptureTarget, Operation, OperationId, OperationValue,
+    PanelHandle, Snapshot,
 };
-use bed_ui::{TextureHandle, gpu::CanvasOutput};
+use bed_ui::TextureHandle;
+#[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
+use bed_ui::gpu::CanvasOutput;
 use bevy::{prelude::*, window::PrimaryWindow, winit::WINIT_WINDOWS};
 use serde_json::{Value, json};
-#[cfg(any(feature = "editor", feature = "terminal"))]
+#[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
 use std::collections::HashSet;
 use std::{
     io,
@@ -53,6 +74,7 @@ struct Smoke {
     started: Instant,
     phase_frame: u64,
     operation: Option<OperationId>,
+    application_operation: Option<crate::application::AppRequestId>,
     inspect: Option<OperationId>,
     snapshot: Option<Snapshot>,
     fixture: Option<Fixture>,
@@ -61,6 +83,7 @@ struct Smoke {
     panel: Option<PanelHandle>,
     other: Option<PanelHandle>,
     handle: Option<TextureHandle>,
+    #[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
     generation: u64,
     baseline: Vec<u8>,
     size: [u32; 2],
@@ -70,18 +93,30 @@ struct Smoke {
     saw_focus_loss: bool,
     saw_focus_gain: bool,
     original_settings: Value,
+    #[cfg(feature = "terminal")]
     terminal_ids: Vec<(u64, u32)>,
+    #[cfg(feature = "terminal")]
     terminal_panel: Option<Entity>,
+    #[cfg(feature = "terminal")]
     terminal_window: Option<winit::window::WindowId>,
     children: Vec<std::process::Child>,
+    #[cfg(all(target_os = "macos", feature = "editor"))]
     keyboard_save: bool,
 }
 
+#[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
 #[derive(Component)]
 struct SmokeGameplay(u32);
 
 struct Fixture(PathBuf);
 
+#[cfg(any(
+    all(feature = "image-viewer", feature = "model-viewer"),
+    all(target_os = "macos", feature = "editor"),
+    feature = "git",
+    feature = "debugger",
+    feature = "terminal"
+))]
 impl Fixture {
     fn new(name: &str) -> io::Result<Self> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -128,6 +163,7 @@ impl Smoke {
             started: Instant::now(),
             phase_frame: 0,
             operation: None,
+            application_operation: None,
             inspect: None,
             snapshot: None,
             fixture: None,
@@ -135,6 +171,7 @@ impl Smoke {
             panel: None,
             other: None,
             handle: None,
+            #[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
             generation: 0,
             baseline: Vec::new(),
             size: [0; 2],
@@ -144,10 +181,14 @@ impl Smoke {
             saw_focus_loss: false,
             saw_focus_gain: false,
             original_settings: Value::Null,
+            #[cfg(feature = "terminal")]
             terminal_ids: Vec::new(),
+            #[cfg(feature = "terminal")]
             terminal_panel: None,
+            #[cfg(feature = "terminal")]
             terminal_window: None,
             children: Vec::new(),
+            #[cfg(all(target_os = "macos", feature = "editor"))]
             keyboard_save: false,
         }
     }
@@ -197,6 +238,23 @@ impl Smoke {
         self.poll_operation(world, id)
     }
 
+    fn app_operation(
+        &mut self,
+        world: &mut World,
+        action: crate::application::AppAction,
+        source: Option<Entity>,
+    ) -> io::Result<Option<crate::application::AppRequestOutcome>> {
+        let Some(id) = self.application_operation else {
+            self.application_operation = Some(crate::automation::submit(world, action, source));
+            return Ok(None);
+        };
+        let Some(result) = crate::automation::poll(world, id) else {
+            return Ok(None);
+        };
+        self.application_operation = None;
+        result.map(Some)
+    }
+
     fn poll_operation(
         &mut self,
         world: &mut World,
@@ -209,6 +267,12 @@ impl Smoke {
         result.map(Some).map_err(io::Error::other)
     }
 
+    #[cfg(any(
+        all(feature = "image-viewer", feature = "model-viewer"),
+        all(target_os = "macos", feature = "editor"),
+        feature = "git",
+        feature = "terminal"
+    ))]
     fn panels(&self, kind: &str) -> Vec<PanelHandle> {
         self.snapshot.as_ref().map_or_else(Vec::new, |s| {
             s.panels
@@ -219,6 +283,11 @@ impl Smoke {
         })
     }
 
+    #[cfg(any(
+        all(feature = "image-viewer", feature = "model-viewer"),
+        feature = "git",
+        feature = "terminal"
+    ))]
     fn ready(&self, panel: PanelHandle) -> io::Result<bool> {
         let Some(panel) = self
             .snapshot
@@ -234,19 +303,29 @@ impl Smoke {
         }
     }
 
+    #[cfg(any(
+        all(feature = "image-viewer", feature = "model-viewer"),
+        all(target_os = "macos", feature = "editor"),
+        feature = "git",
+        feature = "debugger",
+        feature = "terminal"
+    ))]
     fn open(&mut self, world: &mut World, path: PathBuf, viewer: Option<&str>) -> io::Result<bool> {
-        if let Some(result) = self.operation(
+        if let Some(result) = self.app_operation(
             world,
-            Operation::App(AppOperation::OpenFile {
+            crate::application::AppAction::OpenFileWithViewer {
                 path,
                 viewer: viewer.map(String::from),
                 additional: false,
-            }),
+                move_existing: false,
+            },
+            None,
         )? {
-            let OperationValue::Opened(panel) = result else {
+            let crate::application::AppRequestOutcome::Opened { panel, .. } = result else {
                 return Err(io::Error::other(format!("OpenFile returned {result:?}")));
             };
-            self.panel = Some(panel);
+            self.panel =
+                Some(bed_plugin_automation::panel_handle(world, panel).map_err(io::Error::other)?);
             Ok(true)
         } else {
             Ok(false)
@@ -287,6 +366,7 @@ impl Smoke {
         self.other = None;
         self.handle = None;
         self.operation = None;
+        self.application_operation = None;
         if let Some(fixture) = self.fixture.take() {
             self.retired_fixtures.push(fixture);
         }
@@ -459,12 +539,14 @@ fn basic(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
 
 fn setting(world: &mut World, smoke: &mut Smoke, key: &str, value: Value) -> io::Result<bool> {
     Ok(smoke
-        .operation(
+        .app_operation(
             world,
-            Operation::App(AppOperation::SetSetting {
-                key: key.into(),
+            crate::application::AppAction::Settings(bed_api::settings::SettingsRequest::new(
+                crate::config::settings_owner(key),
+                key,
                 value,
-            }),
+            )),
+            None,
         )?
         .is_some())
 }
@@ -489,10 +571,7 @@ fn effects(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
 
 fn appearance(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     if smoke.phase == 0 {
-        smoke.original_settings = world
-            .non_send::<bed_app_config::Settings>()
-            .settings
-            .clone();
+        smoke.original_settings = world.non_send::<crate::config::Settings>().settings.clone();
         smoke.next(world);
     }
     let changes = [
@@ -531,7 +610,7 @@ fn appearance(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
         Ok(false)
     } else {
         ensure(
-            world.non_send::<bed_app_config::Settings>().settings == smoke.original_settings,
+            world.non_send::<crate::config::Settings>().settings == smoke.original_settings,
             "appearance smoke did not restore preferences",
         )?;
         Ok(smoke.elapsed_frames(world) >= 2)
@@ -615,22 +694,34 @@ fn lifecycle(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     Ok(false)
 }
 
+#[cfg(any(
+    all(feature = "image-viewer", feature = "model-viewer"),
+    all(target_os = "macos", feature = "editor"),
+    feature = "git",
+    feature = "debugger"
+))]
 fn fixture_workspace(world: &mut World, smoke: &mut Smoke, name: &str) -> io::Result<bool> {
     if smoke.fixture.is_none() {
         smoke.fixture = Some(Fixture::new(name)?);
     }
     let root = smoke.fixture.as_ref().unwrap().0.clone();
     Ok(smoke
-        .operation(
+        .app_operation(
             world,
-            Operation::App(AppOperation::OpenDirectory(bed_api::files::FileLocation {
-                provider: bed_api::files::FileProviderId::Local,
-                path: root,
-            })),
+            crate::application::AppAction::HostAction(
+                bed_api::features::HostAction::OpenDirectory {
+                    location: bed_api::files::FileLocation {
+                        provider: bed_api::files::FileProviderId::Local,
+                        path: root,
+                    },
+                },
+            ),
+            None,
         )?
         .is_some())
 }
 
+#[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
 fn canvas(
     world: &World,
     panel: PanelHandle,
@@ -839,14 +930,14 @@ fn plugins(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                     )?;
                     smoke.entities = world
                         .query_filtered::<Entity, Or<(
-                            With<bed_runtime::render::PreviewView>,
-                            With<bed_app::PanelPresentations>,
+                            With<bed_desktop::preview::PreviewView>,
+                            With<crate::application::PanelPresentations>,
                         )>>()
                         .iter(world)
                         .collect();
                     ensure(
                         world
-                            .query::<(&bed_runtime::render::PreviewView, &bevy::mesh::Mesh3d)>()
+                            .query::<(&bed_desktop::preview::PreviewView, &bevy::mesh::Mesh3d)>()
                             .iter(world)
                             .any(|(view, _)| view.0 == smoke.handle.unwrap().0),
                         "model mesh missing",
@@ -903,12 +994,17 @@ fn plugins(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
             }
             17 => {
                 if smoke
-                    .operation(
+                    .app_operation(
                         world,
-                        Operation::App(AppOperation::SwitchViewer {
-                            panel: smoke.panel.unwrap(),
+                        crate::application::AppAction::SwitchViewer {
+                            panel: bed_plugin_automation::resolve_panel(
+                                world,
+                                smoke.panel.unwrap(),
+                            )
+                            .map_err(io::Error::other)?,
                             viewer: "bed.gltf.viewer".into(),
-                        }),
+                        },
+                        Some(smoke.panel.unwrap().entity()),
                     )?
                     .is_some()
                 {
@@ -953,6 +1049,7 @@ fn plugins(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     }
 }
 
+#[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
 fn destroy_device(world: &World) -> io::Result<()> {
     let device = &world.resource::<DesktopGpu>().device;
     // The desktop renders on this thread. Complete submitted work and deliver
@@ -978,6 +1075,7 @@ fn visible_pixels(pixels: &[u8]) -> usize {
         .count()
 }
 
+#[cfg(any(test, all(feature = "image-viewer", feature = "model-viewer")))]
 fn compare_recovered_pixels(before: &[u8], after: &[u8]) -> io::Result<()> {
     ensure(
         before.len() == after.len(),
@@ -1008,6 +1106,7 @@ fn compare_recovered_pixels(before: &[u8], after: &[u8]) -> io::Result<()> {
     )
 }
 
+#[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
 fn read_target(world: &World, target: &bed_ui::gpu::RenderTarget) -> io::Result<Vec<u8>> {
     let gpu = world.resource::<DesktopGpu>();
     let row = target.size[0] * 4;
@@ -1066,6 +1165,11 @@ fn read_target(world: &World, target: &bed_ui::gpu::RenderTarget) -> io::Result<
     Ok(pixels)
 }
 
+#[cfg(any(
+    all(target_os = "macos", feature = "editor"),
+    feature = "git",
+    feature = "terminal"
+))]
 fn binding(world: &World, panel: PanelHandle) -> io::Result<PanelBinding> {
     let entity = panel_presentation(world, panel.entity())
         .ok_or_else(|| io::Error::other("presentation missing"))?;
@@ -1075,6 +1179,7 @@ fn binding(world: &World, panel: PanelHandle) -> io::Result<PanelBinding> {
         .ok_or_else(|| io::Error::other("editor binding missing"))
 }
 
+#[cfg(all(target_os = "macos", feature = "editor"))]
 fn document_bytes(world: &World, panel: PanelHandle) -> io::Result<(Vec<u8>, bool, String)> {
     let document = binding(world, panel)?
         .document
@@ -1085,7 +1190,7 @@ fn document_bytes(world: &World, panel: PanelHandle) -> io::Result<(Vec<u8>, boo
     Ok((snapshot.bytes.to_vec(), snapshot.dirty, snapshot.path))
 }
 
-#[cfg(feature = "editor")]
+#[cfg(all(target_os = "macos", feature = "editor"))]
 fn editor_focused(world: &mut World, panel: PanelHandle) -> io::Result<bool> {
     let binding = binding(world, panel)?;
     let Some(view) = binding.view else {
@@ -1172,7 +1277,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 return Ok(false);
             }
             if smoke.operation.is_none() && !editor_focused(world, smoke.panel.unwrap())? {
-                bed_app::focus_panel(world, smoke.panel.unwrap().entity(), true)?;
+                crate::application::focus_panel(world, smoke.panel.unwrap().entity(), true)?;
                 return Ok(false);
             }
             if (smoke.operation.is_some() || editor_focused(world, smoke.panel.unwrap())?)
@@ -1275,13 +1380,13 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                     // current slot before verifying both global template commands.
                     crate::app::smoke_native_menu(
                         world,
-                        MenuAction::UseLayout(bed_app_config::LayoutSlot::Layout1),
+                        MenuAction::UseLayout(crate::config::LayoutSlot::Layout1),
                     )?;
-                    bed_app::process_app_requests(world)?;
+                    crate::application::process_app_requests(world)?;
                     crate::app::smoke_native_menu(world, MenuAction::SetCurrentLayout)?;
                     crate::app::smoke_native_menu(
                         world,
-                        MenuAction::SetLayoutDefault(bed_app_config::LayoutSlot::Startup),
+                        MenuAction::SetLayoutDefault(crate::config::LayoutSlot::Startup),
                     )?;
                     smoke.next(world);
                 }
@@ -1289,15 +1394,15 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
         }
         14 => {
             if smoke.elapsed_frames(world) >= 2 {
-                let settings: Value = serde_json::from_slice(&std::fs::read(
-                    world
-                        .non_send::<bed_app_config::Settings>()
-                        .settings_path
-                        .clone(),
-                )?)?;
-                let default = &settings["layout_defaults"]["1"];
+                let store = &world
+                    .non_send::<crate::application::WorkspacePersistence>()
+                    .store;
+                let default = store
+                    .layout_default(crate::config::LayoutSlot::Layout1)
+                    .ok_or_else(|| io::Error::other("missing saved layout template"))?;
                 ensure(
-                    settings["layout_defaults"]["startup"] == *default,
+                    store.layout_default(crate::config::LayoutSlot::Startup)
+                        == Some(default.clone()),
                     "Set Other Layout did not save the Startup template",
                 )?;
                 ensure(
@@ -1312,11 +1417,11 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 )?;
                 crate::app::smoke_native_menu(
                     world,
-                    MenuAction::RestoreBuiltinLayout(bed_app_config::LayoutSlot::Layout1),
+                    MenuAction::RestoreBuiltinLayout(crate::config::LayoutSlot::Layout1),
                 )?;
                 crate::app::smoke_native_menu(
                     world,
-                    MenuAction::RestoreBuiltinLayout(bed_app_config::LayoutSlot::Startup),
+                    MenuAction::RestoreBuiltinLayout(crate::config::LayoutSlot::Startup),
                 )?;
                 smoke.next(world);
             }
@@ -1325,12 +1430,14 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
             if smoke.elapsed_frames(world) >= 2 {
                 ensure(
                     world
-                        .non_send::<bed_app_config::Settings>()
-                        .layout_default(bed_app_config::LayoutSlot::Layout1)
+                        .non_send::<crate::application::WorkspacePersistence>()
+                        .store
+                        .layout_default(crate::config::LayoutSlot::Layout1)
                         .is_none()
                         && world
-                            .non_send::<bed_app_config::Settings>()
-                            .layout_default(bed_app_config::LayoutSlot::Startup)
+                            .non_send::<crate::application::WorkspacePersistence>()
+                            .store
+                            .layout_default(crate::config::LayoutSlot::Startup)
                             .is_none(),
                     "Reset Default Layout did not clear template",
                 )?;
@@ -1353,10 +1460,10 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
         }
         17 => {
             if smoke.elapsed_frames(world) >= 8 {
-                let panels = bed_app::active_panel_entities(world);
+                let panels = crate::application::active_panel_entities(world);
                 ensure(
-                    world.resource::<bed_app::LayoutSlots>().active()
-                        == bed_app_config::LayoutSlot::Layout3
+                    world.resource::<crate::application::LayoutSlots>().active()
+                        == crate::config::LayoutSlot::Layout3
                         && panels.len() == 4,
                     "terminal layout did not create four panels",
                 )?;
@@ -1403,12 +1510,12 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
         18 => {
             if smoke.elapsed_frames(world) >= 3 {
                 ensure(
-                    bed_app::active_panel_entities(world) == smoke.entities,
+                    crate::application::active_panel_entities(world) == smoke.entities,
                     "reset replaced live terminals",
                 )?;
                 crate::app::smoke_native_menu(
                     world,
-                    MenuAction::UseLayout(bed_app_config::LayoutSlot::Layout1),
+                    MenuAction::UseLayout(crate::config::LayoutSlot::Layout1),
                 )?;
                 smoke.next(world);
             }
@@ -1416,8 +1523,8 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
         19 => {
             if smoke.elapsed_frames(world) >= 3 {
                 ensure(
-                    world.resource::<bed_app::LayoutSlots>().active()
-                        == bed_app_config::LayoutSlot::Layout1,
+                    world.resource::<crate::application::LayoutSlots>().active()
+                        == crate::config::LayoutSlot::Layout1,
                     "layout 1 was not restored",
                 )?;
                 ensure(
@@ -1427,7 +1534,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 )?;
                 crate::app::smoke_native_menu(
                     world,
-                    MenuAction::UseLayout(bed_app_config::LayoutSlot::Layout3),
+                    MenuAction::UseLayout(crate::config::LayoutSlot::Layout3),
                 )?;
                 smoke.next(world);
             }
@@ -1435,12 +1542,12 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
         20 => {
             if smoke.elapsed_frames(world) >= 8 {
                 ensure(
-                    bed_app::active_panel_entities(world) == smoke.entities,
+                    crate::application::active_panel_entities(world) == smoke.entities,
                     "switching recreated terminal sessions",
                 )?;
                 crate::app::smoke_native_menu(
                     world,
-                    MenuAction::UseLayout(bed_app_config::LayoutSlot::Startup),
+                    MenuAction::UseLayout(crate::config::LayoutSlot::Startup),
                 )?;
                 smoke.next(world);
             }
@@ -1448,21 +1555,21 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
         21 => {
             if smoke.elapsed_frames(world) >= 3 {
                 ensure(
-                    world.resource::<bed_app::LayoutSlots>().active()
-                        == bed_app_config::LayoutSlot::Startup,
+                    world.resource::<crate::application::LayoutSlots>().active()
+                        == crate::config::LayoutSlot::Startup,
                     "Startup layout was not selected",
                 )?;
-                let panels = bed_app::active_panel_entities(world);
+                let panels = crate::application::active_panel_entities(world);
                 ensure(
                     panels.len() == 1
                         && world
                             .get::<bed_workbench::PanelRecord>(panels[0])
-                            .is_some_and(|panel| panel.panel_type == "bed.projects.panel"),
+                            .is_some_and(|panel| panel.panel_type == "bed.workspaces.panel"),
                     "Startup did not restore the built-in Workspaces panel",
                 )?;
                 crate::app::smoke_native_menu(
                     world,
-                    MenuAction::UseLayout(bed_app_config::LayoutSlot::Layout3),
+                    MenuAction::UseLayout(crate::config::LayoutSlot::Layout3),
                 )?;
                 smoke.next(world);
             }
@@ -1470,7 +1577,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
         22 => {
             if smoke.elapsed_frames(world) >= 8 {
                 ensure(
-                    bed_app::active_panel_entities(world) == smoke.entities,
+                    crate::application::active_panel_entities(world) == smoke.entities,
                     "Startup switching recreated terminal sessions",
                 )?;
                 return basic(world, smoke);
@@ -1523,10 +1630,8 @@ fn platform(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 smoke.fixture.as_ref().unwrap().0.join("document.txt"),
                 None,
             )? {
-                smoke.original_settings = world
-                    .non_send::<bed_app_config::Settings>()
-                    .settings
-                    .clone();
+                smoke.original_settings =
+                    world.non_send::<crate::config::Settings>().settings.clone();
                 smoke.next(world);
             }
         }
