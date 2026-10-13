@@ -21,6 +21,7 @@ fn read_color(value: &Value) -> Option<[f32; 4]> {
     }
     color::valid(result).then_some(result)
 }
+
 /// Color data belongs to the panel entity. UI text drafts stay in its frontend.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct ColorState {
@@ -29,6 +30,7 @@ pub struct ColorState {
     pub name: String,
     pub selected: Option<usize>,
 }
+
 impl ColorState {
     fn restore(saved: &Value) -> Self {
         Self {
@@ -53,6 +55,7 @@ impl ColorState {
         self.recent.truncate(16);
     }
 }
+
 struct ColorDrafts {
     fields: [String; 7],
     error: Option<&'static str>,
@@ -60,6 +63,7 @@ struct ColorDrafts {
     #[cfg(test)]
     copy_points: [[f32; 2]; 7],
 }
+
 impl ColorDrafts {
     fn new(rgba: [f32; 4]) -> Self {
         Self {

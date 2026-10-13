@@ -192,6 +192,7 @@ mod tests {
             [0.1, 0.2, 0.3, 0.4]
         );
     }
+    
     #[test]
     fn conversions_round_trip_and_reject_invalid_input() {
         for color in [

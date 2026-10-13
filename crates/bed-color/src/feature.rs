@@ -16,6 +16,7 @@ pub const APPLY_COMMAND: &str = "bed.color.apply";
 pub struct ColorPalette(pub Vec<Value>);
 
 pub struct ColorPlugin;
+
 impl Plugin for ColorPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<bed_editor_api::Registry>();
@@ -72,6 +73,7 @@ pub struct ColorFrontend {
     drafts: ColorDrafts,
     observed_rgba: [f32; 4],
 }
+
 impl Panel for ColorFrontend {
     fn title(&self, _: &World) -> String {
         "Color Picker".into()
