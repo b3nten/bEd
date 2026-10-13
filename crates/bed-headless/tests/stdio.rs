@@ -11,6 +11,7 @@ use std::{
 };
 
 struct Temp(PathBuf);
+
 impl Temp {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -22,12 +23,15 @@ impl Temp {
         fs::create_dir_all(&path).unwrap();
         Self(fs::canonicalize(path).unwrap())
     }
+
     fn root(&self) -> String {
         self.0.to_str().unwrap().into()
     }
+
     fn client(&self) -> RemoteClient {
         RemoteClient::launch_local(env!("CARGO_BIN_EXE_bed-headless")).unwrap()
     }
+
     fn git(&self, arguments: &[&str]) {
         let output = Command::new("git")
             .arg("-C")
@@ -42,6 +46,7 @@ impl Temp {
         );
     }
 }
+
 impl Drop for Temp {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

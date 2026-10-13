@@ -14,6 +14,7 @@ struct Fixture {
     base: String,
     root: String,
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = self.client.call(Request::Remove {
@@ -227,11 +228,13 @@ fn ssh_managed_helper_first_install_and_cache_reuse() {
         io::Write,
         path::{Path, PathBuf},
     };
+
     struct Cleanup {
         host: String,
         cache: String,
         local: PathBuf,
     }
+
     impl Drop for Cleanup {
         fn drop(&mut self) {
             if !self.cache.is_empty() {
