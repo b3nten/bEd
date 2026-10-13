@@ -18,6 +18,7 @@ pub struct StructureSurface;
 pub struct StructureOutline(pub Option<OutlineService>);
 
 pub struct OutlinePlugin;
+
 impl Plugin for OutlinePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<EditorFrame>()
@@ -52,6 +53,7 @@ fn open(In(invocation): In<CommandInvocation>) -> CommandResult {
         area: Some(invocation.area),
     }])
 }
+
 fn create(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
         ("Structure", "Focus a text document to view its outline. Expand entries to reveal nested symbols."),
@@ -63,6 +65,7 @@ fn create(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
         tree: presentation::StructurePanel::default(),
     }))
 }
+
 fn prepare(
     frame: Res<EditorFrame>,
     live: Query<Entity, With<StructureSurface>>,
@@ -93,10 +96,12 @@ struct StructureFrontend {
     entity: Entity,
     tree: presentation::StructurePanel,
 }
+
 impl Panel for StructureFrontend {
     fn title(&self, _: &World) -> String {
         "Structure".into()
     }
+
     fn draw(
         &mut self,
         ui: &Ui,

@@ -24,6 +24,7 @@ pub struct StructureJump {
     pub key: OutlineKey,
     pub offset: usize,
 }
+
 impl StructurePanel {
     pub fn draw(
         &mut self,
@@ -184,6 +185,7 @@ impl StructurePanel {
             });
         jump
     }
+
     fn refresh_visible(&mut self, result: &OutlineResult) {
         if self.source.as_ref() == Some(&result.key) && !self.visibility_dirty {
             return;
