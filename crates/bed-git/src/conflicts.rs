@@ -71,6 +71,7 @@ impl GitController {
             .insert(document, (revision, status.operation, presentation.clone()));
         Ok(Some(presentation))
     }
+
     pub fn source_action(
         &mut self,
         session: &mut EditorSession,
@@ -187,12 +188,14 @@ fn parse(bytes: &[u8]) -> Vec<Conflict> {
     }
     result
 }
+
 fn marker(line: &[u8], prefix: &[u8]) -> bool {
     line.starts_with(prefix)
         && line
             .get(prefix.len())
             .is_none_or(|byte| matches!(byte, b' ' | b'\r' | b'\n'))
 }
+
 fn marker_label(line: &[u8], default: &str) -> String {
     let label = String::from_utf8_lossy(&line[7..]).trim().to_owned();
     if label.is_empty() {
@@ -214,6 +217,7 @@ pub(crate) fn has_conflict_markers(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn ordinary_and_diff3_conflicts_keep_precise_byte_ranges() {
         for text in [
@@ -227,6 +231,7 @@ mod tests {
             assert_eq!(&text[conflict.range], &text[7..text.len() - 6]);
         }
     }
+
     #[test]
     fn malformed_and_nested_blocks_offer_no_automatic_resolution() {
         assert!(parse(b"<<<<<<< ours\ntext\n=======\ntext\n").is_empty());
@@ -237,6 +242,7 @@ mod tests {
             .is_empty()
         );
     }
+
     #[test]
     fn choosing_both_is_one_shared_undo_transaction() {
         let bytes = b"<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\n";
@@ -261,6 +267,7 @@ mod tests {
             .unwrap();
         assert_eq!(session.snapshot(document).unwrap().bytes, bytes);
     }
+
     #[test]
     fn changed_conflict_identity_cannot_replace_a_different_block() {
         let bytes = b"<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\n";

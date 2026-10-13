@@ -11,6 +11,7 @@ use std::io;
 pub(crate) struct GitPanel {
     confirm: Option<Operation>,
 }
+
 impl GitPanel {
     pub(crate) fn draw_body(
         &mut self,
@@ -381,9 +382,11 @@ impl GitPanel {
 fn staged(entry: &StatusEntry) -> bool {
     !matches!(entry.index_status, ' ' | '.' | '?')
 }
+
 fn unstaged(entry: &StatusEntry) -> bool {
     !matches!(entry.worktree_status, ' ' | '.') || entry.index_status == '?'
 }
+
 // New files stay in the same section when added to the index, until committed.
 fn new_file(entry: &StatusEntry) -> bool {
     matches!(entry.index_status, '?' | 'A')
@@ -709,6 +712,7 @@ fn operation_name(operation: RepositoryOperation) -> &'static str {
         RepositoryOperation::Revert => "Revert",
     }
 }
+
 pub(crate) fn confirmation_text(operation: &Operation) -> (&'static str, &'static str) {
     match operation {
         Operation::Abort => (
@@ -728,15 +732,18 @@ pub(crate) fn confirmation_text(operation: &Operation) -> (&'static str, &'stati
         ),
     }
 }
+
 fn button_width(ui: &Ui, label: &str) -> f32 {
     ui.calc_text_size(label)[0] + ui.clone_style().frame_padding()[0] * 2.0
 }
+
 fn same_line_if_room(ui: &Ui, width: f32) {
     let right = ui.cursor_screen_pos()[0] + ui.content_region_avail()[0];
     if ui.item_rect_max()[0] + ui.clone_style().item_spacing()[0] + width <= right {
         ui.same_line();
     }
 }
+
 fn fit_label(ui: &Ui, label: &str, width: f32) -> String {
     if ui.calc_text_size(label)[0] <= width {
         return label.to_owned();
@@ -752,6 +759,7 @@ fn fit_label(ui: &Ui, label: &str, width: f32) -> String {
     }
     format!("{}…", &label[..end])
 }
+
 pub(crate) fn show_error(ui: &Ui, state: &mut GitController, requests: &mut Vec<HostRequest>) {
     if let Some(error) = state.error.clone() {
         let _wrap = ui.push_text_wrap_pos(0.0);
@@ -1007,6 +1015,7 @@ mod tests {
         );
         state.cancel_operation();
     }
+
     #[test]
     fn new_files_and_partial_changes_keep_their_sections_and_staging_state() {
         for (index, worktree, is_new, staging) in [

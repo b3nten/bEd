@@ -30,6 +30,7 @@ use std::{
 
 #[derive(Default)]
 pub struct DiffStates(HashMap<Entity, DiffState>);
+
 struct DiffState {
     key: DiffKey,
     workspace: u64,
@@ -45,8 +46,10 @@ struct DiffState {
     confirm: Option<Operation>,
     error: Option<String>,
 }
+
 #[derive(Resource)]
 struct Close(bed_editor_api::EditorPanelLifecycleSystem);
+
 #[derive(Resource)]
 struct Actions(bed_editor_api::PanelActionSystem);
 
@@ -63,6 +66,7 @@ pub(crate) fn install(app: &mut App) {
             .in_set(EditorFeatureSystems::Prepare),
     );
 }
+
 pub(crate) fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
         ("Compare", "Inspect the selected repository file’s changes. Open a comparison from the Git panel’s staged or unstaged file actions."),
@@ -191,6 +195,7 @@ fn prepare(world: &mut World) {
         }
     }
 }
+
 fn publish_readiness(world: &mut World) {
     let updates = {
         let states = world.non_send::<DiffStates>();
@@ -218,6 +223,7 @@ fn publish_readiness(world: &mut World) {
         }
     }
 }
+
 fn panel_action(
     In(invocation): In<bed_editor_api::PanelActionInvocation>,
     mut states: NonSendMut<DiffStates>,
@@ -248,6 +254,7 @@ fn panel_action(
     }
     Ok(true)
 }
+
 fn close_panel(In(entity): In<Entity>, world: &mut World) -> Result<(), String> {
     let mut system = SystemState::<(
         NonSendMut<DiffStates>,
@@ -286,6 +293,7 @@ fn close_panel(In(entity): In<Entity>, world: &mut World) -> Result<(), String> 
     }
     Ok(())
 }
+
 impl DiffState {
     fn sync_editor(
         &mut self,
@@ -353,6 +361,7 @@ impl DiffState {
         self.snapshot = Some(diff.snapshot.clone());
         Ok(())
     }
+
     fn attach_editor(
         &mut self,
         session: &mut EditorSession,
@@ -364,9 +373,11 @@ impl DiffState {
         self.document = Some(document);
         Ok(())
     }
+
     fn saved_editor(&self, session: &EditorSession) -> Value {
         self.editor.as_ref().and_then(|editor| session.view_snapshot(editor.id()).ok()).map_or_else(|| self.editor_state.clone(), |state| json!({"selections":state.selections.iter().map(|selection| [selection.head_row,selection.head_column,selection.anchor_row,selection.anchor_column]).collect::<Vec<_>>(),"primary":state.primary_index,"scroll":state.requested_scroll.unwrap_or(state.scroll_position)}))
     }
+
     fn navigate_hunk(
         &mut self,
         documents: &mut EditorSession,
@@ -648,7 +659,9 @@ impl DiffState {
         Ok(())
     }
 }
+
 struct Frontend(Entity);
+
 impl Panel for Frontend {
     fn title(&self, world: &World) -> String {
         world.non_send::<DiffStates>().0.get(&self.0).map_or_else(
@@ -666,6 +679,7 @@ impl Panel for Frontend {
             },
         )
     }
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -718,6 +732,7 @@ impl Panel for Frontend {
                 .push(Some(self.0), request);
         }
     }
+
     fn save(&self, world: &World) -> Value {
         let Some(state) = world.non_send::<DiffStates>().0.get(&self.0) else {
             return Value::Null;
@@ -782,6 +797,7 @@ mod tests {
     };
 
     struct Directory(PathBuf);
+
     impl Directory {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -794,11 +810,13 @@ mod tests {
             Self(fs::canonicalize(path).unwrap())
         }
     }
+
     impl Drop for Directory {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+
     fn app(directory: &Directory) -> App {
         let mut app = App::new();
         app.world_mut().insert_non_send(EditorSession::new());
@@ -806,6 +824,7 @@ mod tests {
         app.world_mut().non_send_mut::<GitState>().0.root = directory.0.to_string_lossy().into();
         app
     }
+
     fn create(app: &mut App, state: Value) -> (Entity, Box<dyn Panel>) {
         let entity = app.world_mut().spawn(EditorPanelBinding::default()).id();
         let factory = app
@@ -821,6 +840,7 @@ mod tests {
             .unwrap();
         (entity, panel)
     }
+
     fn diff(app: &mut App, entity: Entity, snapshot: &str, bytes: &[u8]) {
         let key = app.world().non_send::<DiffStates>().0[&entity].key.clone();
         let diff = Diff {
@@ -841,6 +861,7 @@ mod tests {
         controller.diffs.insert(key, Arc::new(diff));
         prepare(app.world_mut());
     }
+
     fn close(app: &mut App, entity: Entity) {
         let system = app.world().get::<EditorPanelClose>(entity).unwrap().0;
         app.world_mut()
@@ -848,6 +869,7 @@ mod tests {
             .unwrap()
             .unwrap();
     }
+
     #[test]
     fn registered_factory_validates_paths_before_registering_a_comparison_owner() {
         let directory = Directory::new();
@@ -881,6 +903,7 @@ mod tests {
         assert_eq!(controller.visible, 0);
         assert!(controller.diff_users.is_empty());
     }
+
     #[test]
     fn staged_snapshots_are_read_only_before_ui_and_refresh_keeps_the_same_managed_view() {
         let directory = Directory::new();
@@ -969,6 +992,7 @@ mod tests {
         assert!(!app.world().non_send::<DiffStates>().0.contains_key(&entity));
         assert_eq!(app.world().non_send::<GitState>().0.visible, 0);
     }
+
     #[test]
     fn deleted_file_reconnects_to_the_canonical_document_without_losing_selection_or_scroll() {
         let directory = Directory::new();
@@ -1050,6 +1074,7 @@ mod tests {
             b"one\ntwo\n"
         );
     }
+
     #[test]
     fn closing_or_despawning_one_diff_preserves_other_owners_and_retires_the_last_snapshot() {
         let directory = Directory::new();
@@ -1105,6 +1130,7 @@ mod tests {
         assert!(!controller.diffs.contains_key(&key));
         assert!(!controller.comparisons.contains_key(&key));
     }
+
     #[test]
     fn workspace_restoration_preserves_owned_comparisons_when_existing_panels_are_retained() {
         let directory = Directory::new();
@@ -1145,6 +1171,7 @@ mod tests {
         close(&mut app, entity);
         assert_eq!(app.world().non_send::<GitState>().0.visible, 0);
     }
+
     #[test]
     fn restoring_a_replaced_workspace_clears_old_owner_facts_before_registering_new_comparisons() {
         let directory = Directory::new();
@@ -1182,6 +1209,7 @@ mod tests {
         assert_eq!(controller.visible, 0);
         assert!(controller.diff_users.is_empty());
     }
+
     #[test]
     fn retiring_an_old_workspace_does_not_release_the_new_workspace_comparison_or_view() {
         let directory = Directory::new();
@@ -1224,6 +1252,7 @@ mod tests {
                 .contains_key(&("a.rs".into(), DiffSide::Staged))
         );
     }
+
     #[test]
     fn discard_confirmation_requires_the_rendered_comparison_and_a_clean_canonical_document() {
         let directory = Directory::new();
@@ -1249,6 +1278,7 @@ mod tests {
                 .document_revision(document)
                 .unwrap(),
         };
+
         fn apply(
             world: &mut World,
             key: &DiffKey,

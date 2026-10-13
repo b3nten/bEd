@@ -19,6 +19,7 @@ pub(crate) enum Worker {
         cancelled: Arc<AtomicBool>,
     },
 }
+
 impl Worker {
     pub fn start(root: String, operation: Operation, remote: Option<RemoteClient>) -> Self {
         let Some(client) = remote else {
@@ -69,6 +70,7 @@ impl Worker {
         });
         Self::Remote { result, cancelled }
     }
+
     pub fn poll(&mut self) -> Option<Result<Output, String>> {
         match self {
             Self::Local(job) => job.try_result().map(|r| r.map_err(display_error)),
@@ -81,6 +83,7 @@ impl Worker {
             },
         }
     }
+
     pub fn cancel(&self) {
         match self {
             Self::Local(job) => job.cancel(),
@@ -88,11 +91,13 @@ impl Worker {
         }
     }
 }
+
 impl Drop for Worker {
     fn drop(&mut self) {
         self.cancel();
     }
 }
+
 fn display_error(error: Error) -> String {
     if error.output.trim().is_empty() {
         error.message

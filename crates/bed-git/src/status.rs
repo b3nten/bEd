@@ -26,19 +26,23 @@ pub(crate) fn install(app: &mut App) {
             .to_vec(),
     ));
 }
+
 fn measure(world: &World, ui: &Ui, context: StatusContext) -> Option<f32> {
     presentation(world, context).map(|status| status.measure(ui))
 }
+
 fn draw(world: &mut World, ui: &Ui, context: StatusDrawContext, actions: &mut Vec<Action>) {
     if let Some(status) = presentation(world, context.context) {
         status.draw(ui, context, actions);
     }
 }
+
 fn tooltip(world: &World, ui: &Ui, context: StatusContext) {
     if let Some(status) = presentation(world, context) {
         status.tooltip(ui);
     }
 }
+
 fn presentation(world: &World, context: StatusContext) -> Option<StatusText> {
     let controller = &world.get_non_send::<GitState>()?.0;
     // Without a workspace or explicit Git request, no discovery is underway.
@@ -138,6 +142,7 @@ mod tests {
             area: 9,
         }
     }
+
     #[test]
     fn cached_git_state_contributes_without_a_panel_or_additional_reads() {
         let mut app = App::new();

@@ -21,6 +21,7 @@ pub(crate) enum StagingState {
     Partial,
     Staged,
 }
+
 impl StagingState {
     pub fn from_entry(entry: &StatusEntry) -> Self {
         if matches!(entry.index_status, ' ' | '.' | '?') || entry.conflicted {
@@ -44,6 +45,7 @@ struct Task {
     operation: Operation,
     purpose: Purpose,
 }
+
 enum Purpose {
     Status,
     Diff(DiffKey),
@@ -57,6 +59,7 @@ enum Purpose {
         saved: Vec<SavedDocument>,
     },
 }
+
 impl Purpose {
     fn blocks_actions(&self) -> bool {
         matches!(self, Self::Mutation { .. } | Self::HunkRefresh { .. })
@@ -99,6 +102,7 @@ pub struct GitController {
     pending_absolute_diffs: Vec<String>,
     optimistic_staging: Option<OptimisticStaging>,
 }
+
 impl Default for GitController {
     fn default() -> Self {
         Self {
@@ -130,10 +134,12 @@ impl Default for GitController {
         }
     }
 }
+
 impl GitController {
     pub fn busy(&self) -> bool {
         self.active.is_some() || self.pending_save.is_some() || !self.tasks.is_empty()
     }
+
     /// Cached reads stay interactive; only saves and writes block another action.
     pub fn mutation_pending(&self) -> bool {
         self.optimistic_staging.is_some()
@@ -144,9 +150,11 @@ impl GitController {
                 .is_some_and(|(task, _)| task.purpose.blocks_actions())
             || self.tasks.iter().any(|task| task.purpose.blocks_actions())
     }
+
     pub fn writable(&self) -> bool {
         self.status.as_ref().is_some_and(|s| s.writable)
     }
+
     pub fn staging_state(&self, entry: &StatusEntry) -> StagingState {
         if let Some(pending) = &self.optimistic_staging
             && pending.paths.contains(&entry.path)
@@ -159,6 +167,7 @@ impl GitController {
         }
         StagingState::from_entry(entry)
     }
+
     pub fn repo_root(&self) -> &str {
         self.status
             .as_ref()
@@ -166,9 +175,11 @@ impl GitController {
             .filter(|r| !r.is_empty())
             .unwrap_or(&self.root)
     }
+
     pub fn absolute(&self, path: &str) -> PathBuf {
         Path::new(self.repo_root()).join(path)
     }
+
     fn document_replacement_error(
         &self,
         operation: &Operation,
@@ -198,6 +209,7 @@ impl GitController {
         }
         None
     }
+
     pub fn cancel(&mut self) {
         if let Some((_, worker)) = self.active.take() {
             worker.cancel();
@@ -207,6 +219,7 @@ impl GitController {
         self.pending_absolute_diffs.clear();
         self.optimistic_staging = None;
     }
+
     pub fn cancel_operation(&mut self) {
         if let Some((_, worker)) = &self.active {
             worker.cancel();
@@ -216,6 +229,7 @@ impl GitController {
         self.optimistic_staging = None;
         self.refresh = true;
     }
+
     pub fn request_diff(&mut self, key: DiffKey) {
         let exists =
             self.tasks
@@ -234,6 +248,7 @@ impl GitController {
             });
         }
     }
+
     fn request_status(&mut self) -> bool {
         if !self
             .tasks
@@ -253,6 +268,7 @@ impl GitController {
             false
         }
     }
+
     pub fn mutate(
         &mut self,
         operation: Operation,
@@ -333,9 +349,11 @@ impl GitController {
             });
         }
     }
+
     fn queue_mutation(&mut self, operation: Operation) {
         self.queue_saved_mutation(operation, Vec::new());
     }
+
     fn queue_saved_mutation(&mut self, operation: Operation, saved: Vec<SavedDocument>) {
         let commit = if let Operation::Commit { message } = &operation {
             Some(message.clone())
@@ -347,6 +365,7 @@ impl GitController {
             purpose: Purpose::Mutation { commit, saved },
         });
     }
+
     pub fn save_result(&mut self, token: SaveToken, result: Result<Vec<SavedDocument>, String>) {
         if let Some(pending) = &mut self.pending_save
             && pending.token == token
@@ -354,6 +373,7 @@ impl GitController {
             pending.result = Some(result);
         }
     }
+
     fn accept_save(&mut self, session: &EditorSession) {
         if self
             .pending_save
@@ -421,6 +441,7 @@ impl GitController {
             })
             .or_else(|| self.status.is_none().then_some("Discovering repository…"))
     }
+
     pub fn open_diff(&mut self, path: String, side: DiffSide, requests: &mut Vec<HostRequest>) {
         self.request_diff((path.clone(), side));
         requests.push(HostRequest::OpenPanel {
@@ -498,6 +519,7 @@ impl GitController {
         };
         self.mutate(operation, session, requests);
     }
+
     pub fn can_commit(&self) -> bool {
         self.writable()
             && !self.mutation_pending()
@@ -510,6 +532,7 @@ impl GitController {
             })
     }
 }
+
 fn saved_documents_unchanged(session: &EditorSession, documents: &[SavedDocument]) -> bool {
     documents.iter().all(|saved| {
         session.document_revision(saved.document).ok() == Some(saved.revision)
@@ -519,12 +542,14 @@ fn saved_documents_unchanged(session: &EditorSession, documents: &[SavedDocument
                 .is_some_and(|s| !s.dirty && s.disk_conflict.is_none())
     })
 }
+
 fn filesystem_changed(update: &WorkspaceUpdate) -> bool {
     !update.changes.is_empty()
         || update.indexed_files.is_some()
         || !update.indexed_added.is_empty()
         || !update.indexed_removed.is_empty()
 }
+
 fn bound_output(output: String) -> String {
     const LIMIT: usize = 32 * 1024;
     if output.len() <= LIMIT {
@@ -545,6 +570,7 @@ impl GitController {
         self.workspace = Some(workspace);
         Ok(())
     }
+
     pub fn restore_workspace(&mut self, workspace: Option<u64>, root: String, draft: String) {
         self.cancel();
         // Promotion keeps live presentation ownership. A replacement session
@@ -572,6 +598,7 @@ impl GitController {
             ..Default::default()
         };
     }
+
     pub fn capture_directory_native(&mut self, working_directory: &str, project_root: &str) {
         if self.root.is_empty() {
             self.root = working_directory.into();
@@ -579,6 +606,7 @@ impl GitController {
             self.refresh = true;
         }
     }
+
     pub fn tick_native(
         &mut self,
         documents: &mut EditorSession,
@@ -798,6 +826,7 @@ impl GitController {
         }
         Ok(())
     }
+
     pub fn open_absolute_diff_native(&mut self, path: &str, requests: &mut Vec<HostRequest>) {
         if self.transient && self.status.is_none() {
             self.pending_absolute_diffs.push(path.into());
@@ -835,6 +864,7 @@ mod tests {
     };
 
     struct Repository(PathBuf);
+
     impl Repository {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -851,6 +881,7 @@ mod tests {
             repo.git(&["config", "commit.gpgsign", "false"]);
             repo
         }
+
         fn git(&self, args: &[&str]) {
             let output = Command::new("git")
                 .args(args)
@@ -863,6 +894,7 @@ mod tests {
                 String::from_utf8_lossy(&output.stderr)
             );
         }
+
         fn controller(&self) -> GitController {
             let Output::Status(status) =
                 bed_git_core::execute(&self.0, &Operation::Status).unwrap()
@@ -877,17 +909,20 @@ mod tests {
             }
         }
     }
+
     impl Drop for Repository {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+
     fn tick_once(controller: &mut GitController, session: &mut EditorSession) {
         let root = controller.root.clone();
         controller
             .tick_native(session, &root, None, &mut vec![])
             .unwrap();
     }
+
     /// A read remains in flight until the test explicitly publishes its result.
     fn hold_read(
         controller: &mut GitController,
@@ -904,6 +939,7 @@ mod tests {
         ));
         sender
     }
+
     fn complete(controller: &mut GitController, session: &mut EditorSession) {
         let root = controller.root.clone();
         let start = Instant::now();
@@ -921,6 +957,7 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
     }
+
     #[test]
     fn staging_is_optimistic_until_a_fresh_status_confirms_the_write() {
         let repo = Repository::new();
@@ -1006,6 +1043,7 @@ mod tests {
         );
         assert!(controller.error.is_none(), "{:?}", controller.error);
     }
+
     #[test]
     fn failed_or_cancelled_staging_restores_the_checkbox_state() {
         let repo = Repository::new();
@@ -1038,6 +1076,7 @@ mod tests {
         assert_eq!(controller.staging_state(&entry), StagingState::Unstaged);
         assert!(!controller.mutation_pending());
     }
+
     #[test]
     fn remote_operations_report_progress_while_background_reads_stay_quiet() {
         let repo = Repository::new();
@@ -1049,6 +1088,7 @@ mod tests {
         controller.cancel_operation();
         assert_eq!(controller.progress_label(), None);
     }
+
     #[test]
     fn unsaved_directory_discovers_the_repository_and_resolves_conflicts() {
         let repo = Repository::new();
@@ -1129,12 +1169,14 @@ mod tests {
         assert!(session.options().project_root.is_none());
         assert!(!session.options().persistent_history);
     }
+
     #[test]
     fn truncated_command_output_retains_utf8_boundaries_and_latest_output() {
         let output = bound_output(format!("{}last line", "é".repeat(40_000)));
         assert!(output.ends_with("last line"));
         assert!(output.len() < 33_000);
     }
+
     #[test]
     fn duplicate_diff_requests_share_one_worker_task() {
         let mut controller = GitController::default();
@@ -1142,6 +1184,7 @@ mod tests {
         controller.request_diff(("a.rs".into(), DiffSide::Unstaged));
         assert_eq!(controller.tasks.len(), 1);
     }
+
     #[test]
     fn cached_status_and_diff_refreshes_keep_commit_and_mutation_actions_available() {
         let repo = Repository::new();
@@ -1187,6 +1230,7 @@ mod tests {
         assert!(controller.can_commit());
         assert_eq!(controller.progress_label(), None);
     }
+
     #[test]
     fn stage_during_a_read_takes_priority_over_queued_diffs_and_rejects_a_second_write() {
         let repo = Repository::new();
@@ -1246,6 +1290,7 @@ mod tests {
             .unwrap();
         assert_eq!(indexed.stdout, b"a\n");
     }
+
     #[test]
     fn pending_saves_and_hunk_preparation_block_actions_even_though_preparation_reads_git() {
         let mut controller = GitController {
@@ -1290,6 +1335,7 @@ mod tests {
         );
         assert!(controller.mutation_pending());
     }
+
     #[test]
     fn queued_saved_stage_revalidates_document_after_the_background_read_finishes() {
         let repo = Repository::new();
@@ -1351,6 +1397,7 @@ mod tests {
             .unwrap();
         assert!(indexed.stdout.is_empty());
     }
+
     #[test]
     fn overdue_polling_does_not_requeue_finished_diffs_while_status_is_pending() {
         let repo = Repository::new();
@@ -1385,6 +1432,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn filesystem_metadata_updates_do_not_schedule_git_refresh_but_file_deltas_do() {
         let metadata = WorkspaceUpdate {
@@ -1424,6 +1472,7 @@ mod tests {
             assert!(filesystem_changed(&update));
         }
     }
+
     #[test]
     fn discard_queued_during_a_read_rechecks_unsaved_edits_before_replacing_disk() {
         let repo = Repository::new();
@@ -1476,6 +1525,7 @@ mod tests {
             b"unsaved\nworking\n"
         );
     }
+
     #[test]
     fn abort_queued_during_a_read_rechecks_all_workspace_documents_before_dispatch() {
         let repo = Repository::new();
@@ -1508,6 +1558,7 @@ mod tests {
             b"new edits\nclean\n"
         );
     }
+
     #[test]
     fn unmatched_save_acknowledgements_cannot_start_operations() {
         let mut controller = GitController::default();
@@ -1521,6 +1572,7 @@ mod tests {
         controller.save_result(SaveToken::next(), Ok(vec![]));
         assert!(controller.pending_save.as_ref().unwrap().result.is_none());
     }
+
     #[test]
     fn failed_save_and_edits_after_save_both_prevent_staging() {
         let repo = Repository::new();
@@ -1593,6 +1645,7 @@ mod tests {
                 .is_empty()
         );
     }
+
     #[test]
     fn edited_hunk_saves_then_refreshes_and_stages_only_that_hunk() {
         let repo = Repository::new();
@@ -1678,6 +1731,7 @@ mod tests {
                 .ends_with(b"SEVEN\n")
         );
     }
+
     #[test]
     fn external_disk_edit_after_save_cannot_replace_the_reviewed_hunk() {
         let repo = Repository::new();
@@ -1740,6 +1794,7 @@ mod tests {
             .unwrap();
         assert_eq!(staged.stdout, b"old\n");
     }
+
     #[test]
     fn locally_grouped_range_with_context_stages_exactly_the_reviewed_slice() {
         let repo = Repository::new();
@@ -1797,6 +1852,7 @@ mod tests {
             b"A\nkeep\nB\noutside\nC\n"
         );
     }
+
     #[cfg(unix)]
     #[test]
     fn failed_commit_preserves_message_and_success_clears_only_submitted_draft() {

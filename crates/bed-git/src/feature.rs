@@ -13,11 +13,15 @@ use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct GitState(pub(crate) GitController);
+
 #[derive(Default)]
 pub struct GitPanels(pub(crate) HashMap<Entity, panels::GitPanel>);
+
 #[derive(Resource)]
 struct Close(bed_editor_api::EditorPanelLifecycleSystem);
+
 pub struct GitPlugin;
+
 impl Plugin for GitPlugin {
     fn build(&self, app: &mut App) {
         app.world_mut()
@@ -144,6 +148,7 @@ pub(crate) fn prepare(
         intents.push(None, request);
     }
 }
+
 fn replies(mut replies: MessageReader<EditorFeatureReply>, mut controller: NonSendMut<GitState>) {
     for reply in replies.read() {
         if let EditorFeatureReply::Save {
@@ -157,6 +162,7 @@ fn replies(mut replies: MessageReader<EditorFeatureReply>, mut controller: NonSe
         }
     }
 }
+
 fn document_events(
     mut events: MessageReader<EditorDocumentEvent>,
     mut controller: NonSendMut<GitState>,
@@ -172,6 +178,7 @@ fn document_events(
         controller.0.refresh = true;
     }
 }
+
 fn command(
     In(invocation): In<CommandInvocation>,
     frame: Res<EditorFrame>,
@@ -201,6 +208,7 @@ fn command(
     }
     Ok(Vec::new())
 }
+
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
         ("Changes", "Select a changed file to inspect its diff. Right-click for staged or unstaged comparisons and file operations."),
@@ -227,6 +235,7 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
         .insert(EditorPanelClose(close));
     Ok(Box::new(Frontend(creation.entity)))
 }
+
 fn close_panel(
     In(entity): In<Entity>,
     mut panels: NonSendMut<GitPanels>,
@@ -237,11 +246,14 @@ fn close_panel(
     }
     Ok(())
 }
+
 struct Frontend(Entity);
+
 impl Panel for Frontend {
     fn title(&self, _: &World) -> String {
         "Git".into()
     }
+
     fn draw(
         &mut self,
         ui: &dear_imgui_rs::Ui,
@@ -284,9 +296,11 @@ impl Panel for Frontend {
         }
     }
 }
+
 fn save_workspace(controller: NonSendMut<GitState>) -> Value {
     json!({"commit_message":controller.0.draft})
 }
+
 fn restore_workspace(
     In(restore): In<EditorWorkspaceRestore>,
     mut controller: NonSendMut<GitState>,
@@ -302,6 +316,7 @@ fn restore_workspace(
         .restore_workspace(Some(restore.workspace), restore.root, draft);
     Ok(())
 }
+
 fn shutdown(mut exit: MessageReader<bevy::app::AppExit>, mut controller: NonSendMut<GitState>) {
     if exit.read().next().is_some() {
         controller.0.cancel();
