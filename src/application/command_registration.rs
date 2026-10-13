@@ -1,26 +1,10 @@
-//! Core application commands are ordinary bindable workbench contributions.
+//! bEd commands and defaults registered on the shared workbench.
 use super::runtime::*;
 use bed_api::workbench::PanelTarget;
 use bed_api::workbench::{CommandInvocation, CommandResult};
 use bevy::prelude::*;
 
 pub fn register(world: &mut World) {
-    bed_api::workbench::register(world, "bed.documents", |registrar| {
-        registrar.command(
-            "bed.documents.shell.open",
-            "Open shell files",
-            open_shell_files,
-        );
-        registrar.shell_alias("+open", "bed.documents.shell.open");
-        registrar.shell_alias("+o", "bed.documents.shell.open");
-        registrar.command("bed.documents.open_file", "Open File", command);
-        registrar.command("bed.documents.save", "Save", command);
-        registrar.command("bed.documents.save_as", "Save As", command);
-        registrar.global_shortcut("bed.documents.open_file", &["Primary+O"]);
-        registrar.global_shortcut("bed.documents.save", &["Primary+S"]);
-        registrar.global_shortcut("bed.documents.save_as", &["Primary+Shift+S"]);
-    })
-    .expect("bEd document commands are registered once");
     bed_api::workbench::register(world, "bed.workbench", |registrar| {
         registrar.command("bed.workbench.split_right", "Split Right", command);
         registrar.command("bed.workbench.split_down", "Split Down", command);
@@ -127,9 +111,6 @@ fn command(In(invocation): In<CommandInvocation>, world: &mut World) -> CommandR
         "bed.app.Diagnostics" => WindowCommand::Diagnostics,
         "bed.app.Structure" => WindowCommand::Structure,
         "bed.app.OpenFolder" => WindowCommand::OpenFolder,
-        "bed.documents.open_file" => WindowCommand::OpenFile,
-        "bed.documents.save" => WindowCommand::Save,
-        "bed.documents.save_as" => WindowCommand::SaveAs,
         "bed.app.Close" => WindowCommand::Close,
         "bed.app.Quit" => WindowCommand::Quit,
         "bed.app.Explorer" => WindowCommand::Explorer,
@@ -164,48 +145,4 @@ fn focus(In(invocation): In<CommandInvocation>, world: &mut World) -> CommandRes
         .get(index - 1)
         .map(|entity| vec![bed_api::workbench::WorkbenchAction::FocusPanel(*entity)])
         .unwrap_or_default())
-}
-
-/// Shell paths stay application requests so the enclosing command receipt follows
-/// document saves, panel placement, and failure through the same coordinator.
-fn open_shell_files(In(invocation): In<CommandInvocation>, world: &mut World) -> CommandResult {
-    let shell = bed_api::workbench::ShellInvocation::from_arguments(&invocation.arguments)?;
-    if shell.arguments.is_empty() || shell.arguments.len() > 64 {
-        return Err("usage: +open FILE ...".into());
-    }
-    fn path(bytes: Vec<u8>) -> Result<std::path::PathBuf, String> {
-        if bytes.is_empty() || bytes.contains(&0) {
-            return Err("Shell paths must be nonempty and contain no NUL bytes".into());
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::ffi::OsStringExt;
-            Ok(std::ffi::OsString::from_vec(bytes).into())
-        }
-        #[cfg(not(unix))]
-        {
-            String::from_utf8(bytes)
-                .map(std::path::PathBuf::from)
-                .map_err(|error| error.to_string())
-        }
-    }
-    let directory = path(shell.directory)?;
-    let paths = shell
-        .arguments
-        .into_iter()
-        .map(|argument| path(argument).map(|argument| directory.join(argument)))
-        .collect::<Result<Vec<_>, _>>()?;
-    let area = world
-        .resource::<bed_workbench::WorkbenchLayout>()
-        .tiling
-        .layout
-        .largest_area();
-    world
-        .resource_mut::<bed_api::features::HostEffects>()
-        .push_at(
-            invocation.source,
-            area,
-            bed_api::features::HostAction::OpenTerminalFiles { paths },
-        );
-    Ok(Vec::new())
 }

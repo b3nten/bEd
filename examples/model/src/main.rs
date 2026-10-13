@@ -1,7 +1,13 @@
 //! A typed model with two views and core document/history coordination.
-use bed_app::bed_core;
+use bed_launch::bed_core;
 use serde_json::json;
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
 use {
     bed_core::DocumentBinding, bed_core::DocumentModel, bed_core::api::workbench::*,
     bed_core::bed_documents::DocumentId, bed_core::bevy::prelude::*,
@@ -179,6 +185,8 @@ struct Smoke {
     phase: u8,
     started: Instant,
     save: Option<bed_core::HostRequestId>,
+    capture: Option<bed_core::bed_desktop::DesktopCaptureId>,
+    verified: Arc<AtomicBool>,
 }
 fn smoke(world: &mut World) {
     assert!(
@@ -244,10 +252,59 @@ fn smoke(world: &mut World) {
         }
         5 => {
             let id = world.resource::<Smoke>().save.unwrap();
-            assert!(bed_core::take_host_result(world, id).unwrap().is_err());
+            let Some(result) = bed_core::take_host_result(world, id) else {
+                return;
+            };
+            assert!(result.is_err());
             assert!(bed_core::model_document(world, document).unwrap().dirty());
+        }
+        6 => {
+            let Some(capture) = world.resource::<Smoke>().capture else {
+                let panel = world
+                    .resource::<bed_core::bed_workbench::WorkbenchLayout>()
+                    .focused
+                    .unwrap();
+                let capture = world
+                    .resource_mut::<bed_core::bed_desktop::DesktopCaptureRequests>()
+                    .submit(
+                        vec![
+                            bed_core::bed_desktop::DesktopCaptureTarget::Window,
+                            bed_core::bed_desktop::DesktopCaptureTarget::Panel(panel),
+                        ],
+                        Instant::now() + Duration::from_secs(10),
+                        None,
+                    );
+                world.resource_mut::<Smoke>().capture = Some(capture);
+                return;
+            };
+            let Some(result) = world
+                .resource_mut::<bed_core::bed_desktop::DesktopCaptureResults>()
+                .take(capture)
+            else {
+                return;
+            };
+            let frame = result.expect("model window/panel capture");
+            assert!(
+                frame.images.iter().all(|image| image
+                    .rgba
+                    .pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .any(|pixel| pixel[..3].iter().any(|channel| *channel > 20))),
+                "model capture blank"
+            );
+            std::fs::create_dir_all("target").unwrap();
+            frame.images[0]
+                .rgba
+                .write_png("target/model-smoke.png")
+                .unwrap();
+            world
+                .resource::<Smoke>()
+                .verified
+                .store(true, Ordering::SeqCst);
             println!(
-                "Model smoke passed: two views, typed edits, undo/redo, retained document and failed save"
+                "Model smoke passed: two views, typed history, retention, failed save and native capture"
             );
             world.write_message(AppExit::Success);
         }
@@ -257,31 +314,38 @@ fn smoke(world: &mut World) {
 }
 fn main() -> std::io::Result<()> {
     let smoke_test = std::env::args().any(|argument| argument == "--smoke-test");
-    let launch = match bed_app::Application::new("example.model", "Typed model editor")?
-        .dispatch(std::env::args_os())?
-    {
-        bed_app::LaunchOutcome::Desktop(launch) => *launch,
-        bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+    let launch = match bed_launch::builder("example.model", "Typed model editor")?.dispatch()? {
+        bed_launch::LaunchOutcome::Desktop(launch) => *launch,
+        bed_launch::LaunchOutcome::Handled(exit) => std::process::exit(exit),
     };
-    let launch = if smoke_test {
-        launch.config_directory(
-            std::env::temp_dir().join(format!("bed-model-example-config-{}", std::process::id())),
-        )
-    } else {
-        launch
+    let options = bed_launch::DesktopOptions {
+        config_directory: smoke_test.then(|| {
+            std::env::temp_dir().join(format!("bed-model-example-config-{}", std::process::id()))
+        }),
+        ..Default::default()
     };
-    let exit = launch.run(|app| {
+    let verified = Arc::<AtomicBool>::default();
+    let mut app = launch.build(options, |app| {
         app.add_plugins(GraphPlugin);
         if smoke_test {
             app.insert_resource(Smoke {
                 phase: 0,
                 started: Instant::now(),
                 save: None,
+                capture: None,
+                verified: Arc::clone(&verified),
             })
             .add_systems(Update, smoke);
         }
         Ok(())
     })?;
+    let exit = app.run();
+    if smoke_test {
+        assert!(
+            verified.load(Ordering::SeqCst),
+            "model smoke stopped before completion"
+        );
+    }
     if exit.is_error() {
         return Err(std::io::Error::other("Model example exited with an error"));
     }

@@ -5,14 +5,14 @@ single window camera runs `DesktopGraph` after offscreen preview cameras. Dear
 ImGui `Context` remains on the UI thread; only owned `FrameSnapshot` values,
 geometry observations and GPU handles cross extraction.
 
-Applications start through the owned [`bed-app`](../bed-app/README.md) launcher;
+Applications start through the owned [`bed-launch`](../bed-launch/README.md) launcher;
 this crate implements its native rendering and input lifecycle.
 
 ```rust,no_run
 use bed_desktop::{bevy::prelude::World, dear_imgui_rs::Ui, DesktopUi};
 fn draw(_world: &mut World, ui: &Ui) { ui.text("A desktop application"); }
 fn main() -> std::io::Result<()> {
-    let exit = bed_app::Application::new("example", "Example")?.run(|app| {
+    let exit = bed_launch::builder("example", "Example")?.run(bed_launch::DesktopOptions::default(), |app| {
         app.insert_resource(DesktopUi(draw));
         Ok(())
     })?;

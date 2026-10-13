@@ -11,12 +11,25 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Which invocation a command's availability describes. Global restrictions
+/// apply to every caller; UI facts may describe only the currently shown target.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum CommandPresentationScope {
+    #[default]
+    Global,
+    Invocation {
+        source: Option<Entity>,
+        arguments: Value,
+    },
+}
+
 /// Current command facts, published by the owning feature's preparation systems.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandPresentation {
     pub label: Option<String>,
     pub enabled: bool,
     pub visible: bool,
+    pub scope: CommandPresentationScope,
 }
 
 impl Default for CommandPresentation {
@@ -25,7 +38,25 @@ impl Default for CommandPresentation {
             label: None,
             enabled: true,
             visible: true,
+            scope: CommandPresentationScope::Global,
         }
+    }
+}
+
+impl CommandPresentation {
+    /// Recheck facts that apply to this exact invocation. A different captured
+    /// target or arguments are validated by the command's authoritative handler.
+    pub fn blocks_invocation(&self, world: &World, invocation: &CommandInvocation) -> bool {
+        let applies = match &self.scope {
+            CommandPresentationScope::Global => true,
+            CommandPresentationScope::Invocation { source, arguments } => {
+                let owner = |source: Option<Entity>| {
+                    source.map(|source| panel_owner(world, source).unwrap_or(source))
+                };
+                owner(*source) == owner(invocation.source) && arguments == &invocation.arguments
+            }
+        };
+        applies && (!self.enabled || !self.visible)
     }
 }
 
@@ -875,6 +906,7 @@ mod shortcut_tests {
                 label: Some("Example is busy".into()),
                 enabled: false,
                 visible: true,
+                ..Default::default()
             },
         );
         let presented = world
@@ -998,6 +1030,9 @@ pub enum ClipboardAction {
     Copy,
     Cut,
     Paste(String),
+    /// A native paste may contain files or image data without text. Text-only
+    /// panels ignore the absent text; other panels can read the file clipboard.
+    PasteFromClipboard(Option<String>),
     SelectAll,
 }
 
@@ -1034,6 +1069,12 @@ pub trait FileDialogService {
 /// move intent is retained only by the workbench.
 pub trait FileClipboardService {
     fn read_files(&mut self) -> std::io::Result<Vec<PathBuf>>;
+
+    /// Pasting into a shell may materialize image data as temporary files.
+    /// Applications supplying only file-list clipboard access use that list.
+    fn read_paste_files(&mut self) -> std::io::Result<Vec<PathBuf>> {
+        self.read_files()
+    }
 
     fn write_files(&mut self, paths: &[PathBuf]) -> std::io::Result<()>;
 }

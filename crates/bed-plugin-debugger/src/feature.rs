@@ -326,6 +326,7 @@ fn prepare(world: &mut World) {
                 enabled,
                 visible: !target.remote,
                 label: None,
+                ..Default::default()
             },
         );
     }

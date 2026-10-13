@@ -1899,20 +1899,14 @@ impl NavigationWorkbench {
             app.world_mut(),
             &bed_api::settings::SettingsRequest::batch(
                 [
-                    "terminal_visible",
-                    "sidebar_visible",
-                    "treesitter",
-                    "git_changed_lines",
-                    "minimap",
+                    ("bed.application", "terminal_visible"),
+                    ("bed.application", "sidebar_visible"),
+                    ("bed.editor", "treesitter"),
+                    ("bed.editor", "git_changed_lines"),
+                    ("bed.editor", "minimap"),
                 ]
                 .into_iter()
-                .map(|key| {
-                    bed_api::settings::SettingsChange::set(
-                        bed::config::settings_owner(key),
-                        key,
-                        false,
-                    )
-                })
+                .map(|(owner, key)| bed_api::settings::SettingsChange::set(owner, key, false))
                 .collect(),
             ),
         )

@@ -1,6 +1,6 @@
 # bed-core
 
-Service implementation beneath the owned [`bed-app`](../bed-app/README.md)
+Service implementation beneath the owned [`bed-launch`](../bed-launch/README.md)
 launcher: workbench composition, document/model editing, ordered requests,
 settings and configuration projection. Applications use the launcher to install
 the desktop foundation; `DocumentHostPlugin` supports ordinary headless Bevy
@@ -9,8 +9,18 @@ tests of shared editing services.
 Feature plugins register panels and commands through `api::workbench::register`.
 The workbench owns handlers and presentation metadata; core resolves document
 requests and close/save barriers. `CorePresentationMode::Application` delegates
-chrome and application command policy to the application while retaining core's
-shared editing owner.
+chrome and application lifecycle policy while retaining shared editing and the
+common Open, Save, Save As and shell-file command declarations. An application
+with its own ordered reducer selects `DocumentRequestScheduling::External` and
+calls the shared operations at its admitted request point.
+
+The launcher also installs `DesktopWorkbenchPlugin`: native file drags and
+clipboard access, pinch gestures, and panel geometry reach the same shared
+workbench contracts with either the standard UI or an application's custom UI.
+Native edit and drop actions emit captured `HostRequest`s, so external request
+schedulers retain the original source, session, layout and ordering. Applications
+keep their menu arrangement and unhandled-drop policy; registered panel handlers
+own clipboard interpretation, including terminal file and image pastes.
 
 ## Documents and editing
 
@@ -24,6 +34,12 @@ file-provider backend for local atomic saves; bEd explicitly enables
 `language-services`. Core's `remote` feature provides SSH document access without
 language-server or highlighting services.
 
+Core is the writer of `DocumentFrame`. By default its active document follows
+the focused panel. An application can supply `DocumentFrameSelection` before
+`CoreSystems::Frame` to remember a document while a tool has focus; an explicit
+empty selection clears it. Manual publication uses the same `publish_documents`
+operation and selection input.
+
 Applications prepare a session with
 `DocumentSession::with_file_services(options, &context, &services)`. SSH providers
 retain the authenticated transport and deployed agent path. File locations keep
@@ -31,8 +47,12 @@ provider identity, so a remote path cannot fall back to a coincident local file.
 The selected directory is independent of process cwd and saved-workspace policy.
 
 `open_file` selects a registered viewer and binds its document or local file
-before running the panel factory. `open_document_panel` creates another view of
-an existing document. Saved file-backed panel records include the path and
+before running the panel factory. `open_document_viewer` opens a compatible viewer
+in its own tab for the same document. Viewer tabs share canonical data, revisions,
+saves and undo history, while each keeps its own UI state. Repeating a viewer
+request focuses its matching tab in the requested tab group; changing viewer type
+keeps the originating tab open. `open_document_panel` explicitly creates another
+view of an existing document. Saved file-backed panel records include the path and
 content kind so layout restore can recreate their bindings.
 Untitled panels reuse their validated document identity within the same live
 session. Persistence across restarts requires the application's document
@@ -63,8 +83,9 @@ clone before committing contents and history. `undo_document`, `redo_document`,
 work for both default and typed documents. Saves return a `DocumentSaveId`;
 consume `poll_document_save` before reporting success. Its receipt names the exact
 persisted revision. Edits made while an older revision is
-saving remain dirty. Format-on-save runs through this same owner when language
-services are enabled. Hosts with custom storage acknowledge the exact persisted
+saving remain dirty. `begin_explicit_document_save` reads the registered editor
+formatting preference when language services are enabled; lifecycle saves and
+autosave bypass formatting. All saves use the same receipts. Hosts with custom storage acknowledge the exact persisted
 revision through `mark_model_saved`. A plugin can also keep its own model without
 joining this document lifecycle.
 Model mutation and persistence stop when the shared session shuts down.
@@ -124,7 +145,7 @@ nothing by itself. A saved workspace is optional.
 ## Icons, themes and assets
 
 Plugins register exact namespaced icon contracts and embedded defaults through
-[`bed-ui`](../bed-ui/README.md). `DesktopLaunch::icon_directories` selects per-owner
+[`bed-ui`](../bed-ui/README.md). `DesktopOptions::icon_directories` selects per-owner
 artwork directories before installers run. Core fills its embedded `bed.core.*`
 artwork without discovering bEd configuration or resources.
 
@@ -136,9 +157,19 @@ Native and GPU realization remain desktop-owned.
 
 ## Terminal and debugger entrypoints
 
-Register `bed_plugin_terminal::launch_registration()` and/or the debugger's
-launch registration before dispatch. Their early process handlers run before
-GUI startup and their deferred installers run after the desktop foundation.
+Register `bed_plugin_terminal::launchers()` and/or `bed_plugin_debugger::launchers()`
+before dispatch. Their early process handlers run before GUI startup. Install
+the normal plugins explicitly in the desktop configuration callback.
 Terminal owns command forwarding and acknowledgements; the document,
 workspace and mascot command owners supply `+open`, `+workspace` and `+ducky`
 behavior through registered workbench commands.
+
+## Native workbench integration
+
+`DesktopWorkbenchPlugin` bridges desktop input to captured host requests for
+panel actions, clipboard operations and external file drags. It supplies native
+pinch events, the file clipboard adapter and panel geometry for rendering even
+when an application replaces the default drawing callback. Feature plugins own
+paste interpretation and drop acceptance; applications retain their menu and
+fallback opening policy. A direct-file viewer does not reserve its file against
+editing, renaming or deletion merely because its tab is open.

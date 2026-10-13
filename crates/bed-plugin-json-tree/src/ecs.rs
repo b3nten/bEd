@@ -80,7 +80,7 @@ fn shutdown(mut exits: MessageReader<bevy::app::AppExit>, mut states: NonSendMut
 fn create_json_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     world.entity_mut(creation.entity).insert(bed_api::workbench::PanelDocumentation::new(&[
         ("Tree", "Expand objects and arrays to explore JSON or JSONC. Select values to inspect their contents."),
-        ("Source", "Edit as Text opens the shared source document. Undo and redo use the document’s edit history."),
+        ("Source", "Open in Text Editor opens the shared source document. Undo and redo use the document’s edit history."),
     ]).shortcut_actions(&["bed.edit.undo", "bed.edit.redo"]));
     if world
         .get::<PanelBinding>(creation.entity)
@@ -379,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_as_text_switches_the_retained_frontends_owning_tab() {
+    fn edit_as_text_requests_another_viewer_from_the_owning_tab() {
         let _lock = crate::IMGUI_TEST_LOCK
             .lock()
             .unwrap_or_else(|error| error.into_inner());
@@ -473,7 +473,7 @@ mod tests {
         assert_eq!(requests[0].source, Some(entity));
         assert!(matches!(
             &requests[0].action,
-            HostAction::SwitchViewer {
+            HostAction::OpenDocumentViewer {
                 tab: 37,
                 document: DocumentId(4),
                 viewer,

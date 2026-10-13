@@ -46,7 +46,6 @@ struct Active {
     started: Instant,
     paused: Vec<DocumentId>,
     export: bool,
-    local_destination: bool,
     destination_provider: bed_files::FileServices,
     kind: OperationKind,
     refresh: Vec<String>,
@@ -304,7 +303,6 @@ impl FileOperations {
                     started: Instant::now(),
                     paused: pending.documents,
                     export,
-                    local_destination: matches!(request.destination, Endpoint::Local { .. }),
                     destination_provider: match &request.destination {
                         Endpoint::Remote { .. } => self.target.services.clone(),
                         Endpoint::Local { .. } => bed_files::FileServices::local(),
@@ -382,7 +380,6 @@ impl FileOperations {
         session: &mut DocumentSession,
         explorer: &mut ExplorerState,
         clipboard: Option<&mut dyn FileClipboardService>,
-        protected: &[PathBuf],
         requests: &mut Vec<HostAction>,
     ) {
         if self.active.as_ref().is_some_and(|active| {
@@ -467,19 +464,13 @@ impl FileOperations {
                     self.conflict_appearing = true;
                     self.apply_all = false;
                 }
-                OperationEvent::BeforeCommit { path, reply } => {
+                OperationEvent::BeforeCommit { reply, .. } => {
                     let result = if self
                         .active
                         .as_ref()
                         .is_none_or(|active| active.job.is_canceled())
                     {
                         Err("File operation canceled".into())
-                    } else if self
-                        .active
-                        .as_ref()
-                        .is_some_and(|active| active.local_destination)
-                    {
-                        ensure_unprotected(&path, protected).map_err(|error| error.to_string())
                     } else {
                         Ok(())
                     };
@@ -576,10 +567,6 @@ impl FileOperations {
             requests.push(HostAction::Invalidate);
         }
     }
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "The file transition names its document, UI, native and protection inputs explicitly"
-    )]
     pub fn action(
         &mut self,
         action: ExplorerAction,
@@ -587,7 +574,6 @@ impl FileOperations {
         explorer: &mut ExplorerState,
         root: &str,
         clipboard: Option<&mut dyn FileClipboardService>,
-        protected: &[PathBuf],
         requests: &mut Vec<HostAction>,
     ) -> io::Result<()> {
         if root != self.target.root {
@@ -698,19 +684,14 @@ impl FileOperations {
                     error: None,
                 });
             }
-            FileTreeAction::Trash(path) => {
-                self.delete_paths(vec![path], session, protected, requests)?
-            }
-            FileTreeAction::TrashMany(paths) => {
-                self.delete_paths(paths, session, protected, requests)?
-            }
+            FileTreeAction::Trash(path) => self.delete_paths(vec![path], session, requests)?,
+            FileTreeAction::TrashMany(paths) => self.delete_paths(paths, session, requests)?,
             FileTreeAction::Move { paths, destination } => self.project_job(
                 OperationKind::Move,
                 paths,
                 destination,
                 false,
                 session,
-                protected,
                 requests,
             )?,
             FileTreeAction::Duplicate(paths) => {
@@ -720,15 +701,7 @@ impl FileOperations {
                         .unwrap_or(Path::new(root))
                         .to_string_lossy()
                         .into_owned();
-                    self.project_job(
-                        OperationKind::Copy,
-                        paths,
-                        parent,
-                        true,
-                        session,
-                        protected,
-                        requests,
-                    )?;
+                    self.project_job(OperationKind::Copy, paths, parent, true, session, requests)?;
                 }
             }
             FileTreeAction::Copy(paths) => {
@@ -793,7 +766,6 @@ impl FileOperations {
                         directory,
                         false,
                         session,
-                        protected,
                         requests,
                     ) {
                         self.cut = Some((session_id, paths));
@@ -817,7 +789,6 @@ impl FileOperations {
                         explorer,
                         root,
                         None,
-                        protected,
                         requests,
                     )?;
                 }
@@ -833,7 +804,6 @@ impl FileOperations {
         &mut self,
         paths: Vec<String>,
         session: &DocumentSession,
-        protected: &[PathBuf],
         requests: &mut Vec<HostAction>,
     ) -> io::Result<()> {
         if self.target.services.is_remote() {
@@ -847,15 +817,10 @@ impl FileOperations {
                 String::new(),
                 false,
                 session,
-                protected,
                 requests,
             )
         }
     }
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "One operation boundary validates the complete request against the current workspace and protected paths"
-    )]
     fn project_job(
         &mut self,
         kind: OperationKind,
@@ -863,18 +828,12 @@ impl FileOperations {
         directory: String,
         duplicate: bool,
         session: &DocumentSession,
-        protected: &[PathBuf],
         requests: &mut Vec<HostAction>,
     ) -> io::Result<()> {
         let paths = top_level_paths(&paths)
             .into_iter()
             .map(|path| validate_entry(&self.target, &path))
             .collect::<io::Result<Vec<_>>>()?;
-        if kind != OperationKind::Copy && !self.target.services.is_remote() {
-            for path in &paths {
-                ensure_unprotected(path, protected)?;
-            }
-        }
         let directory = if kind == OperationKind::Delete {
             directory
         } else {
@@ -904,7 +863,6 @@ impl FileOperations {
         ui: &Ui,
         session: &DocumentSession,
         root: &str,
-        protected: &[PathBuf],
         requests: &mut Vec<HostAction>,
     ) {
         if self
@@ -981,7 +939,7 @@ impl FileOperations {
             self.dialog = None;
         }
         if submit && let Some(dialog) = self.dialog.take() {
-            match self.submit_name(&dialog, session, root, protected, requests) {
+            match self.submit_name(&dialog, session, root, requests) {
                 Ok(()) => {}
                 Err(error) => {
                     self.dialog = Some(NameDialog {
@@ -1018,7 +976,6 @@ impl FileOperations {
                 String::new(),
                 false,
                 session,
-                protected,
                 requests,
             )
         {
@@ -1079,7 +1036,6 @@ impl FileOperations {
         dialog: &NameDialog,
         session: &DocumentSession,
         root: &str,
-        protected: &[PathBuf],
         requests: &mut Vec<HostAction>,
     ) -> io::Result<()> {
         if self.busy() {
@@ -1112,9 +1068,6 @@ impl FileOperations {
             }
             FileTreeAction::Rename(from) => {
                 let from = validate_entry(&self.target, from)?;
-                if !self.target.services.is_remote() {
-                    ensure_unprotected(&from, protected)?;
-                }
                 let to = Path::new(&from)
                     .with_file_name(&dialog.name)
                     .to_string_lossy()
@@ -1300,26 +1253,6 @@ fn rebind(session: &mut DocumentSession, from: &str, to: &str) -> io::Result<()>
     Ok(())
 }
 
-fn ensure_unprotected(path: &str, protected: &[PathBuf]) -> io::Result<()> {
-    let entry = Path::new(path);
-    let resolved = fs::symlink_metadata(entry)
-        .ok()
-        .filter(|metadata| !metadata.file_type().is_symlink())
-        .and_then(|_| fs::canonicalize(entry).ok());
-    if protected.iter().any(|protected| {
-        protected.starts_with(entry)
-            || resolved
-                .as_ref()
-                .is_some_and(|resolved| protected.starts_with(resolved))
-    }) {
-        return Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "Close the file viewer before changing its path",
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) fn reconcile(
     session: &mut DocumentSession,
     explorer: &mut ExplorerState,
@@ -1406,7 +1339,6 @@ mod tests {
                 explorer,
                 root,
                 None,
-                &[],
                 &mut requests,
             )
             .unwrap();
@@ -1490,7 +1422,7 @@ mod tests {
         );
         let deadline = Instant::now() + Duration::from_secs(5);
         while operations.busy() && Instant::now() < deadline {
-            operations.poll(&mut session, &mut explorer, None, &[], &mut Vec::new());
+            operations.poll(&mut session, &mut explorer, None, &mut Vec::new());
             thread::sleep(Duration::from_millis(2));
         }
         assert!(!operations.busy());
@@ -1607,7 +1539,6 @@ mod tests {
                 &mut explorer,
                 &root_directory,
                 None,
-                &[],
                 &mut Vec::new(),
             )
             .unwrap_err();
@@ -1640,7 +1571,6 @@ mod tests {
                     &mut explorer,
                     &root_directory,
                     None,
-                    &[],
                     &mut requests,
                 )
                 .unwrap();
@@ -1661,7 +1591,7 @@ mod tests {
             &mut session
         ));
         assert!(!operations.busy() && operations.cut.is_none());
-        operations.poll(&mut session, &mut explorer, None, &[], &mut Vec::new());
+        operations.poll(&mut session, &mut explorer, None, &mut Vec::new());
         assert!(temp.path("source.txt").exists());
     }
 
@@ -1673,7 +1603,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
             let mut requests = Vec::new();
-            operations.poll(session, explorer, None, &[], &mut requests);
+            operations.poll(session, explorer, None, &mut requests);
             if let Some(conflict) = operations.conflict.take() {
                 conflict
                     .reply
@@ -1745,7 +1675,7 @@ mod tests {
         );
         let deadline = Instant::now() + Duration::from_secs(5);
         while operations.busy() && Instant::now() < deadline {
-            operations.poll(&mut session, &mut explorer, None, &[], &mut Vec::new());
+            operations.poll(&mut session, &mut explorer, None, &mut Vec::new());
             thread::sleep(Duration::from_millis(2));
         }
         assert!(!operations.busy());
@@ -1894,7 +1824,7 @@ mod tests {
                     explorer,
                 );
             }
-            operations.poll(session, explorer, Some(clipboard), &[], &mut Vec::new());
+            operations.poll(session, explorer, Some(clipboard), &mut Vec::new());
             if let Some(conflict) = operations.conflict.take() {
                 conflict
                     .reply
@@ -1942,7 +1872,6 @@ mod tests {
                 &mut explorer,
                 &root_directory,
                 Some(&mut clipboard),
-                &[],
                 &mut Vec::new(),
             )
             .unwrap();
@@ -1973,7 +1902,6 @@ mod tests {
                 &mut explorer,
                 &root_directory,
                 Some(&mut clipboard),
-                &[],
                 &mut Vec::new(),
             )
             .unwrap();
@@ -1986,7 +1914,6 @@ mod tests {
                 &mut explorer,
                 &root_directory,
                 Some(&mut clipboard),
-                &[],
                 &mut Vec::new(),
             )
             .unwrap();
@@ -2036,7 +1963,6 @@ mod tests {
                 &mut explorer,
                 &root_directory,
                 Some(&mut clipboard),
-                &[],
                 &mut Vec::new(),
             )
             .unwrap();
@@ -2115,7 +2041,6 @@ mod tests {
                     &mut explorer,
                     &root_directory,
                     None,
-                    &[],
                     &mut requests,
                 )
                 .unwrap_err();
@@ -2140,7 +2065,6 @@ mod tests {
                 &mut explorer,
                 &root_directory,
                 Some(&mut clipboard),
-                &[],
                 &mut requests,
             )
             .unwrap();
@@ -2174,7 +2098,6 @@ mod tests {
                 &mut explorer,
                 &root_directory,
                 Some(&mut clipboard),
-                &[],
                 &mut Vec::new(),
             )
             .unwrap();
@@ -2217,7 +2140,6 @@ mod tests {
                     &mut explorer,
                     &root_directory,
                     Some(&mut clipboard),
-                    &[],
                     &mut requests,
                 )
                 .unwrap();
@@ -2272,7 +2194,6 @@ mod tests {
                 &mut explorer,
                 &root_directory,
                 Some(&mut clipboard),
-                &[],
                 &mut Vec::new(),
             )
             .unwrap();
@@ -2285,7 +2206,6 @@ mod tests {
                 &mut explorer,
                 &root_directory,
                 Some(&mut clipboard),
-                &[],
                 &mut Vec::new(),
             )
             .unwrap();

@@ -1,5 +1,5 @@
 //! Per-view theme drafts; editing does not change preferences or write files.
-use crate::config::{Settings, theme::ThemeDraft};
+use super::{ThemeDraft, ThemeFiles};
 use dear_imgui_rs::{ColorDisplayMode, TreeNodeFlags, Ui, sys};
 use std::ffi::{CStr, CString};
 
@@ -52,8 +52,8 @@ fn color(ui: &Ui, label: &str, value: &mut [f32; 4]) -> bool {
     }
 }
 
-fn load(draft: &mut ThemeDraft, settings: &Settings, selection: &str, clone: bool) {
-    match settings.load_theme(selection) {
+fn load(draft: &mut ThemeDraft, files: &ThemeFiles, selection: &str, clone: bool) {
+    match files.load_theme(selection) {
         Ok(mut theme) => {
             if clone {
                 theme.name.push_str(" Copy");
@@ -64,39 +64,22 @@ fn load(draft: &mut ThemeDraft, settings: &Settings, selection: &str, clone: boo
     }
 }
 
-pub(crate) fn save(draft: &mut ThemeDraft, settings: &mut Settings, apply: bool) {
-    let Some(theme) = &draft.palette else {
-        return;
-    };
-    match settings.save_custom_theme(draft.destination.as_deref(), &theme.to_json()) {
-        Ok(selection) => {
-            draft.destination = Some(selection.clone());
-            draft.dirty = false;
-            draft.error = None;
-            draft.message = Some(format!("Saved {selection}"));
-            if apply && let Err(error) = settings.select_theme(&selection) {
-                draft.error = Some(format!("Theme saved, but could not apply it: {error}"));
-            }
-        }
-        Err(error) => draft.error = Some(error.to_string()),
-    }
+pub(crate) fn save(draft: &mut ThemeDraft, apply: bool) {
+    draft.request_save(apply);
 }
 
-fn choose(ui: &Ui, draft: &mut ThemeDraft, settings: &Settings) {
+fn choose(ui: &Ui, draft: &mut ThemeDraft, files: &ThemeFiles, selection: &str) {
     ui.text_wrapped("Open a custom theme to edit, or clone a theme to make your own.");
-    if let Some(theme) = &draft.palette {
+    if let Some(theme) = &draft.file {
         if ui.button(format!("Continue editing {}", theme.name)) {
             draft.editing = true;
         }
         ui.spacing();
     }
     if draft.source.is_empty() {
-        draft.source = settings.settings["theme"]
-            .as_str()
-            .unwrap_or("tokyo")
-            .to_owned();
+        draft.source = selection.to_owned();
     }
-    let themes = settings.list_themes();
+    let themes = files.list_themes();
     ui.spacing();
     ui.text("Edit a custom theme");
     if themes.iter().any(|t| t.0.starts_with("themes/")) {
@@ -104,7 +87,7 @@ fn choose(ui: &Ui, draft: &mut ThemeDraft, settings: &Settings) {
             for (selection, name) in themes.iter().filter(|t| t.0.starts_with("themes/")) {
                 let _id = ui.push_id(selection);
                 if ui.selectable(name) {
-                    load(draft, settings, selection, false);
+                    load(draft, files, selection, false);
                 }
             }
         }
@@ -132,7 +115,7 @@ fn choose(ui: &Ui, draft: &mut ThemeDraft, settings: &Settings) {
         }
     }
     if ui.button("Clone Theme") {
-        load(draft, settings, &draft.source.clone(), true);
+        load(draft, files, &draft.source.clone(), true);
     }
     ui.spacing();
     ui.separator();
@@ -167,20 +150,26 @@ fn choose(ui: &Ui, draft: &mut ThemeDraft, settings: &Settings) {
     }
 }
 
-pub(crate) fn draw(ui: &Ui, draft: &mut ThemeDraft, settings: &mut Settings) {
+pub(crate) fn draw(ui: &Ui, draft: &mut ThemeDraft, files: &ThemeFiles, selection: &str) {
     ui.text("Theme Editor");
     ui.separator();
     if !draft.editing {
-        choose(ui, draft, settings);
+        choose(ui, draft, files, selection);
         return;
     }
+    let saving = draft.pending.is_some();
+    let navigation = ui.begin_disabled_with_cond(saving);
     if ui.button("Back to Themes") {
         draft.editing = false;
         return;
     }
+    drop(navigation);
+    if saving {
+        ui.text_disabled("Saving theme…");
+    }
     ui.spacing();
     ui.text_wrapped("Click a color swatch for a picker, or enter a hex value. Changes are kept in this draft until you save.");
-    if let Some(theme) = &mut draft.palette {
+    if let Some(theme) = &mut draft.file {
         ui.separator();
         let mut changed = ui.input_text("Name", &mut theme.name).build();
         let mut appearance = usize::from(theme.light);
@@ -189,23 +178,27 @@ pub(crate) fn draw(ui: &Ui, draft: &mut ThemeDraft, settings: &mut Settings) {
             changed = true;
         }
         if ui.collapsing_header("UI Colors", TreeNodeFlags::DEFAULT_OPEN) {
-            changed |= color(ui, "Background", &mut theme.background);
-            changed |= color(ui, "Window Background", &mut theme.window_background);
+            changed |= color(ui, "Background", &mut theme.palette.background);
+            changed |= color(
+                ui,
+                "Window Background",
+                &mut theme.palette.window_background,
+            );
             if !draft.separate_tab_bar {
-                theme.tab_bar = theme.background;
+                theme.palette.tab_bar = theme.palette.background;
             }
-            changed |= color(ui, "Surface", &mut theme.surface);
-            changed |= color(ui, "Foreground", &mut theme.foreground);
-            changed |= color(ui, "Accent", &mut theme.accent);
-            changed |= color(ui, "Selection", &mut theme.selection);
+            changed |= color(ui, "Surface", &mut theme.palette.surface);
+            changed |= color(ui, "Foreground", &mut theme.palette.text);
+            changed |= color(ui, "Accent", &mut theme.palette.accent);
+            changed |= color(ui, "Selection", &mut theme.palette.selection);
             if ui.checkbox("Separate tab bar color", &mut draft.separate_tab_bar) {
                 if !draft.separate_tab_bar {
-                    theme.tab_bar = theme.background;
+                    theme.palette.tab_bar = theme.palette.background;
                 }
                 changed = true;
             }
             if draft.separate_tab_bar {
-                changed |= color(ui, "Tab Bar", &mut theme.tab_bar);
+                changed |= color(ui, "Tab Bar", &mut theme.palette.tab_bar);
             }
         }
         if ui.collapsing_header("Syntax Colors", TreeNodeFlags::empty()) {
@@ -240,12 +233,13 @@ pub(crate) fn draw(ui: &Ui, draft: &mut ThemeDraft, settings: &mut Settings) {
                 sys::igSetClipboardText(text.as_ptr());
             });
         }
+        let _save_controls = ui.begin_disabled_with_cond(saving);
         if ui.button("Save Theme") {
-            save(draft, settings, false);
+            save(draft, false);
         }
         ui.same_line();
         if ui.button("Save & Apply") {
-            save(draft, settings, true);
+            save(draft, true);
         }
     } else if let Some(error) = &draft.error {
         ui.text_wrapped(error);

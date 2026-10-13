@@ -61,7 +61,26 @@ enum Command {
     RefreshOptions(bool),
     IncludeIgnored(bool),
     Events(DebounceEventResult),
+    #[cfg(target_os = "macos")]
+    NativeWatcherStarted(PathBuf, Result<Box<NativeWatcher>, String>),
     Stop,
+}
+
+type NativeWatcher = Debouncer<RecommendedWatcher, NoCache>;
+
+fn native_watcher(sender: Sender<Command>) -> Result<NativeWatcher, String> {
+    new_debouncer_opt::<_, RecommendedWatcher, NoCache>(
+        Duration::from_millis(180),
+        Some(Duration::from_millis(40)),
+        move |events| {
+            let _ = sender.send(Command::Events(events));
+        },
+        NoCache::new(),
+        notify_debouncer_full::notify::Config::default(),
+    )
+    .map_err(|error| {
+        format!("Filesystem watching is unavailable: {error}. Reconciling every 30 seconds.")
+    })
 }
 
 struct Inner {
@@ -183,7 +202,7 @@ struct NativeState {
     indexed_directories: BTreeSet<PathBuf>,
     requested: BTreeSet<PathBuf>,
     listings: BTreeMap<PathBuf, DirectoryListing>,
-    watcher: Option<Debouncer<RecommendedWatcher, NoCache>>,
+    watcher: Option<NativeWatcher>,
     #[cfg(target_os = "macos")]
     auxiliary_watchers: BTreeMap<PathBuf, Debouncer<RecommendedWatcher, NoCache>>,
     #[cfg(target_os = "macos")]
@@ -315,6 +334,13 @@ impl NativeState {
     }
 
     fn watch(&mut self, path: &Path) {
+        // Initial discovery and directory commands remain usable while the
+        // native stream starts on its bootstrap thread. Installation rescans
+        // the workspace to reconcile changes made before the stream was ready.
+        #[cfg(target_os = "macos")]
+        if self.watcher.is_none() {
+            return;
+        }
         if self.watched.contains(path) {
             return;
         }
@@ -1045,6 +1071,40 @@ fn local_worker(
     requests: Receiver<Command>,
     stop: Arc<AtomicBool>,
 ) {
+    run_local_worker(
+        root,
+        include_ignored,
+        sender,
+        requests,
+        stop,
+        #[cfg(target_os = "macos")]
+        |path, sender| {
+            let mut watcher = native_watcher(sender)?;
+            watcher
+                .watch(path, RecursiveMode::Recursive)
+                .map_err(|error| {
+                    format!(
+                        "Filesystem watching is unavailable: {error}. Reconciling every 30 seconds."
+                    )
+                })?;
+            Ok(watcher)
+        },
+    );
+}
+
+fn run_local_worker(
+    root: String,
+    include_ignored: bool,
+    sender: Sender<Command>,
+    requests: Receiver<Command>,
+    stop: Arc<AtomicBool>,
+    #[cfg(target_os = "macos")] initialize_watcher: impl FnOnce(
+        &Path,
+        Sender<Command>,
+    ) -> Result<NativeWatcher, String>
+    + Send
+    + 'static,
+) {
     let root_path = match fs::canonicalize(&root) {
         Ok(path) => path,
         Err(error) => {
@@ -1061,18 +1121,8 @@ fn local_worker(
     };
     #[cfg(target_os = "macos")]
     let event_sender = sender.clone();
-    let watcher = new_debouncer_opt::<_, RecommendedWatcher, NoCache>(
-        Duration::from_millis(180),
-        Some(Duration::from_millis(40)),
-        move |events| {
-            let _ = sender.send(Command::Events(events));
-        },
-        NoCache::new(),
-        notify_debouncer_full::notify::Config::default(),
-    );
-    let degraded = watcher.as_ref().err().map(|error| {
-        format!("Filesystem watching is unavailable: {error}. Reconciling every 30 seconds.")
-    });
+    #[cfg(not(target_os = "macos"))]
+    let watcher = native_watcher(sender);
     let mut state = NativeState {
         root: root_path.clone(),
         include_ignored,
@@ -1090,13 +1140,19 @@ fn local_worker(
         indexed_directories: BTreeSet::from([root_path.clone()]),
         requested: BTreeSet::from([root_path]),
         listings: BTreeMap::new(),
+        #[cfg(not(target_os = "macos"))]
+        degraded: watcher.as_ref().err().cloned(),
+        #[cfg(not(target_os = "macos"))]
         watcher: watcher.ok(),
+        #[cfg(target_os = "macos")]
+        watcher: None,
         #[cfg(target_os = "macos")]
         auxiliary_watchers: BTreeMap::new(),
         #[cfg(target_os = "macos")]
         event_sender,
         watched: BTreeSet::new(),
-        degraded,
+        #[cfg(target_os = "macos")]
+        degraded: None,
         generation: 0,
         stop: stop.clone(),
     };
@@ -1104,8 +1160,9 @@ fn local_worker(
     if let Some(parent) = state.root.parent().map(Path::to_path_buf) {
         state.watch(&parent);
     }
-    // Register root before walking, and each child before reading it. Queued
-    // events reconcile changes that raced with the initial background index.
+    // Directory snapshots do not depend on the macOS native run loop starting.
+    // Other backends register each directory before reading it and reconcile
+    // queued events that raced with the initial background index.
     let initial = state.rebuild();
     let mut subscribers = Vec::new();
     let mut deferred = VecDeque::new();
@@ -1113,6 +1170,31 @@ fn local_worker(
     if let Err(error) = initial {
         state.degraded = Some(error.to_string());
     }
+    #[cfg(target_os = "macos")]
+    let bootstrap = {
+        // One stable recursive stream covers the root and renames through its
+        // parent. FSEvents startup can block; it must not own the scanner's
+        // command loop. The actor becomes the watcher owner on installation.
+        let parent = state.root.parent().unwrap_or(&state.root);
+        let path = state
+            .workdir
+            .as_deref()
+            .filter(|workdir| parent.starts_with(workdir))
+            .unwrap_or(parent)
+            .to_owned();
+        let bootstrap_stop = stop.clone();
+        thread::spawn(move || {
+            if bootstrap_stop.load(Ordering::Acquire) {
+                return;
+            }
+            let watcher = initialize_watcher(&path, sender.clone()).map(Box::new);
+            if !bootstrap_stop.load(Ordering::Acquire) {
+                let _ = sender.send(Command::NativeWatcherStarted(path, watcher));
+            }
+            // A stopped provider or failed send drops a late watcher here,
+            // without blocking the service handle's teardown.
+        })
+    };
     while !stop.load(Ordering::Acquire) {
         let command = match deferred
             .pop_front()
@@ -1123,9 +1205,28 @@ fn local_worker(
             Err(mpsc::RecvTimeoutError::Timeout) => None,
             Err(_) => break,
         };
+        if stop.load(Ordering::Acquire) {
+            break;
+        }
         let update = match command {
             Some(Command::Stop) => break,
-            _ if state.degraded.is_some() && last_reconcile.elapsed() >= FALLBACK_INTERVAL => {
+            #[cfg(target_os = "macos")]
+            Some(Command::NativeWatcherStarted(path, watcher)) => {
+                match watcher {
+                    Ok(watcher) => {
+                        state.watcher = Some(*watcher);
+                        state.watched.insert(path);
+                    }
+                    Err(error) => state.degraded = Some(error),
+                }
+                // Close the observation gap between the initial scan and
+                // native registration, including requested/ignored folders.
+                Some(state.rebuild())
+            }
+            _ if (state.degraded.is_some()
+                || (cfg!(target_os = "macos") && state.watcher.is_none()))
+                && last_reconcile.elapsed() >= FALLBACK_INTERVAL =>
+            {
                 if let Some(command) = command {
                     deferred.push_front(command);
                 }
@@ -1206,6 +1307,11 @@ fn local_worker(
             }
         }
     }
+    // The actor owns its bootstrap task through teardown. The service handle
+    // still waits at most 100 ms for this worker, so a blocked native startup
+    // or watcher destruction never extends that caller's shutdown bound.
+    #[cfg(target_os = "macos")]
+    let _ = bootstrap.join();
 }
 
 fn remote_worker(
@@ -1433,6 +1539,7 @@ mod tests {
     struct Fixture(
         PathBuf,
         #[allow(dead_code)] std::sync::MutexGuard<'static, ()>,
+        std::cell::RefCell<Vec<JoinHandle<()>>>,
     );
 
     impl Fixture {
@@ -1450,7 +1557,7 @@ mod tests {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             fs::create_dir_all(&root).unwrap();
-            Self(fs::canonicalize(root).unwrap(), guard)
+            Self(fs::canonicalize(root).unwrap(), guard, Default::default())
         }
 
         fn write(&self, path: &str, bytes: &[u8]) {
@@ -1468,15 +1575,64 @@ mod tests {
         ) {
             let filesystem =
                 WorkspaceFilesystem::local(self.0.to_string_lossy().into_owned(), false);
+            self.own_worker(&filesystem);
             let updates = filesystem.subscribe();
             let initial = wait(&updates, |update| update.indexed_files.is_some());
+            // Native notification tests begin after the bootstrap rescan.
+            // The earlier snapshot is intentionally available to consumers
+            // before macOS finishes starting its stream.
+            #[cfg(target_os = "macos")]
+            let initial = if initial.generation < 2 {
+                wait(&updates, |update| update.generation >= 2)
+            } else {
+                initial
+            };
             assert!(initial.degraded.is_none(), "{:?}", initial.degraded);
             (filesystem, updates, initial)
+        }
+
+        fn own_worker(&self, filesystem: &WorkspaceFilesystem) {
+            self.2.borrow_mut().push(
+                filesystem
+                    .0
+                    .worker
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("fixture owns each worker once"),
+            );
+        }
+
+        #[cfg(target_os = "macos")]
+        fn with_watcher_startup(
+            &self,
+            initialize: impl FnOnce(&Path, Sender<Command>) -> Result<NativeWatcher, String>
+            + Send
+            + 'static,
+        ) -> WorkspaceFilesystem {
+            let (sender, requests) = mpsc::channel();
+            let stop = Arc::new(AtomicBool::new(false));
+            let worker_stop = stop.clone();
+            let events = sender.clone();
+            let root = self.0.to_string_lossy().into_owned();
+            let worker = thread::spawn(move || {
+                run_local_worker(root, false, events, requests, worker_stop, initialize);
+            });
+            WorkspaceFilesystem(Arc::new(Inner {
+                sender,
+                stop,
+                worker: Mutex::new(Some(worker)),
+            }))
         }
     }
 
     impl Drop for Fixture {
         fn drop(&mut self) {
+            // Production shutdown detaches after 100 ms. Native test streams
+            // must finish purging before the next fixture acquires the mutex.
+            for worker in self.2.get_mut().drain(..) {
+                let _ = worker.join();
+            }
             let _ = fs::remove_dir_all(&self.0);
         }
     }
@@ -1494,6 +1650,101 @@ mod tests {
                 return update;
             }
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_startup_does_not_block_snapshots_or_directory_commands_and_rescans_on_install() {
+        let fixture = Fixture::new();
+        fixture.write("original", b"initial");
+        fixture.write("nested/entry", b"nested");
+        let (release, gate) = mpsc::channel();
+        let filesystem = fixture.with_watcher_startup(move |_, sender| {
+            gate.recv().unwrap();
+            // Simulate successful native registration without involving the
+            // OS run loop: this test exercises scanner/bootstrap ordering.
+            native_watcher(sender)
+        });
+        let updates = filesystem.subscribe();
+        let initial = updates
+            .recv_timeout(Duration::from_secs(2))
+            .expect("initial snapshot waited for native startup");
+        assert!(initial.ready);
+        assert_eq!(initial.indexed_files.as_ref().unwrap().len(), 2);
+        assert!(initial.degraded.is_none());
+        let nested = fixture.0.join("nested").to_string_lossy().into_owned();
+        filesystem.request_directory(nested.clone());
+        let listing = updates
+            .recv_timeout(Duration::from_secs(2))
+            .expect("directory command waited for native startup");
+        assert!(listing.directories.iter().any(|listing| {
+            listing.path == nested && listing.entries.iter().any(|entry| entry.name == "entry")
+        }));
+        fixture.write("during-startup", b"new");
+        fixture.write("nested/during-startup", b"new");
+        release.send(()).unwrap();
+        let reconciled = updates
+            .recv_timeout(Duration::from_secs(2))
+            .expect("native installation did not rescan");
+        assert!(reconciled.degraded.is_none());
+        assert!(
+            reconciled
+                .indexed_files
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|path| path.ends_with("/during-startup"))
+        );
+        assert!(reconciled.directories.iter().any(|listing| {
+            listing.path == nested
+                && listing
+                    .entries
+                    .iter()
+                    .any(|entry| entry.name == "during-startup")
+        }));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn blocked_native_startup_does_not_block_provider_teardown() {
+        let fixture = Fixture::new();
+        fixture.write("entry", b"text");
+        let (release, gate) = mpsc::channel();
+        let (started, startup) = mpsc::channel();
+        let (finished, completion) = mpsc::channel();
+        let filesystem = fixture.with_watcher_startup(move |_, sender| {
+            started.send(()).unwrap();
+            gate.recv().unwrap();
+            let watcher = native_watcher(sender);
+            finished.send(()).unwrap();
+            watcher
+        });
+        let updates = filesystem.subscribe();
+        updates.recv_timeout(Duration::from_secs(2)).unwrap();
+        startup.recv_timeout(Duration::from_secs(2)).unwrap();
+        let start = Instant::now();
+        drop(filesystem);
+        assert!(start.elapsed() < Duration::from_secs(1));
+        release.send(()).unwrap();
+        completion.recv_timeout(Duration::from_secs(2)).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn failed_native_startup_reports_degraded_status_and_keeps_directory_commands_available() {
+        let fixture = Fixture::new();
+        fixture.write("nested/entry", b"text");
+        let filesystem =
+            fixture.with_watcher_startup(|_, _| Err("injected startup failure".into()));
+        let updates = filesystem.subscribe();
+        let failed = wait(&updates, |update| update.degraded.is_some());
+        assert_eq!(failed.degraded.as_deref(), Some("injected startup failure"));
+        let nested = fixture.0.join("nested").to_string_lossy().into_owned();
+        filesystem.request_directory(nested.clone());
+        let listing = updates.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(listing.directories.iter().any(|listing| {
+            listing.path == nested && listing.entries.iter().any(|entry| entry.name == "entry")
+        }));
     }
 
     #[test]
@@ -1807,6 +2058,17 @@ mod tests {
         .unwrap() else {
             unreachable!()
         };
+        struct WorkspaceWatchGuard(u64);
+        impl Drop for WorkspaceWatchGuard {
+            fn drop(&mut self) {
+                let _ = call(Request::UnwatchWorkspace { watch_id: self.0 });
+            }
+        }
+        let watch = WorkspaceWatchGuard(watch_id);
+        {
+            let watches = watches().lock().unwrap();
+            fixture.own_worker(&watches.get(&watch_id).unwrap().filesystem);
+        }
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {
             let Response::WorkspaceUpdates { updates } =
@@ -1814,7 +2076,10 @@ mod tests {
             else {
                 unreachable!()
             };
-            if updates.iter().any(|update| update.indexed_files.is_some()) {
+            if updates.iter().any(|update| {
+                update.indexed_files.is_some()
+                    && (!cfg!(target_os = "macos") || update.generation >= 2)
+            }) {
                 break;
             }
             assert!(Instant::now() < deadline);
@@ -1826,7 +2091,7 @@ mod tests {
             unreachable!()
         };
         assert!(updates.is_empty());
-        call(Request::UnwatchWorkspace { watch_id }).unwrap();
+        drop(watch);
         assert!(call(Request::PollWorkspace { watch_id }).is_err());
     }
 }

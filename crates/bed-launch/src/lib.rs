@@ -16,9 +16,22 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub struct Application {
+pub struct LaunchBuilder {
     identity: ApplicationIdentity,
+    arguments: Vec<OsString>,
     registrations: Vec<LaunchRegistration>,
+}
+
+/// Begin launch dispatch before constructing Bevy or reading application settings.
+pub fn builder(
+    id: impl Into<String>,
+    display_name: impl Into<String>,
+) -> io::Result<LaunchBuilder> {
+    Ok(LaunchBuilder {
+        identity: ApplicationIdentity::new(id, display_name)?,
+        arguments: std::env::args_os().collect(),
+        registrations: Vec::new(),
+    })
 }
 
 pub enum LaunchOutcome {
@@ -29,33 +42,49 @@ pub enum LaunchOutcome {
 pub struct DesktopLaunch {
     identity: ApplicationIdentity,
     arguments: Vec<OsString>,
-    registrations: Vec<LaunchRegistration>,
-    config_directory: Option<PathBuf>,
-    workspace_directory_name: Option<String>,
-    desktop: bed_desktop::DesktopPlugins,
-    icon_directories: bed_ui::icons::IconDirectories,
-    presentation_mode: bed_core::CorePresentationMode,
-    theme: Option<bed_ui::appearance::UiTheme>,
 }
 
-impl Application {
-    pub fn new(id: impl Into<String>, display_name: impl Into<String>) -> io::Result<Self> {
-        Ok(Self {
-            identity: ApplicationIdentity::new(id, display_name)?,
-            registrations: Vec::new(),
-        })
+/// Configuration for the desktop path, supplied after early process dispatch.
+pub struct DesktopOptions {
+    pub config_directory: Option<PathBuf>,
+    pub workspace_directory_name: Option<String>,
+    pub desktop: bed_desktop::DesktopPlugins,
+    pub icon_directories: bed_ui::icons::IconDirectories,
+    pub presentation_mode: bed_core::CorePresentationMode,
+    pub theme: Option<bed_ui::appearance::UiTheme>,
+}
+
+impl Default for DesktopOptions {
+    fn default() -> Self {
+        let mut desktop = bed_desktop::DesktopPlugins {
+            close_when_requested: false,
+            ..Default::default()
+        };
+        desktop.window.title.clear();
+        Self {
+            config_directory: None,
+            workspace_directory_name: None,
+            desktop,
+            icon_directories: Default::default(),
+            presentation_mode: Default::default(),
+            theme: None,
+        }
+    }
+}
+
+impl LaunchBuilder {
+    pub fn with_args(mut self, arguments: impl IntoIterator<Item = OsString>) -> Self {
+        self.arguments = arguments.into_iter().collect();
+        self
     }
 
-    pub fn register(mut self, registration: LaunchRegistration) -> Self {
+    pub fn with_launchers(mut self, registration: LaunchRegistration) -> Self {
         self.registrations.push(registration);
         self
     }
 
-    pub fn dispatch(
-        self,
-        arguments: impl IntoIterator<Item = OsString>,
-    ) -> io::Result<LaunchOutcome> {
-        let arguments = arguments.into_iter().collect::<Vec<_>>();
+    pub fn dispatch(self) -> io::Result<LaunchOutcome> {
+        let arguments = self.arguments;
         let mut owners = HashSet::new();
         let mut selectors = Vec::new();
         for registration in &self.registrations {
@@ -116,7 +145,6 @@ impl Application {
                         return Ok(LaunchOutcome::Desktop(Box::new(DesktopLaunch::new(
                             self.identity,
                             arguments,
-                            self.registrations,
                         ))));
                     }
                 }
@@ -125,90 +153,60 @@ impl Application {
         Ok(LaunchOutcome::Desktop(Box::new(DesktopLaunch::new(
             self.identity,
             arguments,
-            self.registrations,
         ))))
     }
 
-    pub fn run(self, configure: impl FnOnce(&mut App) -> io::Result<()>) -> io::Result<i32> {
-        match self.dispatch(std::env::args_os())? {
+    pub fn run(
+        self,
+        options: DesktopOptions,
+        configure: impl FnOnce(&mut App) -> io::Result<()>,
+    ) -> io::Result<i32> {
+        match self.dispatch()? {
             LaunchOutcome::Handled(exit) => Ok(exit),
             LaunchOutcome::Desktop(launch) => launch
-                .run(configure)
+                .run(options, configure)
                 .map(|exit| if exit.is_error() { 1 } else { 0 }),
         }
     }
 }
 
 impl DesktopLaunch {
-    fn new(
-        identity: ApplicationIdentity,
-        arguments: Vec<OsString>,
-        registrations: Vec<LaunchRegistration>,
-    ) -> Self {
-        let mut desktop = bed_desktop::DesktopPlugins {
-            close_when_requested: false,
-            ..Default::default()
-        };
-        desktop.window.title = identity.display_name.clone();
+    fn new(identity: ApplicationIdentity, arguments: Vec<OsString>) -> Self {
         Self {
             identity,
             arguments,
-            registrations,
-            config_directory: None,
-            workspace_directory_name: None,
-            desktop,
-            icon_directories: Default::default(),
-            presentation_mode: Default::default(),
-            theme: None,
         }
     }
+
     pub fn arguments(&self) -> &[OsString] {
         self.arguments.get(1..).unwrap_or_default()
     }
-    pub fn options(mut self, desktop: bed_desktop::DesktopPlugins) -> Self {
-        self.desktop = desktop;
-        self
-    }
-    pub fn config_directory(mut self, path: impl Into<PathBuf>) -> Self {
-        self.config_directory = Some(path.into());
-        self
-    }
-    pub fn workspace_directory_name(mut self, name: impl Into<String>) -> Self {
-        self.workspace_directory_name = Some(name.into());
-        self
-    }
-    pub fn icon_directories(mut self, directories: bed_ui::icons::IconDirectories) -> Self {
-        self.icon_directories = directories;
-        self
-    }
-    /// Let an application supply its own chrome and document commands.
-    pub fn presentation_mode(mut self, mode: bed_core::CorePresentationMode) -> Self {
-        self.presentation_mode = mode;
-        self
-    }
-    /// Supply one theme and application defaults for its configurable UI values.
-    pub fn theme(mut self, theme: bed_ui::appearance::UiTheme) -> Self {
-        self.theme = Some(theme);
-        self
-    }
 
-    pub fn build(self, configure: impl FnOnce(&mut App) -> io::Result<()>) -> io::Result<App> {
+    /// Build a real Bevy application. Normal plugins belong in `configure`.
+    pub fn build(
+        self,
+        mut options: DesktopOptions,
+        configure: impl FnOnce(&mut App) -> io::Result<()>,
+    ) -> io::Result<App> {
+        if options.desktop.window.title.is_empty() {
+            options.desktop.window.title = self.identity.display_name.clone();
+        }
         let paths = ApplicationPaths::new(
             &self.identity.id,
-            self.config_directory,
-            self.workspace_directory_name,
+            options.config_directory,
+            options.workspace_directory_name,
         )?;
         let settings_path = paths.config_dir.join("settings.json");
         let mut app = App::new();
         app.insert_resource(paths)
             .insert_resource(ApplicationInfo(self.identity));
-        app.insert_non_send(self.icon_directories);
-        app.insert_resource(self.presentation_mode);
+        app.insert_non_send(options.icon_directories);
+        app.insert_resource(options.presentation_mode);
         app.add_plugins(bed_core::FoundationPlugin {
-            desktop: self.desktop,
+            desktop: options.desktop,
         });
         bed_core::settings::initialize_settings(app.world_mut(), Some(settings_path))?;
-        if let Some(theme) = self.theme {
+        if let Some(theme) = options.theme {
             bed_core::settings::set_application_defaults(
                 app.world_mut(),
                 "bed.ui",
@@ -227,16 +225,17 @@ impl DesktopLaunch {
             )?;
             app.insert_resource(bed_desktop::DesktopTheme(theme));
         }
-        for registration in self.registrations {
-            (registration.install)(&mut app);
-        }
         configure(&mut app)?;
         bed_core::settings::finalize_settings(app.world_mut())?;
         Ok(app)
     }
 
-    pub fn run(self, configure: impl FnOnce(&mut App) -> io::Result<()>) -> io::Result<AppExit> {
-        let mut app = self.build(configure)?;
+    pub fn run(
+        self,
+        options: DesktopOptions,
+        configure: impl FnOnce(&mut App) -> io::Result<()>,
+    ) -> io::Result<AppExit> {
+        let mut app = self.build(options, configure)?;
         Ok(app.run())
     }
 }
@@ -247,77 +246,88 @@ pub struct ApplicationInfo(pub ApplicationIdentity);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static INSTALLED: AtomicBool = AtomicBool::new(false);
+
     fn handled(args: Vec<OsString>) -> io::Result<Option<i32>> {
         assert_eq!(args[2], "opaque");
         Ok(Some(7))
     }
-    fn feature(selector: ProcessSelector) -> LaunchRegistration {
+
+    fn launcher(owner: &'static str, selector: ProcessSelector) -> LaunchRegistration {
         LaunchRegistration {
-            owner: "test",
+            owner,
             entrypoints: vec![ProcessEntrypoint {
                 selector,
                 run: handled,
             }],
-            install: Box::new(|_| {
-                INSTALLED.store(true, Ordering::SeqCst);
-            }),
         }
     }
+
     #[test]
-    fn helpers_dispatch_before_any_feature_or_desktop_installation() {
-        INSTALLED.store(false, Ordering::SeqCst);
-        let result = Application::new("test", "Test")
+    fn helpers_dispatch_without_constructing_bevy_or_loading_settings() {
+        let result = builder("test", "Test")
             .unwrap()
-            .register(feature(ProcessSelector::FirstArgument("--helper".into())))
-            .dispatch(["test", "--helper", "opaque"].map(OsString::from))
+            .with_args(["test", "--helper", "opaque"].map(OsString::from))
+            .with_launchers(launcher(
+                "test",
+                ProcessSelector::FirstArgument("--helper".into()),
+            ))
+            .dispatch()
             .unwrap();
         assert!(matches!(result, LaunchOutcome::Handled(7)));
-        assert!(!INSTALLED.load(Ordering::SeqCst));
     }
+
     #[test]
     fn duplicate_owners_are_rejected_before_dispatch() {
-        let result = Application::new("test", "Test")
+        let result = builder("test", "Test")
             .unwrap()
-            .register(feature(ProcessSelector::FirstArgument("--one".into())))
-            .register(feature(ProcessSelector::FirstArgument("--two".into())))
-            .dispatch([OsString::from("test")]);
+            .with_args([OsString::from("test")])
+            .with_launchers(launcher(
+                "test",
+                ProcessSelector::FirstArgument("--one".into()),
+            ))
+            .with_launchers(launcher(
+                "test",
+                ProcessSelector::FirstArgument("--two".into()),
+            ))
+            .dispatch();
         assert!(result.is_err());
     }
+
     #[test]
     fn executable_helper_keeps_its_opaque_argument_tail() {
-        let application = Application::new("test", "Test")
+        let result = builder("test", "Test")
             .unwrap()
-            .register(feature(ProcessSelector::ExecutablePrefix("+".into())))
-            .register(LaunchRegistration {
+            .with_args(["/tmp/helpers/+custom", "--debugger", "opaque"].map(OsString::from))
+            .with_launchers(launcher(
+                "test",
+                ProcessSelector::ExecutablePrefix("+".into()),
+            ))
+            .with_launchers(LaunchRegistration {
                 owner: "debugger",
                 entrypoints: vec![ProcessEntrypoint {
                     selector: ProcessSelector::FirstArgument("--debugger".into()),
                     run: |_| panic!("The helper's argument must not select another handler"),
                 }],
-                install: Box::new(|_| panic!("Early helpers must not install desktop plugins")),
-            });
-        assert!(matches!(
-            application
-                .dispatch(["/tmp/helpers/+custom", "--debugger", "opaque"].map(OsString::from))
-                .unwrap(),
-            LaunchOutcome::Handled(7)
-        ));
+            })
+            .dispatch()
+            .unwrap();
+        assert!(matches!(result, LaunchOutcome::Handled(7)));
     }
+
     #[test]
     fn overlapping_selectors_fail_before_any_process_handler() {
-        let application = Application::new("test", "Test")
+        let result = builder("test", "Test")
             .unwrap()
-            .register(feature(ProcessSelector::ExecutablePrefix("+".into())))
-            .register(LaunchRegistration {
-                owner: "other",
-                entrypoints: vec![ProcessEntrypoint {
-                    selector: ProcessSelector::ExecutablePrefix("+custom".into()),
-                    run: |_| panic!("Conflicting entrypoints must not execute"),
-                }],
-                install: Box::new(|_| {}),
-            });
-        assert!(application.dispatch([OsString::from("+custom")]).is_err());
+            .with_args([OsString::from("+custom")])
+            .with_launchers(launcher(
+                "test",
+                ProcessSelector::ExecutablePrefix("+".into()),
+            ))
+            .with_launchers(launcher(
+                "other",
+                ProcessSelector::ExecutablePrefix("+custom".into()),
+            ))
+            .dispatch();
+        assert!(result.is_err());
     }
 }

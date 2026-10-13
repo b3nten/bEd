@@ -1,4 +1,5 @@
 //! Terminal input ownership is resolved before ImGui and gameplay receive events.
+use crate::feature::file_paste_text;
 use bed_api::workbench::PanelFrontend;
 use bed_desktop::{
     DesktopContext, DesktopFileClipboard, DesktopInjectedEvent, DesktopInjectedInputEvents,
@@ -540,36 +541,6 @@ pub fn clipboard_file_paste(
         return Ok(None);
     }
     file_paste_text(&paths).map(Some)
-}
-
-/// Preserve each path as one shell argument. Reject control characters because
-/// terminal paste normalizes newlines and strips escape bytes.
-fn file_paste_text(paths: &[std::path::PathBuf]) -> std::io::Result<String> {
-    let mut text = String::new();
-    for path in paths {
-        let path = path.to_str().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Clipboard file path is not UTF-8",
-            )
-        })?;
-        if path.is_empty() || path.chars().any(char::is_control) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Clipboard file path is empty or contains control characters",
-            ));
-        }
-        if !text.is_empty() {
-            text.push(' ');
-        }
-        for character in path.chars() {
-            if !character.is_alphanumeric() && !matches!(character, '/' | '.' | '_' | '-') {
-                text.push('\\');
-            }
-            text.push(character);
-        }
-    }
-    Ok(text)
 }
 
 fn terminal_key_event(event: &KeyEvent, modifiers: TerminalModifiers) -> TerminalKeyEvent {

@@ -8,7 +8,13 @@ use bed_ui::{
     },
 };
 use dear_imgui_rs::{Color, Ui};
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 #[derive(Component)]
 struct Source {
@@ -19,6 +25,7 @@ struct Source {
 
 #[derive(Resource)]
 struct Proof {
+    verified: Arc<AtomicBool>,
     first: Entity,
     second: Entity,
     phase: u8,
@@ -30,26 +37,28 @@ struct Proof {
 }
 
 fn main() -> std::io::Result<()> {
-    let launch = match bed_app::Application::new("bed.proof.canvas-smoke", "Desktop proof")?
-        .dispatch(std::env::args_os())?
-    {
-        bed_app::LaunchOutcome::Desktop(launch) => *launch,
-        bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+    let verified = Arc::<AtomicBool>::default();
+    let launch = match bed_launch::builder("bed.proof.canvas-smoke", "Desktop proof")?.dispatch()? {
+        bed_launch::LaunchOutcome::Desktop(launch) => *launch,
+        bed_launch::LaunchOutcome::Handled(exit) => std::process::exit(exit),
     };
-    let mut app = launch
-        .options(DesktopPlugins {
-            window: Window {
-                title: "Desktop canvas proof".into(),
-                resolution: (140, 80).into(),
+    let mut app = launch.build(
+        bed_launch::DesktopOptions {
+            desktop: DesktopPlugins {
+                window: Window {
+                    title: "Desktop canvas proof".into(),
+                    resolution: (140, 80).into(),
+                    ..default()
+                },
                 ..default()
             },
-            ..default()
-        })
-        .presentation_mode(bed_app::bed_core::CorePresentationMode::Application)
-        .config_directory(
-            std::env::temp_dir().join(format!("bed.proof.canvas-smoke-{}", std::process::id())),
-        )
-        .build(|app| {
+            presentation_mode: bed_launch::bed_core::CorePresentationMode::Application,
+            config_directory: Some(
+                std::env::temp_dir().join(format!("bed.proof.canvas-smoke-{}", std::process::id())),
+            ),
+            ..Default::default()
+        },
+        |app| {
             let mut icons = bed_ui::icons::Icons::default();
             icons.images.insert(
                 "proof".into(),
@@ -90,6 +99,7 @@ fn main() -> std::io::Result<()> {
             let first = canvas(1, wgpu::Color::RED);
             let second = canvas(2, wgpu::Color::GREEN);
             app.insert_resource(Proof {
+                verified: Arc::clone(&verified),
                 first,
                 second,
                 phase: 0,
@@ -107,10 +117,15 @@ fn main() -> std::io::Result<()> {
                     .before(DesktopSystems::RouteInput),
             );
             Ok(())
-        })?;
+        },
+    )?;
     if app.run().is_error() {
         return Err(std::io::Error::other("Desktop proof exited with an error"));
     }
+    assert!(
+        verified.load(Ordering::SeqCst),
+        "desktop smoke exited before completing its assertions"
+    );
     Ok(())
 }
 
@@ -297,6 +312,7 @@ fn advance(world: &mut World) {
                 eprintln!(
                     "canvas proof: safe retirement, persistent quarantine and generation-aware canvas/icon replacement passed"
                 );
+                proof.verified.store(true, Ordering::SeqCst);
                 world.write_message(bevy::app::AppExit::Success);
                 proof.phase = 9;
             }

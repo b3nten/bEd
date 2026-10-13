@@ -1,40 +1,22 @@
 //! Native acceptance scenarios drive the same captured operations as editor clients.
 #[cfg(feature = "terminal")]
 use crate::application::WorkspaceState;
-#[cfg(any(
-    all(feature = "image-viewer", feature = "model-viewer"),
-    all(target_os = "macos", feature = "editor"),
-    feature = "git",
-    feature = "terminal"
-))]
+#[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
 use crate::application::panel_presentation;
 use crate::startup::SmokeOptions;
-#[cfg(any(
-    all(target_os = "macos", feature = "editor"),
-    feature = "git",
-    feature = "terminal"
-))]
+#[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
 use bed_api::documents::PanelBinding;
-#[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
-use bed_desktop::DesktopCanvasTargets;
 #[cfg(all(target_os = "macos", feature = "editor"))]
 use bed_desktop::DesktopContext;
 use bed_desktop::{DesktopGpu, DesktopRenderStatus};
 #[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
 use bed_desktop::{DesktopInjectedEvent, DesktopInputStep};
-#[cfg(any(
-    all(feature = "image-viewer", feature = "model-viewer"),
-    feature = "git",
-    feature = "terminal"
-))]
+#[cfg(feature = "terminal")]
 use bed_plugin_automation::Readiness;
 use bed_plugin_automation::{
     AutomationRequests, AutomationResults, CaptureTarget, Operation, OperationId, OperationValue,
     PanelHandle, Snapshot,
 };
-use bed_ui::TextureHandle;
-#[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
-use bed_ui::gpu::CanvasOutput;
 use bevy::{prelude::*, window::PrimaryWindow, winit::WINIT_WINDOWS};
 use serde_json::{Value, json};
 #[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
@@ -82,16 +64,7 @@ struct Smoke {
     retired_fixtures: Vec<Fixture>,
     panel: Option<PanelHandle>,
     other: Option<PanelHandle>,
-    handle: Option<TextureHandle>,
-    #[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
-    generation: u64,
-    baseline: Vec<u8>,
-    size: [u32; 2],
     entities: Vec<Entity>,
-    gameplay: Option<Entity>,
-    restore_at: Option<Instant>,
-    saw_focus_loss: bool,
-    saw_focus_gain: bool,
     original_settings: Value,
     #[cfg(feature = "terminal")]
     terminal_ids: Vec<(u64, u32)>,
@@ -104,19 +77,9 @@ struct Smoke {
     keyboard_save: bool,
 }
 
-#[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
-#[derive(Component)]
-struct SmokeGameplay(u32);
-
 struct Fixture(PathBuf);
 
-#[cfg(any(
-    all(feature = "image-viewer", feature = "model-viewer"),
-    all(target_os = "macos", feature = "editor"),
-    feature = "git",
-    feature = "debugger",
-    feature = "terminal"
-))]
+#[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
 impl Fixture {
     fn new(name: &str) -> io::Result<Self> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -170,16 +133,7 @@ impl Smoke {
             retired_fixtures: Vec::new(),
             panel: None,
             other: None,
-            handle: None,
-            #[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
-            generation: 0,
-            baseline: Vec::new(),
-            size: [0; 2],
             entities: Vec::new(),
-            gameplay: None,
-            restore_at: None,
-            saw_focus_loss: false,
-            saw_focus_gain: false,
             original_settings: Value::Null,
             #[cfg(feature = "terminal")]
             terminal_ids: Vec::new(),
@@ -267,12 +221,7 @@ impl Smoke {
         result.map(Some).map_err(io::Error::other)
     }
 
-    #[cfg(any(
-        all(feature = "image-viewer", feature = "model-viewer"),
-        all(target_os = "macos", feature = "editor"),
-        feature = "git",
-        feature = "terminal"
-    ))]
+    #[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
     fn panels(&self, kind: &str) -> Vec<PanelHandle> {
         self.snapshot.as_ref().map_or_else(Vec::new, |s| {
             s.panels
@@ -283,11 +232,7 @@ impl Smoke {
         })
     }
 
-    #[cfg(any(
-        all(feature = "image-viewer", feature = "model-viewer"),
-        feature = "git",
-        feature = "terminal"
-    ))]
+    #[cfg(feature = "terminal")]
     fn ready(&self, panel: PanelHandle) -> io::Result<bool> {
         let Some(panel) = self
             .snapshot
@@ -303,13 +248,7 @@ impl Smoke {
         }
     }
 
-    #[cfg(any(
-        all(feature = "image-viewer", feature = "model-viewer"),
-        all(target_os = "macos", feature = "editor"),
-        feature = "git",
-        feature = "debugger",
-        feature = "terminal"
-    ))]
+    #[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
     fn open(&mut self, world: &mut World, path: PathBuf, viewer: Option<&str>) -> io::Result<bool> {
         if let Some(result) = self.app_operation(
             world,
@@ -364,17 +303,12 @@ impl Smoke {
         self.started = Instant::now();
         self.panel = None;
         self.other = None;
-        self.handle = None;
         self.operation = None;
         self.application_operation = None;
         if let Some(fixture) = self.fixture.take() {
             self.retired_fixtures.push(fixture);
         }
-        self.baseline.clear();
         self.entities.clear();
-        if let Some(entity) = self.gameplay.take() {
-            let _ = world.try_despawn(entity);
-        }
     }
 }
 
@@ -472,15 +406,10 @@ fn advance(world: &mut World) {
             }
             let done = match smoke.name() {
                 "--smoke-test" | "--main-only-smoke" => basic(world, &mut smoke)?,
-                "--effects-smoke" => effects(world, &mut smoke)?,
                 "--appearance-smoke" => appearance(world, &mut smoke)?,
-                "--lifecycle-smoke" => lifecycle(world, &mut smoke)?,
-                "--plugin-smoke" => plugins(world, &mut smoke)?,
                 "--menu-smoke" => menu(world, &mut smoke)?,
                 "--platform-smoke" => platform(world, &mut smoke)?,
-                "--terminal-smoke" | "--term-promotion-smoke" => terminal(world, &mut smoke)?,
-                "--git-smoke" => git(world, &mut smoke)?,
-                "--debug-smoke" => debug(world, &mut smoke)?,
+                "--term-promotion-smoke" => terminal(world, &mut smoke)?,
                 name => return Err(io::Error::other(format!("unknown smoke scenario {name}"))),
             };
             if done {
@@ -537,36 +466,22 @@ fn basic(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     Ok(false)
 }
 
-fn setting(world: &mut World, smoke: &mut Smoke, key: &str, value: Value) -> io::Result<bool> {
+fn setting(
+    world: &mut World,
+    smoke: &mut Smoke,
+    owner: &str,
+    key: &str,
+    value: Value,
+) -> io::Result<bool> {
     Ok(smoke
         .app_operation(
             world,
             crate::application::AppAction::Settings(bed_api::settings::SettingsRequest::new(
-                crate::config::settings_owner(key),
-                key,
-                value,
+                owner, key, value,
             )),
             None,
         )?
         .is_some())
-}
-
-fn effects(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
-    #[cfg(feature = "effects")]
-    {
-        if smoke.phase == 0 {
-            if setting(world, smoke, "effect_preset", json!("sharp"))? {
-                smoke.next(world);
-            }
-            return Ok(false);
-        }
-        basic(world, smoke)
-    }
-    #[cfg(not(feature = "effects"))]
-    {
-        let _ = (world, smoke);
-        Err(io::Error::other("effects smoke requires effects feature"))
-    }
 }
 
 fn appearance(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
@@ -575,14 +490,14 @@ fn appearance(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
         smoke.next(world);
     }
     let changes = [
-        ("font", json!("Paper Mono")),
-        ("fontSize", json!(24)),
-        ("theme", json!("solarized-light")),
-        ("treesitter", json!(true)),
+        ("bed.ui", "font", json!("Paper Mono")),
+        ("bed.ui", "fontSize", json!(24)),
+        ("bed.application", "theme", json!("solarized-light")),
+        ("bed.editor", "treesitter", json!(true)),
     ];
     if (1..=4).contains(&smoke.phase) {
-        let (key, value) = changes[(smoke.phase - 1) as usize].clone();
-        if setting(world, smoke, key, value)? {
+        let (owner, key, value) = changes[(smoke.phase - 1) as usize].clone();
+        if setting(world, smoke, owner, key, value)? {
             smoke.next(world);
         }
         return Ok(false);
@@ -595,16 +510,16 @@ fn appearance(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
         }
         return Ok(false);
     }
-    let entries = smoke
-        .original_settings
-        .as_object()
-        .ok_or_else(|| io::Error::other("settings fixture is not an object"))?
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect::<Vec<_>>();
     let index = (smoke.phase - 6) as usize;
-    if let Some((key, value)) = entries.get(index) {
-        if setting(world, smoke, key, value.clone())? {
+    // Restore exactly the preferences this smoke changed in their owning namespaces.
+    if let Some((owner, key, _)) = changes.get(index) {
+        if setting(
+            world,
+            smoke,
+            owner,
+            key,
+            smoke.original_settings[owner][key].clone(),
+        )? {
             smoke.next(world);
         }
         Ok(false)
@@ -635,71 +550,7 @@ fn native_window<T>(
     })
 }
 
-fn lifecycle(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
-    for event in &world.resource::<bed_desktop::DesktopInputEvents>().0 {
-        if let winit::event::WindowEvent::Focused(focused) = event.event.event {
-            smoke.saw_focus_loss |= !focused;
-            smoke.saw_focus_gain |= focused;
-        }
-    }
-    match smoke.phase {
-        0 => {
-            smoke.size = native_window(world, |w| {
-                w.focus_window();
-                let target =
-                    winit::dpi::LogicalSize::new(840., 600.).to_physical::<u32>(w.scale_factor());
-                let _ = w.request_inner_size(target);
-                [target.width, target.height]
-            })?;
-            smoke.next(world);
-        }
-        1 => {
-            if native_window(world, |w| {
-                [w.inner_size().width, w.inner_size().height] == smoke.size && w.has_focus()
-            })? && smoke.elapsed_frames(world) >= 2
-            {
-                native_window(world, |w| w.set_minimized(true))?;
-                smoke.restore_at = Some(Instant::now() + Duration::from_millis(700));
-                smoke.saw_focus_gain = false;
-                smoke.next(world);
-            }
-        }
-        2 => {
-            if Instant::now() >= smoke.restore_at.unwrap() {
-                ensure(
-                    native_window(world, |w| w.is_minimized() == Some(true))?,
-                    "native minimize not observed",
-                )?;
-                ensure(smoke.saw_focus_loss, "minimize did not report focus loss")?;
-                native_window(world, |w| {
-                    w.set_minimized(false);
-                    w.focus_window();
-                })?;
-                smoke.next(world);
-            }
-        }
-        3 => {
-            if !native_window(world, |w| w.has_focus())? {
-                native_window(world, |w| w.focus_window())?;
-            }
-            if native_window(world, |w| w.is_minimized() == Some(false) && w.has_focus())?
-                && smoke.saw_focus_gain
-                && smoke.elapsed_frames(world) >= 2
-            {
-                return basic(world, smoke);
-            }
-        }
-        _ => unreachable!(),
-    }
-    Ok(false)
-}
-
-#[cfg(any(
-    all(feature = "image-viewer", feature = "model-viewer"),
-    all(target_os = "macos", feature = "editor"),
-    feature = "git",
-    feature = "debugger"
-))]
+#[cfg(all(target_os = "macos", feature = "editor"))]
 fn fixture_workspace(world: &mut World, smoke: &mut Smoke, name: &str) -> io::Result<bool> {
     if smoke.fixture.is_none() {
         smoke.fixture = Some(Fixture::new(name)?);
@@ -721,351 +572,6 @@ fn fixture_workspace(world: &mut World, smoke: &mut Smoke, name: &str) -> io::Re
         .is_some())
 }
 
-#[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
-fn canvas(
-    world: &World,
-    panel: PanelHandle,
-) -> io::Result<(TextureHandle, bed_ui::gpu::RenderTarget)> {
-    let entity = panel_presentation(world, panel.entity())
-        .ok_or_else(|| io::Error::other("panel presentation missing"))?;
-    let handle = world
-        .get::<CanvasOutput>(entity)
-        .ok_or_else(|| io::Error::other("panel canvas output missing"))?
-        .0
-        .handle;
-    let target = world
-        .resource::<DesktopCanvasTargets>()
-        .target(handle)
-        .ok_or_else(|| io::Error::other("panel target missing"))?
-        .clone();
-    Ok((handle, target))
-}
-
-fn plugins(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
-    #[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
-    {
-        match smoke.phase {
-            0 => {
-                if fixture_workspace(world, smoke, "plugins")? {
-                    let f = smoke.fixture.as_ref().unwrap();
-                    f.write(
-                        "image.png",
-                        include_bytes!("../assets/bEd-iOS-Default-1024@1x.png"),
-                    )?;
-                    f.write("bytes.bin", [0, 255, 13, 10, 239, 187, 191, 128, 0, 1])?;
-                    f.write(
-                        "cube.glb",
-                        include_bytes!("../tests/fixtures/gltf/cube.glb"),
-                    )?;
-                    f.write(
-                        "cube.gltf",
-                        include_bytes!("../tests/fixtures/gltf/cube.gltf"),
-                    )?;
-                    smoke.gameplay = Some(world.spawn(SmokeGameplay(42)).id());
-                    smoke.next(world);
-                }
-            }
-            1 => {
-                if smoke.open(
-                    world,
-                    smoke.fixture.as_ref().unwrap().0.join("image.png"),
-                    None,
-                )? {
-                    smoke.next(world);
-                }
-            }
-            2 => {
-                let panel = smoke.panel.unwrap();
-                if smoke.ready(panel)? && smoke.elapsed_frames(world) >= 2 {
-                    let (handle, _) = canvas(world, panel)?;
-                    smoke.handle = Some(handle);
-                    if smoke
-                        .capture(
-                            world,
-                            vec![CaptureTarget::Window, CaptureTarget::Panel(panel)],
-                        )?
-                        .is_some()
-                    {
-                        smoke.other = Some(panel);
-                        smoke.next(world);
-                    }
-                }
-            }
-            3 => {
-                if smoke.open(
-                    world,
-                    smoke.fixture.as_ref().unwrap().0.join("bytes.bin"),
-                    None,
-                )? {
-                    smoke.next(world);
-                }
-            }
-            4 => {
-                ensure(
-                    smoke.panels("bed.editor.hex-panel").len() == 1,
-                    "binary not routed to hex editor",
-                )?;
-                if smoke
-                    .operation(world, Operation::FocusPanel(smoke.other.unwrap()))?
-                    .is_some()
-                {
-                    smoke.next(world);
-                }
-            }
-            5 => {
-                if smoke.elapsed_frames(world) >= 2
-                    && smoke
-                        .operation(world, Operation::ClosePanel(smoke.other.unwrap()))?
-                        .is_some()
-                {
-                    smoke.next(world);
-                }
-            }
-            6 => {
-                if (smoke.operation.is_some()
-                    || (smoke.panels("bed.image.panel").is_empty()
-                        && world
-                            .resource::<DesktopCanvasTargets>()
-                            .target(smoke.handle.unwrap())
-                            .is_none()))
-                    && smoke.open(
-                        world,
-                        smoke.fixture.as_ref().unwrap().0.join("image.png"),
-                        None,
-                    )?
-                {
-                    smoke.next(world);
-                }
-            }
-            7 => {
-                if smoke.ready(smoke.panel.unwrap())? && smoke.elapsed_frames(world) >= 2 {
-                    let (handle, _) = canvas(world, smoke.panel.unwrap())?;
-                    ensure(
-                        Some(handle) != smoke.handle,
-                        "reopened canvas reused retired handle",
-                    )?;
-                    smoke.handle = Some(handle);
-                    smoke.generation = world.resource::<DesktopGpu>().generation;
-                    destroy_device(world)?;
-                    smoke.next(world);
-                }
-            }
-            8 => {
-                if world.resource::<DesktopGpu>().generation != smoke.generation
-                    && smoke.elapsed_frames(world) >= 4
-                    && smoke.ready(smoke.panel.unwrap())?
-                {
-                    ensure(
-                        canvas(world, smoke.panel.unwrap())?.0 == smoke.handle.unwrap(),
-                        "image handle changed after replacement",
-                    )?;
-                    if smoke
-                        .capture(world, vec![CaptureTarget::Panel(smoke.panel.unwrap())])?
-                        .is_some()
-                    {
-                        smoke.next(world);
-                    }
-                }
-            }
-            9 => {
-                if smoke
-                    .operation(world, Operation::ClosePanel(smoke.panel.unwrap()))?
-                    .is_some()
-                {
-                    smoke.next(world);
-                }
-            }
-            10 => {
-                if let Some(id) = smoke.operation {
-                    // Once submitted, consume the close receipt even after the tab is gone.
-                    if smoke.poll_operation(world, id)?.is_some() {
-                        smoke.next(world);
-                    }
-                } else if let Some(panel) = smoke.panels("bed.editor.hex-panel").first().copied() {
-                    if smoke
-                        .operation(world, Operation::ClosePanel(panel))?
-                        .is_some()
-                    {
-                        smoke.next(world);
-                    }
-                } else {
-                    smoke.next(world);
-                }
-            }
-            11 => {
-                ensure(
-                    std::fs::read(smoke.fixture.as_ref().unwrap().0.join("bytes.bin"))?
-                        == [0, 255, 13, 10, 239, 187, 191, 128, 0, 1],
-                    "binary view modified disk bytes",
-                )?;
-                if smoke.open(
-                    world,
-                    smoke.fixture.as_ref().unwrap().0.join("cube.glb"),
-                    None,
-                )? {
-                    smoke.next(world);
-                }
-            }
-            12 => {
-                if smoke.ready(smoke.panel.unwrap())? && smoke.elapsed_frames(world) >= 20 {
-                    let (handle, target) = canvas(world, smoke.panel.unwrap())?;
-                    ensure(target.depth.is_some(), "model canvas lacks depth")?;
-                    smoke.handle = Some(handle);
-                    smoke.size = target.size;
-                    native_window(world, |w| {
-                        let _ = w.request_inner_size(winit::dpi::PhysicalSize::new(1800, 1200));
-                    })?;
-                    smoke.next(world);
-                }
-            }
-            13 => {
-                if smoke.ready(smoke.panel.unwrap())? && smoke.elapsed_frames(world) >= 20 {
-                    let (_, target) = canvas(world, smoke.panel.unwrap())?;
-                    ensure(target.size != smoke.size, "model output did not resize")?;
-                    smoke.size = target.size;
-                    smoke.baseline = read_target(world, &target)?;
-                    ensure(
-                        visible_pixels(&smoke.baseline) > 1000,
-                        "model render is blank",
-                    )?;
-                    smoke.entities = world
-                        .query_filtered::<Entity, Or<(
-                            With<bed_desktop::preview::PreviewView>,
-                            With<crate::application::PanelPresentations>,
-                        )>>()
-                        .iter(world)
-                        .collect();
-                    ensure(
-                        world
-                            .query::<(&bed_desktop::preview::PreviewView, &bevy::mesh::Mesh3d)>()
-                            .iter(world)
-                            .any(|(view, _)| view.0 == smoke.handle.unwrap().0),
-                        "model mesh missing",
-                    )?;
-                    smoke.generation = world.resource::<DesktopGpu>().generation;
-                    destroy_device(world)?;
-                    smoke.next(world);
-                }
-            }
-            14 => {
-                if world.resource::<DesktopGpu>().generation != smoke.generation
-                    && smoke.ready(smoke.panel.unwrap())?
-                    && smoke.elapsed_frames(world) >= 20
-                {
-                    let (handle, target) = canvas(world, smoke.panel.unwrap())?;
-                    ensure(
-                        handle == smoke.handle.unwrap()
-                            && target.size == smoke.size
-                            && target.depth.is_some(),
-                        "model output identity/extent/depth changed during recovery",
-                    )?;
-                    ensure(
-                        smoke.entities.iter().all(|e| world.entities().contains(*e))
-                            && world
-                                .get::<SmokeGameplay>(smoke.gameplay.unwrap())
-                                .is_some_and(|v| v.0 == 42),
-                        "device recovery replaced live editor/game entities",
-                    )?;
-                    compare_recovered_pixels(&smoke.baseline, &read_target(world, &target)?)?;
-                    smoke.next(world);
-                }
-            }
-            15 => {
-                if smoke
-                    .operation(world, Operation::ClosePanel(smoke.panel.unwrap()))?
-                    .is_some()
-                {
-                    smoke.next(world);
-                }
-            }
-            16 => {
-                if world
-                    .resource::<DesktopCanvasTargets>()
-                    .target(smoke.handle.unwrap())
-                    .is_none()
-                    && smoke.open(
-                        world,
-                        smoke.fixture.as_ref().unwrap().0.join("cube.gltf"),
-                        None,
-                    )?
-                {
-                    smoke.next(world);
-                }
-            }
-            17 => {
-                if smoke
-                    .app_operation(
-                        world,
-                        crate::application::AppAction::SwitchViewer {
-                            panel: bed_plugin_automation::resolve_panel(
-                                world,
-                                smoke.panel.unwrap(),
-                            )
-                            .map_err(io::Error::other)?,
-                            viewer: "bed.gltf.viewer".into(),
-                        },
-                        Some(smoke.panel.unwrap().entity()),
-                    )?
-                    .is_some()
-                {
-                    smoke.next(world);
-                }
-            }
-            18 => {
-                if smoke.ready(smoke.panel.unwrap())? && smoke.elapsed_frames(world) >= 20 {
-                    let (handle, _) = canvas(world, smoke.panel.unwrap())?;
-                    smoke.handle = Some(handle);
-                    if smoke
-                        .capture(world, vec![CaptureTarget::Panel(smoke.panel.unwrap())])?
-                        .is_some()
-                    {
-                        smoke.next(world);
-                    }
-                }
-            }
-            19 => {
-                if smoke
-                    .operation(world, Operation::ClosePanel(smoke.panel.unwrap()))?
-                    .is_some()
-                {
-                    smoke.next(world);
-                }
-            }
-            20 => {
-                return Ok(smoke.panels("bed.gltf.panel").is_empty()
-                    && world
-                        .resource::<DesktopCanvasTargets>()
-                        .target(smoke.handle.unwrap())
-                        .is_none());
-            }
-            _ => unreachable!(),
-        }
-        Ok(false)
-    }
-    #[cfg(not(all(feature = "image-viewer", feature = "model-viewer")))]
-    {
-        let _ = (world, smoke);
-        Err(io::Error::other("plugin smoke requires images/models"))
-    }
-}
-
-#[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
-fn destroy_device(world: &World) -> io::Result<()> {
-    let device = &world.resource::<DesktopGpu>().device;
-    // The desktop renders on this thread. Complete submitted work and deliver
-    // its readback callbacks before deliberately destroying the device: an
-    // already successful map must be consumed while its buffer is still live.
-    device
-        .poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: Some(Duration::from_secs(10)),
-        })
-        .map_err(io::Error::other)?;
-    device.destroy();
-    let _ = device.poll(wgpu::PollType::Poll);
-    Ok(())
-}
-
 fn visible_pixels(pixels: &[u8]) -> usize {
     pixels
         .as_chunks::<4>()
@@ -1075,101 +581,7 @@ fn visible_pixels(pixels: &[u8]) -> usize {
         .count()
 }
 
-#[cfg(any(test, all(feature = "image-viewer", feature = "model-viewer")))]
-fn compare_recovered_pixels(before: &[u8], after: &[u8]) -> io::Result<()> {
-    ensure(
-        before.len() == after.len(),
-        "recovered model pixel extent differs",
-    )?;
-    let count = visible_pixels(before);
-    ensure(
-        count > 1000 && visible_pixels(after) >= count * 3 / 4,
-        "recovered model is blank",
-    )?;
-    let difference = before
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(after.as_chunks::<4>().0.iter())
-        .filter(|(p, _)| p[..3].iter().any(|v| *v > 20))
-        .map(|(a, b)| {
-            a[..3]
-                .iter()
-                .zip(&b[..3])
-                .map(|(a, b)| u64::from(a.abs_diff(*b)))
-                .sum::<u64>()
-        })
-        .sum::<u64>();
-    ensure(
-        difference <= count as u64 * 3 * 8,
-        format!("recovered model differs from baseline ({difference} across {count} pixels)"),
-    )
-}
-
-#[cfg(all(feature = "image-viewer", feature = "model-viewer"))]
-fn read_target(world: &World, target: &bed_ui::gpu::RenderTarget) -> io::Result<Vec<u8>> {
-    let gpu = world.resource::<DesktopGpu>();
-    let row = target.size[0] * 4;
-    let stride = row.div_ceil(256) * 256;
-    let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("native smoke readback"),
-        size: u64::from(stride) * u64::from(target.size[1]),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let mut encoder = gpu
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-    encoder.copy_texture_to_buffer(
-        target.texture.as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(stride),
-                rows_per_image: Some(target.size[1]),
-            },
-        },
-        wgpu::Extent3d {
-            width: target.size[0],
-            height: target.size[1],
-            depth_or_array_layers: 1,
-        },
-    );
-    gpu.queue.submit([encoder.finish()]);
-    let (tx, rx) = std::sync::mpsc::channel();
-    buffer
-        .slice(..)
-        .map_async(wgpu::MapMode::Read, move |result| {
-            let _ = tx.send(result);
-        });
-    gpu.device
-        .poll(wgpu::PollType::Wait {
-            timeout: Some(Duration::from_secs(10)),
-            submission_index: None,
-        })
-        .map_err(io::Error::other)?;
-    rx.recv_timeout(Duration::from_secs(10))
-        .map_err(io::Error::other)?
-        .map_err(io::Error::other)?;
-    let data = buffer
-        .slice(..)
-        .get_mapped_range()
-        .map_err(io::Error::other)?;
-    let pixels = data
-        .chunks_exact(stride as usize)
-        .flat_map(|row_bytes| row_bytes[..row as usize].iter().copied())
-        .collect();
-    drop(data);
-    buffer.unmap();
-    Ok(pixels)
-}
-
-#[cfg(any(
-    all(target_os = "macos", feature = "editor"),
-    feature = "git",
-    feature = "terminal"
-))]
+#[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
 fn binding(world: &World, panel: PanelHandle) -> io::Result<PanelBinding> {
     let entity = panel_presentation(world, panel.entity())
         .ok_or_else(|| io::Error::other("presentation missing"))?;
@@ -1253,12 +665,18 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
             }
         }
         2 => {
-            if setting(world, smoke, "autosave", json!(true))? {
+            if setting(world, smoke, "bed.documents", "autosave", json!(true))? {
                 smoke.next(world);
             }
         }
         3 => {
-            if setting(world, smoke, "autosave_delay_ms", json!(100))? {
+            if setting(
+                world,
+                smoke,
+                "bed.documents",
+                "autosave_delay_ms",
+                json!(100),
+            )? {
                 smoke.next(world);
             }
         }
@@ -1382,17 +800,25 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                         world,
                         MenuAction::UseLayout(crate::config::LayoutSlot::Layout1),
                     )?;
-                    crate::application::process_app_requests(world)?;
-                    crate::app::smoke_native_menu(world, MenuAction::SetCurrentLayout)?;
-                    crate::app::smoke_native_menu(
-                        world,
-                        MenuAction::SetLayoutDefault(crate::config::LayoutSlot::Startup),
-                    )?;
                     smoke.next(world);
                 }
             }
         }
         14 => {
+            // Native dispatch is admitted on the next frame. Saving must capture
+            // the selected slot after the layout transition has completed.
+            if world.resource::<crate::application::LayoutSlots>().active()
+                == crate::config::LayoutSlot::Layout1
+            {
+                crate::app::smoke_native_menu(world, MenuAction::SetCurrentLayout)?;
+                crate::app::smoke_native_menu(
+                    world,
+                    MenuAction::SetLayoutDefault(crate::config::LayoutSlot::Startup),
+                )?;
+                smoke.next(world);
+            }
+        }
+        15 => {
             if smoke.elapsed_frames(world) >= 2 {
                 let store = &world
                     .non_send::<crate::application::WorkspacePersistence>()
@@ -1406,7 +832,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                     "Set Other Layout did not save the Startup template",
                 )?;
                 ensure(
-                    default["version"] == 1
+                    default["version"] == 2
                         && default["panels"].as_array().is_some_and(|panels| {
                             !panels.is_empty()
                                 && panels.iter().all(|p| {
@@ -1426,7 +852,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 smoke.next(world);
             }
         }
-        15 => {
+        16 => {
             if smoke.elapsed_frames(world) >= 2 {
                 ensure(
                     world
@@ -1450,7 +876,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 smoke.next(world);
             }
         }
-        16 => {
+        17 => {
             if !native_window(world, |window| window.has_focus())? {
                 crate::app::smoke_focus_window(world);
             } else {
@@ -1458,7 +884,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 smoke.next(world);
             }
         }
-        17 => {
+        18 => {
             if smoke.elapsed_frames(world) >= 8 {
                 let panels = crate::application::active_panel_entities(world);
                 ensure(
@@ -1507,7 +933,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 smoke.next(world);
             }
         }
-        18 => {
+        19 => {
             if smoke.elapsed_frames(world) >= 3 {
                 ensure(
                     crate::application::active_panel_entities(world) == smoke.entities,
@@ -1520,7 +946,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 smoke.next(world);
             }
         }
-        19 => {
+        20 => {
             if smoke.elapsed_frames(world) >= 3 {
                 ensure(
                     world.resource::<crate::application::LayoutSlots>().active()
@@ -1539,7 +965,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 smoke.next(world);
             }
         }
-        20 => {
+        21 => {
             if smoke.elapsed_frames(world) >= 8 {
                 ensure(
                     crate::application::active_panel_entities(world) == smoke.entities,
@@ -1552,7 +978,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 smoke.next(world);
             }
         }
-        21 => {
+        22 => {
             if smoke.elapsed_frames(world) >= 3 {
                 ensure(
                     world.resource::<crate::application::LayoutSlots>().active()
@@ -1561,11 +987,13 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 )?;
                 let panels = crate::application::active_panel_entities(world);
                 ensure(
-                    panels.len() == 1
-                        && world
-                            .get::<bed_workbench::PanelRecord>(panels[0])
-                            .is_some_and(|panel| panel.panel_type == "bed.workspaces.panel"),
-                    "Startup did not restore the built-in Workspaces panel",
+                    panels.contains(&smoke.panel.unwrap().entity())
+                        && panels.iter().any(|panel| {
+                            world
+                                .get::<bed_workbench::PanelRecord>(*panel)
+                                .is_some_and(|panel| panel.panel_type == "bed.workspaces.panel")
+                        }),
+                    "Startup did not retain its document and Workspaces panels",
                 )?;
                 crate::app::smoke_native_menu(
                     world,
@@ -1574,7 +1002,7 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 smoke.next(world);
             }
         }
-        22 => {
+        23 => {
             if smoke.elapsed_frames(world) >= 8 {
                 ensure(
                     crate::application::active_panel_entities(world) == smoke.entities,
@@ -1668,12 +1096,18 @@ fn platform(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
             }
         }
         4 => {
-            if setting(world, smoke, "background_opacity", json!(0.35))? {
+            if setting(world, smoke, "bed.ui", "background_opacity", json!(0.35))? {
                 smoke.next(world);
             }
         }
         5 => {
-            if setting(world, smoke, "mac_blur_enabled", json!(false))? {
+            if setting(
+                world,
+                smoke,
+                "bed.application",
+                "mac_blur_enabled",
+                json!(false),
+            )? {
                 smoke.next(world);
             }
         }
@@ -1709,8 +1143,9 @@ fn platform(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
             if setting(
                 world,
                 smoke,
+                "bed.ui",
                 "background_opacity",
-                smoke.original_settings["background_opacity"].clone(),
+                smoke.original_settings["bed.ui"]["background_opacity"].clone(),
             )? {
                 smoke.next(world);
             }
@@ -1719,8 +1154,9 @@ fn platform(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
             if setting(
                 world,
                 smoke,
+                "bed.application",
                 "mac_blur_enabled",
-                smoke.original_settings["mac_blur_enabled"].clone(),
+                smoke.original_settings["bed.application"]["mac_blur_enabled"].clone(),
             )? {
                 for action in [
                     MenuAction::NewExplorer,
@@ -1826,272 +1262,9 @@ fn platform(_: &mut World, _: &mut Smoke) -> io::Result<bool> {
     Err(io::Error::other("platform smoke requires macOS/editor"))
 }
 
-#[cfg(feature = "git")]
-fn git(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
-    match smoke.phase {
-        0 => {
-            if smoke.fixture.is_none() {
-                let fixture = Fixture::new("git")?;
-                fixture.write("main.rs",b"fn greeting(name: &str) {\n    println!(\"Hello, {name}!\");\n}\n\nfn main() {\n    greeting(\"world\");\n}\n")?;
-                for args in [
-                    vec!["init", "-q"],
-                    vec!["config", "user.name", "bEd Smoke"],
-                    vec!["config", "user.email", "smoke@example.invalid"],
-                    vec!["config", "core.hooksPath", ".git/hooks"],
-                    vec!["add", "main.rs"],
-                    vec!["-c", "commit.gpgsign=false", "commit", "-qm", "Initial"],
-                ] {
-                    let output = std::process::Command::new("git")
-                        .current_dir(&fixture.0)
-                        .args(args)
-                        .output()?;
-                    ensure(
-                        output.status.success(),
-                        String::from_utf8_lossy(&output.stderr),
-                    )?;
-                }
-                fixture.write("main.rs",b"fn greeting(name: &str) {\n    println!(\"Welcome, {name}!\");\n}\n\nfn main() {\n    greeting(\"world\");\n}\n")?;
-                ensure(
-                    std::process::Command::new("git")
-                        .current_dir(&fixture.0)
-                        .args(["add", "main.rs"])
-                        .status()?
-                        .success(),
-                    "git stage fixture failed",
-                )?;
-                fixture.write("main.rs",b"fn greeting(name: &str) {\n    println!(\"Welcome, {name}!\");\n}\n\nfn main() {\n    let name = \"bEd\";\n    greeting(name);\n}\n")?;
-                fixture.write("notes.txt", b"A new file, ready to stage.\n")?;
-                smoke.fixture = Some(fixture);
-            }
-            if fixture_workspace(world, smoke, "git")? {
-                smoke.next(world);
-            }
-        }
-        1 => {
-            if smoke.open(
-                world,
-                smoke.fixture.as_ref().unwrap().0.join("main.rs"),
-                None,
-            )? {
-                smoke.next(world);
-            }
-        }
-        2 => {
-            if smoke
-                .operation(
-                    world,
-                    Operation::InvokeCommand {
-                        command: bed_plugin_git::SHOW_COMMAND.into(),
-                        source: smoke.panel,
-                        arguments: Value::Null,
-                    },
-                )?
-                .is_some()
-            {
-                smoke.next(world);
-            }
-        }
-        3 | 4 => {
-            let side = if smoke.phase == 3 {
-                "staged"
-            } else {
-                "unstaged"
-            };
-            if let Some(OperationValue::Opened(panel)) = smoke.operation(
-                world,
-                Operation::OpenPanel {
-                    panel_type: bed_plugin_git::DIFF_PANEL_ID.into(),
-                    state: json!({"path":"main.rs","side":side}),
-                    area: None,
-                },
-            )? {
-                if smoke.phase == 3 {
-                    smoke.other = Some(panel);
-                } else {
-                    smoke.panel = Some(panel);
-                }
-                smoke.next(world);
-            }
-        }
-        5 => {
-            if smoke.ready(smoke.panel.unwrap())? && smoke.ready(smoke.other.unwrap())? {
-                ensure(
-                    smoke.panels(bed_plugin_git::DIFF_PANEL_ID).len() == 2,
-                    "Git comparisons did not load both sides",
-                )?;
-                if smoke
-                    .operation(world, Operation::FocusPanel(smoke.panel.unwrap()))?
-                    .is_some()
-                {
-                    smoke.next(world);
-                }
-            }
-        }
-        6 => {
-            let staged = binding(world, smoke.other.unwrap())?
-                .document
-                .ok_or_else(|| io::Error::other("staged comparison has no document"))?;
-            let working = binding(world, smoke.panel.unwrap())?
-                .document
-                .ok_or_else(|| io::Error::other("working comparison has no document"))?;
-            {
-                let session = world.non_send::<bed_documents::DocumentSession>();
-                ensure(
-                    session.is_snapshot_document(staged) && !session.is_snapshot_document(working),
-                    "Git comparisons did not retain read-only index and editable working documents",
-                )?;
-                let staged_bytes = session.snapshot(staged)?.bytes;
-                let working_bytes = session.snapshot(working)?.bytes;
-                ensure(
-                    staged_bytes
-                        .windows(b"Welcome".len())
-                        .any(|bytes| bytes == b"Welcome")
-                        && !staged_bytes
-                            .windows(b"let name".len())
-                            .any(|bytes| bytes == b"let name")
-                        && working_bytes
-                            .windows(b"let name = \"bEd\"".len())
-                            .any(|bytes| bytes == b"let name = \"bEd\""),
-                    "Git comparisons displayed the wrong revisions",
-                )?;
-            }
-            if let Some(frame) = smoke.capture(
-                world,
-                vec![
-                    CaptureTarget::Window,
-                    CaptureTarget::Panel(smoke.panel.unwrap()),
-                ],
-            )? {
-                ensure(
-                    visible_pixels(&frame.images[1].rgba.pixels) > 1000,
-                    "Git comparison render is blank",
-                )?;
-                return Ok(true);
-            }
-        }
-        _ => unreachable!(),
-    }
-    Ok(false)
-}
-
-#[cfg(not(feature = "git"))]
-fn git(_: &mut World, _: &mut Smoke) -> io::Result<bool> {
-    Err(io::Error::other("Git smoke requires git feature"))
-}
-
-#[cfg(feature = "debugger")]
-fn debug(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
-    match smoke.phase {
-        0 => {
-            if fixture_workspace(world, smoke, "debug")? {
-                smoke.fixture.as_ref().unwrap().write("main.rs",b"fn main() {\n    let number = 42;\n    println!(\"debug smoke {number}\");\n}\n")?;
-                smoke.next(world);
-            }
-        }
-        1 => {
-            if smoke.open(
-                world,
-                smoke.fixture.as_ref().unwrap().0.join("main.rs"),
-                None,
-            )? {
-                smoke.next(world);
-            }
-        }
-        2 => {
-            let root = &smoke.fixture.as_ref().unwrap().0;
-            let executable = root.join("debug-fixture");
-            let profile = bed_debugger::DebugProfile {
-                name: "Native smoke".into(),
-                program: executable.to_string_lossy().into_owned(),
-                build_command: format!(
-                    "rustc -g --edition=2024 main.rs -o '{}'",
-                    executable.display()
-                ),
-                cwd: root.to_string_lossy().into_owned(),
-                stop_on_entry: true,
-                ..default()
-            };
-            {
-                let mut debugger = world.non_send_mut::<bed_plugin_debugger::DebugState>();
-                debugger.0.profiles = vec![profile];
-                debugger.0.selected = 0;
-            }
-            smoke.next(world);
-        }
-        3 => {
-            if smoke
-                .operation(
-                    world,
-                    Operation::InvokeCommand {
-                        command: bed_plugin_debugger::BREAKPOINT_COMMAND.into(),
-                        source: smoke.panel,
-                        arguments: Value::Null,
-                    },
-                )?
-                .is_some()
-            {
-                smoke.next(world);
-            }
-        }
-        4 => {
-            if smoke
-                .operation(
-                    world,
-                    Operation::InvokeCommand {
-                        command: bed_plugin_debugger::START_COMMAND.into(),
-                        source: smoke.panel,
-                        arguments: Value::Null,
-                    },
-                )?
-                .is_some()
-            {
-                smoke.next(world);
-            }
-        }
-        5 => {
-            if world
-                .non_send::<bed_plugin_debugger::DebugState>()
-                .0
-                .debug_smoke_ready()?
-            {
-                crate::app::smoke_focus_window(world);
-                smoke.next(world);
-            }
-        }
-        6 => {
-            if smoke.capture(world, vec![CaptureTarget::Window])?.is_some() {
-                smoke.next(world);
-            }
-        }
-        7 => {
-            if smoke
-                .operation(
-                    world,
-                    Operation::InvokeCommand {
-                        command: bed_plugin_debugger::STOP_COMMAND.into(),
-                        source: smoke.panel,
-                        arguments: Value::Null,
-                    },
-                )?
-                .is_some()
-            {
-                return Ok(true);
-            }
-        }
-        _ => unreachable!(),
-    }
-    Ok(false)
-}
-
-#[cfg(not(feature = "debugger"))]
-fn debug(_: &mut World, _: &mut Smoke) -> io::Result<bool> {
-    Err(io::Error::other("debug smoke requires debug feature"))
-}
-
 #[cfg(feature = "terminal")]
 fn terminal(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     use bed_terminal::bed_terminal::BedTerminal;
-    let promotion = smoke.name() == "--term-promotion-smoke";
     match smoke.phase {
         0 => {
             if smoke.fixture.is_none() {
@@ -2311,9 +1484,6 @@ fn terminal(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 )?
             {
                 verify_terminal_capture(&frame, smoke.panel.unwrap())?;
-                if !promotion {
-                    return Ok(true);
-                }
                 let terminal = world.non_send::<BedTerminal>();
                 smoke.terminal_ids = terminal
                     .session_ids()
@@ -2549,14 +1719,6 @@ fn terminal(_: &mut World, _: &mut Smoke) -> io::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn model_recovery_requires_visible_similar_pixels() {
-        let pixels = [80u8, 60, 40, 255].repeat(1024);
-        compare_recovered_pixels(&pixels, &pixels).unwrap();
-        assert!(compare_recovered_pixels(&pixels, &[0u8; 4096]).is_err());
-        assert!(compare_recovered_pixels(&pixels, &[255u8; 4096]).is_err());
-        assert!(compare_recovered_pixels(&pixels, &pixels[..4092]).is_err());
-    }
     #[cfg(feature = "terminal")]
     #[test]
     fn shell_input_separates_committed_unicode_text_and_enter_frames() {

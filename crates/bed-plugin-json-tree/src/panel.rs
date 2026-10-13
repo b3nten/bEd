@@ -209,7 +209,7 @@ impl JsonPanel {
         if let Some(menu) = host.viewer_menu
             && let Some(viewer) = menu.choices.iter().find(|viewer| viewer.text_editor)
         {
-            requests.push(HostAction::SwitchViewer {
+            requests.push(HostAction::OpenDocumentViewer {
                 tab: menu.tab,
                 document: self.document,
                 viewer: viewer.id.clone(),
@@ -324,7 +324,7 @@ impl JsonPanel {
         ui.separator();
         if let Some(error) = &self.error {
             ui.text_wrapped(error);
-            if ui.button("Edit as Text") {
+            if ui.button("Open in Text Editor") {
                 self.edit_as_text(host, requests);
             }
         } else if self.updating {

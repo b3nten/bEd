@@ -85,7 +85,7 @@ fn create_editor(world: &mut World, creation: PanelCreation, hex: bool) -> Panel
     let mut notes = if hex {
         bed_api::workbench::PanelDocumentation::new(&[
             ("Bytes", "Inspect and edit bytes in hexadecimal or text. Select a range to copy it; Toggle Insert Mode switches between inserting and replacing bytes."),
-            ("Views", "The viewer menu switches between text and hex presentations of the same document."),
+            ("Views", "The viewer menu opens another tab for a compatible viewer of the same document."),
         ]).shortcut_actions(&[
             "bed.editor.delete_left", "bed.editor.delete_right",
             "bed.navigation.move_left", "bed.navigation.move_right", "bed.navigation.move_up", "bed.navigation.move_down",

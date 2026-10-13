@@ -1,8 +1,8 @@
 //! The game shares this Bevy World with the editor. This adapter owns output
 //! attachments and input admission; the game has no knowledge of its panels.
-use bed_app::{api::workbench::*, bed_core, bed_desktop, ui as bed_ui};
 use bed_desktop::{DesktopCapture, DesktopSystems};
 use bed_example_game::{ExampleGamePlugin, GameCamera, GameExecution, GameProgress};
+use bed_launch::{api::workbench::*, bed_core, bed_desktop, ui as bed_ui};
 use bed_ui::{TextureHandle, gpu::*};
 use bevy::{
     camera::{ManualTextureViewHandle, RenderTarget as CameraTarget},
@@ -10,10 +10,14 @@ use bevy::{
     render::texture::{ManualTextureView, ManualTextureViews},
 };
 use serde_json::{Value, json};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 const PANEL: &str = "example.game.viewport";
 const VIEW: ManualTextureViewHandle = ManualTextureViewHandle(u32::MAX - 1);
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Debug)]
 struct ViewportInput {
     drawn: bool,
     keyboard: bool,
@@ -204,38 +208,38 @@ fn start(world: &mut World) {
 }
 fn main() -> std::io::Result<()> {
     let smoke_test = std::env::args().any(|arg| arg == "--smoke-test");
-    let launch =
-        match bed_app::Application::new("example.game.editor", "Game editor — same Bevy World")?
-            .dispatch(std::env::args_os())?
-        {
-            bed_app::LaunchOutcome::Desktop(launch) => *launch,
-            bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
-        };
+    let launch = match bed_launch::builder("example.game.editor", "Game editor — same Bevy World")?
+        .dispatch()?
+    {
+        bed_launch::LaunchOutcome::Desktop(launch) => *launch,
+        bed_launch::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+    };
     let mut theme = bed_ui::appearance::UiTheme::default();
     // Pixel assertions inspect viewport content independently of opening motion.
     theme.motion.enabled = !smoke_test;
-    let launch = launch
-        .options(bed_desktop::DesktopPlugins {
+    let options = bed_launch::DesktopOptions {
+        desktop: bed_desktop::DesktopPlugins {
             window: Window {
                 title: "Game editor — same Bevy World".into(),
                 resolution: (1000, 700).into(),
                 ..default()
             },
             ..default()
-        })
-        .theme(theme);
-    let launch = if smoke_test {
-        launch.config_directory(
-            std::env::temp_dir().join(format!("bed-game-editor-proof-{}", std::process::id())),
-        )
-    } else {
-        launch
+        },
+        theme: Some(theme),
+        config_directory: smoke_test.then(|| {
+            std::env::temp_dir().join(format!("bed-game-editor-proof-{}", std::process::id()))
+        }),
+        ..Default::default()
     };
-    let exit = launch.run(|app| {
+    let verified = Arc::<AtomicBool>::default();
+    let exit = launch.run(options, |app| {
         app.add_plugins((ExampleGamePlugin, GameEditorPlugin));
         if smoke_test {
             app.insert_resource(Smoke {
+                verified: Arc::clone(&verified),
                 phase: 0,
+                logged_phase: None,
                 ticks: 0,
                 camera: None,
                 started: std::time::Instant::now(),
@@ -247,6 +251,12 @@ fn main() -> std::io::Result<()> {
         }
         Ok(())
     })?;
+    if smoke_test {
+        assert!(
+            verified.load(Ordering::SeqCst),
+            "game editor smoke exited before completing its assertions"
+        );
+    }
     if exit.is_error() {
         return Err(std::io::Error::other("Game editor exited with an error"));
     }
@@ -255,7 +265,9 @@ fn main() -> std::io::Result<()> {
 
 #[derive(Resource)]
 struct Smoke {
+    verified: Arc<AtomicBool>,
     phase: u8,
+    logged_phase: Option<u8>,
     ticks: u64,
     camera: Option<Entity>,
     started: std::time::Instant,
@@ -278,18 +290,46 @@ fn player_pixels(pixels: &[u8]) -> usize {
         .count()
 }
 fn smoke(world: &mut World) {
-    assert!(
-        world.resource::<Smoke>().started.elapsed() < std::time::Duration::from_secs(30),
-        "game editor smoke timed out"
-    );
+    let phase = world.resource::<Smoke>().phase;
     let frames = world
         .resource::<bed_desktop::DesktopRenderStatus>()
         .read()
         .completed_frames;
+    if world.resource::<Smoke>().logged_phase != Some(phase) {
+        eprintln!(
+            "game editor smoke phase {phase}, presented {frames}, viewport {:?}",
+            world.resource::<ViewportInput>()
+        );
+        world.resource_mut::<Smoke>().logged_phase = Some(phase);
+    }
+    if world.resource::<Smoke>().started.elapsed() >= std::time::Duration::from_secs(30) {
+        let status = world.resource::<bed_desktop::DesktopRenderStatus>().read();
+        let info = world.resource::<bed_desktop::DesktopFrameInfo>();
+        panic!(
+            "game editor smoke timed out in phase {phase}: presented {frames}, UI {}, GPU {}, recovering {}, recoveries {}, error {:?}, capture {:?}, viewport {:?}",
+            info.frame.0,
+            info.generation,
+            status.recovering,
+            status.recoveries,
+            status.error,
+            world.resource::<Smoke>().capture,
+            world.resource::<ViewportInput>()
+        );
+    }
     if frames < 8 {
+        let primary = world
+            .query_filtered::<Entity, With<bevy::window::PrimaryWindow>>()
+            .single(world)
+            .unwrap();
+        bevy::winit::WINIT_WINDOWS.with(|windows| {
+            if let Some(window) = windows.borrow().get_window(primary)
+                && !window.has_focus()
+            {
+                window.focus_window();
+            }
+        });
         return;
     }
-    let phase = world.resource::<Smoke>().phase;
     match phase {
         0 => {
             assert!(world.contains_resource::<bed_desktop::BedMemoryAssets>());
@@ -352,7 +392,15 @@ fn smoke(world: &mut World) {
             result.unwrap();
             assert!(
                 world.resource::<GameProgress>().position.y > 0.0,
-                "focused viewport must admit ordinary Bevy keyboard input"
+                "focused viewport must admit ordinary Bevy keyboard input; admission {:?}, capture {:?}, layout focus {:?}",
+                world.resource::<ViewportInput>(),
+                (
+                    world.resource::<DesktopCapture>().keyboard,
+                    world.resource::<DesktopCapture>().pointer
+                ),
+                world
+                    .resource::<bed_core::bed_workbench::WorkbenchLayout>()
+                    .focused
             );
             assert!(
                 !world
@@ -509,6 +557,10 @@ fn smoke(world: &mut World) {
             println!(
                 "Game editor smoke passed: same world, admitted keyboard/relative mouse, panel close/reopen/resize, pause and recovered viewport pixels"
             );
+            world
+                .resource::<Smoke>()
+                .verified
+                .store(true, Ordering::SeqCst);
             world.write_message(AppExit::Success);
             world.resource_mut::<Smoke>().phase = 9;
         }

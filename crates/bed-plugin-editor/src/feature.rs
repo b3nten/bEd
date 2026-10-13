@@ -58,7 +58,12 @@ impl Plugin for EditorPlugin {
             .init_non_send::<bed_editor_widgets::source_intents::SourceRequests>();
         app.init_resource::<HostEffects>()
             .init_resource::<bed_api::features::FeatureRegistry>()
-            .add_systems(PreUpdate, prepare.in_set(FeatureSystems::Prepare))
+            .add_systems(
+                PreUpdate,
+                (configure_preferences, prepare)
+                    .chain()
+                    .in_set(FeatureSystems::Prepare),
+            )
             .add_systems(
                 Last,
                 (retire_views, shutdown.after(bevy::app::OnAppExitSystems)),
@@ -445,7 +450,9 @@ fn clipboard_operation(
                 if view.read_only()
                     && matches!(
                         invocation.action,
-                        ClipboardAction::Cut | ClipboardAction::Paste(_)
+                        ClipboardAction::Cut
+                            | ClipboardAction::Paste(_)
+                            | ClipboardAction::PasteFromClipboard(_)
                     )
                 {
                     return Ok(None);
@@ -457,10 +464,12 @@ fn clipboard_operation(
                     ClipboardAction::Cut => {
                         Some(String::from_utf8_lossy(&commands.cut()).into_owned())
                     }
-                    ClipboardAction::Paste(text) => {
+                    ClipboardAction::Paste(text)
+                    | ClipboardAction::PasteFromClipboard(Some(text)) => {
                         commands.paste(text.as_bytes());
                         None
                     }
+                    ClipboardAction::PasteFromClipboard(None) => None,
                     ClipboardAction::SelectAll => {
                         commands.select_all();
                         None
@@ -472,7 +481,11 @@ fn clipboard_operation(
                 match invocation.action {
                     ClipboardAction::Copy => editor.copy_text(session).map(Some),
                     ClipboardAction::Cut => editor.cut_text(session).map(Some),
-                    ClipboardAction::Paste(text) => editor.paste_text(session, &text).map(|_| None),
+                    ClipboardAction::Paste(text)
+                    | ClipboardAction::PasteFromClipboard(Some(text)) => {
+                        editor.paste_text(session, &text).map(|_| None)
+                    }
+                    ClipboardAction::PasteFromClipboard(None) => Ok(None),
                     ClipboardAction::SelectAll => editor.select_all(session).map(|_| None),
                 }
             }
@@ -772,6 +785,45 @@ mod tests {
         app.world_mut().insert_non_send(EditorRuntime::default());
         app.add_plugins((WorkbenchPlugin, EditorPlugin));
         app
+    }
+
+    #[test]
+    fn registered_preferences_configure_editor_and_document_services_without_bed() {
+        let mut app = app();
+        app.insert_resource(bed_api::settings::SettingsSnapshot {
+            settings: json!({
+                "bed.editor": {
+                    "word_wrap": false, "minimap": false, "rainbow": false,
+                    "cursor_smear": false, "lsp_autocomplete": false,
+                    "lsp_completion_delay_ms": 420.0,
+                    "git_changed_lines": false, "treesitter": false,
+                },
+                "bed.ui": { "ui_animations": false },
+            }),
+            ..Default::default()
+        });
+        app.update();
+        let editor = app.world().non_send::<EditorConfig>();
+        assert!(!editor.options.soft_wrap);
+        assert!(!editor.options.minimap_enabled);
+        assert!(!editor.options.rainbow_mode);
+        assert!(!editor.options.cursor_smear);
+        assert!(!editor.navigation_animations);
+        assert!(!editor.lsp.autocomplete);
+        assert_eq!(editor.lsp.completion_delay_ms, 420);
+        let session = app.world().non_send::<DocumentSession>();
+        assert!(!session.options().git);
+        assert!(!session.options().highlighting);
+        app.world_mut()
+            .resource_mut::<bed_api::settings::SettingsSnapshot>()
+            .settings[MODULE_ID]["git_changed_lines"] = json!(true);
+        app.world_mut()
+            .resource_mut::<bed_api::settings::SettingsSnapshot>()
+            .settings[MODULE_ID]["treesitter"] = json!(true);
+        app.update();
+        let session = app.world().non_send::<DocumentSession>();
+        assert!(session.options().git);
+        assert!(session.options().highlighting);
     }
 
     fn open(app: &mut App, panel_type: &str) -> Entity {

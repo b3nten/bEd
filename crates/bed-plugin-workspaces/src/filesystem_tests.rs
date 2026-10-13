@@ -1,7 +1,10 @@
 use super::*;
-use crate::application::test_support::TempDir;
-use bed_plugin_workspaces::WorkspaceRepository;
+#[path = "../../../tests/support/temp_dir.rs"]
+#[allow(dead_code)]
+mod test_support;
+use crate::WorkspaceRepository;
 use bed_storage::{StateScope, StateStore};
+use test_support::TempDir;
 
 fn paths(temp: &TempDir) -> ApplicationPaths {
     ApplicationPaths::new("fixture", Some(temp.path("config")), None).unwrap()
@@ -21,8 +24,8 @@ fn remote(host: &str, root: &str) -> WorkspaceSpec {
 fn layout(label: &str) -> Value {
     json!({"version":2,"panels":[],"label":label})
 }
-fn snapshot(slot: LayoutSlot, plugins: Value) -> bed_plugin_workspaces::WorkspaceSnapshot {
-    bed_plugin_workspaces::WorkspaceSnapshot {
+fn snapshot(slot: LayoutSlot, plugins: Value) -> crate::WorkspaceSnapshot {
+    crate::WorkspaceSnapshot {
         layouts: json!({"layouts":{slot.key():layout(slot.key())},"active_layout_slot":slot.to_value()}),
         plugins,
     }

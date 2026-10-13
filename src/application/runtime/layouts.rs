@@ -29,6 +29,13 @@ pub(super) fn load(world: &mut World) -> io::Result<Option<Value>> {
     let value = snapshot.layouts;
     let active = LayoutSlot::from_value(&value["active_layout_slot"])
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid active layout slot"))?;
+    // Startup belongs to a window without a selected directory, even if an older
+    // workspace snapshot saved it as the active slot.
+    let active = if active == LayoutSlot::Startup {
+        LayoutSlot::Layout1
+    } else {
+        active
+    };
     let saved = value["layouts"]
         .as_object()
         .ok_or_else(|| {
@@ -52,6 +59,30 @@ pub(super) fn initialize(world: &mut World, slot: LayoutSlot) -> io::Result<()> 
     Ok(())
 }
 
+/// A temporary directory also leaves Startup, preserving its open document tabs.
+pub(super) fn enter_directory(world: &mut World) -> io::Result<()> {
+    if world.resource::<LayoutSlots>().active() != LayoutSlot::Startup {
+        return Ok(());
+    }
+    let launchers = active_panel_entities(world)
+        .into_iter()
+        .filter(|panel| {
+            world
+                .get::<PanelRecord>(*panel)
+                .is_some_and(|record| record.panel_type == "bed.workspaces.panel")
+        })
+        .collect::<Vec<_>>();
+    retire_panels(world, &launchers)?;
+    let live = world.resource_mut::<LayoutSlots>().take_live();
+    world
+        .resource_mut::<LayoutSlots>()
+        .select(LayoutSlot::Layout1);
+    restore_directory_layout(world, live, None)?;
+    bed_workbench::invalidate_layout_frontend(world);
+    bed_workbench::advance_layout_epoch(world);
+    Ok(())
+}
+
 /// Attachment keeps standalone panels and processes, but adopts workspace slots.
 pub(super) fn attach(world: &mut World, terminal: Option<Entity>) -> io::Result<()> {
     let mut live = world.resource::<LayoutSlots>().live().clone();
@@ -67,11 +98,18 @@ pub(super) fn attach(world: &mut World, terminal: Option<Entity>) -> io::Result<
     }
     clear(world);
     load(world)?;
-    let mut slot = world.resource::<LayoutSlots>().active();
-    if slot == LayoutSlot::Startup {
-        slot = LayoutSlot::Layout1;
-        world.resource_mut::<LayoutSlots>().select(slot);
-    }
+    restore_directory_layout(world, live, terminal)?;
+    bed_workbench::invalidate_layout_frontend(world);
+    bed_workbench::advance_layout_epoch(world);
+    Ok(())
+}
+
+fn restore_directory_layout(
+    world: &mut World,
+    mut live: HashMap<LayoutSlot, LiveLayout>,
+    terminal: Option<Entity>,
+) -> io::Result<()> {
+    let slot = world.resource::<LayoutSlots>().active();
     // Live numbered layouts take precedence over saved versions on attachment.
     // Merge the active standalone panels into the destination's arrangement.
     if let Some(target) = live.remove(&slot) {
@@ -99,8 +137,6 @@ pub(super) fn attach(world: &mut World, terminal: Option<Entity>) -> io::Result<
         restore_layout_with_terminal(world, &value, true, terminal)?;
     }
     world.resource_mut::<LayoutSlots>().replace_live(live);
-    bed_workbench::invalidate_layout_frontend(world);
-    bed_workbench::advance_layout_epoch(world);
     Ok(())
 }
 
@@ -637,7 +673,7 @@ mod tests {
                 byte_offset: 0,
                 revision,
             },
-            HostAction::SwitchViewer {
+            HostAction::OpenDocumentViewer {
                 tab,
                 document,
                 viewer: bed_plugin_editor::HEX_VIEWER.into(),
@@ -1029,6 +1065,167 @@ mod tests {
             AppRequestOutcome::Ignored
         );
         assert_eq!(active_panel_entities(app.world_mut()), active);
+    }
+
+    #[test]
+    #[cfg(feature = "workspaces")]
+    fn saved_workspace_autosaves_added_tabs_and_restores_them_after_restart() {
+        let dir = TempDir::new();
+        let start = |restore: bool| {
+            let mut app = App::new();
+            install_test_infrastructure(&mut app, &dir.path("config"));
+            // Match native composition: the picker is installed before app runtime.
+            // Its in-memory default must not replace the selected filesystem repository.
+            app.add_plugins(bed_plugin_workspaces::WorkspacesPlugin);
+            app.add_plugins((
+                (bevy::MinimalPlugins, bevy::input::InputPlugin),
+                AppRuntimePlugin {
+                    options: AppOptions {
+                        working_directory: Some(dir.root().to_owned()),
+                        workspace: restore
+                            .then(|| {
+                                WorkspaceStore::load(&test_application_paths(&dir.path("config")))
+                                    .unwrap()
+                                    .last_workspace()
+                            })
+                            .flatten(),
+                        ..Default::default()
+                    },
+                },
+                bed_plugin_editor::EditorPlugin,
+                FixturePlugin,
+            ));
+            app.update();
+            app
+        };
+        let mut app = start(false);
+        switch(app.world_mut(), LayoutSlot::Layout1).unwrap();
+        let first = fixture(app.world_mut());
+        let first_id = app.world().get::<PanelPresentation>(first).unwrap().id;
+        let area = app
+            .world()
+            .resource::<WorkbenchLayout>()
+            .tiling
+            .area_for(first_id)
+            .unwrap();
+        let spec = save_current_workspace(app.world_mut(), Some("Example Project".into())).unwrap();
+        let second = open_panel(
+            app.world_mut(),
+            "fixture.panel",
+            PanelInput::None,
+            json!({"draft":"added after saving"}),
+            None,
+            Some(area),
+            false,
+        )
+        .unwrap();
+        let second_id = app.world().get::<PanelPresentation>(second).unwrap().id;
+        let expected_tabs = app
+            .world()
+            .resource::<WorkbenchLayout>()
+            .tiling
+            .areas
+            .iter()
+            .find(|group| group.area == area)
+            .unwrap()
+            .tabs
+            .clone();
+        assert!(expected_tabs.ends_with(&[first_id, second_id]));
+
+        // Exercise normal autosave rather than calling the persistence helper.
+        app.world_mut()
+            .non_send_mut::<WorkspacePersistence>()
+            .last_saved = Instant::now() - std::time::Duration::from_secs(3);
+        tick_app_services(app.world_mut()).unwrap();
+        assert!(app.world().resource::<WorkspaceState>().error.is_none());
+        let paths = test_application_paths(&dir.path("config"));
+        let saved = WorkspaceStore::load(&paths).unwrap();
+        assert_eq!(
+            saved.recent_workspaces().as_slice(),
+            std::slice::from_ref(&spec)
+        );
+        assert_eq!(saved.last_workspace(), Some(spec.clone()));
+        assert_eq!(saved.active_layout_slot(&spec), LayoutSlot::Layout1);
+        assert!(
+            paths
+                .workspace_directory(dir.root())
+                .join("workspace.json")
+                .is_file()
+        );
+        drop(app);
+
+        let mut restarted = start(true);
+        assert!(
+            restarted
+                .world()
+                .resource::<WorkspaceState>()
+                .error
+                .is_none()
+        );
+        assert_eq!(
+            restarted.world().resource::<WorkspaceState>().spec.as_ref(),
+            Some(&spec)
+        );
+        assert_eq!(
+            restarted
+                .world()
+                .resource::<bed_plugin_workspaces::WorkspacesState>()
+                .recent_workspaces,
+            [spec]
+        );
+        assert_eq!(
+            restarted.world().resource::<LayoutSlots>().active(),
+            LayoutSlot::Layout1
+        );
+        let layout = restarted.world().resource::<WorkbenchLayout>();
+        let group = layout
+            .tiling
+            .areas
+            .iter()
+            .find(|group| group.area == area)
+            .unwrap();
+        assert_eq!(group.tabs, expected_tabs);
+        assert_eq!(group.selected, Some(second_id));
+        let restored = active_panel_entities(restarted.world_mut())
+            .into_iter()
+            .filter(|panel| {
+                restarted
+                    .world()
+                    .get::<PanelRecord>(*panel)
+                    .unwrap()
+                    .panel_type
+                    == "fixture.panel"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(restored.len(), 2);
+        for (id, state) in [
+            (first_id, json!({"draft":"retained"})),
+            (second_id, json!({"draft":"added after saving"})),
+        ] {
+            let owner = restored
+                .iter()
+                .find(|panel| {
+                    restarted
+                        .world()
+                        .get::<PanelPresentation>(**panel)
+                        .unwrap()
+                        .id
+                        == id
+                })
+                .copied()
+                .unwrap();
+            let frontend = panel_presentation(restarted.world(), owner).unwrap();
+            assert_eq!(
+                restarted.world().get::<FixtureState>(frontend).unwrap().0,
+                state
+            );
+            if id == second_id {
+                assert_eq!(
+                    restarted.world().resource::<WorkbenchLayout>().focused,
+                    Some(owner)
+                );
+            }
+        }
     }
 
     #[test]

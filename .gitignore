@@ -10,3 +10,5 @@
 # Python packaging checks.
 __pycache__/
 *.pyc
+
+.bed

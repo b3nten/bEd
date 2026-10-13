@@ -1,4 +1,4 @@
-//! Standalone windows use the Startup layout.
+//! Windows without explicit launch paths use the Startup layout.
 //! Explicit launch paths take precedence and only exact saved roots attach.
 use crate::application::WorkspaceSpec;
 use crate::config::LayoutSlot;
@@ -38,9 +38,10 @@ impl StartupOptions {
             workspace.as_deref().or(self.cwd.as_deref()),
             home.as_deref(),
         )?;
+        let explicit_directory = workspace.is_some() || self.cwd.is_some();
         Ok(Startup {
+            workspace: explicit_directory.then(|| directory.clone()),
             directory,
-            workspace,
             files,
             requested_workspace: self.requested_workspace,
         })
@@ -93,11 +94,19 @@ impl Startup {
             None
         } else if let Some(spec) = self.requested_workspace {
             Some(spec)
-        } else {
-            let root = self.workspace.as_ref().unwrap_or(&self.directory);
+        } else if let Some(root) = self.workspace.as_ref() {
             store.stored_spec(&WorkspaceSpec::local(root.to_string_lossy()))?
+        } else {
+            None
         };
-        let initial_layout = workspace.is_none().then_some(LayoutSlot::Startup);
+        let initial_layout =
+            workspace
+                .is_none()
+                .then_some(if self.workspace.is_some() || !self.files.is_empty() {
+                    LayoutSlot::Layout1
+                } else {
+                    LayoutSlot::Startup
+                });
         let options = AppOptions {
             working_directory: Some(self.directory),
             workspace,
@@ -227,9 +236,10 @@ mod tests {
             vec![a, b]
         );
         assert!(options.workspace.is_none());
+        assert_eq!(options.initial_layout, Some(LayoutSlot::Layout1));
     }
     #[test]
-    fn standalone_launches_always_select_startup_and_ignore_legacy_preferences() {
+    fn launches_without_paths_select_startup_and_ignore_legacy_preferences() {
         let mut fixture = Fixture::new();
         fixture.project("previous");
         for mode in ["startup", "terminal", "last_project", "unknown"] {
@@ -247,12 +257,28 @@ mod tests {
                 assert!(options.startup_panel.is_none());
             }
         }
-        let options = fixture.options(
-            StartupOptions::default(),
-            vec![fixture.root.join("file.txt")],
-        );
-        assert_eq!(options.initial_layout, Some(LayoutSlot::Startup));
-        assert_eq!(options.files.len(), 1);
+    }
+    #[test]
+    fn explicit_launch_paths_select_layout_one_unless_a_workspace_is_attached() {
+        let fixture = Fixture::new();
+        for (startup, paths) in [
+            (
+                StartupOptions::default(),
+                vec![fixture.root.join("file.txt")],
+            ),
+            (StartupOptions::default(), vec![fixture.root.clone()]),
+            (
+                StartupOptions {
+                    cwd: Some(fixture.root.clone()),
+                    ..Default::default()
+                },
+                vec![],
+            ),
+        ] {
+            let options = fixture.options(startup, paths);
+            assert!(options.workspace.is_none());
+            assert_eq!(options.initial_layout, Some(LayoutSlot::Layout1));
+        }
         let saved = fixture.project("explicit");
         let options = fixture.options(StartupOptions::default(), vec![PathBuf::from(&saved.root)]);
         if cfg!(feature = "workspaces") {
@@ -260,8 +286,26 @@ mod tests {
             assert!(options.initial_layout.is_none());
         } else {
             assert!(options.workspace.is_none());
-            assert_eq!(options.initial_layout, Some(LayoutSlot::Startup));
+            assert_eq!(options.initial_layout, Some(LayoutSlot::Layout1));
         }
+    }
+    #[test]
+    #[cfg(feature = "workspaces")]
+    fn an_implicit_launch_directory_does_not_attach_a_saved_workspace() {
+        let fixture = Fixture::new();
+        let saved = fixture.project("implicit-home");
+        let options = Startup {
+            directory: PathBuf::from(&saved.root),
+            workspace: None,
+            files: Vec::new(),
+            requested_workspace: None,
+        }
+        .into_options(
+            &ApplicationPaths::new("bed", Some(fixture.settings.config_dir.clone()), None).unwrap(),
+        )
+        .unwrap();
+        assert!(options.workspace.is_none());
+        assert_eq!(options.initial_layout, Some(LayoutSlot::Startup));
     }
     #[test]
     #[cfg(feature = "workspaces")]
@@ -295,7 +339,7 @@ mod tests {
         .unwrap();
         let options = fixture.options(StartupOptions::default(), vec![fixture.root.clone()]);
         assert!(options.workspace.is_none());
-        assert_eq!(options.initial_layout, Some(LayoutSlot::Startup));
+        assert_eq!(options.initial_layout, Some(LayoutSlot::Layout1));
     }
 
     #[test]
@@ -359,7 +403,7 @@ impl Launch {
             match argument.to_str() {
                 Some("--help" | "-h") => {
                     println!(
-                        "Usage: bed [FILE_OR_FOLDER ...] [--cwd DIRECTORY] [--config-dir DIRECTORY]\n  --new-window     Open a standalone instance\n  --workspace JSON\n  --capture-frame OUTPUT.png|OUTPUT.ppm [--capture-after-frames N]\n  --smoke-test | --main-only-smoke | --lifecycle-smoke | --effects-smoke\n  --appearance-smoke | --platform-smoke | --menu-smoke | --plugin-smoke\n  --debug-smoke | --git-smoke | --terminal-smoke | --term-promotion-smoke\n\nSmoke and screenshot commands require --features automation.\nWindows without a workspace open the configurable Startup layout.\nOnly exact saved folder roots attach at launch; workspaces must be requested explicitly."
+                        "Usage: bed [FILE_OR_FOLDER ...] [--cwd DIRECTORY] [--config-dir DIRECTORY]\n  --new-window     Open a standalone instance\n  --workspace JSON\n  --capture-frame OUTPUT.png|OUTPUT.ppm [--capture-after-frames N]\n  --smoke-test | --main-only-smoke | --appearance-smoke\n  --platform-smoke | --menu-smoke | --term-promotion-smoke\n\nSmoke and screenshot commands require --features automation.\nWindows without launch paths open the configurable Startup layout.\nExplicit files and folders use layout 1; saved workspace roots restore their selected layout.\nOnly exact saved folder roots attach at launch; workspaces must be requested explicitly."
                     );
                     return Ok(None);
                 }
@@ -409,15 +453,9 @@ impl Launch {
                 Some(
                     "--smoke-test"
                     | "--main-only-smoke"
-                    | "--lifecycle-smoke"
-                    | "--effects-smoke"
                     | "--appearance-smoke"
                     | "--platform-smoke"
                     | "--menu-smoke"
-                    | "--plugin-smoke"
-                    | "--debug-smoke"
-                    | "--git-smoke"
-                    | "--terminal-smoke"
                     | "--term-promotion-smoke",
                 ) => launch
                     .smoke

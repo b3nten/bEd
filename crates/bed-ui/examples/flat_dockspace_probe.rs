@@ -8,10 +8,6 @@ use dear_imgui_rs::{Condition, ConfigFlags, Context, MouseButton, StyleVar, Wind
 use dear_imgui_sys as sys;
 use std::ffi::CString;
 
-unsafe extern "C" {
-    fn bed_imgui_dock_node_tab_bar(node: *const sys::ImGuiDockNode) -> *mut sys::ImGuiTabBar;
-}
-
 #[derive(Clone, Copy)]
 struct Area {
     id: u32,
@@ -36,9 +32,10 @@ fn frame_with_policy(
     areas: &[Area],
     panels: &[&str],
     mut policy: Option<&mut TilingPolicy>,
-) {
+) -> Vec<(sys::ImGuiID, [f32; 2])> {
     let binding = context.binding();
     let ui = context.frame();
+    let mut tab_centers = Vec::new();
     binding.with_bound_context(|| {
         let _padding = ui.push_style_var(StyleVar::WindowPadding([0.0; 2]));
         let _rounding = ui.push_style_var(StyleVar::WindowRounding(0.0));
@@ -86,6 +83,30 @@ fn frame_with_policy(
                 .size([300.0, 220.0], Condition::FirstUseEver)
                 .build(|| ui.text(format!("Contents of {title}")));
         }
+        // The dock node is opaque. Read its tabs through the public amendment
+        // scope while this frame is active, balancing it without adding items.
+        unsafe {
+            for &title in panels {
+                let name = CString::new(title).unwrap();
+                let window = sys::igFindWindowByName(name.as_ptr());
+                let node = (*window).DockNode;
+                if node.is_null() || !sys::igDockNodeBeginAmendTabBar(node) {
+                    continue;
+                }
+                let bar = &*sys::igGetCurrentTabBar();
+                let tabs = std::slice::from_raw_parts(bar.Tabs.Data, bar.Tabs.Size as usize);
+                if let Some(tab) = tabs.iter().find(|tab| tab.Window == window) {
+                    tab_centers.push((
+                        (*window).ID,
+                        [
+                            bar.BarRect.Min.x + tab.Offset - bar.ScrollingAnim + tab.Width * 0.45,
+                            (bar.BarRect.Min.y + bar.BarRect.Max.y) * 0.5,
+                        ],
+                    ));
+                }
+                sys::igDockNodeEndAmendTabBar();
+            }
+        }
         if let Some(policy) = policy.as_mut() {
             unsafe {
                 let native = &*sys::igGetCurrentContext();
@@ -108,6 +129,7 @@ fn frame_with_policy(
         }
     });
     drop(context.render_legacy());
+    tab_centers
 }
 
 fn native_drag_state(context: &Context) -> (bool, bool, bool, i32) {
@@ -143,24 +165,21 @@ fn dock_id(context: &Context, title: &str) -> u32 {
         .with_bound_context(|| unsafe { (*sys::igFindWindowByName(title.as_ptr())).DockId })
 }
 
-fn tab_center(context: &Context, title: &str) -> [f32; 2] {
+fn tab_center(context: &mut Context, areas: &[Area], panels: &[&str], title: &str) -> [f32; 2] {
+    let centers = frame_with_policy(context, areas, panels, None);
     let title = CString::new(title).unwrap();
-    context.binding().with_bound_context(|| unsafe {
-        let window = sys::igFindWindowByName(title.as_ptr());
-        let bar = bed_imgui_dock_node_tab_bar((*window).DockNode)
-            .as_ref()
-            .unwrap();
-        let tabs = std::slice::from_raw_parts(bar.Tabs.Data, bar.Tabs.Size as usize);
-        let tab = tabs.iter().find(|tab| tab.Window == window).unwrap();
-        [
-            bar.BarRect.Min.x + tab.Offset - bar.ScrollingAnim + tab.Width * 0.45,
-            (bar.BarRect.Min.y + bar.BarRect.Max.y) * 0.5,
-        ]
-    })
+    let id = context
+        .binding()
+        .with_bound_context(|| unsafe { (*sys::igFindWindowByName(title.as_ptr())).ID });
+    centers
+        .into_iter()
+        .find(|(window, _)| *window == id)
+        .expect("native dock tab geometry")
+        .1
 }
 
 fn drag_tab(context: &mut Context, areas: &[Area], panels: &[&str], title: &str, target: [f32; 2]) {
-    let start = tab_center(context, title);
+    let start = tab_center(context, areas, panels, title);
     context.io_mut().add_mouse_pos_event(start);
     frame(context, areas, panels);
     context
@@ -427,7 +446,7 @@ fn main() {
         let title = panels[0];
         let home = dock_id(&restored, title);
         let previous_rehomes = policy.rehome_count;
-        let start = tab_center(&restored, title);
+        let start = tab_center(&mut restored, &areas, &panels, title);
         restored.io_mut().add_mouse_pos_event(start);
         frame_with_policy(&mut restored, &areas, &panels, Some(&mut policy));
         restored

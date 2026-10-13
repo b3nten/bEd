@@ -22,3 +22,7 @@ bed-ui = { workspace = true, features = ["imgui"] }
 bed-editor-widgets = { workspace = true }
 dear-imgui-rs = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+bed-core = { workspace = true, features = ["language-services"] }
+bed-files = { workspace = true }

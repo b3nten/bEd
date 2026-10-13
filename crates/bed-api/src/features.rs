@@ -111,7 +111,10 @@ impl HostAction {
             | HostAction::OpenFileIn { .. }
             | HostAction::PreviewFileIn { .. }
             | HostAction::DropFile { .. }
-            | HostAction::SwitchViewer { .. }
+            | HostAction::ExternalFiles { .. }
+            | HostAction::PanelAction { .. }
+            | HostAction::Clipboard { .. }
+            | HostAction::OpenDocumentViewer { .. }
             | HostAction::OpenFileDialog { .. }
             | HostAction::SaveAsDialog { .. }
             | HostAction::Navigate { .. } => true,
@@ -395,7 +398,22 @@ pub enum HostAction {
     DropFile {
         path: String,
     },
-    SwitchViewer {
+    /// Native file drag facts, resolved by the same owner as other panel requests.
+    ExternalFiles {
+        panel: Option<bevy::prelude::Entity>,
+        event: crate::workbench::ExternalFileDrag,
+    },
+    PanelAction {
+        panel: bevy::prelude::Entity,
+        action: PanelAction,
+    },
+    Clipboard {
+        panel: bevy::prelude::Entity,
+        action: crate::workbench::ClipboardAction,
+    },
+    /// Open another viewer tab for the same document, retaining the originating tab.
+    OpenDocumentViewer {
+        /// The originating tab identity; its tab group receives the new viewer.
         tab: u64,
         document: DocumentId,
         viewer: String,
@@ -636,23 +654,24 @@ impl FeatureRegistry {
         self.viewers.iter().find(|viewer| viewer.matches_path(path))
     }
 
-    /// Text defaults to its editor. Binary uses the first matching compatible
-    /// format viewer, then hex. Unknown content has no default yet.
+    /// Text prefers its fallback editor, then a matching compatible format.
+    /// Binary prefers a matching format, then hex. Unknown content has no default.
     #[cfg(feature = "documents")]
     pub fn default_viewer_for_file(
         &self,
         path: &str,
         content_kind: Option<DocumentKind>,
     ) -> Option<&FileViewer> {
-        self.viewers
-            .iter()
-            .find(|viewer| {
-                content_kind == Some(DocumentKind::Bytes)
-                    && viewer.matches_path(path)
-                    && (viewer.is_local_file()
-                        || viewer.supports_document_kind(DocumentKind::Bytes))
-            })
-            .or_else(|| content_kind.and_then(|kind| self.default_viewer(kind)))
+        let kind = content_kind?;
+        let matching = self.viewers.iter().find(|viewer| {
+            viewer.matches_path(path)
+                && (viewer.is_local_file() || viewer.supports_document_kind(kind))
+        });
+        let fallback = self.default_viewer(kind);
+        match kind {
+            DocumentKind::Text => fallback.or(matching),
+            DocumentKind::Bytes => matching.or(fallback),
+        }
     }
 
     /// Preferences select presentations, while classification owns document storage.
@@ -1288,6 +1307,72 @@ mod tests {
     }
 
     #[test]
+    fn matching_text_viewers_work_without_a_fallback_editor() {
+        let mut registry = FeatureRegistry::default();
+        registry
+            .register(&module("standalone", |registrar| {
+                registrar.panel_ref("standalone.panel");
+                registrar.viewer(
+                    "standalone.table",
+                    "Table",
+                    "standalone.panel",
+                    &["csv"],
+                    DocumentKind::Text,
+                );
+                registrar.viewer(
+                    "standalone.image",
+                    "Image",
+                    "standalone.panel",
+                    &["svg", "png"],
+                    DocumentKind::Bytes,
+                );
+                registrar.viewer_document_kinds(
+                    "standalone.image",
+                    &[DocumentKind::Text, DocumentKind::Bytes],
+                );
+            }))
+            .unwrap();
+        for (path, kind, expected) in [
+            (
+                "results.csv",
+                Some(DocumentKind::Text),
+                Some("standalone.table"),
+            ),
+            (
+                "chart.svg",
+                Some(DocumentKind::Text),
+                Some("standalone.image"),
+            ),
+            (
+                "chart.png",
+                Some(DocumentKind::Bytes),
+                Some("standalone.image"),
+            ),
+            ("binary.csv", Some(DocumentKind::Bytes), None),
+            ("README", Some(DocumentKind::Text), None),
+            ("results.csv", None, None),
+        ] {
+            assert_eq!(
+                registry
+                    .default_viewer_for_file(path, kind)
+                    .map(|viewer| viewer.id),
+                expected,
+                "{path}"
+            );
+        }
+        assert_eq!(
+            registry
+                .preferred_viewer_for_file(
+                    "results.csv",
+                    DocumentKind::Text,
+                    &serde_json::json!({"csv":"unavailable.editor"}),
+                )
+                .map(|viewer| viewer.id),
+            Some("standalone.table")
+        );
+    }
+
+    #[test]
     fn pending_classification_has_no_default_but_lists_byte_formats() {
         let registry = compatibility_registry();
         for path in ["source.rs", "README", "table.csv", "unknown.bin"] {
@@ -1381,7 +1466,7 @@ mod tests {
     }
 
     #[test]
-    fn viewer_menu_queues_a_switch_for_its_originating_tab() {
+    fn viewer_menu_queues_another_viewer_from_its_originating_tab() {
         let menu = ViewerMenu {
             tab: 37,
             document: DocumentId(9),
@@ -1413,8 +1498,8 @@ mod tests {
                 .position([0.0; 2], dear_imgui_rs::Condition::Always)
                 .size([600.0, 400.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    ui.open_popup("Switch presentation");
-                    if let Some(_popup) = ui.begin_popup("Switch presentation") {
+                    ui.open_popup("Open another viewer");
+                    if let Some(_popup) = ui.begin_popup("Open another viewer") {
                         menu.draw(ui, requests);
                         let (min, max) = ui.item_rect();
                         point = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
@@ -1436,7 +1521,7 @@ mod tests {
             .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
         draw(&mut context, &mut requests);
         assert!(
-            matches!(requests.as_slice(), [HostAction::SwitchViewer{tab:37,document:DocumentId(9),viewer}] if viewer=="views.text")
+            matches!(requests.as_slice(), [HostAction::OpenDocumentViewer{tab:37,document:DocumentId(9),viewer}] if viewer=="views.text")
         );
     }
 

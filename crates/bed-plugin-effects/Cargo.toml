@@ -8,11 +8,12 @@ license.workspace = true
 [features]
 default = []
 gpu = ["dep:wgpu"]
-desktop = ["gpu", "dep:bevy", "dep:bed-desktop", "dep:dear-imgui-rs", "dep:dear-imgui-wgpu"]
+desktop = ["gpu", "dep:bevy", "dep:bed-api", "dep:bed-desktop", "dep:dear-imgui-rs", "dep:dear-imgui-wgpu"]
 
 [dependencies]
 bevy = { workspace = true, features = ["std"], optional = true }
 bed-desktop = { workspace = true, optional = true }
+bed-api = { workspace = true, optional = true }
 dear-imgui-rs = { workspace = true, optional = true }
 dear-imgui-wgpu = { workspace = true, optional = true }
 wgpu = { workspace = true, optional = true }

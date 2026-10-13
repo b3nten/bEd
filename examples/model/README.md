@@ -1,6 +1,6 @@
 # Model application
 
-An application launched through `bed_app::Application` with one custom panel
+An application launched through `bed_launch::LaunchBuilder` with one custom panel
 plugin. Two panels share a typed graph document. Moving a node commits one semantic change;
 undo/redo updates both panels through the common document commands.
 
@@ -23,3 +23,7 @@ their own model format and retain document identities across restarts.
 
 The native smoke exercises shared views, edits, undo/redo, closing one view,
 retaining the document and rejecting a save without a destination.
+
+The native `--smoke-test` path also captures the real window and a visible panel
+after presentations, and fails if the application exits before completing its
+assertions. Capture output is written under `target/`.

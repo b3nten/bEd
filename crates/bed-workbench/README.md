@@ -22,6 +22,13 @@ entity and area that originated the command. Closing and restoring a panel
 creates a new entity, so a stale command cannot act on a replacement that reused
 its saved numeric ID.
 
+Publish labels and availability through `CommandPresentations`. The default
+`CommandPresentationScope::Global` applies disabled or hidden facts to every
+invocation when it executes. Use `Invocation { source, arguments }` for facts
+about the current UI target; these apply only to that source and exact arguments.
+Frontend sources resolve to their owning tab for this comparison. Handlers
+validate captured targets when another invocation's presentation does not apply.
+
 Keep the factory entity distinct from the layout tab when using the application host.
 The generic workbench uses one entity for both. The application passes factories a
 frontend entity with `PanelOwner(tab)`, while the stable tab has

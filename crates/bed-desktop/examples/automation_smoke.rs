@@ -15,6 +15,7 @@ use winit::{
 
 #[derive(Resource)]
 struct Proof {
+    verified: Arc<AtomicBool>,
     panel: Entity,
     phase: u8,
     clicks: u32,
@@ -53,26 +54,30 @@ fn withhold_output(
 }
 
 fn main() -> std::io::Result<()> {
-    let launch = match bed_app::Application::new("bed.proof.automation-smoke", "Desktop proof")?
-        .dispatch(std::env::args_os())?
-    {
-        bed_app::LaunchOutcome::Desktop(launch) => *launch,
-        bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
-    };
-    let mut app = launch
-        .options(DesktopPlugins {
-            window: Window {
-                title: "Desktop automation proof".into(),
-                resolution: (320, 180).into(),
+    let verified = Arc::<AtomicBool>::default();
+    let launch =
+        match bed_launch::builder("bed.proof.automation-smoke", "Desktop proof")?.dispatch()? {
+            bed_launch::LaunchOutcome::Desktop(launch) => *launch,
+            bed_launch::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+        };
+    let mut app = launch.build(
+        bed_launch::DesktopOptions {
+            desktop: DesktopPlugins {
+                window: Window {
+                    title: "Desktop automation proof".into(),
+                    resolution: (320, 180).into(),
+                    ..default()
+                },
                 ..default()
             },
-            ..default()
-        })
-        .presentation_mode(bed_app::bed_core::CorePresentationMode::Application)
-        .config_directory(
-            std::env::temp_dir().join(format!("bed.proof.automation-smoke-{}", std::process::id())),
-        )
-        .build(|app| {
+            presentation_mode: bed_launch::bed_core::CorePresentationMode::Application,
+            config_directory: Some(
+                std::env::temp_dir()
+                    .join(format!("bed.proof.automation-smoke-{}", std::process::id())),
+            ),
+            ..Default::default()
+        },
+        |app| {
             let absent = AbsentOutput::default();
             app.insert_resource(absent.clone());
             app.sub_app_mut(bevy::render::RenderApp)
@@ -87,6 +92,7 @@ fn main() -> std::io::Result<()> {
                 );
             let panel = app.world_mut().spawn_empty().id();
             app.insert_resource(Proof {
+                verified: Arc::clone(&verified),
                 panel,
                 phase: 0,
                 clicks: 0,
@@ -110,10 +116,15 @@ fn main() -> std::io::Result<()> {
                     .before(DesktopSystems::RouteInput),
             );
             Ok(())
-        })?;
+        },
+    )?;
     if app.run().is_error() {
         return Err(std::io::Error::other("Desktop proof exited with an error"));
     }
+    assert!(
+        verified.load(Ordering::SeqCst),
+        "desktop smoke exited before completing its assertions"
+    );
     Ok(())
 }
 
@@ -355,6 +366,7 @@ fn advance(world: &mut World) {
                 eprintln!(
                     "automation proof: fresh window/panel pixels without a native surface; presented counter stayed unchanged"
                 );
+                proof.verified.store(true, Ordering::SeqCst);
                 world.write_message(bevy::app::AppExit::Success);
                 proof.phase = 5;
             }

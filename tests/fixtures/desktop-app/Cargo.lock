@@ -452,13 +452,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-effects-config"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "bed-files"
 version = "0.1.0"
 dependencies = [
@@ -480,8 +473,8 @@ dependencies = [
 name = "bed-plugin-effects"
 version = "0.1.0"
 dependencies = [
+ "bed-api",
  "bed-desktop",
- "bed-effects-config",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-wgpu",

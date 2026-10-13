@@ -237,7 +237,6 @@ pub struct DocumentSession {
     services: bed_files::FileServices,
     documents: BTreeMap<DocumentId, DocumentEntry>,
     paths: BTreeMap<PathBuf, DocumentId>,
-    read_only_local_paths: Vec<PathBuf>,
     views: BTreeMap<ViewId, DocumentId>,
     history: SharedProjectUndo,
     #[cfg(feature = "ide-services")]
@@ -279,7 +278,6 @@ impl Default for DocumentSession {
             services: bed_files::FileServices::local(),
             documents: BTreeMap::new(),
             paths: BTreeMap::new(),
-            read_only_local_paths: Vec::new(),
             views: BTreeMap::new(),
             history: Rc::new(RefCell::new(ProjectUndo::default())),
             #[cfg(feature = "ide-services")]
@@ -316,55 +314,6 @@ impl Default for DocumentSession {
 impl DocumentSession {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// The host reserves files that are owned outside the editable document
-    /// registry. This protects direct service callers and autosave alike.
-    pub fn set_read_only_local_paths(&mut self, paths: Vec<PathBuf>) {
-        self.read_only_local_paths = paths;
-    }
-
-    pub fn ensure_local_path_editable(&self, path: &Path) -> io::Result<()> {
-        if self.is_remote() || path.as_os_str().is_empty() || self.read_only_local_paths.is_empty()
-        {
-            return Ok(());
-        }
-        let canonical = canonical_binding(path).ok();
-        #[cfg(unix)]
-        let identity = {
-            use std::os::unix::fs::MetadataExt;
-            std::fs::metadata(path)
-                .ok()
-                .map(|metadata| (metadata.dev(), metadata.ino()))
-        };
-        for reserved in &self.read_only_local_paths {
-            let reserved_canonical = canonical_binding(reserved).ok();
-            let same_path = path == reserved
-                || canonical.as_ref().is_some_and(|path| path == reserved)
-                || canonical
-                    .as_ref()
-                    .zip(reserved_canonical.as_ref())
-                    .is_some_and(|(a, b)| a == b);
-            #[cfg(unix)]
-            let same_file = {
-                use std::os::unix::fs::MetadataExt;
-                identity.zip(std::fs::metadata(reserved).ok()).is_some_and(
-                    |((dev, ino), metadata)| dev == metadata.dev() && ino == metadata.ino(),
-                )
-            };
-            #[cfg(not(unix))]
-            let same_file = false;
-            if same_path || same_file {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    format!(
-                        "{} is reserved for read-only access; close its file viewer before editing or replacing it",
-                        reserved.display()
-                    ),
-                ));
-            }
-        }
-        Ok(())
     }
 
     pub fn with_options(mut options: SessionOptions) -> io::Result<Self> {
@@ -810,7 +759,6 @@ impl DocumentSession {
                     )
                 });
         }
-        self.ensure_local_path_editable(path)?;
         let path = std::fs::canonicalize(path)?;
         if let Some(&id) = self.paths.get(&path) {
             if self.document_kind(id)? != kind {
@@ -831,7 +779,6 @@ impl DocumentSession {
                 .request_open_file_auto(path)?
                 .ok_or_else(|| io::Error::new(io::ErrorKind::WouldBlock, "Remote open queued"));
         }
-        self.ensure_local_path_editable(path)?;
         let path = std::fs::canonicalize(path)?;
         if let Some(&id) = self.paths.get(&path) {
             return Ok(id);
@@ -1593,7 +1540,6 @@ impl DocumentSession {
             return self.queue_remote_save(document, None);
         }
         let entry = self.entry(document)?;
-        self.ensure_local_path_editable(Path::new(&entry.runtime.state.path))?;
         if !entry.runtime.state.path.is_empty()
             && (entry.removed || !Path::new(&entry.runtime.state.path).try_exists()?)
         {
@@ -1703,7 +1649,6 @@ impl DocumentSession {
         let target = if self.is_remote() {
             destination.to_owned()
         } else {
-            self.ensure_local_path_editable(destination)?;
             canonical_binding(destination)?
         };
         if self.paths.get(&target).is_some_and(|id| *id != document) {
@@ -2098,15 +2043,8 @@ impl DocumentSession {
                 && self.options.autosave.is_some()
                 && !self.documents[&id].autosave_paused
             {
-                let state = &self.documents[&id].runtime.state;
-                let read_only = state.dirty
-                    && !state.path.is_empty()
-                    && self
-                        .ensure_local_path_editable(Path::new(&state.path))
-                        .is_err();
                 let entry = self.documents.get_mut(&id).unwrap();
-                let result = if read_only
-                    || entry.removed
+                let result = if entry.removed
                     || entry.removal_pending_since.is_some()
                     || entry.runtime.disk_conflict.is_some()
                 {

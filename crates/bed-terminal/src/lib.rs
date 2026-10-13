@@ -86,3 +86,6 @@ fn poll(
         }
     }
 }
+
+#[cfg(all(test, feature = "ui", unix))]
+mod native_tests;

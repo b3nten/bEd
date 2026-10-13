@@ -1,7 +1,7 @@
 # Same game, editor and runtime
 
 `game` contains a game plugin that depends only on Bevy. `editor` launches through
-`bed_app::Application`, renders the game camera through a
+`bed_launch::LaunchBuilder`, renders the game camera through a
 workbench canvas and admits ordinary Bevy input only for its focused viewport.
 `runtime` adds that same game plugin to ordinary Bevy and renders into the window;
 it has no bEd crate dependencies.

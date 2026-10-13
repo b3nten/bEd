@@ -420,16 +420,6 @@ fn start(world: &mut World, operation: Operation) -> Result<Pending, AutomationE
                     format!("command is unavailable: {command}"),
                 ));
             }
-            if world
-                .get_resource::<bed_api::workbench::CommandPresentations>()
-                .and_then(|facts| facts.0.get(&command))
-                .is_some_and(|fact| !fact.enabled || !fact.visible)
-            {
-                return Err(AutomationError::new(
-                    ErrorKind::Unavailable,
-                    format!("command is currently unavailable: {command}"),
-                ));
-            }
             let source = source
                 .map(|panel| resolve_panel(world, panel))
                 .transpose()?
@@ -443,12 +433,23 @@ fn start(world: &mut World, operation: Operation) -> Result<Pending, AutomationE
                         .area_for(panel.id)
                 })
                 .unwrap_or_else(|| world.resource::<WorkbenchLayout>().tiling.layout.areas[0].id);
-            WorkbenchAction::Invoke(CommandInvocation {
+            let invocation = CommandInvocation {
                 command,
                 source,
                 area,
                 arguments,
-            })
+            };
+            if world
+                .get_resource::<bed_api::workbench::CommandPresentations>()
+                .and_then(|facts| facts.0.get(&invocation.command))
+                .is_some_and(|fact| fact.blocks_invocation(world, &invocation))
+            {
+                return Err(AutomationError::new(
+                    ErrorKind::Unavailable,
+                    format!("command is currently unavailable: {}", invocation.command),
+                ));
+            }
+            WorkbenchAction::Invoke(invocation)
         }
         Operation::Input(steps) => {
             let mut requests = world

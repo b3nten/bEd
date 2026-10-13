@@ -19,19 +19,15 @@ pub const MODULE_ID: &str = "bed.terminal";
 pub const PANEL_ID: &str = "bed.terminal.panel";
 pub const NEW_COMMAND: &str = "bed.terminal.new";
 
-/// Install shell panels and register their executable helper before GUI startup.
-pub fn launch_registration() -> bed_api::launch::LaunchRegistration {
+/// Register executable shell helpers before GUI startup; install plugins separately.
+pub fn launchers() -> bed_api::launch::LaunchRegistration {
     use bed_api::launch::{LaunchRegistration, ProcessEntrypoint, ProcessSelector};
-    use bevy::prelude::App;
     LaunchRegistration {
         owner: MODULE_ID,
         entrypoints: vec![ProcessEntrypoint {
             selector: ProcessSelector::ExecutablePrefix("+".into()),
             run: |args| run_helper(args).transpose().map(|result| result.map(|_| 0)),
         }],
-        install: Box::new(|app: &mut App| {
-            app.add_plugins((TerminalPlugin, TerminalAppIntegrationPlugin));
-        }),
     }
 }
 

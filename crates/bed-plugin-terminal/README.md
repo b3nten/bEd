@@ -11,10 +11,10 @@ sessions and remote application workspace projection; it forwards the `bed-termi
 transport and `bed-documents` service integration. A remote workspace without
 that feature reports an unavailable panel instead of starting a local shell.
 
-Register `bed_plugin_terminal::launch_registration()` with
-[`bed_app::Application`](../bed-app/README.md). Its deferred installer adds
-`TerminalPlugin` and `TerminalAppIntegrationPlugin` after the foundation, and
-its early `+` executable handler forwards shell invocations before GUI startup.
+Register `bed_plugin_terminal::launchers()` with
+[`bed_launch::LaunchBuilder`](../bed-launch/README.md). Its early `+` executable
+handler forwards shell invocations before GUI startup. Install `TerminalPlugin`
+and `TerminalAppIntegrationPlugin` explicitly in the desktop callback.
 
 Open `bed.terminal.panel` through workbench requests or use the contributed
 `bed.terminal.new` command. The icon contract is `terminal.svg`, with embedded

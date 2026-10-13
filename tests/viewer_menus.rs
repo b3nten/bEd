@@ -126,7 +126,7 @@ impl Fixture {
 }
 
 #[test]
-fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
+fn markdown_menus_open_separate_tabs_for_the_shared_document_without_sqlite_choices() {
     let directory = temp_dir::TempDir::new();
     let root = directory.root().join("project");
     std::fs::create_dir(&root).unwrap();
@@ -202,7 +202,7 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
         .clone();
     let document = binding.document.unwrap();
     let view = binding.view.unwrap();
-    let unsaved = b"# Unsaved heading\n\nThis edit must survive viewer switches.\n";
+    let unsaved = b"# Unsaved heading\n\nThis edit must be shared by viewer tabs.\n";
     app.world_mut()
         .non_send_mut::<DocumentSession>()
         .with_commands(view, |commands| {
@@ -300,10 +300,25 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
     );
     // Text remains the default; Markdown is the next compatible presentation.
     fixture.click(fixture.popup_item(1, Some(1)), MouseButton::Left);
+    let preview_panel = fixture
+        .app
+        .world()
+        .resource::<WorkbenchLayout>()
+        .focused
+        .unwrap();
+    assert_ne!(
+        preview_panel, panel,
+        "Open With creates an independent viewer tab"
+    );
+    assert_eq!(fixture.active_frontend(panel), text_frontend);
     assert_eq!(
-        fixture.app.world().resource::<WorkbenchLayout>().focused,
-        Some(panel),
-        "Open With duplicated the document's tab"
+        fixture
+            .app
+            .world()
+            .get::<PanelBinding>(preview_panel)
+            .unwrap()
+            .document,
+        Some(document)
     );
     assert_eq!(
         fixture
@@ -321,7 +336,7 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
             ),
         Some(editor_area)
     );
-    let preview_frontend = fixture.active_frontend(panel);
+    let preview_frontend = fixture.active_frontend(preview_panel);
     assert_ne!(preview_frontend, text_frontend);
     assert_eq!(
         fixture
@@ -352,20 +367,25 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
     let geometry = fixture
         .app
         .world()
-        .get::<bed_workbench::api::PanelGeometry>(panel)
+        .get::<bed_workbench::api::PanelGeometry>(preview_panel)
         .unwrap();
     let preview_point = [geometry.content_min[0] + 80., geometry.content_min[1] + 80.];
     let menu = fixture.click(preview_point, MouseButton::Right);
     assert!(
-        menu.contains("Edit as Text"),
-        "preview lacks text switch: {menu}"
+        menu.contains("Open in Text Editor"),
+        "preview lacks another text viewer: {menu}"
     );
     fixture.click(fixture.popup_item(0, Some(0)), MouseButton::Left);
     assert_eq!(
         fixture.active_frontend(panel),
         text_frontend,
-        "switch did not retain the text frontend"
+        "opening text focuses the existing text tab"
     );
+    assert_eq!(
+        fixture.app.world().resource::<WorkbenchLayout>().focused,
+        Some(panel)
+    );
+    assert_eq!(fixture.active_frontend(preview_panel), preview_frontend);
     let menu = fixture
         .app
         .world()
@@ -378,8 +398,8 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
     ];
     let menu = fixture.click(text_point, MouseButton::Right);
     assert!(
-        menu.contains("View as Markdown Preview"),
-        "text editor lacks Markdown switch: {menu}"
+        menu.contains("Open in Markdown Preview"),
+        "text editor lacks Markdown viewer choice: {menu}"
     );
     assert!(
         !menu.contains("SQLite Viewer"),
@@ -387,10 +407,15 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
     );
     fixture.click(fixture.popup_item(0, Some(0)), MouseButton::Left);
     assert_eq!(
-        fixture.active_frontend(panel),
+        fixture.active_frontend(preview_panel),
         preview_frontend,
-        "switch did not retain the preview frontend"
+        "the existing preview tab retains its frontend"
     );
+    assert_eq!(
+        fixture.app.world().resource::<WorkbenchLayout>().focused,
+        Some(preview_panel)
+    );
+    assert_eq!(fixture.active_frontend(panel), text_frontend);
     let snapshot = fixture
         .app
         .world()

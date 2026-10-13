@@ -457,6 +457,7 @@ fn clipboard(
     In(invocation): In<bed_api::workbench::ClipboardInvocation>,
     states: Query<&TerminalPanelState>,
     mut terminal: NonSendMut<BedTerminal>,
+    mut files: Option<NonSendMut<Box<dyn bed_api::workbench::FileClipboardService>>>,
 ) -> bed_api::workbench::ClipboardResult {
     let state = states
         .get(invocation.entity)
@@ -471,6 +472,25 @@ fn clipboard(
             terminal
                 .native_paste(text)
                 .map_err(|error| error.to_string())?;
+            Ok(None)
+        }
+        bed_api::workbench::ClipboardAction::PasteFromClipboard(text) => {
+            let paths = files
+                .as_deref_mut()
+                .map(|clipboard| clipboard.read_paste_files())
+                .transpose()
+                .map_err(|error| error.to_string())?
+                .unwrap_or_default();
+            let text = if paths.is_empty() {
+                text
+            } else {
+                Some(file_paste_text(&paths).map_err(|error| error.to_string())?)
+            };
+            if let Some(text) = text {
+                terminal
+                    .native_paste(text)
+                    .map_err(|error| error.to_string())?;
+            }
             Ok(None)
         }
         bed_api::workbench::ClipboardAction::SelectAll => {
@@ -500,6 +520,36 @@ fn show_panel(In(invocation): In<CommandInvocation>) -> CommandResult {
         state: Value::Null,
         area: Some(invocation.area),
     }])
+}
+
+/// Preserve each path as one shell argument. Reject control characters because
+/// terminal paste normalizes newlines and strips escape bytes.
+pub(crate) fn file_paste_text(paths: &[std::path::PathBuf]) -> std::io::Result<String> {
+    let mut text = String::new();
+    for path in paths {
+        let path = path.to_str().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Clipboard file path is not UTF-8",
+            )
+        })?;
+        if path.is_empty() || path.chars().any(char::is_control) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Clipboard file path is empty or contains control characters",
+            ));
+        }
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        for character in path.chars() {
+            if !character.is_alphanumeric() && !matches!(character, '/' | '.' | '_' | '-') {
+                text.push('\\');
+            }
+            text.push(character);
+        }
+    }
+    Ok(text)
 }
 
 #[cfg(test)]
@@ -562,6 +612,121 @@ mod tests {
             TerminalAppIntegrationPlugin,
         ));
         app
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registered_clipboard_paste_uses_files_only_for_native_requests() {
+        use bed_terminal::terminal_pty::{PtyOptions, TerminalShell};
+        use std::{
+            cell::Cell,
+            rc::Rc,
+            time::{Duration, Instant},
+        };
+        struct Files {
+            paths: Vec<std::path::PathBuf>,
+            reads: Rc<Cell<usize>>,
+        }
+        impl bed_api::workbench::FileClipboardService for Files {
+            fn read_files(&mut self) -> std::io::Result<Vec<std::path::PathBuf>> {
+                self.reads.set(self.reads.get() + 1);
+                Ok(self.paths.clone())
+            }
+            fn write_files(&mut self, _: &[std::path::PathBuf]) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        fn output(terminal: &BedTerminal) -> String {
+            terminal
+                .active_terminal()
+                .unwrap()
+                .lines
+                .iter()
+                .flat_map(|row| row.cells.iter())
+                .map(|cell| cell.text.as_ref())
+                .collect()
+        }
+        let paths = vec![std::path::PathBuf::from("/tmp/pasted file")];
+        let expected = format!("EXPLICIT{}", file_paste_text(&paths).unwrap());
+        let expected_hex = expected
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let script = format!(
+            "stty raw -echo; printf READY; data=$(dd bs=1 count={} 2>/dev/null | od -An -tx1 | tr -d ' \\n'); test \"$data\" = {expected_hex} && printf PASTE_OK",
+            expected.len()
+        );
+        let mut terminal = BedTerminal::new_empty();
+        let (session_id, _) = terminal
+            .new_command_session(
+                PtyOptions {
+                    shell: Some(TerminalShell::new("/bin/sh", vec!["-c".into(), script])),
+                    ..Default::default()
+                },
+                "Registered clipboard fixture",
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !output(&terminal).contains("READY") {
+            terminal.poll().unwrap();
+            assert!(Instant::now() < deadline, "Child must be ready for paste");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let reads = Rc::new(Cell::new(0));
+        let mut world = World::new();
+        world.insert_non_send(terminal);
+        world.insert_non_send(Box::new(Files {
+            paths,
+            reads: Rc::clone(&reads),
+        })
+            as Box<dyn bed_api::workbench::FileClipboardService>);
+        let panel = world
+            .spawn(TerminalPanelState {
+                session_id,
+                command: true,
+            })
+            .id();
+        let handler = world.register_system(clipboard);
+        world
+            .run_system_with(
+                handler,
+                bed_api::workbench::ClipboardInvocation {
+                    entity: panel,
+                    action: bed_api::workbench::ClipboardAction::Paste("EXPLICIT".into()),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reads.get(),
+            0,
+            "Explicit text must not consult the native clipboard"
+        );
+        world
+            .run_system_with(
+                handler,
+                bed_api::workbench::ClipboardInvocation {
+                    entity: panel,
+                    action: bed_api::workbench::ClipboardAction::PasteFromClipboard(None),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(reads.get(), 1);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            world.non_send_mut::<BedTerminal>().poll().unwrap();
+            if output(world.non_send::<BedTerminal>()).contains("PASTE_OK") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Native files and explicit text must reach the child once"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        world.non_send_mut::<BedTerminal>().shutdown();
     }
 
     #[test]

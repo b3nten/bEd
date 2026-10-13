@@ -1,7 +1,7 @@
 //! Application transactions on permanent Bevy resources and generic workbench panels.
+mod command_registration;
 pub mod commands;
 pub mod runtime;
-mod shortcuts;
 mod status_bar;
 mod ui;
 pub mod workspace;

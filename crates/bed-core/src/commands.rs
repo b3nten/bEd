@@ -9,25 +9,27 @@ impl Plugin for DocumentCommandsPlugin {
     fn build(&self, app: &mut App) {
         let standard =
             *app.world().resource::<CorePresentationMode>() == CorePresentationMode::Standard;
-        if standard {
-            api::workbench::register(app.world_mut(), "bed.documents", |registrar| {
-                registrar.command(
-                    "bed.documents.shell.open",
-                    "Open shell files",
-                    open_shell_files,
-                );
-                registrar.shell_alias("+open", "bed.documents.shell.open");
-                registrar.shell_alias("+o", "bed.documents.shell.open");
+        api::workbench::register(app.world_mut(), "bed.documents", |registrar| {
+            registrar.command(
+                "bed.documents.shell.open",
+                "Open shell files",
+                open_shell_files,
+            );
+            registrar.shell_alias("+open", "bed.documents.shell.open");
+            registrar.shell_alias("+o", "bed.documents.shell.open");
+            registrar.command("bed.documents.open_file", "Open File", open);
+            registrar.command("bed.documents.save", "Save", save);
+            registrar.command("bed.documents.save_as", "Save As", save_as);
+            registrar.command("bed.documents.undo", "Undo document change", undo);
+            registrar.command("bed.documents.redo", "Redo document change", redo);
+            registrar.global_shortcut("bed.documents.open_file", &["Primary+O"]);
+            registrar.global_shortcut("bed.documents.save", &["Primary+S"]);
+            registrar.global_shortcut("bed.documents.save_as", &["Primary+Shift+S"]);
+            registrar.command_icon("bed.documents.save", "bed.core.text");
+            if standard {
                 registrar.command("bed.documents.new", "New document", new_document);
-                registrar.command("bed.documents.open_file", "Open file…", open);
-                registrar.command("bed.documents.save", "Save document", save);
-                registrar.command("bed.documents.save_as", "Save document as…", save_as);
-                registrar.command("bed.documents.undo", "Undo document change", undo);
-                registrar.command("bed.documents.redo", "Redo document change", redo);
                 registrar.global_shortcut("bed.documents.new", &["Primary+N"]);
-                registrar.global_shortcut("bed.documents.open_file", &["Primary+O"]);
-                registrar.global_shortcut("bed.documents.save", &["Primary+S"]);
-                registrar.global_shortcut("bed.documents.save_as", &["Primary+Shift+S"]);
+                registrar.command_icon("bed.documents.new", "bed.core.text");
                 for id in [
                     "bed.documents.new",
                     "bed.documents.open_file",
@@ -38,11 +40,9 @@ impl Plugin for DocumentCommandsPlugin {
                 ] {
                     registrar.menu(id);
                 }
-                registrar.command_icon("bed.documents.new", "bed.core.text");
-                registrar.command_icon("bed.documents.save", "bed.core.text");
-            })
-            .expect("shared document commands are registered once");
-        }
+            }
+        })
+        .expect("shared document commands are registered once");
         api::workbench::register(app.world_mut(), "bed.core", |registrar| {
             registrar.command("bed.core.close", "Close panel", close);
             registrar.command("bed.core.quit", "Quit application", quit_application);
@@ -53,7 +53,6 @@ impl Plugin for DocumentCommandsPlugin {
             }
         })
         .expect("foundation lifecycle commands are registered once");
-        app.add_systems(PreUpdate, availability.in_set(CoreSystems::Frame));
     }
 }
 
@@ -92,9 +91,11 @@ fn open_shell_files(In(input): In<CommandInvocation>, world: &mut World) -> Comm
         .tiling
         .layout
         .largest_area();
-    for path in paths {
-        crate::open_file(world, &path, None, Some(area))?;
-    }
+    world.resource_mut::<api::features::HostEffects>().push_at(
+        input.source,
+        area,
+        api::features::HostAction::OpenTerminalFiles { paths },
+    );
     Ok(Vec::new())
 }
 fn document(world: &World, input: &CommandInvocation) -> Option<DocumentId> {
@@ -117,14 +118,32 @@ fn document(world: &World, input: &CommandInvocation) -> Option<DocumentId> {
         .resource::<bed_api::documents::DocumentFrame>()
         .active_document
 }
-fn availability(world: &mut World) {
-    if *world.resource::<CorePresentationMode>() == CorePresentationMode::Application {
-        return;
+fn save_target(world: &World, input: &CommandInvocation) -> Result<Option<DocumentId>, String> {
+    // bEd and other command producers can snapshot an explicitly selected
+    // document. An explicit empty target must not inherit a later selection.
+    if let Some(document) = input.arguments.get("document") {
+        if document.is_null() {
+            return Ok(None);
+        }
+        let document = document
+            .as_u64()
+            .filter(|id| *id > 0)
+            .map(DocumentId)
+            .ok_or_else(|| "A captured document ID must be a positive integer".to_owned())?;
+        crate::document_revision(world, document)?;
+        return Ok(Some(document));
     }
-    let has_editor = world
-        .resource::<bed_api::features::FeatureRegistry>()
-        .default_viewer(DocumentKind::Text)
-        .is_some();
+    Ok(document(world, input).or_else(|| {
+        world
+            .get_resource::<DocumentFrameSelection>()
+            .and_then(|selection| selection.document)
+    }))
+}
+
+pub(crate) fn publish_document_commands(world: &mut World) {
+    let features = world.resource::<bed_api::features::FeatureRegistry>();
+    let has_editor = features.default_viewer(DocumentKind::Text).is_some();
+    let has_viewer = !features.viewers().is_empty();
     let focused = world.resource::<bed_workbench::WorkbenchLayout>().focused;
     let input = CommandInvocation {
         command: String::new(),
@@ -133,14 +152,24 @@ fn availability(world: &mut World) {
         arguments: serde_json::Value::Null,
     };
     let has_document = document(world, &input).is_some();
+    let has_save_target = save_target(world, &input).is_ok_and(|document| document.is_some());
     let local = !world.resource::<bed_files::FileServices>().is_remote();
     let mut facts = world.resource_mut::<api::workbench::CommandPresentations>();
     for id in ["bed.documents.new", "bed.documents.open_file"] {
+        let available = if id == "bed.documents.open_file" {
+            has_viewer && local
+        } else {
+            has_editor
+        };
         facts.0.insert(
             id.into(),
             api::workbench::CommandPresentation {
-                visible: has_editor,
-                enabled: has_editor && (id != "bed.documents.open_file" || local),
+                visible: if id == "bed.documents.open_file" {
+                    has_viewer
+                } else {
+                    has_editor
+                },
+                enabled: available,
                 ..Default::default()
             },
         );
@@ -154,8 +183,20 @@ fn availability(world: &mut World) {
         facts.0.insert(
             id.into(),
             api::workbench::CommandPresentation {
-                visible: has_editor || has_document,
-                enabled: has_document && (id != "bed.documents.save_as" || local),
+                visible: has_editor || has_document || has_save_target,
+                enabled: if id == "bed.documents.save" || id == "bed.documents.save_as" {
+                    has_save_target && (id != "bed.documents.save_as" || local)
+                } else {
+                    has_document
+                },
+                scope: if id == "bed.documents.save_as" && !local {
+                    api::workbench::CommandPresentationScope::Global
+                } else {
+                    api::workbench::CommandPresentationScope::Invocation {
+                        source: focused,
+                        arguments: serde_json::Value::Null,
+                    }
+                },
                 ..Default::default()
             },
         );
@@ -164,6 +205,10 @@ fn availability(world: &mut World) {
         "bed.core.close".into(),
         api::workbench::CommandPresentation {
             enabled: focused.is_some(),
+            scope: api::workbench::CommandPresentationScope::Invocation {
+                source: focused,
+                arguments: serde_json::Value::Null,
+            },
             ..Default::default()
         },
     );
@@ -196,7 +241,7 @@ fn open(In(input): In<CommandInvocation>, world: &mut World) -> CommandResult {
     Ok(Vec::new())
 }
 fn save(In(input): In<CommandInvocation>, world: &mut World) -> CommandResult {
-    let document = document(world, &input).ok_or("No document is selected")?;
+    let document = save_target(world, &input)?.ok_or("No document is selected")?;
     let needs_path = model_document(world, document)
         .map(|document| document.path.is_none())
         .unwrap_or_else(|| {
@@ -215,7 +260,7 @@ fn save(In(input): In<CommandInvocation>, world: &mut World) -> CommandResult {
     }
 }
 fn save_as(In(input): In<CommandInvocation>, world: &mut World) -> CommandResult {
-    let document = document(world, &input).ok_or("No document is selected")?;
+    let document = save_target(world, &input)?.ok_or("No document is selected")?;
     world.resource_mut::<api::features::HostEffects>().push(
         input.source,
         api::features::HostAction::SaveAsDialog { document },

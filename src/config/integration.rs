@@ -1,4 +1,4 @@
-//! bEd maps its private settings form into the shared preference owner's transactions.
+//! bEd submits its namespaced settings draft to the shared preference owner.
 use super::Settings;
 use bed_api::settings::{SettingDefinition, SettingsRegistry, SettingsResults, SettingsSnapshot};
 use bevy::prelude::*;
@@ -8,28 +8,9 @@ use std::{collections::BTreeMap, io};
 #[derive(Resource)]
 struct AppSettingsRegistered;
 
-pub fn settings_owner(key: &str) -> &'static str {
-    match key {
-        "font" | "fontSize" | "background_opacity" | "ui_animations" => "bed.ui",
-        "autosave" | "autosave_delay_ms" | "default_viewers" => "bed.documents",
-        "tab_bar_add_button" => "bed.workbench",
-        "word_wrap"
-        | "minimap"
-        | "rainbow"
-        | "lsp_autocomplete"
-        | "lsp_completion_delay_ms"
-        | "lsp_format_on_save"
-        | "git_changed_lines"
-        | "treesitter" => "bed.editor",
-        _ => "bed.application",
-    }
-}
-
 const APPLICATION_KEYS: &[&str] = &[
     "agent_model",
     "ai_autocomplete",
-    "bedtime_enabled",
-    "bedtime_delay_seconds",
     "completion_model",
     "fps_target",
     "fps_target_unfocused",
@@ -38,21 +19,6 @@ const APPLICATION_KEYS: &[&str] = &[
     "sidebar_visible",
     "terminal_visible",
     "splitPos",
-    "theme",
-    "effect_preset",
-    "cursor_smear",
-    "bloom_intensity",
-    "burnin_intensity",
-    "colorshift_intensity",
-    "curvature_intensity",
-    "jitter_intensity",
-    "pixel_width",
-    "pixelation_intensity",
-    "scanline_intensity",
-    "shader_toggle",
-    "static_intensity",
-    "vignet_intensity",
-    "pulse_intensity",
 ];
 
 pub fn register_app_settings(world: &mut World) -> io::Result<()> {
@@ -107,10 +73,16 @@ pub fn ensure_settings_view(world: &mut World) -> io::Result<()> {
     if !world.contains_resource::<AppSettingsRegistered>() {
         let path = world.non_send::<Settings>().settings_path.clone();
         bed_core::settings::initialize_settings(world, Some(path))?;
+        let resources_root = world.non_send::<Settings>().resources_root.clone();
+        crate::themes::install_theme_services(world, resources_root);
         register_app_settings(world)?;
         bed_core::settings::finalize_settings(world)?;
     }
-    sync_view(world)
+    let resources_root = world.non_send::<Settings>().resources_root.clone();
+    crate::themes::install_theme_services(world, resources_root);
+    sync_view(world)?;
+    crate::themes::configure_themes(world);
+    Ok(())
 }
 
 pub fn sync_view(world: &mut World) -> io::Result<()> {
@@ -128,13 +100,6 @@ pub fn sync_view(world: &mut World) -> io::Result<()> {
     world
         .non_send_mut::<Settings>()
         .synchronize(&snapshot, results);
-    let syntax = world.non_send::<Settings>().highlight_colors();
-    if world
-        .get_resource::<bed_core::SyntaxAppearance>()
-        .is_none_or(|appearance| appearance.0 != syntax)
-    {
-        world.insert_resource(bed_core::SyntaxAppearance(syntax));
-    }
     Ok(())
 }
 
@@ -154,6 +119,13 @@ pub(crate) fn commit_test_draft(view: &mut Settings) -> io::Result<()> {
     #[cfg(feature = "editor")]
     app.add_plugins(bed_plugin_editor::EditorPlugin);
     let world = app.world_mut();
+    #[cfg(feature = "effects")]
+    bed_plugin_effects::settings::register_preferences(world);
+    #[cfg(feature = "idle")]
+    bed_plugin_idle::register_preferences(world);
+    let paths =
+        bed_api::launch::ApplicationPaths::new("bed", Some(owned.config_dir.clone()), None)?;
+    world.insert_resource(paths);
     world.insert_non_send(owned);
     bed_core::settings::install_settings(world);
     #[cfg(not(feature = "editor"))]
@@ -164,6 +136,7 @@ pub(crate) fn commit_test_draft(view: &mut Settings) -> io::Result<()> {
             SettingDefinition::new("word_wrap", "Wrap", true),
             SettingDefinition::new("minimap", "Minimap", true),
             SettingDefinition::new("rainbow", "Rainbow", true),
+            SettingDefinition::new("cursor_smear", "Animate cursor movement", true),
             SettingDefinition::new("lsp_autocomplete", "Autocomplete", true),
             SettingDefinition::new("lsp_completion_delay_ms", "Delay", 150.0),
             SettingDefinition::new("lsp_format_on_save", "Format", true),
@@ -198,6 +171,8 @@ pub(crate) fn commit_test_draft(view: &mut Settings) -> io::Result<()> {
     let path = world.non_send::<Settings>().settings_path.clone();
     let result = (|| {
         bed_core::settings::initialize_settings(world, Some(path.clone()))?;
+        let resources_root = world.non_send::<Settings>().resources_root.clone();
+        crate::themes::install_theme_services(world, resources_root);
         register_app_settings(world)?;
         bed_core::settings::finalize_settings(world)?;
         // Fixture setup explicitly asks the core owner for an empty profile.
@@ -241,14 +216,71 @@ mod tests {
         assert!(!temp.path("config").exists());
     }
 
+    #[cfg(all(feature = "editor", feature = "effects", feature = "idle"))]
+    #[test]
+    fn fresh_profile_applies_application_defaults_after_plugin_definitions() {
+        let temp = TempDir::new();
+        let view = view(&temp);
+        let expected = view.settings.clone();
+        let mut app = App::new();
+        app.add_plugins(bed_plugin_editor::EditorPlugin);
+        bed_plugin_effects::settings::register_preferences(app.world_mut());
+        bed_plugin_idle::register_preferences(app.world_mut());
+        app.insert_resource(
+            bed_api::launch::ApplicationPaths::new("bed", Some(temp.path("config")), None).unwrap(),
+        );
+        app.insert_non_send(view);
+        crate::themes::install_theme_services(
+            app.world_mut(),
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        );
+        bed_core::settings::initialize_settings(
+            app.world_mut(),
+            Some(temp.path("config/settings.json")),
+        )
+        .unwrap();
+        register_app_settings(app.world_mut()).unwrap();
+        bed_core::settings::finalize_settings(app.world_mut()).unwrap();
+        sync_view(app.world_mut()).unwrap();
+        let snapshot = app.world().resource::<SettingsSnapshot>();
+        assert_eq!(
+            snapshot.get("bed.idle", "bedtime_delay_seconds"),
+            Some(&json!(60))
+        );
+        assert_eq!(
+            snapshot.get("bed.effects", "vignet_intensity"),
+            Some(&expected["bed.effects"]["vignet_intensity"])
+        );
+        assert_eq!(
+            snapshot.get("bed.editor", "cursor_smear"),
+            Some(&json!(true))
+        );
+        assert_eq!(
+            app.world().non_send::<Settings>().settings["bed.idle"]["bedtime_delay_seconds"],
+            60
+        );
+        assert!(
+            app.world()
+                .non_send::<Settings>()
+                .settings
+                .get("plugins")
+                .is_none()
+        );
+        assert!(!temp.path("config").exists());
+    }
+
     #[test]
     fn draft_batches_reach_the_core_owner_and_keybindings_share_the_profile() {
         let temp = TempDir::new();
         let mut current = view(&temp);
         commit_test_draft(&mut current).unwrap();
-        current.settings["fontSize"] = json!(25.0);
-        current.settings["autosave"] = json!(false);
-        current.keybinds.clear("bed.edit.copy").unwrap();
+        current.settings["bed.ui"]["fontSize"] = json!(25.0);
+        current.settings["bed.documents"]["autosave"] = json!(false);
+        let mut keybindings = current.keybindings();
+        keybindings
+            .actions
+            .insert("bed.edit.copy".into(), Vec::new());
+        current.set_keybindings(keybindings);
         current.request_save();
         assert_eq!(current.request_ids().len(), 1);
         commit_test_draft(&mut current).unwrap();
@@ -269,16 +301,51 @@ mod tests {
     }
 
     #[test]
+    fn plugin_drafts_save_in_their_own_namespace_and_keep_absent_plugins() {
+        let temp = TempDir::new();
+        let absent = json!({"state": {"future": [1, "retained", true]}});
+        temp.write(
+            "config/settings.json",
+            &serde_json::to_vec(&json!({
+                "version": 1,
+                "overrides": {"third.party": absent},
+            }))
+            .unwrap(),
+        );
+        let mut current = view(&temp);
+        commit_test_draft(&mut current).unwrap();
+        assert_eq!(current.settings["third.party"], absent);
+        current.settings["fixture"]["enabled"] = json!(true);
+        current.settings["bed.ui"]["fontSize"] = json!(25.0);
+        current.request_save();
+        commit_test_draft(&mut current).unwrap();
+        let saved: Value =
+            serde_json::from_slice(&std::fs::read(&current.settings_path).unwrap()).unwrap();
+        assert_eq!(saved["overrides"]["fixture"]["enabled"], true);
+        assert_eq!(saved["overrides"]["third.party"], absent);
+        assert!(
+            saved["overrides"]["bed.application"]
+                .get("plugins")
+                .is_none()
+        );
+        let mut restarted = view(&temp);
+        commit_test_draft(&mut restarted).unwrap();
+        assert_eq!(restarted.settings["fixture"]["enabled"], true);
+        assert_eq!(restarted.settings["third.party"], absent);
+        assert_eq!(restarted.font_size(), 25.0);
+    }
+
+    #[test]
     fn pending_batch_keeps_save_sequence_and_later_unsaved_draft() {
         let temp = TempDir::new();
         let mut current = view(&temp);
         commit_test_draft(&mut current).unwrap();
-        current.settings["fontSize"] = json!(24.0);
+        current.settings["bed.ui"]["fontSize"] = json!(24.0);
         current.request_save();
         let sequence = current.request_ids()[0].0;
         let later = bed_api::features::next_request_sequence();
         assert!(sequence < later);
-        current.settings["fontSize"] = json!(28.0);
+        current.settings["bed.ui"]["fontSize"] = json!(28.0);
         commit_test_draft(&mut current).unwrap();
         assert_eq!(current.font_size(), 28.0);
         let saved: Value =
@@ -294,41 +361,19 @@ mod tests {
         let temp = TempDir::new();
         let mut current = view(&temp);
         commit_test_draft(&mut current).unwrap();
-        current.settings["fontSize"] = json!("invalid");
+        current.settings["bed.ui"]["fontSize"] = json!("invalid");
         current.request_save();
         assert!(commit_test_draft(&mut current).is_err());
         assert!(current.error.is_some());
         assert!(current.request_ids().is_empty());
-        assert_eq!(current.settings["fontSize"], json!(20.0));
+        assert_eq!(current.settings["bed.ui"]["fontSize"], json!(20.0));
 
-        current.settings["fontSize"] = json!(26.0);
+        current.settings["bed.ui"]["fontSize"] = json!(26.0);
         current.request_save();
         commit_test_draft(&mut current).unwrap();
         assert!(current.error.is_none());
         let mut restarted = view(&temp);
         commit_test_draft(&mut restarted).unwrap();
         assert_eq!(restarted.font_size(), 26.0);
-    }
-
-    #[test]
-    fn theme_files_remain_color_only_and_preference_changes_use_core() {
-        let temp = TempDir::new();
-        let mut current = view(&temp);
-        commit_test_draft(&mut current).unwrap();
-        let mut theme = current.theme.to_json();
-        theme["name"] = json!("Custom theme");
-        theme["fontSize"] = json!(40);
-        let selection = current.save_custom_theme(None, &theme).unwrap();
-        current.select_theme(&selection).unwrap();
-        commit_test_draft(&mut current).unwrap();
-        let theme: Value = serde_json::from_slice(
-            &std::fs::read(current.theme_path(&selection).unwrap()).unwrap(),
-        )
-        .unwrap();
-        assert!(theme.get("fontSize").is_none());
-        assert_eq!(current.font_size(), 20.0);
-        let mut restarted = view(&temp);
-        commit_test_draft(&mut restarted).unwrap();
-        assert_eq!(restarted.theme.name, "Custom theme");
     }
 }

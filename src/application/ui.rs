@@ -30,19 +30,8 @@ pub fn set_root_top_inset(world: &mut World, inset: f32) {
 /// intentions return to the ordered reducer once every UI scope has ended.
 pub fn draw_ui(world: &mut World, ui: &Ui) -> io::Result<()> {
     process_app_requests(world)?;
-    if let Some(textures) = world.get_resource::<bed_ui::gpu::CanvasTextures>() {
-        let textures = textures.0.clone();
-        world
-            .resource_mut::<bed_api::presentation::PresentationFrame>()
-            .textures = textures;
-    }
+    bed_core::prepare_workbench_ui(world);
     publish_app_state(world);
-    for mut visible in world
-        .query::<&mut bed_ui::gpu::CanvasVisible>()
-        .iter_mut(world)
-    {
-        visible.0 = false;
-    }
     let font = world
         .get_non_send::<bed_ui::font::UiFonts>()
         .and_then(|fonts| fonts.main);
@@ -61,46 +50,10 @@ pub fn draw_ui(world: &mut World, ui: &Ui) -> io::Result<()> {
     world
         .resource_mut::<bed_workbench::WorkbenchViewport>()
         .bottom_inset = status_height;
-    world.init_non_send::<bed_workbench::WorkbenchShortcuts>();
-    let overrides = world
-        .resource::<bed_api::settings::SettingsSnapshot>()
-        .keybindings();
-    world
-        .non_send_mut::<bed_workbench::WorkbenchShortcuts>()
-        .overrides = overrides;
     bed_workbench::render_ui(world, ui);
     crate::application::status_bar::draw(world, ui);
 
-    // A quarantined frontend cannot keep consequential intentions emitted
-    // before its panic. Healthy surfaces retain their ordered intentions.
-    let intents = world
-        .resource_mut::<bed_api::features::HostEffects>()
-        .take();
-    for intent in intents {
-        if intent.source.is_some_and(|source| {
-            world
-                .get::<bed_workbench::PanelRecord>(source)
-                .is_some_and(|record| record.unavailable.is_some())
-        }) {
-            continue;
-        }
-        world
-            .resource_mut::<bed_api::features::HostEffects>()
-            .push_effect(intent);
-    }
-    let surfaces = world
-        .query::<(
-            &bed_api::workbench::PanelGeometry,
-            &bed_api::workbench::PanelFrontend,
-        )>()
-        .iter(world)
-        .filter_map(|(geometry, frontend)| geometry.visible.then_some(frontend.0))
-        .collect::<Vec<_>>();
-    for surface in surfaces {
-        world
-            .entity_mut(surface)
-            .insert(bed_ui::gpu::CanvasVisible(true));
-    }
+    bed_core::finish_workbench_ui(world);
     if let Some(error) = world.resource::<WorkspaceState>().error.clone() {
         ui.window("Application error")
             .flags(dear_imgui_rs::WindowFlags::ALWAYS_AUTO_RESIZE)

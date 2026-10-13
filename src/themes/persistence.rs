@@ -1,4 +1,4 @@
-//! Atomic replacement for application-owned configuration files.
+//! Atomic replacement for bEd-owned theme files.
 use serde_json::Value;
 use std::{
     fs,
@@ -25,7 +25,7 @@ fn write(path: &Path, value: &Value, replace: bool) -> io::Result<()> {
     })?;
     fs::create_dir_all(parent)?;
     let temporary = parent.join(format!(
-        ".bed-settings-write-{}-{}.tmp",
+        ".bed-theme-write-{}-{}.tmp",
         std::process::id(),
         NEXT_WRITE.fetch_add(1, Ordering::Relaxed)
     ));

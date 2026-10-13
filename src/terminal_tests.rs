@@ -446,8 +446,9 @@ fn bed_shell_entrypoints_preserve_gui_arguments_and_forward_registered_aliases()
     for command in ["ducky", "--help"] {
         let outcome = crate::app::launcher()
             .unwrap()
-            .dispatch([OsString::from("bed"), OsString::from(command)])
+            .with_args([OsString::from("bed"), OsString::from(command)])
+            .dispatch()
             .unwrap();
-        assert!(matches!(outcome, bed_app::LaunchOutcome::Desktop(_)));
+        assert!(matches!(outcome, bed_launch::LaunchOutcome::Desktop(_)));
     }
 }

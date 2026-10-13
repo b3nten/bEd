@@ -1,5 +1,4 @@
 //! Application identity, storage locations and process entrypoints.
-use bevy::prelude::App;
 use std::{
     ffi::OsString,
     io,
@@ -94,7 +93,6 @@ pub struct ProcessEntrypoint {
 pub struct LaunchRegistration {
     pub owner: &'static str,
     pub entrypoints: Vec<ProcessEntrypoint>,
-    pub install: Box<dyn FnOnce(&mut App)>,
 }
 
 #[cfg(test)]

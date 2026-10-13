@@ -1,5 +1,36 @@
 //! Renderer-independent configuration for Bed visual effects.
 
+pub const SETTINGS_OWNER: &str = "bed.effects";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EffectPreset {
+    Sharp,
+    #[default]
+    Off,
+    Legacy,
+    Custom,
+}
+
+impl EffectPreset {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Sharp => "sharp",
+            Self::Off => "off",
+            Self::Legacy => "legacy",
+            Self::Custom => "custom",
+        }
+    }
+
+    pub fn from_preferences(settings: &serde_json::Value) -> Self {
+        match settings["effect_preset"].as_str() {
+            Some("sharp") => Self::Sharp,
+            Some("legacy") => Self::Legacy,
+            Some("custom") => Self::Custom,
+            _ => Self::Off,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ShaderSettings {
     pub enabled: bool,
@@ -25,6 +56,23 @@ impl Default for ShaderSettings {
 }
 
 impl ShaderSettings {
+    pub fn from_preferences(settings: &serde_json::Value) -> Self {
+        match EffectPreset::from_preferences(settings) {
+            EffectPreset::Sharp => Self::subtle(),
+            EffectPreset::Off => Self::default(),
+            EffectPreset::Legacy => {
+                let mut legacy = Self::from_json(settings);
+                legacy.enabled = true;
+                legacy.pulse_intensity = settings["pulse_intensity"]
+                    .as_f64()
+                    .filter(|value| value.is_finite())
+                    .map_or(0.05, |value| value as f32);
+                legacy
+            }
+            EffectPreset::Custom => Self::from_json(settings),
+        }
+    }
+
     pub fn subtle() -> Self {
         Self {
             enabled: true,
@@ -108,5 +156,105 @@ impl ShaderSettings {
         .into_iter()
         .flat_map(f32::to_ne_bytes)
         .collect()
+    }
+}
+
+#[cfg(feature = "desktop")]
+pub fn register_preferences(world: &mut bevy::prelude::World) {
+    use bed_api::settings::SettingDefinition;
+    let defaults = ShaderSettings::legacy();
+    let mut definitions = vec![
+        SettingDefinition::new("effect_preset", "Effect preset", "off")
+            .validated_by(validate_preset),
+        SettingDefinition::new("shader_toggle", "Enable custom effects", false),
+        SettingDefinition::new("pixel_width", "Pixel width", defaults.pixel_width)
+            .validated_by(validate_positive),
+        SettingDefinition::new(
+            "pixelation_intensity",
+            "Pixelation",
+            defaults.pixelation_intensity,
+        )
+        .validated_by(validate_number),
+        SettingDefinition::new("burnin_intensity", "Burn-in", defaults.burnin_intensity)
+            .validated_by(validate_burnin),
+    ];
+    definitions.extend(
+        [
+            (
+                "scanline_intensity",
+                "Scanlines",
+                defaults.scanline_intensity,
+            ),
+            ("vignet_intensity", "Vignette", defaults.vignet_intensity),
+            ("bloom_intensity", "Bloom", defaults.bloom_intensity),
+            ("static_intensity", "Static", defaults.static_intensity),
+            (
+                "colorshift_intensity",
+                "RGB shift",
+                defaults.colorshift_intensity,
+            ),
+            ("jitter_intensity", "Jitter", defaults.jitter_intensity),
+            (
+                "curvature_intensity",
+                "Curvature",
+                defaults.curvature_intensity,
+            ),
+            ("pulse_intensity", "Pulse", defaults.pulse_intensity),
+        ]
+        .map(|(key, label, value)| {
+            SettingDefinition::new(key, label, value).validated_by(validate_nonnegative)
+        }),
+    );
+    bed_api::settings::register(world, SETTINGS_OWNER, definitions)
+        .expect("Effects preferences install once");
+}
+
+#[cfg(feature = "desktop")]
+fn validate_preset(value: &serde_json::Value) -> Result<(), String> {
+    match value.as_str() {
+        Some("off" | "sharp" | "legacy" | "custom") => Ok(()),
+        _ => Err("Choose off, sharp, legacy, or custom".into()),
+    }
+}
+
+#[cfg(feature = "desktop")]
+fn validate_number(value: &serde_json::Value) -> Result<(), String> {
+    if value
+        .as_f64()
+        .is_some_and(|value| (value as f32).is_finite())
+    {
+        Ok(())
+    } else {
+        Err("Effect values must be finite and fit in a shader float".into())
+    }
+}
+
+#[cfg(feature = "desktop")]
+fn validate_nonnegative(value: &serde_json::Value) -> Result<(), String> {
+    validate_number(value)?;
+    if value.as_f64().expect("Validated number") >= 0.0 {
+        Ok(())
+    } else {
+        Err("Effect intensity must be nonnegative".into())
+    }
+}
+
+#[cfg(feature = "desktop")]
+fn validate_positive(value: &serde_json::Value) -> Result<(), String> {
+    validate_number(value)?;
+    if value.as_f64().expect("Validated number") as f32 > 0.0 {
+        Ok(())
+    } else {
+        Err("Pixel width must be positive".into())
+    }
+}
+
+#[cfg(feature = "desktop")]
+fn validate_burnin(value: &serde_json::Value) -> Result<(), String> {
+    validate_number(value)?;
+    if (0.0..=1.0).contains(&value.as_f64().expect("Validated number")) {
+        Ok(())
+    } else {
+        Err("Burn-in must be between zero and one".into())
     }
 }

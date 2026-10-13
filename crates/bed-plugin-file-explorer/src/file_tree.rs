@@ -1193,14 +1193,11 @@ impl FileTree {
         let icon_text_gap = font_size * 0.35;
         let icon = icons.and_then(|icons| {
             if node.is_directory {
-                icons
-                    .get(if node.is_open {
-                        "folder-open"
-                    } else {
-                        "folder"
-                    })
-                    .or_else(|| icons.get("bed.core.folder"))
-                    .or_else(|| icons.get("bed.core.default"))
+                icons.get(if node.is_open {
+                    "bed.explorer.folder-open"
+                } else {
+                    "bed.explorer.folder"
+                })
             } else {
                 icons.get_for_file(&node.name)
             }
@@ -1494,9 +1491,9 @@ impl FileTree {
             let side = font_size * 0.7;
             if let Some(texture) = icons.and_then(|icons| {
                 icons.get(if node.is_open {
-                    "chevron-down"
+                    "bed.explorer.chevron-down"
                 } else {
-                    "chevron-right"
+                    "bed.explorer.chevron-right"
                 })
             }) {
                 ui.get_window_draw_list().add_image(

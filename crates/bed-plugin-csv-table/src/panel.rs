@@ -509,10 +509,11 @@ impl CsvPanel {
                 }
                 text
             }
-            ClipboardAction::Paste(text) => {
+            ClipboardAction::Paste(text) | ClipboardAction::PasteFromClipboard(Some(text)) => {
                 self.paste_text(&text, requests);
                 None
             }
+            ClipboardAction::PasteFromClipboard(None) => None,
             ClipboardAction::SelectAll => {
                 self.select_all();
                 None
@@ -1532,7 +1533,7 @@ impl CsvPanel {
             {
                 if let Some(menu) = host.viewer_menu {
                     if let Some(viewer) = menu.choices.iter().find(|v| v.text_editor) {
-                        requests.push(HostAction::SwitchViewer {
+                        requests.push(HostAction::OpenDocumentViewer {
                             tab: menu.tab,
                             document: self.document,
                             viewer: viewer.id.clone(),

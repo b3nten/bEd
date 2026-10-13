@@ -32,7 +32,7 @@ pub const OUT_COMMAND: &str = "bed.debug.step_out";
 pub const BREAKPOINT_COMMAND: &str = "bed.debug.toggle_breakpoint";
 
 /// Declare the native debugger trampoline before the application's GUI exists.
-pub fn launch_registration() -> bed_api::launch::LaunchRegistration {
+pub fn launchers() -> bed_api::launch::LaunchRegistration {
     use bed_api::launch::{LaunchRegistration, ProcessEntrypoint, ProcessSelector};
     LaunchRegistration {
         owner: MODULE_ID,
@@ -40,9 +40,6 @@ pub fn launch_registration() -> bed_api::launch::LaunchRegistration {
             selector: ProcessSelector::FirstArgument(bed_debugger::launcher::FLAG.into()),
             run: |args| bed_debugger::launcher::run(args.into_iter().skip(2)).map(|_| Some(0)),
         }],
-        install: Box::new(|app| {
-            app.add_plugins(DebuggerPlugin);
-        }),
     }
 }
 

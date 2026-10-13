@@ -84,12 +84,20 @@ impl Panel for SettingsFrontend {
         _: &mut Vec<WorkbenchAction>,
         _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
-        if self.ui_state.shortcut_recording.is_some()
+        if self.ui_state.keybinding_editor.is_recording()
             && world
                 .get_non_send::<bed_api::workbench::ShortcutRuntime>()
                 .is_some_and(|runtime| runtime.recording != Some(self.entity))
         {
-            self.ui_state.shortcut_recording = None;
+            self.ui_state.keybinding_editor.cancel_recording();
+        }
+        self.ui_state.theme_files = world.get_resource::<crate::themes::ThemeFiles>().cloned();
+        self.ui_state.active_theme = world
+            .get_resource::<crate::themes::ActiveTheme>()
+            .cloned()
+            .unwrap_or_default();
+        if let Some(mut results) = world.get_resource_mut::<crate::themes::ThemeResults>() {
+            self.ui_state.theme_editor.synchronize(&mut results);
         }
         self.ui_state.category = world
             .get::<SettingsPanelState>(self.entity)
@@ -110,7 +118,7 @@ impl Panel for SettingsFrontend {
             .resource::<bed_api::workbench::WorkbenchRegistry>()
             .shortcuts()
             .to_vec();
-        if self.ui_state.shortcut_recording.is_some() {
+        if self.ui_state.keybinding_editor.is_recording() {
             _shortcuts.suppress(ui);
         }
         let fonts = world.get_non_send::<bed_ui::font::UiFonts>();
@@ -145,10 +153,7 @@ impl Panel for SettingsFrontend {
                             section_points.push([(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5]);
                         }
                         if expanded {
-                            if !values["plugins"].is_object() {
-                                values["plugins"] = json!({});
-                            }
-                            let namespace = &mut values["plugins"][section.plugin];
+                            let namespace = &mut values[section.plugin];
                             if !namespace.is_object() {
                                 *namespace = json!({});
                             }
@@ -160,13 +165,12 @@ impl Panel for SettingsFrontend {
             );
         }
         if self.ui_state.category != SettingsCategory::Keybindings {
-            self.ui_state.shortcut_recording = None;
+            self.ui_state.keybinding_editor.cancel_recording();
         }
-        let overrides = world.non_send::<Settings>().keybinds.overrides.clone();
-        if let Some(mut runtime) = world.get_non_send_mut::<bed_api::workbench::ShortcutRuntime>() {
-            runtime.overrides = overrides;
+        for request in self.ui_state.theme_editor.take_requests() {
+            world.write_message(request);
         }
-        if self.ui_state.shortcut_recording.is_some() {
+        if self.ui_state.keybinding_editor.is_recording() {
             _shortcuts.suppress(ui);
             if let Some(mut runtime) =
                 world.get_non_send_mut::<bed_api::workbench::ShortcutRuntime>()
@@ -252,7 +256,15 @@ mod tests {
         let path = settings.settings_path.clone();
         let mut app = App::new();
         app.add_plugins((WorkbenchPlugin, SettingsPlugin));
+        app.insert_resource(
+            bed_api::launch::ApplicationPaths::new("bed", Some(settings.config_dir.clone()), None)
+                .unwrap(),
+        );
         app.insert_non_send(settings);
+        crate::themes::install_theme_services(
+            app.world_mut(),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        );
         app.init_resource::<FeatureRegistry>();
         bed_core::settings::initialize_settings(app.world_mut(), Some(path.clone())).unwrap();
         bed_api::settings::register(
@@ -312,7 +324,7 @@ mod tests {
             .add_mouse_button_event(MouseButton::Left, false);
         frame(&mut context, &mut app, first);
         assert_eq!(
-            app.world().non_send::<Settings>().settings["plugins"]["fixture"]["enabled"],
+            app.world().non_send::<Settings>().settings["fixture"]["enabled"],
             true
         );
         assert_eq!(

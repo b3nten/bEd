@@ -1,10 +1,14 @@
 //! Text editing and shared undo without bEd configuration or a workspace.
-use bed_app::bed_core;
 use bed_core::api::{documents::PanelBinding, features::HostAction};
+use bed_launch::bed_core;
 use bed_plugin_editor::EditorPlugin;
 use serde_json::Value;
 use std::{
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use {
@@ -232,6 +236,8 @@ struct Smoke {
     started: Instant,
     exercised: bool,
     completed_at: u64,
+    capture: Option<bed_core::bed_desktop::DesktopCaptureId>,
+    verified: Arc<AtomicBool>,
 }
 fn smoke(world: &mut World) {
     if world.resource::<Smoke>().started.elapsed() >= Duration::from_secs(30) {
@@ -269,8 +275,52 @@ fn smoke(world: &mut World) {
     } else if world.resource::<Smoke>().exercised
         && frames >= world.resource::<Smoke>().completed_at + 6
     {
+        let Some(capture) = world.resource::<Smoke>().capture else {
+            let panel = world
+                .resource::<bed_core::bed_workbench::WorkbenchLayout>()
+                .focused
+                .unwrap();
+            let capture = world
+                .resource_mut::<bed_core::bed_desktop::DesktopCaptureRequests>()
+                .submit(
+                    vec![
+                        bed_core::bed_desktop::DesktopCaptureTarget::Window,
+                        bed_core::bed_desktop::DesktopCaptureTarget::Panel(panel),
+                    ],
+                    Instant::now() + Duration::from_secs(10),
+                    None,
+                );
+            world.resource_mut::<Smoke>().capture = Some(capture);
+            return;
+        };
+        let Some(result) = world
+            .resource_mut::<bed_core::bed_desktop::DesktopCaptureResults>()
+            .take(capture)
+        else {
+            return;
+        };
+        let frame = result.expect("editor window and panel GPU capture");
+        assert!(
+            frame.images.iter().all(|image| image
+                .rgba
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[..3].iter().any(|channel| *channel > 20))),
+            "editor capture was blank"
+        );
+        std::fs::create_dir_all("target").unwrap();
+        frame.images[0]
+            .rgba
+            .write_png("target/editor-smoke.png")
+            .unwrap();
+        world
+            .resource::<Smoke>()
+            .verified
+            .store(true, Ordering::SeqCst);
         println!(
-            "Editor smoke passed: two text views, shared edits, undo/redo, revision save receipt and layout restore"
+            "Editor smoke passed: shared history, save receipt, layout restore and native window/panel capture"
         );
         world.write_message(AppExit::Success);
     }
@@ -291,20 +341,19 @@ fn main() -> std::io::Result<()> {
         return Ok(());
     }
     let smoke_test = std::env::args().any(|argument| argument == "--smoke-test");
-    let launch = match bed_app::Application::new("example.editor", "Shared document editor")?
-        .dispatch(std::env::args_os())?
-    {
-        bed_app::LaunchOutcome::Desktop(launch) => *launch,
-        bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+    let launch =
+        match bed_launch::builder("example.editor", "Shared document editor")?.dispatch()? {
+            bed_launch::LaunchOutcome::Desktop(launch) => *launch,
+            bed_launch::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+        };
+    let options = bed_launch::DesktopOptions {
+        config_directory: smoke_test.then(|| {
+            std::env::temp_dir().join(format!("bed-editor-example-config-{}", std::process::id()))
+        }),
+        ..Default::default()
     };
-    let launch = if smoke_test {
-        launch.config_directory(
-            std::env::temp_dir().join(format!("bed-editor-example-config-{}", std::process::id())),
-        )
-    } else {
-        launch
-    };
-    let exit = launch.run(|app| {
+    let verified = Arc::<AtomicBool>::default();
+    let mut app = launch.build(options, |app| {
         app.add_plugins(EditorPlugin).add_systems(Startup, start);
         if smoke_test {
             app.insert_resource(smoke_file())
@@ -312,11 +361,20 @@ fn main() -> std::io::Result<()> {
                     started: Instant::now(),
                     exercised: false,
                     completed_at: 0,
+                    capture: None,
+                    verified: Arc::clone(&verified),
                 })
                 .add_systems(Update, smoke);
         }
         Ok(())
     })?;
+    let exit = app.run();
+    if smoke_test {
+        assert!(
+            verified.load(Ordering::SeqCst),
+            "editor smoke stopped before completion"
+        );
+    }
     if exit.is_error() {
         return Err(std::io::Error::other("Editor example exited with an error"));
     }

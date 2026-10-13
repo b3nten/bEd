@@ -28,51 +28,81 @@ pub const BUILTIN_THEMES: &[&str] = &[
     "oxocarbon-light",
 ];
 
-#[derive(Clone, Debug)]
-pub struct Theme {
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThemeFile {
     pub name: String,
     pub light: bool,
-    pub background: [f32; 4],
-    pub window_background: [f32; 4],
-    pub tab_bar: [f32; 4],
-    pub surface: [f32; 4],
-    pub foreground: [f32; 4],
-    pub accent: [f32; 4],
-    pub selection: [f32; 4],
+    pub palette: bed_ui::appearance::UiPalette,
     pub syntax: ThemeColors,
     pub terminal: [[f32; 4]; 16],
 }
 
-/// An unsaved theme, owned by each settings view. The service retains one for
-/// callers of the legacy settings UI that do not supply per-view state.
+/// An unsaved theme and pending save receipt, owned by one settings view.
 #[derive(Default)]
 pub struct ThemeDraft {
     pub editing: bool,
     pub source: String,
     pub destination: Option<String>,
-    pub palette: Option<Theme>,
+    pub file: Option<ThemeFile>,
     pub json_input: String,
     pub error: Option<String>,
     pub message: Option<String>,
     pub dirty: bool,
     pub separate_tab_bar: bool,
+    pub(crate) pending: Option<(super::ThemeSaveId, ThemeFile)>,
+    pub(crate) outbox: Vec<super::SaveTheme>,
 }
 
 impl ThemeDraft {
-    pub fn load(&mut self, theme: Theme, destination: Option<String>) {
+    pub fn load(&mut self, theme: ThemeFile, destination: Option<String>) {
         self.editing = true;
-        self.separate_tab_bar = theme.tab_bar != theme.background;
-        self.palette = Some(theme);
+        self.separate_tab_bar = theme.palette.tab_bar != theme.palette.background;
+        self.file = Some(theme);
         self.destination = destination;
         self.error = None;
         self.message = None;
         self.dirty = self.destination.is_none();
     }
 
+    pub fn request_save(&mut self, apply: bool) {
+        let Some(file) = self.file.as_ref() else {
+            return;
+        };
+        if self.pending.is_some() {
+            return;
+        }
+        let request = super::SaveTheme::new(self.destination.clone(), file.clone(), apply);
+        self.pending = Some((request.id, file.clone()));
+        self.outbox.push(request);
+    }
+
+    pub fn take_requests(&mut self) -> Vec<super::SaveTheme> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    pub fn synchronize(&mut self, results: &mut super::ThemeResults) {
+        let Some((id, submitted)) = self.pending.as_ref() else {
+            return;
+        };
+        let Some(result) = results.take(*id) else {
+            return;
+        };
+        match result {
+            Ok(saved) => {
+                self.destination = Some(saved.selection.clone());
+                self.dirty = self.file.as_ref() != Some(submitted);
+                self.message = Some(format!("Saved {}", saved.selection));
+                self.error = saved.apply_error;
+            }
+            Err(error) => self.error = Some(error),
+        }
+        self.pending = None;
+    }
+
     /// Failed imports leave the current draft intact.
     pub fn import_json(&mut self) -> io::Result<()> {
         let value = serde_json::from_str(&self.json_input).map_err(|e| invalid(e.to_string()))?;
-        let theme = Theme::from_json(&value)?;
+        let theme = ThemeFile::from_json(&value)?;
         self.load(theme, None);
         Ok(())
     }
@@ -100,7 +130,23 @@ fn rgb(value: &Value, field: &str) -> io::Result<[f32; 4]> {
     ])
 }
 
-impl Theme {
+impl ThemeFile {
+    pub fn bundled_default() -> Self {
+        Self::from_json(
+            &serde_json::from_str(include_str!("../../resources/themes/tokyo.json"))
+                .expect("Bundled theme JSON"),
+        )
+        .expect("Bundled default theme")
+    }
+
+    /// Imported colors remain raw in the file; runtime ink is adjusted for contrast.
+    pub fn runtime_palette(&self) -> bed_ui::appearance::UiPalette {
+        let mut palette = self.palette.clone();
+        palette.text = bed_ui::color::ensure_contrast(palette.text, palette.background, 4.5);
+        palette.accent = bed_ui::color::ensure_contrast(palette.accent, palette.background, 3.0);
+        palette
+    }
+
     pub fn load(path: &Path) -> io::Result<Self> {
         let value = serde_json::from_slice(&fs::read(path)?)
             .map_err(|e| invalid(format!("{}: {e}", path.display())))?;
@@ -146,13 +192,15 @@ impl Theme {
         Ok(Self {
             name,
             light,
-            background,
-            window_background,
-            tab_bar,
-            surface: rgb(&ui["surface"], "ui.surface")?,
-            foreground: rgb(&ui["foreground"], "ui.foreground")?,
-            accent: rgb(&ui["accent"], "ui.accent")?,
-            selection: rgb(&ui["selection"], "ui.selection")?,
+            palette: bed_ui::appearance::UiPalette {
+                background,
+                window_background,
+                tab_bar,
+                surface: rgb(&ui["surface"], "ui.surface")?,
+                text: rgb(&ui["foreground"], "ui.foreground")?,
+                accent: rgb(&ui["accent"], "ui.accent")?,
+                selection: rgb(&ui["selection"], "ui.selection")?,
+            },
             syntax,
             terminal,
         })
@@ -168,20 +216,20 @@ impl Theme {
             "name": self.name.trim(),
             "appearance": if self.light { "light" } else { "dark" },
             "ui": {
-                "background": hex(self.background),
-                "surface": hex(self.surface),
-                "foreground": hex(self.foreground),
-                "accent": hex(self.accent),
-                "selection": hex(self.selection),
+                "background": hex(self.palette.background),
+                "surface": hex(self.palette.surface),
+                "foreground": hex(self.palette.text),
+                "accent": hex(self.palette.accent),
+                "selection": hex(self.palette.selection),
             },
             "syntax": {},
             "terminal": self.terminal.map(hex),
         });
-        if self.tab_bar != self.background {
-            value["ui"]["tab_bar"] = json!(hex(self.tab_bar));
+        if self.palette.tab_bar != self.palette.background {
+            value["ui"]["tab_bar"] = json!(hex(self.palette.tab_bar));
         }
-        if self.window_background != self.background {
-            value["ui"]["window_background"] = json!(hex(self.window_background));
+        if self.palette.window_background != self.palette.background {
+            value["ui"]["window_background"] = json!(hex(self.palette.window_background));
         }
         for (key, color) in THEME_KEYS.iter().zip(self.syntax.slots) {
             value["syntax"][key] = json!(hex(color));
@@ -209,13 +257,14 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("window_background");
-        let theme = Theme::from_json(&value).unwrap();
-        assert_eq!(theme.window_background, theme.background);
+        let theme = ThemeFile::from_json(&value).unwrap();
+        assert_eq!(theme.palette.window_background, theme.palette.background);
         assert_eq!(
-            Theme::from_json(&theme.to_json())
+            ThemeFile::from_json(&theme.to_json())
                 .unwrap()
+                .palette
                 .window_background,
-            theme.background
+            theme.palette.background
         );
     }
 
@@ -224,14 +273,17 @@ mod tests {
         let mut value = theme_json();
         let background = value["ui"]["background"].clone();
         value["ui"]["window_background"] = json!("#123456");
-        let theme = Theme::from_json(&value).unwrap();
-        assert_ne!(theme.window_background, theme.background);
+        let theme = ThemeFile::from_json(&value).unwrap();
+        assert_ne!(theme.palette.window_background, theme.palette.background);
         let exported = theme.to_json();
         assert_eq!(exported["ui"]["background"], background);
         assert_eq!(exported["ui"]["window_background"], "#123456");
         assert_eq!(
-            Theme::from_json(&exported).unwrap().window_background,
-            theme.window_background
+            ThemeFile::from_json(&exported)
+                .unwrap()
+                .palette
+                .window_background,
+            theme.palette.window_background
         );
     }
 
@@ -240,7 +292,7 @@ mod tests {
         for color in [Value::Null, json!(42), json!("#12345"), json!("#gggggg")] {
             let mut value = theme_json();
             value["ui"]["window_background"] = color;
-            let error = Theme::from_json(&value).unwrap_err();
+            let error = ThemeFile::from_json(&value).unwrap_err();
             assert_eq!(error.kind(), io::ErrorKind::InvalidData);
             assert!(error.to_string().contains("ui.window_background"));
         }

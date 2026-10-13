@@ -76,272 +76,6 @@ impl Drop for Fixture {
 }
 
 #[test]
-#[ignore = "requires installed rust-analyzer and rust-src; renders real dependency definition jumps"]
-fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() {
-    use bed_api::documents::PanelBinding;
-    use bed_documents::{ClosePolicy, DocumentSession};
-    use bed_plugin_editor::lsp::lsp_ui::ContextLspAction;
-    use bed_workbench::WorkbenchLayout;
-    use bevy::ecs::system::SystemState;
-    use dear_imgui_rs::Context;
-
-    fn frame(app: &mut App, context: &mut Context) {
-        app.update();
-        editor_host::draw_ui(app.world_mut(), context.frame()).unwrap();
-        drop(context.render_legacy());
-        bed::application::process_app_requests(app.world_mut()).unwrap();
-        std::thread::sleep(Duration::from_millis(10));
-    }
-
-    fn caret_visible(app: &App, panel: Entity) -> bool {
-        let Some(surface) = bed::application::panel_presentation(app.world(), panel) else {
-            return false;
-        };
-        let Some(geometry) = app.world().get::<bed_workbench::api::PanelGeometry>(panel) else {
-            return false;
-        };
-        app.world()
-            .non_send::<bed_plugin_editor::EditorViews>()
-            .text(surface)
-            .is_some_and(|view| {
-                let caret = view.presentation().caret_position;
-                caret[1] > geometry.content_min[1] && caret[1] < geometry.content_max[1]
-            })
-    }
-
-    let _lock = IMGUI_TEST_LOCK.lock().unwrap();
-    let fixture = Fixture::new();
-    let root = fixture.0.join("rust-project");
-    std::fs::create_dir_all(root.join("src")).unwrap();
-    std::fs::write(root.join("Cargo.toml"),
-        "[package]\nname = \"bed_definition_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n").unwrap();
-    let source = root.join("src/main.rs");
-    std::fs::write(
-        &source,
-        "fn main() { let _value: String = String::new(); }\n",
-    )
-    .unwrap();
-    let mut app = fixture.app();
-    std::fs::write(
-        fixture.0.join("config/lsp.json"),
-        serde_json::to_vec(&serde_json::json!({
-            "language_servers":{"rust-analyzer":{"command":"rust-analyzer"}}
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    bed_plugin_workspaces::request_workspace(
-        app.world_mut(),
-        WorkspaceAction::OpenLocalWorkspace(root),
-        None,
-        0,
-    );
-    app.update();
-    let panel = bed::application::open_file(app.world_mut(), &source, None, false, None).unwrap();
-    let source_binding = app.world().get::<PanelBinding>(panel).unwrap().clone();
-    let document = source_binding.document.unwrap();
-    let view = source_binding.view.unwrap();
-    let mut context = Context::create();
-    editor_host::prepare_ui(app.world_mut(), &mut context).unwrap();
-    context.set_ini_filename(None::<PathBuf>).unwrap();
-    context
-        .io_mut()
-        .set_config_flags(dear_imgui_rs::ConfigFlags::DOCKING_ENABLE);
-    context.io_mut().set_display_size([1200., 800.]);
-    context.io_mut().set_delta_time(1. / 60.);
-    context
-        .font_atlas()
-        .try_claim_legacy_renderer()
-        .unwrap()
-        .build();
-    // Prepare the fixture's initial workspace analysis. Each navigation below is
-    // a single editor action; a null/error response fails that action rather
-    // than making the test silently issue another definition request.
-    let startup = Instant::now();
-    let deadline = startup + Duration::from_secs(90);
-    let mut settled_since = None;
-    let mut progress = std::collections::BTreeSet::new();
-    let client = loop {
-        frame(&mut app, &mut context);
-        let client = app
-            .world()
-            .non_send::<DocumentSession>()
-            .lsp()
-            .unwrap()
-            .client_for_document(document);
-        if let Some(client) = &client {
-            let client = client.borrow();
-            let jobs = client.progress();
-            for job in &jobs {
-                progress.insert(job.title.clone());
-            }
-            let ready = client.is_initialized()
-                && !progress.is_empty()
-                && jobs.iter().all(|job| job.finished);
-            if ready {
-                let since = settled_since.get_or_insert_with(Instant::now);
-                if since.elapsed() >= Duration::from_millis(750) {
-                    drop(client);
-                    break app
-                        .world()
-                        .non_send::<DocumentSession>()
-                        .lsp()
-                        .unwrap()
-                        .client_for_document(document)
-                        .unwrap();
-                }
-            } else {
-                settled_since = None;
-            }
-        }
-        assert!(
-            Instant::now() < deadline,
-            "initial workspace analysis did not settle: {progress:?}"
-        );
-    };
-    let process = client.borrow().process_id().unwrap();
-    eprintln!(
-        "Initial workspace analysis: {:?}; progress: {progress:?}",
-        startup.elapsed()
-    );
-    let mut string_binding = None;
-    let mut string_source = String::new();
-    for step in 0..3 {
-        let (view, position, suffix, declaration) = if step == 1 {
-            let binding: &PanelBinding = string_binding.as_ref().unwrap();
-            let (row, line) = string_source
-                .lines()
-                .enumerate()
-                .find(|(_, line)| line.contains("vec: Vec<u8>"))
-                .unwrap();
-            (
-                binding.view.unwrap(),
-                (row as i32, (line.find("Vec").unwrap() + 1) as i32),
-                "alloc/src/vec/mod.rs",
-                "pub struct Vec<",
-            )
-        } else {
-            (view, (0, 25), "alloc/src/string.rs", "pub struct String")
-        };
-        let requested = Instant::now();
-        {
-            let mut state = SystemState::<(
-                NonSendMut<bed_plugin_editor::EditorRuntime>,
-                NonSendMut<DocumentSession>,
-            )>::new(app.world_mut());
-            let (mut runtime, mut session) = state.get_mut(app.world_mut()).unwrap();
-            runtime
-                .request_lsp(
-                    &mut session,
-                    view,
-                    ContextLspAction::Definition,
-                    Some(position),
-                )
-                .unwrap();
-        }
-        let definition = loop {
-            frame(&mut app, &mut context);
-            let runtime = app.world().non_send::<bed_plugin_editor::EditorRuntime>();
-            assert!(
-                runtime.navigation_outcome().is_none(),
-                "single navigation action failed: {:?}",
-                runtime.navigation_outcome()
-            );
-            let focused = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-            let binding = app.world().get::<PanelBinding>(focused).unwrap();
-            if binding.document.is_some_and(|document| {
-                app.world()
-                    .non_send::<DocumentSession>()
-                    .snapshot(document)
-                    .unwrap()
-                    .path
-                    .ends_with(suffix)
-            }) {
-                break focused;
-            }
-            assert!(
-                requested.elapsed() < Duration::from_secs(20),
-                "single navigation timed out: {:?}",
-                runtime.navigation_activity()
-            );
-        };
-        // Let asynchronous syntax folds and the centering animation finish.
-        let mut first_visible = caret_visible(&app, definition).then(|| requested.elapsed());
-        for _ in 0..60 {
-            frame(&mut app, &mut context);
-            if first_visible.is_none() && caret_visible(&app, definition) {
-                first_visible = Some(requested.elapsed());
-            }
-        }
-        let binding = app.world().get::<PanelBinding>(definition).unwrap();
-        let session = app.world().non_send::<DocumentSession>();
-        let definition_path = session.snapshot(binding.document.unwrap()).unwrap().path;
-        let contents = std::fs::read_to_string(&definition_path).unwrap();
-        let expected_row = contents
-            .lines()
-            .position(|line| line.contains(declaration))
-            .unwrap() as i32;
-        let snapshot = session.view_snapshot(binding.view.unwrap()).unwrap();
-        assert_eq!(snapshot.row, expected_row);
-        assert!(snapshot.scroll_position[1] > 0.0);
-        assert!(
-            !snapshot.folds.ranges().is_empty(),
-            "real syntax folds never arrived"
-        );
-        let destination_client = session
-            .lsp()
-            .unwrap()
-            .client_for_document(binding.document.unwrap())
-            .unwrap();
-        assert!(
-            std::rc::Rc::ptr_eq(&client, &destination_client),
-            "dependency navigation forked a server"
-        );
-        let statuses = session.lsp().unwrap().server_statuses();
-        let running: Vec<_> = statuses
-            .iter()
-            .filter(|status| status.process_id.is_some())
-            .collect();
-        assert_eq!(running.len(), 1, "unexpected extra servers: {running:?}");
-        assert_eq!(running[0].process_id, Some(process));
-        let surface = bed::application::panel_presentation(app.world(), definition).unwrap();
-        let views = app.world().non_send::<bed_plugin_editor::EditorViews>();
-        let caret = views.text(surface).unwrap().presentation().caret_position;
-        let geometry = app
-            .world()
-            .get::<bed_workbench::api::PanelGeometry>(definition)
-            .unwrap();
-        assert!(
-            caret[1] > geometry.content_min[1] && caret[1] < geometry.content_max[1],
-            "definition is outside the actual rendered viewport: {snapshot:?}"
-        );
-        let timing = app
-            .world()
-            .non_send::<bed_plugin_editor::EditorRuntime>()
-            .navigation_timing()
-            .unwrap();
-        let sent = timing.first_sent.unwrap().duration_since(timing.started);
-        let response = timing
-            .response_received
-            .unwrap()
-            .duration_since(timing.started);
-        eprintln!(
-            "Single action {step}: {suffix} row {expected_row}; action→send {sent:?}, action→response {response:?}, action→visible {:?}; caret {caret:?}; server PID {process}",
-            first_visible.unwrap()
-        );
-        assert!(app.world().resource::<WorkspaceState>().error.is_none());
-        if step == 0 {
-            string_binding = Some(binding.clone());
-            string_source = contents;
-        }
-    }
-    app.world_mut()
-        .non_send_mut::<DocumentSession>()
-        .shutdown(ClosePolicy::Discard)
-        .unwrap();
-}
-
-#[test]
 fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
     use bed_api::documents::PanelBinding;
     use bed_documents::DocumentSession;
@@ -674,7 +408,7 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
 }
 
 #[test]
-fn directory_picker_stays_temporary_until_saved_then_restores_recent_workspaces() {
+fn directory_picker_saves_workspace_and_restores_recent_projects_and_editor_tabs() {
     let fixture = Fixture::new();
     let root = fixture.0.join("project");
     std::fs::create_dir(&root).unwrap();
@@ -697,7 +431,17 @@ fn directory_picker_stays_temporary_until_saved_then_restores_recent_workspaces(
     // Context admission runs after feature preparation; its consumers observe it next frame.
     app.update();
     let spec = WorkspaceSpec::local(root.to_string_lossy());
-    assert_eq!(app.world().resource::<WorkspaceState>().spec.as_ref(), None);
+    assert_eq!(
+        app.world().resource::<WorkspaceState>().spec.as_ref(),
+        Some(&spec)
+    );
+    assert_eq!(
+        app.world()
+            .resource::<bed::application::LayoutSlots>()
+            .active(),
+        bed::config::LayoutSlot::Layout1
+    );
+    assert!(root.join(".bed/workspace.json").is_file());
     {
         let explorer = app
             .world()
@@ -734,31 +478,18 @@ fn directory_picker_stays_temporary_until_saved_then_restores_recent_workspaces(
         }
         assert!(
             Instant::now() < deadline,
-            "project discovery never populated the tree: {:?}, finder status {:?}, indexed {:?}, children {:?}",
+            "project discovery never populated the tree: {:?}, file context {:?}, explorer root {:?}, watching {}, finder visible {}, finder status {:?}, indexed {:?}, children {:?}",
             app.world().resource::<WorkspaceState>().error,
+            app.world().resource::<bed_files::FileContext>(),
+            explorer.project_root,
+            explorer.file_finder.workspace_filesystem().is_some(),
+            explorer.file_finder.show_ff_window,
             explorer.file_finder.discovery_status,
             explorer.file_finder.filtered_list,
             explorer.file_tree.root_node.children
         );
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert!(
-        app.world()
-            .resource::<bed_plugin_workspaces::WorkspacesState>()
-            .recent_workspaces
-            .is_empty()
-    );
-    bed_plugin_workspaces::request_workspace(
-        app.world_mut(),
-        WorkspaceAction::SaveCurrent { name: None },
-        None,
-        0,
-    );
-    app.update();
-    assert_eq!(
-        app.world().resource::<WorkspaceState>().spec.as_ref(),
-        Some(&spec)
-    );
     assert_eq!(
         app.world()
             .resource::<bed_plugin_workspaces::WorkspacesState>()
@@ -782,6 +513,21 @@ fn directory_picker_stays_temporary_until_saved_then_restores_recent_workspaces(
             .any(|document| document.path == file.to_string_lossy())
     );
     assert!(app.world().resource::<WorkspaceState>().error.is_none());
+    bed::application::dispatch_app_command(
+        app.world_mut(),
+        bed::application::WindowCommand::Quit,
+        bed_api::workbench::PanelTarget::LargestArea,
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !app.world().resource::<WorkspaceState>().close_requested {
+        app.update();
+        assert!(
+            Instant::now() < deadline,
+            "clean workspace quit did not complete"
+        );
+    }
+    assert!(app.world().resource::<WorkspaceState>().error.is_none());
     assert_eq!(
         WorkspaceStore::load(
             &bed_api::launch::ApplicationPaths::new("bed", Some(fixture.0.join("config")), None)
@@ -801,6 +547,32 @@ fn directory_picker_stays_temporary_until_saved_then_restores_recent_workspaces(
             .recent_workspaces,
         vec![spec.clone()]
     );
+    bed_plugin_workspaces::request_workspace(
+        app.world_mut(),
+        WorkspaceAction::OpenWorkspace(spec.clone()),
+        None,
+        0,
+    );
+    app.update();
+    app.update();
+    assert_eq!(
+        app.world().resource::<WorkspaceState>().spec.as_ref(),
+        Some(&spec)
+    );
+    assert_eq!(
+        app.world()
+            .resource::<bed::application::LayoutSlots>()
+            .active(),
+        bed::config::LayoutSlot::Layout1
+    );
+    assert!(
+        app.world()
+            .resource::<bed_api::documents::DocumentFrame>()
+            .documents
+            .iter()
+            .any(|document| document.path == file.to_string_lossy())
+    );
+    assert!(app.world().resource::<WorkspaceState>().error.is_none());
     bed_plugin_workspaces::request_workspace(
         app.world_mut(),
         WorkspaceAction::RenameWorkspace(spec.clone(), "Renamed".into()),

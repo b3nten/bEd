@@ -218,6 +218,7 @@ fn disabled_commands_share_menu_availability_and_do_not_execute() {
             label: Some("Busy".into()),
             enabled: false,
             visible: true,
+            ..Default::default()
         },
     );
     app.insert_resource(presentations);
@@ -246,6 +247,86 @@ fn disabled_commands_share_menu_availability_and_do_not_execute() {
         .unwrap();
     assert_eq!(command.label, "Busy");
     assert!(!command.enabled);
+}
+
+#[test]
+fn contextual_availability_uses_the_resolved_command_source() {
+    #[derive(Resource, Default)]
+    struct Calls(u32);
+    let mut app = app();
+    let editor = open(&mut app);
+    let tool = open(&mut app);
+    app.init_resource::<Calls>();
+    bed_api::workbench::register(app.world_mut(), "commands", |registry| {
+        registry.command(
+            "commands.edit",
+            "Edit document",
+            move |In(input): In<CommandInvocation>,
+                  mut calls: ResMut<Calls>|
+                  -> bed_api::workbench::CommandResult {
+                if input.source != Some(editor.entity()) {
+                    return Err("No editable document at this source".into());
+                }
+                calls.0 += 1;
+                Ok(Vec::new())
+            },
+        );
+    })
+    .unwrap();
+    app.world_mut()
+        .resource_mut::<bed_api::workbench::CommandPresentations>()
+        .0
+        .insert(
+            "commands.edit".into(),
+            bed_api::workbench::CommandPresentation {
+                enabled: false,
+                scope: bed_api::workbench::CommandPresentationScope::Invocation {
+                    source: Some(tool.entity()),
+                    arguments: Value::Null,
+                },
+                ..Default::default()
+            },
+        );
+    let captured_editor = submit(
+        &mut app,
+        Operation::InvokeCommand {
+            command: "commands.edit".into(),
+            source: Some(editor),
+            arguments: Value::Null,
+        },
+    );
+    let current_tool = submit(
+        &mut app,
+        Operation::InvokeCommand {
+            command: "commands.edit".into(),
+            source: Some(tool),
+            arguments: Value::Null,
+        },
+    );
+    app.update();
+    assert!(result(&mut app, captured_editor).is_ok());
+    assert_eq!(
+        result(&mut app, current_tool).unwrap_err().kind,
+        ErrorKind::Unavailable
+    );
+    assert_eq!(app.world().resource::<Calls>().0, 1);
+    let close = submit(&mut app, Operation::ClosePanel(editor));
+    app.update();
+    result(&mut app, close).unwrap();
+    let stale = submit(
+        &mut app,
+        Operation::InvokeCommand {
+            command: "commands.edit".into(),
+            source: Some(editor),
+            arguments: Value::Null,
+        },
+    );
+    app.update();
+    assert_eq!(
+        result(&mut app, stale).unwrap_err().kind,
+        ErrorKind::StaleHandle
+    );
+    assert_eq!(app.world().resource::<Calls>().0, 1);
 }
 
 #[cfg(feature = "documents")]

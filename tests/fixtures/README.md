@@ -62,7 +62,7 @@ cargo test --locked -p bed-plugin-model-viewer
 Draco tests also use `gltf/LittlestTokyo.glb`, including its 71 compressed
 primitives, eight skinned meshes and four textures. Malformed-stream tests
 isolate a small primitive from that asset. Opt-in native GPU tests and the
-application's `--plugin-smoke` check rendering and lifecycle behavior separately
+launcher's `viewers_smoke` example check rendering and lifecycle behavior separately
 from these loader fixtures.
 
 `LittlestTokyo.glb` is **Littlest Tokyo** by

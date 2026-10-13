@@ -1,45 +1,24 @@
-//! Application composition. Native adapters produce captured editor requests.
+//! bEd composition and native menu policy. Core owns shared desktop mechanics.
 use crate::application::{
     AppAction, AppOptions, AppRuntimePlugin, WindowCommand, WorkspaceState, capture_app_request,
 };
 use crate::config::Settings;
 use bed_api::workbench::PanelTarget;
 use bed_desktop::{
-    DesktopContext, DesktopFrame, DesktopInputEvents, DesktopPlugins, DesktopRenderStatus,
-    DesktopSystems, DesktopUi,
+    DesktopContext, DesktopInputEvents, DesktopPlugins, DesktopRenderStatus, DesktopSystems,
+    DesktopUi,
 };
 use bevy::prelude::*;
-use dear_imgui_rs::{Context, Ui};
-use std::{
-    error::Error,
-    io,
-    path::{Path, PathBuf},
-};
+use dear_imgui_rs::Ui;
+use std::{error::Error, io, path::Path};
 use winit::event::WindowEvent;
 
 type HostResult<T> = Result<T, Box<dyn Error>>;
 
-struct NativeFileClipboard(bed_desktop::DesktopFileClipboard);
-
-impl bed_api::workbench::FileClipboardService for NativeFileClipboard {
-    fn read_files(&mut self) -> io::Result<Vec<PathBuf>> {
-        self.0.read_files()
-    }
-    fn write_files(&mut self, paths: &[PathBuf]) -> io::Result<()> {
-        self.0.write_files(paths)
-    }
-}
-
-#[derive(Resource, Default)]
-struct NativeFileDrag {
-    paths: Vec<PathBuf>,
-    panel: Option<Entity>,
-}
-
 #[derive(Resource, Default)]
 struct NativeFailure(std::sync::Arc<std::sync::Mutex<Option<String>>>);
 
-/// Platform code observes native events; the editor reducer owns transitions.
+/// Native toolbar facts become commands owned by the application reducer.
 #[cfg(target_os = "macos")]
 #[derive(Resource, Default)]
 struct ToolbarDropCursor(bevy::ecs::message::MessageCursor<bed_workbench::api::PanelDrop>);
@@ -59,13 +38,12 @@ impl Plugin for BedAppPlugin {
         })
         .expect("desktop shortcuts are registered once");
         app.init_resource::<NativeFailure>()
-            .init_resource::<NativeFileDrag>()
             .insert_resource(DesktopUi(draw))
             .add_systems(
                 PreUpdate,
                 configure
                     .in_set(DesktopSystems::Configure)
-                    .after(bed_core::CoreConfigurationSystems::Settings),
+                    .after(crate::themes::ThemeSystems::Configure),
             )
             .add_systems(
                 PreUpdate,
@@ -143,13 +121,16 @@ fn fail(world: &mut World, error: impl std::fmt::Display) {
 }
 
 fn configure(world: &mut World) {
-    bed_core::settings::refresh_settings(world);
     if let Err(error) = crate::config::sync_view(world) {
         fail(world, error);
         return;
     }
     let settings = world.non_send::<Settings>();
-    let appearance = settings.appearance();
+    #[cfg(feature = "file-explorer")]
+    let palette = world
+        .resource::<crate::themes::ActiveTheme>()
+        .file
+        .runtime_palette();
     let mut hidden_picker = world
         .resource::<bed_api::features::FeatureRegistry>()
         .panels()
@@ -159,71 +140,27 @@ fn configure(world: &mut World) {
         .collect::<std::collections::HashSet<_>>();
     hidden_picker.insert("bed.duck.panel".into());
     let workbench_appearance = bed_workbench::WorkbenchAppearance {
-        add_button: settings.bool("tab_bar_add_button", false),
+        add_button: settings.bool("bed.workbench", "tab_bar_add_button", false),
         hidden_picker,
     };
 
-    #[cfg(feature = "terminal")]
-    let terminal_appearance = bed_plugin_terminal::TerminalAppearance {
-        background: settings.background_color(),
-        foreground: settings.text_color(),
-        ansi: settings.theme.terminal,
-    };
     #[cfg(feature = "file-explorer")]
     let explorer = bed_plugin_file_explorer::ExplorerPresentation {
         tree: bed_plugin_file_explorer::file_tree::FileTreeStyle {
-            text_color: settings.text_color(),
+            text_color: palette.text,
             rainbow: settings.rainbow(),
             rainbow_time: 0.0,
-            animations: settings.bool("ui_animations", true),
+            animations: settings.bool("bed.ui", "ui_animations", true),
         },
         finder: bed_plugin_file_explorer::file_finder::FileFinderStyle {
-            background_color: settings.background_color(),
+            background_color: palette.background,
             embedded_pane: None,
         },
     };
-    #[cfg(feature = "effects")]
-    let effects = settings.shader_settings();
-    #[cfg(feature = "idle")]
-    let idle = settings.bool("bedtime_enabled", true);
-    #[cfg(feature = "editor")]
-    let navigation_animations = settings.bool("ui_animations", true);
-    #[cfg(feature = "editor")]
-    let cursor_smear = settings.bool("cursor_smear", true);
-    #[cfg(feature = "editor")]
-    let lsp_options = (
-        settings.lsp_autocomplete_enabled(),
-        settings.lsp_completion_delay().as_millis() as u64,
-    );
-    world.resource_mut::<bed_desktop::DesktopTheme>().0 = appearance;
     *world.resource_mut::<bed_workbench::WorkbenchAppearance>() = workbench_appearance;
-    #[cfg(feature = "editor")]
-    {
-        let mut config = world.non_send_mut::<bed_plugin_editor::EditorConfig>();
-        config.navigation_animations = navigation_animations;
-        config.options.cursor_smear = cursor_smear;
-        config.lsp.autocomplete = lsp_options.0;
-        config.lsp.completion_delay_ms = lsp_options.1;
-    }
-    #[cfg(feature = "terminal")]
-    {
-        *world.resource_mut::<bed_plugin_terminal::TerminalAppearance>() = terminal_appearance;
-    }
     #[cfg(feature = "file-explorer")]
     {
         *world.resource_mut::<bed_plugin_file_explorer::ExplorerPresentation>() = explorer;
-    }
-    #[cfg(feature = "effects")]
-    {
-        world
-            .resource_mut::<bed_plugin_effects::desktop::EffectsState>()
-            .settings = effects;
-    }
-    #[cfg(feature = "idle")]
-    {
-        world
-            .resource_mut::<bed_plugin_idle::IdleSettings>()
-            .enabled = idle;
     }
     #[cfg(target_os = "macos")]
     update_native_presentation(world);
@@ -233,52 +170,16 @@ fn prepare(world: &mut World) {
     if !world.contains_non_send::<DesktopContext>() {
         return;
     }
-    if !world.contains_non_send::<Box<dyn bed_api::workbench::FileClipboardService>>()
-        && let Some(clipboard) = world
-            .get_non_send::<bed_desktop::DesktopFileClipboard>()
-            .cloned()
-    {
-        world.insert_non_send(Box::new(NativeFileClipboard(clipboard))
-            as Box<dyn bed_api::workbench::FileClipboardService>);
-    }
     world
         .non_send_mut::<DesktopContext>()
         .platform
         .set_ime_auto_management(false);
-    #[cfg(target_os = "macos")]
-    if bed_desktop::native::macos_window::toolbar_drag().is_some() {
-        let (position, _) = native_drag_observation(world);
-        let pressed = bed_desktop::native::macos_window::toolbar_drag_pressed();
-        let mut desktop = world.non_send_mut::<DesktopContext>();
-        desktop.context.io_mut().add_mouse_pos_event(position);
-        desktop
-            .context
-            .io_mut()
-            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, pressed);
-    }
     let top = world.resource::<bed_desktop::DesktopContentInsets>().top;
     crate::application::set_root_top_inset(world, top);
 }
 
 fn draw(world: &mut World, ui: &Ui) {
-    #[cfg(target_os = "macos")]
-    if let Some((command, label)) = bed_desktop::native::macos_window::toolbar_drag() {
-        ui.with_bound_context(|| unsafe {
-            if dear_imgui_sys::igBeginDragDropSource(
-                dear_imgui_sys::ImGuiDragDropFlags_SourceExtern
-                    | dear_imgui_sys::ImGuiDragDropFlags_SourceNoPreviewTooltip,
-            ) {
-                dear_imgui_sys::igSetDragDropPayload(
-                    c"BED_TOOLBAR_COMMAND".as_ptr(),
-                    command.as_ptr().cast(),
-                    command.len(),
-                    dear_imgui_sys::ImGuiCond_Always,
-                );
-                bed_workbench::api::draw_panel_drag_label(ui, &label);
-                dear_imgui_sys::igEndDragDropSource();
-            }
-        });
-    }
+    bed_core::begin_native_toolbar_drag(ui);
     if let Err(error) = crate::application::draw_ui(world, ui) {
         fail(world, error);
         return;
@@ -309,27 +210,8 @@ fn draw(world: &mut World, ui: &Ui) {
                 .resource_mut::<crate::application::AppRequests>()
                 .enqueue(request);
         }
-        if !ui.is_mouse_down(dear_imgui_rs::MouseButton::Left) {
-            bed_desktop::native::macos_window::finish_toolbar_drag();
-        }
     }
-    let geometries = world
-        .query::<(Entity, &crate::application::PanelGeometry)>()
-        .iter(world)
-        .map(|(panel, geometry)| bed_desktop::DesktopPanelGeometry {
-            panel,
-            content: bed_desktop::DesktopRect {
-                min: geometry.content_min,
-                max: geometry.content_max,
-            },
-            clip: bed_desktop::DesktopRect {
-                min: geometry.clip_min,
-                max: geometry.clip_max,
-            },
-            visible: geometry.visible,
-        })
-        .collect::<Vec<_>>();
-    world.resource_mut::<DesktopFrame>().panels = geometries;
+    bed_core::finish_native_toolbar_drag(ui);
     #[cfg(feature = "idle")]
     {
         let focused = world
@@ -345,8 +227,6 @@ fn draw(world: &mut World, ui: &Ui) {
 
 fn native_input(world: &mut World) {
     let mut actions = Vec::new();
-    let mut file_events = Vec::new();
-    let mut pinches = Vec::new();
     #[cfg(target_os = "macos")]
     let mut edits = Vec::new();
     #[cfg(target_os = "macos")]
@@ -359,42 +239,13 @@ fn native_input(world: &mut World) {
             if event.consumed {
                 continue;
             }
-            match &event.event.event {
-                WindowEvent::CloseRequested => {
-                    event.consumed = true;
-                    actions.push(AppAction::Command(WindowCommand::Quit));
-                }
-                WindowEvent::DroppedFile(_)
-                | WindowEvent::HoveredFile(_)
-                | WindowEvent::HoveredFileCancelled => {
-                    event.consumed = true;
-                    file_events.push(event.event.event.clone());
-                }
-                WindowEvent::CursorMoved { .. } => file_events.push(event.event.event.clone()),
-                WindowEvent::PinchGesture { delta, phase, .. } => pinches.push((*delta, *phase)),
-                _ => {}
+            if matches!(event.event.event, WindowEvent::CloseRequested) {
+                event.consumed = true;
+                actions.push(AppAction::Command(WindowCommand::Quit));
             }
         }
     }
 
-    native_file_events(world, file_events);
-
-    for (delta, phase) in pinches {
-        let (position, _) = native_drag_observation(world);
-        let phase = match phase {
-            winit::event::TouchPhase::Started => bed_workbench::api::PinchPhase::Started,
-            winit::event::TouchPhase::Moved => bed_workbench::api::PinchPhase::Moved,
-            winit::event::TouchPhase::Ended => bed_workbench::api::PinchPhase::Ended,
-            winit::event::TouchPhase::Cancelled => bed_workbench::api::PinchPhase::Cancelled,
-        };
-        if let Some(mut events) = world.get_resource_mut::<bed_workbench::api::PinchEvents>() {
-            events.0.push(bed_workbench::api::PinchEvent {
-                position,
-                delta,
-                phase,
-            });
-        }
-    }
     #[cfg(target_os = "macos")]
     {
         let dispatches =
@@ -444,7 +295,7 @@ fn native_input(world: &mut World) {
                             shift: dispatch.modifiers.shift,
                         });
                     }
-                    queue_native_shortcut(
+                    bed_core::queue_native_shortcut(
                         &mut world.non_send_mut::<DesktopContext>().context,
                         stroke,
                     );
@@ -467,15 +318,8 @@ fn native_input(world: &mut World) {
                 new_windows += 1;
             } else if action == MenuAction::Quit {
                 actions.push(AppAction::Command(WindowCommand::Quit));
-            } else if let NativeEditRoute::Shortcut(key, shift) = native_edit_route(
-                action,
-                world
-                    .non_send::<DesktopContext>()
-                    .context
-                    .io()
-                    .want_text_input(),
-            ) {
-                edits.push((action, key, shift));
+            } else if let Some(edit) = bed_core::NativeEditAction::from_command(&dispatch.command) {
+                edits.push(edit);
             }
         }
     }
@@ -486,8 +330,8 @@ fn native_input(world: &mut World) {
             .resource_mut::<NativeMenuObservations>()
             .0
             .extend(observations);
-        for (action, key, shift) in edits {
-            route_native_edit(world, action, key, shift);
+        for action in edits {
+            bed_core::route_native_edit(world, action);
         }
         for _ in 0..new_windows {
             if let Err(error) = spawn_instance(world, None) {
@@ -501,195 +345,6 @@ fn native_input(world: &mut World) {
             .resource_mut::<crate::application::AppRequests>()
             .enqueue(request);
     }
-}
-
-fn native_file_events(world: &mut World, events: Vec<WindowEvent>) {
-    use bed_api::workbench::{ExternalFileDrag, ExternalFileDragPhase};
-    let mut dropped = Vec::new();
-    for event in events {
-        let phase = match event {
-            WindowEvent::DroppedFile(path) => {
-                dropped.push(path);
-                continue;
-            }
-            WindowEvent::HoveredFile(path) => {
-                let mut drag = world.resource_mut::<NativeFileDrag>();
-                if !drag.paths.contains(&path) {
-                    drag.paths.push(path);
-                }
-                ExternalFileDragPhase::Hover
-            }
-            WindowEvent::HoveredFileCancelled => ExternalFileDragPhase::Cancel,
-            WindowEvent::CursorMoved { .. }
-                if !world.resource::<NativeFileDrag>().paths.is_empty() =>
-            {
-                ExternalFileDragPhase::Hover
-            }
-            _ => continue,
-        };
-        let (position, modifiers) = native_drag_observation(world);
-        let previous = world.resource::<NativeFileDrag>().panel;
-        let panel = if phase == ExternalFileDragPhase::Cancel {
-            previous
-        } else {
-            native_panel_at(world, position)
-        };
-        let paths = world.resource::<NativeFileDrag>().paths.clone();
-        if previous != panel
-            && let Some(previous) = previous
-        {
-            submit_native_drag(
-                world,
-                Some(previous),
-                ExternalFileDrag {
-                    paths: Vec::new(),
-                    position,
-                    modifiers,
-                    viewport: world
-                        .get::<bed_api::workbench::PanelPresentation>(previous)
-                        .map_or(0, |panel| panel.viewport),
-                    phase: ExternalFileDragPhase::Cancel,
-                },
-            );
-        }
-        let viewport = panel
-            .and_then(|panel| world.get::<bed_api::workbench::PanelPresentation>(panel))
-            .map_or(0, |panel| panel.viewport);
-        submit_native_drag(
-            world,
-            panel,
-            ExternalFileDrag {
-                paths,
-                position,
-                viewport,
-                phase,
-                modifiers,
-            },
-        );
-        let mut drag = world.resource_mut::<NativeFileDrag>();
-        drag.panel = panel;
-        if phase == ExternalFileDragPhase::Cancel {
-            drag.paths.clear();
-            drag.panel = None;
-        }
-    }
-    if !dropped.is_empty() {
-        let (position, modifiers) = native_drag_observation(world);
-        let panel = native_panel_at(world, position);
-        let viewport = panel
-            .and_then(|panel| world.get::<bed_api::workbench::PanelPresentation>(panel))
-            .map_or(0, |panel| panel.viewport);
-        submit_native_drag(
-            world,
-            panel,
-            ExternalFileDrag {
-                paths: dropped,
-                position,
-                viewport,
-                phase: ExternalFileDragPhase::Drop,
-                modifiers,
-            },
-        );
-        let mut drag = world.resource_mut::<NativeFileDrag>();
-        drag.paths.clear();
-        drag.panel = None;
-    }
-}
-
-fn native_panel_at(world: &mut World, position: [f32; 2]) -> Option<Entity> {
-    world
-        .query::<(Entity, &crate::application::PanelGeometry)>()
-        .iter(world)
-        .find(|(_, rect)| {
-            rect.visible
-                && (0..2).all(|axis| {
-                    position[axis] >= rect.content_min[axis].max(rect.clip_min[axis])
-                        && position[axis] < rect.content_max[axis].min(rect.clip_max[axis])
-                })
-        })
-        .map(|(entity, _)| entity)
-}
-
-fn submit_native_drag(
-    world: &mut World,
-    panel: Option<Entity>,
-    event: bed_api::workbench::ExternalFileDrag,
-) {
-    let source = panel.and_then(|panel| crate::application::panel_presentation(world, panel));
-    let request = crate::application::capture_app_request_from(
-        world,
-        AppAction::ExternalFiles { panel, event },
-        PanelTarget::LargestArea,
-        source,
-    );
-    world
-        .resource_mut::<crate::application::AppRequests>()
-        .enqueue(request);
-}
-
-fn native_drag_observation(
-    world: &mut World,
-) -> ([f32; 2], bed_api::workbench::ExternalFileModifiers) {
-    let io = world.non_send::<DesktopContext>().context.io();
-    let mut position = io.mouse_pos();
-    let mut modifiers = bed_api::workbench::ExternalFileModifiers {
-        control: io.key_ctrl(),
-        shift: io.key_shift(),
-        alt: io.key_alt(),
-        super_key: io.key_super(),
-    };
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    {
-        let primary = world
-            .query_filtered::<Entity, With<bevy::window::PrimaryWindow>>()
-            .iter(world)
-            .next();
-        bevy::winit::WINIT_WINDOWS.with(|windows| {
-            let windows = windows.borrow();
-            let Some(window) = primary.and_then(|entity| windows.get_window(entity)) else {
-                return;
-            };
-            #[cfg(target_os = "macos")]
-            {
-                if let Some(mut native) =
-                    bed_desktop::native::macos_window::external_drag_position()
-                    && let Ok(origin) = window.inner_position()
-                {
-                    let origin = origin.to_logical::<f32>(window.scale_factor());
-                    native[0] -= origin.x;
-                    native[1] -= origin.y;
-                    position = native;
-                }
-                if let Some(native) = bed_desktop::native::macos_window::external_drag_modifiers() {
-                    modifiers = bed_api::workbench::ExternalFileModifiers {
-                        control: native.ctrl,
-                        shift: native.shift,
-                        alt: native.alt,
-                        super_key: native.super_key,
-                    };
-                }
-            }
-            #[cfg(target_os = "linux")]
-            {
-                if let Some(native) =
-                    bed_desktop::native::linux_window::external_drag_position(window, false)
-                {
-                    position = native;
-                }
-                if let Some([control, shift, alt, super_key]) =
-                    bed_desktop::native::linux_window::external_drag_modifiers(window)
-                {
-                    modifiers = bed_api::workbench::ExternalFileModifiers {
-                        control,
-                        shift,
-                        alt,
-                        super_key,
-                    };
-                }
-            }
-        });
-    }
-    (position, modifiers)
 }
 
 #[cfg(feature = "editor")]
@@ -787,11 +442,15 @@ fn update_native_presentation(world: &mut World) {
         },
     );
     let settings = world.non_send::<Settings>();
+    let palette = world
+        .resource::<crate::themes::ActiveTheme>()
+        .file
+        .runtime_palette();
     let presentation = bed_desktop::DesktopNativePresentation {
         opacity: settings.background_opacity(),
-        blur: settings.bool("mac_blur_enabled", true),
-        foreground: settings.text_color(),
-        background: settings.background_color(),
+        blur: settings.bool("bed.application", "mac_blur_enabled", true),
+        foreground: palette.text,
+        background: palette.background,
         menus,
         toolbar: toolbar
             .into_iter()
@@ -828,31 +487,32 @@ pub(crate) fn run_shell_entrypoint(
 }
 
 /// bEd owns its CLI policy; feature plugins contribute private process handlers.
-pub(crate) fn launcher() -> io::Result<bed_app::Application> {
-    let application = bed_app::Application::new("bed", "bEd")?;
+pub(crate) fn launcher() -> io::Result<bed_launch::LaunchBuilder> {
+    let application = bed_launch::builder("bed", "bEd")?;
     #[cfg(feature = "terminal")]
     let application = application
-        .register(bed_plugin_terminal::launch_registration())
-        .register(bed_app::LaunchRegistration {
+        .with_launchers(bed_plugin_terminal::launchers())
+        .with_launchers(bed_launch::LaunchRegistration {
             owner: "bed.application.shell",
             entrypoints: ["open", "workspace"]
                 .into_iter()
-                .map(|flag| bed_app::ProcessEntrypoint {
-                    selector: bed_app::ProcessSelector::FirstArgument(flag.into()),
+                .map(|flag| bed_launch::ProcessEntrypoint {
+                    selector: bed_launch::ProcessSelector::FirstArgument(flag.into()),
                     run: |args| {
                         run_shell_entrypoint(args, std::env::var_os("BEDTERM_SOCKET").is_some())
                     },
                 })
                 .collect(),
-            install: Box::new(|_| {}),
         });
     #[cfg(feature = "debugger")]
-    let application = application.register(bed_plugin_debugger::launch_registration());
+    let application = application.with_launchers(bed_plugin_debugger::launchers());
     Ok(application)
 }
 
 pub fn build_app(options: AppOptions, settings: Settings) -> io::Result<App> {
-    let bed_app::LaunchOutcome::Desktop(launch) = launcher()?.dispatch(["bed".into()])? else {
+    let bed_launch::LaunchOutcome::Desktop(launch) =
+        launcher()?.with_args(["bed".into()]).dispatch()?
+    else {
         unreachable!("Normal desktop arguments cannot select a helper")
     };
     build_app_with_launch(options, settings, *launch)
@@ -861,15 +521,15 @@ pub fn build_app(options: AppOptions, settings: Settings) -> io::Result<App> {
 fn build_app_with_launch(
     mut options: AppOptions,
     settings: Settings,
-    launch: bed_app::DesktopLaunch,
+    launch: bed_launch::DesktopLaunch,
 ) -> io::Result<App> {
     if options.working_directory.is_none() {
         options.working_directory = Some(std::env::current_dir()?);
     }
-    launch
-        .config_directory(settings.config_dir.clone())
-        .presentation_mode(bed_core::CorePresentationMode::Application)
-        .options(DesktopPlugins {
+    let desktop_options = bed_launch::DesktopOptions {
+        config_directory: Some(settings.config_dir.clone()),
+        presentation_mode: bed_core::CorePresentationMode::Application,
+        desktop: DesktopPlugins {
             close_when_requested: false,
             window: bevy::window::Window {
                 title: "bEd".into(),
@@ -888,40 +548,44 @@ fn build_app_with_launch(
                 ..default()
             },
             ..default()
-        })
-        .build(move |app| {
-            let paths = app.world().resource::<bed_app::ApplicationPaths>();
-            let store = if cfg!(feature = "workspaces") {
-                crate::application::WorkspaceStore::load(paths)?
-            } else {
-                crate::application::WorkspaceStore::empty(paths)
-            };
-            app.insert_non_send(settings)
-                .insert_non_send(crate::application::WorkspacePersistence::new(store))
-                .insert_resource(crate::application::RemoteHelperDirectory(
-                    crate::remote_helpers::helpers_directory(),
-                ));
-            app.add_plugins(crate::builtins::BedBuiltinPlugins);
-            crate::config::register_app_settings(app.world_mut())?;
-            crate::config::sync_view(app.world_mut())?;
-            app.add_plugins((AppRuntimePlugin { options }, BedAppPlugin));
-            #[cfg(feature = "effects")]
-            app.add_plugins(bed_plugin_effects::EffectsPlugin);
-            #[cfg(feature = "idle")]
-            app.add_plugins(bed_plugin_idle::IdlePlugin);
-            #[cfg(feature = "automation")]
-            {
-                app.add_plugins(bed_plugin_automation::AutomationPlugin);
-                crate::automation::configure(app);
-            }
-            Ok(())
-        })
+        },
+        ..Default::default()
+    };
+    launch.build(desktop_options, move |app| {
+        let paths = app.world().resource::<bed_launch::ApplicationPaths>();
+        let store = if cfg!(feature = "workspaces") {
+            crate::application::WorkspaceStore::load(paths)?
+        } else {
+            crate::application::WorkspaceStore::empty(paths)
+        };
+        crate::application::WorkspacePersistence::install(app, store);
+        app.insert_non_send(settings)
+            .insert_resource(crate::application::RemoteHelperDirectory(
+                crate::remote_helpers::helpers_directory(),
+            ));
+        let resources_root = app.world().non_send::<Settings>().resources_root.clone();
+        app.add_plugins(crate::themes::ThemePlugin::new(resources_root));
+        #[cfg(feature = "effects")]
+        app.add_plugins(bed_plugin_effects::EffectsPlugin);
+        #[cfg(feature = "idle")]
+        app.add_plugins(bed_plugin_idle::IdlePlugin);
+        app.add_plugins(crate::builtins::BedBuiltinPlugins);
+        crate::config::register_app_settings(app.world_mut())?;
+        crate::config::sync_view(app.world_mut())?;
+        app.add_plugins((AppRuntimePlugin { options }, BedAppPlugin));
+        #[cfg(feature = "automation")]
+        {
+            app.add_plugins(bed_plugin_automation::AutomationPlugin);
+            crate::automation::configure(app);
+        }
+        Ok(())
+    })
 }
 
 pub fn run() -> HostResult<i32> {
-    let launch = match launcher()?.dispatch(std::env::args_os())? {
-        bed_app::LaunchOutcome::Handled(exit) => return Ok(exit),
-        bed_app::LaunchOutcome::Desktop(launch) => launch,
+    let launch = match launcher()?.dispatch()? {
+        bed_launch::LaunchOutcome::Handled(exit) => return Ok(exit),
+        bed_launch::LaunchOutcome::Desktop(launch) => launch,
     };
     let Some(mut options) = crate::startup::Launch::parse(launch.arguments().iter().cloned())?
     else {
@@ -941,7 +605,7 @@ pub fn run() -> HostResult<i32> {
             std::env::temp_dir().join(format!("bed-smoke-config-{}-{unique}", std::process::id())),
         );
     }
-    let paths = bed_app::ApplicationPaths::new("bed", options.config_dir.clone(), None)?;
+    let paths = bed_launch::ApplicationPaths::new("bed", options.config_dir.clone(), None)?;
     let settings =
         Settings::with_paths(paths.config_dir.clone(), Settings::get_app_resources_path())?;
     let startup = options
@@ -1079,165 +743,6 @@ fn native_menu_command(
     })
 }
 
-#[cfg(target_os = "macos")]
-#[derive(Debug, PartialEq, Eq)]
-enum NativeEditRoute {
-    Ignore,
-    Shortcut(dear_imgui_rs::Key, bool),
-}
-
-#[cfg(target_os = "macos")]
-fn native_edit_route(
-    action: crate::native_commands::MenuAction,
-    text_input_focused: bool,
-) -> NativeEditRoute {
-    use crate::native_commands::MenuAction;
-    use dear_imgui_rs::Key;
-    match action {
-        MenuAction::Undo => NativeEditRoute::Shortcut(Key::Z, false),
-        MenuAction::Redo => NativeEditRoute::Shortcut(Key::Z, true),
-        MenuAction::Cut => NativeEditRoute::Shortcut(Key::X, false),
-        MenuAction::Copy => NativeEditRoute::Shortcut(Key::C, false),
-        MenuAction::Paste => NativeEditRoute::Shortcut(Key::V, false),
-        MenuAction::SelectAll if text_input_focused => NativeEditRoute::Shortcut(Key::A, false),
-        MenuAction::SelectAll => NativeEditRoute::Shortcut(Key::A, false),
-        _ => NativeEditRoute::Ignore,
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn queue_native_edit_shortcut(context: &mut Context, key: dear_imgui_rs::Key, shift: bool) {
-    use dear_imgui_rs::Key;
-    let io = context.io_mut();
-    // Native menus consume the key-equivalent event. Route edit actions through
-    // the existing focused ImGui/editor input handler. Dear ImGui's
-    // macOS behavior maps physical Command (Super) to logical Ctrl.
-    io.add_key_event(Key::ModSuper, true);
-    io.add_key_event(Key::LeftSuper, true);
-    if shift {
-        io.add_key_event(Key::ModShift, true);
-        io.add_key_event(Key::LeftShift, true);
-    }
-    io.add_key_event(key, true);
-    io.add_key_event(key, false);
-    if shift {
-        io.add_key_event(Key::LeftShift, false);
-        io.add_key_event(Key::ModShift, false);
-    }
-    io.add_key_event(Key::LeftSuper, false);
-    io.add_key_event(Key::ModSuper, false);
-}
-
-#[cfg(target_os = "macos")]
-fn route_native_edit(
-    world: &mut World,
-    action: crate::native_commands::MenuAction,
-    key: dear_imgui_rs::Key,
-    shift: bool,
-) {
-    use crate::native_commands::MenuAction;
-    use bed_api::workbench::{ClipboardAction, ClipboardInvocation, PanelClipboard};
-    let text_input = world
-        .non_send::<DesktopContext>()
-        .context
-        .io()
-        .want_text_input();
-    let source = world
-        .resource::<crate::application::WorkbenchLayout>()
-        .focused
-        .and_then(|panel| crate::application::panel_presentation(world, panel));
-    if !text_input
-        && let Some(panel) = source
-        && world
-            .get::<bed_api::workbench::PanelActions>(panel)
-            .is_some()
-        && let Some(action) = match action {
-            MenuAction::Undo => Some(bed_api::workbench::PanelAction::Undo),
-            MenuAction::Redo => Some(bed_api::workbench::PanelAction::Redo),
-            MenuAction::SelectAll => Some(bed_api::workbench::PanelAction::SelectAll),
-            _ => None,
-        }
-    {
-        let request = crate::application::capture_app_request_from(
-            world,
-            AppAction::PanelAction { panel, action },
-            PanelTarget::LargestArea,
-            Some(panel),
-        );
-        world
-            .resource_mut::<crate::application::AppRequests>()
-            .enqueue(request);
-        return;
-    }
-    let clipboard = if text_input {
-        None
-    } else {
-        source.and_then(|source| {
-            world
-                .get::<PanelClipboard>(source)
-                .map(|handler| (source, handler.0))
-        })
-    };
-    if let Some((entity, handler)) = clipboard {
-        let operation = match action {
-            MenuAction::Copy => Some(ClipboardAction::Copy),
-            MenuAction::Cut => Some(ClipboardAction::Cut),
-            MenuAction::Paste => {
-                #[cfg(feature = "terminal")]
-                let files = if world
-                    .get::<bed_plugin_terminal::TerminalPanelState>(entity)
-                    .is_some()
-                {
-                    let mut clipboard =
-                        world.get_non_send_mut::<bed_desktop::DesktopFileClipboard>();
-                    match bed_plugin_terminal::clipboard_file_paste(clipboard.as_deref_mut()) {
-                        Ok(text) => text,
-                        Err(error) => {
-                            world.resource_mut::<WorkspaceState>().error = Some(error.to_string());
-                            return;
-                        }
-                    }
-                } else {
-                    None
-                };
-                #[cfg(not(feature = "terminal"))]
-                let files = None;
-                files
-                    .or_else(|| {
-                        world
-                            .non_send_mut::<DesktopContext>()
-                            .context
-                            .clipboard_text()
-                    })
-                    .map(ClipboardAction::Paste)
-            }
-            MenuAction::SelectAll => Some(ClipboardAction::SelectAll),
-            _ => None,
-        };
-        if let Some(action) = operation {
-            match world.run_system_with(handler, ClipboardInvocation { entity, action }) {
-                Ok(Ok(Some(value))) => {
-                    world
-                        .non_send_mut::<DesktopContext>()
-                        .context
-                        .set_clipboard_text(value);
-                }
-                Ok(Ok(None)) => {}
-                result => {
-                    world.resource_mut::<WorkspaceState>().error =
-                        Some(format!("Native clipboard operation failed: {result:?}"))
-                }
-            }
-            return;
-        }
-    }
-    queue_native_edit_shortcut(
-        &mut world.non_send_mut::<DesktopContext>().context,
-        key,
-        shift,
-    );
-}
-
 #[cfg(all(feature = "automation", feature = "editor", target_os = "macos"))]
 pub(crate) fn smoke_native_menu(
     world: &World,
@@ -1372,32 +877,4 @@ fn new_window_command(
 ) -> bed_workbench::api::CommandResult {
     spawn_instance(world, None).map_err(|error| error.to_string())?;
     Ok(Vec::new())
-}
-
-#[cfg(target_os = "macos")]
-fn queue_native_shortcut(context: &mut Context, stroke: bed_keybindings::Stroke) {
-    use dear_imgui_rs::Key;
-    let io = context.io_mut();
-    for (key, pressed) in [
-        (Key::ModCtrl, stroke.modifiers.ctrl),
-        (Key::ModShift, stroke.modifiers.shift),
-        (Key::ModAlt, stroke.modifiers.alt),
-        (Key::ModSuper, stroke.modifiers.super_key),
-    ] {
-        if pressed {
-            io.add_key_event(key, true);
-        }
-    }
-    io.add_key_event(stroke.key, true);
-    io.add_key_event(stroke.key, false);
-    for (key, pressed) in [
-        (Key::ModCtrl, stroke.modifiers.ctrl),
-        (Key::ModShift, stroke.modifiers.shift),
-        (Key::ModAlt, stroke.modifiers.alt),
-        (Key::ModSuper, stroke.modifiers.super_key),
-    ] {
-        if pressed {
-            io.add_key_event(key, false);
-        }
-    }
 }

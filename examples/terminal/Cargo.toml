@@ -6,6 +6,18 @@ publish = false
 license.workspace = true
 
 [dependencies]
-bed-app = { workspace = true }
+bevy = { workspace = true, features = ["std"] }
+bed-launch = { workspace = true }
 bed-plugin-terminal = { workspace = true, features = ["desktop"] }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+bed-plugin-automation = { workspace = true, features = ["documents"] }
+bed-plugin-csv-table = { workspace = true }
+bed-plugin-image-viewer = { workspace = true }
+bed-terminal = { workspace = true, features = ["ui"] }
+winit = { workspace = true }
+
+[[example]]
+name = "terminal_smoke"
+path = "src/smoke.rs"

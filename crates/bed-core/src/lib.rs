@@ -19,10 +19,12 @@ pub use format_saves::*;
 pub use saves::*;
 pub use transitions::*;
 mod configuration;
+mod desktop_workbench;
 mod native;
 pub use configuration::CoreConfigurationSystems;
 #[cfg(feature = "language-services")]
 pub use configuration::SyntaxAppearance;
+pub use desktop_workbench::*;
 #[cfg(test)]
 mod tests;
 pub use documents::*;
@@ -115,9 +117,8 @@ impl Plugin for FoundationPlugin {
                 .in_set(DesktopSystems::Configure)
                 .in_set(CoreConfigurationSystems::Settings),
         );
-        #[cfg(feature = "language-services")]
-        app.init_resource::<SyntaxAppearance>();
         native::install(app);
+        app.add_plugins(DesktopWorkbenchPlugin);
         if !app.world().contains_resource::<bed_desktop::DesktopUi>() {
             app.insert_resource(bed_desktop::DesktopUi(draw));
         }
@@ -125,12 +126,8 @@ impl Plugin for FoundationPlugin {
 }
 
 fn draw(world: &mut World, ui: &dear_imgui_rs::Ui) {
-    if let Some(textures) = world.get_resource::<bed_ui::gpu::CanvasTextures>() {
-        let textures = textures.0.clone();
-        world
-            .resource_mut::<api::presentation::PresentationFrame>()
-            .textures = textures;
-    }
+    begin_native_toolbar_drag(ui);
+    prepare_workbench_ui(world);
     if let Some(_menu) = ui.begin_main_menu_bar() {
         let commands = world
             .resource::<api::workbench::WorkbenchRegistry>()
@@ -194,23 +191,8 @@ fn draw(world: &mut World, ui: &dear_imgui_rs::Ui) {
             },
         );
     }
-    let geometry = world
-        .query::<(Entity, &api::workbench::PanelGeometry)>()
-        .iter(world)
-        .map(|(panel, geometry)| bed_desktop::DesktopPanelGeometry {
-            panel,
-            content: bed_desktop::DesktopRect {
-                min: geometry.content_min,
-                max: geometry.content_max,
-            },
-            clip: bed_desktop::DesktopRect {
-                min: geometry.clip_min,
-                max: geometry.clip_max,
-            },
-            visible: geometry.visible,
-        })
-        .collect();
-    world.resource_mut::<bed_desktop::DesktopFrame>().panels = geometry;
+    finish_workbench_ui(world);
+    finish_native_toolbar_drag(ui);
 }
 fn route_native_commands(world: &mut World) {
     if *world.resource::<CorePresentationMode>() == CorePresentationMode::Application {
@@ -218,6 +200,10 @@ fn route_native_commands(world: &mut World) {
     }
     let commands = std::mem::take(&mut world.resource_mut::<bed_desktop::DesktopNativeActions>().0);
     for command in commands {
+        if let Some(action) = NativeEditAction::from_command(&command.command) {
+            route_native_edit(world, action);
+            continue;
+        }
         if command.quit {
             let mut invocation =
                 bed_workbench::capture_command(world, "bed.core.quit", serde_json::Value::Null);

@@ -49,6 +49,10 @@ impl Plugin for EditorPlugin {
             .init_resource::<HostEffects>()
             .init_resource::<bed_api::features::FeatureRegistry>()
             .add_message::<bed_api::features::HostRequest>()
+            .add_systems(
+                PreUpdate,
+                configure_preferences.in_set(bed_api::features::FeatureSystems::Prepare),
+            )
             .add_systems(Last, retire_views);
         let actions = app.world_mut().register_system(panel_action);
         let clipboard = app.world_mut().register_system(clipboard_operation);
@@ -405,7 +409,9 @@ fn clipboard_operation(
                 if view.read_only()
                     && matches!(
                         invocation.action,
-                        ClipboardAction::Cut | ClipboardAction::Paste(_)
+                        ClipboardAction::Cut
+                            | ClipboardAction::Paste(_)
+                            | ClipboardAction::PasteFromClipboard(_)
                     )
                 {
                     return Ok(None);
@@ -417,10 +423,12 @@ fn clipboard_operation(
                     ClipboardAction::Cut => {
                         Some(String::from_utf8_lossy(&commands.cut()).into_owned())
                     }
-                    ClipboardAction::Paste(text) => {
+                    ClipboardAction::Paste(text)
+                    | ClipboardAction::PasteFromClipboard(Some(text)) => {
                         commands.paste(text.as_bytes());
                         None
                     }
+                    ClipboardAction::PasteFromClipboard(None) => None,
                     ClipboardAction::SelectAll => {
                         commands.select_all();
                         None
@@ -430,9 +438,10 @@ fn clipboard_operation(
             Widget::Hex(editor) => match invocation.action {
                 ClipboardAction::Copy => editor.get_mut().copy_text(session).map(Some),
                 ClipboardAction::Cut => editor.get_mut().cut_text(session).map(Some),
-                ClipboardAction::Paste(text) => {
+                ClipboardAction::Paste(text) | ClipboardAction::PasteFromClipboard(Some(text)) => {
                     editor.get_mut().paste_text(session, &text).map(|_| None)
                 }
+                ClipboardAction::PasteFromClipboard(None) => Ok(None),
                 ClipboardAction::SelectAll => editor.get_mut().select_all(session).map(|_| None),
             },
         }

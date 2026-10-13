@@ -1,4 +1,5 @@
 //! Optional preferences panel over core-owned registered settings.
+pub mod keybindings;
 use bed_api::settings::{
     SettingsChange, SettingsRegistry, SettingsRequest, SettingsRequestId, SettingsResults,
     SettingsSnapshot,
@@ -51,8 +52,7 @@ pub struct SettingsFrontend {
     entity: Entity,
     pending: Vec<SettingsRequestId>,
     error: Option<String>,
-    filter: String,
-    recording: Option<(String, Option<usize>)>,
+    keybinding_editor: keybindings::KeybindingEditor,
 }
 fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     world.entity_mut(creation.entity).insert((
@@ -72,8 +72,7 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
         entity: creation.entity,
         pending: Vec::new(),
         error: None,
-        filter: String::new(),
-        recording: None,
+        keybinding_editor: Default::default(),
     }))
 }
 fn open(In(invocation): In<CommandInvocation>) -> CommandResult {
@@ -102,6 +101,13 @@ impl Panel for SettingsFrontend {
         _: &mut Vec<WorkbenchAction>,
         shortcuts: &ShortcutInput,
     ) {
+        if self.keybinding_editor.is_recording()
+            && world
+                .get_non_send::<ShortcutRuntime>()
+                .is_some_and(|runtime| runtime.recording != Some(self.entity))
+        {
+            self.keybinding_editor.cancel_recording();
+        }
         if let Some(mut results) = world.get_resource_mut::<SettingsResults>() {
             self.pending.retain(|id| match results.take(*id) {
                 Some(Ok(_)) => {
@@ -213,10 +219,10 @@ impl Panel for SettingsFrontend {
             world.write_message(request);
         }
         if !recording_visible {
-            self.recording = None;
+            self.keybinding_editor.cancel_recording();
         }
         if let Some(mut runtime) = world.get_non_send_mut::<ShortcutRuntime>() {
-            if self.recording.is_some() {
+            if self.keybinding_editor.is_recording() {
                 runtime.recording = Some(self.entity);
                 shortcuts.suppress(ui);
             } else if runtime.recording == Some(self.entity) {
@@ -238,73 +244,22 @@ impl SettingsFrontend {
         let Some(registry) = world.get_resource::<bed_api::workbench::WorkbenchRegistry>() else {
             return;
         };
-        let mut overrides = snapshot.keybindings();
-        let bindings = bed_keybindings::Bindings::new(
-            registry.shortcuts().to_vec(),
-            &overrides,
-            bed_keybindings::Platform::current(),
-        );
-        ui.input_text("Filter shortcuts", &mut self.filter).build();
-        let filter = self.filter.to_lowercase();
-        let mut changed = false;
-        if let Some((action, index)) = self.recording.clone() {
-            shortcuts.suppress(ui);
-            ui.text("Press a shortcut");
-            if let Some(stroke) = bed_keybindings::record(ui) {
-                let action = registry
-                    .shortcuts()
-                    .iter()
-                    .find(|candidate| candidate.id == action)
-                    .expect("Recording a registered action");
-                match overrides.replace(action, index, stroke) {
-                    Ok(()) => changed = true,
-                    Err(error) => self.error = Some(error),
-                }
-                self.recording = None;
-            }
-            if ui.small_button("Cancel recording") {
-                self.recording = None;
-            }
-        }
-        for action in registry.shortcuts().iter().filter(|action| {
-            action.label.to_lowercase().contains(&filter)
-                || action.id.to_lowercase().contains(&filter)
-        }) {
-            let _id = ui.push_id(&action.id);
-            ui.text(&action.label);
-            for (index, binding) in bindings.for_action(&action.id).iter().enumerate() {
-                let _id = ui.push_id(&index.to_string());
-                if ui.small_button(binding.shortcut.to_string()) {
-                    self.recording = Some((action.id.clone(), Some(index)));
-                }
-                ui.same_line();
-                if ui.small_button("Remove") {
-                    match overrides.remove(action, index) {
-                        Ok(()) => changed = true,
-                        Err(error) => self.error = Some(error),
-                    }
-                }
-            }
-            if ui.small_button("Add shortcut") {
-                self.recording = Some((action.id.clone(), None));
-            }
-            ui.same_line();
-            if ui.small_button("Defaults") {
-                overrides.actions.remove(&action.id);
-                changed = true;
-            }
-        }
-        for collision in bindings
-            .collisions()
+        let groups = registry
+            .panels()
             .iter()
-            .filter(|collision| collision.kind != bed_keybindings::CollisionKind::Reuse)
-        {
-            ui.text_wrapped(format!(
-                "{}: {} overlaps {}",
-                collision.shortcut, collision.first, collision.second
-            ));
+            .map(|panel| (panel.id.to_owned(), panel.label.to_owned()))
+            .collect();
+        let mut overrides = snapshot.keybindings();
+        let edit = self
+            .keybinding_editor
+            .draw(ui, registry.shortcuts(), &groups, &mut overrides);
+        if edit.suppress_shortcuts {
+            shortcuts.suppress(ui);
         }
-        if changed {
+        if let Some(error) = edit.error {
+            self.error = Some(error);
+        }
+        if edit.changed {
             changes.push(SettingsChange::set(
                 "bed.workbench",
                 "keybindings",

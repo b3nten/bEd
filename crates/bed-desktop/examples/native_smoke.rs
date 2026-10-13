@@ -4,11 +4,16 @@ use bed_desktop::{bevy::prelude::*, *};
 use dear_imgui_rs::{Color, Ui};
 use std::{
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 #[derive(Resource)]
 struct Proof {
+    verified: Arc<AtomicBool>,
     phase: u8,
     entered: u64,
     scale: [f32; 2],
@@ -20,29 +25,32 @@ struct Proof {
 }
 
 fn main() -> std::io::Result<()> {
+    let verified = Arc::<AtomicBool>::default();
     let directory = std::env::temp_dir().join(format!("bed-desktop-proof-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
-    let launch = match bed_app::Application::new("bed.proof.native-smoke", "Desktop proof")?
-        .dispatch(std::env::args_os())?
-    {
-        bed_app::LaunchOutcome::Desktop(launch) => *launch,
-        bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+    let launch = match bed_launch::builder("bed.proof.native-smoke", "Desktop proof")?.dispatch()? {
+        bed_launch::LaunchOutcome::Desktop(launch) => *launch,
+        bed_launch::LaunchOutcome::Handled(exit) => std::process::exit(exit),
     };
-    let mut app = launch
-        .options(DesktopPlugins {
-            window: Window {
-                title: "Bed desktop GPU proof".into(),
-                resolution: (180, 100).into(),
+    let mut app = launch.build(
+        bed_launch::DesktopOptions {
+            desktop: DesktopPlugins {
+                window: Window {
+                    title: "Bed desktop GPU proof".into(),
+                    resolution: (180, 100).into(),
+                    ..default()
+                },
                 ..default()
             },
-            ..default()
-        })
-        .presentation_mode(bed_app::bed_core::CorePresentationMode::Application)
-        .config_directory(
-            std::env::temp_dir().join(format!("bed.proof.native-smoke-{}", std::process::id())),
-        )
-        .build(|app| {
+            presentation_mode: bed_launch::bed_core::CorePresentationMode::Application,
+            config_directory: Some(
+                std::env::temp_dir().join(format!("bed.proof.native-smoke-{}", std::process::id())),
+            ),
+            ..Default::default()
+        },
+        |app| {
             app.insert_resource(Proof {
+                verified: Arc::clone(&verified),
                 phase: 0,
                 entered: 0,
                 scale: [1.; 2],
@@ -56,10 +64,15 @@ fn main() -> std::io::Result<()> {
             .add_systems(First, inject_loss_before_ui)
             .add_systems(PreUpdate, advance.in_set(DesktopSystems::AfterUi));
             Ok(())
-        })?;
+        },
+    )?;
     if app.run().is_error() {
         return Err(std::io::Error::other("Desktop proof exited with an error"));
     }
+    assert!(
+        verified.load(Ordering::SeqCst),
+        "desktop smoke exited before completing its assertions"
+    );
     Ok(())
 }
 
@@ -249,6 +262,7 @@ fn advance(world: &mut World) {
                 status.error
             );
             eprintln!("desktop proof: loss before UI recovered without a host skip flag");
+            proof.verified.store(true, Ordering::SeqCst);
             world.write_message(bevy::app::AppExit::Success);
         }
         _ => {}

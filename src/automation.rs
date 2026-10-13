@@ -71,6 +71,9 @@ mod tests {
                 .insert_non_send(bed_ui::icons::Icons::default())
                 .insert_non_send(WorkspacePersistence::new(store))
                 .insert_resource(RemoteHelperDirectory(std::path::PathBuf::new()))
+                .add_plugins(crate::themes::ThemePlugin::new(
+                    env!("CARGO_MANIFEST_DIR").into(),
+                ))
                 .add_plugins(AppRuntimePlugin {
                     options: AppOptions {
                         working_directory: Some(dir.path("")),

@@ -1,6 +1,6 @@
 # Plain editor application
 
-This application launches through `bed_app::Application` and adds the default
+This application launches through `bed_launch::LaunchBuilder` and adds the default
 `EditorPlugin`. Two text panels share one document, while each keeps its own
 caret and scroll state.
 The foundation owns document requests, local saves and shared undo/redo. The
@@ -34,3 +34,7 @@ rendering and exits after the restored panels have drawn several frames.
 `bed-plugin-editor` and `bed-editor-widgets` offer a `language-services` feature for the
 existing code editor, diagnostics, language-server tools and syntax decoration.
 bEd selects this feature explicitly; this example uses the plain defaults.
+
+The native `--smoke-test` path also captures the real window and a visible panel
+after presentations, and fails if the application exits before completing its
+assertions. Capture output is written under `target/`.

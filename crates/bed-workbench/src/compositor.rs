@@ -189,7 +189,9 @@ fn draw(world: &mut World, ui: &Ui) {
                 sys::igSetNextWindowDockID(docks[&area], sys::ImGuiCond_Always);
             }
         }
-        if std::mem::take(&mut presentation.focus) && requested == Some(tab.entity) {
+        let request_focus = presentation.focus && requested == Some(tab.entity);
+        presentation.focus = request_focus;
+        if request_focus {
             unsafe {
                 sys::igSetNextWindowFocus();
             }
@@ -213,7 +215,17 @@ fn draw(world: &mut World, ui: &Ui) {
                 if let Some(mut runtime) = world.get_non_send_mut::<UiRuntime>() {
                     runtime.register_panel(ui);
                 }
-                if ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS)
+                let native_focused =
+                    ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS);
+                // A newly docked tab may be hidden on its first Begin. Retain
+                // the intent until a drawn window confirms native focus.
+                if request_focus && native_focused {
+                    world
+                        .get_mut::<PanelPresentation>(tab.entity)
+                        .unwrap()
+                        .focus = false;
+                }
+                if native_focused
                     && requested.is_none_or(|requested| requested == tab.entity)
                     && layout.focused != Some(tab.entity)
                 {

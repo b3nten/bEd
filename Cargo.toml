@@ -58,7 +58,7 @@ members = [
     "crates/bed-plugin-json-tree",
     "crates/bed-plugin-sqlite-browser",
     "crates/bed-plugin-http-client",
-    "crates/bed-app",
+    "crates/bed-launch",
 ]
 default-members = ["."]
 exclude = ["vendor/arboard", "vendor/dear-imgui-sys", "vendor/dear-imgui-winit", "vendor/dear-imgui-wgpu", "vendor/freetype-sys", "vendor/bevy_stl", "vendor/rio-vt"]
@@ -86,7 +86,7 @@ bed-plugin-color-picker = { path = "crates/bed-plugin-color-picker" }
 bed-plugin-mascots = { path = "crates/bed-plugin-mascots" }
 bed-git = { path = "crates/bed-git" }
 bed-plugin-git = { path = "crates/bed-plugin-git" }
-bed-app = { path = "crates/bed-app" }
+bed-launch = { path = "crates/bed-launch" }
 bed-editor-widgets = { path = "crates/bed-editor-widgets" }
 bed-plugin-file-explorer = { path = "crates/bed-plugin-file-explorer" }
 bed-plugin-file-search = { path = "crates/bed-plugin-file-search" }
@@ -209,7 +209,7 @@ bevy = { workspace = true, features = ["std"] }
 bed-plugin-color-picker = { workspace = true, optional = true }
 bed-plugin-mascots = { workspace = true, optional = true }
 bed-plugin-git = { workspace = true, optional = true }
-bed-app = { workspace = true, features = ["language-services", "remote"] }
+bed-launch = { workspace = true, features = ["language-services", "remote"] }
 bed-editor-widgets = { workspace = true, features = ["language-services"] }
 bed-terminal = { workspace = true, optional = true }
 bed-plugin-file-explorer = { workspace = true, optional = true }

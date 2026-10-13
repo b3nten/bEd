@@ -7,7 +7,7 @@ license.workspace = true
 
 [features]
 default = []
-mascots = ["dep:bed-plugin-mascots", "dep:bed-api"]
+mascots = ["dep:bed-plugin-mascots", "bed-api/gpu", "bed-api/documents"]
 
 [dependencies]
 bed-ui = { workspace = true, features = ["imgui", "gpu"] }
@@ -15,6 +15,7 @@ bevy = { workspace = true, features = ["std"] }
 bed-desktop = { workspace = true }
 winit = { workspace = true }
 dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
 
 bed-plugin-mascots = { workspace = true, optional = true }
-bed-api = { workspace = true, features = ["gpu", "documents"], optional = true }
+bed-api = { workspace = true }

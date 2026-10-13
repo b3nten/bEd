@@ -1,4 +1,4 @@
-//! Retained viewer drafts use the same permanent-resource save and close pipeline.
+//! Independent viewer drafts use the same permanent-resource save and close pipeline.
 use super::*;
 use crate::application::test_support::TempDir;
 use bed_plugin_csv_table::{CsvStates, CsvTablePlugin};
@@ -102,11 +102,15 @@ impl CsvFixture {
     }
 
     fn text_view(&mut self) -> io::Result<()> {
-        self.request(AppAction::SwitchViewer {
+        let outcome = self.request(AppAction::OpenViewer {
             panel: self.tab,
             viewer: bed_plugin_editor::TEXT_VIEWER.into(),
-        })
-        .map(|_| ())
+        })?;
+        let AppRequestOutcome::Opened { panel, .. } = outcome else {
+            panic!("Viewer opens a tab")
+        };
+        self.tab = panel;
+        Ok(())
     }
 
     fn close(&mut self) -> io::Result<()> {
@@ -214,7 +218,7 @@ fn saving_a_world_csv_commits_and_acknowledges_the_pending_cell_before_writing_d
 }
 
 #[test]
-fn viewer_switch_commits_the_csv_draft_and_hidden_csv_drafts_participate_in_text_view_saves() {
+fn opening_another_viewer_commits_csv_drafts_and_saving_either_tab_commits_shared_drafts() {
     let directory = TempDir::new();
     let mut fixture = CsvFixture::new(&directory);
     fixture.draft("first edit");
@@ -235,11 +239,11 @@ fn viewer_switch_commits_the_csv_draft_and_hidden_csv_drafts_participate_in_text
             .non_send_mut::<DocumentSession>()
             .with_view(text_view, |view| view.view.request_focus)
             .unwrap(),
-        "changing the selected tab's presentation focuses its text widget"
+        "the new text tab focuses its widget"
     );
     assert!(
         fixture.app.world().entities().contains(fixture.csv),
-        "a tab retains inactive presentations"
+        "the independent CSV tab remains open"
     );
     assert_eq!(
         fixture
@@ -254,7 +258,7 @@ fn viewer_switch_commits_the_csv_draft_and_hidden_csv_drafts_participate_in_text
     assert_eq!(
         fs::read(&fixture.path).unwrap(),
         b"name,value\nalpha,one\n",
-        "a viewer change updates memory without saving the file"
+        "opening a viewer commits drafts without saving the file"
     );
     fixture.wait_ready();
     fixture.draft("hidden edit");
@@ -301,7 +305,7 @@ fn closing_a_world_csv_commits_and_saves_the_last_presentation_before_retiring_i
 }
 
 #[test]
-fn stale_csv_drafts_block_save_close_and_viewer_switch_without_discarding_the_draft() {
+fn stale_csv_drafts_block_save_close_and_new_viewer_without_discarding_the_draft() {
     for operation in ["save", "close", "switch", "preview"] {
         let directory = TempDir::new();
         let mut fixture = CsvFixture::new(&directory);
@@ -368,7 +372,7 @@ fn stale_csv_drafts_block_save_close_and_viewer_switch_without_discarding_the_dr
 }
 
 #[test]
-fn a_rejected_hidden_csv_draft_blocks_the_text_view_save_and_retains_the_tab() {
+fn a_rejected_csv_tab_draft_blocks_the_text_tab_save_and_retains_both_tabs() {
     let directory = TempDir::new();
     let mut fixture = CsvFixture::new(&directory);
     fixture.text_view().unwrap();

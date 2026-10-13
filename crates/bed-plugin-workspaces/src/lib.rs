@@ -1,6 +1,7 @@
 //! Workspace picker panels and their concrete workspace action contract.
 mod contracts;
 mod feature;
+pub mod filesystem;
 mod lifecycle;
 pub use contracts::*;
 pub use lifecycle::*;

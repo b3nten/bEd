@@ -1,6 +1,6 @@
 # Layout app
 
-A desktop app launched through `bed_app::Application`, with `bed-plugin-layouts`
+A desktop app launched through `bed_launch::LaunchBuilder`, with `bed-plugin-layouts`
 and an ordinary Bevy counter plugin. The foundation supplies windowing, ImGui,
 theming, icons, layout, shared document
 editing/history, and registry menus. The app does not add code-editor, terminal,

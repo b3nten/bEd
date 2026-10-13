@@ -112,6 +112,14 @@ pub(crate) fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -
         .ok_or("Git comparisons require an editor document session")?
         .session_id()
         .0;
+    // Comparisons obtain their document asynchronously. Seed the binding here
+    // so this frontend can publish it without an application's preparation hook.
+    if world.get::<PanelBinding>(creation.entity).is_none() {
+        world.entity_mut(creation.entity).insert(PanelBinding {
+            session_id,
+            ..Default::default()
+        });
+    }
     let mut controller = world.non_send_mut::<GitState>();
     controller.0.claim_session(session_id)?;
     controller.0.visible += 1;
@@ -832,7 +840,7 @@ mod tests {
     }
 
     fn create(app: &mut App, state: Value) -> (Entity, Box<dyn Panel>) {
-        let entity = app.world_mut().spawn(PanelBinding::default()).id();
+        let entity = app.world_mut().spawn_empty().id();
         let factory = app
             .world()
             .resource::<bed_api::workbench::WorkbenchRegistry>()
@@ -920,6 +928,10 @@ mod tests {
         );
         diff(&mut app, entity, "index-1", b"one\ntwo\n");
         let binding = app.world().get::<PanelBinding>(entity).unwrap().clone();
+        assert_eq!(
+            binding.session_id,
+            app.world().non_send::<DocumentSession>().session_id().0
+        );
         let document = binding.document.unwrap();
         let view = binding.view.unwrap();
         assert!(

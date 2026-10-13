@@ -8,11 +8,9 @@ trap 'kill "$bed_window_manager" 2>/dev/null || true' EXIT
 sleep 1
 # Exercise Bevy's X11 desktop backend under the Xvfb window manager.
 unset WAYLAND_DISPLAY
-target/release/bed --lifecycle-smoke --capture-after-frames 30 \
-  --capture-frame target/native-window.ppm --config-dir target/native-config src/main.rs
+cargo run --locked -p bed-desktop --example lifecycle_smoke
 test -s target/native-window.ppm
-target/release/bed --terminal-smoke --capture-after-frames 90 \
-  --capture-frame target/native-terminal.ppm
+cargo run --locked -p bed-example-terminal --example terminal_smoke
 test -s target/native-terminal.ppm
 mkdir -p target/native-project
 cp src/main.rs target/native-project/main.rs
@@ -24,6 +22,10 @@ cargo run --locked -p bed-desktop --example native_smoke
 cargo run --locked -p bed-desktop --example canvas_smoke
 cargo run --locked -p bed-desktop --example automation_smoke
 cargo run --locked -p bed-desktop --example window_config_smoke
+cargo run --locked -p bed-launch --example workbench_smoke
+cargo run --locked -p bed-launch --example effects_smoke
+cargo run --locked -p bed-launch --features language-services --example git_smoke
+cargo run --locked -p bed-launch --features language-services --example viewers_smoke
 cargo run --locked -p bed-example-layouts -- --smoke-test --capture-frame target/native-layout.ppm
 test -s target/native-layout.ppm
 cargo run --locked -p bed-example-editor -- --smoke-test

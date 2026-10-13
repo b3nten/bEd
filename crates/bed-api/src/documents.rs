@@ -213,7 +213,7 @@ pub fn panel_viewer_menu(
 }
 
 impl ViewerMenu {
-    /// Append switching actions to an existing panel context menu.
+    /// Append requests to open another viewer to an existing panel context menu.
     pub fn draw(&self, ui: &Ui, requests: &mut Vec<HostAction>) {
         let alternatives: Vec<_> = self
             .choices
@@ -222,18 +222,18 @@ impl ViewerMenu {
             .collect();
         let mut selected = None;
         for choice in alternatives.iter().filter(|v| v.text_editor) {
-            if ui.menu_item("Edit as Text") {
+            if ui.menu_item("Open in Text Editor") {
                 selected = Some(choice.id.clone());
             }
         }
         let formatted: Vec<_> = alternatives.iter().filter(|v| !v.text_editor).collect();
         if formatted.len() == 1 {
             let choice = formatted[0];
-            if ui.menu_item(format!("View as {}", choice.label)) {
+            if ui.menu_item(format!("Open in {}", choice.label)) {
                 selected = Some(choice.id.clone());
             }
         } else if !formatted.is_empty()
-            && let Some(_menu) = ui.begin_menu("View As")
+            && let Some(_menu) = ui.begin_menu("Open With")
         {
             for choice in formatted {
                 if ui.menu_item(&choice.label) {
@@ -242,7 +242,7 @@ impl ViewerMenu {
             }
         }
         if let Some(viewer) = selected {
-            requests.push(HostAction::SwitchViewer {
+            requests.push(HostAction::OpenDocumentViewer {
                 tab: self.tab,
                 document: self.document,
                 viewer,

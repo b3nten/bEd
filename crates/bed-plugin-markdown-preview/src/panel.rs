@@ -139,7 +139,7 @@ impl MarkdownPanel {
         if let Some(menu) = host.viewer_menu
             && let Some(choice) = menu.choices.iter().find(|choice| choice.text_editor)
         {
-            requests.push(HostAction::SwitchViewer {
+            requests.push(HostAction::OpenDocumentViewer {
                 tab: menu.tab,
                 document: self.document,
                 viewer: choice.id.clone(),
@@ -202,7 +202,7 @@ impl MarkdownPanel {
             .build(ui, || {
                 if let Some(error) = &self.error {
                     ui.text_wrapped(error);
-                    if ui.button("Edit as Text") {
+                    if ui.button("Open in Text Editor") {
                         self.edit_as_text(host, requests);
                     }
                     return;
@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(requests.len(), 1);
         panel.edit_as_text(&host, &mut requests);
         assert!(
-            matches!(&requests[1],HostAction::SwitchViewer{tab:12,document,viewer} if *document==id && viewer=="bed.editor.text")
+            matches!(&requests[1],HostAction::OpenDocumentViewer{tab:12,document,viewer} if *document==id && viewer=="bed.editor.text")
         );
     }
 }

@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "tests/fixtures/desktop-app/Cargo.toml"
 FORBIDDEN = {
-    "bed", "bed-plugin-settings", "bed-app", "bed-core",
+    "bed", "bed-plugin-settings", "bed-launch", "bed-core",
     "bed-plugin-editor", "bed-editor-widgets", "bed-editing", "bed-documents",
     "bed-files", "bed-storage", "bed-remote", "bed-lsp", "bed-plugin-git", "bed-git",
     "bed-plugin-terminal", "bed-terminal", "bed-plugin-debugger", "bed-debugger",
@@ -33,12 +33,16 @@ def main(offline=False):
         tree = cargo("tree", *options, "--edges", "normal,build", "--prefix", "none", offline=offline)
         names = {line.split()[0] for line in tree.splitlines() if line.strip()}
         forbidden = FORBIDDEN | ({"bed-plugin-effects"} if "effects" not in features else set())
-        if "layout" in features:
+        # Layout and effects use shared API contracts (including preferences).
+        # Those contracts do not install document services or a workbench.
+        if features:
             forbidden -= {"bed-files", "bed-storage", "bed-editing"}
         forbidden |= {name for name in names if name.startswith("bed-plugin-")} - ({"bed-plugin-effects"} if "effects" in features else set())
         assert not names & forbidden, f"{features or 'base'} includes {sorted(names & forbidden)}"
         if "layout" not in features:
-            assert not names & {"bed-workbench", "bed-api"}, "Base installs layout"
+            assert "bed-workbench" not in names, "Composition installs a workbench"
+        if not features:
+            assert "bed-api" not in names, "Base includes application contracts"
         cargo("check", *options, "--all-targets", offline=offline)
         print(f"Independent desktop consumer: {features or 'base'} passed.", flush=True)
 

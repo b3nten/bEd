@@ -179,6 +179,49 @@ mod tests {
     use winit::keyboard::KeyCode;
 
     #[test]
+    fn idle_preferences_configure_enablement_and_delay_without_bed() {
+        use bevy::prelude::*;
+        let mut app = App::new();
+        register_preferences(app.world_mut());
+        app.init_resource::<IdleSettings>()
+            .insert_resource(IdleController::new(Instant::now() - Duration::from_secs(3)))
+            .insert_resource(bed_api::settings::SettingsSnapshot {
+                settings: serde_json::json!({"bed.idle": {
+                    "bedtime_enabled": true, "bedtime_delay_seconds": 2.0,
+                }}),
+                ..Default::default()
+            })
+            .add_systems(Update, (configure_preferences, update_idle).chain());
+        let registry = app
+            .world()
+            .resource::<bed_api::settings::SettingsRegistry>();
+        let delay = registry
+            .definition(SETTINGS_OWNER, "bedtime_delay_seconds")
+            .unwrap();
+        assert!(delay.validate_value(&serde_json::json!(-1)).is_err());
+        assert!(delay.validate_value(&serde_json::json!(1e100)).is_err());
+        assert_eq!(delay.default, serde_json::json!(300.0));
+        app.world_mut().resource_mut::<IdleSettings>().eligible = Some(7);
+        // First observing an eligible viewport begins its timer.
+        app.update();
+        app.world_mut()
+            .resource_mut::<IdleController>()
+            .activity(Instant::now() - Duration::from_secs(3));
+        app.update();
+        assert_eq!(
+            app.world().resource::<IdleSettings>().delay,
+            Duration::from_secs(2)
+        );
+        assert_eq!(app.world().resource::<IdleController>().viewport(), Some(7));
+        app.world_mut()
+            .resource_mut::<bed_api::settings::SettingsSnapshot>()
+            .settings[SETTINGS_OWNER]["bedtime_enabled"] = serde_json::json!(false);
+        app.update();
+        assert!(!app.world().resource::<IdleSettings>().enabled);
+        assert_eq!(app.world().resource::<IdleController>().viewport(), None);
+    }
+
+    #[test]
     fn unset_main_viewport_scale_preserves_scene_resolution_and_aspect() {
         assert_eq!(
             scene_pixels([1200.0, 800.0], [0.0; 2], [2.0; 2]),
@@ -284,7 +327,7 @@ mod tests {
     }
 }
 
-/// The host publishes eligibility and preferences; this plugin owns idle transitions.
+/// The host publishes eligibility; this plugin applies preferences and owns idle transitions.
 #[derive(bevy::prelude::Resource)]
 pub struct IdleSettings {
     pub enabled: bool,
@@ -304,6 +347,27 @@ impl Default for IdleSettings {
 
 pub struct IdlePlugin;
 
+pub const SETTINGS_OWNER: &str = "bed.idle";
+
+pub fn register_preferences(world: &mut bevy::prelude::World) {
+    use bed_api::settings::SettingDefinition;
+    bed_api::settings::register(
+        world,
+        SETTINGS_OWNER,
+        vec![
+            SettingDefinition::new("bedtime_enabled", "Show idle screen", true),
+            SettingDefinition::new("bedtime_delay_seconds", "Idle delay (seconds)", 300.0)
+                .validated_by(|value| {
+                    let seconds = value.as_f64().expect("Setting type was validated");
+                    Duration::try_from_secs_f64(seconds)
+                        .map(|_| ())
+                        .map_err(|_| "Idle delay must be nonnegative and fit in a duration".into())
+                }),
+        ],
+    )
+    .expect("Idle preferences install once");
+}
+
 #[derive(bevy::prelude::SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IdleSystems {
     Intercept,
@@ -312,6 +376,7 @@ pub enum IdleSystems {
 impl bevy::prelude::Plugin for IdlePlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         use bevy::prelude::*;
+        register_preferences(app.world_mut());
         app.insert_resource(IdleController::new(Instant::now()))
             .init_resource::<IdleSettings>()
             .add_systems(
@@ -322,8 +387,10 @@ impl bevy::prelude::Plugin for IdlePlugin {
             )
             .add_systems(
                 PreUpdate,
-                update_idle
+                (configure_preferences, update_idle)
+                    .chain()
                     .after(bed_desktop::DesktopSystems::Input)
+                    .after(bed_desktop::DesktopSystems::Prepare)
                     .before(bed_desktop::DesktopSystems::Ui),
             );
         #[cfg(feature = "mascots")]
@@ -337,6 +404,28 @@ impl bevy::prelude::Plugin for IdlePlugin {
                 world.insert_resource(IdleSurface(scene));
             });
         }
+    }
+}
+
+fn configure_preferences(
+    snapshot: Option<bevy::prelude::Res<bed_api::settings::SettingsSnapshot>>,
+    mut idle: bevy::prelude::ResMut<IdleSettings>,
+) {
+    let Some(snapshot) = snapshot else {
+        return;
+    };
+    if let Some(enabled) = snapshot
+        .get(SETTINGS_OWNER, "bedtime_enabled")
+        .and_then(serde_json::Value::as_bool)
+    {
+        idle.enabled = enabled;
+    }
+    if let Some(seconds) = snapshot
+        .get(SETTINGS_OWNER, "bedtime_delay_seconds")
+        .and_then(serde_json::Value::as_f64)
+    {
+        idle.delay =
+            Duration::try_from_secs_f64(seconds).expect("Published idle delay was validated");
     }
 }
 
@@ -425,7 +514,10 @@ pub fn draw_ui(world: &mut bevy::prelude::World, ui: &dear_imgui_rs::Ui) {
             let entity = world.resource::<IdleSurface>().0;
             let pixels = scene_pixels(
                 [size.x, size.y],
-                ui.main_viewport().framebuffer_scale(),
+                [
+                    (*viewport).FramebufferScale.x,
+                    (*viewport).FramebufferScale.y,
+                ],
                 ui.io().display_framebuffer_scale(),
             );
             bed_plugin_mascots::update_scene(

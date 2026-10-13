@@ -40,11 +40,17 @@ pub(crate) fn formatting_pending(world: &World) -> bool {
         .is_some_and(|saves| !saves.formats.is_empty() || !saves.writes.is_empty())
 }
 
+/// Begin a user-requested save using the installed editor's formatting preference.
+/// Lifecycle and autosave writes use `begin_document_save` directly.
 pub fn begin_explicit_document_save(
     world: &mut World,
     document: DocumentId,
-    format: bool,
 ) -> Result<DocumentSaveId, String> {
+    let format = world
+        .resource::<bed_api::settings::SettingsSnapshot>()
+        .get("bed.editor", "lsp_format_on_save")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
     world.init_resource::<ExplicitDocumentSaves>();
     if !format || crate::models::model_entity(world, document).is_some() {
         return begin_document_save(

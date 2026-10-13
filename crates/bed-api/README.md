@@ -2,7 +2,7 @@
 
 Shared contracts for the desktop foundation and optional Bevy feature plugins.
 This is a linked Rust API; each plugin is an ordinary Bevy `Plugin`.
-The owned launcher re-exports this crate as `bed_app::api`.
+The owned launcher re-exports this crate as `bed_launch::api`.
 
 | Module | Contracts |
 | --- | --- |

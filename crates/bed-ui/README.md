@@ -33,7 +33,11 @@ foundation and feature plugins. Each entry chooses a directory for one plugin:
 let mut directories = IconDirectories::default();
 directories.0.insert("bed.terminal".into(), "my-icons/terminal".into());
 directories.0.insert("bed.core".into(), "my-icons/chrome".into());
-launch.icon_directories(directories).run(|app| {
+let options = bed_launch::DesktopOptions {
+    icon_directories: directories,
+    ..Default::default()
+};
+launch.run(options, |app| {
     app.add_plugins(MyPanelPlugin);
     Ok(())
 })?;
@@ -53,7 +57,7 @@ The built-in contracts are:
 | `bed.core` | Keys in the [shared catalog](assets/icons/catalog.tsv), each with `.svg` |
 | `bed.terminal` | `terminal.svg` |
 | `bed.http` | `request.svg` |
-| `bed.explorer` | `files.svg` |
+| `bed.explorer` | `files.svg`, `folder.svg`, `folder-open.svg`, `chevron-right.svg`, `chevron-down.svg` |
 | `bed.git` | `branch.svg`, `refresh.svg`, `fetch.svg`, `pull.svg`, `push.svg`, `stage.svg`, `unstage.svg` |
 | `bed.debug` | `debug.svg` |
 | `bed.editor` | `diagnostics.svg`, `language-server.svg`, `document.svg`, `hex.svg`, `navigation.svg` |
@@ -71,7 +75,7 @@ Namespaced keys resolve exactly in both ImGui and native toolbars. All lookups u
 
 ## Shared controls and live themes
 
-The application selects its initial `UiTheme` with `DesktopLaunch::theme`, then
+The application selects its initial `UiTheme` with `DesktopOptions::theme`, then
 can publish live changes through the desktop's `DesktopTheme` resource.
 Its palette, font options, control metrics and motion policy are prepared before
 opening the frame. Theme selection and disk formats belong to the application.
@@ -95,6 +99,6 @@ frontend drawing scope includes third-party and footer popups in opening motion.
 Direct ImGui fixtures without a runtime inherit native colors and the common
 default metrics; `UiRuntime` supplies customized themes without a workbench.
 
-`DesktopLaunch::theme` also establishes font, opacity and motion preference
+`DesktopOptions::theme` also establishes font, opacity and motion preference
 defaults. User preferences can override those defaults; applications resolve
 their selected theme before publishing the next frame's `DesktopTheme`.

@@ -358,7 +358,6 @@ impl DocumentSession {
         let documents = workspace_edit::parse_workspace_edit(&transaction.edit)?;
         let mut waiting = false;
         for edit in &documents {
-            self.ensure_local_path_editable(&edit.path)?;
             if self.document_for_path(&edit.path).is_none() {
                 match self.request_open_mode(
                     &edit.path,
@@ -638,7 +637,6 @@ impl DocumentSession {
         let mut waiting = false;
         for participant in &group.participants {
             let path = Path::new(&participant.path);
-            self.ensure_local_path_editable(path)?;
             let document = match self.document_for_path(path) {
                 Some(id) => id,
                 None => match self.request_open_file(path)? {

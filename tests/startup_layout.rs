@@ -14,6 +14,16 @@ use serde_json::json;
 use temp_dir::TempDir;
 
 fn app(dir: &TempDir, options: AppOptions) -> App {
+    let initial_layout = options.initial_layout.or_else(|| {
+        options
+            .workspace
+            .is_none()
+            .then_some(if options.files.is_empty() {
+                LayoutSlot::Startup
+            } else {
+                LayoutSlot::Layout1
+            })
+    });
     let mut app = App::new();
     editor_host::install(
         &mut app,
@@ -29,7 +39,7 @@ fn app(dir: &TempDir, options: AppOptions) -> App {
         AppRuntimePlugin {
             options: AppOptions {
                 working_directory: Some(dir.root().to_owned()),
-                initial_layout: Some(LayoutSlot::Startup),
+                initial_layout,
                 ..options
             },
         },
@@ -116,18 +126,7 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
     persist_workspace(original.world_mut()).unwrap();
     drop(original);
 
-    let path = dir.write("note.txt", b"note").canonicalize().unwrap();
-    let mut fresh = app(
-        &dir,
-        AppOptions {
-            files: vec![OpenFileOptions {
-                path: path.clone(),
-                viewer: None,
-                additional: false,
-            }],
-            ..Default::default()
-        },
-    );
+    let mut fresh = app(&dir, Default::default());
     assert_eq!(
         fresh.world().resource::<LayoutSlots>().active(),
         LayoutSlot::Startup
@@ -148,21 +147,6 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
         2
     );
     let focused = fresh.world().resource::<WorkbenchLayout>().focused.unwrap();
-    let document = fresh
-        .world()
-        .get::<PanelBinding>(focused)
-        .unwrap()
-        .document
-        .unwrap();
-    assert_eq!(
-        fresh
-            .world()
-            .non_send::<DocumentSession>()
-            .snapshot(document)
-            .unwrap()
-            .path,
-        path.to_string_lossy()
-    );
     command(
         &mut fresh,
         WindowCommand::RestoreBuiltinLayout(LayoutSlot::Startup),
@@ -200,6 +184,58 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
             .unwrap()
             .panel_type,
         bed_plugin_workspaces::PANEL_ID
+    );
+}
+
+#[test]
+fn an_explicit_file_launch_uses_layout_one_instead_of_the_startup_template() {
+    let dir = TempDir::new();
+    let mut original = app(&dir, Default::default());
+    command(&mut original, WindowCommand::NewDocument);
+    command(&mut original, WindowCommand::SplitDown);
+    command(&mut original, WindowCommand::SetCurrentLayout);
+    persist_workspace(original.world_mut()).unwrap();
+    drop(original);
+
+    let path = dir.write("note.txt", b"note").canonicalize().unwrap();
+    let mut fresh = app(
+        &dir,
+        AppOptions {
+            files: vec![OpenFileOptions {
+                path: path.clone(),
+                viewer: None,
+                additional: false,
+            }],
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        fresh.world().resource::<LayoutSlots>().active(),
+        LayoutSlot::Layout1
+    );
+    assert!(
+        active_panel_entities(fresh.world_mut())
+            .iter()
+            .all(|panel| {
+                fresh.world().get::<PanelRecord>(*panel).unwrap().panel_type
+                    != bed_plugin_workspaces::PANEL_ID
+            })
+    );
+    let focused = fresh.world().resource::<WorkbenchLayout>().focused.unwrap();
+    let document = fresh
+        .world()
+        .get::<PanelBinding>(focused)
+        .unwrap()
+        .document
+        .unwrap();
+    assert_eq!(
+        fresh
+            .world()
+            .non_send::<DocumentSession>()
+            .snapshot(document)
+            .unwrap()
+            .path,
+        path.to_string_lossy()
     );
 }
 

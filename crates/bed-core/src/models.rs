@@ -388,10 +388,10 @@ pub fn undo_document(world: &mut World, document: DocumentId) -> Result<(), Stri
         !bed_workbench::frontend_active(world),
         "history resolves after drawing"
     );
+    crate::commit_document_drafts(world, &[document])?;
     if let Some(result) = run_model_operation(world, document, ModelOperation::Undo) {
         return result;
     }
-    crate::commit_document_drafts(world, &[document])?;
     world
         .non_send_mut::<DocumentSession>()
         .undo_document(document)
@@ -402,10 +402,10 @@ pub fn redo_document(world: &mut World, document: DocumentId) -> Result<(), Stri
         !bed_workbench::frontend_active(world),
         "history resolves after drawing"
     );
+    crate::commit_document_drafts(world, &[document])?;
     if let Some(result) = run_model_operation(world, document, ModelOperation::Redo) {
         return result;
     }
-    crate::commit_document_drafts(world, &[document])?;
     world
         .non_send_mut::<DocumentSession>()
         .redo_document(document)

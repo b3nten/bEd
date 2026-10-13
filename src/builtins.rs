@@ -1,4 +1,4 @@
-//! bEd chooses its installed reusable features here.
+//! bEd's feature panels and commands. Native composition installs desktop effects and idle behavior.
 use bevy::prelude::*;
 
 pub struct BedBuiltinPlugins;

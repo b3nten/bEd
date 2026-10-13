@@ -125,6 +125,7 @@ fn command_availability_is_checked_when_delayed_requests_execute() {
                     enabled,
                     visible,
                     label: None,
+                    ..Default::default()
                 },
             );
         process_requests(app.world_mut());
@@ -150,6 +151,102 @@ fn command_availability_is_checked_when_delayed_requests_execute() {
     invoke(&mut app, "test.open");
     process_requests(app.world_mut());
     assert_eq!(save(app.world_mut())["panels"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn invocation_facts_follow_the_canonical_source_and_exact_arguments() {
+    let mut app = app();
+    invoke(&mut app, "test.open");
+    process_requests(app.world_mut());
+    let first = app.world().resource::<WorkbenchLayout>().focused.unwrap();
+    invoke(&mut app, "test.open");
+    process_requests(app.world_mut());
+    let second = app.world().resource::<WorkbenchLayout>().focused.unwrap();
+    let frontend = app.world_mut().spawn(api::PanelOwner(first)).id();
+    for (fact_arguments, source, arguments, expected) in [
+        (
+            Value::Null,
+            frontend,
+            Value::Null,
+            WorkbenchOutcome::Ignored,
+        ),
+        (Value::Null, second, Value::Null, WorkbenchOutcome::Applied),
+        (
+            Value::Null,
+            first,
+            json!({"target":1}),
+            WorkbenchOutcome::Applied,
+        ),
+        (
+            json!({"target":1}),
+            first,
+            json!({"target":1}),
+            WorkbenchOutcome::Ignored,
+        ),
+        (
+            json!({"target":1}),
+            first,
+            json!({"target":2}),
+            WorkbenchOutcome::Applied,
+        ),
+    ] {
+        app.world_mut()
+            .resource_mut::<api::CommandPresentations>()
+            .0
+            .insert(
+                "test.open".into(),
+                api::CommandPresentation {
+                    enabled: false,
+                    scope: api::CommandPresentationScope::Invocation {
+                        source: Some(first),
+                        arguments: fact_arguments,
+                    },
+                    ..Default::default()
+                },
+            );
+        let receipt =
+            app.world_mut()
+                .resource_mut::<WorkbenchRequests>()
+                .submit(WorkbenchAction::Invoke(CommandInvocation {
+                    command: "test.open".into(),
+                    source: Some(source),
+                    area: 1,
+                    arguments,
+                }));
+        process_requests(app.world_mut());
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<WorkbenchRequests>()
+                .take_result(receipt),
+            Some(Ok(expected))
+        );
+    }
+    app.world_mut()
+        .resource_mut::<api::CommandPresentations>()
+        .0
+        .insert(
+            "test.open".into(),
+            api::CommandPresentation {
+                enabled: false,
+                ..Default::default()
+            },
+        );
+    let receipt =
+        app.world_mut()
+            .resource_mut::<WorkbenchRequests>()
+            .submit(WorkbenchAction::Invoke(CommandInvocation {
+                command: "test.open".into(),
+                source: Some(second),
+                area: 1,
+                arguments: json!({"target":1}),
+            }));
+    process_requests(app.world_mut());
+    assert_eq!(
+        app.world_mut()
+            .resource_mut::<WorkbenchRequests>()
+            .take_result(receipt),
+        Some(Ok(WorkbenchOutcome::Ignored))
+    );
 }
 
 #[test]
@@ -576,6 +673,148 @@ fn requested_focus_survives_frontend_observations_across_tiled_areas() {
             );
         }
     }
+}
+
+#[test]
+fn closing_and_reopening_a_tab_preserves_queued_focus_until_the_native_window_draws() {
+    let _lock = IMGUI_TEST_LOCK.lock().unwrap();
+    let mut app = app();
+    app.init_resource::<RequestedUiTheme>();
+    app.world_mut()
+        .resource_mut::<RequestedUiTheme>()
+        .0
+        .motion
+        .enabled = false;
+    let mut context = imgui_context();
+    let draw = |app: &mut App, context: &mut dear_imgui_rs::Context| {
+        context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
+            [800.0, 600.0],
+            1.0 / 60.0,
+        ));
+        prepare_ui(app.world_mut(), context);
+        draw_with_ui(app.world_mut(), context.frame(), crate::render_ui);
+        drop(context.render_legacy());
+    };
+    let original = open_panel(
+        app.world_mut(),
+        json!({"panel_type":"test.counter"}),
+        Some(1),
+        None,
+    )
+    .unwrap();
+    let surviving = open_panel(
+        app.world_mut(),
+        json!({"panel_type":"test.counter"}),
+        Some(1),
+        None,
+    )
+    .unwrap();
+    focus_panel(app.world_mut(), original);
+    for _ in 0..6 {
+        draw(&mut app, &mut context);
+        process_requests(app.world_mut());
+    }
+    assert!(
+        app.world()
+            .get::<api::PanelGeometry>(original)
+            .unwrap()
+            .visible
+    );
+    assert!(commit_close(app.world_mut(), original));
+    assert_eq!(app.world().resource::<WorkbenchLayout>().focused, None);
+
+    // Closing the selected native window reveals the surviving tab. Capture
+    // that native fact while an earlier application open is still queued.
+    let surviving_id = app.world().get::<PanelPresentation>(surviving).unwrap().id;
+    let name = std::ffi::CString::new(format!("###bed_tab_{surviving_id}")).unwrap();
+    context.binding().with_bound_context(|| unsafe {
+        dear_imgui_rs::sys::igSetWindowFocus_Str(name.as_ptr());
+    });
+    let open =
+        app.world_mut()
+            .resource_mut::<WorkbenchRequests>()
+            .submit(WorkbenchAction::OpenPanel {
+                panel_type: "test.counter".into(),
+                state: Value::Null,
+                area: Some(1),
+            });
+    draw(&mut app, &mut context);
+    assert!(
+        app.world()
+            .resource::<WorkbenchRequests>()
+            .pending
+            .iter()
+            .any(|request| matches!(request.action, WorkbenchAction::ObserveFocus(panel) if panel == surviving)),
+        "the frontend must capture the surviving tab's native focus before the queued open"
+    );
+    process_requests(app.world_mut());
+    let WorkbenchOutcome::Opened(reopened) = app
+        .world_mut()
+        .resource_mut::<WorkbenchRequests>()
+        .take_result(open)
+        .unwrap()
+        .unwrap()
+    else {
+        panic!("queued open did not create a tab");
+    };
+    let reopened_id = app.world().get::<PanelPresentation>(reopened).unwrap().id;
+    assert_ne!(reopened, original);
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().focused,
+        Some(reopened)
+    );
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().tiling.areas[0].selected,
+        Some(reopened_id)
+    );
+
+    // Native docking may draw the new window immediately or need another
+    // frame. A skipped first Begin must leave the focus request pending.
+    draw(&mut app, &mut context);
+    if !app
+        .world()
+        .get::<api::PanelGeometry>(reopened)
+        .is_some_and(|geometry| geometry.visible)
+    {
+        assert!(
+            app.world()
+                .get::<PanelPresentation>(reopened)
+                .unwrap()
+                .focus,
+            "a window that has not drawn must retain its requested native focus"
+        );
+    }
+    process_requests(app.world_mut());
+    for _ in 0..6 {
+        draw(&mut app, &mut context);
+        process_requests(app.world_mut());
+        assert_eq!(
+            app.world().resource::<WorkbenchLayout>().focused,
+            Some(reopened)
+        );
+    }
+    let presentation = app.world().get::<PanelPresentation>(reopened).unwrap();
+    assert!(
+        !presentation.focus,
+        "native focus must acknowledge the request"
+    );
+    assert_ne!(presentation.dock_id, 0);
+    assert!(
+        app.world()
+            .get::<api::PanelGeometry>(reopened)
+            .unwrap()
+            .visible
+    );
+    assert!(
+        !app.world()
+            .get::<api::PanelGeometry>(surviving)
+            .unwrap()
+            .visible
+    );
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().tiling.areas[0].tabs,
+        [surviving_id, reopened_id]
+    );
 }
 
 #[test]

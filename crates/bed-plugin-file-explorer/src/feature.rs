@@ -8,7 +8,7 @@ use bed_api::workbench::{
     WorkbenchAction, register,
 };
 use bed_api::{
-    documents::{DocumentReply, PanelBinding},
+    documents::DocumentReply,
     features::{FeatureSystems, HostEffects},
     workbench::{
         CommandPresentations, FileClipboardService, PanelExternalFiles,
@@ -110,12 +110,17 @@ impl Plugin for FileExplorerPlugin {
             .get_non_send::<bed_ui::icons::IconDirectories>()
             .and_then(|sources| sources.get(MODULE_ID))
             .map(std::path::Path::to_path_buf);
-        let definitions = [("files", "files.svg", "files")].map(|(name, filename, bundled)| {
-            bed_ui::icons::IconDefinition {
-                name,
-                filename,
-                embedded_svg: bed_ui::icons::Icons::bundled_svg(bundled),
-            }
+        let definitions = [
+            ("files", "files.svg", "files"),
+            ("folder", "folder.svg", "folder"),
+            ("folder-open", "folder-open.svg", "folder-open"),
+            ("chevron-right", "chevron-right.svg", "chevron-right"),
+            ("chevron-down", "chevron-down.svg", "chevron-down"),
+        ]
+        .map(|(name, filename, bundled)| bed_ui::icons::IconDefinition {
+            name,
+            filename,
+            embedded_svg: bed_ui::icons::Icons::bundled_svg(bundled),
         });
         app.world_mut()
             .non_send_mut::<bed_ui::icons::Icons>()
@@ -215,27 +220,6 @@ fn shutdown(
     }
 }
 
-fn protected_paths(world: &mut World) -> Vec<std::path::PathBuf> {
-    world
-        .query::<&PanelBinding>()
-        .iter(world)
-        .filter_map(|binding| binding.input.local_file())
-        .flat_map(|file| {
-            [
-                file.to_path_buf(),
-                std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf()),
-            ]
-        })
-        .flat_map(|file| {
-            ["", "-wal", "-shm"].map(|suffix| {
-                let mut path = file.as_os_str().to_os_string();
-                path.push(suffix);
-                std::path::PathBuf::from(path)
-            })
-        })
-        .collect()
-}
-
 fn prepare(world: &mut World) {
     if let Some(settings) = world.get_resource::<bed_api::settings::SettingsSnapshot>() {
         let current = *world.resource::<ExplorerDefaults>();
@@ -256,7 +240,6 @@ fn prepare(world: &mut World) {
         .non_send_mut::<ExplorerPanels>()
         .0
         .retain(|entity, _| alive.contains(entity));
-    let protected = protected_paths(world);
     let mut requests = Vec::new();
     let frame = FrontendSnapshot::capture(world);
     let mut state = SystemState::<(
@@ -342,7 +325,6 @@ fn prepare(world: &mut World) {
         clipboard
             .as_mut()
             .map(|clipboard| &mut ***clipboard as &mut dyn FileClipboardService),
-        &protected,
         &mut requests,
     );
     for action in explorer.take_actions() {
@@ -357,7 +339,6 @@ fn prepare(world: &mut World) {
             clipboard
                 .as_mut()
                 .map(|clipboard| &mut ***clipboard as &mut dyn FileClipboardService),
-            &protected,
             &mut requests,
         ) {
             requests.push(HostAction::Notify {
@@ -504,7 +485,6 @@ impl Panel for Frontend {
 pub fn draw_popups(world: &mut World, ui: &Ui) {
     open_dropped_files(world);
     let mut requests = Vec::new();
-    let protected = protected_paths(world);
     let mut state = SystemState::<(
         NonSendMut<ExplorerState>,
         NonSendMut<operations::FileOperations>,
@@ -524,7 +504,7 @@ pub fn draw_popups(world: &mut World, ui: &Ui) {
         icons.as_deref().map(|icons| icons as &dyn FileIcons),
         &mut requests,
     );
-    operations.draw(ui, &session, &target.root, &protected, &mut requests);
+    operations.draw(ui, &session, &target.root, &mut requests);
     operations::guard_document_requests(&target, &session, &mut requests);
     for request in requests {
         world.resource_mut::<HostEffects>().push(None, request);
@@ -620,7 +600,6 @@ fn configure_target(
 ) {
     handle.file_content.reset();
     handle.actions.clear();
-    handle.set_file_services(target.services.clone());
     let state = &mut handle.file_explorer;
     state.project_root = target.root.clone();
     state.file_finder.cancel_and_close();
@@ -649,7 +628,66 @@ fn configure_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bed_api::documents::PanelBinding;
     use bed_workbench::{WorkbenchPlugin, WorkbenchRequests, commit_close};
+
+    #[test]
+    fn a_local_file_panel_does_not_block_moving_files_or_database_sidecars() {
+        use std::time::{Duration, Instant};
+        let directory = crate::test_support::TempDir::new();
+        let database = directory.write("database.sqlite", b"database");
+        let wal = directory.write("database.sqlite-wal", b"journal");
+        let shm = directory.write("database.sqlite-shm", b"shared memory");
+        let destination = directory.path("moved");
+        std::fs::create_dir(&destination).unwrap();
+        let mut app = App::new();
+        app.insert_resource(FileContext::local(directory.root()).unwrap())
+            .add_plugins(FileExplorerPlugin);
+        // A direct file viewer keeps a path, without owning a document buffer.
+        let panel = app
+            .world_mut()
+            .spawn(PanelBinding {
+                input: bed_api::documents::PanelInput::LocalFile(database.clone()),
+                ..Default::default()
+            })
+            .id();
+        prepare(app.world_mut());
+        app.world_mut()
+            .non_send_mut::<ExplorerState>()
+            .actions
+            .push(ExplorerAction::Tree(FileTreeAction::Move {
+                paths: [&database, &wal, &shm]
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .into(),
+                destination: destination.to_string_lossy().into_owned(),
+            }));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            prepare(app.world_mut());
+            if !app.world().non_send::<operations::FileOperations>().busy()
+                && [&database, &wal, &shm].iter().all(|path| !path.exists())
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "local file panels must not reserve paths against normal Files operations: {:?}",
+                app.world_mut().resource_mut::<HostEffects>().take()
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        for (name, content) in [
+            ("database.sqlite", b"database".as_slice()),
+            ("database.sqlite-wal", b"journal".as_slice()),
+            ("database.sqlite-shm", b"shared memory".as_slice()),
+        ] {
+            assert_eq!(std::fs::read(destination.join(name)).unwrap(), content);
+        }
+        assert_eq!(
+            app.world().get::<PanelBinding>(panel).unwrap().input,
+            bed_api::documents::PanelInput::LocalFile(database)
+        );
+    }
 
     #[test]
     fn a_temporary_directory_is_browsable_without_a_saved_workspace_or_host_module() {
@@ -742,13 +780,31 @@ mod tests {
     }
 
     #[test]
-    fn panel_and_finder_draw_current_icons_after_feature_preparation() {
+    fn panel_and_finder_draw_current_icons_without_a_duplicate_root_label() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let temp = crate::test_support::TempDir::new();
         let file = temp.write("example.txt", b"example");
         let root = temp.root().to_string_lossy().into_owned();
         let old = dear_imgui_rs::TextureId::from(23usize);
         let current = dear_imgui_rs::TextureId::from(148usize);
+        let tree_icons = [
+            (
+                "bed.explorer.folder-open",
+                dear_imgui_rs::TextureId::from(200usize),
+            ),
+            (
+                "bed.explorer.folder",
+                dear_imgui_rs::TextureId::from(201usize),
+            ),
+            (
+                "bed.explorer.chevron-down",
+                dear_imgui_rs::TextureId::from(202usize),
+            ),
+            (
+                "bed.explorer.chevron-right",
+                dear_imgui_rs::TextureId::from(203usize),
+            ),
+        ];
         let mut app = App::new();
         let mut icons = Icons::default();
         icons.set_texture("bed.core.default", old);
@@ -770,6 +826,7 @@ mod tests {
             .next()
             .unwrap();
         app.world_mut().resource_mut::<ExplorerTarget>().root = root.clone();
+        prepare(app.world_mut());
         {
             let mut explorer = app.world_mut().non_send_mut::<ExplorerState>();
             explorer.file_explorer.project_root = root.clone();
@@ -778,20 +835,35 @@ mod tests {
                 full_path: root.clone(),
                 is_directory: true,
                 is_open: true,
-                children: vec![FileNode {
-                    name: "example.txt".into(),
-                    full_path: file.to_string_lossy().into_owned(),
-                    ..Default::default()
-                }],
+                children: vec![
+                    FileNode {
+                        name: "src".into(),
+                        full_path: format!("{root}/src"),
+                        is_directory: true,
+                        ..Default::default()
+                    },
+                    FileNode {
+                        name: "example.txt".into(),
+                        full_path: file.to_string_lossy().into_owned(),
+                        ..Default::default()
+                    },
+                ],
                 ..Default::default()
             };
         }
         // The canvas stage may replace all GPU registrations after feature
         // preparation and before UI. The frontend must read this new mapping.
-        prepare(app.world_mut());
-        app.world_mut()
-            .non_send_mut::<Icons>()
-            .set_texture("bed.core.default", current);
+        {
+            let mut icons = app.world_mut().non_send_mut::<Icons>();
+            icons.set_texture("bed.core.default", current);
+            for (key, texture) in tree_icons {
+                // Match desktop upload: only registered source artwork acquires
+                // a texture. This also exercises the plugin's icon contract.
+                if icons.images.contains_key(key) {
+                    icons.set_texture(key, texture);
+                }
+            }
+        }
         let mut context = dear_imgui_rs::Context::create();
         context
             .set_ini_filename(None::<std::path::PathBuf>)
@@ -814,6 +886,8 @@ mod tests {
                     1.0 / 60.0,
                 ));
                 let ui = context.frame();
+                let mut content_origin = [0.0; 2];
+                let mut line_height = 0.0;
                 if finder {
                     draw_popups(app.world_mut(), ui);
                 } else {
@@ -821,6 +895,8 @@ mod tests {
                         .position([0.0; 2], dear_imgui_rs::Condition::Always)
                         .size([600.0, 500.0], dear_imgui_rs::Condition::Always)
                         .build(|| {
+                            content_origin = ui.cursor_screen_pos();
+                            line_height = ui.text_line_height_with_spacing();
                             bed_workbench::render_panel(app.world_mut(), entity, ui).unwrap();
                         });
                 }
@@ -843,47 +919,41 @@ mod tests {
                     textures.contains(&current),
                     "current icon absent for finder={finder}"
                 );
+                if !finder {
+                    for (key, texture) in tree_icons {
+                        assert!(textures.contains(&texture), "tree artwork absent: {key}");
+                    }
+                    let root_top = draw
+                        .draw_lists()
+                        .flat_map(|list| {
+                            list.commands().filter_map(move |command| match command {
+                                dear_imgui_rs::DrawCmd::Elements { count, cmd_params }
+                                    if cmd_params.texture_id == tree_icons[0].1 =>
+                                {
+                                    Some(
+                                        list.idx_buffer()
+                                            [cmd_params.idx_offset..cmd_params.idx_offset + count]
+                                            .iter()
+                                            .map(|index| {
+                                                list.vtx_buffer()
+                                                    [cmd_params.vtx_offset + usize::from(*index)]
+                                                .pos[1]
+                                            })
+                                            .fold(f32::INFINITY, f32::min),
+                                    )
+                                }
+                                _ => None,
+                            })
+                        })
+                        .fold(f32::INFINITY, f32::min);
+                    assert!(
+                        root_top < content_origin[1] + line_height,
+                        "the root row must start at the panel's first line; extra path label moved it to {root_top} from {}",
+                        content_origin[1]
+                    );
+                }
             }
         }
-    }
-
-    #[test]
-    fn live_local_file_panels_protect_database_and_sidecars_before_job_creation() {
-        let temp = crate::test_support::TempDir::new();
-        let database = temp.write("database.sqlite", b"database");
-        let sidecar = temp.write("database.sqlite-wal", b"pending transaction");
-        std::fs::create_dir(temp.path("destination")).unwrap();
-        let mut app = App::new();
-        app.add_plugins(FileExplorerPlugin);
-        let session_id = app.world().non_send::<DocumentSession>().session_id().0;
-        app.world_mut().resource_mut::<ExplorerTarget>().root =
-            temp.root().to_string_lossy().into_owned();
-        app.world_mut().resource_mut::<DocumentFrame>().session_id = session_id;
-        prepare(app.world_mut());
-        app.world_mut().spawn(PanelBinding {
-            input: bed_api::documents::PanelInput::LocalFile(database),
-            session_id,
-            ..Default::default()
-        });
-        app.world_mut()
-            .non_send_mut::<ExplorerState>()
-            .actions
-            .push(ExplorerAction::Tree(FileTreeAction::Move {
-                paths: vec![sidecar.to_string_lossy().into_owned()],
-                destination: temp.path("destination").to_string_lossy().into_owned(),
-            }));
-        app.update();
-        assert!(!app.world().non_send::<operations::FileOperations>().busy());
-        assert_eq!(std::fs::read(&sidecar).unwrap(), b"pending transaction");
-        assert!(!temp.path("destination/database.sqlite-wal").exists());
-        let intents = app.world_mut().resource_mut::<HostEffects>().take();
-        assert!(intents.iter().any(|intent|matches!(&intent.action,HostAction::Notify{message} if message.contains("Close the file viewer"))));
-        assert!(
-            intents.iter().all(|intent| !matches!(
-                &intent.action,
-                HostAction::CommitDocumentsWithResult { .. }
-            ))
-        );
     }
 
     #[test]

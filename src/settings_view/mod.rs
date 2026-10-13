@@ -1,7 +1,6 @@
 //! Settings controls hosted through the ordinary workbench module API.
 mod feature;
 mod panel;
-mod theme_editor;
 mod ui;
 #[cfg(test)]
 pub(crate) use crate::test_support;

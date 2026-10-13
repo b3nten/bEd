@@ -6,7 +6,7 @@ publish = false
 license.workspace = true
 
 [dependencies]
-bed-app = { workspace = true }
+bed-launch = { workspace = true }
 bed-plugin-layouts = { workspace = true }
 bed-desktop = { workspace = true }
 bed-workbench = { workspace = true }

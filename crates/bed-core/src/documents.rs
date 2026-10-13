@@ -21,6 +21,15 @@ pub enum CorePresentationMode {
     Standard,
     Application,
 }
+
+/// An application may retain a document selection while a tool panel has focus.
+/// Without this input the frame follows the focused workbench panel. An explicit
+/// empty selection also prevents a direct file viewer from inheriting a document.
+#[derive(Resource, Default, Clone, Copy, Debug)]
+pub struct DocumentFrameSelection {
+    pub document: Option<DocumentId>,
+    pub view: Option<bed_documents::ViewId>,
+}
 #[derive(Resource, Default)]
 pub(crate) struct CoreExiting(pub bool);
 #[derive(Resource, Default)]
@@ -240,7 +249,8 @@ impl Plugin for DocumentHostPlugin {
             app.add_plugins(crate::commands::DocumentCommandsPlugin);
         }
         #[cfg(feature = "language-services")]
-        app.init_resource::<crate::format_saves::ExplicitDocumentSaves>();
+        app.init_resource::<crate::format_saves::ExplicitDocumentSaves>()
+            .init_resource::<crate::SyntaxAppearance>();
     }
 }
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
@@ -339,7 +349,7 @@ pub fn publish_documents(world: &mut World) {
             .get::<bed_api::workbench::PanelFrontend>(entity)
             .map_or(Some(entity), |frontend| Some(frontend.0))
     });
-    let active = frontend.and_then(|entity| {
+    let focused_selection = frontend.and_then(|entity| {
         world
             .get::<PanelBinding>(entity)
             .and_then(|binding| binding.document.map(|document| (document, binding.view)))
@@ -349,9 +359,20 @@ pub fn publish_documents(world: &mut World) {
                     .map(|binding| (binding.0, None))
             })
     });
-    let mut frame = world.resource_mut::<DocumentFrame>();
-    frame.active_document = active.map(|(document, _)| document);
-    frame.active_view = active.and_then(|(_, view)| view);
+    let active =
+        world
+            .get_resource::<DocumentFrameSelection>()
+            .map_or(focused_selection, |selection| {
+                selection
+                    .document
+                    .map(|document| (document, selection.view))
+            });
+    {
+        let mut frame = world.resource_mut::<DocumentFrame>();
+        frame.active_document = active.map(|(document, _)| document);
+        frame.active_view = active.and_then(|(_, view)| view);
+    }
+    crate::commands::publish_document_commands(world);
 }
 
 /// Validate every document before quitting. Application-specific prompts and
@@ -786,6 +807,17 @@ pub fn open_document_panel(
     state: Value,
     area: Option<u32>,
 ) -> Result<Entity, String> {
+    open_document_panel_with_viewer(world, panel_type, document, state, area, None)
+}
+
+fn open_document_panel_with_viewer(
+    world: &mut World,
+    panel_type: &str,
+    document: DocumentId,
+    state: Value,
+    area: Option<u32>,
+    viewer: Option<&str>,
+) -> Result<Entity, String> {
     assert!(
         !bed_workbench::frontend_active(world),
         "document panels open after drawing"
@@ -806,11 +838,13 @@ pub fn open_document_panel(
     }
     let session = world.non_send::<DocumentSession>().session_id().0;
     serialized["document_session"] = json!(session);
+    serialized["viewer"] = json!(viewer);
     serialized["document_origin"] = json!(world.resource::<LiveDocumentOrigin>().0.to_string());
     let entity = bed_workbench::spawn_panel(world, serialized, area, None)?;
     world.entity_mut(entity).insert(PanelBinding {
         input: PanelInput::Document(document),
         document: Some(document),
+        viewer: viewer.map(str::to_owned),
         session_id: session,
         ..Default::default()
     });
@@ -830,6 +864,80 @@ pub fn open_document_panel(
         }
     }
 }
+/// Open a compatible viewer in its own tab, sharing canonical data and undo history.
+/// Repeated requests focus the matching viewer in the requested tab group.
+pub fn open_document_viewer(
+    world: &mut World,
+    document: DocumentId,
+    viewer: &str,
+    area: Option<u32>,
+) -> Result<Entity, String> {
+    let descriptor = world
+        .resource::<bed_api::features::FeatureRegistry>()
+        .viewer(viewer)
+        .cloned()
+        .ok_or_else(|| format!("Viewer unavailable: {viewer}"))?;
+    let kind = world
+        .non_send::<DocumentSession>()
+        .document_kind(document)
+        .map_err(|error| error.to_string())?;
+    if !descriptor.supports_document_kind(kind) {
+        return Err("This viewer does not support the document's content kind".into());
+    }
+    commit_document_drafts(world, &[document])?;
+    let existing = document_viewer_tab(world, document, viewer, area);
+    if let Some(panel) = existing {
+        bed_workbench::keep_panel(world, panel);
+        bed_workbench::focus_panel(world, panel);
+        return Ok(panel);
+    }
+    let layout = world.resource::<WorkbenchLayout>();
+    let previous_focus = layout.focused;
+    let previous_area = layout.focused_area;
+    match open_document_panel_with_viewer(
+        world,
+        descriptor.panel_type,
+        document,
+        Value::Null,
+        area,
+        Some(viewer),
+    ) {
+        Ok(panel) => Ok(panel),
+        Err(error) => {
+            if let Some(panel) = previous_focus {
+                bed_workbench::focus_panel(world, panel);
+            } else if let Some(area) = previous_area {
+                bed_workbench::focus_area(world, area);
+            }
+            Err(error)
+        }
+    }
+}
+
+fn document_viewer_tab(
+    world: &mut World,
+    document: DocumentId,
+    viewer: &str,
+    area: Option<u32>,
+) -> Option<Entity> {
+    world
+        .query::<(Entity, &PanelBinding, &bed_workbench::PanelPresentation)>()
+        .iter(world)
+        .find_map(|(panel, binding, presentation)| {
+            (binding.document == Some(document)
+                && binding.viewer.as_deref() == Some(viewer)
+                && bed_api::workbench::panel_active(world, panel)
+                && area.is_none_or(|area| {
+                    world
+                        .resource::<WorkbenchLayout>()
+                        .tiling
+                        .area_for(presentation.id)
+                        == Some(area)
+                }))
+            .then_some(panel)
+        })
+}
+
 pub fn open_file(
     world: &mut World,
     path: &Path,
@@ -882,26 +990,24 @@ pub fn open_file(
     if !descriptor.supports_document_kind(kind) {
         return Err("This viewer does not support the document's content kind".into());
     }
-    if let Some(existing) = world
-        .query::<(Entity, &PanelBinding, &bed_workbench::PanelRecord)>()
-        .iter(world)
-        .find_map(|(entity, binding, record)| {
-            (binding.document == Some(document)
-                && record.panel_type == descriptor.panel_type
-                && bed_api::workbench::panel_active(world, entity))
-            .then_some(entity)
+    // File opening reuses an existing matching tab anywhere in the active layout.
+    // Drop requests can then move that tab to their captured destination.
+    // Opening another viewer explicitly remains scoped to its source tab group.
+    let placement = document_viewer_tab(world, document, descriptor.id, None)
+        .map(|panel| {
+            world
+                .resource::<WorkbenchLayout>()
+                .tiling
+                .area_for(
+                    world
+                        .get::<bed_workbench::PanelPresentation>(panel)
+                        .unwrap()
+                        .id,
+                )
+                .expect("An active panel belongs to a tab group")
         })
-    {
-        bed_workbench::focus_panel(world, existing);
-        return Ok(existing);
-    }
-    let entity = open_document_panel(world, descriptor.panel_type, document, Value::Null, area)?;
-    world.get_mut::<PanelBinding>(entity).unwrap().viewer = Some(descriptor.id.into());
-    world
-        .get_mut::<bed_workbench::PanelRecord>(entity)
-        .unwrap()
-        .serialized["viewer"] = json!(descriptor.id);
-    Ok(entity)
+        .or(area);
+    open_document_viewer(world, document, descriptor.id, placement)
 }
 fn open_local_file_panel(
     world: &mut World,
@@ -1384,8 +1490,11 @@ pub fn apply_document_request(
             revision,
             edits,
         } => {
-            let result = apply_edits(world, document, revision, &edits)
-                .map_err(|error| error.to_string())
+            let result = commit_document_drafts(world, &[document])
+                .and_then(|()| {
+                    apply_edits(world, document, revision, &edits)
+                        .map_err(|error| error.to_string())
+                })
                 .and_then(|_| {
                     world
                         .non_send::<DocumentSession>()
@@ -1403,15 +1512,7 @@ pub fn apply_document_request(
         HostAction::Redo { document } => models::redo_document(world, document)?,
         HostAction::Save { document } => {
             #[cfg(feature = "language-services")]
-            let save = crate::begin_explicit_document_save(
-                world,
-                document,
-                world
-                    .resource::<bed_api::settings::SettingsSnapshot>()
-                    .settings["bed.editor"]["lsp_format_on_save"]
-                    .as_bool()
-                    .unwrap_or(true),
-            )?;
+            let save = crate::begin_explicit_document_save(world, document)?;
             #[cfg(not(feature = "language-services"))]
             let save = crate::begin_document_save(
                 world,
@@ -1746,11 +1847,127 @@ pub fn apply_document_request(
                 })
                 .map_err(|error| error.to_string())?;
         }
+        HostAction::Clipboard { panel, action } => {
+            let effects = crate::dispatch_panel_clipboard(world, panel, action)?;
+            continue_panel_effects(world, &request, effects);
+        }
+        HostAction::PanelAction { panel, action } => {
+            let document = world
+                .get::<PanelBinding>(panel)
+                .and_then(|binding| binding.document)
+                .or_else(|| {
+                    bed_api::workbench::panel_owner(world, panel)
+                        .and_then(|panel| world.get::<PanelBinding>(panel))
+                        .and_then(|binding| binding.document)
+                });
+            if matches!(
+                action,
+                bed_api::workbench::PanelAction::Undo
+                    | bed_api::workbench::PanelAction::Redo
+                    | bed_api::workbench::PanelAction::CommitEdit
+            ) && let Some(document) = document
+            {
+                commit_document_drafts(world, &[document])?;
+            }
+            let (_, effects) = crate::dispatch_panel_action(world, panel, action)?;
+            continue_panel_effects(world, &request, effects);
+        }
+        HostAction::ExternalFiles { panel, event } => {
+            let (response, effects) = crate::dispatch_external_files(world, panel, event.clone())?;
+            let mut effects = effects;
+            if response != bed_api::workbench::ExternalFileDropResponse::Accepted
+                && event.phase == bed_api::workbench::ExternalFileDragPhase::Drop
+            {
+                let area = bed_workbench::area_at(world, event.position, event.viewport)
+                    .unwrap_or(request.area());
+                effects.extend(
+                    event
+                        .paths
+                        .into_iter()
+                        .map(|path| bed_api::features::HostEffect {
+                            source: request.source(),
+                            area: Some(area),
+                            tab_index: None,
+                            action: if path.is_dir() {
+                                HostAction::OpenDirectory {
+                                    location: bed_files::FileLocation {
+                                        provider: bed_files::FileProviderId::Local,
+                                        path,
+                                    },
+                                }
+                            } else {
+                                HostAction::DropFile {
+                                    path: path.to_string_lossy().into_owned(),
+                                }
+                            },
+                        }),
+                );
+            }
+            continue_panel_effects(world, &request, effects);
+        }
+        HostAction::OpenDocumentViewer {
+            tab,
+            document,
+            viewer,
+        } => {
+            let source = world
+                .query::<(Entity, &PanelBinding, &bed_workbench::PanelPresentation)>()
+                .iter(world)
+                .find_map(|(panel, binding, presentation)| {
+                    (presentation.id == tab
+                        && binding.document == Some(document)
+                        && bed_api::workbench::panel_active(world, panel))
+                    .then_some(panel)
+                })
+                .ok_or("Originating document tab is unavailable")?;
+            let area = world
+                .resource::<bed_workbench::WorkbenchLayout>()
+                .tiling
+                .area_for(
+                    world
+                        .get::<bed_workbench::PanelPresentation>(source)
+                        .unwrap()
+                        .id,
+                );
+            let opened = open_document_viewer(world, document, &viewer, area)?;
+            bed_workbench::keep_panel(world, source);
+            return Ok(HostOutcome::Opened(opened));
+        }
         HostAction::Notify { message } => notice(world, request.source(), message),
         HostAction::Invalidate => {}
         _ => return Err("This operation requires an application integration".into()),
     }
     Ok(HostOutcome::Applied)
+}
+
+fn continue_panel_effects(
+    world: &mut World,
+    parent: &HostRequest,
+    effects: Vec<bed_api::features::HostEffect>,
+) {
+    let effects = effects
+        .into_iter()
+        .map(|effect| {
+            HostRequest::capture(
+                parent.session_id(),
+                effect.source,
+                effect.action,
+                effect.area.unwrap_or(parent.area()),
+                parent.layout_epoch(),
+            )
+        })
+        .collect();
+    continue_command(
+        world,
+        PendingCommand {
+            id: None,
+            outcome: None,
+            effects,
+            saves: Vec::new(),
+            barrier: None,
+            error: None,
+        },
+    );
 }
 
 fn reveal_source(

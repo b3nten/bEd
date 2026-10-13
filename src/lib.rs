@@ -19,6 +19,7 @@ mod smoke;
 mod startup;
 #[cfg(all(test, feature = "terminal", feature = "editor", unix))]
 mod terminal_tests;
+pub mod themes;
 #[cfg(test)]
 pub(crate) static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(test)]

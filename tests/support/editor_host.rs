@@ -26,10 +26,15 @@ pub fn install(app: &mut App, settings: Settings) -> io::Result<()> {
 #[allow(dead_code)]
 pub fn prepare_ui(world: &mut World, context: &mut Context) -> io::Result<()> {
     bed::config::sync_view(world)?;
+    bed::themes::configure_themes(world);
+    let palette = world
+        .resource::<bed::themes::ActiveTheme>()
+        .file
+        .runtime_palette();
     let appearance = {
         let mut settings = world.non_send_mut::<Settings>();
         settings.refresh();
-        settings.appearance()
+        settings.appearance(&palette)
     };
     context
         .set_ini_filename(None::<PathBuf>)

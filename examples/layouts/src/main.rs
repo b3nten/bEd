@@ -9,6 +9,10 @@ use serde_json::{Value, json};
 use std::{
     io,
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use {
@@ -303,6 +307,7 @@ fn restarted_app(path: PathBuf) -> App {
 
 #[derive(Resource)]
 struct Smoke {
+    verified: Arc<AtomicBool>,
     phase: u8,
     source: Option<Entity>,
     expected_count: i64,
@@ -428,6 +433,10 @@ fn smoke(world: &mut World) {
             println!(
                 "Layout smoke passed: ECS commands, splitting, live slot retention, disk restart and fresh panels ({frames} presented frames)"
             );
+            world
+                .resource::<Smoke>()
+                .verified
+                .store(true, Ordering::SeqCst);
             world.write_message(bevy::app::AppExit::Success);
             world.resource_mut::<Smoke>().phase = 6;
         }
@@ -462,31 +471,30 @@ fn main() -> io::Result<()> {
             PathBuf::from("layout-app.json")
         }
     });
-    let launch = match bed_app::Application::new("example.layouts", "Layout workbench")?
-        .dispatch(std::env::args_os())?
-    {
-        bed_app::LaunchOutcome::Desktop(launch) => *launch,
-        bed_app::LaunchOutcome::Handled(exit) => std::process::exit(exit),
+    let launch = match bed_launch::builder("example.layouts", "Layout workbench")?.dispatch()? {
+        bed_launch::LaunchOutcome::Desktop(launch) => *launch,
+        bed_launch::LaunchOutcome::Handled(exit) => std::process::exit(exit),
     };
-    let launch = launch.options(DesktopPlugins {
-        window: Window {
-            title: "Layout workbench".into(),
+    let options = bed_launch::DesktopOptions {
+        desktop: DesktopPlugins {
+            window: Window {
+                title: "Layout workbench".into(),
+                ..default()
+            },
             ..default()
         },
-        ..default()
-    });
-    let launch = if smoke_test {
-        launch.config_directory(
-            std::env::temp_dir().join(format!("bed-layout-example-config-{}", std::process::id())),
-        )
-    } else {
-        launch
+        config_directory: smoke_test.then(|| {
+            std::env::temp_dir().join(format!("bed-layout-example-config-{}", std::process::id()))
+        }),
+        ..Default::default()
     };
-    let exit = launch.run(|app| {
+    let verified = Arc::<AtomicBool>::default();
+    let exit = launch.run(options, |app| {
         app.add_plugins((LayoutsPlugin, LayoutDemoPlugin { slots: 3 }))
             .insert_resource(LayoutFile(path));
         if smoke_test {
             app.insert_resource(Smoke {
+                verified: Arc::clone(&verified),
                 phase: 0,
                 source: None,
                 expected_count: 0,
@@ -497,6 +505,12 @@ fn main() -> io::Result<()> {
         }
         Ok(())
     })?;
+    if smoke_test {
+        assert!(
+            verified.load(Ordering::SeqCst),
+            "layout smoke exited before completing its assertions"
+        );
+    }
     if exit.is_error() {
         return Err(io::Error::other("Layout example exited with an error"));
     }

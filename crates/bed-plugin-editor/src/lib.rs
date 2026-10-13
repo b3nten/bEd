@@ -3,6 +3,11 @@
 //!
 //! `bed_editor_widgets::EditorView` remains directly embeddable. This crate adds the desktop
 //! panel lifecycle without making the workbench API depend on text editor types.
+//! Preferences under `bed.editor` configure existing and new views, including cursor
+//! movement, wrapping, minimap and rainbow text. With `language-services`, this plugin
+//! also owns language completion, Git line markers, syntax highlighting and the
+//! format-on-save preference. Applications supply defaults through the shared settings
+//! service; they do not need to apply editor preferences themselves.
 #[cfg(feature = "language-services")]
 mod feature;
 #[cfg(not(feature = "language-services"))]
@@ -51,6 +56,8 @@ pub(crate) mod rustup_fixture;
 pub(crate) mod test_support;
 
 pub const MODULE_ID: &str = "bed.editor";
+#[cfg(test)]
+mod native_clipboard_tests;
 pub const TEXT_PANEL_TYPE: &str = "bed.editor.text-panel";
 pub const HEX_PANEL_TYPE: &str = "bed.editor.hex-panel";
 pub const TEXT_VIEWER: &str = "bed.editor.text";
@@ -68,6 +75,7 @@ fn register_settings(world: &mut bevy::prelude::World) {
         SettingDefinition::new("word_wrap", "Wrap long lines", true),
         SettingDefinition::new("minimap", "Show minimap", true),
         SettingDefinition::new("rainbow", "Rainbow text", true),
+        SettingDefinition::new("cursor_smear", "Animate cursor movement", true),
     ];
     #[cfg(feature = "language-services")]
     let definitions = definitions
@@ -108,6 +116,9 @@ fn apply_settings(config: &mut EditorConfig, snapshot: &bed_api::settings::Setti
     if let Some(value) = settings["rainbow"].as_bool() {
         config.options.rainbow_mode = value;
     }
+    if let Some(value) = settings["cursor_smear"].as_bool() {
+        config.options.cursor_smear = value;
+    }
     if let Some(value) = snapshot
         .get("bed.ui", "ui_animations")
         .and_then(Value::as_bool)
@@ -121,6 +132,39 @@ fn apply_settings(config: &mut EditorConfig, snapshot: &bed_api::settings::Setti
         }
         if let Some(value) = settings["lsp_completion_delay_ms"].as_f64() {
             config.lsp.completion_delay_ms = value as u64;
+        }
+    }
+}
+
+/// Apply editor preferences independently of an application's settings frontend.
+fn configure_preferences(world: &mut bevy::prelude::World) {
+    let Some(snapshot) = world
+        .get_resource::<bed_api::settings::SettingsSnapshot>()
+        .cloned()
+    else {
+        return;
+    };
+    apply_settings(&mut world.non_send_mut::<EditorConfig>(), &snapshot);
+    #[cfg(feature = "language-services")]
+    {
+        let mut session = world.non_send_mut::<DocumentSession>();
+        let mut options = session.options().clone();
+        if let Some(value) = snapshot
+            .get(MODULE_ID, "git_changed_lines")
+            .and_then(Value::as_bool)
+        {
+            options.git = value;
+        }
+        if let Some(value) = snapshot
+            .get(MODULE_ID, "treesitter")
+            .and_then(Value::as_bool)
+        {
+            options.highlighting = value;
+        }
+        if session.options() != &options
+            && let Err(error) = session.configure(options)
+        {
+            eprintln!("Editor preferences: {error}");
         }
     }
 }

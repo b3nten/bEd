@@ -1,6 +1,6 @@
 //! Settings controls and the legacy floating settings window.
-use crate::config::theme::ThemeDraft;
 use crate::config::{EffectPreset, Settings};
+use crate::themes::{ActiveTheme, ThemeDraft, ThemeFiles};
 use bed_documents::document_runtime::DocumentRuntime;
 use bed_ui::color::{blend, ensure_contrast};
 use bed_ui::components::tooltip_text;
@@ -49,15 +49,15 @@ pub struct SettingsWindowState {
     /// Runtime presentation supplied by the host, never persisted.
     pub main_font: Option<dear_imgui_rs::FontId>,
     pub font_warning: Option<String>,
-    theme_editor: ThemeDraft,
+    pub(crate) theme_editor: ThemeDraft,
+    pub(crate) theme_files: Option<ThemeFiles>,
+    pub(crate) active_theme: ActiveTheme,
     was_focused: bool,
     pub(crate) viewers: Vec<bed_api::documents::FileViewer>,
     new_viewer_extension: String,
     pub(crate) shortcut_actions: Vec<bed_keybindings::ShortcutAction>,
-    shortcut_filter: String,
     pub(crate) shortcut_groups: std::collections::BTreeMap<String, String>,
-    pub(crate) shortcut_recording: Option<(String, Option<usize>)>,
-    shortcut_recording_frame: usize,
+    pub(crate) keybinding_editor: bed_plugin_settings::keybindings::KeybindingEditor,
 }
 
 impl Default for SettingsWindowState {
@@ -71,14 +71,14 @@ impl Default for SettingsWindowState {
             main_font: None,
             font_warning: None,
             theme_editor: ThemeDraft::default(),
+            theme_files: None,
+            active_theme: ActiveTheme::default(),
             was_focused: false,
             viewers: Vec::new(),
             new_viewer_extension: String::new(),
             shortcut_actions: Vec::new(),
-            shortcut_filter: String::new(),
             shortcut_groups: Default::default(),
-            shortcut_recording: None,
-            shortcut_recording_frame: 0,
+            keybinding_editor: Default::default(),
         }
     }
 }
@@ -145,16 +145,6 @@ pub trait SettingsUi {
         icons: Option<&Icons>,
         extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
     );
-
-    fn draw_tab(&mut self, ui: &Ui, editor: &mut DocumentRuntime, icons: Option<&Icons>);
-
-    fn draw_tab_with_extensions(
-        &mut self,
-        ui: &Ui,
-        editor: &mut DocumentRuntime,
-        icons: Option<&Icons>,
-        extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
-    );
 }
 
 impl SettingsUi for Settings {
@@ -207,42 +197,16 @@ impl SettingsUi for Settings {
     ) {
         SettingsView::new(self, state).draw_tab_with_extensions(ui, editor, icons, extensions);
     }
-
-    fn draw_tab(&mut self, ui: &Ui, editor: &mut DocumentRuntime, icons: Option<&Icons>) {
-        self.draw_tab_with_extensions(ui, editor, icons, &mut |_, _| false);
-    }
-
-    fn draw_tab_with_extensions(
-        &mut self,
-        ui: &Ui,
-        editor: &mut DocumentRuntime,
-        icons: Option<&Icons>,
-        extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
-    ) {
-        let mut state = SettingsWindowState {
-            theme_editor: std::mem::take(&mut self.theme_draft),
-            ..Default::default()
-        };
-        let id = ui.get_id("bed-settings-category").raw();
-        let selected = ui.with_bound_context(|| unsafe {
-            dear_imgui_rs::sys::ImGuiStorage_GetInt(dear_imgui_rs::sys::igGetStateStorage(), id, 0)
-        });
-        state.category = SettingsCategory::ALL
-            .get(selected as usize)
-            .map_or(SettingsCategory::General, |entry| entry.0);
-        SettingsView::new(self, &mut state).draw_tab_with_extensions(ui, editor, icons, extensions);
-        self.theme_draft = std::mem::take(&mut state.theme_editor);
-        ui.with_bound_context(|| unsafe {
-            dear_imgui_rs::sys::ImGuiStorage_SetInt(
-                dear_imgui_rs::sys::igGetStateStorage(),
-                id,
-                state.category as i32,
-            );
-        });
-    }
 }
 
 impl SettingsView<'_> {
+    fn background_color(&self) -> [f32; 4] {
+        self.window.active_theme.runtime_palette().background
+    }
+    fn text_color(&self) -> [f32; 4] {
+        self.window.active_theme.runtime_palette().text
+    }
+
     fn persist_ui(&mut self) {
         self.request_save();
     }
@@ -415,7 +379,7 @@ impl SettingsView<'_> {
         shaders_available: bool,
         extensions: &mut dyn FnMut(&Ui, &mut Value) -> bool,
     ) {
-        if let Some(error) = &self.reload_error {
+        if let Some(error) = &self.window.active_theme.error {
             ui.text_wrapped(error);
         }
         if let Some(error) = &self.error {
@@ -461,17 +425,35 @@ impl SettingsView<'_> {
                     if !self.is_embedded {
                         self.draw_mac_settings(ui);
                     }
-                    self.draw_boolean(ui, "UI Animations", "ui_animations", true);
-                    self.draw_boolean(ui, "Show tab bar add button", "tab_bar_add_button", false);
-                    self.draw_boolean(ui, "Rainbow cursor and line numbers", "rainbow", true);
+                    self.draw_boolean(ui, "UI Animations", "bed.ui", "ui_animations", true);
+                    self.draw_boolean(
+                        ui,
+                        "Show tab bar add button",
+                        "bed.workbench",
+                        "tab_bar_add_button",
+                        false,
+                    );
+                    self.draw_boolean(
+                        ui,
+                        "Rainbow cursor and line numbers",
+                        "bed.editor",
+                        "rainbow",
+                        true,
+                    );
                     ui.dummy([0.0, ui.current_font_size()]);
                     ui.text("Editor");
                     ui.separator();
                     self.draw_autosave_settings(ui);
-                    self.draw_boolean(ui, "Minimap", "minimap", true);
-                    self.draw_boolean(ui, "Word Wrap", "word_wrap", true);
-                    self.draw_boolean(ui, "Syntax highlighting", "treesitter", true);
-                    self.draw_boolean(ui, "Git changed lines", "git_changed_lines", true);
+                    self.draw_boolean(ui, "Minimap", "bed.editor", "minimap", true);
+                    self.draw_boolean(ui, "Word Wrap", "bed.editor", "word_wrap", true);
+                    self.draw_boolean(ui, "Syntax highlighting", "bed.editor", "treesitter", true);
+                    self.draw_boolean(
+                        ui,
+                        "Git changed lines",
+                        "bed.editor",
+                        "git_changed_lines",
+                        true,
+                    );
                     self.draw_lsp_settings(ui);
                     if editor.lsp_client().is_some() && ui.button("LSP Dashboard") {
                         self.request_lsp_dashboard = true;
@@ -482,10 +464,10 @@ impl SettingsView<'_> {
                 SettingsCategory::Bedtime => {
                     ui.text("Bedtime");
                     ui.separator();
-                    self.draw_boolean(ui, "bEdtime when idle", "bedtime_enabled", true);
-                    let mut delay = self.number("bedtime_delay_seconds", 60.0);
+                    self.draw_boolean(ui, "bEdtime when idle", "bed.idle", "bedtime_enabled", true);
+                    let mut delay = self.number("bed.idle", "bedtime_delay_seconds", 60.0);
                     if ui.slider("bEdtime delay (seconds)", 10.0, 1800.0, &mut delay) {
-                        self.settings["bedtime_delay_seconds"] = json!(delay);
+                        self.settings["bed.idle"]["bedtime_delay_seconds"] = json!(delay);
                     }
                     if ui.is_item_deactivated_after_edit() {
                         self.persist_ui();
@@ -495,14 +477,20 @@ impl SettingsView<'_> {
                 SettingsCategory::Performance => {
                     ui.text("Performance");
                     ui.separator();
-                    self.draw_boolean(ui, "Limit frame rate", "fps_toggle", true);
+                    self.draw_boolean(
+                        ui,
+                        "Limit frame rate",
+                        "bed.application",
+                        "fps_toggle",
+                        true,
+                    );
                     for (label, key, default) in [
                         ("Frame rate", "fps_target", 57.0),
                         ("Unfocused frame rate", "fps_target_unfocused", 30.0),
                     ] {
-                        let mut value = self.number(key, default);
+                        let mut value = self.number("bed.application", key, default);
                         if ui.slider(label, 10.0, 240.0, &mut value) {
-                            self.settings[key] = json!(value);
+                            self.settings["bed.application"][key] = json!(value);
                         }
                         if ui.is_item_deactivated_after_edit() {
                             self.persist_ui();
@@ -510,16 +498,24 @@ impl SettingsView<'_> {
                     }
                 }
                 SettingsCategory::ThemeEditor => {
-                    crate::settings_view::theme_editor::draw(
-                        ui,
-                        &mut self.window.theme_editor,
-                        self.service,
-                    );
+                    if let Some(files) = self.window.theme_files.as_ref() {
+                        let selection = self.service.settings["bed.application"]["theme"]
+                            .as_str()
+                            .unwrap_or("tokyo");
+                        crate::themes::editor::draw(
+                            ui,
+                            &mut self.window.theme_editor,
+                            files,
+                            selection,
+                        );
+                    } else {
+                        ui.text_disabled("Theme files are unavailable in this application");
+                    }
                 }
                 SettingsCategory::Effects => {
                     ui.text("Cursor");
                     ui.separator();
-                    self.draw_boolean(ui, "Cursor Smear", "cursor_smear", true);
+                    self.draw_boolean(ui, "Cursor Smear", "bed.editor", "cursor_smear", true);
                     ui.dummy([0.0, ui.current_font_size()]);
                     if shaders_available {
                         self.draw_shader_settings(ui);
@@ -540,10 +536,10 @@ impl SettingsView<'_> {
         ui.text("Default viewers");
         ui.separator();
         ui.text_wrapped("Text files open in the code editor. Binary files use the first matching viewer, or Hex Editor. These associations override that choice for new opens.");
-        if !self.settings["default_viewers"].is_object() {
-            self.settings["default_viewers"] = json!({});
+        if !self.settings["bed.documents"]["default_viewers"].is_object() {
+            self.settings["bed.documents"]["default_viewers"] = json!({});
         }
-        let mut extensions: Vec<String> = self.settings["default_viewers"]
+        let mut extensions: Vec<String> = self.settings["bed.documents"]["default_viewers"]
             .as_object()
             .unwrap()
             .keys()
@@ -553,7 +549,7 @@ impl SettingsView<'_> {
         let mut changed = false;
         for extension in extensions {
             let _id = ui.push_id(&extension);
-            let selected = self.settings["default_viewers"][&extension]
+            let selected = self.settings["bed.documents"]["default_viewers"][&extension]
                 .as_str()
                 .unwrap_or("")
                 .to_owned();
@@ -574,14 +570,15 @@ impl SettingsView<'_> {
                             .selected(viewer.id == selected)
                             .build()
                     {
-                        self.service.settings["default_viewers"][&extension] = json!(viewer.id);
+                        self.service.settings["bed.documents"]["default_viewers"][&extension] =
+                            json!(viewer.id);
                         changed = true;
                     }
                 }
             }
             ui.same_line();
             if ui.button("Remove") {
-                self.settings["default_viewers"]
+                self.settings["bed.documents"]["default_viewers"]
                     .as_object_mut()
                     .unwrap()
                     .remove(&extension);
@@ -606,14 +603,16 @@ impl SettingsView<'_> {
                     && (viewer.fallback || viewer.matches_path(&format!("file.{extension}")))
                     && ui.selectable(viewer.label)
                 {
-                    self.service.settings["default_viewers"][&extension] = json!(viewer.id);
+                    self.service.settings["bed.documents"]["default_viewers"][&extension] =
+                        json!(viewer.id);
                     self.window.new_viewer_extension.clear();
                     changed = true;
                 }
             }
         }
         if ui.button("Reset to defaults") {
-            self.settings["default_viewers"] = crate::config::settings::bundled_default_viewers();
+            self.settings["bed.documents"]["default_viewers"] =
+                crate::config::settings::bundled_default_viewers();
             changed = true;
         }
         if changed {
@@ -621,10 +620,10 @@ impl SettingsView<'_> {
         }
     }
 
-    fn draw_boolean(&mut self, ui: &Ui, label: &str, key: &str, default: bool) {
-        let mut value = self.bool(key, default);
+    fn draw_boolean(&mut self, ui: &Ui, label: &str, owner: &str, key: &str, default: bool) {
+        let mut value = self.bool(owner, key, default);
         if ui.checkbox(label, &mut value) {
-            self.settings[key] = json!(value);
+            self.settings[owner][key] = json!(value);
             self.request_apply();
             self.persist_ui();
         }
@@ -711,19 +710,26 @@ impl SettingsView<'_> {
     }
 
     fn draw_theme_selector(&mut self, ui: &Ui) {
-        let current = self.settings["theme"]
+        let Some(files) = self.window.theme_files.clone() else {
+            ui.text_disabled("Theme files are unavailable in this application");
+            return;
+        };
+        let current = self.settings["bed.application"]["theme"]
             .as_str()
             .unwrap_or("tokyo")
             .to_owned();
-        if let Some(_combo) = ui.begin_combo("Theme", self.theme.name.clone()) {
-            for (id, name) in self.list_themes() {
+        if let Some(_combo) = ui.begin_combo("Theme", &self.window.active_theme.file.name) {
+            for (id, name) in files.list_themes() {
                 let _id = ui.push_id(&id);
                 let selected = id == current;
-                if ui.selectable_config(&name).selected(selected).build()
-                    && !selected
-                    && let Err(error) = self.select_theme(&id)
-                {
-                    self.error = Some(error.to_string());
+                if ui.selectable_config(&name).selected(selected).build() && !selected {
+                    match files.load_theme(&id) {
+                        Ok(_) => {
+                            self.settings["bed.application"]["theme"] = json!(id);
+                            self.request_save();
+                        }
+                        Err(error) => self.error = Some(error.to_string()),
+                    }
                 }
                 if selected {
                     ui.set_item_default_focus();
@@ -731,7 +737,7 @@ impl SettingsView<'_> {
             }
         }
         if current.starts_with("themes/") && ui.button("Open Theme JSON") {
-            match self.theme_path(&current) {
+            match files.theme_path(&current) {
                 Ok(path) => self.request_config_file = Some(path),
                 Err(error) => self.error = Some(error.to_string()),
             }
@@ -741,7 +747,7 @@ impl SettingsView<'_> {
     }
 
     fn draw_main_settings(&mut self, ui: &Ui) {
-        let current = self.settings["font"]
+        let current = self.settings["bed.ui"]["font"]
             .as_str()
             .unwrap_or("Paper Mono")
             .to_owned();
@@ -749,7 +755,7 @@ impl SettingsView<'_> {
             for name in bed_ui::font::available_fonts() {
                 let selected = name == current;
                 if ui.selectable_config(&name).selected(selected).build() {
-                    self.settings["font"] = json!(name);
+                    self.settings["bed.ui"]["font"] = json!(name);
                     self.request_apply();
                     self.persist_ui();
                 }
@@ -769,7 +775,7 @@ impl SettingsView<'_> {
                     .build()
                     && !selected
                 {
-                    self.settings["fontSize"] = json!(value);
+                    self.settings["bed.ui"]["fontSize"] = json!(value);
                     self.request_apply();
                     self.persist_ui();
                 }
@@ -784,7 +790,7 @@ impl SettingsView<'_> {
     fn draw_autosave_settings(&mut self, ui: &Ui) {
         let mut autosave = self.autosave_enabled();
         if ui.checkbox("Autosave code files", &mut autosave) {
-            self.settings["autosave"] = json!(autosave);
+            self.settings["bed.documents"]["autosave"] = json!(autosave);
             self.persist_ui();
         }
         if ui.is_item_hovered() {
@@ -807,7 +813,7 @@ impl SettingsView<'_> {
                 .expect("constant valid format")
                 .build(&mut delay)
             {
-                self.settings["autosave_delay_ms"] = json!(delay);
+                self.settings["bed.documents"]["autosave_delay_ms"] = json!(delay);
             }
             if ui.is_item_deactivated_after_edit() {
                 self.persist_ui();
@@ -816,7 +822,13 @@ impl SettingsView<'_> {
     }
 
     fn draw_lsp_settings(&mut self, ui: &Ui) {
-        self.draw_boolean(ui, "Automatic LSP completions", "lsp_autocomplete", true);
+        self.draw_boolean(
+            ui,
+            "Automatic LSP completions",
+            "bed.editor",
+            "lsp_autocomplete",
+            true,
+        );
         if ui.is_item_hovered() {
             tooltip_text(
                 ui,
@@ -834,14 +846,20 @@ impl SettingsView<'_> {
                 .expect("constant valid format")
                 .build(&mut delay)
             {
-                self.settings["lsp_completion_delay_ms"] = json!(delay);
+                self.settings["bed.editor"]["lsp_completion_delay_ms"] = json!(delay);
                 self.request_apply();
             }
             if ui.is_item_deactivated_after_edit() {
                 self.persist_ui();
             }
         }
-        self.draw_boolean(ui, "Format on explicit save", "lsp_format_on_save", true);
+        self.draw_boolean(
+            ui,
+            "Format on explicit save",
+            "bed.editor",
+            "lsp_format_on_save",
+            true,
+        );
         if ui.is_item_hovered() {
             tooltip_text(
                 ui,
@@ -860,14 +878,20 @@ impl SettingsView<'_> {
             .expect("constant valid format")
             .build(&mut opacity)
         {
-            self.settings["background_opacity"] = json!(opacity);
+            self.settings["bed.ui"]["background_opacity"] = json!(opacity);
             self.request_apply();
         }
         if ui.is_item_deactivated_after_edit() {
             self.persist_ui();
         }
         #[cfg(target_os = "macos")]
-        self.draw_boolean(ui, "Enable Background Blur", "mac_blur_enabled", true);
+        self.draw_boolean(
+            ui,
+            "Enable Background Blur",
+            "bed.application",
+            "mac_blur_enabled",
+            true,
+        );
     }
 
     fn draw_shader_settings(&mut self, ui: &Ui) {
@@ -909,9 +933,9 @@ impl SettingsView<'_> {
         ui.text("Shaders");
         ui.separator();
         ui.spacing();
-        let mut enabled = self.bool("shader_toggle", false);
+        let mut enabled = self.bool("bed.effects", "shader_toggle", false);
         if ui.checkbox("Enable Shader Effects", &mut enabled) {
-            self.settings["shader_toggle"] = json!(enabled);
+            self.settings["bed.effects"]["shader_toggle"] = json!(enabled);
             self.persist_ui();
         }
         ui.same_line();
@@ -934,7 +958,7 @@ impl SettingsView<'_> {
             ("Jitter", "jitter_intensity", 0.0, 10.0, "%.02f", 2.81),
             ("Pulse", "pulse_intensity", 0.0, 0.1, "%.03f", 0.0),
         ] {
-            let mut value = self.number(key, default);
+            let mut value = self.number("bed.effects", key, default);
             if ui
                 .slider_config(label, min, max)
                 .flags(dear_imgui_rs::SliderFlags::ALWAYS_CLAMP)
@@ -942,7 +966,7 @@ impl SettingsView<'_> {
                 .expect("constant valid format")
                 .build(&mut value)
             {
-                self.settings[key] = json!(value);
+                self.settings["bed.effects"][key] = json!(value);
             }
             if ui.is_item_deactivated_after_edit() {
                 self.persist_ui();
@@ -952,237 +976,21 @@ impl SettingsView<'_> {
     }
 
     fn draw_keybinds_settings(&mut self, ui: &Ui) {
-        use bed_keybindings::{Bindings, CollisionKind, Platform, Stroke};
-        let previous_overrides = self.keybinds.overrides.clone();
-        let size = ui.current_font_size();
-        let _spacing = ui.push_style_var(StyleVar::ItemSpacing([size * 0.65, size * 0.55]));
-        let _padding = ui.push_style_var(StyleVar::FramePadding([size * 0.6, size * 0.3]));
-        ui.dummy([0.0, size * 0.5]);
-        ui.text_wrapped("Common shortcuts include application commands and actions handled by the focused panel or widget.");
-        ui.input_text(
-            "Search actions or shortcuts",
-            &mut self.window.shortcut_filter,
-        )
-        .build();
         if ui.button("Open Settings File") {
             self.request_config_file = Some(self.settings_path.clone());
         }
-        let actions = self.window.shortcut_actions.clone();
-        let bindings = Bindings::new(
-            actions.clone(),
-            &self.keybinds.overrides,
-            Platform::current(),
+        let mut overrides = self.keybindings();
+        let edit = self.window.keybinding_editor.draw(
+            ui,
+            &self.window.shortcut_actions,
+            &self.window.shortcut_groups,
+            &mut overrides,
         );
-        let collisions = bindings.collisions();
-        let filter = self.window.shortcut_filter.to_lowercase();
-        let mut edit: Option<(bed_keybindings::ShortcutAction, Option<usize>, Stroke)> = None;
-        if let Some((id, index)) = self.window.shortcut_recording.clone() {
-            ui.separator();
-            let action = actions.iter().find(|a| a.id == id);
-            let position = ui.cursor_screen_pos();
-            let pulse = (ui.time() as f32 * std::f32::consts::TAU).sin() * 0.5 + 0.5;
-            ui.get_window_draw_list()
-                .add_circle(
-                    [position[0] + size * 0.35, position[1] + size * 0.5],
-                    size * (0.22 + pulse * 0.05),
-                    [0.95, 0.2, 0.22, 0.45 + pulse * 0.55],
-                )
-                .filled(true)
-                .build();
-            ui.dummy([size * 0.7, size]);
-            ui.same_line();
-            ui.text(format!(
-                "Recording: {}",
-                action.map_or(id.as_str(), |a| a.label.as_str())
-            ));
-            ui.text_disabled("Press a combination. Escape cancels.");
-            let cancel =
-                ui.button("Cancel recording") || ui.is_key_pressed_with_repeat(Key::Escape, false);
-            ui.same_line();
-            let escape = ui.button("Assign Escape");
-            if cancel {
-                self.window.shortcut_recording = None;
-            } else if let Some(action) = action {
-                let captured = if escape {
-                    Some("Escape".parse().unwrap())
-                } else if ui.frame_count() > self.window.shortcut_recording_frame {
-                    bed_keybindings::record(ui)
-                } else {
-                    None
-                };
-                if let Some(stroke) = captured {
-                    edit = Some((action.clone(), index, stroke));
-                    self.window.shortcut_recording = None;
-                }
-            }
-            ui.separator();
+        if let Some(error) = edit.error {
+            self.error = Some(error);
         }
-        let mut groups = actions
-            .iter()
-            .map(|a| match &a.scope {
-                bed_keybindings::Scope::Global | bed_keybindings::Scope::Focused => {
-                    "Common".to_owned()
-                }
-                bed_keybindings::Scope::Panel(id) => id.clone(),
-            })
-            .collect::<Vec<_>>();
-        groups.sort();
-        groups.dedup();
-        if let Some(index) = groups.iter().position(|g| g == "Common") {
-            let common = groups.remove(index);
-            groups.insert(0, common);
-        }
-        for group in groups {
-            let header = if group == bed_keybindings::EDITOR_SCOPE {
-                "Editor".to_owned()
-            } else {
-                self.window
-                    .shortcut_groups
-                    .get(&group)
-                    .cloned()
-                    .unwrap_or_else(|| group.clone())
-            };
-            let matching = actions
-                .iter()
-                .filter(|a| match &a.scope {
-                    bed_keybindings::Scope::Global | bed_keybindings::Scope::Focused => {
-                        group == "Common"
-                    }
-                    bed_keybindings::Scope::Panel(id) => id == &group,
-                })
-                .filter(|action| {
-                    format!(
-                        "{} {} {} {}",
-                        action.id,
-                        action.label,
-                        action.owner,
-                        bindings
-                            .for_action(&action.id)
-                            .iter()
-                            .map(|b| b.shortcut.to_string())
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    )
-                    .to_lowercase()
-                    .contains(&filter)
-                })
-                .collect::<Vec<_>>();
-            if matching.is_empty() {
-                continue;
-            }
-            if !filter.is_empty() {
-                ui.set_next_item_open(true);
-            }
-            ui.dummy([0.0, size * 0.35]);
-            if !ui.collapsing_header(&header, dear_imgui_rs::TreeNodeFlags::empty()) {
-                continue;
-            }
-            ui.indent_by(size * 0.8);
-            for action in matching {
-                ui.dummy([0.0, size * 0.45]);
-                let _id = ui.push_id(&action.id);
-                ui.text(&action.label);
-                ui.same_line();
-                ui.text_disabled(
-                    if self.keybinds.overrides.actions.contains_key(&action.id) {
-                        "Custom"
-                    } else {
-                        "Default"
-                    },
-                );
-                let shortcuts = self
-                    .keybinds
-                    .overrides
-                    .actions
-                    .get(&action.id)
-                    .map(|v| v.iter().map(|a| a.shortcut).collect::<Vec<_>>())
-                    .unwrap_or_else(|| action.defaults.clone());
-                if shortcuts.is_empty() {
-                    ui.text_disabled("Unbound");
-                }
-                let mut remove = None;
-                for (index, stroke) in shortcuts.iter().enumerate() {
-                    let _index = ui.push_id(index as i32);
-                    if ui.button(stroke.label(Platform::current())) {
-                        self.window.shortcut_recording = Some((action.id.clone(), Some(index)));
-                        self.window.shortcut_recording_frame = ui.frame_count();
-                    }
-                    ui.same_line();
-                    if ui.small_button("Remove") {
-                        remove = Some(index);
-                    }
-                }
-                if let Some(index) = remove
-                    && let Err(error) = self.keybinds.remove(action, index)
-                {
-                    self.error = Some(error.to_string());
-                }
-                if ui.small_button("Add binding") {
-                    self.window.shortcut_recording = Some((action.id.clone(), None));
-                    self.window.shortcut_recording_frame = ui.frame_count();
-                }
-                ui.same_line();
-                if ui.small_button("Clear")
-                    && let Err(error) = self.keybinds.clear(&action.id)
-                {
-                    self.error = Some(error.to_string());
-                }
-                ui.same_line();
-                if ui.small_button("Restore defaults")
-                    && let Err(error) = self.keybinds.restore(&action.id)
-                {
-                    self.error = Some(error.to_string());
-                }
-                if self.keybinds.overrides.actions.contains_key(&action.id) {
-                    ui.text_disabled(format!(
-                        "Defaults: {}",
-                        if action.defaults.is_empty() {
-                            "Unbound".into()
-                        } else {
-                            action
-                                .defaults
-                                .iter()
-                                .map(|s| s.label(Platform::current()))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        }
-                    ));
-                }
-                for warning in collisions.iter().filter(|c| {
-                    c.kind != CollisionKind::Reuse
-                        && (c.first == action.id || c.second == action.id)
-                }) {
-                    let other = if warning.first == action.id {
-                        &warning.second
-                    } else {
-                        &warning.first
-                    };
-                    let other = actions
-                        .iter()
-                        .find(|a| &a.id == other)
-                        .map_or(other.as_str(), |a| a.label.as_str());
-                    let _font =
-                        ui.push_font_with_size(None, ui.clone_style().font_size_base() * 0.85);
-                    let _color = ui.push_style_color(StyleColor::Text, [0.78, 0.57, 0.34, 1.0]);
-                    ui.text_wrapped(format!(
-                        "{} is also assigned to {}.",
-                        warning.shortcut, other
-                    ));
-                }
-                ui.dummy([0.0, size * 0.3]);
-                ui.separator();
-            }
-            ui.unindent_by(size * 0.8);
-        }
-        if actions.is_empty() {
-            ui.text_disabled("No shortcut actions registered by this host.");
-        }
-        if let Some((action, index, stroke)) = edit
-            && let Err(error) = self.keybinds.assign(&action, index, stroke)
-        {
-            self.error = Some(error.to_string());
-        }
-        if self.keybinds.overrides != previous_overrides {
+        if edit.changed {
+            self.set_keybindings(overrides);
             self.persist_ui();
         }
     }
@@ -1305,7 +1113,7 @@ mod tests {
         };
         let mut editor = DocumentRuntime::new();
         let mut context = settings_context();
-        assert!(current.bool("cursor_smear", true));
+        assert!(current.bool("bed.editor", "cursor_smear", true));
         current.refresh();
         let draw = |context: &mut Context,
                     current: &mut Settings,
@@ -1359,7 +1167,7 @@ mod tests {
             .add_mouse_button_event(MouseButton::Left, false);
         draw(&mut context, &mut current, &mut state, &mut editor);
         assert!(
-            !current.bool("cursor_smear", true),
+            !current.bool("bed.editor", "cursor_smear", true),
             "Effects checkbox turns the smear off"
         );
         assert!(
@@ -1368,11 +1176,11 @@ mod tests {
         );
         crate::config::integration::commit_test_draft(&mut current).unwrap();
         assert_eq!(
-            read_json(&current.settings_path).unwrap()["overrides"]["bed.application"]["cursor_smear"],
+            read_json(&current.settings_path).unwrap()["overrides"]["bed.editor"]["cursor_smear"],
             false
         );
         assert!(
-            !settings(&temp).bool("cursor_smear", true),
+            !settings(&temp).bool("bed.editor", "cursor_smear", true),
             "off state survives restarting"
         );
     }
@@ -1389,9 +1197,9 @@ mod tests {
             .unwrap();
         let mut state = SettingsWindowState {
             shortcut_actions: vec![action.clone()],
-            shortcut_recording: Some((action.id.clone(), None)),
             ..Default::default()
         };
+        state.keybinding_editor.begin_recording(&action.id, None, 0);
         let mut context = settings_context();
         let draw =
             |context: &mut Context, settings: &mut Settings, state: &mut SettingsWindowState| {
@@ -1411,10 +1219,10 @@ mod tests {
         context.io_mut().add_key_event(Key::ModAlt, true);
         context.io_mut().add_key_event(Key::F12, true);
         draw(&mut context, &mut settings, &mut state);
-        assert!(state.shortcut_recording.is_none());
+        assert!(!state.keybinding_editor.is_recording());
         let model = Bindings::new(
             vec![action.clone()],
-            &settings.keybinds.overrides,
+            &settings.keybindings(),
             Platform::current(),
         );
         assert_eq!(model.for_action(&action.id).len(), 2);
@@ -1427,35 +1235,41 @@ mod tests {
         let disk = std::fs::read(settings.settings_path.as_path()).unwrap();
         assert_eq!(
             serde_json::from_value::<bed_keybindings::Overrides>(serde_json::from_slice::<Value>(&disk).unwrap()["overrides"]["bed.workbench"]["keybindings"].clone()).unwrap(),
-            settings.keybinds.overrides
+            settings.keybindings()
         );
         context.io_mut().add_key_event(Key::F12, false);
         context.io_mut().add_key_event(Key::ModCtrl, false);
         context.io_mut().add_key_event(Key::ModAlt, false);
         draw(&mut context, &mut settings, &mut state);
-        state.shortcut_recording = Some((action.id.clone(), Some(0)));
+        state
+            .keybinding_editor
+            .begin_recording(&action.id, Some(0), 0);
         context.io_mut().add_key_event(Key::Escape, true);
         draw(&mut context, &mut settings, &mut state);
-        assert!(state.shortcut_recording.is_none());
+        assert!(!state.keybinding_editor.is_recording());
         assert_eq!(
             std::fs::read(settings.settings_path.as_path()).unwrap(),
             disk
         );
-        settings.keybinds.clear(&action.id).unwrap();
+        let mut overrides = settings.keybindings();
+        overrides.actions.insert(action.id.clone(), Vec::new());
+        settings.set_keybindings(overrides);
         assert!(
             Bindings::new(
                 vec![action.clone()],
-                &settings.keybinds.overrides,
+                &settings.keybindings(),
                 Platform::current()
             )
             .for_action(&action.id)
             .is_empty()
         );
-        settings.keybinds.restore(&action.id).unwrap();
+        let mut overrides = settings.keybindings();
+        overrides.actions.remove(&action.id);
+        settings.set_keybindings(overrides);
         assert_eq!(
             Bindings::new(
                 vec![action.clone()],
-                &settings.keybinds.overrides,
+                &settings.keybindings(),
                 Platform::current()
             )
             .for_action(&action.id)
@@ -1469,7 +1283,7 @@ mod tests {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let temp = TempDir::new();
         let mut settings = settings(&temp);
-        settings.settings["default_viewers"] = json!({"svg":"missing.viewer"});
+        settings.settings["bed.documents"]["default_viewers"] = json!({"svg":"missing.viewer"});
         settings.request_save();
         crate::config::integration::commit_test_draft(&mut settings).unwrap();
         let mut state = SettingsWindowState::default();
@@ -1506,7 +1320,7 @@ mod tests {
             .add_mouse_button_event(MouseButton::Left, false);
         draw(&mut context, &mut settings, &mut state);
         assert_eq!(
-            settings.settings["default_viewers"],
+            settings.settings["bed.documents"]["default_viewers"],
             crate::config::settings::bundled_default_viewers()
         );
         crate::config::integration::commit_test_draft(&mut settings).unwrap();
@@ -1518,7 +1332,7 @@ mod tests {
             Settings::with_paths(temp.0.clone(), Settings::get_app_resources_path()).unwrap();
         crate::config::integration::commit_test_draft(&mut restarted).unwrap();
         assert_eq!(
-            restarted.settings["default_viewers"],
+            restarted.settings["bed.documents"]["default_viewers"],
             crate::config::settings::bundled_default_viewers()
         );
     }
@@ -1542,7 +1356,14 @@ mod tests {
                 .position([0.0; 2], Condition::Always)
                 .size([1000.0, 1200.0], Condition::Always)
                 .build(|| {
-                    crate::settings_view::theme_editor::draw(ui, draft, settings);
+                    let files = ThemeFiles::new(
+                        settings.config_dir.clone(),
+                        settings.resources_root.clone(),
+                    );
+                    let selection = settings.settings["bed.application"]["theme"]
+                        .as_str()
+                        .unwrap();
+                    crate::themes::editor::draw(ui, draft, &files, selection);
                     ui.with_bound_context(|| unsafe {
                         last_item = (*sys::igGetCurrentContext()).LastItemData.ID;
                         if let Some(label) = activate {
@@ -1556,17 +1377,17 @@ mod tests {
         draw(&mut context, &mut settings, &mut draft, None);
         let chooser_item = draw(&mut context, &mut settings, &mut draft, None);
         assert!(!draft.editing);
-        assert!(draft.palette.is_none());
+        assert!(draft.file.is_none());
 
         draw(&mut context, &mut settings, &mut draft, Some("Clone Theme"));
         draw(&mut context, &mut settings, &mut draft, None);
         assert!(draft.editing);
         assert!(draft.destination.is_none());
         assert!(draft.dirty);
-        assert_eq!(draft.palette.as_ref().unwrap().name, "Tokyo Night Copy");
+        assert_eq!(draft.file.as_ref().unwrap().name, "Tokyo Night Copy");
         let editor_item = draw(&mut context, &mut settings, &mut draft, None);
         assert_ne!(chooser_item, editor_item);
-        draft.palette.as_mut().unwrap().name = "My unsaved colors".into();
+        draft.file.as_mut().unwrap().name = "My unsaved colors".into();
 
         draw(
             &mut context,
@@ -1589,8 +1410,8 @@ mod tests {
         );
         draw(&mut context, &mut settings, &mut draft, None);
         assert!(draft.editing);
-        assert_eq!(draft.palette.as_ref().unwrap().name, "My unsaved colors");
-        assert_eq!(settings.settings["theme"], "tokyo");
+        assert_eq!(draft.file.as_ref().unwrap().name, "My unsaved colors");
+        assert_eq!(settings.settings["bed.application"]["theme"], "tokyo");
         assert!(!temp.0.join("themes").exists());
     }
 
@@ -1600,47 +1421,59 @@ mod tests {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let temp = TempDir::new();
         let mut settings = settings(&temp);
-        let original_font = settings.settings["font"].clone();
+        let original_font = settings.settings["bed.ui"]["font"].clone();
         let mut states = [
             SettingsWindowState::default(),
             SettingsWindowState::default(),
         ];
         for (index, state) in states.iter_mut().enumerate() {
-            let mut theme = settings.theme.clone();
+            let mut theme = crate::themes::ThemeFile::bundled_default();
             theme.name = format!("Custom view {index}");
             state.theme_editor.load(theme, None);
         }
-        states[0].theme_editor.palette.as_mut().unwrap().background = [0.2, 0.3, 0.4, 1.0];
+        states[0]
+            .theme_editor
+            .file
+            .as_mut()
+            .unwrap()
+            .palette
+            .background = [0.2, 0.3, 0.4, 1.0];
         let mut context = settings_context();
-        let draw = |context: &mut Context,
-                    settings: &mut Settings,
-                    state: &mut SettingsWindowState| {
-            context.prepare_frame(FramePrepareOptions::new([1000.0, 2000.0], 1.0 / 60.0));
-            let ui = context.frame();
-            let mut button = [0.0; 2];
-            ui.window("Theme editing")
-                .position([0.0; 2], Condition::Always)
-                .size([1000.0, 2000.0], Condition::Always)
-                .build(|| {
-                    for label in ["Syntax Colors", "Terminal Colors"] {
-                        let id = ui.get_id(label).raw();
-                        ui.with_bound_context(|| unsafe {
-                            sys::ImGuiStorage_SetInt(sys::igGetStateStorage(), id, 1);
-                        });
-                    }
-                    crate::settings_view::theme_editor::draw(ui, &mut state.theme_editor, settings);
-                    let (min, max) = ui.item_rect();
-                    button = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
-                    ui.with_bound_context(|| unsafe {
-                        assert_eq!(
-                            (*sys::igGetCurrentContext()).LastItemData.ID,
-                            sys::igGetID_Str(c"Save & Apply".as_ptr())
+        let draw =
+            |context: &mut Context, settings: &mut Settings, state: &mut SettingsWindowState| {
+                context.prepare_frame(FramePrepareOptions::new([1000.0, 2000.0], 1.0 / 60.0));
+                let ui = context.frame();
+                let mut button = [0.0; 2];
+                ui.window("Theme editing")
+                    .position([0.0; 2], Condition::Always)
+                    .size([1000.0, 2000.0], Condition::Always)
+                    .build(|| {
+                        for label in ["Syntax Colors", "Terminal Colors"] {
+                            let id = ui.get_id(label).raw();
+                            ui.with_bound_context(|| unsafe {
+                                sys::ImGuiStorage_SetInt(sys::igGetStateStorage(), id, 1);
+                            });
+                        }
+                        let files = ThemeFiles::new(
+                            settings.config_dir.clone(),
+                            settings.resources_root.clone(),
                         );
+                        let selection = settings.settings["bed.application"]["theme"]
+                            .as_str()
+                            .unwrap();
+                        crate::themes::editor::draw(ui, &mut state.theme_editor, &files, selection);
+                        let (min, max) = ui.item_rect();
+                        button = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
+                        ui.with_bound_context(|| unsafe {
+                            assert_eq!(
+                                (*sys::igGetCurrentContext()).LastItemData.ID,
+                                sys::igGetID_Str(c"Save & Apply".as_ptr())
+                            );
+                        });
                     });
-                });
-            drop(context.render_legacy());
-            button
-        };
+                drop(context.render_legacy());
+                button
+            };
         draw(&mut context, &mut settings, &mut states[0]);
         let button = draw(&mut context, &mut settings, &mut states[0]);
         context.io_mut().add_mouse_pos_event(button);
@@ -1653,17 +1486,47 @@ mod tests {
             .io_mut()
             .add_mouse_button_event(MouseButton::Left, false);
         draw(&mut context, &mut settings, &mut states[0]);
-        assert_eq!(settings.settings["theme"], "themes/custom-view-0.json");
+        assert_eq!(settings.settings["bed.application"]["theme"], "tokyo");
+        assert!(
+            !temp.0.join("themes").exists(),
+            "drawing submits a save rather than writing files"
+        );
+        let mut app = bevy::prelude::App::new();
+        app.insert_resource(
+            bed_api::launch::ApplicationPaths::new("bed", Some(temp.0.clone()), None).unwrap(),
+        );
+        bed_core::settings::initialize_settings(
+            app.world_mut(),
+            Some(settings.settings_path.clone()),
+        )
+        .unwrap();
+        crate::themes::install_theme_services(app.world_mut(), settings.resources_root.clone());
+        bed_core::settings::finalize_settings(app.world_mut()).unwrap();
+        for request in states[0].theme_editor.take_requests() {
+            app.world_mut().write_message(request);
+        }
+        crate::themes::tests::finish_requests(&mut app);
+        states[0].theme_editor.synchronize(
+            &mut app
+                .world_mut()
+                .resource_mut::<crate::themes::ThemeResults>(),
+        );
+        assert_eq!(
+            app.world()
+                .resource::<bed_api::settings::SettingsSnapshot>()
+                .get("bed.application", "theme"),
+            Some(&json!("themes/custom-view-0.json"))
+        );
         assert_eq!(
             read_json(&temp.0.join("themes/custom-view-0.json")).unwrap()["ui"]["background"],
             "#334d66"
         );
-        assert_eq!(settings.settings["font"], original_font);
+        assert_eq!(settings.settings["bed.ui"]["font"], original_font);
         assert!(!settings.shader_settings().enabled);
         assert!(states[0].theme_editor.destination.is_some());
         assert!(states[1].theme_editor.destination.is_none());
         assert_eq!(
-            states[1].theme_editor.palette.as_ref().unwrap().name,
+            states[1].theme_editor.file.as_ref().unwrap().name,
             "Custom view 1"
         );
     }
@@ -1748,7 +1611,7 @@ mod tests {
             category: SettingsCategory::Extensions,
             ..Default::default()
         };
-        current.settings["plugins"]["unavailable"] = json!({"retained": true});
+        current.settings["unavailable"] = json!({"retained": true});
         let mut editor = DocumentRuntime::new();
         let mut context = settings_context();
         context.io_mut().set_display_size([1800.0, 1200.0]);
@@ -1766,7 +1629,7 @@ mod tests {
                     &mut |ui, value| {
                         tab_calls += 1;
                         ui.text("Image Viewer");
-                        value["plugins"]["image"]["fit"] = json!(true);
+                        value["image"]["fit"] = json!(true);
                         true
                     },
                 );
@@ -1790,7 +1653,7 @@ mod tests {
             &mut |ui, value| {
                 legacy_calls += 1;
                 ui.text("Image Viewer");
-                value["plugins"]["image"]["zoom"] = json!(2.0);
+                value["image"]["zoom"] = json!(2.0);
                 true
             },
         );
@@ -1798,12 +1661,9 @@ mod tests {
         assert_eq!(legacy_calls, 1);
         crate::config::integration::commit_test_draft(&mut current).unwrap();
         let restarted = settings(&temp);
-        assert_eq!(restarted.settings["plugins"]["image"]["fit"], true);
-        assert_eq!(restarted.settings["plugins"]["image"]["zoom"], 2.0);
-        assert_eq!(
-            restarted.settings["plugins"]["unavailable"]["retained"],
-            true
-        );
+        assert_eq!(restarted.settings["image"]["fit"], true);
+        assert_eq!(restarted.settings["image"]["zoom"], 2.0);
+        assert_eq!(restarted.settings["unavailable"]["retained"], true);
     }
 
     struct NativeSettingsWindow {
@@ -2009,7 +1869,7 @@ mod tests {
         let mut context = settings_context();
         draw_settings(&mut context, &mut settings, &mut window_state, &mut editor);
         let window = draw_settings(&mut context, &mut settings, &mut window_state, &mut editor);
-        settings.settings["test_close"] = json!("unsaved before title close");
+        settings.settings["bed.application"]["test_close"] = json!("unsaved before title close");
         let font_size = context.style().font_size_base();
         let padding = context.style().frame_padding();
         let close = [
@@ -2136,7 +1996,7 @@ mod tests {
                 .iter()
                 .all(|color| *color == tint)
         );
-        settings.settings["test_close"] = json!("header persists");
+        settings.settings["bed.application"]["test_close"] = json!("header persists");
         context
             .io_mut()
             .add_mouse_button_event(MouseButton::Left, true);
@@ -2179,8 +2039,8 @@ mod tests {
         };
         let background = [0.97, 0.94, 0.89, 1.0];
         let text = [0.12, 0.18, 0.23, 1.0];
-        settings.theme.background = background;
-        settings.theme.foreground = text;
+        window_state.active_theme.file.palette.background = background;
+        window_state.active_theme.file.palette.text = text;
         let mut context = settings_context();
         context
             .style_mut()
@@ -2220,7 +2080,11 @@ mod tests {
     fn apply_pending(context: &mut Context, settings: &mut Settings) -> bool {
         let applied = settings.refresh();
         if applied {
-            bed_ui::appearance::apply_style(context, &settings.appearance(), settings.is_embedded);
+            bed_ui::appearance::apply_style(
+                context,
+                &settings.appearance(&ActiveTheme::default().runtime_palette()),
+                settings.is_embedded,
+            );
         }
         if applied {
             context
@@ -2239,8 +2103,8 @@ mod tests {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let temp = TempDir::new();
         let mut settings = settings(&temp);
-        settings.settings["background_opacity"] = json!(0.5);
-        settings.settings["mac_blur_enabled"] = json!(true);
+        settings.settings["bed.ui"]["background_opacity"] = json!(0.5);
+        settings.settings["bed.application"]["mac_blur_enabled"] = json!(true);
         settings.request_save();
         crate::config::integration::commit_test_draft(&mut settings).unwrap();
         let mut context = settings_context();
@@ -2287,13 +2151,13 @@ mod tests {
             .io_mut()
             .add_mouse_button_event(MouseButton::Left, false);
         draw(&mut context, &mut settings);
-        let opacity = settings.number("background_opacity", 0.0);
+        let opacity = settings.number("bed.ui", "background_opacity", 0.0);
         assert!(opacity > 0.7 && opacity < 0.8);
         assert!(apply_pending(&mut context, &mut settings));
         crate::config::integration::commit_test_draft(&mut settings).unwrap();
         assert_eq!(
             read_json(&settings.settings_path).unwrap()["overrides"]["bed.ui"]["background_opacity"],
-            settings.settings["background_opacity"]
+            settings.settings["bed.ui"]["background_opacity"]
         );
         context.io_mut().add_mouse_pos_event(checkbox);
         draw(&mut context, &mut settings);
@@ -2305,7 +2169,7 @@ mod tests {
             .io_mut()
             .add_mouse_button_event(MouseButton::Left, false);
         draw(&mut context, &mut settings);
-        assert!(!settings.bool("mac_blur_enabled", true));
+        assert!(!settings.bool("bed.application", "mac_blur_enabled", true));
         assert!(apply_pending(&mut context, &mut settings));
         crate::config::integration::commit_test_draft(&mut settings).unwrap();
         assert_eq!(

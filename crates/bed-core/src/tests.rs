@@ -1,5 +1,8 @@
 use crate::*;
-use bed_api::{documents::PanelBinding, features::HostAction};
+use bed_api::{
+    documents::{DocumentFrame, PanelBinding},
+    features::HostAction,
+};
 use bed_documents::{ByteEdit, DocumentSession};
 use bed_workbench::{WorkbenchLayout, WorkbenchRequests};
 use bevy::prelude::*;
@@ -697,6 +700,9 @@ fn document_commands_use_the_captured_panel_and_tools_do_not_inherit_selection()
             .active_document
             .is_none()
     );
+    assert!(
+        !world.resource::<api::workbench::CommandPresentations>().0["bed.documents.undo"].enabled
+    );
     // The earlier editor command still targets its originating document.
     world
         .resource_mut::<WorkbenchRequests>()
@@ -727,6 +733,374 @@ fn document_commands_use_the_captured_panel_and_tools_do_not_inherit_selection()
         )
         .unwrap();
     assert!(result.unwrap_err().contains("No document"));
+}
+
+#[test]
+fn an_explicit_save_target_runs_while_the_current_tool_invocation_is_disabled() {
+    let temp = TempDir::new();
+    let path = temp.write("document.txt", b"initial");
+    let mut app = app();
+    let world = app.world_mut();
+    let document = world
+        .non_send_mut::<DocumentSession>()
+        .open_file(&path)
+        .unwrap();
+    let editor = open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    submit_host_request(world, Some(editor), edit(world, document, b"changed "));
+    resolve_documents(world);
+    let tool = panel(world);
+    resolve_documents(world);
+    assert_eq!(world.resource::<DocumentFrame>().active_document, None);
+    assert!(
+        !world.resource::<api::workbench::CommandPresentations>().0["bed.documents.save"].enabled
+    );
+    let invocation =
+        bed_workbench::capture_command(world, "bed.documents.save", json!({"document":document.0}));
+    assert_eq!(invocation.source, Some(tool));
+    let receipt = world
+        .resource_mut::<WorkbenchRequests>()
+        .submit(api::workbench::WorkbenchAction::Invoke(invocation));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let outcome = loop {
+        poll_document_services(world);
+        resolve_documents(world);
+        if let Some(outcome) = world
+            .resource_mut::<WorkbenchRequests>()
+            .take_result(receipt)
+        {
+            break outcome;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "captured save did not finish"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    };
+    assert_eq!(outcome, Ok(bed_workbench::WorkbenchOutcome::Applied));
+    assert_eq!(std::fs::read(path).unwrap(), b"changed initial");
+}
+
+#[test]
+fn application_selection_is_published_by_core_and_can_be_explicitly_cleared() {
+    let mut app = app();
+    let world = app.world_mut();
+    let document = world
+        .non_send_mut::<DocumentSession>()
+        .create_document(b"remembered")
+        .unwrap();
+    open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    let tool = panel(world);
+    world.insert_resource(DocumentFrameSelection {
+        document: Some(document),
+        view: None,
+    });
+    for _ in 0..3 {
+        app.update();
+        assert_eq!(
+            app.world().resource::<DocumentFrame>().active_document,
+            Some(document)
+        );
+        assert_eq!(
+            app.world().resource::<WorkbenchLayout>().focused,
+            Some(tool)
+        );
+    }
+    app.world_mut()
+        .insert_resource(DocumentFrameSelection::default());
+    app.update();
+    assert!(
+        app.world()
+            .resource::<DocumentFrame>()
+            .active_document
+            .is_none()
+    );
+    app.world_mut().remove_resource::<DocumentFrameSelection>();
+    app.update();
+    assert!(
+        app.world()
+            .resource::<DocumentFrame>()
+            .active_document
+            .is_none()
+    );
+}
+
+#[test]
+fn application_mode_uses_shared_save_commands_with_its_explicit_selection() {
+    let temp = TempDir::new();
+    let path = temp.write("remembered.txt", b"before");
+    let mut app = App::new();
+    app.insert_resource(CorePresentationMode::Application)
+        .add_plugins(DocumentHostPlugin);
+    api::workbench::register(app.world_mut(), "test", |registrar| {
+        registrar.panel("test.panel", "Test", factory);
+    })
+    .unwrap();
+    let world = app.world_mut();
+    let document = world
+        .non_send_mut::<DocumentSession>()
+        .open_file(&path)
+        .unwrap();
+    open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    let tool = panel(world);
+    let revision = document_revision(world, document).unwrap();
+    apply_edits(
+        world,
+        document,
+        revision,
+        &[ByteEdit {
+            range: 0..6,
+            bytes: b"after".to_vec(),
+        }],
+    )
+    .unwrap();
+    world.insert_resource(DocumentFrameSelection {
+        document: Some(document),
+        view: None,
+    });
+    publish_documents(world);
+    let save = world
+        .resource::<api::workbench::WorkbenchRegistry>()
+        .command("bed.documents.save")
+        .unwrap()
+        .handler;
+    world
+        .run_system_with(
+            save,
+            api::workbench::CommandInvocation {
+                command: "bed.documents.save".into(),
+                source: Some(tool),
+                area: 1,
+                arguments: Value::Null,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let effects = world.resource_mut::<api::features::HostEffects>().take();
+    assert_eq!(effects.len(), 1);
+    assert!(
+        matches!(effects[0].action, HostAction::Save { document: selected } if selected == document)
+    );
+    let receipt = submit_host_request(
+        world,
+        Some(tool),
+        effects.into_iter().next().unwrap().action,
+    );
+    wait_host_result(world, receipt).unwrap();
+    assert_eq!(std::fs::read(path).unwrap(), b"after");
+    let registry = world.resource::<api::workbench::WorkbenchRegistry>();
+    for command in [
+        "bed.documents.open_file",
+        "bed.documents.save",
+        "bed.documents.save_as",
+        "bed.documents.shell.open",
+    ] {
+        assert!(registry.command(command).is_some());
+    }
+}
+
+#[test]
+fn shared_save_arguments_keep_the_captured_target_and_reject_empty_or_invalid_ids() {
+    let mut app = app();
+    let world = app.world_mut();
+    let first = world
+        .non_send_mut::<DocumentSession>()
+        .create_document(b"first")
+        .unwrap();
+    let editor = open_document_panel(world, "test.panel", first, Value::Null, None).unwrap();
+    let second = world
+        .non_send_mut::<DocumentSession>()
+        .create_document(b"second")
+        .unwrap();
+    let tool = panel(world);
+    world.insert_resource(DocumentFrameSelection {
+        document: Some(second),
+        view: None,
+    });
+    for command in ["bed.documents.save", "bed.documents.save_as"] {
+        let handler = world
+            .resource::<api::workbench::WorkbenchRegistry>()
+            .command(command)
+            .unwrap()
+            .handler;
+        world
+            .run_system_with(
+                handler,
+                api::workbench::CommandInvocation {
+                    command: command.into(),
+                    source: Some(tool),
+                    area: 1,
+                    arguments: json!({"document":first.0}),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let effects = world.resource_mut::<api::features::HostEffects>().take();
+        assert!(
+            matches!(effects.as_slice(), [effect] if matches!(effect.action, HostAction::SaveAsDialog { document } if document == first))
+        );
+        for document in [
+            Value::Null,
+            json!(0),
+            json!(-1),
+            json!("1"),
+            json!(u64::MAX),
+        ] {
+            let result = world
+                .run_system_with(
+                    handler,
+                    api::workbench::CommandInvocation {
+                        command: command.into(),
+                        source: Some(tool),
+                        area: 1,
+                        arguments: json!({"document":document}),
+                    },
+                )
+                .unwrap();
+            assert!(
+                result.is_err(),
+                "An empty or malformed captured selection cannot use the later document"
+            );
+            assert!(
+                world
+                    .resource_mut::<api::features::HostEffects>()
+                    .take()
+                    .is_empty()
+            );
+        }
+        world
+            .run_system_with(
+                handler,
+                api::workbench::CommandInvocation {
+                    command: command.into(),
+                    source: Some(editor),
+                    area: 1,
+                    arguments: Value::Null,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let effects = world.resource_mut::<api::features::HostEffects>().take();
+        assert!(
+            matches!(effects.as_slice(), [effect] if matches!(effect.action, HostAction::SaveAsDialog { document } if document == first))
+        );
+    }
+}
+
+#[test]
+fn open_file_is_available_with_a_direct_file_viewer_and_no_code_editor() {
+    let mut app = app();
+    app.world_mut()
+        .resource_mut::<api::features::FeatureRegistry>()
+        .register_with("archive", |registrar| {
+            registrar.panel_ref("archive.panel");
+            registrar.local_file_viewer("archive.viewer", "Archive", "archive.panel", &["zip"]);
+        })
+        .unwrap();
+    api::workbench::register(app.world_mut(), "archive", |registrar| {
+        registrar.panel("archive.panel", "Archive", factory);
+    })
+    .unwrap();
+    app.update();
+    let commands = app
+        .world()
+        .resource::<api::workbench::CommandPresentations>();
+    assert!(commands.0["bed.documents.open_file"].visible);
+    assert!(commands.0["bed.documents.open_file"].enabled);
+    assert!(!commands.0["bed.documents.new"].visible);
+}
+
+#[test]
+fn model_history_commits_panel_drafts_before_undoing_the_latest_change() {
+    #[derive(Component)]
+    struct Draft(u32);
+    let mut app = app();
+    let world = app.world_mut();
+    let document = create_model_document(world, Counter(1), "Counter", None);
+    edit_model::<Counter>(world, document, 0, 2, "Initial change").unwrap();
+    let panel = panel(world);
+    let commit = world.register_system(
+        |In(input): In<api::workbench::PanelActionInvocation>,
+         world: &mut World|
+         -> api::workbench::PanelActionResult {
+            if input.action == api::workbench::PanelAction::CommitEdit
+                && let Some(draft) = world.entity_mut(input.entity).take::<Draft>()
+            {
+                let document = world.get::<DocumentBinding>(input.entity).unwrap().0;
+                let revision = model_document(world, document).unwrap().revision();
+                edit_model::<Counter>(world, document, revision, draft.0, "Panel draft")?;
+            }
+            Ok(true)
+        },
+    );
+    world.entity_mut(panel).insert((
+        DocumentBinding(document),
+        api::workbench::PanelActions(commit),
+        Draft(3),
+    ));
+    let request = capture_host_request(world, Some(panel), HostAction::Undo { document });
+    apply_document_request(world, request).unwrap();
+    assert_eq!(model::<Counter>(world, document).unwrap().0, 2);
+    assert!(world.get::<Draft>(panel).is_none());
+    let request = capture_host_request(world, Some(panel), HostAction::Redo { document });
+    apply_document_request(world, request).unwrap();
+    assert_eq!(model::<Counter>(world, document).unwrap().0, 3);
+}
+
+#[test]
+fn revision_checked_panel_edits_acknowledge_success_and_failure_once() {
+    #[derive(Resource, Default)]
+    struct Acknowledgements(Vec<bed_api::documents::PanelEditResult>);
+    let mut app = app();
+    let world = app.world_mut();
+    let document = world
+        .non_send_mut::<DocumentSession>()
+        .create_document(b"old")
+        .unwrap();
+    let panel = open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    world.init_resource::<Acknowledgements>();
+    let handler = world.register_system(
+        |In(result): In<bed_api::documents::PanelEditResult>,
+         mut replies: ResMut<Acknowledgements>| {
+            replies.0.push(result);
+        },
+    );
+    world
+        .entity_mut(panel)
+        .insert(bed_api::documents::PanelEdits(handler));
+    let revision = document_revision(world, document).unwrap();
+    for (token, expected_revision) in [
+        (bed_api::documents::EditToken(1), revision),
+        (bed_api::documents::EditToken(2), revision),
+    ] {
+        let request = capture_host_request(
+            world,
+            Some(panel),
+            HostAction::ApplyEditsWithResult {
+                token,
+                document,
+                revision: expected_revision,
+                edits: vec![ByteEdit {
+                    range: 0..3,
+                    bytes: b"new".to_vec(),
+                }],
+            },
+        );
+        let _ = apply_document_request(world, request);
+    }
+    let replies = &world.resource::<Acknowledgements>().0;
+    assert_eq!(replies.len(), 2);
+    assert_eq!(replies[0].token, bed_api::documents::EditToken(1));
+    assert!(replies[0].result.is_ok());
+    assert_eq!(replies[1].token, bed_api::documents::EditToken(2));
+    assert!(replies[1].result.is_err());
+    assert_eq!(
+        world
+            .non_send::<DocumentSession>()
+            .snapshot(document)
+            .unwrap()
+            .bytes,
+        b"new"
+    );
 }
 
 #[test]
@@ -1198,3 +1572,123 @@ fn a_rejected_typed_model_draft_prevents_quitting_a_clean_model() {
     assert!(world.non_send::<DocumentSession>().is_running());
     assert!(world.entities().contains(panel));
 }
+
+#[test]
+fn another_viewer_opens_a_separate_tab_with_shared_content_and_history_without_bed() {
+    fn view_factory(
+        In(input): In<api::workbench::PanelCreation>,
+        world: &mut World,
+    ) -> api::workbench::PanelResult {
+        let binding = world.get::<PanelBinding>(input.entity).unwrap();
+        assert!(
+            matches!(binding.viewer.as_deref(), Some("views.text" | "views.tree")),
+            "Viewer identity is available to the factory"
+        );
+        let document = binding.document.unwrap();
+        let view = world
+            .non_send_mut::<DocumentSession>()
+            .create_view(document)
+            .map_err(|error| error.to_string())?;
+        world.get_mut::<PanelBinding>(input.entity).unwrap().view = Some(view);
+        Ok(Box::new(EmptyPanel))
+    }
+    let mut app = app();
+    let world = app.world_mut();
+    api::workbench::register(world, "views", |registrar| {
+        registrar.panel("views.panel", "Document view", view_factory);
+    })
+    .unwrap();
+    world
+        .resource_mut::<api::features::FeatureRegistry>()
+        .register_with("views", |registrar| {
+            registrar.panel_ref("views.panel");
+            registrar.viewer(
+                "views.text",
+                "Text",
+                "views.panel",
+                &["json"],
+                bed_documents::DocumentKind::Text,
+            );
+            registrar.viewer(
+                "views.tree",
+                "Tree",
+                "views.panel",
+                &["json"],
+                bed_documents::DocumentKind::Text,
+            );
+        })
+        .unwrap();
+    let document = world
+        .non_send_mut::<DocumentSession>()
+        .create_document(b"{} ")
+        .unwrap();
+    let first = open_document_viewer(world, document, "views.text", None).unwrap();
+    let tab = world
+        .get::<api::workbench::PanelPresentation>(first)
+        .unwrap()
+        .id;
+    let request = capture_host_request(
+        world,
+        Some(first),
+        HostAction::OpenDocumentViewer {
+            tab,
+            document,
+            viewer: "views.tree".into(),
+        },
+    );
+    let HostOutcome::Opened(second) = apply_document_request(world, request).unwrap() else {
+        panic!("Another viewer opens a tab")
+    };
+    assert_ne!(first, second);
+    assert_eq!(
+        world.get::<PanelBinding>(first).unwrap().viewer.as_deref(),
+        Some("views.text")
+    );
+    assert_eq!(
+        world.get::<PanelBinding>(second).unwrap().document,
+        Some(document)
+    );
+    let first_view = world.get::<PanelBinding>(first).unwrap().view.unwrap();
+    let second_view = world.get::<PanelBinding>(second).unwrap().view.unwrap();
+    assert_ne!(first_view, second_view);
+    assert_eq!(
+        world.resource::<WorkbenchLayout>().tiling.areas[0]
+            .tabs
+            .len(),
+        2
+    );
+    assert_eq!(
+        open_document_viewer(world, document, "views.tree", None).unwrap(),
+        second
+    );
+    apply_document_request(
+        world,
+        capture_host_request(world, Some(first), edit(world, document, b"shared ")),
+    )
+    .unwrap();
+    assert_eq!(
+        world
+            .non_send::<DocumentSession>()
+            .snapshot(document)
+            .unwrap()
+            .bytes,
+        b"shared {} "
+    );
+    undo_document(world, document).unwrap();
+    assert_eq!(
+        world
+            .non_send::<DocumentSession>()
+            .snapshot(document)
+            .unwrap()
+            .bytes,
+        b"{} "
+    );
+    bed_workbench::commit_close(world, first);
+    assert!(!retire_document(world, document).unwrap());
+    assert!(world.entities().contains(second));
+    assert_eq!(world.non_send::<DocumentSession>().view_count(document), 1);
+}
+
+#[cfg(all(unix, feature = "language-services"))]
+#[path = "format_save_tests.rs"]
+mod format_save_tests;

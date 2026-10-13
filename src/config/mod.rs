@@ -1,14 +1,11 @@
-//! bEd's settings draft, theme-file editing, and core preference projection.
+//! bEd's namespaced settings draft and shared preference transactions.
 pub(crate) mod integration;
-pub mod keybinds;
 pub use integration::{
-    ensure_settings_view, flush_settings_outbox, register_app_settings, settings_owner, sync_view,
+    ensure_settings_view, flush_settings_outbox, register_app_settings, sync_view,
 };
 mod layout_slot;
 pub use layout_slot::LayoutSlot;
-mod persistence;
 pub mod settings;
-pub mod theme;
 #[cfg(test)]
 pub(crate) use crate::test_support;
 #[cfg(test)]

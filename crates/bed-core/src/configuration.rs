@@ -1,5 +1,5 @@
 //! Requested runtime configuration is ordinary ECS data. Consumers prepare later.
-use crate::{CoreNotice, CorePresentationMode};
+use crate::CoreNotice;
 use bevy::prelude::*;
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -12,9 +12,6 @@ pub enum CoreConfigurationSystems {
 pub struct SyntaxAppearance(pub bed_highlight::tree_sitter::ThemeColors);
 
 pub(crate) fn configure(world: &mut World) {
-    if *world.resource::<CorePresentationMode>() != CorePresentationMode::Standard {
-        return;
-    }
     crate::settings::refresh_settings(world);
     let values = world
         .resource::<bed_api::settings::SettingsSnapshot>()

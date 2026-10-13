@@ -498,7 +498,7 @@ fn execute_action(
                 .resource::<api::CommandPresentations>()
                 .0
                 .get(&invocation.command)
-                .is_some_and(|presentation| !presentation.enabled || !presentation.visible)
+                .is_some_and(|presentation| presentation.blocks_invocation(world, &invocation))
             {
                 return Ok((WorkbenchOutcome::Ignored, Vec::new()));
             }
@@ -568,11 +568,11 @@ fn execute_action(
             ))
         }
         WorkbenchAction::ObserveFocus(source) => {
-            let Some(panel) =
-                api::panel_owner(world, source).filter(|entity| owns_panel(world, *entity))
-            else {
+            if !accepts_focus_observation(world, source) {
                 return Ok((WorkbenchOutcome::Ignored, Vec::new()));
-            };
+            }
+            let panel = api::panel_owner(world, source)
+                .expect("an accepted focus observation has a live owner");
             observe_focus(world, panel);
             Ok((WorkbenchOutcome::Applied, Vec::new()))
         }
@@ -765,6 +765,28 @@ pub fn recent_panel(world: &mut World, panel_type: &str) -> Option<Entity> {
         })
 }
 
+/// Native facts captured before a queued open/focus cannot replace that request
+/// while the presenter is still applying its requested focus.
+pub fn accepts_focus_observation(world: &World, source: Entity) -> bool {
+    let Some(panel) = api::panel_owner(world, source)
+        .filter(|panel| owns_panel(world, *panel) && api::panel_active(world, *panel))
+    else {
+        return false;
+    };
+    world
+        .resource::<WorkbenchLayout>()
+        .focused
+        .is_none_or(|focused| {
+            focused == panel
+                || world
+                    .get::<PanelPresentation>(focused)
+                    .is_none_or(|presentation| !presentation.focus)
+        })
+}
+
+/// Record an application selection without requesting native focus again.
+/// UI facts first pass `accepts_focus_observation`; explicit app transitions may
+/// deliberately supersede an outstanding native focus request.
 pub fn observe_focus(world: &mut World, entity: Entity) {
     if !owns_panel(world, entity) || !api::panel_active(world, entity) {
         return;

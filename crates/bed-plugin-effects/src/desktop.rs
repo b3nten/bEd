@@ -42,8 +42,13 @@ struct EditorEffectsRenderer {
 }
 
 pub fn install(app: &mut App) {
+    crate::settings::register_preferences(app.world_mut());
     app.init_resource::<EffectsState>()
         .insert_resource(bed_desktop::DesktopComposition(compose_editor))
+        .add_systems(
+            PreUpdate,
+            configure_preferences.in_set(bed_api::features::FeatureSystems::Prepare),
+        )
         .add_systems(
             Update,
             |time: Res<Time<Real>>, mut effects: ResMut<EffectsState>| {
@@ -55,6 +60,22 @@ pub fn install(app: &mut App) {
         >::default());
     app.sub_app_mut(RenderApp)
         .add_systems(bevy::render::RenderStartup, reset_editor_effects);
+}
+
+fn configure_preferences(
+    snapshot: Option<Res<bed_api::settings::SettingsSnapshot>>,
+    mut effects: ResMut<EffectsState>,
+) {
+    let Some(snapshot) = snapshot else {
+        return;
+    };
+    if snapshot
+        .get(crate::settings::SETTINGS_OWNER, "effect_preset")
+        .is_some()
+    {
+        effects.settings =
+            ShaderSettings::from_preferences(snapshot.for_owner(crate::settings::SETTINGS_OWNER));
+    }
 }
 
 fn reset_editor_effects(world: &mut World) {
@@ -145,6 +166,71 @@ mod tests {
         time::{TimePlugin, TimeUpdateStrategy},
     };
     use std::time::Duration;
+
+    #[test]
+    fn effects_preferences_apply_without_an_application_projection() {
+        let mut app = App::new();
+        app.add_plugins(TimePlugin)
+            .add_plugins(ExtractPlugin::<RenderApp>::new(
+                |_, _| {},
+                Render::base_schedule,
+                Render.intern(),
+                RenderSystems::ExtractCommands.intern(),
+                RenderSystems::PostCleanup.intern(),
+            ))
+            .add_plugins(EffectsPlugin);
+        let registry = app
+            .world()
+            .resource::<bed_api::settings::SettingsRegistry>();
+        for (key, value) in [
+            ("effect_preset", serde_json::json!("unknown")),
+            ("pixel_width", serde_json::json!(0)),
+            ("burnin_intensity", serde_json::json!(1.1)),
+            ("bloom_intensity", serde_json::json!(-1)),
+        ] {
+            assert!(
+                registry
+                    .definition(crate::settings::SETTINGS_OWNER, key)
+                    .unwrap()
+                    .validate_value(&value)
+                    .is_err()
+            );
+        }
+        app.insert_resource(bed_api::settings::SettingsSnapshot {
+            settings: serde_json::json!({"bed.effects": {
+                "effect_preset": "custom", "shader_toggle": true,
+                "bloom_intensity": 0.3, "burnin_intensity": 0.6,
+            }}),
+            ..Default::default()
+        });
+        app.update();
+        let state = app.world().resource::<EffectsState>();
+        assert!(state.settings.enabled);
+        assert_eq!(state.settings.bloom_intensity, 0.3);
+        assert_eq!(state.settings.burnin_intensity, 0.6);
+        for (preset, expected) in [
+            ("sharp", ShaderSettings::subtle()),
+            ("off", ShaderSettings::default()),
+        ] {
+            app.world_mut()
+                .resource_mut::<bed_api::settings::SettingsSnapshot>()
+                .settings["bed.effects"]["effect_preset"] = serde_json::json!(preset);
+            app.update();
+            assert_eq!(app.world().resource::<EffectsState>().settings, expected);
+        }
+        app.world_mut()
+            .resource_mut::<bed_api::settings::SettingsSnapshot>()
+            .settings["bed.effects"]["effect_preset"] = serde_json::json!("legacy");
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<EffectsState>()
+                .settings
+                .bloom_intensity,
+            0.3
+        );
+        assert!(app.world().resource::<EffectsState>().settings.enabled);
+    }
 
     #[test]
     fn desktop_effects_extract_current_real_time_even_when_gameplay_is_paused() {

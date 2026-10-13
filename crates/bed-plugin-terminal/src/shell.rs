@@ -2,9 +2,11 @@
 use crate::TerminalPanelState;
 #[cfg(feature = "remote")]
 use bed_api::files::FileProviderId;
+#[cfg(test)]
+use bed_api::workbench::CommandPresentations;
 use bed_api::workbench::{
-    CommandInvocation, CommandPresentations, PanelOwner, PanelPresentation, ShellInvocation,
-    WorkbenchAction, WorkbenchRegistry,
+    CommandInvocation, PanelOwner, PanelPresentation, ShellInvocation, WorkbenchAction,
+    WorkbenchRegistry,
 };
 use bed_api::{
     features::{HostAction, HostEffects},
@@ -24,7 +26,6 @@ type ShellContext<'w> = (
     Option<Res<'w, WorkbenchLayout>>,
     Res<'w, WorkbenchRegistry>,
     Option<Res<'w, FileContext>>,
-    Option<Res<'w, CommandPresentations>>,
 );
 
 #[derive(Resource, Default)]
@@ -120,7 +121,7 @@ fn poll(
     ),
 ) {
     let (mut intents, mut activity) = feedback;
-    let (layout, registry, files, command_presentations) = context;
+    let (layout, registry, files) = context;
     #[cfg(not(feature = "remote"))]
     let _ = files;
     let source_for_session = |session| {
@@ -222,10 +223,7 @@ fn poll(
                     nonce,
                     result.and_then(|outcome| {
                         if matches!(outcome, bed_workbench::WorkbenchOutcome::Ignored) {
-                            Err(
-                                "The shell command is no longer available in its originating panel"
-                                    .into(),
-                            )
+                            Err("Shell command unavailable in its originating panel".into())
                         } else {
                             Ok(())
                         }
@@ -252,14 +250,6 @@ fn poll(
             let command = registry
                 .shell_command(&request.alias)
                 .ok_or_else(|| format!("Shell command unavailable: {}", request.alias))?;
-            if command_presentations.as_ref().is_some_and(|presentations| {
-                presentations
-                    .0
-                    .get(command.id)
-                    .is_some_and(|presentation| !presentation.enabled || !presentation.visible)
-            }) {
-                return Err(format!("Shell command unavailable: {}", request.alias));
-            }
             let pane = &request.pane;
             let session = match pane {
                 Some(pane) => Some(terminal.session_for_pane(pane).ok_or_else(|| {
@@ -298,6 +288,8 @@ fn poll(
                 pane: request.pane,
             }
             .to_arguments();
+            // The ordered workbench executor checks availability for this
+            // captured source and arguments when the command runs.
             let operation = requests.submit(WorkbenchAction::Invoke(CommandInvocation {
                 command: command.id.into(),
                 source,
@@ -436,6 +428,59 @@ mod tests {
             observed[0].1.directory,
             directory.root().as_os_str().as_bytes()
         );
+        // Current UI facts with default arguments do not disable a shell's
+        // explicit arguments. Admission belongs to the ordered executor.
+        app.world_mut()
+            .resource_mut::<CommandPresentations>()
+            .0
+            .insert(
+                "example.shell".into(),
+                bed_api::workbench::CommandPresentation {
+                    enabled: false,
+                    scope: bed_api::workbench::CommandPresentationScope::Invocation {
+                        source: None,
+                        arguments: Value::Null,
+                    },
+                    ..Default::default()
+                },
+            );
+        let stream = send(
+            &app,
+            json!({"command":"invoke", "alias":"+custom", "arguments":[], "directory":directory.root().as_os_str().as_bytes()}),
+        );
+        assert!(reply(&mut app, stream)["error"].is_null());
+        assert_eq!(app.world().resource::<Observed>().0.len(), 2);
+        let arguments = ShellInvocation {
+            arguments: Vec::new(),
+            directory: directory.root().as_os_str().as_bytes().to_vec(),
+            pane: None,
+        }
+        .to_arguments();
+        app.world_mut()
+            .resource_mut::<CommandPresentations>()
+            .0
+            .insert(
+                "example.shell".into(),
+                bed_api::workbench::CommandPresentation {
+                    enabled: false,
+                    scope: bed_api::workbench::CommandPresentationScope::Invocation {
+                        source: None,
+                        arguments,
+                    },
+                    ..Default::default()
+                },
+            );
+        let stream = send(
+            &app,
+            json!({"command":"invoke", "alias":"+custom", "arguments":[], "directory":directory.root().as_os_str().as_bytes()}),
+        );
+        assert!(
+            reply(&mut app, stream)["error"]
+                .as_str()
+                .unwrap()
+                .contains("unavailable")
+        );
+        assert_eq!(app.world().resource::<Observed>().0.len(), 2);
         let stream = send(
             &app,
             json!({"command":"invoke", "alias":"+unavailable", "arguments":[], "directory":directory.root().as_os_str().as_bytes()}),
@@ -455,6 +500,7 @@ mod tests {
                     label: None,
                     enabled: false,
                     visible: true,
+                    ..Default::default()
                 },
             );
         let stream = send(
@@ -467,7 +513,7 @@ mod tests {
                 .unwrap()
                 .contains("unavailable")
         );
-        assert_eq!(app.world().resource::<Observed>().0.len(), 1);
+        assert_eq!(app.world().resource::<Observed>().0.len(), 2);
         app.world_mut().write_message(AppExit::Success);
         app.update();
     }

@@ -35,3 +35,6 @@ static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub mod documentation;
 #[cfg(feature = "documentation")]
 pub mod documentation_markdown;
+
+#[cfg(all(test, feature = "imgui"))]
+mod checkbox_tests;

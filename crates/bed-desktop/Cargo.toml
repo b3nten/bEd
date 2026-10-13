@@ -33,4 +33,4 @@ objc2-app-kit = { workspace = true }
 objc2-quartz-core = { workspace = true }
 
 [dev-dependencies]
-bed-app = { workspace = true }
+bed-launch = { workspace = true }

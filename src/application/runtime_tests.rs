@@ -42,6 +42,128 @@ fn apply(world: &mut World, action: AppAction, source: Option<Entity>) -> AppReq
     poll_app_request(world, id).unwrap().unwrap()
 }
 
+#[test]
+#[cfg(feature = "workspaces")]
+fn picker_open_saves_workspace_and_leaves_startup_without_losing_open_documents() {
+    let dir = TempDir::new();
+    let root = dir.path("project");
+    std::fs::create_dir(&root).unwrap();
+    let mut app = unstarted_app(&dir);
+    app.add_plugins(bed_plugin_workspaces::WorkspacesPlugin);
+    app.world_mut()
+        .resource_mut::<InitialAppOptions>()
+        .0
+        .as_mut()
+        .unwrap()
+        .initial_layout = Some(LayoutSlot::Startup);
+    app.update();
+    let picker = active_panel_entities(app.world_mut())[0];
+    let path = dir.write("carried.txt", b"before");
+    let panel = open_file(app.world_mut(), &path, None, false, None).unwrap();
+    let document = app
+        .world()
+        .get::<PanelBinding>(panel)
+        .unwrap()
+        .document
+        .unwrap();
+    let session = app.world().non_send::<DocumentSession>().session_id();
+    let revision = app
+        .world()
+        .non_send::<DocumentSession>()
+        .document_revision(document)
+        .unwrap();
+    app.world_mut()
+        .non_send_mut::<DocumentSession>()
+        .apply_edits(
+            document,
+            revision,
+            &[ByteEdit {
+                range: 0..6,
+                bytes: b"retained draft".to_vec(),
+            }],
+        )
+        .unwrap();
+
+    assert_eq!(
+        apply(
+            app.world_mut(),
+            AppAction::Workspace(WorkspaceAction::OpenLocalWorkspace(root.clone())),
+            Some(picker),
+        ),
+        AppRequestOutcome::Applied
+    );
+    let spec = WorkspaceSpec::local(root.canonicalize().unwrap().to_string_lossy());
+    assert_eq!(
+        app.world().resource::<WorkspaceState>().spec.as_ref(),
+        Some(&spec)
+    );
+    assert_eq!(
+        app.world().resource::<LayoutSlots>().active(),
+        LayoutSlot::Layout1
+    );
+    assert!(!app.world().entities().contains(picker));
+    assert!(bed_api::workbench::panel_active(app.world(), panel));
+    assert_eq!(
+        app.world().non_send::<DocumentSession>().session_id(),
+        session
+    );
+    let snapshot = app
+        .world()
+        .non_send::<DocumentSession>()
+        .snapshot(document)
+        .unwrap();
+    assert_eq!(snapshot.bytes, b"retained draft");
+    assert!(snapshot.dirty);
+    assert_eq!(std::fs::read(path).unwrap(), b"before");
+    let stored = WorkspaceStore::load(&test_application_paths(&dir.path("config"))).unwrap();
+    assert_eq!(stored.recent_workspaces(), vec![spec.clone()]);
+    assert_eq!(stored.active_layout_slot(&spec), LayoutSlot::Layout1);
+    assert!(root.join(".bed/workspace.json").is_file());
+}
+
+#[test]
+#[cfg(feature = "workspaces")]
+fn opening_another_new_project_saves_both_workspaces_and_uses_layout_one() {
+    let dir = TempDir::new();
+    let first = dir.path("first");
+    let second = dir.path("second");
+    std::fs::create_dir(&first).unwrap();
+    std::fs::create_dir(&second).unwrap();
+    let mut app = app(&dir);
+    for root in [&first, &second] {
+        assert_eq!(
+            apply(
+                app.world_mut(),
+                AppAction::Workspace(WorkspaceAction::OpenLocalWorkspace(root.clone())),
+                None,
+            ),
+            AppRequestOutcome::Applied
+        );
+        assert_eq!(
+            app.world().resource::<LayoutSlots>().active(),
+            LayoutSlot::Layout1
+        );
+        assert_eq!(
+            app.world()
+                .resource::<WorkspaceState>()
+                .spec
+                .as_ref()
+                .unwrap()
+                .root,
+            root.canonicalize().unwrap().to_string_lossy()
+        );
+        assert!(root.join(".bed/workspace.json").is_file());
+    }
+    let stored = WorkspaceStore::load(&test_application_paths(&dir.path("config"))).unwrap();
+    assert_eq!(
+        stored.recent_workspaces(),
+        vec![
+            WorkspaceSpec::local(second.canonicalize().unwrap().to_string_lossy()),
+            WorkspaceSpec::local(first.canonicalize().unwrap().to_string_lossy()),
+        ]
+    );
+}
+
 fn navigation_context() -> dear_imgui_rs::Context {
     let mut imgui = dear_imgui_rs::Context::create();
     imgui.set_ini_filename(None::<PathBuf>).unwrap();
@@ -324,6 +446,9 @@ fn each_area_has_its_own_preview_and_failed_opens_preserve_it() {
 fn syntax_spans_use_the_selected_theme_and_update_existing_documents() {
     let dir = TempDir::new();
     let mut app = app(&dir);
+    app.add_plugins(crate::themes::ThemePlugin::new(PathBuf::from(env!(
+        "CARGO_MANIFEST_DIR"
+    ))));
     let path = dir.root().join("syntax.rs");
     std::fs::write(
         &path,
@@ -355,14 +480,19 @@ fn syntax_spans_use_the_selected_theme_and_update_existing_documents() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     for theme in ["tokyo", "catppuccin-latte"] {
-        app.world_mut()
-            .non_send_mut::<Settings>()
-            .select_theme(theme)
-            .unwrap();
+        {
+            let mut settings = app.world_mut().non_send_mut::<Settings>();
+            settings.settings["bed.application"]["theme"] = json!(theme);
+            settings.request_save();
+        }
         // The ordered reducer commits preferences after this frame's preparation.
         app.update();
         app.update();
-        let palette = app.world().non_send::<Settings>().highlight_colors();
+        let palette = app
+            .world()
+            .resource::<bed_core::SyntaxAppearance>()
+            .0
+            .clone();
         app.world_mut()
             .non_send_mut::<DocumentSession>()
             .with_view(view, |view| {
@@ -767,21 +897,67 @@ fn saving_a_captured_panel_never_redirects_to_newer_focus() {
 }
 
 #[test]
-fn inactive_viewers_remain_owned_until_the_layout_panel_closes() {
+fn different_viewers_have_independent_tabs_for_one_shared_document() {
     let dir = TempDir::new();
     let mut app = app(&dir);
-    let path = dir.root().join("values.json");
-    std::fs::write(&path, b"{\"value\":1}").unwrap();
-    let panel = open_file(app.world_mut(), &path, Some("bed.editor.text"), false, None).unwrap();
-    let text = panel_presentation(app.world(), panel).unwrap();
-    switch_viewer(app.world_mut(), panel, "bed.json.viewer").unwrap();
-    let json = panel_presentation(app.world(), panel).unwrap();
-    assert_ne!(text, json);
-    switch_viewer(app.world_mut(), panel, "bed.editor.text").unwrap();
-    assert_eq!(panel_presentation(app.world(), panel), Some(text));
-    assert!(app.world().entities().contains(json));
-    apply(app.world_mut(), AppAction::ClosePanel(panel), Some(panel));
+    let path = dir.write("values.json", b"{\"value\":1}");
+    let text_tab = open_file(app.world_mut(), &path, Some("bed.editor.text"), false, None).unwrap();
+    let text = panel_presentation(app.world(), text_tab).unwrap();
+    let json_tab = open_viewer(app.world_mut(), text_tab, "bed.json.viewer").unwrap();
+    let json = panel_presentation(app.world(), json_tab).unwrap();
+    assert_ne!(text_tab, json_tab);
+    assert_eq!(panel_presentation(app.world(), text_tab), Some(text));
+    let document = app
+        .world()
+        .get::<PanelBinding>(text_tab)
+        .unwrap()
+        .document
+        .unwrap();
+    assert_eq!(
+        app.world().get::<PanelBinding>(json_tab).unwrap().document,
+        Some(document)
+    );
+    assert_eq!(
+        open_viewer(app.world_mut(), json_tab, "bed.editor.text").unwrap(),
+        text_tab
+    );
+    assert_eq!(
+        open_file(app.world_mut(), &path, Some("bed.json.viewer"), false, None).unwrap(),
+        json_tab
+    );
+    let area = app
+        .world()
+        .resource::<WorkbenchLayout>()
+        .tiling
+        .areas
+        .iter()
+        .find(|area| {
+            area.tabs
+                .contains(&app.world().get::<PanelPresentation>(text_tab).unwrap().id)
+        })
+        .unwrap();
+    assert!(
+        area.tabs
+            .contains(&app.world().get::<PanelPresentation>(json_tab).unwrap().id)
+    );
+    apply(
+        app.world_mut(),
+        AppAction::ClosePanel(text_tab),
+        Some(text_tab),
+    );
     assert!(!app.world().entities().contains(text));
+    assert!(app.world().entities().contains(json));
+    assert!(
+        app.world()
+            .non_send::<DocumentSession>()
+            .snapshot(document)
+            .is_ok()
+    );
+    apply(
+        app.world_mut(),
+        AppAction::ClosePanel(json_tab),
+        Some(json_tab),
+    );
     assert!(!app.world().entities().contains(json));
 }
 
@@ -840,7 +1016,7 @@ fn a_registered_viewer_factory_failure_retains_the_active_presentation_and_docum
         .selections;
     let id = submit(
         app.world_mut(),
-        AppAction::SwitchViewer {
+        AppAction::OpenViewer {
             panel: tab,
             viewer: "fixture.viewer".into(),
         },
@@ -854,6 +1030,7 @@ fn a_registered_viewer_factory_failure_retains_the_active_presentation_and_docum
             .message
             .contains("Factory rejected")
     );
+    assert_eq!(app.world().resource::<WorkbenchLayout>().focused, Some(tab));
     assert_eq!(panel_presentation(app.world(), tab), Some(surface));
     assert_eq!(app.world().get::<PanelBinding>(tab).unwrap(), &binding);
     assert!(
@@ -1140,6 +1317,163 @@ fn shortcut_panel_opening_captures_the_focused_area_while_menu_opening_uses_the_
             Some(if keyboard { focused_area } else { largest })
         );
     }
+}
+
+#[test]
+fn scheduled_frames_and_shared_save_commands_preserve_a_tools_remembered_document() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    apply(
+        app.world_mut(),
+        AppAction::Settings(bed_api::settings::SettingsRequest::new(
+            "bed.documents",
+            "autosave",
+            false,
+        )),
+        None,
+    );
+    let path = dir.write("remembered.txt", b"before");
+    let editor = open_file(app.world_mut(), &path, None, false, None).unwrap();
+    let document = app
+        .world()
+        .get::<PanelBinding>(editor)
+        .unwrap()
+        .document
+        .unwrap();
+    let tool = match apply(
+        app.world_mut(),
+        AppAction::PluginCommand(bed_plugin_color_picker::OPEN_COMMAND.into()),
+        Some(editor),
+    ) {
+        AppRequestOutcome::Opened { panel, .. } => panel,
+        outcome => panic!("color tool did not open: {outcome:?}"),
+    };
+    for _ in 0..3 {
+        app.update();
+        assert_eq!(
+            app.world().resource::<WorkbenchLayout>().focused,
+            Some(tool)
+        );
+        assert_eq!(
+            app.world()
+                .resource::<bed_api::documents::DocumentFrame>()
+                .active_document,
+            Some(document)
+        );
+    }
+    let revision = app
+        .world()
+        .non_send::<DocumentSession>()
+        .document_revision(document)
+        .unwrap();
+    apply(
+        app.world_mut(),
+        AppAction::ApplyEdits {
+            document,
+            revision,
+            edits: vec![ByteEdit {
+                range: 0..6,
+                bytes: b"after".to_vec(),
+            }],
+        },
+        Some(editor),
+    );
+    let outcome = apply(
+        app.world_mut(),
+        AppAction::PluginCommand("bed.documents.save".into()),
+        Some(tool),
+    );
+    assert!(matches!(outcome, AppRequestOutcome::Saved { .. }));
+    assert_eq!(std::fs::read(path).unwrap(), b"after");
+    assert_eq!(
+        app.world().resource::<WorkbenchLayout>().focused,
+        Some(tool)
+    );
+}
+
+#[test]
+fn queued_shared_save_keeps_the_document_captured_while_a_tool_was_focused() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    apply(
+        app.world_mut(),
+        AppAction::Settings(bed_api::settings::SettingsRequest::new(
+            "bed.documents",
+            "autosave",
+            false,
+        )),
+        None,
+    );
+    let first_path = dir.write("first-save.txt", b"before-a");
+    let first = open_file(app.world_mut(), &first_path, None, false, None).unwrap();
+    let first_document = app
+        .world()
+        .get::<PanelBinding>(first)
+        .unwrap()
+        .document
+        .unwrap();
+    let second_path = dir.write("second-save.txt", b"before-b");
+    let second = open_file(app.world_mut(), &second_path, None, false, None).unwrap();
+    let second_document = app
+        .world()
+        .get::<PanelBinding>(second)
+        .unwrap()
+        .document
+        .unwrap();
+    for (panel, document, bytes) in [
+        (first, first_document, b"after-a".to_vec()),
+        (second, second_document, b"after-b".to_vec()),
+    ] {
+        let revision = app
+            .world()
+            .non_send::<DocumentSession>()
+            .document_revision(document)
+            .unwrap();
+        apply(
+            app.world_mut(),
+            AppAction::ApplyEdits {
+                document,
+                revision,
+                edits: vec![ByteEdit { range: 0..8, bytes }],
+            },
+            Some(panel),
+        );
+    }
+    focus_panel(app.world_mut(), first, true).unwrap();
+    let tool = match apply(
+        app.world_mut(),
+        AppAction::PluginCommand(bed_plugin_color_picker::OPEN_COMMAND.into()),
+        Some(first),
+    ) {
+        AppRequestOutcome::Opened { panel, .. } => panel,
+        outcome => panic!("tool did not open: {outcome:?}"),
+    };
+    let invocation = bed_workbench::capture_command(app.world(), "bed.documents.save", Value::Null);
+    let captured = capture_app_request_from(
+        app.world(),
+        AppAction::WorkbenchAction(WorkbenchAction::Invoke(invocation)),
+        PanelTarget::LastFocused,
+        Some(tool),
+    );
+    assert_eq!(captured.context.document, Some(first_document));
+    let request = submit_app_request(app.world_mut(), captured);
+    focus_panel(app.world_mut(), second, true).unwrap();
+    publish_app_state(app.world_mut());
+    process_app_requests(app.world_mut()).unwrap();
+    let outcome = poll_app_request(app.world_mut(), request).unwrap().unwrap();
+    assert!(
+        matches!(outcome, AppRequestOutcome::Saved { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(std::fs::read(first_path).unwrap(), b"after-a");
+    assert_eq!(std::fs::read(second_path).unwrap(), b"before-b");
+    assert!(
+        app.world()
+            .non_send::<DocumentSession>()
+            .snapshot(second_document)
+            .unwrap()
+            .dirty
+    );
 }
 
 #[test]
@@ -1846,7 +2180,14 @@ fn accepted_file_drop_finishes_its_editor_effects_before_acknowledging_and_later
 #[test]
 fn dropping_a_directory_stays_temporary_without_replacing_carried_documents() {
     let dir = TempDir::new();
-    let mut app = app(&dir);
+    let mut app = unstarted_app(&dir);
+    app.world_mut()
+        .resource_mut::<InitialAppOptions>()
+        .0
+        .as_mut()
+        .unwrap()
+        .initial_layout = Some(LayoutSlot::Startup);
+    app.update();
     let path = dir.write("carried.txt", b"carried");
     let panel = open_file(app.world_mut(), &path, None, false, None).unwrap();
     let document = app
@@ -1886,10 +2227,16 @@ fn dropping_a_directory_stays_temporary_without_replacing_carried_documents() {
     );
     assert!(app.world().resource::<WorkspaceState>().spec.is_none());
     assert_eq!(
+        app.world().resource::<LayoutSlots>().active(),
+        LayoutSlot::Layout1
+    );
+    assert!(!project.join(".bed/workspace.json").exists());
+    assert_eq!(
         app.world().resource::<bed_files::FileContext>().directory,
         project.canonicalize().unwrap()
     );
     assert!(app.world().entities().contains(panel));
+    assert!(bed_api::workbench::panel_active(app.world(), panel));
     assert!(
         app.world()
             .non_send::<DocumentSession>()
@@ -2141,6 +2488,96 @@ fn restored_empty_areas_and_failed_splits_never_create_or_discard_content() {
             .view_count(document),
         1
     );
+}
+
+#[test]
+#[cfg(feature = "terminal")]
+fn splitting_a_terminal_creates_an_independent_shell_in_the_inherited_directory() {
+    use bed_plugin_terminal::TerminalPanelState;
+    use bed_terminal::bed_terminal::{BedTerminal, TerminalSessionState};
+
+    let dir = TempDir::new();
+    let cwd = dir.path("shell-directory");
+    std::fs::create_dir(&cwd).unwrap();
+    let mut app = unstarted_app(&dir);
+    app.add_plugins(bed_plugin_terminal::TerminalAppIntegrationPlugin);
+    app.update();
+    let source = open_panel(
+        app.world_mut(),
+        bed_plugin_terminal::PANEL_ID,
+        PanelInput::None,
+        json!({ "cwd": cwd }),
+        None,
+        Some(1),
+        false,
+    )
+    .unwrap();
+    let source_frontend = panel_presentation(app.world(), source).unwrap();
+    let source_session = app
+        .world()
+        .get::<TerminalPanelState>(source_frontend)
+        .unwrap()
+        .session_id;
+    let source_id = app.world().get::<PanelPresentation>(source).unwrap().id;
+    let source_area = app
+        .world()
+        .resource::<WorkbenchLayout>()
+        .tiling
+        .area_for(source_id)
+        .unwrap();
+
+    let copy = split_panel(app.world_mut(), source_frontend, 0, true).unwrap();
+    app.update();
+    let copy_frontend = panel_presentation(app.world(), copy).unwrap();
+    let copy_session = app
+        .world()
+        .get::<TerminalPanelState>(copy_frontend)
+        .unwrap()
+        .session_id;
+    let copy_id = app.world().get::<PanelPresentation>(copy).unwrap().id;
+    assert_ne!(source, copy);
+    assert_ne!(source_frontend, copy_frontend);
+    assert_ne!(source_session, copy_session);
+    assert_eq!(
+        panel_presentation(app.world(), source),
+        Some(source_frontend)
+    );
+    assert_eq!(
+        app.world().get::<PanelBinding>(source).unwrap().terminal,
+        Some(source_session)
+    );
+    assert_eq!(
+        app.world().get::<PanelBinding>(copy).unwrap().terminal,
+        Some(copy_session)
+    );
+    let layout = app.world().resource::<WorkbenchLayout>();
+    assert_eq!(layout.tiling.area_for(source_id), Some(source_area));
+    let copy_area = layout.tiling.area_for(copy_id).unwrap();
+    assert_ne!(copy_area, source_area);
+    assert_eq!(layout.focused, Some(copy));
+    assert_eq!(layout.focused_area, Some(copy_area));
+    for (area, id) in [(source_area, source_id), (copy_area, copy_id)] {
+        let group = layout
+            .tiling
+            .areas
+            .iter()
+            .find(|group| group.area == area)
+            .unwrap();
+        assert_eq!(group.tabs, [id]);
+        assert_eq!(group.selected, Some(id));
+    }
+
+    let terminal = app.world().non_send::<BedTerminal>();
+    assert_eq!(terminal.session_ids(), [source_session, copy_session]);
+    assert_eq!(terminal.active_session_id(), Some(copy_session));
+    for session in [source_session, copy_session] {
+        assert_eq!(terminal.working_directory(session), Some(cwd.as_path()));
+        assert_eq!(
+            terminal.session_state(session),
+            Some(TerminalSessionState::Pending)
+        );
+        assert_eq!(terminal.process_id(session), None);
+    }
 }
 
 #[test]
@@ -2543,4 +2980,121 @@ fn global_settings_requests_persist_in_emission_order_without_a_workspace() {
         true
     );
     assert!(!dir.root().join("config/registry.json").exists());
+}
+
+#[test]
+fn opening_a_multi_kind_viewer_reuses_the_live_document_kind_and_unsaved_contents() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    struct BothKinds;
+    impl bed_api::workbench::Panel for BothKinds {
+        fn title(&self, _: &World) -> String {
+            "Both kinds".into()
+        }
+        fn draw(
+            &mut self,
+            _: &dear_imgui_rs::Ui,
+            _: &mut World,
+            _: &mut Vec<WorkbenchAction>,
+            _: &bed_api::workbench::ShortcutInput,
+        ) {
+        }
+    }
+    bed_workbench::register(app.world_mut(), "dual", |registrar| {
+        registrar.panel(
+            "dual.panel",
+            "Both kinds",
+            |_: In<PanelCreation>| -> bed_api::workbench::PanelResult { Ok(Box::new(BothKinds)) },
+        );
+    })
+    .unwrap();
+    app.world_mut()
+        .resource_mut::<bed_api::features::FeatureRegistry>()
+        .register_with("dual", |registrar| {
+            registrar.panel_ref("dual.panel");
+            registrar.viewer(
+                "dual.viewer",
+                "Both kinds",
+                "dual.panel",
+                &["json"],
+                bed_documents::DocumentKind::Bytes,
+            );
+            registrar.viewer_document_kinds(
+                "dual.viewer",
+                &[
+                    bed_documents::DocumentKind::Text,
+                    bed_documents::DocumentKind::Bytes,
+                ],
+            );
+        })
+        .unwrap();
+    let path = dir.write("values.json", b"{\"value\":1}");
+    let text = open_file(
+        app.world_mut(),
+        &path,
+        Some(bed_plugin_editor::TEXT_VIEWER),
+        false,
+        None,
+    )
+    .unwrap();
+    let binding = app.world().get::<PanelBinding>(text).unwrap().clone();
+    app.world_mut()
+        .non_send_mut::<DocumentSession>()
+        .with_commands(binding.view.unwrap(), |commands| {
+            commands.type_text(b"unsaved ")
+        })
+        .unwrap();
+    let other = open_file(app.world_mut(), &path, Some("dual.viewer"), false, None).unwrap();
+    assert_ne!(text, other);
+    assert_eq!(
+        app.world().get::<PanelBinding>(other).unwrap().document,
+        binding.document
+    );
+    let snapshot = app
+        .world()
+        .non_send::<DocumentSession>()
+        .snapshot(binding.document.unwrap())
+        .unwrap();
+    assert_eq!(snapshot.kind, bed_documents::DocumentKind::Text);
+    assert_eq!(snapshot.bytes, b"unsaved {\"value\":1}");
+    assert_eq!(std::fs::read(&path).unwrap(), b"{\"value\":1}");
+}
+
+#[test]
+fn opening_a_file_keeps_a_pristine_core_viewer_tab_and_its_widget_intact() {
+    let dir = TempDir::new();
+    let mut app = app(&dir);
+    let document = app
+        .world_mut()
+        .non_send_mut::<DocumentSession>()
+        .create_document(b"")
+        .unwrap();
+    let core_tab = bed_core::open_document_viewer(
+        app.world_mut(),
+        document,
+        bed_plugin_editor::TEXT_VIEWER,
+        None,
+    )
+    .unwrap();
+    focus_panel(app.world_mut(), core_tab, true).unwrap();
+    let original = app.world().get::<PanelBinding>(core_tab).unwrap().clone();
+    let file = dir.write("next.txt", b"next");
+    let opened = open_file(app.world_mut(), &file, None, false, None).unwrap();
+    assert_ne!(opened, core_tab);
+    assert_eq!(
+        app.world().get::<PanelBinding>(core_tab).unwrap(),
+        &original
+    );
+    assert!(
+        app.world()
+            .non_send::<bed_plugin_editor::EditorViews>()
+            .text(core_tab)
+            .is_some()
+    );
+    assert_eq!(
+        app.world()
+            .non_send::<DocumentSession>()
+            .document_for_view(original.view.unwrap()),
+        Some(document)
+    );
 }

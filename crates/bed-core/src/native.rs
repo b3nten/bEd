@@ -150,6 +150,7 @@ mod tests {
                     label: Some("Working…".into()),
                     enabled: false,
                     visible: true,
+                    ..Default::default()
                 },
             );
             facts.0.insert(

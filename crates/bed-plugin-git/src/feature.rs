@@ -10,7 +10,7 @@ use bed_api::{
     features::{FeatureSystems, HostEffects},
     workbench::{CommandPresentation, CommandPresentations, PanelClose},
 };
-use bed_files::{FileContext, FileServices};
+use bed_files::{FileContext, FileProviderId, FileServices};
 use bevy::{ecs::system::SystemState, prelude::*};
 use std::collections::HashMap;
 
@@ -30,6 +30,16 @@ pub struct GitTarget {
     pub working_directory: String,
     pub session_id: Option<bed_documents::SessionId>,
 }
+
+#[derive(Clone, PartialEq, Eq)]
+struct RepositorySelection {
+    directory: String,
+    root: String,
+    provider: FileProviderId,
+    session: bed_documents::SessionId,
+}
+#[derive(Resource, Default)]
+pub(crate) struct SelectedRepository(Option<RepositorySelection>);
 
 fn working_directory(target: &GitTarget, context: &FileContext) -> String {
     if target.working_directory.is_empty() {
@@ -75,6 +85,7 @@ impl Plugin for GitPlugin {
             .init_non_send::<bed_editor_widgets::source_intents::SourceRequests>()
             .init_resource::<DocumentFrame>()
             .init_resource::<GitTarget>()
+            .init_resource::<SelectedRepository>()
             .init_resource::<FileContext>()
             .init_resource::<FileServices>()
             .init_resource::<HostEffects>()
@@ -147,6 +158,7 @@ pub(crate) fn prepare(
     filesystem: Option<NonSend<bed_remote::WorkspaceFilesystem>>,
     frame: Res<DocumentFrame>,
     target: Res<GitTarget>,
+    mut selected: ResMut<SelectedRepository>,
     file_context: Res<FileContext>,
     file_services: Res<FileServices>,
     mut intents: ResMut<HostEffects>,
@@ -161,7 +173,18 @@ pub(crate) fn prepare(
     let mut requests = Vec::new();
     let file_services = file_services.for_context(&file_context);
     let controller = &mut controller.0;
-    controller.capture_directory_native(&working_directory(&target, &file_context), &target.root);
+    let selection = RepositorySelection {
+        directory: working_directory(&target, &file_context),
+        root: target.root.clone(),
+        provider: file_context.provider.clone(),
+        session: target.session_id.unwrap_or_else(|| documents.session_id()),
+    };
+    if selected.0.as_ref().is_some_and(|prior| prior != &selection) {
+        let draft = std::mem::take(&mut controller.draft);
+        controller.restore_session(Some(selection.session.0), selection.root.clone(), draft);
+    }
+    controller.capture_directory_native(&selection.directory, &selection.root);
+    selected.0 = Some(selection);
     if let Err(error) = controller.tick_native(
         &mut documents,
         &target.root,
@@ -186,6 +209,7 @@ pub(crate) fn prepare(
             label: controller.busy().then(|| "Refreshing Git…".into()),
             enabled: !controller.busy(),
             visible: true,
+            ..Default::default()
         },
     );
     presentations.0.insert(
@@ -412,4 +436,52 @@ fn source_action(
         .map_err(|error| error.to_string())?;
     intents.push(invocation.source, HostAction::Invalidate);
     Ok(Vec::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn repository_follows_live_directory_provider_and_session_without_workspace_restore() {
+        let mut app = App::new();
+        app.world_mut().insert_non_send(DocumentSession::new());
+        app.add_plugins(GitPlugin);
+        let mut context = FileContext::local(std::env::temp_dir()).unwrap();
+        context.availability = bed_files::FileAvailability::Disconnected;
+        let first = context.directory_string();
+        app.insert_resource(context);
+        let system = app.world_mut().register_system(prepare);
+        app.world_mut().run_system(system).unwrap();
+        assert_eq!(app.world().non_send::<GitState>().0.root, first);
+        let session = app.world().non_send::<DocumentSession>().session_id().0;
+        {
+            let mut controller = app.world_mut().non_send_mut::<GitState>();
+            controller.0.session_id = Some(session);
+            controller.0.visible = 2;
+            controller.0.draft = "Commit draft".into();
+        }
+        let mut context = FileContext::remote("fixture-host", "/project").unwrap();
+        context.availability = bed_files::FileAvailability::Disconnected;
+        app.insert_resource(context);
+        app.world_mut().run_system(system).unwrap();
+        let controller = &app.world().non_send::<GitState>().0;
+        assert_eq!(controller.root, "/project");
+        assert!(controller.status.is_none() && !controller.busy());
+        assert_eq!(controller.visible, 2);
+        assert_eq!(controller.draft, "Commit draft");
+        let old_session = app.world().non_send::<DocumentSession>().session_id();
+        app.world_mut().insert_non_send(DocumentSession::new());
+        assert_ne!(
+            app.world().non_send::<DocumentSession>().session_id(),
+            old_session
+        );
+        app.world_mut().run_system(system).unwrap();
+        assert_eq!(app.world().non_send::<GitState>().0.visible, 0);
+        app.world_mut().resource_mut::<GitTarget>().root = "/explicit-repository".into();
+        app.world_mut().run_system(system).unwrap();
+        assert_eq!(
+            app.world().non_send::<GitState>().0.root,
+            "/explicit-repository"
+        );
+    }
 }

@@ -52,7 +52,7 @@ cargo run -p bed
 
 ## Build another desktop application
 
-[`bed-app::Application`](crates/bed-app/README.md) owns startup and installs the
+[`bed_launch::builder`](crates/bed-launch/README.md) owns startup and installs the
 window, renderer, Dear ImGui, theme, fonts, icons, workbench and shared document
 editing before feature plugins. Register plugin entrypoints before dispatch;
 the desktop callback adds panels and application behavior. bEd keeps its CLI,
@@ -92,19 +92,23 @@ supply panels and commands. Example applications use `bed-example-*`.
 | Host | Application supplying services and resolving registered requests |
 | File context | Selected directory, provider identity and connection availability |
 | Workspace | Optional saved arrangement and plugin state associated with a location |
-| Application | Reusable owned launcher in `bed-app`; bEd policy in `src/application` |
+| Launcher | Helper process dispatch and desktop initialization in `bed-launch` |
+| Application | Bevy `App` composed from core, feature plugins and application policy |
 
 [`bed-api`](crates/bed-api/README.md) holds shared contracts in `workbench`,
 `documents`, `features`, `files`, `storage`, `settings`, `presentation`, `status`
 and `gpu` modules.
-Use `bed_app::api` when building an application. The API's default build supports a
+Use `bed_launch::api` when building an application. The API's default build supports a
 workbench without document services; its `documents` feature adds document
 contracts. `gpu` and `language-services` are separate opt-ins.
 
 The optional Workspaces plugin accepts an application-supplied repository.
 Documents, Search, Explorer and Git use the live file context without requiring a
-saved workspace. New directories stay temporary until explicitly saved. bEd
-stores saved local workspace snapshots and document history in `<root>/.bed`,
+saved workspace. The workspace picker and File → Open Folder create or reopen a
+saved workspace. New command-line and dropped directories stay temporary until
+Save Workspace is requested. Explicit paths use layout 1; saved workspaces restore
+their selected numbered layout. Launching without a path uses Startup. bEd stores
+saved local workspace snapshots and document history in `<root>/.bed`,
 remote snapshots locally in `~/.config/bed/remote`, and recent locations and
 layout templates in its global configuration directory.
 The workspace directory name is application-configurable. Local `workspace.json`

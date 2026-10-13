@@ -72,7 +72,7 @@ jobs:
         run: cargo test --workspace --locked --all-targets --features bed/automation
       - name: Minimal desktop composition
         run: |
-          cargo check --locked -p bed-app -p bed-core -p bed-plugin-layouts -p bed-plugin-settings -p bed-storage
+          cargo check --locked -p bed-launch -p bed-core -p bed-plugin-layouts -p bed-plugin-settings -p bed-storage
           cargo check --locked -p bed-core --no-default-features --features remote
           cargo check --locked -p bed-example-layouts -p bed-example-terminal -p bed-example-editor -p bed-example-model -p bed-example-game-editor -p bed-example-game-runtime
           cargo check --locked -p bed-ui --no-default-features
@@ -145,28 +145,31 @@ jobs:
           cargo run --locked -p bed-desktop --example canvas_smoke
           cargo run --locked -p bed-desktop --example automation_smoke
           cargo run --locked -p bed-desktop --example window_config_smoke
-          cargo run --locked -p bed-desktop --example attachment_smoke
+          cargo run --locked -p bed-desktop --example lifecycle_smoke
+          cargo run --locked -p bed-launch --example workbench_smoke
+          cargo run --locked -p bed-launch --example effects_smoke
+          cargo run --locked -p bed-launch --features language-services --example git_smoke
           cargo run --locked -p bed-example-game-editor -- --smoke-test
           cargo run --locked -p bed-example-game-runtime -- --smoke-test
           cargo run --locked -p bed-example-layouts -- --smoke-test --capture-frame target/native-layout.ppm
           cargo run --locked -p bed-example-editor -- --smoke-test
           cargo run --locked -p bed-example-model -- --smoke-test
           bash scripts/ci/desktop-consumer.sh
-      - name: Native lifecycle and GPU capture (macOS)
+      - name: bEd native chrome and GPU capture (macOS)
         if: runner.os == 'macOS'
-        run: target/release/bed --platform-smoke --lifecycle-smoke --capture-after-frames 30 --capture-frame target/native-window.ppm --config-dir target/native-config src/main.rs
+        run: target/release/bed --platform-smoke --capture-after-frames 30 --capture-frame target/native-window.ppm --config-dir target/native-config src/main.rs
       - name: Native macOS menu Undo and Redo after autosave
         if: runner.os == 'macOS'
         run: target/release/bed --menu-smoke --capture-after-frames 30 --capture-frame target/native-menu-undo.ppm
       - name: Terminal glyphs, images and independent sessions (macOS)
         if: runner.os == 'macOS'
-        run: target/release/bed --terminal-smoke --capture-after-frames 90 --capture-frame target/native-terminal.ppm
+        run: cargo run --locked -p bed-example-terminal --example terminal_smoke
       - name: Calling shell workspace promotion (macOS)
         if: runner.os == 'macOS'
         run: target/release/bed --term-promotion-smoke --capture-after-frames 30 --capture-frame target/native-promotion.png
       - name: Shared viewer GPU recovery (macOS)
         if: runner.os == 'macOS'
-        run: target/release/bed --plugin-smoke --capture-after-frames 30 --capture-frame target/native-viewers.png
+        run: cargo run --locked -p bed-launch --features language-services --example viewers_smoke
       - name: Docked panels and main window composition (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -197,4 +200,6 @@ jobs:
             target/native-promotion.png
             target/native-viewers.png
             target/native-layout.ppm
+            target/workbench-smoke.png
+            target/git-smoke.png
           if-no-files-found: error

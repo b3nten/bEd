@@ -614,7 +614,6 @@ impl ExplorerPanel {
             }
             return Ok(());
         }
-        bed_ui::presentation::directory_label(ui, &root);
         let config = controller.config.clone();
         let active_path = host
             .active()

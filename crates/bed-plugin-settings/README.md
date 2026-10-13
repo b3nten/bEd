@@ -20,3 +20,9 @@ suppresses normal dispatch until a combination is captured or cancelled.
 
 Applications may supply a custom settings frontend while continuing to use the
 same definitions, snapshots, request ordering and persistent owner.
+
+Custom Settings frontends can reuse `keybindings::KeybindingEditor`. It accepts
+registered actions, panel labels and a caller-owned overrides draft, then returns
+changes, errors and shortcut-input suppression. It performs no ECS mutation or
+persistence; the frontend submits changes through its settings owner. Recording
+ignores the opening frame and uses Escape to cancel unless explicitly assigned.

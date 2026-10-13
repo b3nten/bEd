@@ -1776,6 +1776,55 @@ mod tests {
     }
 
     #[test]
+    fn refresh_observes_external_edits_and_reports_a_removed_database() {
+        let _guard = IMGUI_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let database = Database::new("CREATE TABLE items(value); INSERT INTO items VALUES (1);");
+        let mut harness = Harness::new(&database, json!({"selected_table":"items"}));
+        harness.wait();
+        assert!(harness.panel.error().is_none());
+        assert_eq!(
+            harness.panel.browse.as_ref().unwrap().rows[0][0],
+            Cell::Integer(1)
+        );
+
+        Connection::open(&database.0)
+            .unwrap()
+            .execute_batch("UPDATE items SET value = 2;")
+            .unwrap();
+        harness.click_refresh();
+        harness.wait();
+        assert!(
+            harness.panel.error().is_none(),
+            "{:?}",
+            harness.panel.error()
+        );
+        assert_eq!(
+            harness.panel.browse.as_ref().unwrap().rows[0][0],
+            Cell::Integer(2)
+        );
+
+        std::fs::remove_file(&database.0).unwrap();
+        harness.click_refresh();
+        harness.wait();
+        assert!(
+            harness
+                .panel
+                .error()
+                .is_some_and(|error| error.contains("unable to open database file")),
+            "refresh must report the missing file: {:?}",
+            harness.panel.error()
+        );
+        assert!(
+            harness.panel.browse.is_none(),
+            "refresh must not show stale rows"
+        );
+        assert!(
+            !database.0.exists(),
+            "read-only refresh must not recreate the file"
+        );
+    }
+
+    #[test]
     fn nested_tables_remember_schema_when_query_is_restored_and_visited() {
         let _guard = IMGUI_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let database = Database::new("CREATE TABLE items(value); INSERT INTO items VALUES (1);");
