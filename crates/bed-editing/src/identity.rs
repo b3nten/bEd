@@ -12,6 +12,7 @@ macro_rules! identity {
         }
     };
 }
-identity!(WorkspaceId);
+// Identity of one in-memory document container, independent of project paths.
+identity!(SessionId);
 identity!(DocumentId);
 identity!(ViewId);

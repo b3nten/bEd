@@ -1,6 +1,6 @@
 //! Opt-in compatibility probes: cargo test -p bed-lsp --test real_servers -- --ignored.
 //! These require the named server, its compiler/toolchain, and no network dependencies.
-use bed_editing::editor_events::DocumentChange;
+use bed_editing::editing_events::DocumentChange;
 use bed_lsp::{lsp_client::LspClient, lsp_config::LspConfig, lsp_uri::LspUri};
 use serde_json::{Value, json};
 use std::{

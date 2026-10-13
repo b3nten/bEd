@@ -1920,46 +1920,48 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 name = "bed"
 version = "0.1.0"
 dependencies = [
- "bed-audio",
- "bed-automation",
- "bed-color",
- "bed-config",
- "bed-csv",
- "bed-debug",
- "bed-debug-core",
+ "bed-api",
+ "bed-app",
+ "bed-app-config",
+ "bed-app-shell",
+ "bed-core",
+ "bed-debugger",
  "bed-desktop",
- "bed-document-session",
+ "bed-documents",
  "bed-editing",
- "bed-editor",
- "bed-editor-api",
- "bed-editor-ui",
- "bed-editor-workbench",
- "bed-effects",
- "bed-explorer",
+ "bed-editor-widgets",
  "bed-files",
- "bed-font",
- "bed-git",
- "bed-http",
- "bed-idle",
- "bed-image",
- "bed-json",
  "bed-keybindings",
  "bed-lsp",
- "bed-markdown",
- "bed-model-viewer",
- "bed-outline",
- "bed-projects",
+ "bed-plugin-audio-player",
+ "bed-plugin-automation",
+ "bed-plugin-color-picker",
+ "bed-plugin-csv-table",
+ "bed-plugin-debugger",
+ "bed-plugin-editor",
+ "bed-plugin-effects",
+ "bed-plugin-file-explorer",
+ "bed-plugin-file-search",
+ "bed-plugin-font-viewer",
+ "bed-plugin-git",
+ "bed-plugin-http-client",
+ "bed-plugin-idle",
+ "bed-plugin-image-viewer",
+ "bed-plugin-json-tree",
+ "bed-plugin-layouts",
+ "bed-plugin-markdown-preview",
+ "bed-plugin-mascots",
+ "bed-plugin-model-viewer",
+ "bed-plugin-settings",
+ "bed-plugin-source-outline",
+ "bed-plugin-sqlite-browser",
+ "bed-plugin-terminal",
+ "bed-plugin-workspaces",
  "bed-remote",
  "bed-runtime",
- "bed-scenes",
- "bed-search",
- "bed-settings",
- "bed-sqlite",
  "bed-terminal",
- "bed-terminal-core",
  "bed-ui",
  "bed-workbench",
- "bedterm",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -1970,61 +1972,62 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-audio"
+name = "bed-api"
 version = "0.1.0"
 dependencies = [
+ "bed-documents",
  "bed-editing",
- "bed-editor-api",
  "bed-keybindings",
+ "bed-lsp",
  "bed-ui",
- "bed-workbench-api",
  "bevy",
  "dear-imgui-rs",
- "rodio",
- "rustfft",
+ "dear-imgui-sys",
  "serde_json",
+ "wgpu",
 ]
 
 [[package]]
-name = "bed-automation"
+name = "bed-app"
 version = "0.1.0"
 dependencies = [
- "bed-config",
- "bed-desktop",
- "bed-document-session",
+ "bed-api",
+ "bed-app-config",
+ "bed-documents",
  "bed-editing",
- "bed-editor",
- "bed-editor-api",
- "bed-editor-workbench",
+ "bed-editor-widgets",
+ "bed-files",
+ "bed-keybindings",
+ "bed-lsp",
+ "bed-plugin-color-picker",
+ "bed-plugin-csv-table",
+ "bed-plugin-debugger",
+ "bed-plugin-editor",
+ "bed-plugin-file-explorer",
+ "bed-plugin-git",
+ "bed-plugin-http-client",
+ "bed-plugin-image-viewer",
+ "bed-plugin-json-tree",
+ "bed-plugin-layouts",
+ "bed-remote",
+ "bed-runtime",
  "bed-ui",
  "bed-workbench",
- "bed-workbench-api",
  "bevy",
  "dear-imgui-rs",
+ "dear-imgui-sys",
+ "rfd",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-color"
-version = "0.1.0"
-dependencies = [
- "bed-editing",
- "bed-editor-api",
- "bed-ui",
- "bed-workbench",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "serde_json",
-]
-
-[[package]]
-name = "bed-config"
+name = "bed-app-config"
 version = "0.1.0"
 dependencies = [
  "bed-effects-config",
  "bed-highlight",
  "bed-keybindings",
+ "bed-plugin-layouts",
  "bed-ui",
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -2032,47 +2035,35 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-csv"
+name = "bed-app-shell"
 version = "0.1.0"
 dependencies = [
- "bed-document-session",
- "bed-editing",
- "bed-editor-api",
- "bed-keybindings",
- "bed-ui",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "dear-imgui-sys",
- "serde",
- "serde_json",
+ "bed-terminal",
 ]
 
 [[package]]
-name = "bed-debug"
+name = "bed-core"
 version = "0.1.0"
 dependencies = [
- "bed-debug-core",
- "bed-document-session",
+ "bed-api",
+ "bed-desktop",
+ "bed-documents",
  "bed-editing",
- "bed-editor-api",
- "bed-editor-ui",
- "bed-keybindings",
- "bed-terminal-core",
+ "bed-plugin-layouts",
+ "bed-runtime",
  "bed-ui",
  "bed-workbench",
- "bed-workbench-api",
  "bevy",
  "dear-imgui-rs",
- "serde",
+ "rfd",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-debug-core"
+name = "bed-debugger"
 version = "0.1.0"
 dependencies = [
- "bed-terminal-core",
+ "bed-terminal",
  "libc",
  "serde",
  "serde_json",
@@ -2100,7 +2091,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-document-session"
+name = "bed-documents"
 version = "0.1.0"
 dependencies = [
  "bed-editing",
@@ -2123,45 +2114,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-editor"
+name = "bed-editor-widgets"
 version = "0.1.0"
 dependencies = [
- "bed-document-session",
- "bed-editing",
- "bed-editor-api",
- "bed-editor-ui",
- "bed-highlight",
- "bed-keybindings",
- "bed-lsp",
- "bed-ui",
- "bed-workbench",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "serde_json",
-]
-
-[[package]]
-name = "bed-editor-api"
-version = "0.1.0"
-dependencies = [
- "bed-document-session",
- "bed-editing",
- "bed-lsp",
- "bed-ui",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "dear-imgui-sys",
- "serde_json",
- "wgpu",
-]
-
-[[package]]
-name = "bed-editor-ui"
-version = "0.1.0"
-dependencies = [
- "bed-document-session",
+ "bed-documents",
  "bed-editing",
  "bed-highlight",
  "bed-keybindings",
@@ -2174,48 +2130,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-editor-workbench"
-version = "0.1.0"
-dependencies = [
- "bed-color",
- "bed-config",
- "bed-csv",
- "bed-document-session",
- "bed-editing",
- "bed-editor",
- "bed-editor-api",
- "bed-editor-ui",
- "bed-files",
- "bed-image",
- "bed-json",
- "bed-keybindings",
- "bed-lsp",
- "bed-remote",
- "bed-runtime",
- "bed-ui",
- "bed-workbench",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "dear-imgui-sys",
- "rfd",
- "serde_json",
-]
-
-[[package]]
-name = "bed-effects"
-version = "0.1.0"
-dependencies = [
- "bed-desktop",
- "bed-effects-config",
- "bevy",
- "dear-imgui-rs",
- "dear-imgui-wgpu",
- "serde_json",
- "wgpu",
-]
-
-[[package]]
 name = "bed-effects-config"
 version = "0.1.0"
 dependencies = [
@@ -2223,24 +2137,47 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-explorer"
+name = "bed-example-editor"
 version = "0.1.0"
 dependencies = [
- "bed-csv",
- "bed-document-session",
+ "bed-core",
  "bed-editing",
- "bed-editor-api",
- "bed-files",
- "bed-keybindings",
- "bed-remote",
- "bed-ui",
- "bed-workbench",
- "bed-workbench-api",
+ "bed-plugin-editor",
  "bevy",
- "chrono",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-example-layouts"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-core",
+ "bed-desktop",
+ "bed-plugin-layouts",
+ "bed-workbench",
+ "bevy",
  "dear-imgui-rs",
  "serde_json",
- "trash",
+]
+
+[[package]]
+name = "bed-example-model"
+version = "0.1.0"
+dependencies = [
+ "bed-core",
+ "bevy",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-example-terminal"
+version = "0.1.0"
+dependencies = [
+ "bed-core",
+ "bed-plugin-terminal",
+ "bed-workbench",
+ "serde_json",
 ]
 
 [[package]]
@@ -2254,55 +2191,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-font"
-version = "0.1.0"
-dependencies = [
- "bed-editing",
- "bed-editor-api",
- "bed-ui",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "dear-imgui-sys",
- "flate2",
- "harfrust 0.14.0",
- "serde_json",
- "wuff",
-]
-
-[[package]]
 name = "bed-git"
-version = "0.1.0"
-dependencies = [
- "bed-document-session",
- "bed-editing",
- "bed-editor-api",
- "bed-editor-ui",
- "bed-git-core",
- "bed-remote",
- "bed-ui",
- "bed-workbench",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "serde_json",
-]
-
-[[package]]
-name = "bed-git-core"
 version = "0.1.0"
 dependencies = [
  "libc",
  "serde",
-]
-
-[[package]]
-name = "bed-headless"
-version = "0.1.0"
-dependencies = [
- "bed-files",
- "bed-lsp",
- "bed-remote",
 ]
 
 [[package]]
@@ -2316,84 +2209,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-http"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "bed-editing",
- "bed-editor-api",
- "bed-ui",
- "bed-workbench",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "bed-idle"
-version = "0.1.0"
-dependencies = [
- "bed-desktop",
- "bed-editor-api",
- "bed-scenes",
- "bed-ui",
- "bevy",
- "dear-imgui-rs",
- "winit",
-]
-
-[[package]]
-name = "bed-image"
-version = "0.1.0"
-dependencies = [
- "bed-editing",
- "bed-editor-api",
- "bed-keybindings",
- "bed-ui",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "image",
- "resvg",
- "serde_json",
-]
-
-[[package]]
-name = "bed-json"
-version = "0.1.0"
-dependencies = [
- "bed-editing",
- "bed-editor-api",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "jsonc-parser",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "bed-keybindings"
 version = "0.1.0"
 dependencies = [
  "dear-imgui-rs",
  "serde",
- "serde_json",
-]
-
-[[package]]
-name = "bed-layout-app"
-version = "0.1.0"
-dependencies = [
- "bed-desktop",
- "bed-workbench",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
  "serde_json",
 ]
 
@@ -2410,16 +2230,266 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-markdown"
+name = "bed-plugin-audio-player"
 version = "0.1.0"
 dependencies = [
- "bed-document-session",
+ "bed-api",
  "bed-editing",
- "bed-editor-api",
- "bed-image",
+ "bed-keybindings",
+ "bed-ui",
+ "bevy",
+ "dear-imgui-rs",
+ "rodio",
+ "rustfft",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-automation"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-app",
+ "bed-app-config",
+ "bed-desktop",
+ "bed-documents",
+ "bed-editing",
+ "bed-plugin-editor",
+ "bed-ui",
+ "bed-workbench",
+ "bevy",
+ "dear-imgui-rs",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-color-picker"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-editing",
+ "bed-ui",
+ "bed-workbench",
+ "bevy",
+ "dear-imgui-rs",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-csv-table"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-documents",
+ "bed-editing",
+ "bed-keybindings",
+ "bed-ui",
+ "bevy",
+ "dear-imgui-rs",
+ "dear-imgui-sys",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-debugger"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-debugger",
+ "bed-documents",
+ "bed-editing",
+ "bed-editor-widgets",
+ "bed-keybindings",
+ "bed-terminal",
+ "bed-ui",
+ "bed-workbench",
+ "bevy",
+ "dear-imgui-rs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-editor"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-documents",
+ "bed-editing",
+ "bed-editor-widgets",
+ "bed-highlight",
+ "bed-keybindings",
+ "bed-lsp",
+ "bed-ui",
+ "bed-workbench",
+ "bevy",
+ "dear-imgui-rs",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-effects"
+version = "0.1.0"
+dependencies = [
+ "bed-desktop",
+ "bed-effects-config",
+ "bevy",
+ "dear-imgui-rs",
+ "dear-imgui-wgpu",
+ "serde_json",
+ "wgpu",
+]
+
+[[package]]
+name = "bed-plugin-file-explorer"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-documents",
+ "bed-editing",
+ "bed-files",
+ "bed-keybindings",
+ "bed-plugin-csv-table",
  "bed-remote",
  "bed-ui",
- "bed-workbench-api",
+ "bed-workbench",
+ "bevy",
+ "chrono",
+ "dear-imgui-rs",
+ "serde_json",
+ "trash",
+]
+
+[[package]]
+name = "bed-plugin-file-search"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-documents",
+ "bed-editing",
+ "bed-files",
+ "bed-keybindings",
+ "bed-remote",
+ "bed-ui",
+ "bed-workbench",
+ "bevy",
+ "dear-imgui-rs",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-font-viewer"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-editing",
+ "bed-ui",
+ "bevy",
+ "dear-imgui-rs",
+ "dear-imgui-sys",
+ "flate2",
+ "harfrust 0.14.0",
+ "serde_json",
+ "wuff",
+]
+
+[[package]]
+name = "bed-plugin-git"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-documents",
+ "bed-editing",
+ "bed-editor-widgets",
+ "bed-git",
+ "bed-remote",
+ "bed-ui",
+ "bed-workbench",
+ "bevy",
+ "dear-imgui-rs",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-http-client"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bed-api",
+ "bed-editing",
+ "bed-ui",
+ "bed-workbench",
+ "bevy",
+ "dear-imgui-rs",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "bed-plugin-idle"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-desktop",
+ "bed-plugin-mascots",
+ "bed-ui",
+ "bevy",
+ "dear-imgui-rs",
+ "winit",
+]
+
+[[package]]
+name = "bed-plugin-image-viewer"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-editing",
+ "bed-keybindings",
+ "bed-ui",
+ "bevy",
+ "dear-imgui-rs",
+ "image",
+ "resvg",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-json-tree"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-editing",
+ "bevy",
+ "dear-imgui-rs",
+ "jsonc-parser",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-layouts"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-workbench",
+ "bevy",
+ "dear-imgui-rs",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-markdown-preview"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-documents",
+ "bed-editing",
+ "bed-plugin-image-viewer",
+ "bed-remote",
+ "bed-ui",
  "bevy",
  "dear-imgui-rs",
  "pulldown-cmark",
@@ -2428,16 +2498,32 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-model-viewer"
+name = "bed-plugin-mascots"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-documents",
+ "bed-runtime",
+ "bed-ui",
+ "bevy",
+ "dear-imgui-rs",
+ "gltf",
+ "image",
+ "rodio",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-model-viewer"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "bed-api",
+ "bed-desktop",
  "bed-editing",
- "bed-editor-api",
  "bed-keybindings",
  "bed-runtime",
  "bed-ui",
- "bed-workbench-api",
  "bevy",
  "bevy_stl",
  "bytemuck",
@@ -2452,30 +2538,80 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-outline"
+name = "bed-plugin-settings"
 version = "0.1.0"
 dependencies = [
- "bed-editing",
- "bed-editor-api",
- "bed-highlight",
+ "bed-api",
+ "bed-app-config",
+ "bed-documents",
+ "bed-keybindings",
  "bed-ui",
  "bed-workbench",
- "bed-workbench-api",
  "bevy",
  "dear-imgui-rs",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-projects"
+name = "bed-plugin-source-outline"
 version = "0.1.0"
 dependencies = [
- "bed-document-session",
- "bed-editor-api",
- "bed-scenes",
+ "bed-api",
+ "bed-editing",
+ "bed-highlight",
  "bed-ui",
  "bed-workbench",
- "bed-workbench-api",
+ "bevy",
+ "dear-imgui-rs",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-sqlite-browser"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-editing",
+ "bed-keybindings",
+ "bevy",
+ "dear-imgui-rs",
+ "dear-imgui-sys",
+ "rusqlite",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "bed-plugin-terminal"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-app",
+ "bed-app-config",
+ "bed-app-shell",
+ "bed-desktop",
+ "bed-documents",
+ "bed-keybindings",
+ "bed-plugin-editor",
+ "bed-remote",
+ "bed-terminal",
+ "bed-ui",
+ "bed-workbench",
+ "bevy",
+ "dear-imgui-rs",
+ "serde_json",
+ "winit",
+]
+
+[[package]]
+name = "bed-plugin-workspaces"
+version = "0.1.0"
+dependencies = [
+ "bed-api",
+ "bed-documents",
+ "bed-plugin-mascots",
+ "bed-ui",
+ "bed-workbench",
  "bevy",
  "dear-imgui-rs",
  "serde_json",
@@ -2486,7 +2622,7 @@ name = "bed-remote"
 version = "0.1.0"
 dependencies = [
  "bed-editing",
- "bed-git-core",
+ "bed-git",
  "git2",
  "infer",
  "libc",
@@ -2494,6 +2630,15 @@ dependencies = [
  "object",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "bed-remote-agent"
+version = "0.1.0"
+dependencies = [
+ "bed-files",
+ "bed-lsp",
+ "bed-remote",
 ]
 
 [[package]]
@@ -2505,96 +2650,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-scenes"
-version = "0.1.0"
-dependencies = [
- "bed-document-session",
- "bed-editor-api",
- "bed-runtime",
- "bed-ui",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "gltf",
- "image",
- "rodio",
- "serde_json",
-]
-
-[[package]]
-name = "bed-search"
-version = "0.1.0"
-dependencies = [
- "bed-document-session",
- "bed-editing",
- "bed-editor-api",
- "bed-files",
- "bed-keybindings",
- "bed-remote",
- "bed-ui",
- "bed-workbench",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "serde_json",
-]
-
-[[package]]
-name = "bed-settings"
-version = "0.1.0"
-dependencies = [
- "bed-config",
- "bed-document-session",
- "bed-editor-api",
- "bed-keybindings",
- "bed-ui",
- "bed-workbench",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "serde_json",
-]
-
-[[package]]
-name = "bed-sqlite"
-version = "0.1.0"
-dependencies = [
- "bed-editing",
- "bed-editor-api",
- "bed-keybindings",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "dear-imgui-sys",
- "rusqlite",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "bed-terminal"
-version = "0.1.0"
-dependencies = [
- "bed-config",
- "bed-desktop",
- "bed-document-session",
- "bed-editor",
- "bed-editor-api",
- "bed-editor-workbench",
- "bed-keybindings",
- "bed-remote",
- "bed-terminal-core",
- "bed-ui",
- "bed-workbench",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "serde_json",
- "winit",
-]
-
-[[package]]
-name = "bed-terminal-core"
 version = "0.1.0"
 dependencies = [
  "bed-editing",
@@ -2631,31 +2687,12 @@ dependencies = [
 name = "bed-workbench"
 version = "0.1.0"
 dependencies = [
- "bed-keybindings",
- "bed-ui",
- "bed-workbench-api",
- "bevy",
- "dear-imgui-rs",
- "serde_json",
-]
-
-[[package]]
-name = "bed-workbench-api"
-version = "0.1.0"
-dependencies = [
+ "bed-api",
  "bed-keybindings",
  "bed-ui",
  "bevy",
  "dear-imgui-rs",
- "dear-imgui-sys",
  "serde_json",
-]
-
-[[package]]
-name = "bedterm"
-version = "0.1.0"
-dependencies = [
- "bed-terminal-core",
 ]
 
 [[package]]
@@ -6025,18 +6062,6 @@ dependencies = [
  "cc",
  "float-cmp 0.10.0",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "minimal"
-version = "0.1.0"
-dependencies = [
- "bed-desktop",
- "bed-editor-api",
- "bed-terminal",
- "bed-workbench",
- "bedterm",
- "serde_json",
 ]
 
 [[package]]

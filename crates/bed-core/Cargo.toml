@@ -1,0 +1,24 @@
+[package]
+name = "bed-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+description = "A Bevy desktop workbench with shared documents and editing"
+
+[dependencies]
+bed-desktop = { workspace = true }
+bed-runtime = { workspace = true }
+bed-workbench = { workspace = true }
+bed-api = { workspace = true, features = ["documents"] }
+bed-documents = { workspace = true }
+bed-editing = { workspace = true }
+bed-ui = { workspace = true, features = ["imgui", "gpu"] }
+bevy = { workspace = true, features = ["std"] }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+rfd = { workspace = true }
+
+[dev-dependencies]
+bed-plugin-layouts = { workspace = true }
+

@@ -1,33 +1,88 @@
-//! TerminalPlugin attaches panel entities to the world's shared BedTerminal.
+//! Bed terminal components. Attribution: workspace LICENSE and NOTICE.
+#[cfg(feature = "ui")]
+#[path = "bed_terminal.rs"]
+pub mod bed_terminal;
+pub mod process_cwd;
+mod process_title;
+pub mod shell_bridge;
+pub mod terminal;
+#[cfg(feature = "ui")]
+pub mod terminal_font;
+pub mod terminal_input;
+pub mod terminal_links;
+pub mod terminal_pty;
+#[cfg(feature = "ui")]
+pub mod terminal_renderer;
+#[cfg(feature = "ui")]
+pub mod terminal_view;
 
-mod feature;
-#[cfg(unix)]
-mod shell;
-pub use feature::{
-    TerminalAppearance, TerminalFrontend, TerminalPanelState, TerminalPlugin, TerminalRetentions,
-    TerminalWorkspace, close_panel, focus_panel,
-};
-use std::path::{Path, PathBuf};
+#[cfg(all(test, feature = "ui"))]
+pub(crate) static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-pub const MODULE_ID: &str = "bed.terminal";
-pub const PANEL_ID: &str = "bed.terminal.panel";
-pub const NEW_COMMAND: &str = "bed.terminal.new";
+/// Process sessions are shared by terminal presentations and debugger launches.
+#[derive(bevy::prelude::Resource, Default)]
+pub struct TerminalRetentions(pub std::collections::HashSet<u64>);
 
-pub fn shell_directory(saved: Option<&str>, base_directory: &str, remote: bool) -> Option<PathBuf> {
-    saved
-        .filter(|path| remote || Path::new(path).is_dir())
-        .map(PathBuf::from)
-        .or_else(|| (!base_directory.is_empty()).then(|| PathBuf::from(base_directory)))
+#[derive(bevy::prelude::Component, Clone, Copy, Debug)]
+pub struct TerminalAttachment {
+    pub session_id: u64,
+    pub command: bool,
 }
 
-#[cfg(feature = "desktop")]
-mod input;
-#[cfg(feature = "desktop")]
-pub use input::{TerminalInputPolicy, TerminalInputSystems, clipboard_file_paste};
+#[cfg(feature = "ui")]
+pub struct TerminalCorePlugin;
 
-#[cfg(test)]
-#[path = "../../../tests/support/temp_dir.rs"]
-mod test_support;
+#[cfg(feature = "ui")]
+impl bevy::app::Plugin for TerminalCorePlugin {
+    fn build(&self, app: &mut bevy::app::App) {
+        if !app.world().contains_non_send::<bed_terminal::BedTerminal>() {
+            app.insert_non_send(bed_terminal::BedTerminal::new_empty());
+        }
+        app.init_non_send::<terminal_font::TerminalFonts>()
+            .init_resource::<TerminalRetentions>()
+            .init_resource::<TerminalActivity>()
+            .add_systems(
+                bevy::prelude::PreUpdate,
+                bevy::prelude::IntoScheduleConfigs::in_set(poll, TerminalCoreSystems::Poll),
+            )
+            .add_systems(
+                bevy::prelude::Last,
+                bevy::prelude::IntoScheduleConfigs::after(shutdown, bevy::app::OnAppExitSystems),
+            );
+    }
+}
 
-#[cfg(test)]
-pub(crate) static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[cfg(feature = "ui")]
+fn shutdown(
+    mut exit: bevy::prelude::MessageReader<bevy::app::AppExit>,
+    mut terminal: bevy::prelude::NonSendMut<bed_terminal::BedTerminal>,
+) {
+    if exit.read().next().is_some() {
+        terminal.shutdown();
+    }
+}
+
+#[derive(bevy::prelude::SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TerminalCoreSystems {
+    Poll,
+}
+
+#[derive(bevy::prelude::Resource, Default)]
+pub struct TerminalActivity {
+    pub changed: bool,
+    pub error: Option<String>,
+}
+
+#[cfg(feature = "ui")]
+fn poll(
+    mut terminal: bevy::prelude::NonSendMut<bed_terminal::BedTerminal>,
+    mut activity: bevy::prelude::ResMut<TerminalActivity>,
+) {
+    match terminal.poll() {
+        Ok(changed) => activity.changed = changed,
+        Err(error) => {
+            activity.error = Some(error.to_string());
+            activity.changed = true;
+        }
+    }
+}

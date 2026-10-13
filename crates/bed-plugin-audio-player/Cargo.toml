@@ -1,0 +1,17 @@
+[package]
+name = "bed-plugin-audio-player"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-keybindings = { workspace = true }
+bevy = { workspace = true, features = ["std"] }
+bed-api = { workspace = true, features = ["gpu", "documents"] }
+bed-ui = { workspace = true, features = ["imgui", "gpu"] }
+bed-editing = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+rodio = { workspace = true }
+rustfft = "=6.4.1"

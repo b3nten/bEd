@@ -1,6 +1,7 @@
 //! One status row. Features own content; this renderer owns sizing and requests.
 use super::{UiLoan, WorkbenchLayout, WorkbenchRequests, WorkbenchViewport, api};
-use api::{Action, StatusContext, StatusDrawContext, StatusDrawMode, StatusItem, StatusItems};
+use api::WorkbenchAction;
+use bed_api::status::{StatusContext, StatusDrawContext, StatusDrawMode, StatusItem, StatusItems};
 use bed_ui::util::popup_style;
 use bevy::prelude::*;
 use dear_imgui_rs::{Condition, StyleColor, StyleVar, TextureId, Ui, WindowFlags, sys};
@@ -251,7 +252,7 @@ fn draw_entry(
     entry: &Entry,
     ctx: StatusDrawContext,
     state: &mut StatusBarState,
-    actions: &mut Vec<Action>,
+    actions: &mut Vec<WorkbenchAction>,
 ) {
     if let Some(error) = state.failures.get(&entry.key()) {
         ui.text(format!("{}: unavailable\n{error}", entry.item.label));
@@ -350,7 +351,7 @@ fn draw(
     ui: &Ui,
     host: StatusBarHost<'_>,
     icons: StatusIconResolver,
-) -> Vec<Action> {
+) -> Vec<WorkbenchAction> {
     let viewport = *world.resource::<WorkbenchViewport>();
     let main = ui.main_viewport();
     let (origin, size) = viewport

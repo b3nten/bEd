@@ -1,7 +1,5 @@
 //! Opt-in acceptance of real completion and workspace-changing LSP actions.
-use bed_document_session::{
-    ByteEdit, ClosePolicy, DocumentId, EditorSession, SessionOptions, ViewId,
-};
+use bed_documents::{ByteEdit, ClosePolicy, DocumentId, DocumentSession, SessionOptions, ViewId};
 use bed_lsp::{lsp_uri::LspUri, workspace_lsp::RoutedLspResponse};
 use serde_json::{Value, json};
 use std::{
@@ -15,7 +13,7 @@ use std::{
 #[path = "support/temp_dir.rs"]
 mod temp_dir;
 
-fn pump(session: &mut EditorSession, ready: impl Fn(&EditorSession) -> bool) {
+fn pump(session: &mut DocumentSession, ready: impl Fn(&DocumentSession) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(90);
     while !ready(session) {
         let report = session.tick();
@@ -30,7 +28,7 @@ fn pump(session: &mut EditorSession, ready: impl Fn(&EditorSession) -> bool) {
 }
 
 fn request(
-    session: &mut EditorSession,
+    session: &mut DocumentSession,
     document: DocumentId,
     view: ViewId,
     method: &str,
@@ -67,7 +65,7 @@ fn request(
     }
 }
 
-fn replace(session: &mut EditorSession, document: DocumentId, bytes: &[u8]) {
+fn replace(session: &mut DocumentSession, document: DocumentId, bytes: &[u8]) {
     let revision = session.document_revision(document).unwrap();
     let len = session.snapshot(document).unwrap().bytes.len();
     session
@@ -112,7 +110,7 @@ fn real_completion_import_format_rename_quick_fix_and_workspace_undo() {
         "languages":[{"name":"rust","language_id":"rust","file_types":["rs"],"language_server":"rust-analyzer"}],
         "language_servers":{"rust-analyzer":{"command":"rust-analyzer"}}
     })).unwrap());
-    let mut session = EditorSession::with_options(SessionOptions {
+    let mut session = DocumentSession::with_options(SessionOptions {
         project_root: Some(dir.root().into()),
         lsp_config: Some(config),
         ..Default::default()

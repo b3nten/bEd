@@ -106,13 +106,13 @@ impl<T> LspRequestState<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bed_editing::identity::{DocumentId, ViewId, WorkspaceId};
+    use bed_editing::identity::{DocumentId, SessionId, ViewId};
 
     #[test]
     fn routed_replies_require_exact_workspace_document_version_view_and_ticket() {
         let state = LspRequestState::new();
         let origin = state.begin_for(LspRequestOrigin {
-            workspace_id: WorkspaceId(1),
+            session_id: SessionId(1),
             document_id: DocumentId(2),
             view_id: ViewId(3),
             server_generation: 4,
@@ -122,7 +122,7 @@ mod tests {
         });
         for stale in [
             LspRequestOrigin {
-                workspace_id: WorkspaceId(7),
+                session_id: SessionId(7),
                 ..origin
             },
             LspRequestOrigin {

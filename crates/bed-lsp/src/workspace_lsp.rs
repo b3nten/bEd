@@ -10,7 +10,7 @@ use crate::{
     message_handler::RpcEvent,
     rust_recovery::{RustInstallStatus, RustStartupIssue, SharedOutput, output_text},
 };
-pub use bed_editing::identity::{DocumentId, ViewId, WorkspaceId};
+pub use bed_editing::identity::{DocumentId, SessionId, ViewId};
 use bed_editing::util::doc_path;
 use bed_remote::RemoteClient;
 use serde_json::Value;
@@ -42,7 +42,7 @@ pub struct ServerInstanceId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LspRequestOrigin {
-    pub workspace_id: WorkspaceId,
+    pub session_id: SessionId,
     pub server_generation: u64,
     pub document_id: DocumentId,
     pub document_generation: u64,
@@ -223,7 +223,7 @@ impl Drop for DiscoveryWorker {
 pub struct WorkspaceLsp {
     ssh_target: Option<bed_remote::SshTarget>,
     remote_client: Option<RemoteClient>,
-    workspace_id: WorkspaceId,
+    session_id: SessionId,
     config_path: PathBuf,
     root: PathBuf,
     config: LspConfig,
@@ -246,8 +246,8 @@ pub struct WorkspaceLsp {
 
 impl WorkspaceLsp {
     /// Exact supplied configuration, preserving the embedded-host contract.
-    pub fn new(workspace_id: WorkspaceId, config_path: PathBuf, root: PathBuf) -> Self {
-        let mut workspace = Self::unloaded(workspace_id, config_path, root);
+    pub fn new(session_id: SessionId, config_path: PathBuf, root: PathBuf) -> Self {
+        let mut workspace = Self::unloaded(session_id, config_path, root);
         match LspConfig::load(&workspace.config_path) {
             Ok(config) => {
                 workspace.outside_config = config.clone();
@@ -258,11 +258,11 @@ impl WorkspaceLsp {
         workspace
     }
 
-    fn unloaded(workspace_id: WorkspaceId, config_path: PathBuf, root: PathBuf) -> Self {
+    fn unloaded(session_id: SessionId, config_path: PathBuf, root: PathBuf) -> Self {
         Self {
             ssh_target: None,
             remote_client: None,
-            workspace_id,
+            session_id,
             config_path,
             root,
             outside_config: LspConfig::default(),
@@ -285,31 +285,31 @@ impl WorkspaceLsp {
     }
 
     pub fn new_remote(
-        workspace_id: WorkspaceId,
+        session_id: SessionId,
         config_path: PathBuf,
         root: PathBuf,
         target: bed_remote::SshTarget,
     ) -> Self {
-        let mut workspace = Self::new(workspace_id, config_path, root);
+        let mut workspace = Self::new(session_id, config_path, root);
         workspace.ssh_target = Some(target);
         workspace
     }
 
-    pub fn new_layered(workspace_id: WorkspaceId, config_path: PathBuf, root: PathBuf) -> Self {
+    pub fn new_layered(session_id: SessionId, config_path: PathBuf, root: PathBuf) -> Self {
         let root = PathBuf::from(doc_path::normalize(&root.to_string_lossy()));
-        let mut workspace = Self::unloaded(workspace_id, config_path, root);
+        let mut workspace = Self::unloaded(session_id, config_path, root);
         workspace.begin_layered(None);
         workspace
     }
 
     pub fn new_remote_layered(
-        workspace_id: WorkspaceId,
+        session_id: SessionId,
         config_path: PathBuf,
         root: PathBuf,
         target: bed_remote::SshTarget,
         remote: RemoteClient,
     ) -> Self {
-        let mut workspace = Self::unloaded(workspace_id, config_path, root);
+        let mut workspace = Self::unloaded(session_id, config_path, root);
         workspace.ssh_target = Some(target);
         workspace.begin_layered(Some(remote));
         workspace
@@ -378,8 +378,8 @@ impl WorkspaceLsp {
         }
     }
 
-    pub fn workspace_id(&self) -> WorkspaceId {
-        self.workspace_id
+    pub fn session_id(&self) -> SessionId {
+        self.session_id
     }
 
     pub fn root(&self) -> &Path {
@@ -1337,7 +1337,7 @@ impl WorkspaceLsp {
         let document = self.documents.get(&id)?;
         let slot = self.servers.get(document.instance.as_ref()?)?;
         Some(LspRequestOrigin {
-            workspace_id: self.workspace_id,
+            session_id: self.session_id,
             server_generation: slot.generation.get(),
             document_id: id,
             document_generation,
@@ -1348,7 +1348,7 @@ impl WorkspaceLsp {
     }
 
     pub fn origin_is_current(&self, origin: &LspRequestOrigin) -> bool {
-        origin.workspace_id == self.workspace_id
+        origin.session_id == self.session_id
             && self
                 .documents
                 .get(&origin.document_id)

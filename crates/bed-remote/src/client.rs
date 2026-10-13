@@ -25,7 +25,7 @@ impl SshTarget {
     pub fn new(host: impl Into<String>) -> Self {
         Self {
             host: host.into(),
-            agent: "bed-headless".into(),
+            agent: "bed-remote-agent".into(),
         }
     }
 }
@@ -249,8 +249,8 @@ mod tests {
         );
         assert!(shell_quote("a\0b").is_err());
         assert_eq!(
-            remote_command(&["bed-headless".into(), "".into()]).unwrap(),
-            "'bed-headless' ''"
+            remote_command(&["bed-remote-agent".into(), "".into()]).unwrap(),
+            "'bed-remote-agent' ''"
         );
     }
 }

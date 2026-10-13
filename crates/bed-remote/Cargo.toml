@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 bed-editing = { workspace = true }
-bed-git-core = { workspace = true }
+bed-git = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 object = { workspace = true }

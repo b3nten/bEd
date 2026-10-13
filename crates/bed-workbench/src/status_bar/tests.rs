@@ -17,7 +17,7 @@ fn measure(world: &World, _: &Ui, ctx: StatusContext) -> Option<f32> {
     data.enabled.then_some(data.width)
 }
 
-fn draw(world: &mut World, ui: &Ui, ctx: StatusDrawContext, actions: &mut Vec<Action>) {
+fn draw(world: &mut World, ui: &Ui, ctx: StatusDrawContext, actions: &mut Vec<WorkbenchAction>) {
     world
         .get_mut::<Data>(ctx.context.publisher)
         .unwrap()
@@ -217,7 +217,7 @@ fn status_tooltips_wrap_round_and_animate_for_icons_contents_and_host() {
     let mut fixture = Fixture::new(800.0);
 
     fn details(_: &World, ui: &Ui, _: StatusContext) {
-        api::StatusText::new(
+        bed_api::status::StatusText::new(
             "Current status details",
             "Location: /workspace/projects/a-long-directory-name/source-file.rs\n".repeat(3),
         )
@@ -337,7 +337,7 @@ fn compact_widget_popup_is_interactive_and_withdrawal_closes_it() {
         .take_next()
         .unwrap();
     assert!(
-        matches!(queued.action, Action::Invoke(ref invocation) if invocation.command == "test.record" && invocation.source.is_none())
+        matches!(queued.action, WorkbenchAction::Invoke(ref invocation) if invocation.command == "test.record" && invocation.source.is_none())
     );
     fixture
         .app
@@ -513,7 +513,7 @@ fn popup_actions_retain_panel_source_and_area_across_focus_changes() {
             .take_next()
             .unwrap()
             .action;
-        let Action::Invoke(invocation) = action else {
+        let WorkbenchAction::Invoke(invocation) = action else {
             panic!("expected command")
         };
         assert_eq!(invocation.source, Some(publisher));
@@ -595,7 +595,7 @@ fn failing_widget_discards_actions_and_does_not_interrupt_other_items() {
     let _lock = IMGUI_TEST_LOCK.lock().unwrap();
     let mut fixture = Fixture::new(800.0);
 
-    fn broken(_: &mut World, _: &Ui, ctx: StatusDrawContext, actions: &mut Vec<Action>) {
+    fn broken(_: &mut World, _: &Ui, ctx: StatusDrawContext, actions: &mut Vec<WorkbenchAction>) {
         actions.push(ctx.context.invoke("test.unwanted", Value::Null));
         unsafe {
             sys::igBeginChild_Str(

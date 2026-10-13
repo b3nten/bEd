@@ -166,10 +166,10 @@ pub(crate) fn language_name(id: &str) -> Option<&'static str> {
 /// Comment markers for the selected language, using filename detection only
 /// when the document's language has not been manually changed.
 pub fn comment_delimiters(
-    state: &bed_editing::editor_state::EditorState,
+    state: &bed_editing::document_state::DocumentState,
 ) -> Option<(&'static [u8], &'static [u8])> {
-    use bed_editing::editor_state::EditorState;
-    let language = if state.language_id == EditorState::language_id_from_path(&state.path) {
+    use bed_editing::document_state::DocumentState;
+    let language = if state.language_id == DocumentState::language_id_from_path(&state.path) {
         language_name(&state.path).or_else(|| language_name(&state.language_id))
     } else {
         language_name(&state.language_id)
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn comment_markers_follow_filename_detection_and_manual_language_selection() {
-        use bed_editing::editor_state::EditorState;
+        use bed_editing::document_state::DocumentState;
         for (path, start, end) in [
             ("main.rs", &b"//"[..], &b""[..]),
             ("script.py", b"#", b""),
@@ -208,12 +208,12 @@ mod tests {
             ("config.nix", b"#", b""),
             ("script.lisp", b";", b""),
         ] {
-            let mut state = EditorState::new();
+            let mut state = DocumentState::new();
             state.path = path.into();
-            state.language_id = EditorState::language_id_from_path(path);
+            state.language_id = DocumentState::language_id_from_path(path);
             assert_eq!(comment_delimiters(&state), Some((start, end)), "{path}");
         }
-        let mut state = EditorState::new();
+        let mut state = DocumentState::new();
         state.path = "main.rs".into();
         state.language_id = "python".into();
         assert_eq!(comment_delimiters(&state), Some((&b"#"[..], &b""[..])));

@@ -1,10 +1,10 @@
 //! Opt-in acceptance against the real installed rust-analyzer, without fake
 //! server responses or changes to the user's LSP configuration.
-use bed_document_session::{
-    ClosePolicy, EditorSession, LspConfigMode, SessionOptions,
-    editor_session::{DocumentId, ViewId, WorkspaceId},
+use bed_documents::{
+    ClosePolicy, DocumentSession, LspConfigMode, SessionOptions,
+    session::{DocumentId, SessionId, ViewId},
 };
-use bed_editing::editor_commands::CursorReveal;
+use bed_editing::text_commands::CursorReveal;
 use bed_lsp::{lsp_locations::from_definition_result, workspace_lsp::WorkspaceLsp};
 use serde_json::{Value, json};
 use std::{
@@ -26,7 +26,7 @@ impl Drop for Cleanup {
 }
 
 fn existing_user_config() -> PathBuf {
-    let config = bed_config::Settings::get_user_config_dir()
+    let config = bed_app_config::Settings::get_user_config_dir()
         .expect("a user settings directory is required for the existing LSP configuration")
         .join("lsp.json");
     assert!(config.is_file(), "existing user LSP configuration required");
@@ -34,7 +34,7 @@ fn existing_user_config() -> PathBuf {
 }
 
 fn observe_progress(
-    session: &EditorSession,
+    session: &DocumentSession,
     document: DocumentId,
     titles: &mut BTreeSet<String>,
     active_seen: &mut bool,
@@ -65,7 +65,7 @@ fn real_session_user_config_reports_and_clears_rust_syntax_diagnostics() {
     ).unwrap();
     let path = cleanup.0.join("src/main.rs");
     fs::write(&path, b"fn main() {}\n").unwrap();
-    let mut session = EditorSession::with_options(SessionOptions {
+    let mut session = DocumentSession::with_options(SessionOptions {
         project_root: Some(cleanup.0.clone()),
         lsp_config: Some(existing_user_config()),
         lsp_config_mode: LspConfigMode::Layered,
@@ -185,7 +185,7 @@ fn real_bed_repository_session_reports_unsaved_syntax_diagnostics() {
         .filter(|(_, line)| line.trim() == "}")
         .last()
         .unwrap();
-    let mut session = EditorSession::with_options(SessionOptions {
+    let mut session = DocumentSession::with_options(SessionOptions {
         project_root: Some(repo),
         lsp_config: Some(existing_user_config()),
         lsp_config_mode: LspConfigMode::Layered,
@@ -342,7 +342,7 @@ fn real_bed_repository_hover_and_definition() {
         .unwrap();
     let column = line.find("LspConfig").unwrap() + 2;
     let id = DocumentId(9001);
-    let mut pool = WorkspaceLsp::new(WorkspaceId(9000), config, repo);
+    let mut pool = WorkspaceLsp::new(SessionId(9000), config, repo);
     pool.register_document(id, path.to_str().unwrap(), &bytes, 0, "rust")
         .unwrap();
     let client = pool.client_for_document(id).unwrap();

@@ -1,0 +1,15 @@
+[package]
+name = "bed-plugin-layouts"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bevy = { workspace = true, features = ["std"] }
+bed-workbench = { workspace = true }
+bed-api = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+dear-imgui-rs = { workspace = true }

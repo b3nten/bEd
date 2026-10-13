@@ -3,16 +3,15 @@
 //! required and the application gains no test-only CLI modes.
 #[path = "support/editor_host.rs"]
 mod editor_host;
-use bed_config::Settings;
+use bed_app_config::Settings;
 use std::io;
 
-use bed_document_session::{
-    editor::Editor,
-    editor_session::{ClosePolicy, DocumentId, EditorSession, SessionOptions, ViewId, WorkspaceId},
+use bed_documents::{
+    document_runtime::DocumentRuntime,
+    session::{ClosePolicy, DocumentId, DocumentSession, SessionId, SessionOptions, ViewId},
 };
-use bed_editing::editor_events::DocumentChange;
-use bed_editor::lsp::lsp_ui::{ContextLspAction, LspUi};
-use bed_editor_ui::editor_view::{EditorView, EditorViewOptions};
+use bed_editing::editing_events::DocumentChange;
+use bed_editor_widgets::editor_view::{EditorView, EditorViewOptions};
 use bed_lsp::{
     connection::{Connection, encode_packet, write_packet},
     jsonrpc::{
@@ -25,6 +24,7 @@ use bed_lsp::{
     process::ProcessOptions,
     workspace_lsp::{LspRequestOrigin, WorkspaceLsp},
 };
+use bed_plugin_editor::lsp::lsp_ui::{ContextLspAction, LspUi};
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -553,7 +553,7 @@ fn work_done_progress_is_main_thread_owned_and_resets() {
     // The actual docked dashboard body must draw active server work inside the
     // caller's native window, then stop presenting it as active after end.
     {
-        use bed_editor::lsp::lsp_dashboard::LspDashboard;
+        use bed_plugin_editor::lsp::lsp_dashboard::LspDashboard;
         use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
         let mut context = Context::create();
         context.set_ini_filename(None::<PathBuf>).unwrap();
@@ -1050,7 +1050,7 @@ fn editor_bridge_synchronizes_edits_save_and_switch() {
     fixture.ready();
     let empty = LspClient::new(fixture.root.join("unused.json"));
     let shared = Rc::new(RefCell::new(std::mem::replace(&mut fixture.client, empty)));
-    let mut editor = Editor::new();
+    let mut editor = DocumentRuntime::new();
     editor.bind_lsp_client(Some(shared.clone()));
     editor
         .api()
@@ -1062,7 +1062,7 @@ fn editor_bridge_synchronizes_edits_save_and_switch() {
         0,
         5,
         false,
-        bed_editing::editor_commands::CursorReveal::Ensure,
+        bed_editing::text_commands::CursorReveal::Ensure,
     );
     editor.commands().type_text(b"X");
     assert!(editor.save().unwrap());
@@ -1142,11 +1142,11 @@ fn native_fixture_supports_navigation_hover_and_diagnostics() {
 }
 
 fn shared_session_pulls_unsaved_diagnostics_and_clears_them_on_undo() {
-    use bed_editing::editor_commands::CursorReveal;
+    use bed_editing::text_commands::CursorReveal;
     let fixture = PoolFixture::new(9901, "basic");
     let path = fixture.root.join("unsaved.rs");
     fs::write(&path, b"valid\n").unwrap();
-    let mut session = EditorSession::with_options(SessionOptions {
+    let mut session = DocumentSession::with_options(SessionOptions {
         project_root: Some(fixture.root.clone()),
         lsp_config: Some(fixture.root.join("lsp.json")),
         ..SessionOptions::default()
@@ -1218,14 +1218,14 @@ fn shared_session_pulls_unsaved_diagnostics_and_clears_them_on_undo() {
 }
 
 fn shared_session_save_diagnostics_render_in_each_custom_view() {
-    use bed_editing::editor_commands::CursorReveal;
-    use bed_editor_ui::views::diagnostic_style::severity_color;
+    use bed_editing::text_commands::CursorReveal;
+    use bed_editor_widgets::views::diagnostic_style::severity_color;
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions, sys};
 
     let fixture = PoolFixture::new(9900, "basic");
     let path = fixture.root.join("shared😀.rs");
     fs::write(&path, "a🙂b\n".as_bytes()).unwrap();
-    let mut session = EditorSession::with_options(SessionOptions {
+    let mut session = DocumentSession::with_options(SessionOptions {
         project_root: Some(fixture.root.clone()),
         lsp_config: Some(fixture.root.join("lsp.json")),
         ..SessionOptions::default()
@@ -1262,7 +1262,7 @@ fn shared_session_save_diagnostics_render_in_each_custom_view() {
         .unwrap()
         .build();
     let draw = |context: &mut Context,
-                session: &mut EditorSession,
+                session: &mut DocumentSession,
                 left: &mut EditorView,
                 right: &mut EditorView| {
         context.prepare_frame(FramePrepareOptions::new([1000.0, 600.0], 1.0 / 60.0));
@@ -1459,7 +1459,7 @@ impl PoolFixture {
                 "rust":{"command":std::env::current_exe().unwrap(),"args":["--mock-server",scenario]}
             }
         })).unwrap()).unwrap();
-        let pool = WorkspaceLsp::new(WorkspaceId(id), config, root.clone());
+        let pool = WorkspaceLsp::new(SessionId(id), config, root.clone());
         Self { root, pool }
     }
 
@@ -1593,7 +1593,7 @@ fn workspace_languages_and_roots_are_independent() {
         .request_origin(DocumentId(1), ViewId(2), 3, 4)
         .unwrap();
     let mut replacement = WorkspaceLsp::new(
-        first.pool.workspace_id(),
+        first.pool.session_id(),
         first.pool.config_path().to_owned(),
         first.root.clone(),
     );
@@ -1719,7 +1719,7 @@ fn workspace_pending_close_and_stale_request_routes() {
         .unwrap();
     assert!(fixture.pool.origin_is_current(&origin));
     assert!(!fixture.pool.origin_is_current(&LspRequestOrigin {
-        workspace_id: WorkspaceId(51),
+        session_id: SessionId(51),
         ..origin
     }));
     let result = Rc::new(RefCell::new(None));
@@ -1812,7 +1812,7 @@ fn workspace_failure_stderr_and_restart_are_actionable() {
         "languages":[{"name":"rust","language_id":"rust","file_types":["rs"],"language_server":"rust"}],
         "language_servers":{"rust":{"command":"/bed-guaranteed-no-rust-server"}}
     })).unwrap()).unwrap();
-    let mut pool = WorkspaceLsp::new(WorkspaceId(61), missing, fixture.root.clone());
+    let mut pool = WorkspaceLsp::new(SessionId(61), missing, fixture.root.clone());
     pool.register_document(
         DocumentId(2),
         &fixture.path("missing.rs"),
@@ -1858,10 +1858,8 @@ impl NavigationWorkbench {
             bevy::prelude::Entity,
         ),
     ) -> Self {
-        use bed_editing::editor_commands::CursorReveal;
-        use bed_editor_workbench::{
-            EditorWorkbenchOptions, EditorWorkbenchPlugin, WindowCommand, WorkspaceSpec,
-        };
+        use bed_app::{AppOptions, AppRuntimePlugin, WindowCommand, WorkspaceSpec};
+        use bed_editing::text_commands::CursorReveal;
         let fixture = PoolFixture::new(9910, "basic");
         let path = fixture.root.join("navigation.rs");
         fs::write(&path, "é🙂symbol\nline target\nlast\n").unwrap();
@@ -1898,60 +1896,59 @@ impl NavigationWorkbench {
         editor_host::install(&mut app, settings).unwrap();
         app.add_plugins((
             bed_runtime::BedRuntimePlugin,
-            EditorWorkbenchPlugin {
-                options: EditorWorkbenchOptions {
+            AppRuntimePlugin {
+                options: AppOptions {
                     working_directory: Some(fixture.root.clone()),
                     workspace: Some(WorkspaceSpec::local(fixture.root.to_string_lossy())),
                     ..Default::default()
                 },
             },
-            bed_editor::EditorPlugin,
+            bed_plugin_editor::EditorPlugin,
         ));
         app.update();
         editor_host::prepare_ui(app.world_mut(), &mut context).unwrap();
-        let request_tab =
-            bed_editor_workbench::open_file(app.world_mut(), &path, None, false, None).unwrap();
+        let request_tab = bed_app::open_file(app.world_mut(), &path, None, false, None).unwrap();
         let document = app
             .world()
-            .resource::<bed_editor_workbench::EditorNavigation>()
+            .resource::<bed_app::DocumentNavigation>()
             .active_document
             .unwrap();
         let requesting = app
             .world()
-            .resource::<bed_editor_workbench::EditorNavigation>()
+            .resource::<bed_app::DocumentNavigation>()
             .active_view
             .unwrap();
-        bed_editor_workbench::dispatch_editor_command(
+        bed_app::dispatch_app_command(
             app.world_mut(),
             WindowCommand::DuplicateView,
-            bed_editor_api::PanelTarget::LastFocused,
+            bed_api::workbench::PanelTarget::LastFocused,
         )
         .unwrap();
         let sibling = app
             .world()
-            .resource::<bed_editor_workbench::EditorNavigation>()
+            .resource::<bed_app::DocumentNavigation>()
             .active_view
             .unwrap();
         let sibling_tab = app
             .world()
-            .resource::<bed_editor_workbench::WorkbenchLayout>()
+            .resource::<bed_app::WorkbenchLayout>()
             .focused
             .unwrap();
         app.world_mut()
-            .non_send_mut::<EditorSession>()
+            .non_send_mut::<DocumentSession>()
             .with_commands(requesting, |commands| {
                 commands.set_cursor(0, 2, false, CursorReveal::Ensure)
             })
             .unwrap();
         app.world_mut()
-            .non_send_mut::<EditorSession>()
+            .non_send_mut::<DocumentSession>()
             .with_commands(sibling, |commands| {
                 commands.set_cursor(2, 1, false, CursorReveal::Ensure)
             })
             .unwrap();
         let path = app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .snapshot(document)
             .unwrap()
             .path;
@@ -1964,7 +1961,7 @@ impl NavigationWorkbench {
         wait_until(|| {
             app.update();
             app.world()
-                .non_send::<EditorSession>()
+                .non_send::<DocumentSession>()
                 .lsp()
                 .unwrap()
                 .client_for_document(document)
@@ -1972,7 +1969,7 @@ impl NavigationWorkbench {
         });
         let client = app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .lsp()
             .unwrap()
             .client_for_document(document)
@@ -2004,31 +2001,31 @@ impl NavigationWorkbench {
                 [1600.0, 1000.0],
                 1.0 / 60.0,
             ));
-        bed_editor_workbench::draw_ui(self.app.world_mut(), self.context.frame()).unwrap();
+        bed_app::draw_ui(self.app.world_mut(), self.context.frame()).unwrap();
         assert!(self.context.render_legacy().draw_data().total_vtx_count() > 0);
-        bed_editor_workbench::process_editor_requests(self.app.world_mut()).unwrap();
+        bed_app::process_app_requests(self.app.world_mut()).unwrap();
     }
 
     fn focus(&mut self, tab: bevy::prelude::Entity) {
-        bed_editor_workbench::focus_panel(self.app.world_mut(), tab, true).unwrap();
+        bed_app::focus_panel(self.app.world_mut(), tab, true).unwrap();
         self.frame();
         self.frame();
     }
 
-    fn session(&self) -> &EditorSession {
-        self.app.world().non_send::<EditorSession>()
+    fn session(&self) -> &DocumentSession {
+        self.app.world().non_send::<DocumentSession>()
     }
 
-    fn session_mut(&mut self) -> bevy::ecs::change_detection::Mut<'_, EditorSession> {
-        self.app.world_mut().non_send_mut::<EditorSession>()
+    fn session_mut(&mut self) -> bevy::ecs::change_detection::Mut<'_, DocumentSession> {
+        self.app.world_mut().non_send_mut::<DocumentSession>()
     }
 
     fn panel_count(&mut self, kind: &str) -> usize {
         self.app
             .world_mut()
             .query::<(
-                &bed_editor_workbench::PanelRecord,
-                &bed_editor_workbench::EditorPanel,
+                &bed_app::PanelRecord,
+                &bed_api::workbench::PanelPresentation,
             )>()
             .iter(self.app.world())
             .filter(|(record, _)| record.panel_type == kind)
@@ -2038,24 +2035,22 @@ impl NavigationWorkbench {
     fn active_view(&self) -> Option<ViewId> {
         self.app
             .world()
-            .resource::<bed_editor_workbench::EditorNavigation>()
+            .resource::<bed_app::DocumentNavigation>()
             .active_view
     }
 
     fn close(&mut self, panel: bevy::prelude::Entity) {
-        let request = bed_editor_workbench::capture_editor_request_from(
+        let request = bed_app::capture_app_request_from(
             self.app.world(),
-            bed_editor_workbench::EditorAction::ClosePanel(panel),
-            bed_editor_api::PanelTarget::LastFocused,
+            bed_app::AppAction::ClosePanel(panel),
+            bed_api::workbench::PanelTarget::LastFocused,
             Some(panel),
         );
-        let id = bed_editor_workbench::submit_editor_request(self.app.world_mut(), request);
+        let id = bed_app::submit_app_request(self.app.world_mut(), request);
         self.app.update();
         assert!(matches!(
-            bed_editor_workbench::poll_editor_request(self.app.world_mut(), id),
-            Some(Ok(
-                bed_editor_workbench::EditorRequestOutcome::Closed { .. }
-            ))
+            bed_app::poll_app_request(self.app.world_mut(), id),
+            Some(Ok(bed_app::AppRequestOutcome::Closed { .. }))
         ));
     }
 
@@ -2078,7 +2073,10 @@ impl NavigationWorkbench {
         self.frame();
         self.context.io_mut().add_key_event(Key::F12, false);
         self.frame();
-        assert_eq!(self.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+        assert_eq!(
+            self.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+            0
+        );
         assert!(
             shared_request(&self.client, "test/transcript")
                 .as_array()
@@ -2098,7 +2096,7 @@ impl Drop for NavigationWorkbench {
     fn drop(&mut self) {
         self.app
             .world_mut()
-            .non_send_mut::<EditorSession>()
+            .non_send_mut::<DocumentSession>()
             .shutdown(ClosePolicy::Discard)
             .unwrap();
         let _ = &self.fixture;
@@ -2117,7 +2115,10 @@ fn workbench_single_definition_returns_to_requesting_view_without_references() {
         .selections;
     fixture.focus(fixture.sibling_tab);
     fixture.release();
-    assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+    assert_eq!(
+        fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+        0
+    );
     fixture.frame();
     assert_eq!(fixture.active_view(), Some(fixture.requesting));
     let view = fixture.session().view_snapshot(fixture.requesting).unwrap();
@@ -2130,7 +2131,10 @@ fn workbench_single_definition_returns_to_requesting_view_without_references() {
             .selections,
         other
     );
-    assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+    assert_eq!(
+        fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+        0
+    );
     assert_eq!(
         fixture.session().snapshot(fixture.document).unwrap().bytes,
         bytes
@@ -2142,20 +2146,20 @@ fn workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs()
     let source_id = fixture
         .app
         .world()
-        .get::<bed_editor_workbench::EditorPanel>(fixture.request_tab)
+        .get::<bed_api::workbench::PanelPresentation>(fixture.request_tab)
         .unwrap()
         .id;
     let sibling_id = fixture
         .app
         .world()
-        .get::<bed_editor_workbench::EditorPanel>(fixture.sibling_tab)
+        .get::<bed_api::workbench::PanelPresentation>(fixture.sibling_tab)
         .unwrap()
         .id;
     let source_area = {
         let mut layout = fixture
             .app
             .world_mut()
-            .resource_mut::<bed_editor_workbench::WorkbenchLayout>();
+            .resource_mut::<bed_app::WorkbenchLayout>();
         let tiling = &mut layout.tiling;
         let source_area = tiling.area_for(source_id).unwrap();
         let rect = tiling.layout.area(source_area).rect;
@@ -2186,20 +2190,20 @@ fn workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs()
     let panel = fixture
         .app
         .world()
-        .resource::<bed_editor_workbench::WorkbenchLayout>()
+        .resource::<bed_app::WorkbenchLayout>()
         .focused
         .unwrap();
     let id = fixture
         .app
         .world()
-        .get::<bed_editor_workbench::EditorPanel>(panel)
+        .get::<bed_api::workbench::PanelPresentation>(panel)
         .unwrap()
         .id;
     assert_eq!(
         fixture
             .app
             .world()
-            .resource::<bed_editor_workbench::WorkbenchLayout>()
+            .resource::<bed_app::WorkbenchLayout>()
             .tiling
             .area_for(id),
         Some(source_area),
@@ -2209,7 +2213,7 @@ fn workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs()
         fixture
             .app
             .world()
-            .resource::<bed_editor_workbench::WorkbenchLayout>()
+            .resource::<bed_app::WorkbenchLayout>()
             .tiling
             .areas
             .iter()
@@ -2220,13 +2224,16 @@ fn workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs()
     let view = fixture
         .app
         .world()
-        .get::<bed_editor_api::EditorPanelBinding>(panel)
+        .get::<bed_api::documents::PanelBinding>(panel)
         .unwrap()
         .view
         .unwrap();
     let snapshot = fixture.session().view_snapshot(view).unwrap();
     assert_eq!((snapshot.row, snapshot.column), (1, 3));
-    assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+    assert_eq!(
+        fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+        0
+    );
 
     fixture.configure(fixture.location(1, 2));
     fixture.shortcut();
@@ -2241,7 +2248,7 @@ fn workbench_cross_file_definition_uses_a_preview_and_preserves_same_file_tabs()
         fixture
             .app
             .world()
-            .resource::<bed_editor_workbench::WorkbenchLayout>()
+            .resource::<bed_app::WorkbenchLayout>()
             .tiling
             .areas
             .iter()
@@ -2256,7 +2263,10 @@ fn workbench_multiple_and_stale_definitions_use_guarded_routes() {
     fixture.shortcut();
     fixture.release();
     fixture.frame();
-    assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 1);
+    assert_eq!(
+        fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+        1
+    );
     assert_eq!(
         fixture
             .session()
@@ -2268,11 +2278,14 @@ fn workbench_multiple_and_stale_definitions_use_guarded_routes() {
     let active = fixture
         .app
         .world()
-        .resource::<bed_editor_workbench::WorkbenchLayout>()
+        .resource::<bed_app::WorkbenchLayout>()
         .focused
         .unwrap();
     fixture.close(active);
-    assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+    assert_eq!(
+        fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+        0
+    );
     fixture.configure(fixture.location(1, 2));
     fixture.shortcut();
     let requesting = fixture.requesting;
@@ -2290,10 +2303,10 @@ fn workbench_multiple_and_stale_definitions_use_guarded_routes() {
         fixture
             .app
             .world()
-            .non_send::<bed_editor::EditorRuntime>()
+            .non_send::<bed_plugin_editor::EditorRuntime>()
             .navigation_outcome()
             .map(|outcome| &outcome.kind),
-        Some(bed_editor::NavigationOutcomeKind::Cancelled)
+        Some(bed_plugin_editor::NavigationOutcomeKind::Cancelled)
     ));
     assert!(
         shared_request(&fixture.client, "test/transcript")
@@ -2313,7 +2326,10 @@ fn workbench_multiple_and_stale_definitions_use_guarded_routes() {
             .selections,
         expected
     );
-    assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+    assert_eq!(
+        fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+        0
+    );
     drop(fixture);
     let mut fixture = NavigationWorkbench::new();
     fixture.configure(fixture.location(1, 2));
@@ -2324,10 +2340,10 @@ fn workbench_multiple_and_stale_definitions_use_guarded_routes() {
         fixture
             .app
             .world()
-            .non_send::<bed_editor::EditorRuntime>()
+            .non_send::<bed_plugin_editor::EditorRuntime>()
             .navigation_outcome()
             .map(|outcome| &outcome.kind),
-        Some(bed_editor::NavigationOutcomeKind::Cancelled)
+        Some(bed_plugin_editor::NavigationOutcomeKind::Cancelled)
     ));
     assert!(
         shared_request(&fixture.client, "test/transcript")
@@ -2358,11 +2374,14 @@ fn workbench_multiple_and_stale_definitions_use_guarded_routes() {
             .selections,
         expected
     );
-    assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+    assert_eq!(
+        fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+        0
+    );
 }
 
 fn workbench_primary_click_sends_clicked_utf16_position() {
-    use bed_editor_ui::views::view_layout::{glyph_advance, line_column_x};
+    use bed_editor_widgets::views::view_layout::{glyph_advance, line_column_x};
     use dear_imgui_rs::{Key, MouseButton, sys};
     let mut fixture = NavigationWorkbench::new();
     fixture.configure(fixture.location(1, 2));
@@ -2373,13 +2392,13 @@ fn workbench_primary_click_sends_clicked_utf16_position() {
             1.0 / 60.0,
         ));
     let ui = fixture.context.frame();
-    bed_editor_workbench::draw_ui(fixture.app.world_mut(), ui).unwrap();
+    bed_app::draw_ui(fixture.app.world_mut(), ui).unwrap();
     let name = std::ffi::CString::new(format!(
         "###bed_tab_{}",
         fixture
             .app
             .world()
-            .get::<bed_editor_workbench::EditorPanel>(fixture.request_tab)
+            .get::<bed_api::workbench::PanelPresentation>(fixture.request_tab)
             .unwrap()
             .id
     ))
@@ -2463,7 +2482,10 @@ fn workbench_primary_click_sends_clicked_utf16_position() {
             .selections,
         other
     );
-    assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+    assert_eq!(
+        fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+        0
+    );
     let transcript = shared_request(&fixture.client, "test/transcript");
     let request = transcript
         .as_array()
@@ -2485,7 +2507,10 @@ fn workbench_primary_click_sends_clicked_utf16_position() {
             .row,
         1
     );
-    assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+    assert_eq!(
+        fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+        0
+    );
 }
 
 fn navigation_canvas_point(
@@ -2493,12 +2518,12 @@ fn navigation_canvas_point(
     ui: &dear_imgui_rs::Ui,
     tab: bevy::prelude::Entity,
 ) -> [f32; 2] {
-    use bed_editor_ui::views::view_layout::{glyph_advance, line_column_x};
+    use bed_editor_widgets::views::view_layout::{glyph_advance, line_column_x};
     use dear_imgui_rs::sys;
     let name = std::ffi::CString::new(format!(
         "###bed_tab_{}",
         world
-            .get::<bed_editor_workbench::EditorPanel>(tab)
+            .get::<bed_api::workbench::PanelPresentation>(tab)
             .unwrap()
             .id
     ))
@@ -2532,30 +2557,30 @@ fn navigation_canvas_point(
 }
 
 fn workbench_cold_navigation_retains_one_action_and_position() {
-    use bed_editing::editor_commands::CursorReveal;
+    use bed_editing::text_commands::CursorReveal;
     use dear_imgui_rs::{FramePrepareOptions, Key, MouseButton};
     for action in ["shortcut", "primary click", "context menu"] {
         let mut fixture =
             NavigationWorkbench::with_startup("navigation-cold", |app, context, view, tab| {
-                bed_editor_workbench::focus_panel(app.world_mut(), tab, true).unwrap();
+                bed_app::focus_panel(app.world_mut(), tab, true).unwrap();
                 let mut point = [0.0; 2];
                 // Draw native focus and hit geometry without polling discovery or the
                 // initialize response. The user acts while the server is not ready.
                 for _ in 0..2 {
                     context.prepare_frame(FramePrepareOptions::new([1600.0, 1000.0], 1.0 / 60.0));
                     let ui = context.frame();
-                    bed_editor_workbench::draw_ui(app.world_mut(), ui).unwrap();
+                    bed_app::draw_ui(app.world_mut(), ui).unwrap();
                     point = navigation_canvas_point(app.world(), ui, tab);
                     drop(context.render_legacy());
                 }
                 let document = app
                     .world()
-                    .non_send::<EditorSession>()
+                    .non_send::<DocumentSession>()
                     .document_for_view(view)
                     .unwrap();
                 assert!(
                     !app.world()
-                        .non_send::<EditorSession>()
+                        .non_send::<DocumentSession>()
                         .lsp()
                         .unwrap()
                         .client_for_document(document)
@@ -2583,7 +2608,7 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
                     context.io_mut().add_key_event(Key::F12, true);
                 }
                 context.prepare_frame(FramePrepareOptions::new([1600.0, 1000.0], 1.0 / 60.0));
-                bed_editor_workbench::draw_ui(app.world_mut(), context.frame()).unwrap();
+                bed_app::draw_ui(app.world_mut(), context.frame()).unwrap();
                 drop(context.render_legacy());
                 context
                     .io_mut()
@@ -2595,12 +2620,12 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
                 context.io_mut().add_key_event(modifier, false);
                 context.prepare_frame(FramePrepareOptions::new([1600.0, 1000.0], 1.0 / 60.0));
                 let ui = context.frame();
-                bed_editor_workbench::draw_ui(app.world_mut(), ui).unwrap();
+                bed_app::draw_ui(app.world_mut(), ui).unwrap();
                 let menu_point = (action == "context menu").then(|| {
-                    let viewer_menu = bed_editor_api::panel_viewer_menu(
+                    let viewer_menu = bed_api::documents::panel_viewer_menu(
                         app.world(),
                         tab,
-                        bed_editor::TEXT_VIEWER,
+                        bed_plugin_editor::TEXT_VIEWER,
                     );
                     assert!(
                         viewer_menu.as_ref().is_none_or(|menu| menu
@@ -2611,8 +2636,8 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
                     );
                     let prefix = if viewer_menu.is_some() { 4.0 } else { 0.0 };
                     let font_size = app.world().non_send::<Settings>().font_size();
-                    let activity = bed_editor::EditorRuntime::document_lsp_activity(
-                        app.world().non_send::<EditorSession>(),
+                    let activity = bed_plugin_editor::EditorRuntime::document_lsp_activity(
+                        app.world().non_send::<DocumentSession>(),
                         document,
                     )
                     .is_some();
@@ -2640,26 +2665,26 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
                         .io_mut()
                         .add_mouse_button_event(MouseButton::Left, true);
                     context.prepare_frame(FramePrepareOptions::new([1600.0, 1000.0], 1.0 / 60.0));
-                    bed_editor_workbench::draw_ui(app.world_mut(), context.frame()).unwrap();
+                    bed_app::draw_ui(app.world_mut(), context.frame()).unwrap();
                     drop(context.render_legacy());
                     context
                         .io_mut()
                         .add_mouse_button_event(MouseButton::Left, false);
                     context.prepare_frame(FramePrepareOptions::new([1600.0, 1000.0], 1.0 / 60.0));
-                    bed_editor_workbench::draw_ui(app.world_mut(), context.frame()).unwrap();
+                    bed_app::draw_ui(app.world_mut(), context.frame()).unwrap();
                     drop(context.render_legacy());
                 }
                 let activity = app
                     .world()
-                    .non_send::<bed_editor::EditorRuntime>()
+                    .non_send::<bed_plugin_editor::EditorRuntime>()
                     .navigation_activity()
                     .expect("one cold UI action is retained");
                 assert_eq!(
                     (activity.view, activity.stage),
-                    (view, bed_editor::NavigationStage::WaitingForServer)
+                    (view, bed_plugin_editor::NavigationStage::WaitingForServer)
                 );
                 app.world_mut()
-                    .non_send_mut::<EditorSession>()
+                    .non_send_mut::<DocumentSession>()
                     .with_commands(view, |commands| {
                         commands.set_cursor(2, 1, false, CursorReveal::Ensure)
                     })
@@ -2670,7 +2695,7 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
             fixture
                 .app
                 .world()
-                .non_send::<bed_editor::EditorRuntime>()
+                .non_send::<bed_plugin_editor::EditorRuntime>()
                 .navigation_activity()
                 .is_none()
         });
@@ -2678,7 +2703,7 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
             fixture
                 .app
                 .world()
-                .non_send::<bed_editor::EditorRuntime>()
+                .non_send::<bed_plugin_editor::EditorRuntime>()
                 .navigation_outcome()
                 .is_none()
         );
@@ -2711,7 +2736,10 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
         };
         assert!(index("initialized") < index("textDocument/didOpen"));
         assert!(index("textDocument/didOpen") < index("textDocument/definition"));
-        assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+        assert_eq!(
+            fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+            0
+        );
     }
 }
 
@@ -2728,7 +2756,7 @@ fn workbench_navigation_retries_only_transient_errors() {
         fixture
             .app
             .world()
-            .non_send::<bed_editor::EditorRuntime>()
+            .non_send::<bed_plugin_editor::EditorRuntime>()
             .navigation_activity()
             .is_none()
     });
@@ -2744,11 +2772,14 @@ fn workbench_navigation_retries_only_transient_errors() {
         fixture
             .app
             .world()
-            .non_send::<bed_editor::EditorRuntime>()
+            .non_send::<bed_plugin_editor::EditorRuntime>()
             .navigation_outcome()
             .is_none()
     );
-    let runtime = fixture.app.world().non_send::<bed_editor::EditorRuntime>();
+    let runtime = fixture
+        .app
+        .world()
+        .non_send::<bed_plugin_editor::EditorRuntime>();
     let timing = runtime.navigation_timing().unwrap();
     assert!(
         timing
@@ -2770,11 +2801,14 @@ fn workbench_navigation_retries_only_transient_errors() {
             .iter()
             .all(|request| request["params"] == requests[0]["params"])
     );
-    assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+    assert_eq!(
+        fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+        0
+    );
 }
 
 fn workbench_navigation_empty_errors_and_timeout_are_distinct() {
-    use bed_editor::NavigationOutcomeKind;
+    use bed_plugin_editor::NavigationOutcomeKind;
     for (scenario, result, errors, hold, expected_requests) in [
         ("basic", Value::Null, json!([]), false, 1),
         ("basic", json!({"invalid":"location"}), json!([]), false, 1),
@@ -2800,14 +2834,14 @@ fn workbench_navigation_empty_errors_and_timeout_are_distinct() {
             fixture
                 .app
                 .world()
-                .non_send::<bed_editor::EditorRuntime>()
+                .non_send::<bed_plugin_editor::EditorRuntime>()
                 .navigation_activity()
                 .is_none()
         });
         let outcome = &fixture
             .app
             .world()
-            .non_send::<bed_editor::EditorRuntime>()
+            .non_send::<bed_plugin_editor::EditorRuntime>()
             .navigation_outcome()
             .unwrap()
             .kind;
@@ -2821,7 +2855,10 @@ fn workbench_navigation_empty_errors_and_timeout_are_distinct() {
                 "{outcome:?}"
             );
         }
-        assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+        assert_eq!(
+            fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+            0
+        );
         assert_eq!(
             fixture
                 .session()
@@ -2882,7 +2919,10 @@ fn workbench_latest_navigation_cancels_the_previous_rpc() {
             .row,
         2
     );
-    assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+    assert_eq!(
+        fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+        0
+    );
     drop(fixture);
 
     let mut fixture = NavigationWorkbench::new();
@@ -2899,10 +2939,10 @@ fn workbench_latest_navigation_cancels_the_previous_rpc() {
         fixture
             .app
             .world()
-            .non_send::<bed_editor::EditorRuntime>()
+            .non_send::<bed_plugin_editor::EditorRuntime>()
             .navigation_outcome()
             .map(|outcome| &outcome.kind),
-        Some(bed_editor::NavigationOutcomeKind::Cancelled)
+        Some(bed_plugin_editor::NavigationOutcomeKind::Cancelled)
     ));
     wait_until(|| {
         fixture.frame();
@@ -2916,7 +2956,10 @@ fn workbench_latest_navigation_cancels_the_previous_rpc() {
             .selections,
         before
     );
-    assert_eq!(fixture.panel_count(bed_editor::REFERENCES_PANEL_TYPE), 0);
+    assert_eq!(
+        fixture.panel_count(bed_plugin_editor::REFERENCES_PANEL_TYPE),
+        0
+    );
     assert!(
         !shared_request(&fixture.client, "test/transcript")
             .as_array()
@@ -2934,7 +2977,7 @@ fn typed_navigation_results_follow_the_requesting_view() {
         .register_document(DocumentId(1), &path, b"symbol", 1, "rust")
         .unwrap();
     fixture.ready();
-    let mut editor = Editor::new();
+    let mut editor = DocumentRuntime::new();
     editor.state.set_from_bytes(b"symbol");
     editor.state.path = path;
     let client = fixture.pool.client_for_document(DocumentId(1)).unwrap();
@@ -3146,7 +3189,7 @@ fn layered_shared_servers_roots_and_reload() {
     })).unwrap()).unwrap();
     let project = root.join(".bed/lsp.json");
     fs::write(&project, serde_json::to_vec(&json!({"language_servers":{"foundation":{"environment":{"BED_LSP_PROCESS_TEST_MARKER":"project"},"settings":{"foundation":{"value":"project"}}}}})).unwrap()).unwrap();
-    let mut pool = WorkspaceLsp::new_layered(WorkspaceId(1000), config, root.clone());
+    let mut pool = WorkspaceLsp::new_layered(SessionId(1000), config, root.clone());
     let path = |relative: &str| root.join(relative).to_string_lossy().into_owned();
     let first = path("packages/a/src/first.foo");
     let second = path("packages/a/src/second.bar");

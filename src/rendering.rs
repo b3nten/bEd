@@ -1,6 +1,6 @@
-//! Native render test support; production composition belongs to bed-effects.
-use bed_effects::desktop::{EffectsState as EditorEffects, install};
-use bed_effects::shader_manager::ShaderSettings;
+//! Native render test support; production composition belongs to bed-plugin-effects.
+use bed_plugin_effects::desktop::{EffectsState, install};
+use bed_plugin_effects::shader_manager::ShaderSettings;
 use bed_runtime::bevy;
 use bevy::{
     prelude::*,
@@ -81,12 +81,12 @@ mod tests {
     }
 
     #[derive(Resource)]
-    pub(crate) struct EditorRenderer {
+    pub(crate) struct AppRenderer {
         pub imgui: WgpuSnapshotRenderer,
     }
 
     #[derive(Resource)]
-    pub(crate) struct EditorRenderFrame {
+    pub(crate) struct AppRenderFrame {
         pub snapshot: Option<FrameSnapshot>,
         pub output: Option<wgpu::TextureView>,
         pub size: [u32; 2],
@@ -125,8 +125,8 @@ mod tests {
         settings: ShaderSettings,
     ) {
         app.sub_app_mut(RenderApp)
-            .insert_resource(EditorRenderer { imgui })
-            .insert_resource(EditorRenderFrame {
+            .insert_resource(AppRenderer { imgui })
+            .insert_resource(AppRenderFrame {
                 snapshot: None,
                 output: None,
                 size,
@@ -140,8 +140,8 @@ mod tests {
 
     fn render_editor(world: &mut World) {
         let (snapshot, output, size, policy, canvases) = {
-            let mut frame = world.resource_mut::<EditorRenderFrame>();
-            let policy = EditorEffects {
+            let mut frame = world.resource_mut::<AppRenderFrame>();
+            let policy = EffectsState {
                 settings: frame.settings,
                 time: frame.time,
                 scene_generation: frame.scene_generation,
@@ -159,7 +159,7 @@ mod tests {
             return;
         };
         world.insert_resource(policy);
-        let mut renderer = world.remove_resource::<EditorRenderer>().unwrap();
+        let mut renderer = world.remove_resource::<AppRenderer>().unwrap();
         let result = if let Some(output) = output {
             let composition = world.resource::<bed_desktop::DesktopComposition>().0;
             composition(
@@ -178,20 +178,20 @@ mod tests {
         };
         world.insert_resource(renderer);
         if let Err(error) = result {
-            world.resource_mut::<EditorRenderFrame>().error = Some(error);
+            world.resource_mut::<AppRenderFrame>().error = Some(error);
         }
     }
 
-    pub(crate) fn renderer(app: &mut App) -> Mut<'_, EditorRenderer> {
+    pub(crate) fn renderer(app: &mut App) -> Mut<'_, AppRenderer> {
         app.sub_app_mut(RenderApp)
             .world_mut()
-            .resource_mut::<EditorRenderer>()
+            .resource_mut::<AppRenderer>()
     }
 
-    pub(crate) fn frame(app: &mut App) -> Mut<'_, EditorRenderFrame> {
+    pub(crate) fn frame(app: &mut App) -> Mut<'_, AppRenderFrame> {
         app.sub_app_mut(RenderApp)
             .world_mut()
-            .resource_mut::<EditorRenderFrame>()
+            .resource_mut::<AppRenderFrame>()
     }
 
     use super::*;

@@ -10,13 +10,13 @@ publish = false
 [features]
 default = []
 layout = ["dep:bed-workbench", "dep:serde_json"]
-effects = ["dep:bed-effects"]
+effects = ["dep:bed-plugin-effects"]
 
 [dependencies]
 bevy = { version = "=0.20.0", default-features = false, features = ["std"] }
 bed-desktop = { path = "../../../crates/bed-desktop" }
 bed-workbench = { path = "../../../crates/bed-workbench", optional = true }
-bed-effects = { path = "../../../crates/bed-effects", features = ["desktop"], optional = true }
+bed-plugin-effects = { path = "../../../crates/bed-plugin-effects", features = ["desktop"], optional = true }
 serde_json = { version = "1", optional = true }
 
 # These integration patches are currently required by the desktop renderer.

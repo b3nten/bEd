@@ -1,0 +1,28 @@
+[package]
+name = "bed-editor-widgets"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = []
+language-services = ["dep:bed-highlight", "bed-documents/ide-services", "bed-ui/documentation-syntax"]
+
+[dependencies]
+bed-keybindings = { workspace = true }
+bed-editing = { workspace = true }
+bed-documents = { workspace = true }
+bed-highlight = { workspace = true, optional = true }
+bed-ui = { workspace = true, features = ["imgui", "documentation"] }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+git2 = { workspace = true }
+
+[[test]]
+name = "views"
+required-features = ["language-services"]

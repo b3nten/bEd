@@ -4,7 +4,7 @@ mod fixture;
 use bed_lsp::{
     lsp_client::LspClient,
     rust_recovery::RustStartupIssueKind,
-    workspace_lsp::{DocumentId, ServerInstanceId, WorkspaceId, WorkspaceLsp},
+    workspace_lsp::{DocumentId, ServerInstanceId, SessionId, WorkspaceLsp},
 };
 use fixture::{RustupFixture, TOOLCHAIN};
 use std::{
@@ -31,7 +31,7 @@ fn setup(fixture: &RustupFixture) -> (WorkspaceLsp, ServerInstanceId) {
         server: "rust-analyzer".into(),
         root: root.clone(),
     };
-    let mut pool = WorkspaceLsp::new(WorkspaceId(1), fixture.config.clone(), root.clone());
+    let mut pool = WorkspaceLsp::new(SessionId(1), fixture.config.clone(), root.clone());
     pool.register_document(
         DocumentId(1),
         root.join("main.rs").to_str().unwrap(),
@@ -358,7 +358,7 @@ fn remote_install_requests_never_start_local_rustup() {
     let fixture = RustupFixture::new();
     let root = fixture.root("first");
     let mut pool = WorkspaceLsp::new_remote(
-        WorkspaceId(2),
+        SessionId(2),
         fixture.config.clone(),
         root.clone(),
         bed_remote::SshTarget::new("fixture-host"),

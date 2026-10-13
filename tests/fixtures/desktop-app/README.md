@@ -2,7 +2,9 @@
 
 This Cargo workspace deliberately does not inherit the parent workspace's
 feature selection. The default application uses only `bed-desktop`; `layout`
-and `effects` add their respective plugins. There is no bEd settings, editor,
+adds the document-independent `bed-workbench`, and `effects` adds
+`bed-plugin-effects`. The workbench uses `bed-api` with document contracts
+disabled. There is no bEd settings, editor,
 workspace or remote dependency and no resource-directory discovery.
 
 Build with `cargo build --manifest-path tests/fixtures/desktop-app/Cargo.toml`.

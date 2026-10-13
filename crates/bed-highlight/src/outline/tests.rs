@@ -1,5 +1,5 @@
 use super::*;
-use bed_editing::editor_state::EditorState;
+use bed_editing::document_state::DocumentState;
 
 fn key(language: &str) -> OutlineKey {
     OutlineKey {
@@ -12,7 +12,7 @@ fn key(language: &str) -> OutlineKey {
 }
 
 fn snapshot(source: &str) -> Snapshot {
-    let mut state = EditorState::new();
+    let mut state = DocumentState::new();
     state.set_from_bytes(source.as_bytes());
     state.snapshot()
 }
@@ -268,7 +268,7 @@ fn name_ranges_preserve_utf8_bytes_and_all_line_endings() {
             &source.as_bytes()[node.name_range.clone()],
             "café".as_bytes()
         );
-        let mut state = EditorState::new();
+        let mut state = DocumentState::new();
         state.set_from_bytes(source.as_bytes());
         assert_eq!(state.row_col_from_offset(node.name_range.start), (1, 3));
     }
@@ -440,7 +440,7 @@ fn cancellation_during_work_does_not_poison_the_next_parse() {
 #[test]
 fn large_file_limit_skips_parsing_before_materializing_worker_bytes() {
     let source = vec![b' '; SKIP_TREE_SITTER_BYTES + 1];
-    let mut state = EditorState::new();
+    let mut state = DocumentState::new();
     state.set_from_bytes(&source);
     drop(source);
     let mut parser = Parser::new();

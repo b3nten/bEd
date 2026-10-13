@@ -87,16 +87,16 @@ for target in "${targets[@]}"; do
         --env "BED_BUILD_UID=$host_uid" \
         --env "BED_BUILD_GID=$host_gid" \
         "$image" sh -eu -c '
-            cargo build --locked --release --target "$BED_BUILD_TRIPLE" -p bed-headless
-            binary="/target/$BED_BUILD_TRIPLE/release/bed-headless"
+            cargo build --locked --release --target "$BED_BUILD_TRIPLE" -p bed-remote-agent
+            binary="/target/$BED_BUILD_TRIPLE/release/bed-remote-agent"
             printf "Helper protocol version: "
             "$binary" --protocol-version
-            cp "$binary" /out/bed-headless
-            chmod 0755 /out/bed-headless
-            chown "$BED_BUILD_UID:$BED_BUILD_GID" /out/bed-headless
+            cp "$binary" /out/bed-remote-agent
+            chmod 0755 /out/bed-remote-agent
+            chown "$BED_BUILD_UID:$BED_BUILD_GID" /out/bed-remote-agent
         '
     python3 "$bed_root/scripts/lib/remote-helpers.py" stage \
-        --target "$target" --binary "$output/bed-headless"
+        --target "$target" --binary "$output/bed-remote-agent"
     validation_args+=(--target "$target")
 done
 

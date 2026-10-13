@@ -740,7 +740,7 @@ fn search(
     buffer_paths: &[String],
     max_results: usize,
 ) -> ServiceResult<Response> {
-    use bed_editing::{editor_state::EditorState, text_search::CompiledSearch};
+    use bed_editing::{document_state::DocumentState, text_search::CompiledSearch};
     let matcher = CompiledSearch::new(query.as_bytes(), options)
         .map_err(|error| RemoteError::new(ErrorKind::InvalidInput, error))?;
     let paths = if options.include_ignored {
@@ -788,7 +788,7 @@ fn search(
                 continue;
             }
             let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
-            let (lines, _) = EditorState::split_lines(bytes);
+            let (lines, _) = DocumentState::split_lines(bytes);
             for (row, line) in lines.iter().enumerate() {
                 for range in matcher.matches(line) {
                     budget += line.len().saturating_mul(12)

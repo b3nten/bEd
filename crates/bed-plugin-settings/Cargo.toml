@@ -1,0 +1,19 @@
+[package]
+name = "bed-plugin-settings"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-keybindings = { workspace = true }
+bed-documents = { workspace = true }
+bed-app-config = { workspace = true }
+bed-ui = { workspace = true, features = ["imgui"] }
+bed-api = { workspace = true  , features = ["documents"] }
+bevy = { workspace = true, features = ["std"] }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+bed-workbench = { workspace = true }

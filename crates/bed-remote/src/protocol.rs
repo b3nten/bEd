@@ -7,7 +7,7 @@ pub const TRANSFER_CHUNK_BYTES: usize = 1024 * 1024;
 pub const MAX_FILE_PREFIX_BYTES: usize = 1024;
 // JSON arrays of u8 require at most four bytes per input byte. Keep headroom
 // for a full file and its request metadata.
-pub const MAX_FILE_BYTES: usize = 128 * 1024 * 1024;
+pub const MAX_FILE_BYTES: usize = bed_editing::MAX_DOCUMENT_BYTES;
 pub const MAX_FRAME_BYTES: usize = 4 * MAX_FILE_BYTES + 16 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -238,7 +238,7 @@ pub enum Request {
     GitStart {
         root: String,
         #[serde(rename = "git_operation")]
-        operation: bed_git_core::Operation,
+        operation: bed_git::Operation,
     },
     GitPoll {
         job_id: u64,
@@ -284,7 +284,7 @@ pub enum Response {
     /// Completion remains available until explicitly released.
     GitJob {
         #[serde(rename = "completion")]
-        result: Option<std::result::Result<bed_git_core::Output, bed_git_core::Error>>,
+        result: Option<std::result::Result<bed_git::Output, bed_git::Error>>,
     },
     Hello {
         version: u32,

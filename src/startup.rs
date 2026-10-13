@@ -1,7 +1,7 @@
 //! Standalone windows use the Startup layout.
 //! Explicit launch paths take precedence and only exact saved roots attach.
-use bed_config::{LayoutSlot, Settings};
-use bed_editor_api::workspace::{WorkspaceSpec, WorkspaceTarget};
+use bed_api::application::{WorkspaceSpec, WorkspaceTarget};
+use bed_app_config::{LayoutSlot, Settings};
 use std::{
     io,
     path::{Path, PathBuf},
@@ -75,12 +75,10 @@ pub(crate) struct Startup {
 }
 
 impl Startup {
-    pub fn into_options(
-        self,
-        settings: &Settings,
-    ) -> io::Result<bed_editor_workbench::EditorWorkbenchOptions> {
-        use bed_editor_workbench::{EditorWorkbenchOptions, OpenFileOptions};
-        let store = crate::workbench::workspace::store::WorkspaceStore::load(&settings.config_dir)?;
+    pub fn into_options(self, settings: &Settings) -> io::Result<bed_app::AppOptions> {
+        use bed_app::{AppOptions, OpenFileOptions};
+        let store =
+            crate::app_runtime::workspace::store::WorkspaceStore::load(&settings.config_dir)?;
         let workspace = if let Some(spec) = self.requested_workspace {
             Some(spec)
         } else if let Some(root) = self.workspace {
@@ -91,7 +89,7 @@ impl Startup {
             None
         };
         let initial_layout = workspace.is_none().then_some(LayoutSlot::Startup);
-        let options = EditorWorkbenchOptions {
+        let options = AppOptions {
             working_directory: Some(self.directory),
             workspace,
             initial_layout,
@@ -113,7 +111,7 @@ impl Startup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workbench::workspace::store::WorkspaceStore;
+    use crate::app_runtime::workspace::store::WorkspaceStore;
     use std::sync::atomic::{AtomicU64, Ordering};
     struct Fixture {
         root: PathBuf,
@@ -145,11 +143,7 @@ mod tests {
                 .unwrap();
             spec
         }
-        fn options(
-            &self,
-            options: StartupOptions,
-            paths: Vec<PathBuf>,
-        ) -> bed_editor_workbench::EditorWorkbenchOptions {
+        fn options(&self, options: StartupOptions, paths: Vec<PathBuf>) -> bed_app::AppOptions {
             options
                 .resolve(paths, Some(&self.root))
                 .unwrap()

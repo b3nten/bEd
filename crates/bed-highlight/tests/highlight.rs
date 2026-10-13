@@ -1,21 +1,21 @@
 // Translated from nealmick/ned tests/editor/{capture_map,highlight_queries,
 // highlight_service}_test.cpp at 2d3e9b53b0ebc44c6da6901ff242a95edaa4a1ff. License in LICENSE/NOTICE.
 use bed_editing::{
-    editor_operations::{EditorOperations, OpKind, TextOp},
-    editor_state::EditorState,
+    document_state::DocumentState,
+    editing_operations::{EditingOperations, OpKind, TextOp},
 };
 use bed_highlight::{
     capture_map::{
         ThemeSlot, capture_priority, theme_key_for_capture, theme_slot_for_capture,
         theme_slot_for_key,
     },
-    highlight_service::{EditorHighlight, PRIME_QUERY_LINES},
+    highlight_service::{PRIME_QUERY_LINES, SyntaxHighlighter},
     tree_sitter::{ThemeColors, TreeSitter},
 };
 use std::time::{Duration, Instant};
 
-fn document(bytes: &[u8], path: &str, language: &str) -> EditorState {
-    let mut state = EditorState::new();
+fn document(bytes: &[u8], path: &str, language: &str) -> DocumentState {
+    let mut state = DocumentState::new();
     state.set_from_bytes(bytes);
     state.path = path.to_owned();
     state.language_id = language.to_owned();
@@ -31,9 +31,9 @@ fn many_c_lines(n: usize) -> Vec<u8> {
 }
 
 fn wait_spans(
-    hl: &mut EditorHighlight,
-    state: &EditorState,
-    ops: &EditorOperations,
+    hl: &mut SyntaxHighlighter,
+    state: &DocumentState,
+    ops: &EditingOperations,
     row: i32,
 ) -> bool {
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -131,8 +131,8 @@ fn highlight_snippet_colors_a_cpp_signature() {
 #[test]
 fn full_rebuild_colors_the_prime_window_before_poll() {
     let state = document(&many_c_lines(2000), "test.c", "c");
-    let mut ops = EditorOperations::new();
-    let mut hl = EditorHighlight::new();
+    let mut ops = EditingOperations::new();
+    let mut hl = SyntaxHighlighter::new();
     hl.reset_for_document(&state, state.line_count() as usize);
     hl.highlight_content(&state, &mut ops);
     assert!(wait_spans(&mut hl, &state, &ops, 0));
@@ -151,8 +151,8 @@ fn insert_at_end_of_span_keeps_slot_before_recolor() {
     let mut text = b"// hi\n".to_vec();
     text.extend(many_c_lines(2000));
     let mut state = document(&text, "test.c", "c");
-    let mut ops = EditorOperations::new();
-    let mut hl = EditorHighlight::new();
+    let mut ops = EditingOperations::new();
+    let mut hl = SyntaxHighlighter::new();
     hl.reset_for_document(&state, state.line_count() as usize);
     hl.highlight_content(&state, &mut ops);
     assert!(wait_spans(&mut hl, &state, &ops, 0));
@@ -184,8 +184,8 @@ fn insert_at_end_of_span_keeps_slot_before_recolor() {
 #[test]
 fn theme_swap_remaps_palette_without_dropping_spans() {
     let state = document(b"int main(void) { return 0; }\n", "test.c", "c");
-    let mut ops = EditorOperations::new();
-    let mut hl = EditorHighlight::new();
+    let mut ops = EditingOperations::new();
+    let mut hl = SyntaxHighlighter::new();
     hl.reset_for_document(&state, state.line_count() as usize);
     hl.highlight_content(&state, &mut ops);
     assert!(wait_spans(&mut hl, &state, &ops, 0));
@@ -200,8 +200,8 @@ fn theme_swap_remaps_palette_without_dropping_spans() {
 #[test]
 fn language_switch_replaces_c_spans_with_python_spans() {
     let mut state = document(b"def foo():\n    return 1\n", "test.py", "c");
-    let mut ops = EditorOperations::new();
-    let mut hl = EditorHighlight::new();
+    let mut ops = EditingOperations::new();
+    let mut hl = SyntaxHighlighter::new();
     hl.reset_for_document(&state, state.line_count() as usize);
     hl.highlight_content(&state, &mut ops);
     assert!(wait_spans(&mut hl, &state, &ops, 0));
@@ -243,8 +243,8 @@ fn start_background_prewarm_compiles_shipped_queries() {
 #[test]
 fn empty_buffer_stays_spannless() {
     let state = document(b"", "empty.c", "c");
-    let mut ops = EditorOperations::new();
-    let mut hl = EditorHighlight::new();
+    let mut ops = EditingOperations::new();
+    let mut hl = SyntaxHighlighter::new();
     hl.reset_for_document(&state, state.line_count() as usize);
     hl.highlight_content(&state, &mut ops);
     hl.poll(&state, &ops);
@@ -283,8 +283,8 @@ fn incremental_multi_line_edits_match_full_snapshot_captures() {
         "edits.c",
         "c",
     );
-    let mut ops = EditorOperations::new();
-    let mut hl = EditorHighlight::new();
+    let mut ops = EditingOperations::new();
+    let mut hl = SyntaxHighlighter::new();
     hl.reset_for_document(&state, state.line_count() as usize);
     hl.highlight_content(&state, &mut ops);
     for operation in [
@@ -340,8 +340,8 @@ fn incremental_multi_line_edits_match_full_snapshot_captures() {
 #[test]
 fn cleared_service_rejects_in_flight_worker_results() {
     let state = document(&many_c_lines(20000), "canceled.c", "c");
-    let mut ops = EditorOperations::new();
-    let mut hl = EditorHighlight::new();
+    let mut ops = EditingOperations::new();
+    let mut hl = SyntaxHighlighter::new();
     hl.reset_for_document(&state, state.line_count() as usize);
     hl.highlight_content(&state, &mut ops);
     hl.clear();

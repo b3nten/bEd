@@ -1,5 +1,5 @@
 //! bEd menu policy. Native construction and activation live in bed-desktop.
-use bed_config::LayoutSlot;
+use bed_app_config::LayoutSlot;
 use bed_desktop::{
     DesktopMenu, DesktopMenuCommand, DesktopMenuItem, DesktopModifiers, DesktopShortcut,
 };
@@ -12,7 +12,7 @@ pub enum MenuAction {
     NewTerminal,
     NewExplorer,
     NewSettings,
-    NewProjects,
+    NewWorkspaces,
     NewDiagnostics,
     Debug,
     NewStructure,
@@ -29,7 +29,7 @@ pub enum MenuAction {
     RestoreBuiltinLayout(LayoutSlot),
     SaveDefaultLayout,
     ResetDefaultLayout,
-    Projects,
+    Workspaces,
     Diagnostics,
     Structure,
     OpenFolder,
@@ -51,7 +51,7 @@ pub enum MenuAction {
     Settings,
     LspDashboard,
     FindFile,
-    FindProject,
+    FindWorkspace,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -69,6 +69,8 @@ impl MenuAction {
             SetLayoutDefault(slot) => format!("bed.app.set_layout_{slot}"),
             RestoreBuiltinLayout(slot) => format!("bed.app.restore_layout_{slot}"),
             NewWindow => "bed.desktop.new_window".into(),
+            NewWorkspaces => "bed.app.NewProjects".into(),
+            Workspaces => "bed.app.Projects".into(),
             Settings => "bed.settings.show".into(),
             NewSettings => "bed.settings.new".into(),
             Terminal => "bed.terminal.show".into(),
@@ -76,7 +78,7 @@ impl MenuAction {
             Explorer => "bed.explorer.show".into(),
             NewExplorer => "bed.explorer.new".into(),
             FindFile => "bed.explorer.find_file".into(),
-            FindProject => "bed.search.show".into(),
+            FindWorkspace => "bed.search.show".into(),
             Diagnostics => "bed.editor.show_diagnostics".into(),
             Debug => "bed.debug.show".into(),
             Undo => "bed.edit.undo".into(),
@@ -108,7 +110,7 @@ impl MenuAction {
             NewTerminal,
             NewExplorer,
             NewSettings,
-            NewProjects,
+            NewWorkspaces,
             NewDiagnostics,
             Debug,
             NewStructure,
@@ -122,7 +124,7 @@ impl MenuAction {
             ResetLayout,
             SaveDefaultLayout,
             ResetDefaultLayout,
-            Projects,
+            Workspaces,
             Diagnostics,
             Structure,
             OpenFolder,
@@ -144,7 +146,7 @@ impl MenuAction {
             Settings,
             LspDashboard,
             FindFile,
-            FindProject,
+            FindWorkspace,
         ]
         .into_iter()
         .find(|action| action.command_id() == id)
@@ -216,7 +218,7 @@ pub fn menus(
     clipboard: bool,
     text_input: bool,
     editor_focused: bool,
-    commands: &[bed_editor_workbench::commands::CommandItem],
+    commands: &[bed_app::commands::CommandItem],
     active_layout: LayoutSlot,
 ) -> Vec<DesktopMenu> {
     use DesktopMenuItem::*;
@@ -305,7 +307,7 @@ pub fn menus(
         (A::SelectAll, "Select All"),
         (A::Find, "Find…"),
         (A::FindFile, "Find File…"),
-        (A::FindProject, "Find in Project…"),
+        (A::FindWorkspace, "Find in Project…"),
         (A::GoToLine, "Go to Line…"),
     ]);
     let mut window = Vec::new();
@@ -341,7 +343,7 @@ pub fn menus(
         (A::NewExplorer, "File Explorer"),
         (A::NewTerminal, "Terminal"),
         (A::NewSettings, "Settings"),
-        (A::NewProjects, "Workspaces"),
+        (A::NewWorkspaces, "Workspaces"),
         (A::NewContentSearch, "Project Search"),
         (A::NewDiagnostics, "Diagnostics"),
         (A::NewReferences, "References"),
@@ -397,12 +399,24 @@ pub fn menus(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bed_keybindings::{Action, Overrides, Platform, Scope};
+    use bed_keybindings::{Overrides, Platform, Scope, ShortcutAction};
+
+    #[test]
+    fn stored_workspace_command_ids_resolve_to_workspace_actions() {
+        for (id, action) in [
+            ("bed.app.NewProjects", MenuAction::NewWorkspaces),
+            ("bed.app.Projects", MenuAction::Workspaces),
+            ("bed.search.show", MenuAction::FindWorkspace),
+        ] {
+            assert_eq!(MenuAction::from_command(id), Some(action));
+            assert_eq!(action.command_id(), id);
+        }
+    }
 
     #[test]
     fn tools_own_panel_creation_and_window_owns_layouts() {
         let bindings = Bindings::new(Vec::new(), &Overrides::default(), Platform::Mac);
-        let commands = vec![bed_editor_workbench::commands::CommandItem {
+        let commands = vec![bed_app::commands::CommandItem {
             id: "bed.http.open".into(),
             label: "HTTP Client".into(),
             icon: None,
@@ -455,7 +469,7 @@ mod tests {
     fn layout_menus_select_the_active_slot_and_keep_save_reset_unbound() {
         let actions = (1..=9)
             .map(|slot| {
-                Action::new(
+                ShortcutAction::new(
                     &format!("bed.app.layout_{slot}"),
                     &format!("Switch to Layout {slot}"),
                     "bed.app",
@@ -566,14 +580,14 @@ mod tests {
 
     #[test]
     fn native_accelerators_preserve_all_modifiers_and_skip_shadowed_or_cleared_bindings() {
-        let save = Action::new(
+        let save = ShortcutAction::new(
             "bed.app.Save",
             "Save",
             "bed.app",
             Scope::Global,
             &["Ctrl+S", "Ctrl+Command+Alt+Shift+F12"],
         );
-        let other = Action::new(
+        let other = ShortcutAction::new(
             "bed.app.ZOther",
             "Other",
             "bed.app",
@@ -587,7 +601,7 @@ mod tests {
         );
         let stroke = input_shortcut(MenuAction::Save, &model).unwrap();
         assert_eq!(stroke.to_string(), "Ctrl+Command+Alt+Shift+F12");
-        let editor_action = Action::new(
+        let editor_action = ShortcutAction::new(
             "bed.edit.copy",
             "Copy",
             "bed.editor",

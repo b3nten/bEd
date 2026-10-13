@@ -19,7 +19,7 @@ use crate::{
         Provider as WorkspaceDiagnosticProvider, WorkspaceDiagnosticPull,
     },
 };
-use bed_editing::editor_events::DocumentChange;
+use bed_editing::editing_events::DocumentChange;
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,

@@ -1,0 +1,26 @@
+[package]
+name = "bed-plugin-automation"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = []
+app = ["bed-api/documents", "dep:bed-app", "dep:bed-documents", "dep:bed-editing"]
+
+[dependencies]
+bevy = { workspace = true, features = ["std"] }
+bed-desktop = { workspace = true }
+bed-workbench = { workspace = true }
+bed-api = { workspace = true }
+bed-app = { workspace = true, optional = true }
+bed-documents = { workspace = true, optional = true }
+bed-editing = { workspace = true, optional = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+bed-app-config = { workspace = true }
+bed-ui = { workspace = true, features = ["imgui"] }
+dear-imgui-rs = { workspace = true }
+bed-plugin-editor = { workspace = true }

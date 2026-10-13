@@ -1,0 +1,270 @@
+//! A typed model with two views and core document/history coordination.
+use serde_json::json;
+use std::time::{Duration, Instant};
+use {
+    bed_core::BedCorePlugin, bed_core::DocumentBinding, bed_core::DocumentModel,
+    bed_core::api::workbench::*, bed_core::bed_documents::DocumentId, bed_core::bevy::prelude::*,
+};
+
+#[derive(Clone)]
+struct Graph {
+    nodes: Vec<[f32; 2]>,
+}
+#[derive(Clone)]
+struct MoveNode {
+    node: usize,
+    position: [f32; 2],
+}
+impl DocumentModel for Graph {
+    type Change = MoveNode;
+    fn apply(&mut self, change: &MoveNode) -> Result<MoveNode, String> {
+        if !change.position.iter().all(|value| value.is_finite()) {
+            return Err("Node positions must be finite".into());
+        }
+        let position = self
+            .nodes
+            .get_mut(change.node)
+            .ok_or("Node is unavailable")?;
+        let inverse = MoveNode {
+            node: change.node,
+            position: *position,
+        };
+        *position = change.position;
+        Ok(inverse)
+    }
+    fn encode(&self) -> Result<Vec<u8>, String> {
+        serde_json::to_vec(&self.nodes).map_err(|error| error.to_string())
+    }
+}
+struct GraphPanel {
+    entity: Entity,
+    document: DocumentId,
+}
+impl Panel for GraphPanel {
+    fn title(&self, _: &World) -> String {
+        "Graph document".into()
+    }
+    fn draw(
+        &mut self,
+        ui: &bed_core::bed_desktop::dear_imgui_rs::Ui,
+        world: &mut World,
+        requests: &mut Vec<WorkbenchAction>,
+        _: &ShortcutInput,
+    ) {
+        let graph = bed_core::model::<Graph>(world, self.document).unwrap();
+        let position = graph.nodes[0];
+        let info = bed_core::model_document(world, self.document).unwrap();
+        let revision = info.revision();
+        ui.text(format!("Node 0: {:.0}, {:.0}", position[0], position[1]));
+        ui.text(format!("Revision: {revision}   Changed: {}", info.dirty()));
+        let command = if ui.button("Move node right") {
+            Some((
+                "example.model.move",
+                json!({"document":self.document.0,"revision":revision,"x":position[0]+10.0}),
+            ))
+        } else if ui.button("Undo") {
+            Some(("example.model.undo", json!({"document":self.document.0})))
+        } else if ui.button("Redo") {
+            Some(("example.model.redo", json!({"document":self.document.0})))
+        } else {
+            None
+        };
+        if let Some((command, arguments)) = command {
+            let mut invocation =
+                bed_core::bed_workbench::capture_command(world, command, arguments);
+            invocation.source = Some(self.entity);
+            requests.push(WorkbenchAction::Invoke(invocation));
+        }
+    }
+}
+fn create(In(input): In<PanelCreation>, world: &mut World) -> PanelResult {
+    let document = DocumentId(
+        input.state["document"]
+            .as_u64()
+            .ok_or("Missing model document")?,
+    );
+    if bed_core::model::<Graph>(world, document).is_none() {
+        return Err("Model document is unavailable".into());
+    }
+    world
+        .entity_mut(input.entity)
+        .insert(DocumentBinding(document));
+    Ok(Box::new(GraphPanel {
+        entity: input.entity,
+        document,
+    }))
+}
+fn move_node(In(input): In<CommandInvocation>, world: &mut World) -> CommandResult {
+    let document = DocumentId(
+        input.arguments["document"]
+            .as_u64()
+            .ok_or("Missing document")?,
+    );
+    let revision = input.arguments["revision"]
+        .as_u64()
+        .ok_or("Missing revision")?;
+    let x = input.arguments["x"].as_f64().ok_or("Missing position")? as f32;
+    bed_core::edit_model::<Graph>(
+        world,
+        document,
+        revision,
+        MoveNode {
+            node: 0,
+            position: [x, 0.0],
+        },
+        "Move node",
+    )?;
+    Ok(Vec::new())
+}
+fn undo(In(input): In<CommandInvocation>, world: &mut World) -> CommandResult {
+    bed_core::undo_document(
+        world,
+        DocumentId(
+            input.arguments["document"]
+                .as_u64()
+                .ok_or("Missing document")?,
+        ),
+    )?;
+    Ok(Vec::new())
+}
+fn redo(In(input): In<CommandInvocation>, world: &mut World) -> CommandResult {
+    bed_core::redo_document(
+        world,
+        DocumentId(
+            input.arguments["document"]
+                .as_u64()
+                .ok_or("Missing document")?,
+        ),
+    )?;
+    Ok(Vec::new())
+}
+struct GraphPlugin;
+impl Plugin for GraphPlugin {
+    fn build(&self, app: &mut App) {
+        register(app.world_mut(), "example.model", |registrar| {
+            registrar.panel("example.model.panel", "Graph", create);
+            registrar.command("example.model.move", "Move node", move_node);
+            registrar.command("example.model.undo", "Undo model change", undo);
+            registrar.command("example.model.redo", "Redo model change", redo);
+        })
+        .unwrap();
+        app.add_systems(Startup, start);
+    }
+}
+#[derive(Resource)]
+struct SharedGraph(DocumentId);
+fn start(world: &mut World) {
+    let document = bed_core::create_model_document(
+        world,
+        Graph {
+            nodes: vec![[0.0, 0.0], [100.0, 100.0]],
+        },
+        "Graph",
+        None,
+    );
+    world.insert_resource(SharedGraph(document));
+    for _ in 0..2 {
+        bed_core::bed_workbench::open_panel(
+            world,
+            json!({"panel_type":"example.model.panel","state":{"document":document.0}}),
+            None,
+            None,
+        )
+        .unwrap();
+    }
+}
+#[derive(Resource)]
+struct Smoke {
+    phase: u8,
+    started: Instant,
+    save: Option<bed_core::HostRequestId>,
+}
+fn smoke(world: &mut World) {
+    assert!(
+        world.resource::<Smoke>().started.elapsed() < Duration::from_secs(30),
+        "model smoke timed out"
+    );
+    let frames = world
+        .resource::<bed_core::bed_desktop::DesktopRenderStatus>()
+        .read()
+        .completed_frames;
+    let document = world.resource::<SharedGraph>().0;
+    let phase = world.resource::<Smoke>().phase;
+    if frames < u64::from(phase + 1) * 3 {
+        return;
+    }
+    match phase {
+        0 => {
+            let invocation = bed_core::bed_workbench::capture_command(
+                world,
+                "example.model.move",
+                json!({"document":document.0,"revision":0,"x":10}),
+            );
+            world
+                .resource_mut::<bed_core::bed_workbench::WorkbenchRequests>()
+                .push(WorkbenchAction::Invoke(invocation));
+        }
+        1 => {
+            assert_eq!(
+                bed_core::model::<Graph>(world, document).unwrap().nodes[0],
+                [10.0, 0.0]
+            );
+            bed_core::undo_document(world, document).unwrap();
+        }
+        2 => {
+            assert_eq!(
+                bed_core::model::<Graph>(world, document).unwrap().nodes[0],
+                [0.0, 0.0]
+            );
+            assert!(!bed_core::model_document(world, document).unwrap().dirty());
+            bed_core::redo_document(world, document).unwrap();
+        }
+        3 => {
+            let panel = world
+                .resource::<bed_core::bed_workbench::WorkbenchLayout>()
+                .focused
+                .unwrap();
+            world
+                .resource_mut::<bed_core::bed_workbench::WorkbenchRequests>()
+                .push(WorkbenchAction::ClosePanel(panel));
+        }
+        4 => {
+            assert_eq!(world.query::<&DocumentBinding>().iter(world).count(), 1);
+            assert_eq!(
+                bed_core::model::<Graph>(world, document).unwrap().nodes[0],
+                [10.0, 0.0]
+            );
+            let id = bed_core::submit_host_request(
+                world,
+                None,
+                bed_core::api::features::HostAction::Save { document },
+            );
+            world.resource_mut::<Smoke>().save = Some(id);
+        }
+        5 => {
+            let id = world.resource::<Smoke>().save.unwrap();
+            assert!(bed_core::take_host_result(world, id).unwrap().is_err());
+            assert!(bed_core::model_document(world, document).unwrap().dirty());
+            println!(
+                "Model smoke passed: two views, typed edits, undo/redo, retained document and failed save"
+            );
+            world.write_message(AppExit::Success);
+        }
+        _ => return,
+    }
+    world.resource_mut::<Smoke>().phase += 1;
+}
+fn main() {
+    let smoke_test = std::env::args().any(|argument| argument == "--smoke-test");
+    let mut app = App::new();
+    app.add_plugins((BedCorePlugin::default(), GraphPlugin));
+    if smoke_test {
+        app.insert_resource(Smoke {
+            phase: 0,
+            started: Instant::now(),
+            save: None,
+        })
+        .add_systems(Update, smoke);
+    }
+    app.run();
+}

@@ -1,0 +1,13 @@
+[package]
+name = "bed-remote-agent"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bed-remote = { workspace = true }
+bed-files = { workspace = true, features = ["workspace-services"] }
+
+[dev-dependencies]
+bed-lsp = { workspace = true }

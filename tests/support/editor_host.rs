@@ -1,6 +1,6 @@
 //! Explicit application infrastructure for editor integration fixtures.
-use bed_config::Settings;
-use bed_editor_workbench::{RemoteHelperDirectory, WorkspacePersistence, WorkspaceStore};
+use bed_app::{RemoteHelperDirectory, WorkspacePersistence, WorkspaceStore};
+use bed_app_config::Settings;
 use bevy::prelude::*;
 use dear_imgui_rs::Context;
 use std::{io, path::PathBuf};

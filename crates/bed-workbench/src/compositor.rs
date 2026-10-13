@@ -110,7 +110,7 @@ fn draw(world: &mut World, ui: &Ui) {
         .non_send_mut::<UiAnimations>()
         .begin(ui, appearance.animations);
     let definitions = world
-        .resource::<Registry>()
+        .resource::<WorkbenchRegistry>()
         .panels()
         .iter()
         .map(|definition| ChromePanel {
@@ -235,7 +235,7 @@ fn draw(world: &mut World, ui: &Ui) {
                     && requested.is_none_or(|requested| requested == tab.entity)
                     && layout.focused != Some(tab.entity)
                 {
-                    requests.push(Action::ObserveFocus(tab.entity));
+                    requests.push(WorkbenchAction::ObserveFocus(tab.entity));
                 }
                 let min = ui.cursor_screen_pos();
                 let extent = ui.content_region_avail();
@@ -259,7 +259,7 @@ fn draw(world: &mut World, ui: &Ui) {
                 }
             });
         if !opened {
-            requests.push(Action::ClosePanel(tab.entity));
+            requests.push(WorkbenchAction::ClosePanel(tab.entity));
         }
     }
     let (draft, actions, chrome_requests, minimum) = {
@@ -325,7 +325,7 @@ fn resolve_gestures(
     tabs: &[ChromeTab],
     actions: Vec<TilingAction>,
     minimum: [i32; 2],
-) -> (Vec<Action>, Vec<api::PanelDrop>) {
+) -> (Vec<WorkbenchAction>, Vec<api::PanelDrop>) {
     let closing = actions
         .iter()
         .filter_map(|action| match action {
@@ -352,9 +352,9 @@ fn resolve_gestures(
                     .and_then(|group| group.selected)
                     .and_then(entity)
                 {
-                    requests.push(Action::FocusPanel(panel));
+                    requests.push(WorkbenchAction::FocusPanel(panel));
                 } else {
-                    requests.push(Action::FocusArea(area));
+                    requests.push(WorkbenchAction::FocusArea(area));
                 }
                 let removed = draft
                     .areas
@@ -415,14 +415,14 @@ fn resolve_gestures(
             }
             TilingAction::CloseTab(panel) => {
                 if let Some(entity) = entity(panel) {
-                    requests.push(Action::ClosePanel(entity));
+                    requests.push(WorkbenchAction::ClosePanel(entity));
                 }
                 draft.remove(panel);
             }
             TilingAction::CloseArea(area) => {
                 draft.close_empty_area(area);
             }
-            TilingAction::AddPanel { area, kind } => requests.push(Action::OpenPanel {
+            TilingAction::AddPanel { area, kind } => requests.push(WorkbenchAction::OpenPanel {
                 panel_type: kind,
                 state: Value::Null,
                 area: Some(area),
@@ -439,11 +439,11 @@ fn resolve_gestures(
             }
         }
         requests.retain(
-            |request| !matches!(request,Action::ClosePanel(entity) if close.contains(entity)),
+            |request| !matches!(request,WorkbenchAction::ClosePanel(entity) if close.contains(entity)),
         );
         requests.insert(
             0,
-            Action::SetLayout {
+            WorkbenchAction::SetLayout {
                 tiling: draft.to_value(
                     tabs.iter()
                         .filter_map(|tab| draft.area_for(tab.id).map(|_| tab.id)),

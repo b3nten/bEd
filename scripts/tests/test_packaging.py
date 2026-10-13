@@ -75,7 +75,7 @@ class DesktopPackageTests(unittest.TestCase):
             "resources/terminal/LICENSE": "Retained X.Org license\n",
             "resources/terminal/ATTRIBUTION.txt": "X.Org source/checksum record\n",
             "target/release/bed": "#!/bin/sh\nexit 0\n",
-            "target/release/bed-headless": "#!/bin/sh\nexit 0\n",
+            "target/release/bed-remote-agent": "#!/bin/sh\nexit 0\n",
         }
         files["resources/fonts/PaperMono-OFL.txt"] = "Paper license\n"
         for theme in THEMES:
@@ -88,7 +88,7 @@ class DesktopPackageTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(contents, encoding="utf-8")
         shutil.copytree(SCRIPTS.parent / "resources/icons", self.root / "resources/icons")
-        for binary in ("bed", "bed-headless"):
+        for binary in ("bed", "bed-remote-agent"):
             (self.root / "target/release" / binary).chmod(0o755)
         (self.root / "assets/bEd-iOS-Default-1024@1x.png").write_bytes(png(1024))
         helpers = self.root / "prebuilt helper bundles"
@@ -189,7 +189,7 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
                 self.assertEqual(LICENSES.original_notice(notice_bundle, notice),
                                  (self.root / notice).read_bytes())
             for target in HELPERS.TARGETS:
-                binary = prefix + f"remote-helpers/{target}/bed-headless"
+                binary = prefix + f"remote-helpers/{target}/bed-remote-agent"
                 self.assertTrue(package.getmember(binary).mode & 0o111)
                 manifest = json.load(package.extractfile(prefix + f"remote-helpers/{target}/manifest.json"))
                 self.assertEqual(manifest["target"], target)
@@ -203,6 +203,7 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
             self.assertEqual(info["CFBundleExecutable"], "bed")
             self.assertEqual(info["CFBundleName"], "bEd")
             self.assertEqual(info["CFBundleIconFile"], "bed.icns")
+            self.assertEqual(info["CFBundleIdentifier"], "org.bed-editor.bed")
             resources = "bEd.app/Contents/Resources/"
             self.assertEqual(package.read(resources + "resources/icons/bed.png"),
                              (self.root / "assets/bEd-iOS-Default-1024@1x.png").read_bytes())
@@ -236,7 +237,7 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
                 self.assertEqual(LICENSES.original_notice(notice_bundle, notice),
                                  (self.root / notice).read_bytes())
             for target in HELPERS.TARGETS:
-                self.assertIn(resources + f"remote-helpers/{target}/bed-headless", package.namelist())
+                self.assertIn(resources + f"remote-helpers/{target}/bed-remote-agent", package.namelist())
 
     def test_unexpected_runtime_font_prevents_packaging(self):
         (self.root / "resources/fonts/extra.ttf").write_bytes(b"unexpected font")
@@ -245,7 +246,7 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
         self.assertIn("extra.ttf", result.stderr)
 
     def test_damaged_helper_prevents_publishing_a_desktop_package(self):
-        helper = Path(self.environment["BED_HELPERS_DIR"]) / next(iter(HELPERS.TARGETS)) / "bed-headless"
+        helper = Path(self.environment["BED_HELPERS_DIR"]) / next(iter(HELPERS.TARGETS)) / "bed-remote-agent"
         helper.write_bytes(helper.read_bytes() + b"damaged")
         result = self.run_package("linux")
         self.assertNotEqual(result.returncode, 0)
@@ -331,7 +332,7 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
             text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         with zipfile.ZipFile(output.with_suffix(".zip")) as package:
-            self.assertEqual(package.read("helper/bed-headless"), b"#!/bin/sh\nexit 0\n")
+            self.assertEqual(package.read("helper/bed-remote-agent"), b"#!/bin/sh\nexit 0\n")
             self.assertEqual(package.read("helper/LICENSE"), b"Project license\n")
             self.assertIn("helper/NOTICE", package.namelist())
             self.assertIn("helper/license-index.json", package.namelist())

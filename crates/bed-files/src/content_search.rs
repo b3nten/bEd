@@ -16,7 +16,7 @@ use std::{
 
 use crate::{file_finder::FileEntry, files::read_file_raw};
 use bed_editing::{
-    editor_state::EditorState,
+    document_state::DocumentState,
     text_search::{CompiledSearch, SearchOptions},
 };
 
@@ -640,7 +640,7 @@ fn run_search_project_with_options(
         // Reuse the exact document splitter/BOM convention without building
         // and then walking an editable AVL rope for each read-only file.
         let content = raw.raw.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&raw.raw);
-        let (lines, _) = EditorState::split_lines(content);
+        let (lines, _) = DocumentState::split_lines(content);
         for (row, line) in lines.into_iter().enumerate() {
             if canceled() {
                 return None;
@@ -702,7 +702,7 @@ fn append_buffer_matches(
     matcher: &CompiledSearch,
 ) {
     let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
-    let (lines, _) = EditorState::split_lines(bytes);
+    let (lines, _) = DocumentState::split_lines(bytes);
     for (row, line) in lines.into_iter().enumerate() {
         let line: Arc<[u8]> = Arc::from(line);
         for range in matcher.matches(&line) {
@@ -918,7 +918,7 @@ mod tests {
             b"\xef\xbb\xbfAaAa .*[\xff\r\n\xe9\x9b\xaa aAaA\r\nend\r\xff\0 text\n",
         );
         let raw = read_file_raw(&temp.path("file")).unwrap();
-        let mut state = EditorState::new();
+        let mut state = DocumentState::new();
         state.set_from_bytes(&raw.raw);
         for query in [
             b"aa".as_slice(),

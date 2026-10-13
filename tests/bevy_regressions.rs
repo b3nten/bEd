@@ -1,11 +1,14 @@
-#![cfg(all(feature = "editor", feature = "explorer", feature = "projects"))]
+#![cfg(all(feature = "editor", feature = "file-explorer", feature = "workspaces"))]
 
-use bed_config::Settings;
-use bed_editor_api::{EditorFrame, EditorIntents, HostRequest, ProjectRequest};
-use bed_editor_workbench::{
-    EditorWorkbenchOptions, EditorWorkbenchPlugin, EditorWorkspace, RemoteHelperDirectory,
-    WorkspacePersistence, WorkspaceSpec, WorkspaceStore,
+use bed_api::{
+    application::WorkspaceAction,
+    features::{HostAction, HostEffects, HostFrame},
 };
+use bed_app::{
+    AppOptions, AppRuntimePlugin, RemoteHelperDirectory, WorkspacePersistence, WorkspaceSpec,
+    WorkspaceState, WorkspaceStore,
+};
+use bed_app_config::Settings;
 use bevy::prelude::*;
 use std::{
     path::PathBuf,
@@ -43,16 +46,16 @@ impl Fixture {
             .insert_resource(RemoteHelperDirectory(PathBuf::new()))
             .add_plugins((
                 bed_runtime::BedRuntimePlugin,
-                EditorWorkbenchPlugin {
-                    options: EditorWorkbenchOptions {
+                AppRuntimePlugin {
+                    options: AppOptions {
                         working_directory: Some(self.0.clone()),
-                        startup_panel: Some(bed_projects::PANEL_ID.into()),
+                        startup_panel: Some(bed_plugin_workspaces::PANEL_ID.into()),
                         ..Default::default()
                     },
                 },
-                bed_editor::EditorPlugin,
-                bed_explorer::ExplorerPlugin,
-                bed_projects::ProjectsPlugin,
+                bed_plugin_editor::EditorPlugin,
+                bed_plugin_file_explorer::FileExplorerPlugin,
+                bed_plugin_workspaces::WorkspacesPlugin,
             ));
         app.update();
         app
@@ -68,30 +71,30 @@ impl Drop for Fixture {
 #[test]
 #[ignore = "requires installed rust-analyzer and rust-src; renders real dependency definition jumps"]
 fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() {
-    use bed_document_session::{ClosePolicy, EditorSession};
-    use bed_editor::lsp::lsp_ui::ContextLspAction;
-    use bed_editor_api::EditorPanelBinding;
+    use bed_api::documents::PanelBinding;
+    use bed_documents::{ClosePolicy, DocumentSession};
+    use bed_plugin_editor::lsp::lsp_ui::ContextLspAction;
     use bed_workbench::WorkbenchLayout;
     use bevy::ecs::system::SystemState;
     use dear_imgui_rs::Context;
 
     fn frame(app: &mut App, context: &mut Context) {
         app.update();
-        bed_editor_workbench::draw_ui(app.world_mut(), context.frame()).unwrap();
+        bed_app::draw_ui(app.world_mut(), context.frame()).unwrap();
         drop(context.render_legacy());
-        bed_editor_workbench::process_editor_requests(app.world_mut()).unwrap();
+        bed_app::process_app_requests(app.world_mut()).unwrap();
         std::thread::sleep(Duration::from_millis(10));
     }
 
     fn caret_visible(app: &App, panel: Entity) -> bool {
-        let Some(surface) = bed_editor_workbench::panel_presentation(app.world(), panel) else {
+        let Some(surface) = bed_app::panel_presentation(app.world(), panel) else {
             return false;
         };
         let Some(geometry) = app.world().get::<bed_workbench::api::PanelGeometry>(panel) else {
             return false;
         };
         app.world()
-            .non_send::<bed_editor::EditorViews>()
+            .non_send::<bed_plugin_editor::EditorViews>()
             .text(surface)
             .is_some_and(|view| {
                 let caret = view.presentation().caret_position;
@@ -120,18 +123,13 @@ fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() 
         .unwrap(),
     )
     .unwrap();
-    app.world_mut().resource_mut::<EditorIntents>().push(
+    app.world_mut().resource_mut::<HostEffects>().push(
         None,
-        HostRequest::Project(ProjectRequest::OpenProject(root)),
+        HostAction::Workspace(WorkspaceAction::OpenLocalWorkspace(root)),
     );
     app.update();
-    let panel =
-        bed_editor_workbench::open_file(app.world_mut(), &source, None, false, None).unwrap();
-    let source_binding = app
-        .world()
-        .get::<EditorPanelBinding>(panel)
-        .unwrap()
-        .clone();
+    let panel = bed_app::open_file(app.world_mut(), &source, None, false, None).unwrap();
+    let source_binding = app.world().get::<PanelBinding>(panel).unwrap().clone();
     let document = source_binding.document.unwrap();
     let view = source_binding.view.unwrap();
     let mut context = Context::create();
@@ -157,7 +155,7 @@ fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() 
         frame(&mut app, &mut context);
         let client = app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .lsp()
             .unwrap()
             .client_for_document(document);
@@ -176,7 +174,7 @@ fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() 
                     drop(client);
                     break app
                         .world()
-                        .non_send::<EditorSession>()
+                        .non_send::<DocumentSession>()
                         .lsp()
                         .unwrap()
                         .client_for_document(document)
@@ -200,7 +198,7 @@ fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() 
     let mut string_source = String::new();
     for step in 0..3 {
         let (view, position, suffix, declaration) = if step == 1 {
-            let binding: &EditorPanelBinding = string_binding.as_ref().unwrap();
+            let binding: &PanelBinding = string_binding.as_ref().unwrap();
             let (row, line) = string_source
                 .lines()
                 .enumerate()
@@ -218,8 +216,8 @@ fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() 
         let requested = Instant::now();
         {
             let mut state = SystemState::<(
-                NonSendMut<bed_editor::EditorRuntime>,
-                NonSendMut<EditorSession>,
+                NonSendMut<bed_plugin_editor::EditorRuntime>,
+                NonSendMut<DocumentSession>,
             )>::new(app.world_mut());
             let (mut runtime, mut session) = state.get_mut(app.world_mut()).unwrap();
             runtime
@@ -233,17 +231,17 @@ fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() 
         }
         let definition = loop {
             frame(&mut app, &mut context);
-            let runtime = app.world().non_send::<bed_editor::EditorRuntime>();
+            let runtime = app.world().non_send::<bed_plugin_editor::EditorRuntime>();
             assert!(
                 runtime.navigation_outcome().is_none(),
                 "single navigation action failed: {:?}",
                 runtime.navigation_outcome()
             );
             let focused = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-            let binding = app.world().get::<EditorPanelBinding>(focused).unwrap();
+            let binding = app.world().get::<PanelBinding>(focused).unwrap();
             if binding.document.is_some_and(|document| {
                 app.world()
-                    .non_send::<EditorSession>()
+                    .non_send::<DocumentSession>()
                     .snapshot(document)
                     .unwrap()
                     .path
@@ -265,8 +263,8 @@ fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() 
                 first_visible = Some(requested.elapsed());
             }
         }
-        let binding = app.world().get::<EditorPanelBinding>(definition).unwrap();
-        let session = app.world().non_send::<EditorSession>();
+        let binding = app.world().get::<PanelBinding>(definition).unwrap();
+        let session = app.world().non_send::<DocumentSession>();
         let definition_path = session.snapshot(binding.document.unwrap()).unwrap().path;
         let contents = std::fs::read_to_string(&definition_path).unwrap();
         let expected_row = contents
@@ -296,8 +294,8 @@ fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() 
             .collect();
         assert_eq!(running.len(), 1, "unexpected extra servers: {running:?}");
         assert_eq!(running[0].process_id, Some(process));
-        let surface = bed_editor_workbench::panel_presentation(app.world(), definition).unwrap();
-        let views = app.world().non_send::<bed_editor::EditorViews>();
+        let surface = bed_app::panel_presentation(app.world(), definition).unwrap();
+        let views = app.world().non_send::<bed_plugin_editor::EditorViews>();
         let caret = views.text(surface).unwrap().presentation().caret_position;
         let geometry = app
             .world()
@@ -309,7 +307,7 @@ fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() 
         );
         let timing = app
             .world()
-            .non_send::<bed_editor::EditorRuntime>()
+            .non_send::<bed_plugin_editor::EditorRuntime>()
             .navigation_timing()
             .unwrap();
         let sent = timing.first_sent.unwrap().duration_since(timing.started);
@@ -321,27 +319,28 @@ fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() 
             "Single action {step}: {suffix} row {expected_row}; action→send {sent:?}, action→response {response:?}, action→visible {:?}; caret {caret:?}; server PID {process}",
             first_visible.unwrap()
         );
-        assert!(app.world().resource::<EditorWorkspace>().error.is_none());
+        assert!(app.world().resource::<WorkspaceState>().error.is_none());
         if step == 0 {
             string_binding = Some(binding.clone());
             string_source = contents;
         }
     }
     app.world_mut()
-        .non_send_mut::<EditorSession>()
+        .non_send_mut::<DocumentSession>()
         .shutdown(ClosePolicy::Discard)
         .unwrap();
 }
 
 #[test]
 fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
-    use bed_document_session::EditorSession;
-    use bed_editor_api::EditorPanelBinding;
-    use bed_workbench::{
-        PanelPresentation, WorkbenchLayout,
-        workspace::{tiling::Layout, tiling_state::TilingState},
-    };
+    use bed_api::documents::PanelBinding;
+    use bed_documents::DocumentSession;
     use dear_imgui_rs::{Context, MouseButton};
+    use {
+        bed_workbench::PanelPresentation, bed_workbench::WorkbenchLayout,
+        bed_workbench::workspace::tiling::Layout,
+        bed_workbench::workspace::tiling_state::TilingState,
+    };
 
     let _lock = IMGUI_TEST_LOCK.lock().unwrap();
     let fixture = Fixture::new();
@@ -352,15 +351,15 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
     std::fs::write(&source, "dragged file\n").unwrap();
     std::fs::write(&target, "target panel\n").unwrap();
     let mut app = fixture.app();
-    app.world_mut().resource_mut::<EditorIntents>().push(
+    app.world_mut().resource_mut::<HostEffects>().push(
         None,
-        HostRequest::Project(ProjectRequest::OpenProject(root.clone())),
+        HostAction::Workspace(WorkspaceAction::OpenLocalWorkspace(root.clone())),
     );
     app.update();
-    app.world_mut().resource_mut::<EditorIntents>().push(
+    app.world_mut().resource_mut::<HostEffects>().push(
         None,
-        HostRequest::OpenPanel {
-            panel_type: bed_explorer::PANEL_ID.into(),
+        HostAction::OpenPanel {
+            panel_type: bed_plugin_file_explorer::PANEL_ID.into(),
             document: None,
             state: serde_json::Value::Null,
         },
@@ -368,14 +367,13 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
     app.update();
     let files_front = *app
         .world()
-        .non_send::<bed_explorer::ExplorerPanels>()
+        .non_send::<bed_plugin_file_explorer::ExplorerPanels>()
         .0
         .keys()
         .last()
         .unwrap();
     let files_panel = bed_workbench::api::panel_owner(app.world(), files_front).unwrap();
-    let target_panel =
-        bed_editor_workbench::open_file(app.world_mut(), &target, None, false, None).unwrap();
+    let target_panel = bed_app::open_file(app.world_mut(), &target, None, false, None).unwrap();
     let mut layout = Layout::default();
     let right = layout.split(1, 0, 4000, 1).unwrap();
     let empty = layout.split(right, 1, 5000, 1).unwrap();
@@ -410,11 +408,11 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
         .resource_mut::<bed_workbench::WorkbenchAppearance>()
         .animations = false;
     app.world_mut()
-        .resource_mut::<bed_explorer::ExplorerPresentation>()
+        .resource_mut::<bed_plugin_file_explorer::ExplorerPresentation>()
         .tree
         .animations = false;
     app.world_mut()
-        .non_send_mut::<bed_explorer::ExplorerState>()
+        .non_send_mut::<bed_plugin_file_explorer::ExplorerState>()
         .file_explorer
         .file_tree
         .preferences
@@ -439,18 +437,18 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
     let frame = |app: &mut App, context: &mut Context| {
         app.update();
         let ui = context.frame();
-        bed_editor_workbench::draw_ui(app.world_mut(), ui).unwrap();
+        bed_app::draw_ui(app.world_mut(), ui).unwrap();
         let mut rows = Vec::new();
         ui.window(format!("Files###bed_tab_{files_id}")).build(|| {
             rows = app
                 .world()
-                .non_send::<bed_explorer::ExplorerState>()
+                .non_send::<bed_plugin_file_explorer::ExplorerState>()
                 .explorer()
                 .file_tree
                 .drop_targets(ui);
         });
         drop(context.render_legacy());
-        bed_editor_workbench::process_editor_requests(app.world_mut()).unwrap();
+        bed_app::process_app_requests(app.world_mut()).unwrap();
         rows
     };
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -487,7 +485,7 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
         }
         assert_eq!(
             app.world()
-                .non_send::<bed_explorer::ExplorerState>()
+                .non_send::<bed_plugin_file_explorer::ExplorerState>()
                 .explorer()
                 .file_tree
                 .dragged_paths()
@@ -503,12 +501,12 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
         }
         let document = app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .document_for_path(&source)
             .expect("drop never opened the file");
         let matching = app
             .world_mut()
-            .query::<(Entity, &PanelPresentation, &EditorPanelBinding)>()
+            .query::<(Entity, &PanelPresentation, &PanelBinding)>()
             .iter(app.world())
             .filter(|(_, _, binding)| binding.document == Some(document))
             .map(|(entity, presentation, _)| (entity, presentation.id))
@@ -530,7 +528,7 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
             Some(matching[0].0)
         );
         assert_eq!(std::fs::read_to_string(&source).unwrap(), "dragged file\n");
-        assert!(app.world().resource::<EditorWorkspace>().error.is_none());
+        assert!(app.world().resource::<WorkspaceState>().error.is_none());
     }
 
     // File clicks target the largest area, including a second click after
@@ -539,16 +537,16 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
         let clicked = root.join(name);
         std::fs::write(&clicked, "clicked file\n").unwrap();
         app.world_mut()
-            .non_send_mut::<bed_explorer::ExplorerState>()
+            .non_send_mut::<bed_plugin_file_explorer::ExplorerState>()
             .explorer_mut()
             .file_tree
             .refresh_file_tree(root.to_str().unwrap())
             .unwrap();
-        bed_editor_workbench::focus_panel(app.world_mut(), target_panel, true).unwrap();
+        bed_app::focus_panel(app.world_mut(), target_panel, true).unwrap();
         for _ in 0..3 {
             frame(&mut app, &mut context);
         }
-        bed_editor_workbench::focus_panel(app.world_mut(), files_panel, true).unwrap();
+        bed_app::focus_panel(app.world_mut(), files_panel, true).unwrap();
         let mut rows = Vec::new();
         for _ in 0..6 {
             rows = frame(&mut app, &mut context);
@@ -571,10 +569,10 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
         let panel = app.world().resource::<WorkbenchLayout>().focused.unwrap();
         assert_eq!(
             app.world()
-                .non_send::<EditorSession>()
+                .non_send::<DocumentSession>()
                 .snapshot(
                     app.world()
-                        .get::<EditorPanelBinding>(panel)
+                        .get::<PanelBinding>(panel)
                         .unwrap()
                         .document
                         .unwrap()
@@ -603,7 +601,7 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
     let destination = root.join("destination");
     std::fs::create_dir(&destination).unwrap();
     app.world_mut()
-        .non_send_mut::<bed_explorer::ExplorerState>()
+        .non_send_mut::<bed_plugin_file_explorer::ExplorerState>()
         .explorer_mut()
         .file_tree
         .refresh_file_tree(root.to_str().unwrap())
@@ -654,7 +652,7 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
     }
     assert!(!source.exists());
     assert_eq!(std::fs::read_to_string(&moved).unwrap(), "dragged file\n");
-    assert!(app.world().resource::<EditorWorkspace>().error.is_none());
+    assert!(app.world().resource::<WorkspaceState>().error.is_none());
 }
 
 #[test]
@@ -667,24 +665,24 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
     let mut app = fixture.app();
     assert!(
         app.world()
-            .resource::<bed_projects::ProjectsState>()
+            .resource::<bed_plugin_workspaces::WorkspacesState>()
             .recent_workspaces
             .is_empty()
     );
-    app.world_mut().resource_mut::<EditorIntents>().push(
+    app.world_mut().resource_mut::<HostEffects>().push(
         None,
-        HostRequest::Project(ProjectRequest::OpenProject(root.clone())),
+        HostAction::Workspace(WorkspaceAction::OpenLocalWorkspace(root.clone())),
     );
     app.update();
     let spec = WorkspaceSpec::local(root.to_string_lossy());
     assert_eq!(
-        app.world().resource::<EditorWorkspace>().spec.as_ref(),
+        app.world().resource::<WorkspaceState>().spec.as_ref(),
         Some(&spec)
     );
     {
         let explorer = app
             .world()
-            .non_send::<bed_explorer::ExplorerState>()
+            .non_send::<bed_plugin_file_explorer::ExplorerState>()
             .explorer();
         assert_eq!(explorer.file_tree.root_node.full_path, spec.root);
         assert_eq!(explorer.file_tree.root_node.name, "project");
@@ -692,14 +690,14 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
         assert!(explorer.file_tree.root_node.is_open);
     }
     app.world_mut()
-        .non_send_mut::<bed_explorer::ExplorerState>()
+        .non_send_mut::<bed_plugin_file_explorer::ExplorerState>()
         .toggle_finder();
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         app.update();
         let explorer = app
             .world()
-            .non_send::<bed_explorer::ExplorerState>()
+            .non_send::<bed_plugin_file_explorer::ExplorerState>()
             .explorer();
         if explorer
             .file_tree
@@ -718,7 +716,7 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
         assert!(
             Instant::now() < deadline,
             "project discovery never populated the tree: {:?}, finder status {:?}, indexed {:?}, children {:?}",
-            app.world().resource::<EditorWorkspace>().error,
+            app.world().resource::<WorkspaceState>().error,
             explorer.file_finder.discovery_status,
             explorer.file_finder.filtered_list,
             explorer.file_tree.root_node.children
@@ -727,14 +725,14 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
     }
     assert_eq!(
         app.world()
-            .resource::<bed_projects::ProjectsState>()
+            .resource::<bed_plugin_workspaces::WorkspacesState>()
             .recent_workspaces,
         vec![spec.clone()]
     );
-    assert!(app.world().resource::<EditorWorkspace>().error.is_none());
-    app.world_mut().resource_mut::<EditorIntents>().push(
+    assert!(app.world().resource::<WorkspaceState>().error.is_none());
+    app.world_mut().resource_mut::<HostEffects>().push(
         None,
-        HostRequest::OpenFile {
+        HostAction::OpenFile {
             path: file.to_string_lossy().into_owned(),
             viewer: None,
         },
@@ -742,12 +740,12 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
     app.update();
     assert!(
         app.world()
-            .resource::<EditorFrame>()
+            .resource::<HostFrame>()
             .documents
             .iter()
             .any(|document| document.path == file.to_string_lossy())
     );
-    assert!(app.world().resource::<EditorWorkspace>().error.is_none());
+    assert!(app.world().resource::<WorkspaceState>().error.is_none());
     assert_eq!(
         WorkspaceStore::load(&fixture.0.join("config"))
             .unwrap()
@@ -759,18 +757,18 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
     // A fresh standalone launcher receives saved history before its first draw.
     let mut app = fixture.app();
     assert_eq!(
-        app.world().resource::<EditorFrame>().recent_workspaces,
+        app.world().resource::<HostFrame>().recent_workspaces,
         vec![spec.clone()]
     );
     assert_eq!(
         app.world()
-            .resource::<bed_projects::ProjectsState>()
+            .resource::<bed_plugin_workspaces::WorkspacesState>()
             .recent_workspaces,
         vec![spec.clone()]
     );
-    app.world_mut().resource_mut::<EditorIntents>().push(
+    app.world_mut().resource_mut::<HostEffects>().push(
         None,
-        HostRequest::Project(ProjectRequest::RenameWorkspace(
+        HostAction::Workspace(WorkspaceAction::RenameWorkspace(
             spec.clone(),
             "Renamed".into(),
         )),
@@ -779,20 +777,20 @@ fn project_picker_records_and_restores_recent_workspaces_and_discovers_the_selec
     app.update();
     assert_eq!(
         app.world()
-            .resource::<bed_projects::ProjectsState>()
+            .resource::<bed_plugin_workspaces::WorkspacesState>()
             .recent_workspaces[0]
             .name,
         "Renamed"
     );
-    app.world_mut().resource_mut::<EditorIntents>().push(
+    app.world_mut().resource_mut::<HostEffects>().push(
         None,
-        HostRequest::Project(ProjectRequest::RemoveWorkspace(spec)),
+        HostAction::Workspace(WorkspaceAction::RemoveWorkspace(spec)),
     );
     app.update();
     app.update();
     assert!(
         app.world()
-            .resource::<bed_projects::ProjectsState>()
+            .resource::<bed_plugin_workspaces::WorkspacesState>()
             .recent_workspaces
             .is_empty()
     );

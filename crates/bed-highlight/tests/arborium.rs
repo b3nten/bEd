@@ -1,9 +1,9 @@
 use bed_editing::{
-    editor_operations::{EditorOperations, OpKind, TextOp},
-    editor_state::EditorState,
+    document_state::DocumentState,
+    editing_operations::{EditingOperations, OpKind, TextOp},
 };
 use bed_highlight::{
-    capture_map::ThemeSlot, highlight_service::EditorHighlight, tree_sitter::TreeSitter,
+    capture_map::ThemeSlot, highlight_service::SyntaxHighlighter, tree_sitter::TreeSitter,
 };
 
 fn slot(source: &str, token: &str, language: &str) -> Option<ThemeSlot> {
@@ -93,12 +93,12 @@ fn html_injects_javascript_and_css() {
 #[test]
 fn editing_fence_language_recolors_existing_contents() {
     TreeSitter::prewarm("md").unwrap();
-    let mut state = EditorState::new();
+    let mut state = DocumentState::new();
     state.path = "notes.md".into();
     state.language_id = "md".into();
     state.set_from_bytes(b"```unknown\nfn main() {}\n```\n");
-    let mut operations = EditorOperations::new();
-    let mut highlight = EditorHighlight::new();
+    let mut operations = EditingOperations::new();
+    let mut highlight = SyntaxHighlighter::new();
     highlight.reset_for_document(&state, state.line_count() as usize);
     highlight.highlight_content(&state, &mut operations);
     assert!(highlight.spans_for_line(1).is_empty());
@@ -140,13 +140,13 @@ fn special_filenames_use_their_grammar_and_manual_language_wins() {
         ("CMakeLists.txt", "cmake_minimum_required(VERSION 3.20)\n"),
         ("Makefile", "all:\n\techo hello\n"),
     ] {
-        let mut state = EditorState::new();
+        let mut state = DocumentState::new();
         state.path = path.into();
-        state.language_id = EditorState::language_id_from_path(path);
+        state.language_id = DocumentState::language_id_from_path(path);
         state.set_from_bytes(source.as_bytes());
         TreeSitter::prewarm(path).unwrap();
-        let mut operations = EditorOperations::new();
-        let mut highlight = EditorHighlight::new();
+        let mut operations = EditingOperations::new();
+        let mut highlight = SyntaxHighlighter::new();
         highlight.reset_for_document(&state, state.line_count() as usize);
         highlight.highlight_content(&state, &mut operations);
         assert!(!highlight.spans_for_line(0).is_empty(), "{path}");

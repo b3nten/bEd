@@ -4,7 +4,7 @@ use crate::{
     grammars::{grammar_store, language_name},
 };
 use arborium::{Highlighter, advanced::Span};
-use bed_editing::{buffer::text_buffer::Snapshot, editor_state::EditorState};
+use bed_editing::{buffer::text_buffer::Snapshot, document_state::DocumentState};
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -123,7 +123,7 @@ pub struct ParseSnapshot {
 }
 
 impl ParseSnapshot {
-    pub fn from_document(state: &EditorState) -> Self {
+    pub fn from_document(state: &DocumentState) -> Self {
         Self {
             text: state.snapshot(),
             path: state.path.clone(),
@@ -135,7 +135,7 @@ impl ParseSnapshot {
 fn snapshot_language(snap: &ParseSnapshot) -> Option<&'static str> {
     // A manually selected language wins. For automatic detection, the filename
     // can identify formats whose extension alone is ambiguous (CMakeLists.txt).
-    if snap.language_id == EditorState::language_id_from_path(&snap.path) {
+    if snap.language_id == DocumentState::language_id_from_path(&snap.path) {
         language_name(&snap.path).or_else(|| language_name(&snap.language_id))
     } else {
         language_name(&snap.language_id)

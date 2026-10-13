@@ -1,19 +1,19 @@
-#![cfg(all(feature = "editor", feature = "projects"))]
+#![cfg(all(feature = "editor", feature = "workspaces"))]
 
 #[path = "support/editor_host.rs"]
 mod editor_host;
 #[path = "support/temp_dir.rs"]
 mod temp_dir;
 
-use bed_config::{LayoutSlot, Settings};
-use bed_document_session::{ByteEdit, EditorSession};
-use bed_editor_api::{EditorPanelBinding, PanelTarget};
-use bed_editor_workbench::*;
+use bed_api::{documents::PanelBinding, workbench::PanelTarget};
+use bed_app::*;
+use bed_app_config::{LayoutSlot, Settings};
+use bed_documents::{ByteEdit, DocumentSession};
 use bevy::prelude::*;
 use serde_json::json;
 use temp_dir::TempDir;
 
-fn app(dir: &TempDir, options: EditorWorkbenchOptions) -> App {
+fn app(dir: &TempDir, options: AppOptions) -> App {
     let mut app = App::new();
     editor_host::install(
         &mut app,
@@ -26,30 +26,30 @@ fn app(dir: &TempDir, options: EditorWorkbenchOptions) -> App {
     .unwrap();
     app.add_plugins((
         bed_runtime::BedRuntimePlugin,
-        EditorWorkbenchPlugin {
-            options: EditorWorkbenchOptions {
+        AppRuntimePlugin {
+            options: AppOptions {
                 working_directory: Some(dir.root().to_owned()),
                 initial_layout: Some(LayoutSlot::Startup),
                 ..options
             },
         },
-        bed_editor::EditorPlugin,
-        bed_projects::ProjectsPlugin,
+        bed_plugin_editor::EditorPlugin,
+        bed_plugin_workspaces::WorkspacesPlugin,
     ));
     app.update();
-    assert!(app.world().resource::<EditorWorkspace>().error.is_none());
+    assert!(app.world().resource::<WorkspaceState>().error.is_none());
     app
 }
 
 fn command(app: &mut App, command: WindowCommand) {
-    let request = capture_editor_request(
+    let request = capture_app_request(
         app.world(),
-        EditorAction::Command(command),
+        AppAction::Command(command),
         PanelTarget::LastFocused,
     );
-    let id = submit_editor_request(app.world_mut(), request);
-    process_editor_requests(app.world_mut()).unwrap();
-    poll_editor_request(app.world_mut(), id).unwrap().unwrap();
+    let id = submit_app_request(app.world_mut(), request);
+    process_app_requests(app.world_mut()).unwrap();
+    poll_app_request(app.world_mut(), id).unwrap().unwrap();
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
             .get::<PanelRecord>(picker)
             .unwrap()
             .panel_type,
-        bed_projects::PANEL_ID
+        bed_plugin_workspaces::PANEL_ID
     );
     let surface = panel_presentation(original.world(), picker).unwrap();
     assert_eq!(
@@ -84,7 +84,7 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
             .as_array()
             .unwrap()
             .iter()
-            .any(|panel| panel["panel_type"] == bed_projects::PANEL_ID)
+            .any(|panel| panel["panel_type"] == bed_plugin_workspaces::PANEL_ID)
     );
     assert!(
         original
@@ -111,7 +111,7 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
     let path = dir.write("note.txt", b"note").canonicalize().unwrap();
     let mut fresh = app(
         &dir,
-        EditorWorkbenchOptions {
+        AppOptions {
             files: vec![OpenFileOptions {
                 path: path.clone(),
                 viewer: None,
@@ -127,7 +127,7 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
     let panels = active_panel_entities(fresh.world_mut());
     assert!(panels.iter().any(
         |panel| fresh.world().get::<PanelRecord>(*panel).unwrap().panel_type
-            == bed_projects::PANEL_ID
+            == bed_plugin_workspaces::PANEL_ID
     ));
     assert_eq!(
         fresh
@@ -142,14 +142,14 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
     let focused = fresh.world().resource::<WorkbenchLayout>().focused.unwrap();
     let document = fresh
         .world()
-        .get::<EditorPanelBinding>(focused)
+        .get::<PanelBinding>(focused)
         .unwrap()
         .document
         .unwrap();
     assert_eq!(
         fresh
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .snapshot(document)
             .unwrap()
             .path,
@@ -188,7 +188,7 @@ fn startup_templates_include_workspaces_and_new_windows_ignore_previous_sessions
             .get::<PanelRecord>(panel)
             .unwrap()
             .panel_type,
-        bed_projects::PANEL_ID
+        bed_plugin_workspaces::PANEL_ID
     );
 }
 
@@ -201,17 +201,17 @@ fn startup_switches_preserve_dirty_documents_and_attachment_adopts_workspace_sel
     let panel = app.world().resource::<WorkbenchLayout>().focused.unwrap();
     let document = app
         .world()
-        .get::<EditorPanelBinding>(panel)
+        .get::<PanelBinding>(panel)
         .unwrap()
         .document
         .unwrap();
     let revision = app
         .world()
-        .non_send::<EditorSession>()
+        .non_send::<DocumentSession>()
         .document_revision(document)
         .unwrap();
     app.world_mut()
-        .non_send_mut::<EditorSession>()
+        .non_send_mut::<DocumentSession>()
         .apply_edits(
             document,
             revision,
@@ -243,14 +243,14 @@ fn startup_switches_preserve_dirty_documents_and_attachment_adopts_workspace_sel
             }),
         )
         .unwrap();
-    let session = app.world().non_send::<EditorSession>().workspace_id();
+    let session = app.world().non_send::<DocumentSession>().session_id();
     attach_workspace(app.world_mut(), &root).unwrap();
     assert_eq!(
         app.world().resource::<LayoutSlots>().active(),
         LayoutSlot::Layout4
     );
     assert_eq!(
-        app.world().non_send::<EditorSession>().workspace_id(),
+        app.world().non_send::<DocumentSession>().session_id(),
         session
     );
     assert!(!app.world().entities().contains(picker));
@@ -258,7 +258,7 @@ fn startup_switches_preserve_dirty_documents_and_attachment_adopts_workspace_sel
     assert!(bed_workbench::api::panel_active(app.world(), numbered));
     assert_eq!(
         app.world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .snapshot(document)
             .unwrap()
             .bytes,
@@ -266,7 +266,7 @@ fn startup_switches_preserve_dirty_documents_and_attachment_adopts_workspace_sel
     );
     assert!(
         app.world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .snapshot(document)
             .unwrap()
             .dirty
@@ -276,7 +276,7 @@ fn startup_switches_preserve_dirty_documents_and_attachment_adopts_workspace_sel
 
     let mut restored = self::app(
         &dir,
-        EditorWorkbenchOptions {
+        AppOptions {
             workspace: Some(spec),
             ..Default::default()
         },
@@ -293,6 +293,6 @@ fn startup_switches_preserve_dirty_documents_and_attachment_adopts_workspace_sel
                 .get::<PanelRecord>(*panel)
                 .unwrap()
                 .panel_type
-                != bed_projects::PANEL_ID)
+                != bed_plugin_workspaces::PANEL_ID)
     );
 }

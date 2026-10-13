@@ -1,0 +1,33 @@
+[package]
+name = "bed-documents"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = []
+# Existing editor service integration. Local documents, views, edits, saves and
+# in-memory history are available without language servers, Git or SSH.
+ide-services = ["dep:bed-highlight", "dep:bed-lsp", "dep:bed-remote", "dep:git2", "bed-files/workspace-services"]
+
+[dependencies]
+bed-editing = { workspace = true }
+bed-files = { workspace = true }
+bed-highlight = { workspace = true, optional = true }
+bed-lsp = { workspace = true, optional = true }
+bed-remote = { path = "../bed-remote", optional = true }
+git2 = { workspace = true, optional = true }
+serde_json = { workspace = true }
+
+[[test]]
+name = "remote_io"
+path = "tests/remote_io.rs"
+harness = false
+required-features = ["ide-services"]
+
+[[test]]
+name = "lsp_navigation"
+path = "tests/lsp_navigation.rs"
+harness = false
+required-features = ["ide-services"]

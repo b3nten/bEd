@@ -96,6 +96,13 @@ Application resources supplied before installation are preserved. The group
 contains focused appearance, native and canvas plugins that can be configured
 or disabled through Bevy's plugin-group API.
 
+`DesktopPlugins` registers `BedMemoryAssets` before Bevy builds `AssetServer`.
+Optional features can then write bytes into their own namespace and load the
+returned path through `BedMemoryAssets::asset_path`. Its shared `Dir` handle is
+available for worker and loader ownership. Model viewers can be installed after
+the desktop/core group; the foundation does not depend on the model viewer.
+Headless hosts register `BedMemoryAssets` before their own `AssetPlugin`.
+
 `DesktopNativePresentation` contains owned menus, toolbar and Dock command
 models. Native objects initialize after the real primary window exists.
 Native chrome preserves Bevy's window visibility, focus, decorations and

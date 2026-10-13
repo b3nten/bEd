@@ -2,7 +2,7 @@
 //! State stays on the UI thread; a borrowed sink forwards ordered messages to
 //! the transport worker. Full-text providers are invoked only when needed.
 use crate::{diagnostics::LspDiagnostics, lsp_config::LspConfig, lsp_uri::LspUri};
-use bed_editing::{editor_events::DocumentChange, util::doc_path};
+use bed_editing::{editing_events::DocumentChange, util::doc_path};
 use serde_json::{Value, json};
 use std::{collections::HashSet, io};
 

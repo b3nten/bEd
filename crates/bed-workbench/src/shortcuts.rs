@@ -12,7 +12,10 @@ pub fn prepare_shortcuts(world: &mut World, ui: &Ui) {
     if world.non_send::<WorkbenchShortcuts>().prepared_frame == Some(ui.frame_count()) {
         return;
     }
-    let actions = world.resource::<api::Registry>().shortcuts().to_vec();
+    let actions = world
+        .resource::<api::WorkbenchRegistry>()
+        .shortcuts()
+        .to_vec();
     let live_recording = world
         .non_send::<WorkbenchShortcuts>()
         .recording
@@ -61,7 +64,7 @@ pub fn global_shortcuts(world: &mut World, ui: &Ui) {
     let mut requests = Vec::new();
     for action in &input.bindings.actions {
         if action.scope == Scope::Global && input.take(ui, &action.id) {
-            requests.push(api::Action::Invoke(api::CommandInvocation {
+            requests.push(api::WorkbenchAction::Invoke(api::CommandInvocation {
                 command: action.id.clone(),
                 source,
                 area,

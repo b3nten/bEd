@@ -1,8 +1,8 @@
 //! Contextual help is an ordinary panel. Features own the notes it reads.
 use crate::{PanelFocusHistory, PanelRecord, WorkbenchLayout, api};
 use api::{
-    Action, CommandInvocation, CommandResult, Panel, PanelCreation, PanelDocumentation,
-    PanelResult, ShortcutInput,
+    CommandInvocation, CommandResult, Panel, PanelCreation, PanelDocumentation, PanelResult,
+    ShortcutInput, WorkbenchAction,
 };
 use bed_keybindings::{Bindings, RESET_ZOOM, Scope, ZOOM_IN, ZOOM_OUT};
 use bevy::prelude::*;
@@ -26,7 +26,7 @@ impl Plugin for DocsPlugin {
 }
 
 fn show(In(invocation): In<CommandInvocation>) -> CommandResult {
-    Ok(vec![Action::ShowPanel {
+    Ok(vec![WorkbenchAction::ShowPanel {
         panel_type: DOCS_PANEL_ID.into(),
         state: Value::Null,
         area: Some(invocation.area),
@@ -199,7 +199,13 @@ impl Panel for DocsPanel {
         json!({"zoom": self.zoom, "expanded": self.expanded, "symbol_expanded": self.symbol_expanded})
     }
 
-    fn draw(&mut self, ui: &Ui, world: &mut World, _: &mut Vec<Action>, input: &ShortcutInput) {
+    fn draw(
+        &mut self,
+        ui: &Ui,
+        world: &mut World,
+        _: &mut Vec<WorkbenchAction>,
+        input: &ShortcutInput,
+    ) {
         let source = target(world);
         let changed = self.source != source;
         self.source = source;
@@ -212,7 +218,11 @@ impl Panel for DocsPanel {
             self.symbol = Some(symbol.clone());
         }
         let context = record
-            .and_then(|r| world.resource::<api::Registry>().panel(&r.panel_type))
+            .and_then(|r| {
+                world
+                    .resource::<api::WorkbenchRegistry>()
+                    .panel(&r.panel_type)
+            })
             .map(|p| p.label)
             .or_else(|| record.map(|r| r.panel_type.as_str()))
             .unwrap_or("Docs");

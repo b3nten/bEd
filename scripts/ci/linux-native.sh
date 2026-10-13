@@ -24,6 +24,8 @@ cargo run --locked -p bed-desktop --example native_smoke
 cargo run --locked -p bed-desktop --example canvas_smoke
 cargo run --locked -p bed-desktop --example automation_smoke
 cargo run --locked -p bed-desktop --example window_config_smoke
-cargo run --locked -p bed-layout-app -- --smoke-test --capture-frame target/native-layout.ppm
+cargo run --locked -p bed-example-layouts -- --smoke-test --capture-frame target/native-layout.ppm
 test -s target/native-layout.ppm
+cargo run --locked -p bed-example-editor -- --smoke-test
+cargo run --locked -p bed-example-model -- --smoke-test
 bash scripts/ci/desktop-consumer.sh

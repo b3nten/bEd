@@ -31,7 +31,7 @@ impl Plugin for BedRuntimePlugin {
 }
 
 /// The native frontend updates capture before forwarding input to gameplay.
-/// Editor commands still use their captured panel target independently.
+/// Workbench commands still use their captured panel target independently.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InputCapture {
     pub keyboard: bool,

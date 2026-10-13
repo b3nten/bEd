@@ -135,8 +135,8 @@ impl Panel for Pane {
         &mut self,
         ui: &Ui,
         _: &mut World,
-        _: &mut Vec<Action>,
-        _shortcuts: &bed_workbench_api::ShortcutInput,
+        _: &mut Vec<WorkbenchAction>,
+        _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         ui.text("Live panel");
     }
@@ -168,8 +168,8 @@ impl Panel for AnimatedPane {
         &mut self,
         ui: &Ui,
         _: &mut World,
-        _: &mut Vec<Action>,
-        _shortcuts: &bed_workbench_api::ShortcutInput,
+        _: &mut Vec<WorkbenchAction>,
+        _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         fade_marker(ui);
         ui.child_window("fade child")
@@ -836,7 +836,7 @@ fn closing_the_final_tab_keeps_blank_areas_and_defaults_commands_to_the_largest(
             .app
             .world_mut()
             .resource_mut::<WorkbenchRequests>()
-            .push(Action::ClosePanel(panel));
+            .push(WorkbenchAction::ClosePanel(panel));
     }
     process_requests(fixture.app.world_mut());
     fixture.settle();
@@ -1092,8 +1092,8 @@ impl Panel for DropWidget {
         &mut self,
         ui: &Ui,
         world: &mut World,
-        _: &mut Vec<Action>,
-        _: &bed_workbench_api::ShortcutInput,
+        _: &mut Vec<WorkbenchAction>,
+        _: &bed_api::workbench::ShortcutInput,
     ) {
         let min = ui.cursor_screen_pos();
         let size = ui.content_region_avail();

@@ -2,15 +2,15 @@
 #![cfg(feature = "editor")]
 #[path = "support/editor_host.rs"]
 mod editor_host;
-use bed_document_session::editor_session::{DocumentId, EditorSession, ViewId};
-use bed_editing::editor_commands::CursorReveal;
-use bed_editor_api::{EditorPanelBinding, PanelTarget};
-use bed_editor_workbench::{
-    EditorAction, EditorNavigation, EditorPanel as PanelPresentation, EditorRequestOutcome,
-    EditorWorkbenchOptions, EditorWorkbenchPlugin, WindowCommand, WorkbenchLayout,
-    capture_editor_request, capture_editor_request_from, dispatch_editor_command,
-    poll_editor_request, process_editor_requests, submit_editor_request,
+#[cfg(feature = "settings")]
+use bed_app::dispatch_app_command;
+use bed_app::{
+    AppAction, AppOptions, AppRequestOutcome, AppRuntimePlugin, DocumentNavigation, WindowCommand,
+    WorkbenchLayout, capture_app_request, capture_app_request_from, poll_app_request,
+    process_app_requests, submit_app_request,
 };
+use bed_documents::session::{DocumentId, DocumentSession, ViewId};
+use bed_editing::text_commands::CursorReveal;
 use bevy::prelude::*;
 use dear_imgui_rs::{Context, FramePrepareOptions};
 use std::{
@@ -20,6 +20,10 @@ use std::{
         Mutex,
         atomic::{AtomicU64, Ordering},
     },
+};
+use {
+    bed_api::documents::PanelBinding,
+    bed_api::workbench::{PanelPresentation, PanelTarget},
 };
 static CONTEXT_LOCK: Mutex<()> = Mutex::new(());
 
@@ -40,24 +44,24 @@ impl Fixture {
         let mut app = App::new();
         editor_host::install(
             &mut app,
-            bed_config::Settings::with_paths(
+            bed_app_config::Settings::with_paths(
                 root.join("config"),
                 PathBuf::from(env!("CARGO_MANIFEST_DIR")),
             )
             .unwrap(),
         )
         .unwrap();
-        app.add_plugins(EditorWorkbenchPlugin {
-            options: EditorWorkbenchOptions {
+        app.add_plugins(AppRuntimePlugin {
+            options: AppOptions {
                 working_directory: Some(root.clone()),
                 ..Default::default()
             },
         });
-        app.add_plugins(bed_editor::EditorPlugin);
+        app.add_plugins(bed_plugin_editor::EditorPlugin);
         #[cfg(feature = "settings")]
-        app.add_plugins(bed_settings::SettingsPlugin);
-        #[cfg(feature = "explorer")]
-        app.add_plugins(bed_explorer::ExplorerPlugin);
+        app.add_plugins(bed_plugin_settings::SettingsPlugin);
+        #[cfg(feature = "file-explorer")]
+        app.add_plugins(bed_plugin_file_explorer::FileExplorerPlugin);
         app.update();
         Self { root, app }
     }
@@ -68,20 +72,20 @@ impl Fixture {
         path
     }
 
-    fn request(&mut self, action: EditorAction) -> EditorRequestOutcome {
-        let request = capture_editor_request(self.app.world(), action, PanelTarget::LastFocused);
-        let id = submit_editor_request(self.app.world_mut(), request);
-        process_editor_requests(self.app.world_mut()).unwrap();
-        poll_editor_request(self.app.world_mut(), id)
+    fn request(&mut self, action: AppAction) -> AppRequestOutcome {
+        let request = capture_app_request(self.app.world(), action, PanelTarget::LastFocused);
+        let id = submit_app_request(self.app.world_mut(), request);
+        process_app_requests(self.app.world_mut()).unwrap();
+        poll_app_request(self.app.world_mut(), id)
             .expect("synchronous request receipt")
             .unwrap()
     }
 
     fn open(&mut self, path: &Path) -> (Entity, DocumentId, ViewId) {
-        let EditorRequestOutcome::Opened {
+        let AppRequestOutcome::Opened {
             panel,
             document: Some(document),
-        } = self.request(EditorAction::OpenFile(path.to_owned()))
+        } = self.request(AppAction::OpenFile(path.to_owned()))
         else {
             panic!("document open receipt")
         };
@@ -90,7 +94,7 @@ impl Fixture {
             document,
             self.app
                 .world()
-                .get::<EditorPanelBinding>(panel)
+                .get::<PanelBinding>(panel)
                 .unwrap()
                 .view
                 .unwrap(),
@@ -98,32 +102,28 @@ impl Fixture {
     }
 
     fn focus(&mut self, panel: Entity) {
-        let request = capture_editor_request_from(
+        let request = capture_app_request_from(
             self.app.world(),
-            EditorAction::FocusPanel(panel),
+            AppAction::FocusPanel(panel),
             PanelTarget::LastFocused,
             Some(panel),
         );
-        let id = submit_editor_request(self.app.world_mut(), request);
-        process_editor_requests(self.app.world_mut()).unwrap();
-        assert!(
-            poll_editor_request(self.app.world_mut(), id)
-                .unwrap()
-                .is_ok()
-        );
+        let id = submit_app_request(self.app.world_mut(), request);
+        process_app_requests(self.app.world_mut()).unwrap();
+        assert!(poll_app_request(self.app.world_mut(), id).unwrap().is_ok());
     }
 
     fn bytes(&self, document: DocumentId) -> Vec<u8> {
         self.app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .snapshot(document)
             .unwrap()
             .bytes
     }
 
     fn frame(&mut self, context: &mut Context) {
-        bed_editor_workbench::tick_editor_services(self.app.world_mut()).unwrap();
+        bed_app::tick_app_services(self.app.world_mut()).unwrap();
         editor_host::prepare_ui(self.app.world_mut(), context).unwrap();
         context
             .font_atlas()
@@ -131,9 +131,9 @@ impl Fixture {
             .unwrap()
             .build();
         context.prepare_frame(FramePrepareOptions::new([1200.0, 800.0], 1.0 / 60.0));
-        bed_editor_workbench::draw_ui(self.app.world_mut(), context.frame()).unwrap();
+        bed_app::draw_ui(self.app.world_mut(), context.frame()).unwrap();
         assert!(context.render_legacy().draw_data().total_vtx_count() > 0);
-        process_editor_requests(self.app.world_mut()).unwrap();
+        process_app_requests(self.app.world_mut()).unwrap();
     }
 }
 
@@ -162,16 +162,16 @@ fn duplicated_views_share_documents_and_transform_independent_carets() {
     fixture
         .app
         .world_mut()
-        .non_send_mut::<EditorSession>()
+        .non_send_mut::<DocumentSession>()
         .with_commands(view, |commands| {
             commands.set_cursor(0, 1, false, CursorReveal::Ensure)
         })
         .unwrap();
-    fixture.request(EditorAction::Command(WindowCommand::DuplicateView));
+    fixture.request(AppAction::Command(WindowCommand::DuplicateView));
     let sibling = fixture
         .app
         .world()
-        .resource::<EditorNavigation>()
+        .resource::<DocumentNavigation>()
         .active_view
         .unwrap();
     assert_ne!(view, sibling);
@@ -179,14 +179,14 @@ fn duplicated_views_share_documents_and_transform_independent_carets() {
         fixture
             .app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .view_count(document),
         2
     );
     fixture
         .app
         .world_mut()
-        .non_send_mut::<EditorSession>()
+        .non_send_mut::<DocumentSession>()
         .with_commands(sibling, |commands| {
             commands.set_cursor(0, 4, false, CursorReveal::Ensure)
         })
@@ -194,13 +194,13 @@ fn duplicated_views_share_documents_and_transform_independent_carets() {
     let revision = fixture
         .app
         .world()
-        .non_send::<EditorSession>()
+        .non_send::<DocumentSession>()
         .document_revision(document)
         .unwrap();
-    fixture.request(EditorAction::ApplyEdits {
+    fixture.request(AppAction::ApplyEdits {
         document,
         revision,
-        edits: vec![bed_document_session::editor_session::ByteEdit {
+        edits: vec![bed_documents::session::ByteEdit {
             range: 4..4,
             bytes: "🙂".as_bytes().to_vec(),
         }],
@@ -210,7 +210,7 @@ fn duplicated_views_share_documents_and_transform_independent_carets() {
         fixture
             .app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .view_snapshot(view)
             .unwrap()
             .column,
@@ -221,7 +221,7 @@ fn duplicated_views_share_documents_and_transform_independent_carets() {
         fixture
             .app
             .world()
-            .resource::<EditorNavigation>()
+            .resource::<DocumentNavigation>()
             .active_view,
         Some(view)
     );
@@ -260,7 +260,7 @@ fn panel_identity_is_live_entity_and_stable_persisted_number() {
             .id,
         number
     );
-    fixture.request(EditorAction::ClosePanel(sibling));
+    fixture.request(AppAction::ClosePanel(sibling));
     assert!(
         fixture
             .app
@@ -282,17 +282,17 @@ fn queued_source_commands_preserve_origin_after_focus_changes() {
     let mut fixture = Fixture::new();
     let first = fixture.write("first.txt", b"first");
     let (source, document, _) = fixture.open(&first);
-    let request = capture_editor_request(
+    let request = capture_app_request(
         fixture.app.world(),
-        EditorAction::Command(WindowCommand::DuplicateView),
+        AppAction::Command(WindowCommand::DuplicateView),
         PanelTarget::LastFocused,
     );
     let other = fixture.write("other.txt", b"other");
     let (_, other_document, _) = fixture.open(&other);
-    let id = submit_editor_request(fixture.app.world_mut(), request);
-    process_editor_requests(fixture.app.world_mut()).unwrap();
+    let id = submit_app_request(fixture.app.world_mut(), request);
+    process_app_requests(fixture.app.world_mut()).unwrap();
     assert!(
-        poll_editor_request(fixture.app.world_mut(), id)
+        poll_app_request(fixture.app.world_mut(), id)
             .unwrap()
             .is_ok()
     );
@@ -300,7 +300,7 @@ fn queued_source_commands_preserve_origin_after_focus_changes() {
         fixture
             .app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .view_count(document),
         2
     );
@@ -308,7 +308,7 @@ fn queued_source_commands_preserve_origin_after_focus_changes() {
         fixture
             .app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .view_count(other_document),
         1
     );
@@ -326,18 +326,18 @@ fn closed_source_requests_do_not_retarget_current_document() {
     let mut fixture = Fixture::new();
     let first = fixture.write("first.txt", b"first");
     let (source, _, _) = fixture.open(&first);
-    let request = capture_editor_request(
+    let request = capture_app_request(
         fixture.app.world(),
-        EditorAction::Command(WindowCommand::DuplicateView),
+        AppAction::Command(WindowCommand::DuplicateView),
         PanelTarget::LastFocused,
     );
-    fixture.request(EditorAction::ClosePanel(source));
+    fixture.request(AppAction::ClosePanel(source));
     let other = fixture.write("other.txt", b"other");
     let (_, document, _) = fixture.open(&other);
-    let id = submit_editor_request(fixture.app.world_mut(), request);
-    process_editor_requests(fixture.app.world_mut()).unwrap();
+    let id = submit_app_request(fixture.app.world_mut(), request);
+    process_app_requests(fixture.app.world_mut()).unwrap();
     assert_eq!(
-        bed_editor_workbench::poll_editor_request_result(fixture.app.world_mut(), id)
+        bed_app::poll_app_request_result(fixture.app.world_mut(), id)
             .unwrap()
             .unwrap_err()
             .kind,
@@ -347,7 +347,7 @@ fn closed_source_requests_do_not_retarget_current_document() {
         fixture
             .app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .view_count(document),
         1
     );
@@ -358,7 +358,7 @@ fn split_uses_canonical_layout_and_preserves_document_view_ownership() {
     let mut fixture = Fixture::new();
     let path = fixture.write("split.txt", b"split");
     let (source, document, view) = fixture.open(&path);
-    fixture.request(EditorAction::Command(WindowCommand::SplitRight));
+    fixture.request(AppAction::Command(WindowCommand::SplitRight));
     let layout = fixture.app.world().resource::<WorkbenchLayout>();
     assert_eq!(layout.tiling.layout.areas.len(), 2);
     let destination = layout.focused.unwrap();
@@ -383,7 +383,7 @@ fn split_uses_canonical_layout_and_preserves_document_view_ownership() {
         fixture
             .app
             .world()
-            .get::<EditorPanelBinding>(destination)
+            .get::<PanelBinding>(destination)
             .unwrap()
             .document,
         Some(document)
@@ -392,7 +392,7 @@ fn split_uses_canonical_layout_and_preserves_document_view_ownership() {
         fixture
             .app
             .world()
-            .get::<EditorPanelBinding>(destination)
+            .get::<PanelBinding>(destination)
             .unwrap()
             .view,
         Some(view)
@@ -424,24 +424,24 @@ fn presentation_drawing_keeps_session_settings_and_registry_installed() {
     let mut fixture = Fixture::new();
     let path = fixture.write("stable.txt", b"stable");
     fixture.open(&path);
-    let session = fixture.app.world().non_send::<EditorSession>() as *const EditorSession;
+    let session = fixture.app.world().non_send::<DocumentSession>() as *const DocumentSession;
     fixture.frame(&mut context);
     fixture.frame(&mut context);
     assert_eq!(
-        fixture.app.world().non_send::<EditorSession>() as *const EditorSession,
+        fixture.app.world().non_send::<DocumentSession>() as *const DocumentSession,
         session
     );
     assert!(
         fixture
             .app
             .world()
-            .contains_non_send::<bed_config::Settings>()
+            .contains_non_send::<bed_app_config::Settings>()
     );
     assert!(
         fixture
             .app
             .world()
-            .contains_resource::<bed_editor_api::Registry>()
+            .contains_resource::<bed_api::features::FeatureRegistry>()
     );
 }
 
@@ -450,7 +450,7 @@ fn workspace_restore_focus_survives_first_presentation_frames() {
     let _lock = CONTEXT_LOCK.lock().unwrap();
     let mut context = context();
     let mut fixture = Fixture::new();
-    fixture.request(EditorAction::AttachWorkspace(fixture.root.clone()));
+    fixture.request(AppAction::AttachWorkspace(fixture.root.clone()));
     let path = fixture.write("first.txt", b"first");
     let (first, _, _) = fixture.open(&path);
     let path = fixture.write("last.txt", b"last");
@@ -462,11 +462,11 @@ fn workspace_restore_focus_survives_first_presentation_frames() {
         .get::<PanelPresentation>(first)
         .unwrap()
         .id;
-    bed_editor_workbench::persist_workspace(fixture.app.world_mut()).unwrap();
+    bed_app::persist_workspace(fixture.app.world_mut()).unwrap();
     let mut restored = App::new();
     editor_host::install(
         &mut restored,
-        bed_config::Settings::with_paths(
+        bed_app_config::Settings::with_paths(
             fixture.root.join("config"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")),
         )
@@ -474,16 +474,16 @@ fn workspace_restore_focus_survives_first_presentation_frames() {
     )
     .unwrap();
     restored
-        .add_plugins(EditorWorkbenchPlugin {
-            options: EditorWorkbenchOptions {
+        .add_plugins(AppRuntimePlugin {
+            options: AppOptions {
                 working_directory: Some(fixture.root.clone()),
-                workspace: Some(bed_editor_api::workspace::WorkspaceSpec::local(
+                workspace: Some(bed_api::application::WorkspaceSpec::local(
                     fixture.root.to_str().unwrap(),
                 )),
                 ..Default::default()
             },
         })
-        .add_plugins(bed_editor::EditorPlugin);
+        .add_plugins(bed_plugin_editor::EditorPlugin);
     restored.update();
     let focused = restored
         .world()
@@ -505,9 +505,9 @@ fn workspace_restore_focus_survives_first_presentation_frames() {
         .unwrap()
         .build();
     context.prepare_frame(FramePrepareOptions::new([1200.0, 800.0], 1.0 / 60.0));
-    bed_editor_workbench::draw_ui(restored.world_mut(), context.frame()).unwrap();
+    bed_app::draw_ui(restored.world_mut(), context.frame()).unwrap();
     drop(context.render_legacy());
-    process_editor_requests(restored.world_mut()).unwrap();
+    process_app_requests(restored.world_mut()).unwrap();
     assert_eq!(
         restored.world().resource::<WorkbenchLayout>().focused,
         Some(focused)
@@ -523,12 +523,12 @@ fn focusing_a_tool_preserves_document_carets() {
     fixture
         .app
         .world_mut()
-        .non_send_mut::<EditorSession>()
+        .non_send_mut::<DocumentSession>()
         .with_commands(view, |commands| {
             commands.set_cursor(0, 3, false, CursorReveal::Ensure)
         })
         .unwrap();
-    dispatch_editor_command(
+    dispatch_app_command(
         fixture.app.world_mut(),
         WindowCommand::NewSettings,
         PanelTarget::LastFocused,
@@ -539,7 +539,7 @@ fn focusing_a_tool_preserves_document_carets() {
         fixture
             .app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .view_snapshot(view)
             .unwrap()
             .column,
@@ -555,7 +555,7 @@ fn application_tab_shortcut_restores_editor_focus_from_a_tool() {
     let mut fixture = Fixture::new();
     let path = fixture.write("shortcut.txt", b"unchanged");
     let (panel, document, _) = fixture.open(&path);
-    dispatch_editor_command(
+    dispatch_app_command(
         fixture.app.world_mut(),
         WindowCommand::NewSettings,
         PanelTarget::LastFocused,
@@ -563,7 +563,7 @@ fn application_tab_shortcut_restores_editor_focus_from_a_tool() {
     .unwrap();
     fixture.frame(&mut context);
     fixture.frame(&mut context);
-    let panels = bed_editor_workbench::panel_entities(fixture.app.world_mut());
+    let panels = bed_app::panel_entities(fixture.app.world_mut());
     let index = panels
         .iter()
         .position(|candidate| *candidate == panel)
@@ -620,12 +620,12 @@ fn byte_view_save_shortcut_uses_the_document_save_pipeline() {
     let mut context = context();
     let mut fixture = Fixture::new();
     let path = fixture.write("shortcut.bin", &[0xff, 0, 1]);
-    let EditorRequestOutcome::Opened {
+    let AppRequestOutcome::Opened {
         panel,
         document: Some(document),
-    } = fixture.request(EditorAction::OpenFileWithViewer {
+    } = fixture.request(AppAction::OpenFileWithViewer {
         path: path.clone(),
-        viewer: Some(bed_editor::HEX_VIEWER.into()),
+        viewer: Some(bed_plugin_editor::HEX_VIEWER.into()),
         additional: false,
         move_existing: false,
     })
@@ -636,7 +636,7 @@ fn byte_view_save_shortcut_uses_the_document_save_pipeline() {
         fixture
             .app
             .world()
-            .get::<EditorPanelBinding>(panel)
+            .get::<PanelBinding>(panel)
             .unwrap()
             .view
             .is_none()
@@ -644,13 +644,13 @@ fn byte_view_save_shortcut_uses_the_document_save_pipeline() {
     let revision = fixture
         .app
         .world()
-        .non_send::<EditorSession>()
+        .non_send::<DocumentSession>()
         .document_revision(document)
         .unwrap();
-    fixture.request(EditorAction::ApplyEdits {
+    fixture.request(AppAction::ApplyEdits {
         document,
         revision,
-        edits: vec![bed_document_session::editor_session::ByteEdit {
+        edits: vec![bed_documents::session::ByteEdit {
             range: 1..2,
             bytes: vec![42],
         }],
@@ -672,7 +672,7 @@ fn byte_view_save_shortcut_uses_the_document_save_pipeline() {
         !fixture
             .app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .snapshot(document)
             .unwrap()
             .dirty

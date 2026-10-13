@@ -11,8 +11,8 @@ pub(crate) struct GitJobs {
 }
 
 struct Entry {
-    job: bed_git_core::Job,
-    result: Option<bed_git_core::Result<bed_git_core::Output>>,
+    job: bed_git::Job,
+    result: Option<bed_git::Result<bed_git::Output>>,
 }
 
 impl GitJobs {
@@ -49,7 +49,7 @@ impl GitJobs {
                 self.jobs.insert(
                     job_id,
                     Entry {
-                        job: bed_git_core::Job::start(root, operation),
+                        job: bed_git::Job::start(root, operation),
                         result: None,
                     },
                 );
@@ -202,7 +202,7 @@ mod tests {
         (client, worker)
     }
 
-    fn start(stream: &mut UnixStream, root: String, operation: bed_git_core::Operation) -> u64 {
+    fn start(stream: &mut UnixStream, root: String, operation: bed_git::Operation) -> u64 {
         let Response::GitStarted { job_id } =
             call(stream, Request::GitStart { root, operation }).unwrap()
         else {
@@ -219,7 +219,7 @@ mod tests {
         let job_id = start(
             &mut client,
             repo.root(),
-            bed_git_core::Operation::Commit {
+            bed_git::Operation::Commit {
                 message: "Slow commit".into(),
             },
         );
@@ -259,10 +259,7 @@ mod tests {
             assert!(Instant::now() < deadline);
             thread::sleep(Duration::from_millis(5));
         };
-        assert_eq!(
-            completion.unwrap_err().kind,
-            bed_git_core::ErrorKind::Canceled
-        );
+        assert_eq!(completion.unwrap_err().kind, bed_git::ErrorKind::Canceled);
         assert!(matches!(
             call(&mut client, Request::GitPoll { job_id }).unwrap(),
             Response::GitJob {
@@ -292,7 +289,7 @@ mod tests {
         start(
             &mut client,
             repo.root(),
-            bed_git_core::Operation::Commit {
+            bed_git::Operation::Commit {
                 message: "Disconnected".into(),
             },
         );
@@ -311,18 +308,14 @@ mod tests {
         let (mut client, server) = connect();
         let mut ids = Vec::new();
         for _ in 0..MAX_JOBS {
-            ids.push(start(
-                &mut client,
-                repo.root(),
-                bed_git_core::Operation::Status,
-            ));
+            ids.push(start(&mut client, repo.root(), bed_git::Operation::Status));
         }
         assert_eq!(
             call(
                 &mut client,
                 Request::GitStart {
                     root: repo.root(),
-                    operation: bed_git_core::Operation::Status
+                    operation: bed_git::Operation::Status
                 }
             )
             .unwrap_err()
@@ -332,7 +325,7 @@ mod tests {
         for job_id in ids {
             call(&mut client, Request::GitRelease { job_id }).unwrap();
         }
-        start(&mut client, repo.root(), bed_git_core::Operation::Status);
+        start(&mut client, repo.root(), bed_git::Operation::Status);
         drop(client);
         server.join().unwrap();
     }

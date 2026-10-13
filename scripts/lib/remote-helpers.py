@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage, validate and package the headless helpers distributed with Bed."""
+"""Stage, validate and package the remote agents distributed with Bed."""
 import argparse
 import hashlib
 import json
@@ -82,7 +82,7 @@ def validate_elf(binary, target):
 
 
 def validate_bundle(directory, target):
-    binary = directory / "bed-headless"
+    binary = directory / "bed-remote-agent"
     validate_elf(binary, target)
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     expected = {"format_version": 1, "target": target, "version": package_version(),
@@ -100,7 +100,7 @@ def validate_bundle(directory, target):
 def validate(source, targets):
     targets = tuple(targets)
     missing = [source / target / name for target in targets
-               for name in ("bed-headless", "manifest.json")
+               for name in ("bed-remote-agent", "manifest.json")
                if not (source / target / name).is_file()]
     if missing:
         paths = "\n".join(f"  {path}" for path in missing)
@@ -135,8 +135,8 @@ def stage(target, binary, output):
     with tempfile.TemporaryDirectory(prefix=".remote-helper-", dir=output) as temporary:
         directory = Path(temporary) / target
         directory.mkdir()
-        shutil.copy2(binary, directory / "bed-headless")
-        (directory / "bed-headless").chmod(0o755)
+        shutil.copy2(binary, directory / "bed-remote-agent")
+        (directory / "bed-remote-agent").chmod(0o755)
         shutil.copy2(REPOSITORY / "LICENSE", directory / "LICENSE")
         subprocess.run([sys.executable, str(REPOSITORY / "scripts/lib/collect-licenses.py"),
                         str(directory)], cwd=REPOSITORY, check=True)
@@ -145,7 +145,7 @@ def stage(target, binary, output):
                     "source_revision": revision(), "cargo_lock_sha256": digest(REPOSITORY / "Cargo.lock")}
         (directory / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         with (directory / "NOTICE").open("a", encoding="utf-8") as notice:
-            notice.write("\nThis bed-headless helper is statically linked for " + target + ".\n"
+            notice.write("\nThis bed-remote-agent helper is statically linked for " + target + ".\n"
                          "Dependency notices cover the resolved Bed workspace; this helper uses a subset.\n"
                          "manifest.json records its checksum, protocol, release and source provenance.\n")
         validate_bundle(directory, target)
@@ -163,19 +163,19 @@ def copy(source, destination):
     for target in TARGETS:
         shutil.copytree(source / target, output / target, dirs_exist_ok=True)
         # CI artifact downloads may not retain POSIX modes.
-        (output / target / "bed-headless").chmod(0o755)
+        (output / target / "bed-remote-agent").chmod(0o755)
     validate(output, TARGETS)
     print(f"Packaged remote helpers: {output}")
 
 
 def standalone(binary, destination):
     repository = REPOSITORY
-    binary_name = "bed-headless"
+    binary_name = "bed-remote-agent"
     if not binary.is_file():
-        raise ValueError(f"Missing release helper: {binary}. Build bed-headless first.")
+        raise ValueError(f"Missing release helper: {binary}. Build bed-remote-agent first.")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="headless-package-", dir=destination.parent) as temporary:
-        stage = Path(temporary) / "bed-headless"
+    with tempfile.TemporaryDirectory(prefix="remote-agent-package-", dir=destination.parent) as temporary:
+        stage = Path(temporary) / "bed-remote-agent"
         stage.mkdir()
         shutil.copy2(binary, stage / binary_name)
         shutil.copy2(repository / "LICENSE", stage / "LICENSE")
@@ -185,7 +185,7 @@ def standalone(binary, destination):
             check=True,
         )
         (stage / "README.txt").write_text(
-            "Bed standalone headless helper\n\n"
+            "Bed standalone remote agent\n\n"
             "Use the helper matching the remote host's operating system and CPU architecture,\n"
             "and the same Bed release as the client. This standalone artifact is for\n"
             "embedding and direct protocol use. Desktop Bed automatically installs its\n"
@@ -224,12 +224,12 @@ def main():
     copying.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
     copying.add_argument("--destination", type=Path, required=True)
     standalone_package = commands.add_parser("standalone", help="archive a native release helper with notices")
-    standalone_package.add_argument("--binary", type=Path, default=REPOSITORY / "target/release/bed-headless")
-    standalone_package.add_argument("--output", type=Path, default=REPOSITORY / "target/headless-package")
+    standalone_package.add_argument("--binary", type=Path, default=REPOSITORY / "target/release/bed-remote-agent")
+    standalone_package.add_argument("--output", type=Path, default=REPOSITORY / "target/remote-agent-package")
     args = parser.parse_args()
     try:
         if args.command == "stage":
-            binary = args.binary or REPOSITORY / "target" / args.target / "release/bed-headless"
+            binary = args.binary or REPOSITORY / "target" / args.target / "release/bed-remote-agent"
             stage(args.target, binary, args.output)
         elif args.command == "validate":
             validate(args.source, args.target or TARGETS)

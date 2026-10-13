@@ -23,9 +23,11 @@ unsafe extern "C" {
         window: *mut dear_imgui_rs::sys::ImGuiWindow,
     );
 }
-pub use api::{Action, CommandInvocation, Panel, PanelPresentation, Registry, register};
+pub use api::{
+    CommandInvocation, Panel, PanelPresentation, WorkbenchAction, WorkbenchRegistry, register,
+};
 use api::{PanelCreation, PanelResult};
-pub use bed_workbench_api as api;
+pub use bed_api::workbench as api;
 use bevy::prelude::*;
 use dear_imgui_rs::{Condition, Ui, WindowFlags};
 use serde_json::{Value, json};
@@ -41,6 +43,27 @@ pub struct WorkbenchViewport {
     pub top_inset: f32,
     pub bottom_inset: f32,
     pub bounds: Option<([f32; 2], [f32; 2])>,
+}
+
+/// Identity of the current live layout activation. It changes when a host
+/// switches layouts, even when it later returns to the same numbered layout.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WorkbenchLayoutEpoch(pub u64);
+
+pub fn advance_layout_epoch(world: &mut World) -> WorkbenchLayoutEpoch {
+    world.init_resource::<WorkbenchLayoutEpoch>();
+    let epoch = {
+        let mut epoch = world.resource_mut::<WorkbenchLayoutEpoch>();
+        epoch.0 = epoch
+            .0
+            .checked_add(1)
+            .expect("layout activation epoch overflow");
+        *epoch
+    };
+    if let Some(mut requests) = world.get_resource_mut::<WorkbenchRequests>() {
+        requests.layout_epoch = epoch;
+    }
+    epoch
 }
 
 #[derive(Resource, Clone, Debug, PartialEq)]
@@ -94,6 +117,48 @@ pub fn frontend_active(world: &World) -> bool {
 #[derive(Resource, Clone, Copy)]
 pub struct WorkbenchClosePolicy(pub fn(&mut World, Entity) -> Result<bool, String>);
 
+/// Release associated feature state only when an approved close is committed.
+/// Approval may be requested for several panels before any are retired.
+#[derive(Resource, Clone, Copy)]
+pub struct WorkbenchPanelRetirement(pub fn(&mut World, Entity));
+
+#[derive(Resource)]
+struct ClosingPanels(Vec<Entity>);
+/// Complete set being considered by the current close preflight. A document
+/// owner can distinguish another surviving view from another closing view.
+pub fn closing_panels(world: &World) -> Option<&[Entity]> {
+    world
+        .get_resource::<ClosingPanels>()
+        .map(|panels| panels.0.as_slice())
+}
+
+fn preflight_closes(world: &mut World, panels: &[Entity]) -> Result<bool, String> {
+    let Some(policy) = world.get_resource::<WorkbenchClosePolicy>().copied() else {
+        return Ok(true);
+    };
+    assert!(
+        !world.contains_resource::<ClosingPanels>(),
+        "close preflights do not nest"
+    );
+    world.insert_resource(ClosingPanels(panels.to_vec()));
+    let result = (|| {
+        let mut approved = true;
+        for &entity in panels {
+            approved &= (policy.0)(world, entity)?;
+        }
+        Ok(approved)
+    })();
+    world.remove_resource::<ClosingPanels>().unwrap();
+    result
+}
+
+/// Optional host preparation of a newly spawned panel, before its feature
+/// factory runs. Document hosts establish canonical associations here while
+/// ordinary workbenches require no extra preparation. A failure retains the
+/// saved panel as unavailable instead of constructing a partial frontend.
+#[derive(Resource, Clone, Copy)]
+pub struct PanelPreparation(pub fn(&mut World, Entity) -> Result<(), String>);
+
 /// Retain the damaged object without calling it again. Moving this presenter
 /// out of and back into the store preserves its quarantine and saved state.
 struct FailedPanel {
@@ -112,8 +177,8 @@ impl Panel for FailedPanel {
         &mut self,
         ui: &Ui,
         _world: &mut World,
-        _requests: &mut Vec<Action>,
-        _shortcuts: &bed_workbench_api::ShortcutInput,
+        _requests: &mut Vec<WorkbenchAction>,
+        _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         ui.text_wrapped(&self.error);
         ui.text_wrapped("Close and reopen this panel to try again.");
@@ -135,7 +200,7 @@ pub enum WorkbenchOutcome {
     Closed(Entity),
 }
 
-/// An editor supplies its own transition barrier while sharing this queue.
+/// A host supplies its own transition barrier while sharing this queue.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WorkbenchRequestMode {
     #[default]
@@ -143,26 +208,19 @@ pub enum WorkbenchRequestMode {
     External,
 }
 
-/// Shared submission order for applications merging generic and domain queues.
-pub fn next_request_sequence() -> u64 {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    NEXT.fetch_update(
-        std::sync::atomic::Ordering::Relaxed,
-        std::sync::atomic::Ordering::Relaxed,
-        |value| value.checked_add(1),
-    )
-    .expect("request sequence overflow")
-}
+pub use bed_api::features::next_request_sequence;
 
 pub struct QueuedWorkbenchRequest {
     pub sequence: u64,
     pub id: Option<WorkbenchRequestId>,
-    pub action: Action,
+    pub action: WorkbenchAction,
+    pub layout_epoch: Option<WorkbenchLayoutEpoch>,
 }
 
 #[derive(Resource, Default)]
 pub struct WorkbenchRequests {
     next_id: u64,
+    layout_epoch: WorkbenchLayoutEpoch,
     pending: VecDeque<QueuedWorkbenchRequest>,
     results: HashMap<WorkbenchRequestId, Result<WorkbenchOutcome, String>>,
     waiting: HashMap<WorkbenchRequestId, (WorkbenchOutcome, Vec<Entity>)>,
@@ -171,26 +229,48 @@ pub struct WorkbenchRequests {
 }
 
 impl WorkbenchRequests {
-    pub fn push(&mut self, action: Action) {
+    pub fn push(&mut self, action: WorkbenchAction) {
+        self.enqueue(action, None, Some(self.layout_epoch));
+    }
+
+    /// Application-wide actions, such as changing layouts or quitting, remain
+    /// valid across layout activations. Ordinary UI requests use `push`.
+    pub fn push_unscoped(&mut self, action: WorkbenchAction) {
+        self.enqueue(action, None, None);
+    }
+
+    fn enqueue(
+        &mut self,
+        action: WorkbenchAction,
+        id: Option<WorkbenchRequestId>,
+        layout_epoch: Option<WorkbenchLayoutEpoch>,
+    ) {
         self.pending.push_back(QueuedWorkbenchRequest {
             sequence: next_request_sequence(),
-            id: None,
+            id,
             action,
+            layout_epoch,
         });
     }
 
-    pub fn submit(&mut self, action: Action) -> WorkbenchRequestId {
+    pub fn submit(&mut self, action: WorkbenchAction) -> WorkbenchRequestId {
+        let id = self.allocate_id();
+        self.enqueue(action, Some(id), Some(self.layout_epoch));
+        id
+    }
+
+    pub fn submit_unscoped(&mut self, action: WorkbenchAction) -> WorkbenchRequestId {
+        let id = self.allocate_id();
+        self.enqueue(action, Some(id), None);
+        id
+    }
+
+    fn allocate_id(&mut self) -> WorkbenchRequestId {
         self.next_id = self
             .next_id
             .checked_add(1)
             .expect("workbench request ID overflow");
-        let id = WorkbenchRequestId(self.next_id);
-        self.pending.push_back(QueuedWorkbenchRequest {
-            sequence: next_request_sequence(),
-            id: Some(id),
-            action,
-        });
-        id
+        WorkbenchRequestId(self.next_id)
     }
 
     pub fn take_result(
@@ -227,17 +307,20 @@ pub struct WorkbenchPlugin;
 
 impl Plugin for WorkbenchPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Registry>()
+        app.init_resource::<WorkbenchRegistry>()
+            .init_resource::<api::CommandPresentations>()
             .init_resource::<api::PinchEvents>()
             .init_resource::<WorkbenchLayout>()
             .init_resource::<PanelFocusHistory>()
             .init_resource::<WorkbenchViewport>()
+            .init_resource::<WorkbenchLayoutEpoch>()
             .init_resource::<WorkbenchRequests>()
             .init_resource::<WorkbenchAppearance>()
             .init_resource::<WorkbenchRequestMode>()
             .init_non_send::<PanelUiStore>()
             .init_non_send::<tiling_ui::TilingFrontend>()
             .add_message::<api::PanelDrop>()
+            .add_message::<bed_api::features::FeatureStateChanged>()
             .add_systems(
                 PreUpdate,
                 process_requests.in_set(WorkbenchSystems::Requests),
@@ -266,6 +349,15 @@ pub fn process_requests(world: &mut World) {
     if *world.resource::<WorkbenchRequestMode>() == WorkbenchRequestMode::External {
         return;
     }
+    poll_request_results(world);
+    while let Some(queued) = world.resource_mut::<WorkbenchRequests>().take_next() {
+        resolve_request(world, queued);
+    }
+}
+
+/// Finish deferred close and layout results without consuming another request.
+/// External hosts call this at their own controlled transition barrier.
+pub fn poll_request_results(world: &mut World) {
     assert!(
         !world.contains_resource::<UiLoan>(),
         "commands run between frontend scopes"
@@ -307,47 +399,44 @@ pub fn process_requests(world: &mut World) {
             .resource_mut::<WorkbenchRequests>()
             .complete(id, Ok(outcome));
     }
-    while let Some(queued) = world.resource_mut::<WorkbenchRequests>().take_next() {
-        if let Action::SetLayout { tiling, close } = queued.action {
-            match request_layout(world, &tiling, &close) {
-                Ok(true) => {
-                    if let Some(id) = queued.id {
-                        world
-                            .resource_mut::<WorkbenchRequests>()
-                            .complete(id, Ok(WorkbenchOutcome::Applied));
-                    }
-                }
-                Ok(false) => world
-                    .resource_mut::<WorkbenchRequests>()
-                    .layouts
-                    .push((queued.id, tiling, close)),
-                Err(error) => {
-                    if let Some(id) = queued.id {
-                        world
-                            .resource_mut::<WorkbenchRequests>()
-                            .complete(id, Err(error));
-                    } else {
-                        world.resource_mut::<WorkbenchRequests>().errors.push(error);
-                    }
-                }
-            }
-            continue;
+}
+
+/// Whether a requested geometry replacement is waiting for its panels to close.
+pub fn waiting_for_layout(world: &World) -> bool {
+    !world.resource::<WorkbenchRequests>().layouts.is_empty()
+}
+
+/// Resolve one request through the same authoritative implementation as the
+/// automatic workbench. Command effects finish synchronously before returning.
+pub fn resolve_request(world: &mut World, queued: QueuedWorkbenchRequest) {
+    assert!(
+        !frontend_active(world),
+        "commands run between frontend scopes"
+    );
+    if queued
+        .layout_epoch
+        .is_some_and(|epoch| epoch != *world.resource::<WorkbenchLayoutEpoch>())
+    {
+        if let Some(id) = queued.id {
+            world
+                .resource_mut::<WorkbenchRequests>()
+                .complete(id, Ok(WorkbenchOutcome::Ignored));
         }
-        match execute_action(world, queued.action) {
-            Ok((outcome, waiting)) => {
+        return;
+    }
+    if let WorkbenchAction::SetLayout { tiling, close } = queued.action {
+        match request_layout(world, &tiling, &close) {
+            Ok(true) => {
                 if let Some(id) = queued.id {
-                    if waiting.is_empty() {
-                        world
-                            .resource_mut::<WorkbenchRequests>()
-                            .complete(id, Ok(outcome));
-                    } else {
-                        world
-                            .resource_mut::<WorkbenchRequests>()
-                            .waiting
-                            .insert(id, (outcome, waiting));
-                    }
+                    world
+                        .resource_mut::<WorkbenchRequests>()
+                        .complete(id, Ok(WorkbenchOutcome::Applied));
                 }
             }
+            Ok(false) => world
+                .resource_mut::<WorkbenchRequests>()
+                .layouts
+                .push((queued.id, tiling, close)),
             Err(error) => {
                 if let Some(id) = queued.id {
                     world
@@ -358,23 +447,57 @@ pub fn process_requests(world: &mut World) {
                 }
             }
         }
+        return;
+    }
+    match execute_action(world, queued.action) {
+        Ok((outcome, waiting)) => {
+            if let Some(id) = queued.id {
+                if waiting.is_empty() {
+                    world
+                        .resource_mut::<WorkbenchRequests>()
+                        .complete(id, Ok(outcome));
+                } else {
+                    world
+                        .resource_mut::<WorkbenchRequests>()
+                        .waiting
+                        .insert(id, (outcome, waiting));
+                }
+            }
+        }
+        Err(error) => {
+            if let Some(id) = queued.id {
+                world
+                    .resource_mut::<WorkbenchRequests>()
+                    .complete(id, Err(error));
+            } else {
+                world.resource_mut::<WorkbenchRequests>().errors.push(error);
+            }
+        }
     }
 }
 
 fn execute_action(
     world: &mut World,
-    action: Action,
+    action: WorkbenchAction,
 ) -> Result<(WorkbenchOutcome, Vec<Entity>), String> {
     match action {
-        Action::Invoke(invocation) => {
+        WorkbenchAction::Invoke(invocation) => {
             if invocation
                 .source
                 .is_some_and(|entity| api::panel_owner(world, entity).is_none())
             {
                 return Ok((WorkbenchOutcome::Ignored, Vec::new()));
             }
+            if world
+                .resource::<api::CommandPresentations>()
+                .0
+                .get(&invocation.command)
+                .is_some_and(|presentation| !presentation.enabled || !presentation.visible)
+            {
+                return Ok((WorkbenchOutcome::Ignored, Vec::new()));
+            }
             let handler = world
-                .resource::<Registry>()
+                .resource::<WorkbenchRegistry>()
                 .command(&invocation.command)
                 .map(|entry| entry.handler)
                 .ok_or_else(|| format!("Command unavailable: {}", invocation.command))?;
@@ -387,7 +510,7 @@ fn execute_action(
             }
             Ok((WorkbenchOutcome::Applied, waiting))
         }
-        Action::ShowPanel {
+        WorkbenchAction::ShowPanel {
             panel_type,
             state,
             area,
@@ -406,7 +529,7 @@ fn execute_action(
                 .map(|entity| (WorkbenchOutcome::Opened(entity), Vec::new()))
             }
         }
-        Action::OpenPanel {
+        WorkbenchAction::OpenPanel {
             panel_type,
             state,
             area,
@@ -415,7 +538,7 @@ fn execute_action(
             open_panel(world, record, area, None)
                 .map(|entity| (WorkbenchOutcome::Opened(entity), Vec::new()))
         }
-        Action::ClosePanel(source) => {
+        WorkbenchAction::ClosePanel(source) => {
             let Some(entity) =
                 api::panel_owner(world, source).filter(|entity| owns_panel(world, *entity))
             else {
@@ -427,7 +550,7 @@ fn execute_action(
                 Ok((WorkbenchOutcome::Closed(entity), vec![entity]))
             }
         }
-        Action::KeepPanel(source) => {
+        WorkbenchAction::KeepPanel(source) => {
             let kept = keep_panel(world, source);
             Ok((
                 if kept {
@@ -438,7 +561,7 @@ fn execute_action(
                 Vec::new(),
             ))
         }
-        Action::ObserveFocus(source) => {
+        WorkbenchAction::ObserveFocus(source) => {
             let Some(panel) =
                 api::panel_owner(world, source).filter(|entity| owns_panel(world, *entity))
             else {
@@ -447,7 +570,7 @@ fn execute_action(
             observe_focus(world, panel);
             Ok((WorkbenchOutcome::Applied, Vec::new()))
         }
-        Action::FocusArea(area) => {
+        WorkbenchAction::FocusArea(area) => {
             if world
                 .resource::<WorkbenchLayout>()
                 .tiling
@@ -462,7 +585,7 @@ fn execute_action(
                 Ok((WorkbenchOutcome::Ignored, Vec::new()))
             }
         }
-        Action::SetLayout { tiling, close } => {
+        WorkbenchAction::SetLayout { tiling, close } => {
             if request_layout(world, &tiling, &close)? {
                 Ok((WorkbenchOutcome::Applied, Vec::new()))
             } else {
@@ -474,7 +597,7 @@ fn execute_action(
                 Ok((WorkbenchOutcome::Applied, close))
             }
         }
-        Action::FocusPanel(entity) => {
+        WorkbenchAction::FocusPanel(entity) => {
             let exists =
                 api::panel_owner(world, entity).is_some_and(|entity| owns_panel(world, entity));
             focus_panel(world, entity);
@@ -487,7 +610,7 @@ fn execute_action(
                 Vec::new(),
             ))
         }
-        Action::SplitPanel { panel, axis, high } => {
+        WorkbenchAction::SplitPanel { panel, axis, high } => {
             if axis > 1 {
                 return Err("Split axis must be horizontal or vertical".into());
             }
@@ -515,6 +638,51 @@ pub fn keep_panel(world: &mut World, source: Entity) -> bool {
     };
     let id = world.get::<PanelPresentation>(panel).unwrap().id;
     world.resource_mut::<WorkbenchLayout>().tiling.keep_tab(id)
+}
+
+/// Move an explicit file/drop destination and retain it as an ordinary tab.
+pub fn move_panel_to_area(world: &mut World, source: Entity, area: u32) -> Result<(), String> {
+    assert!(
+        !frontend_active(world),
+        "panels move between frontend scopes"
+    );
+    let panel = api::panel_owner(world, source)
+        .filter(|panel| owns_panel(world, *panel) && api::panel_active(world, *panel))
+        .ok_or("Panel is unavailable")?;
+    let id = world.get::<PanelPresentation>(panel).unwrap().id;
+    let mut tiling = world.resource::<WorkbenchLayout>().tiling.clone();
+    let index = tiling
+        .areas
+        .iter()
+        .find(|group| group.area == area)
+        .ok_or("Target area is unavailable")?
+        .tabs
+        .len();
+    tiling.move_tab(id, area, index);
+    install_tiling(world, tiling);
+    focus_panel(world, panel);
+    Ok(())
+}
+
+/// The layout owner records which tab a later preview may replace.
+pub fn mark_panel_preview(world: &mut World, source: Entity) -> Result<(), String> {
+    assert!(
+        !frontend_active(world),
+        "previews change between frontend scopes"
+    );
+    let panel = api::panel_owner(world, source)
+        .filter(|panel| owns_panel(world, *panel) && api::panel_active(world, *panel))
+        .ok_or("Panel is unavailable")?;
+    let id = world.get::<PanelPresentation>(panel).unwrap().id;
+    let mut layout = world.resource_mut::<WorkbenchLayout>();
+    let group = layout
+        .tiling
+        .areas
+        .iter_mut()
+        .find(|group| group.tabs.contains(&id))
+        .expect("active panel belongs to an area");
+    group.preview = Some(id);
+    Ok(())
 }
 
 pub fn focus_panel(world: &mut World, entity: Entity) {
@@ -637,16 +805,7 @@ fn request_layout(world: &mut World, value: &Value, close: &[Entity]) -> Result<
         })
         .collect::<Vec<_>>();
     TilingState::from_value(value, ids).map_err(str::to_owned)?;
-    let policy = world.get_resource::<WorkbenchClosePolicy>().copied();
-    let mut deferred = false;
-    for &entity in close {
-        if let Some(policy) = policy
-            && !(policy.0)(world, entity)?
-        {
-            deferred = true;
-        }
-    }
-    if deferred {
+    if !preflight_closes(world, close)? {
         return Ok(false);
     }
     for &entity in close {
@@ -711,20 +870,34 @@ fn install_tiling(world: &mut World, tiling: TilingState) {
     }
 }
 
-fn request_close(world: &mut World, entity: Entity) -> Result<bool, String> {
+/// Ask the installed close owner to resolve the barrier before retiring a panel.
+/// External document coordinators use the same transition as queued actions.
+pub fn request_close(world: &mut World, entity: Entity) -> Result<bool, String> {
     let Some(entity) = api::panel_owner(world, entity) else {
         return Ok(false);
     };
     if !owns_panel(world, entity) {
         return Ok(false);
     }
-    let policy = world.get_resource::<WorkbenchClosePolicy>().copied();
-    if let Some(policy) = policy
-        && !(policy.0)(world, entity)?
-    {
+    request_close_many(world, &[entity])
+}
+
+/// Approve an entire closing set before retiring any of its panels.
+pub fn request_close_many(world: &mut World, panels: &[Entity]) -> Result<bool, String> {
+    assert!(
+        !frontend_active(world),
+        "panels close between frontend scopes"
+    );
+    if panels.iter().any(|entity| !owns_panel(world, *entity)) {
+        return Err("Close target is not owned by this workbench".into());
+    }
+    if !preflight_closes(world, panels)? {
         return Ok(false);
     }
-    Ok(commit_close(world, entity))
+    for &entity in panels {
+        commit_close(world, entity);
+    }
+    Ok(true)
 }
 
 /// Remove an owned panel whose application close barrier has completed.
@@ -739,6 +912,9 @@ pub fn commit_close(world: &mut World, entity: Entity) -> bool {
     };
     if !owns_panel(world, entity) {
         return false;
+    }
+    if let Some(retirement) = world.get_resource::<WorkbenchPanelRetirement>().copied() {
+        (retirement.0)(world, entity);
     }
     let id = world
         .get::<PanelPresentation>(entity)
@@ -841,10 +1017,16 @@ pub fn open_panel(
         .ok_or("Saved panel has no type")?
         .to_owned();
     let factory = world
-        .resource::<Registry>()
+        .resource::<WorkbenchRegistry>()
         .panel(&panel_type)
         .map(|entry| entry.factory);
     let entity = spawn_panel(world, serialized.clone(), area, saved_id)?;
+    if let Some(preparation) = world.get_resource::<PanelPreparation>().copied()
+        && let Err(error) = (preparation.0)(world, entity)
+    {
+        world.get_mut::<PanelRecord>(entity).unwrap().unavailable = Some(error);
+        return Ok(entity);
+    }
     let result: PanelResult = match factory {
         Some(factory) => world
             .run_system_with(
@@ -993,7 +1175,11 @@ pub fn panel_state(world: &mut World, entity: Entity) -> Result<Value, String> {
 /// Draw one owned surface for an application compositor. Returned intentions
 /// have not run. A panicking callback loses its partial intentions, restores
 /// ImGui's entry stacks and becomes a quarantined error presenter.
-pub fn render_panel(world: &mut World, entity: Entity, ui: &Ui) -> Result<Vec<Action>, String> {
+pub fn render_panel(
+    world: &mut World,
+    entity: Entity,
+    ui: &Ui,
+) -> Result<Vec<WorkbenchAction>, String> {
     // The presenter may hold view state that is newer than the loaded record.
     // Save its entry state before allowing a failing draw to damage it.
     panel_state(world, entity)?;
@@ -1039,14 +1225,27 @@ pub fn render_panel(world: &mut World, entity: Entity, ui: &Ui) -> Result<Vec<Ac
 /// Save all panel records. Unavailable features retain their complete opaque
 /// serialized input so rebuilding with that feature restores its original view.
 pub fn save(world: &mut World) -> Value {
+    let panels = world
+        .query_filtered::<Entity, (With<WorkbenchPanel>, Without<api::PanelSuspended>)>()
+        .iter(world)
+        .collect::<Vec<_>>();
+    let layout = world.resource::<WorkbenchLayout>().clone();
+    save_layout(world, panels, &layout)
+}
+
+/// Serialize one retained layout without activating its suspended panels.
+pub fn save_layout(world: &mut World, panels: Vec<Entity>, layout: &WorkbenchLayout) -> Value {
     assert!(
         !world.contains_resource::<UiLoan>(),
         "save runs between frontend scopes"
     );
-    let records = world
-        .query_filtered::<(Entity, &PanelPresentation, &PanelRecord), (With<WorkbenchPanel>, Without<api::PanelSuspended>)>()
-        .iter(world)
-        .map(|(entity, panel, record)| (entity, panel.id, record.serialized.clone()))
+    let records = panels
+        .into_iter()
+        .filter_map(|entity| {
+            let panel = world.get::<PanelPresentation>(entity)?;
+            let record = world.get::<PanelRecord>(entity)?;
+            Some((entity, panel.id, record.serialized.clone()))
+        })
         .collect::<Vec<_>>();
     let mut panels = Vec::new();
     for (entity, id, mut value) in records {
@@ -1067,7 +1266,6 @@ pub fn save(world: &mut World) -> Value {
         panels.push(value);
     }
     panels.sort_by_key(|value| value["id"].as_u64());
-    let layout = world.resource::<WorkbenchLayout>();
     json!({"version":1,"panels":panels,"focused_area":layout.focused_area,
         "tiling":layout.tiling.to_value(panels.iter().filter_map(|panel| panel["id"].as_u64())),
         "focused":layout.focused.and_then(|entity| world.get::<PanelPresentation>(entity)).map(|panel| panel.id).filter(|id| panels.iter().any(|panel| panel["id"].as_u64() == Some(*id)))})
@@ -1116,12 +1314,8 @@ pub fn restore(world: &mut World, value: &Value) -> Result<(), String> {
         .collect::<Vec<_>>();
     // Preflight every old panel before removing any. Deferred saves must not
     // leave a half-replaced workspace or destroy a previously approved panel.
-    if let Some(policy) = world.get_resource::<WorkbenchClosePolicy>().copied() {
-        for &entity in &old {
-            if !(policy.0)(world, entity)? {
-                return Err("Workbench restore is waiting for a panel to close".into());
-            }
-        }
+    if !preflight_closes(world, &old)? {
+        return Err("Workbench restore is waiting for a panel to close".into());
     }
     for entity in old {
         commit_close(world, entity);

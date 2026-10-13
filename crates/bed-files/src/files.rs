@@ -2,7 +2,8 @@
 use bed_editing::text_search::binary_text_probe;
 use std::io;
 use std::{fs, io::Read, path::Path};
-pub const MAX_FILE_SIZE: usize = bed_remote::MAX_FILE_BYTES;
+/// Local and remote documents share the same bounded file size.
+pub const MAX_FILE_SIZE: usize = bed_editing::MAX_DOCUMENT_BYTES;
 pub const BINARY_ERROR: &str = "Error: File appears to be binary and cannot be displayed.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,12 +22,12 @@ pub fn read_file_bytes(path: &Path) -> io::Result<ReadFile> {
 }
 
 /// Automatic routing treats even sparse NULs in binary headers as binary.
-pub fn classify_bytes(bytes: &[u8]) -> bed_editing::editor_state::DocumentKind {
+pub fn classify_bytes(bytes: &[u8]) -> bed_editing::document_state::DocumentKind {
     let prefix = &bytes[..bytes.len().min(1024)];
     if prefix.contains(&0) || binary_text_probe(prefix) {
-        bed_editing::editor_state::DocumentKind::Bytes
+        bed_editing::document_state::DocumentKind::Bytes
     } else {
-        bed_editing::editor_state::DocumentKind::Text
+        bed_editing::document_state::DocumentKind::Text
     }
 }
 
@@ -143,7 +144,7 @@ mod tests {
         bytes[..12].copy_from_slice(b"glTF\x02\0\0\0\0\x08\0\0");
         assert_eq!(
             classify_bytes(&bytes),
-            bed_editing::editor_state::DocumentKind::Bytes
+            bed_editing::document_state::DocumentKind::Bytes
         );
     }
 

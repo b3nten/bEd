@@ -81,7 +81,7 @@ fn main() {
         native_commands.in_set(DesktopSystems::InterceptInput),
     );
     #[cfg(feature = "effects")]
-    app.add_plugins(bed_effects::EffectsPlugin);
+    app.add_plugins(bed_plugin_effects::EffectsPlugin);
     #[cfg(feature = "layout")]
     install_layout(&mut app);
     if smoke {
@@ -347,8 +347,8 @@ impl bed_workbench::Panel for CounterPanel {
         &mut self,
         ui: &Ui,
         world: &mut World,
-        _: &mut Vec<bed_workbench::Action>,
-        _shortcuts: &bed_workbench_api::ShortcutInput,
+        _: &mut Vec<bed_workbench::WorkbenchAction>,
+        _shortcuts: &bed_workbench::api::ShortcutInput,
     ) {
         counter_ui(ui, world);
     }
@@ -376,10 +376,10 @@ fn install_layout(app: &mut App) {
     })
     .unwrap();
     app.add_systems(Startup, |world: &mut World| {
-        use bed_workbench::{Action, WorkbenchRequests};
+        use bed_workbench::{WorkbenchAction, WorkbenchRequests};
         world
             .resource_mut::<WorkbenchRequests>()
-            .push(Action::OpenPanel {
+            .push(WorkbenchAction::OpenPanel {
                 panel_type: "consumer.counter".into(),
                 state: serde_json::Value::Null,
                 area: None,

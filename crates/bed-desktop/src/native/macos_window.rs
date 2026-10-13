@@ -213,6 +213,7 @@ pub struct MacOsWindow {
     buttons: Vec<Retained<NSButton>>,
     commands: Vec<CommandItem>,
     icons: BTreeMap<String, Retained<NSImage>>,
+    icon_sources: BTreeMap<String, bed_ui::icons::RgbaImage>,
     title: Option<Retained<TitleLabel>>,
     title_width: Option<Retained<NSLayoutConstraint>>,
     title_text: String,
@@ -269,26 +270,7 @@ impl MacOsWindow {
         }
         let actions = NativeActions::alloc(mtm).set_ivars(Actions::default());
         let actions: Retained<NativeActions> = unsafe { msg_send![super(actions), init] };
-        // Build native images once. The 32px raster is displayed at 16pt, so
-        // Retina windows use the source pixels without an extra upscale.
-        let mut native_icons = BTreeMap::new();
-        for (key, raster) in &icons.images {
-            let mut png = Vec::new();
-            image::codecs::png::PngEncoder::new(&mut png)
-                .write_image(
-                    &raster.pixels,
-                    raster.width,
-                    raster.height,
-                    image::ExtendedColorType::Rgba8,
-                )
-                .map_err(io::Error::other)?;
-            let data = NSData::with_bytes(&png);
-            let image = NSImage::initWithData(NSImage::alloc(), &data)
-                .ok_or_else(|| io::Error::other(format!("Unable to create native icon: {key}")))?;
-            image.setSize(NSSize::new(16.0, 16.0));
-            image.setTemplate(true);
-            native_icons.insert(key.clone(), image);
-        }
+        let native_icons = realize_icons(icons)?;
         let title_text = native.title().to_string();
         let mut result = Self {
             window: native,
@@ -299,6 +281,7 @@ impl MacOsWindow {
             buttons: Vec::new(),
             commands: commands.to_vec(),
             icons: native_icons,
+            icon_sources: icons.images.clone(),
             title: None,
             title_width: None,
             title_text,
@@ -338,6 +321,21 @@ impl MacOsWindow {
             }
         }
         std::mem::take(&mut *self.actions.ivars().pending.borrow_mut())
+    }
+
+    /// Reconcile the same source artwork consumed by the GPU owner. Late plugin
+    /// contributions and runtime replacement update existing native buttons.
+    pub fn set_icons(&mut self, icons: &Icons) -> io::Result<()> {
+        if self.icon_sources == icons.images {
+            return Ok(());
+        }
+        let realized = realize_icons(icons)?;
+        for (button, command) in self.buttons.iter().zip(&self.commands) {
+            set_command_image(button, command, &realized);
+        }
+        self.icons = realized;
+        self.icon_sources = icons.images.clone();
+        Ok(())
     }
 
     /// Rebuild only for structural changes; enabled state updates in place.
@@ -605,7 +603,8 @@ impl MacOsWindow {
         }
         for (button, command) in self.buttons.iter().zip(&self.commands) {
             let image = button.image().expect("toolbar icon checked above");
-            let expected = &self.icons[command_icon_key(command.icon.as_deref())];
+            let expected = command_image(&self.icons, command.icon.as_deref())
+                .ok_or_else(|| io::Error::other("native toolbar icon source is missing"))?;
             if !image.isTemplate()
                 || image.size() != NSSize::new(16.0, 16.0)
                 || !std::ptr::eq(&*image, &**expected)
@@ -788,6 +787,65 @@ fn find_metal_layer(root: &CALayer) -> Option<Retained<CALayer>> {
         .find_map(|layer| find_metal_layer(&layer))
 }
 
+fn realize_icons(icons: &Icons) -> io::Result<BTreeMap<String, Retained<NSImage>>> {
+    let mut realized = BTreeMap::new();
+    for (key, raster) in &icons.images {
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(
+                &raster.pixels,
+                raster.width,
+                raster.height,
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(io::Error::other)?;
+        let data = NSData::with_bytes(&png);
+        let image = NSImage::initWithData(NSImage::alloc(), &data)
+            .ok_or_else(|| io::Error::other(format!("Unable to create native icon: {key}")))?;
+        // The shared raster is displayed at 16pt; Retina uses its 32px source.
+        image.setSize(NSSize::new(16.0, 16.0));
+        image.setTemplate(true);
+        realized.insert(key.clone(), image);
+    }
+    Ok(realized)
+}
+
+fn command_image<'a>(
+    icons: &'a BTreeMap<String, Retained<NSImage>>,
+    key: Option<&str>,
+) -> Option<&'a Retained<NSImage>> {
+    // Plugin contributions use exact namespaced keys. Legacy host metadata may
+    // still use shared names or aliases while its contributions are migrated.
+    if let Some(key) = key.filter(|key| key.contains('.')) {
+        return icons.get(key);
+    }
+    key.and_then(|key| {
+        icons
+            .get(key)
+            .or_else(|| icons.get(&format!("bed.core.{key}")))
+    })
+    .or_else(|| {
+        let legacy = command_icon_key(key);
+        icons
+            .get(legacy)
+            .or_else(|| icons.get(&format!("bed.core.{legacy}")))
+    })
+}
+
+fn set_command_image(
+    button: &NSButton,
+    command: &CommandItem,
+    icons: &BTreeMap<String, Retained<NSImage>>,
+) {
+    button.setImage(command_image(icons, command.icon.as_deref()).map(|image| &**image));
+    if button.image().is_some() {
+        button.setImagePosition(NSCellImagePosition::ImageOnly);
+    } else {
+        button.setImagePosition(NSCellImagePosition::NoImage);
+        button.setTitle(&NSString::from_str(&command.label));
+    }
+}
+
 fn install_controls(
     window: &NSWindow,
     target: &NativeActions,
@@ -819,16 +877,7 @@ fn install_controls(
         if let Some(layer) = button.layer() {
             layer.setCornerRadius(4.0);
         }
-        button.setImage(
-            icons
-                .get(command_icon_key(command.icon.as_deref()))
-                .map(|image| &**image),
-        );
-        if button.image().is_some() {
-            button.setImagePosition(NSCellImagePosition::ImageOnly);
-        } else {
-            button.setTitle(&NSString::from_str(&command.label));
-        }
+        set_command_image(&button, command, icons);
         unsafe {
             button.setTarget(Some(target));
             button.setAction(Some(sel!(performCommand:)));

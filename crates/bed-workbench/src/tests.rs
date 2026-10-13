@@ -32,11 +32,11 @@ impl Panel for CounterPanel {
         &mut self,
         ui: &Ui,
         _: &mut World,
-        requests: &mut Vec<Action>,
-        _shortcuts: &bed_workbench_api::ShortcutInput,
+        requests: &mut Vec<WorkbenchAction>,
+        _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         if ui.button("Close") || _shortcuts.take(ui, "test.close") {
-            requests.push(Action::ClosePanel(self.0));
+            requests.push(WorkbenchAction::ClosePanel(self.0));
         }
     }
 
@@ -50,7 +50,7 @@ fn factory(In(input): In<PanelCreation>) -> PanelResult {
 }
 
 fn open(In(input): In<CommandInvocation>) -> CommandResult {
-    Ok(vec![Action::OpenPanel {
+    Ok(vec![WorkbenchAction::OpenPanel {
         panel_type: "test.counter".into(),
         state: Value::Null,
         area: Some(input.area),
@@ -74,7 +74,118 @@ fn invoke(app: &mut App, command: &str) {
     let request = capture_command(app.world(), command, Value::Null);
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()
-        .push(Action::Invoke(request));
+        .push(WorkbenchAction::Invoke(request));
+}
+
+#[test]
+fn command_availability_is_checked_when_delayed_requests_execute() {
+    let mut app = app();
+    for (enabled, visible) in [(false, true), (true, false)] {
+        let command = capture_command(app.world(), "test.open", Value::Null);
+        let id = app
+            .world_mut()
+            .resource_mut::<WorkbenchRequests>()
+            .submit(WorkbenchAction::Invoke(command));
+        app.world_mut()
+            .resource_mut::<api::CommandPresentations>()
+            .0
+            .insert(
+                "test.open".into(),
+                api::CommandPresentation {
+                    enabled,
+                    visible,
+                    label: None,
+                },
+            );
+        process_requests(app.world_mut());
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<WorkbenchRequests>()
+                .take_result(id)
+                .unwrap()
+                .unwrap(),
+            WorkbenchOutcome::Ignored
+        );
+        assert!(
+            save(app.world_mut())["panels"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+    app.world_mut()
+        .resource_mut::<api::CommandPresentations>()
+        .0
+        .clear();
+    invoke(&mut app, "test.open");
+    process_requests(app.world_mut());
+    assert_eq!(save(app.world_mut())["panels"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn host_prepares_panels_before_factories_and_preserves_failed_inputs() {
+    #[derive(Component)]
+    struct Association;
+    let mut app = app();
+    register(app.world_mut(), "prepared", |registrar| {
+        registrar.panel(
+            "prepared.panel",
+            "Prepared",
+            |In(input): In<PanelCreation>, world: &mut World| -> PanelResult {
+                if world.get::<Association>(input.entity).is_none() {
+                    return Err("Document association is missing".into());
+                }
+                Ok(Box::new(CounterPanel(input.entity)))
+            },
+        );
+    })
+    .unwrap();
+    app.world_mut()
+        .insert_resource(PanelPreparation(|world, entity| {
+            world.entity_mut(entity).insert(Association);
+            Ok(())
+        }));
+    let prepared = open_panel(
+        app.world_mut(),
+        json!({"panel_type":"prepared.panel", "state":{"document":"canonical"}}),
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(app.world().get::<Association>(prepared).is_some());
+    assert!(
+        app.world()
+            .get::<PanelRecord>(prepared)
+            .unwrap()
+            .unavailable
+            .is_none()
+    );
+    app.world_mut().insert_resource(PanelPreparation(|_, _| {
+        Err("Document cannot be restored".into())
+    }));
+    let failed = open_panel(
+        app.world_mut(),
+        json!({"panel_type":"prepared.panel", "state":{"document":"retain-on-failure"}}),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        app.world()
+            .get::<PanelRecord>(failed)
+            .unwrap()
+            .unavailable
+            .as_deref(),
+        Some("Document cannot be restored")
+    );
+    let saved = save(app.world_mut());
+    assert!(
+        saved["panels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| record["state"]["document"] == "retain-on-failure")
+    );
 }
 
 #[test]
@@ -167,14 +278,14 @@ fn retained_presentation_commands_keep_their_source_and_close_the_owner_after_pr
             |In(invocation): In<CommandInvocation>, world: &mut World| -> CommandResult {
                 let source = invocation.source.unwrap();
                 world.get_mut::<PresentationDraft>(source).unwrap().0 += 1;
-                Ok(vec![Action::FocusPanel(source)])
+                Ok(vec![WorkbenchAction::FocusPanel(source)])
             },
         );
     })
     .unwrap();
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()
-        .push(Action::Invoke(CommandInvocation {
+        .push(WorkbenchAction::Invoke(CommandInvocation {
             command: "presentation.edit".into(),
             source: Some(child),
             area: 1,
@@ -200,7 +311,7 @@ fn retained_presentation_commands_keep_their_source_and_close_the_owner_after_pr
     }));
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()
-        .push(Action::ClosePanel(child));
+        .push(WorkbenchAction::ClosePanel(child));
     process_requests(app.world_mut());
     assert!(app.world().get::<PresentationDraft>(child).is_some());
     assert!(commit_close(app.world_mut(), owner));
@@ -221,7 +332,7 @@ fn registration_failure_publishes_neither_definitions_nor_system_entities() {
     assert!(error.contains("Invalid or duplicate contribution"));
     assert!(
         app.world()
-            .resource::<Registry>()
+            .resource::<WorkbenchRegistry>()
             .command("other.valid")
             .is_none()
     );
@@ -235,7 +346,7 @@ fn registration_failure_publishes_neither_definitions_nor_system_entities() {
     .unwrap();
     assert_eq!(
         app.world()
-            .resource::<Registry>()
+            .resource::<WorkbenchRegistry>()
             .commands()
             .iter()
             .map(|entry| entry.id)
@@ -326,7 +437,7 @@ fn captured_command_does_not_target_an_entity_replacing_its_saved_id() {
     assert_ne!(old, replacement);
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()
-        .push(Action::Invoke(stale));
+        .push(WorkbenchAction::Invoke(stale));
     process_requests(app.world_mut());
     assert_eq!(
         app.world_mut()
@@ -419,7 +530,7 @@ fn requested_focus_survives_frontend_observations_across_tiled_areas() {
     for id in [1, 2, 1] {
         app.world_mut()
             .resource_mut::<WorkbenchRequests>()
-            .push(Action::FocusPanel(entities[&id]));
+            .push(WorkbenchAction::FocusPanel(entities[&id]));
         process_requests(app.world_mut());
         for _ in 0..3 {
             context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
@@ -451,13 +562,13 @@ fn foreign_presentation_targets_cannot_mutate_generic_panels_with_the_same_saved
     let foreign = app.world_mut().spawn(foreign_presentation.clone()).id();
     let before = app.world().resource::<WorkbenchLayout>().clone();
     let mut requests = app.world_mut().resource_mut::<WorkbenchRequests>();
-    requests.push(Action::FocusPanel(foreign));
-    requests.push(Action::SplitPanel {
+    requests.push(WorkbenchAction::FocusPanel(foreign));
+    requests.push(WorkbenchAction::SplitPanel {
         panel: foreign,
         axis: 0,
         high: true,
     });
-    requests.push(Action::ClosePanel(foreign));
+    requests.push(WorkbenchAction::ClosePanel(foreign));
     process_requests(app.world_mut());
     assert_eq!(app.world().resource::<WorkbenchLayout>(), &before);
     assert_eq!(
@@ -470,7 +581,7 @@ fn foreign_presentation_targets_cannot_mutate_generic_panels_with_the_same_saved
     // world even though generic panel lifecycle actions do not own them.
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()
-        .push(Action::Invoke(CommandInvocation {
+        .push(WorkbenchAction::Invoke(CommandInvocation {
             command: "test.open".into(),
             source: Some(foreign),
             area: 1,
@@ -510,12 +621,12 @@ impl Panel for MutableWidget {
         &mut self,
         ui: &Ui,
         world: &mut World,
-        requests: &mut Vec<Action>,
-        _shortcuts: &bed_workbench_api::ShortcutInput,
+        requests: &mut Vec<WorkbenchAction>,
+        _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         world.get_mut::<WidgetState>(self.0).unwrap().0 += 1;
         ui.text(self.title(world));
-        requests.push(Action::ClosePanel(self.0));
+        requests.push(WorkbenchAction::ClosePanel(self.0));
     }
 
     fn save(&self, world: &World) -> Value {
@@ -553,7 +664,9 @@ fn application_compositor_updates_world_widget_state_and_returns_deferred_intent
         panel_state(app.world_mut(), entity).unwrap(),
         json!({"value":42})
     );
-    assert!(matches!(actions.as_slice(), [Action::ClosePanel(target)] if *target == entity));
+    assert!(
+        matches!(actions.as_slice(), [WorkbenchAction::ClosePanel(target)] if *target == entity)
+    );
     assert!(app.world().get::<PanelRecord>(entity).is_some());
     assert_eq!(
         app.world().resource::<WorkbenchLayout>().focused,
@@ -592,7 +705,7 @@ fn deferred_close_keeps_the_frontend_and_layout_until_application_commits() {
     let saved = save(app.world_mut());
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()
-        .push(Action::ClosePanel(entity));
+        .push(WorkbenchAction::ClosePanel(entity));
     process_requests(app.world_mut());
     assert_eq!(app.world().resource::<CloseGate>().calls, [entity]);
     assert_eq!(save(app.world_mut()), saved);
@@ -623,7 +736,7 @@ fn deferred_close_keeps_the_frontend_and_layout_until_application_commits() {
     let next = app.world().resource::<WorkbenchLayout>().focused.unwrap();
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()
-        .push(Action::ClosePanel(next));
+        .push(WorkbenchAction::ClosePanel(next));
     process_requests(app.world_mut());
     assert!(app.world().get_entity(next).is_err());
     assert_eq!(app.world().resource::<CloseGate>().calls, [entity, next]);
@@ -697,12 +810,12 @@ impl Panel for PanickingWidget {
         &mut self,
         _ui: &Ui,
         _world: &mut World,
-        requests: &mut Vec<Action>,
-        _shortcuts: &bed_workbench_api::ShortcutInput,
+        requests: &mut Vec<WorkbenchAction>,
+        _shortcuts: &bed_api::workbench::ShortcutInput,
     ) {
         self.draws.set(self.draws.get() + 1);
         self.draft = 999;
-        requests.push(Action::ClosePanel(self.entity));
+        requests.push(WorkbenchAction::ClosePanel(self.entity));
         unsafe {
             dear_imgui_rs::sys::igBegin(
                 c"unfinished extension window".as_ptr(),
@@ -794,7 +907,7 @@ fn tracked_close_completes_only_after_the_deferred_entity_is_retired() {
     let request = app
         .world_mut()
         .resource_mut::<WorkbenchRequests>()
-        .submit(Action::ClosePanel(panel));
+        .submit(WorkbenchAction::ClosePanel(panel));
     process_requests(app.world_mut());
     assert!(
         app.world_mut()
@@ -820,7 +933,7 @@ fn external_request_mode_leaves_the_same_queue_to_the_application_reducer() {
     let id = app
         .world_mut()
         .resource_mut::<WorkbenchRequests>()
-        .submit(Action::Invoke(CommandInvocation {
+        .submit(WorkbenchAction::Invoke(CommandInvocation {
             command: "test.open".into(),
             source: None,
             area: 1,
@@ -857,14 +970,13 @@ fn splitting_the_focused_panel_updates_its_area_and_roundtrips_exactly() {
         let source = app.world().resource::<WorkbenchLayout>().focused.unwrap();
         let panel_id = app.world().get::<PanelPresentation>(source).unwrap().id;
         let original_area = app.world().resource::<WorkbenchLayout>().focused_area;
-        let id = app
-            .world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .submit(Action::SplitPanel {
+        let id = app.world_mut().resource_mut::<WorkbenchRequests>().submit(
+            WorkbenchAction::SplitPanel {
                 panel: source,
                 axis,
                 high: true,
-            });
+            },
+        );
         process_requests(app.world_mut());
         assert_eq!(
             app.world_mut()
@@ -901,7 +1013,7 @@ fn applying_a_tab_move_updates_focused_area_while_preserving_explicit_area_focus
         .collect::<Vec<_>>();
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()
-        .push(Action::SetLayout {
+        .push(WorkbenchAction::SetLayout {
             tiling: tiling.to_value(ids.clone()),
             close: Vec::new(),
         });
@@ -943,7 +1055,7 @@ fn showing_a_panel_uses_its_recent_focus_and_creating_is_distinct() {
     focus_panel(app.world_mut(), older);
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()
-        .push(Action::ShowPanel {
+        .push(WorkbenchAction::ShowPanel {
             panel_type: "test.counter".into(),
             state: Value::Null,
             area: None,
@@ -965,7 +1077,7 @@ fn showing_a_panel_uses_its_recent_focus_and_creating_is_distinct() {
     commit_close(app.world_mut(), newest);
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()
-        .push(Action::ShowPanel {
+        .push(WorkbenchAction::ShowPanel {
             panel_type: "test.counter".into(),
             state: Value::Null,
             area: None,
@@ -990,7 +1102,7 @@ fn individual_panel_rendering_refreshes_bindings_each_frame() {
     let entity = app.world().resource::<WorkbenchLayout>().focused.unwrap();
     let action = app
         .world()
-        .resource::<Registry>()
+        .resource::<WorkbenchRegistry>()
         .shortcuts()
         .iter()
         .find(|a| a.id == "test.close")
@@ -1021,7 +1133,9 @@ fn individual_panel_rendering_refreshes_bindings_each_frame() {
         ui.window("Direct rendering").focused(true).build(|| {
             requests = render_panel(app.world_mut(), entity, ui).unwrap();
         });
-        assert!(matches!(requests.as_slice(),[Action::ClosePanel(closed)] if *closed==entity));
+        assert!(
+            matches!(requests.as_slice(),[WorkbenchAction::ClosePanel(closed)] if *closed==entity)
+        );
         drop(context.render_legacy());
         context.io_mut().add_key_event(key, false);
         context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(

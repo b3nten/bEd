@@ -1,5 +1,5 @@
 //! Whole-line folds belong to a view; document positions never change when folded.
-use crate::editor_events::DocumentChange;
+use crate::editing_events::DocumentChange;
 
 /// The opening line stays visible, and `start_line + 1..=end_line` is hidden.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,0 +1,24 @@
+[package]
+name = "bed-plugin-debugger"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+bed-keybindings = { workspace = true }
+bevy = { workspace = true, features = ["std"] }
+bed-api = { workspace = true, features = ["documents"] }
+bed-workbench = { workspace = true }
+bed-terminal = { workspace = true, features = ["ui"] }
+serde = { workspace = true }
+bed-ui = { workspace = true, features = ["imgui"] }
+bed-editing = { workspace = true }
+bed-documents = { workspace = true, features = ["ide-services"] }
+bed-editor-widgets = { workspace = true, features = ["language-services"] }
+bed-debugger = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }

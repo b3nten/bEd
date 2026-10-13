@@ -1,0 +1,47 @@
+[
+  {
+    "file": "Apache-2.0.txt",
+    "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/Apache-2.0.txt",
+    "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff"
+  },
+  {
+    "file": "CC-BY-3.0.txt",
+    "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/CC-BY-3.0.txt",
+    "sha256": "e6bc9e9c474700b708f568bac9e5a8a9bcb2b1dad53442f5ba449fcb848b8e76"
+  },
+  {
+    "file": "CC-BY-4.0.txt",
+    "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/CC-BY-4.0.txt",
+    "sha256": "d557539df68e771cc1eedcc91d13f70fca930e508d11eedcafa4b15db49e3744"
+  },
+  {
+    "file": "CC-BY-SA-2.5.txt",
+    "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/CC-BY-SA-2.5.txt",
+    "sha256": "dbe7fadf81c75e0cb15a0cb338a6f42a7b34dced43958a4921ca056ca1b87a93"
+  },
+  {
+    "file": "CC-BY-SA-3.0.txt",
+    "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/CC-BY-SA-3.0.txt",
+    "sha256": "3f941b3b89cf7b8370ceb83cc76d2120d471b58735d8ca60238a751a48d7f72f"
+  },
+  {
+    "file": "CC-BY-SA-4.0.txt",
+    "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/CC-BY-SA-4.0.txt",
+    "sha256": "cde7883b9050a1104f4ac19a1572aafd6e5d7323b68351aaf51fbf4beba54966"
+  },
+  {
+    "file": "Unlicense.txt",
+    "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/Unlicense.txt",
+    "sha256": "0bdebfeda07d45dada625ae1317c6f833186e798b171d0db640bcf32e92a8240"
+  },
+  {
+    "file": "bash-MIT.txt",
+    "url": "https://raw.githubusercontent.com/odb/official-bash-logo/61eff022f2dad3c7468f5deb4f06652d15f2c143/LICENSE",
+    "sha256": "ba89f9b441d35a0a127895ea2ef6fd5ae1387bb6b075ff00d00f83800b0133c5"
+  },
+  {
+    "file": "javascript-MIT.txt",
+    "url": "https://raw.githubusercontent.com/voodootikigod/logo.js/1544bdeed6d618a6cfe4f0650d04ab8d9cfa76d9/LICENSE",
+    "sha256": "0d3f7c086c6b6cf3ea4aac714e9aa3e1fb02e355ce35bd21c56acf8d04390885"
+  }
+]

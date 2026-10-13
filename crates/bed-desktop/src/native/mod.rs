@@ -332,6 +332,7 @@ fn prepare(world: &mut World) {
                     )?);
                 }
                 let chrome = native.window.as_mut().expect("native chrome installed");
+                chrome.set_icons(icons)?;
                 chrome.update(requested.opacity, requested.blur)?;
                 chrome.set_commands(&requested.toolbar)?;
                 chrome.update_theme(requested.foreground, requested.background)?;

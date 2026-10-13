@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(all(unix, feature = "terminal"))]
 use std::time::{Duration, Instant};
 
 #[test]
@@ -13,10 +14,10 @@ fn native_file_drops_enqueue_editor_requests_and_clear_the_hover() {
         platform,
         snapshot_context: None,
     });
-    world.insert_non_send(bed_document_session::EditorSession::new());
+    world.insert_non_send(bed_documents::DocumentSession::new());
     world.init_resource::<bed_workbench::WorkbenchLayout>();
-    world.init_resource::<bed_editor_workbench::LayoutSlots>();
-    world.init_resource::<bed_editor_workbench::EditorRequests>();
+    world.init_resource::<bed_app::LayoutSlots>();
+    world.init_resource::<bed_app::AppRequests>();
     world.init_resource::<NativeFileDrag>();
     #[cfg(target_os = "macos")]
     world.init_resource::<bed_desktop::DesktopNativeActions>();
@@ -42,11 +43,7 @@ fn native_file_drops_enqueue_editor_requests_and_clear_the_hover() {
 
     native_input(&mut world);
 
-    assert!(
-        !world
-            .resource::<bed_editor_workbench::EditorRequests>()
-            .is_empty()
-    );
+    assert!(!world.resource::<bed_app::AppRequests>().is_empty());
     assert!(
         world
             .resource::<DesktopInputEvents>()
@@ -178,7 +175,7 @@ fn smaller_checkbox_keeps_its_full_click_target_and_label_layout() {
 #[cfg(target_os = "macos")]
 #[test]
 fn native_edit_shortcuts_undo_and_redo_once_without_inserting_characters() {
-    use bed_editor_ui::{EditorView, EditorViewOptions};
+    use bed_editor_widgets::{EditorView, EditorViewOptions};
     use dear_imgui_rs::{Condition, FramePrepareOptions, Key};
     let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
     let mut context = Context::create();
@@ -188,7 +185,7 @@ fn native_edit_shortcuts_undo_and_redo_once_without_inserting_characters() {
         .try_claim_legacy_renderer()
         .unwrap()
         .build();
-    let mut session = bed_document_session::EditorSession::new();
+    let mut session = bed_documents::DocumentSession::new();
     let document = session.create_document(b"baseline").unwrap();
     let mut view = EditorView::new(&mut session, document).unwrap();
     session
@@ -202,7 +199,7 @@ fn native_edit_shortcuts_undo_and_redo_once_without_inserting_characters() {
         })
         .unwrap();
     session.request_focus(view.id()).unwrap();
-    let mut render = |context: &mut Context, session: &mut bed_document_session::EditorSession| {
+    let mut render = |context: &mut Context, session: &mut bed_documents::DocumentSession| {
         context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], 1.0 / 60.0));
         let ui = context.frame();
         ui.window("Native menu editing")
@@ -243,11 +240,11 @@ fn native_edit_shortcuts_undo_and_redo_once_without_inserting_characters() {
     assert!(!context.io().key_shift());
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "terminal"))]
 #[test]
 fn native_copy_and_paste_use_terminal_service_commands() {
-    use bed_terminal_core::{
-        bed_terminal_core::BedTerminal,
+    use bed_terminal::{
+        bed_terminal::BedTerminal,
         terminal_pty::{PtyOptions, TerminalShell},
     };
     use dear_imgui_rs::ClipboardBackend;
@@ -334,11 +331,11 @@ fn native_copy_and_paste_use_terminal_service_commands() {
     terminal.shutdown();
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "terminal"))]
 #[test]
 fn native_window_focus_reports_transitions_once_and_keeps_hidden_terminal_blurred() {
-    use bed_terminal_core::{
-        bed_terminal_core::BedTerminal,
+    use bed_terminal::{
+        bed_terminal::BedTerminal,
         terminal_font::TerminalFonts,
         terminal_pty::{PtyOptions, TerminalShell},
     };
@@ -450,9 +447,9 @@ fn native_panel_clicks_create_and_configured_shortcuts_reveal() {
             WindowCommand::Settings,
         ),
         (
-            MenuAction::FindProject,
+            MenuAction::FindWorkspace,
             WindowCommand::NewContentSearch,
-            WindowCommand::FindProject,
+            WindowCommand::FindWorkspace,
         ),
     ] {
         assert_eq!(native_menu_command(action, false), Some(create));
@@ -462,7 +459,7 @@ fn native_panel_clicks_create_and_configured_shortcuts_reveal() {
         (MenuAction::NewExplorer, WindowCommand::NewExplorer),
         (MenuAction::NewTerminal, WindowCommand::NewTerminal),
         (MenuAction::NewSettings, WindowCommand::NewSettings),
-        (MenuAction::Projects, WindowCommand::NewProjects),
+        (MenuAction::Workspaces, WindowCommand::NewWorkspaces),
         (MenuAction::Diagnostics, WindowCommand::NewDiagnostics),
         (MenuAction::Structure, WindowCommand::NewStructure),
         (MenuAction::NewStructure, WindowCommand::NewStructure),
@@ -499,7 +496,7 @@ fn native_edit_actions_respect_text_input_ownership() {
 
 #[test]
 fn workspace_window_launch_preserves_local_and_ssh_identity_as_one_argument() {
-    use bed_editor_api::workspace::{WorkspaceSpec, WorkspaceTarget};
+    use bed_api::application::{WorkspaceSpec, WorkspaceTarget};
     let config = std::env::temp_dir().canonicalize().unwrap();
     for workspace in [
         WorkspaceSpec::local("/tmp/project with spaces"),

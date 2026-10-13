@@ -1,20 +1,23 @@
-#![cfg(all(feature = "editor", feature = "debug"))]
+#![cfg(all(feature = "editor", feature = "debugger"))]
 
 #[path = "support/editor_host.rs"]
 mod editor_host;
 #[path = "support/temp_dir.rs"]
 mod temp_dir;
 
-use bed_config::Settings;
-use bed_debug::{DebugPlugin, DebugState};
-use bed_document_session::EditorSession;
-use bed_editor_api::{EditorPanelBinding, PanelTarget};
-use bed_editor_workbench::*;
-use bed_workbench::{Action, PanelPresentation, WorkbenchLayout, WorkbenchRequests};
+use bed_api::{documents::PanelBinding, workbench::PanelTarget};
+use bed_app::*;
+use bed_app_config::Settings;
+use bed_documents::DocumentSession;
+use bed_plugin_debugger::{DebugState, DebuggerPlugin};
 use bevy::prelude::*;
 use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
 use std::time::{Duration, Instant};
 use temp_dir::TempDir;
+use {
+    bed_workbench::PanelPresentation, bed_workbench::WorkbenchAction,
+    bed_workbench::WorkbenchLayout, bed_workbench::WorkbenchRequests,
+};
 
 #[test]
 fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
@@ -29,15 +32,15 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
     .unwrap();
     app.add_plugins((
         bed_runtime::BedRuntimePlugin,
-        EditorWorkbenchPlugin {
-            options: EditorWorkbenchOptions {
+        AppRuntimePlugin {
+            options: AppOptions {
                 working_directory: Some(root.clone()),
                 workspace: Some(WorkspaceSpec::local(root.to_string_lossy())),
                 ..Default::default()
             },
         },
-        bed_editor::EditorPlugin,
-        DebugPlugin,
+        bed_plugin_editor::EditorPlugin,
+        DebuggerPlugin,
     ));
     app.update();
     let source_area = app
@@ -47,27 +50,23 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
         .layout
         .largest_area();
     let source = open_file(app.world_mut(), &main, None, false, Some(source_area)).unwrap();
-    let binding = app
-        .world()
-        .get::<EditorPanelBinding>(source)
-        .unwrap()
-        .clone();
+    let binding = app.world().get::<PanelBinding>(source).unwrap().clone();
     app.world_mut()
-        .non_send_mut::<EditorSession>()
+        .non_send_mut::<DocumentSession>()
         .with_commands(binding.view.unwrap(), |commands| {
             commands.set_cursor(
                 1,
                 0,
                 false,
-                bed_editing::editor_commands::CursorReveal::Center,
+                bed_editing::text_commands::CursorReveal::Center,
             )
         })
         .unwrap();
     // Publish command availability for the newly opened source view.
     app.update();
-    dispatch_editor_plugin_command(
+    dispatch_app_plugin_command(
         app.world_mut(),
-        bed_debug::BREAKPOINT_COMMAND,
+        bed_plugin_debugger::BREAKPOINT_COMMAND,
         PanelTarget::LastFocused,
     )
     .unwrap();
@@ -88,7 +87,7 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
         .iter(app.world())
         .find(|(entity, record)| {
             bed_workbench::owns_panel(app.world(), *entity)
-                && record.panel_type == bed_debug::PANEL_ID
+                && record.panel_type == bed_plugin_debugger::PANEL_ID
         })
         .unwrap()
         .0;
@@ -103,7 +102,7 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
     let debug_surface = panel_presentation(app.world(), debug).unwrap();
     {
         let mut debugger = app.world_mut().non_send_mut::<DebugState>();
-        debugger.0.profiles = vec![bed_debug_core::DebugProfile {
+        debugger.0.profiles = vec![bed_debugger::DebugProfile {
             name: "Build fixture".into(),
             program: dir.path("fixture").to_string_lossy().into_owned(),
             build_command: "printf started > launch.started; exit 7".into(),
@@ -114,10 +113,10 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
     }
     let saved = b"fn main() {\n    let number = 43;\n}\n";
     app.world_mut()
-        .non_send_mut::<EditorSession>()
+        .non_send_mut::<DocumentSession>()
         .replace_content(binding.document.unwrap(), saved)
         .unwrap();
-    publish_editor_frame(app.world_mut());
+    publish_host_frame(app.world_mut());
 
     let mut context = Context::create();
     context
@@ -147,7 +146,7 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
             });
         let _ = context.render_legacy();
     }
-    let [Action::Invoke(invocation)] = actions.as_slice() else {
+    let [WorkbenchAction::Invoke(invocation)] = actions.as_slice() else {
         panic!("Start must emit one captured command: {actions:?}");
     };
     assert_eq!(invocation.source, Some(debug_surface));
@@ -155,7 +154,7 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()
         .push(actions.pop().unwrap());
-    process_editor_requests(app.world_mut()).unwrap();
+    process_app_requests(app.world_mut()).unwrap();
     assert_eq!(std::fs::read(&main).unwrap(), saved);
     let deadline = Instant::now() + Duration::from_secs(5);
     while app.world().non_send::<DebugState>().0.error.is_none() {
@@ -179,12 +178,12 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
             .unwrap()
             .contains("Build failed")
     );
-    assert!(app.world().resource::<EditorWorkspace>().error.is_none());
+    assert!(app.world().resource::<WorkspaceState>().error.is_none());
 
     for _ in 0..3 {
-        dispatch_editor_plugin_command(
+        dispatch_app_plugin_command(
             app.world_mut(),
-            bed_debug::SHOW_COMMAND,
+            bed_plugin_debugger::SHOW_COMMAND,
             PanelTarget::LargestArea,
         )
         .unwrap();
@@ -195,7 +194,7 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
         .iter(app.world())
         .filter(|(entity, record)| {
             bed_workbench::owns_panel(app.world(), *entity)
-                && record.panel_type == bed_debug::PANEL_ID
+                && record.panel_type == bed_plugin_debugger::PANEL_ID
         })
         .count();
     assert_eq!(
@@ -210,7 +209,7 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
         app.world_mut().non_send_mut::<DebugState>().0.navigation =
             Some((path.to_string_lossy().into_owned(), 1, 5));
         app.update();
-        assert!(app.world().resource::<EditorWorkspace>().error.is_none());
+        assert!(app.world().resource::<WorkspaceState>().error.is_none());
         let panel = app.world().resource::<WorkbenchLayout>().focused.unwrap();
         let id = app.world().get::<PanelPresentation>(panel).unwrap().id;
         let layout = app.world().resource::<WorkbenchLayout>();
@@ -233,13 +232,13 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
         }
         let view = app
             .world()
-            .get::<EditorPanelBinding>(panel)
+            .get::<PanelBinding>(panel)
             .unwrap()
             .view
             .unwrap();
         let cursor = app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .view_snapshot(view)
             .unwrap();
         assert_eq!(
@@ -255,18 +254,20 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
     let path = dir.write("breakpoint.rs", b"fn breakpoint() {}\n");
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()
-        .push(Action::Invoke(bed_workbench::CommandInvocation {
+        .push(WorkbenchAction::Invoke(bed_workbench::CommandInvocation {
             command: "bed.debug.action".into(),
             source: Some(debug_surface),
             area: debug_area,
-            arguments: serde_json::to_value(bed_debug::fixtures::Action::Navigate(
-                path.to_string_lossy().into_owned(),
-                0,
-            ))
+            arguments: serde_json::to_value(
+                bed_plugin_debugger::fixtures::DebuggerAction::Navigate(
+                    path.to_string_lossy().into_owned(),
+                    0,
+                ),
+            )
             .unwrap(),
         }));
-    process_editor_requests(app.world_mut()).unwrap();
-    assert!(app.world().resource::<EditorWorkspace>().error.is_none());
+    process_app_requests(app.world_mut()).unwrap();
+    assert!(app.world().resource::<WorkspaceState>().error.is_none());
     let panel = app.world().resource::<WorkbenchLayout>().focused.unwrap();
     let id = app.world().get::<PanelPresentation>(panel).unwrap().id;
     assert_eq!(
@@ -282,23 +283,23 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
     // Editing a preview keeps it, so subsequent stepping cannot discard work.
     let document = app
         .world()
-        .get::<EditorPanelBinding>(panel)
+        .get::<PanelBinding>(panel)
         .unwrap()
         .document
         .unwrap();
     app.world_mut()
-        .non_send_mut::<EditorSession>()
+        .non_send_mut::<DocumentSession>()
         .replace_content(document, b"fn breakpoint() { /* unsaved */ }\n")
         .unwrap();
     let next = dir.write("after_edit.rs", b"fn after_edit() {}\n");
     app.world_mut().non_send_mut::<DebugState>().0.navigation =
         Some((next.to_string_lossy().into_owned(), 0, 0));
     app.update();
-    assert!(app.world().resource::<EditorWorkspace>().error.is_none());
+    assert!(app.world().resource::<WorkspaceState>().error.is_none());
     assert!(app.world().entities().contains(panel));
     assert!(
         app.world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .snapshot(document)
             .unwrap()
             .dirty

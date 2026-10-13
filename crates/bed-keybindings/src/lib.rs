@@ -165,7 +165,7 @@ impl Scope {
 }
 
 #[derive(Clone, Debug)]
-pub struct Action {
+pub struct ShortcutAction {
     pub id: String,
     pub label: String,
     pub owner: String,
@@ -174,7 +174,7 @@ pub struct Action {
     pub repeat: bool,
 }
 
-impl Action {
+impl ShortcutAction {
     pub fn new(id: &str, label: &str, owner: &str, scope: Scope, defaults: &[&str]) -> Self {
         Self {
             id: id.into(),
@@ -201,7 +201,7 @@ pub const ZOOM_OUT: &str = "bed.view.zoom_out";
 pub const RESET_ZOOM: &str = "bed.view.reset_zoom";
 
 /// One keymap for operations whose meaning follows the current focus.
-pub fn common_actions() -> Vec<Action> {
+pub fn common_actions() -> Vec<ShortcutAction> {
     let mut actions: Vec<_> = [
         ("find", "Find", vec!["Primary+F"]),
         ("copy", "Copy", vec!["Primary+C"]),
@@ -229,7 +229,7 @@ pub fn common_actions() -> Vec<Action> {
                 _ => {}
             }
         }
-        Action::new(
+        ShortcutAction::new(
             &format!("bed.edit.{name}"),
             label,
             "bed.edit",
@@ -251,7 +251,13 @@ pub fn common_actions() -> Vec<Action> {
         ),
         (RESET_ZOOM, "Reset Zoom", &["Primary+0"][..]),
     ] {
-        actions.push(Action::new(id, label, "bed.view", Scope::Focused, keys));
+        actions.push(ShortcutAction::new(
+            id,
+            label,
+            "bed.view",
+            Scope::Focused,
+            keys,
+        ));
     }
     for (direction, key) in [
         ("left", "Left"),
@@ -260,7 +266,7 @@ pub fn common_actions() -> Vec<Action> {
         ("down", "Down"),
     ] {
         actions.push(
-            Action::new(
+            ShortcutAction::new(
                 &format!("bed.navigation.move_{direction}"),
                 &format!("Navigate {key}"),
                 "bed.navigation",
@@ -270,7 +276,7 @@ pub fn common_actions() -> Vec<Action> {
             .repeating(),
         );
         actions.push(
-            Action::new(
+            ShortcutAction::new(
                 &format!("bed.navigation.select_{direction}"),
                 &format!("Extend Selection {key}"),
                 "bed.navigation",
@@ -334,7 +340,7 @@ impl Overrides {
 
     pub fn replace(
         &mut self,
-        action: &Action,
+        action: &ShortcutAction,
         index: Option<usize>,
         shortcut: Stroke,
     ) -> Result<(), String> {
@@ -367,7 +373,7 @@ impl Overrides {
         Ok(())
     }
 
-    pub fn remove(&mut self, action: &Action, index: usize) -> Result<(), String> {
+    pub fn remove(&mut self, action: &ShortcutAction, index: usize) -> Result<(), String> {
         let entries = self.actions.entry(action.id.clone()).or_insert_with(|| {
             action
                 .defaults
@@ -418,7 +424,7 @@ pub struct Binding {
 
 #[derive(Clone, Debug)]
 pub struct Bindings {
-    pub actions: Vec<Action>,
+    pub actions: Vec<ShortcutAction>,
     pub entries: Vec<Binding>,
     pub platform: Platform,
 }
@@ -440,7 +446,7 @@ pub struct Collision {
 }
 
 impl Bindings {
-    pub fn new(actions: Vec<Action>, overrides: &Overrides, platform: Platform) -> Self {
+    pub fn new(actions: Vec<ShortcutAction>, overrides: &Overrides, platform: Platform) -> Self {
         let mut entries = Vec::new();
         for action in &actions {
             let assignments = overrides
@@ -869,8 +875,8 @@ mod tests {
     static IMGUI_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     use super::*;
 
-    fn action(id: &str, scope: Scope, keys: &[&str]) -> Action {
-        Action::new(id, id, "fixture", scope, keys)
+    fn action(id: &str, scope: Scope, keys: &[&str]) -> ShortcutAction {
+        ShortcutAction::new(id, id, "fixture", scope, keys)
     }
 
     #[test]

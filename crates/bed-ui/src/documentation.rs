@@ -2,11 +2,49 @@
 use crate::documentation_markdown::{
     HoverProseRun, HoverProseStyle, parse_hover_markdown, parse_hover_prose, split_hover_lines,
 };
+#[cfg(feature = "documentation-syntax")]
+pub use bed_highlight::tree_sitter::ThemeColors;
+#[cfg(feature = "documentation-syntax")]
 use bed_highlight::{
     capture_map::{THEME_SLOTS, ThemeSlot},
-    tree_sitter::{LineColorSpans, ThemeColors, TreeSitter},
+    tree_sitter::{LineColorSpans, TreeSitter},
 };
 use dear_imgui_rs::{StyleColor, StyleVar, Ui, sys};
+#[cfg(not(feature = "documentation-syntax"))]
+pub use plain::ThemeColors;
+#[cfg(not(feature = "documentation-syntax"))]
+use plain::{LineColorSpans, THEME_SLOTS, ThemeSlot};
+
+/// Documentation works with the UI palette when syntax services are absent.
+/// Enabling `documentation-syntax` retains the editor's syntax theme API.
+#[cfg(not(feature = "documentation-syntax"))]
+mod plain {
+    #[derive(Clone, Copy, Debug)]
+    pub enum ThemeSlot {
+        Text,
+        String,
+    }
+    pub const THEME_SLOTS: [ThemeSlot; 2] = [ThemeSlot::Text, ThemeSlot::String];
+
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct ThemeColors {
+        pub slots: [[f32; 4]; 2],
+    }
+    impl Default for ThemeColors {
+        fn default() -> Self {
+            Self {
+                slots: [[0.9, 0.9, 0.9, 1.0]; 2],
+            }
+        }
+    }
+
+    pub struct LineColorSpan {
+        pub start: i32,
+        pub end: i32,
+        pub slot: ThemeSlot,
+    }
+    pub type LineColorSpans = Vec<LineColorSpan>;
+}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Documentation {
@@ -275,10 +313,16 @@ pub fn render_markdown(ui: &Ui, markdown: &str, colors: &ThemeColors, fallback_l
             } else {
                 &block.language
             };
+            #[cfg(feature = "documentation-syntax")]
             let colors = if language.is_empty() {
                 Vec::new()
             } else {
                 TreeSitter::highlight_snippet(language, block.text.as_bytes())
+            };
+            #[cfg(not(feature = "documentation-syntax"))]
+            let colors: Vec<LineColorSpans> = {
+                let _ = language;
+                Vec::new()
             };
             for (row, line) in split_hover_lines(&block.text).iter().enumerate() {
                 draw_code_line(ui, line, colors.get(row).unwrap_or(&Vec::new()), &palette);
@@ -379,8 +423,13 @@ mod tests {
     fn native_wrapped_code_preserves_indentation_unicode_and_highlighting() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         let mut context = context();
-        let mut editor = ThemeColors::default();
-        editor.slots[ThemeSlot::Keyword as usize] = [0.9, 0.3, 0.4, 1.0];
+        let editor = ThemeColors::default();
+        #[cfg(feature = "documentation-syntax")]
+        let editor = {
+            let mut editor = editor;
+            editor.slots[ThemeSlot::Keyword as usize] = [0.9, 0.3, 0.4, 1.0];
+            editor
+        };
         let code =
             "    pub fn extraordinarily_long_identifier_with_变量_🙂(name: &str) -> usize { 1 }";
         frame(&mut context, |ui| {
@@ -403,20 +452,27 @@ mod tests {
                 .size([130.0, 220.0])
                 .build(ui, || {
                     let palette = HoverColors::new(ui, &editor);
+                    #[cfg(feature = "documentation-syntax")]
                     let spans = TreeSitter::highlight_snippet("rust", code.as_bytes());
+                    #[cfg(not(feature = "documentation-syntax"))]
+                    let spans: Vec<LineColorSpans> = vec![Vec::new()];
+                    #[cfg(feature = "documentation-syntax")]
                     assert!(!spans[0].is_empty());
                     let start_y = ui.cursor_screen_pos()[1];
+                    #[cfg(feature = "documentation-syntax")]
                     let start_vertex = ui.with_bound_context(|| unsafe {
                         (*sys::igGetWindowDrawList()).VtxBuffer.Size
                     });
                     draw_code_line(ui, code, &spans[0], &palette);
                     assert!(ui.cursor_screen_pos()[1] - start_y > ui.text_line_height() * 3.0);
+                    #[cfg(feature = "documentation-syntax")]
                     let colors = ui.with_bound_context(|| unsafe {
                         let vertices = &(*sys::igGetWindowDrawList()).VtxBuffer;
                         (start_vertex..vertices.Size)
                             .map(|index| (*vertices.Data.add(index as usize)).col)
                             .collect::<std::collections::HashSet<_>>()
                     });
+                    #[cfg(feature = "documentation-syntax")]
                     assert!(colors.len() > 1, "wrapped code retains syntax colors");
                 });
         });

@@ -1,6 +1,6 @@
 use super::*;
 use crate::{WorkbenchPlugin, WorkbenchRequests, focus_panel, open_panel, process_requests};
-use bed_keybindings::{Action as KeyAction, Overrides, Platform};
+use bed_keybindings::{Overrides, Platform, ShortcutAction as KeyAction};
 
 fn app() -> App {
     let mut app = App::new();
@@ -51,7 +51,7 @@ fn docs_reuses_its_panel_and_tracks_live_frontends_across_focus_and_layout_chang
     );
     world
         .resource_mut::<WorkbenchRequests>()
-        .push(Action::Invoke(CommandInvocation {
+        .push(WorkbenchAction::Invoke(CommandInvocation {
             command: SHOW_DOCS_COMMAND.into(),
             source: Some(work),
             area: 1,

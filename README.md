@@ -1,6 +1,6 @@
 # bEd
 
-An desktop application platform and IDE with a tiled workspace.
+A desktop application platform and IDE with a tiled workspace.
 
 **macOS and Linux only. Linux is currently untested. bEd is very experimental.**
 
@@ -36,7 +36,7 @@ cd bEd
 cargo build --release -p bed
 ```
 
-Run the editor, optionally passing a project directory or files:
+Run bEd, optionally passing a project directory or files:
 
 ```sh
 ./target/release/bed
@@ -50,7 +50,61 @@ For development:
 cargo run -p bed
 ```
 
+## Build another desktop application
+
+[`BedCorePlugin`](crates/bed-core/README.md) installs the window, renderer,
+Dear ImGui, theme, fonts, icons, panel/layout system and shared document editing.
+Add feature plugins to a fresh Bevy `App`; the host owns startup, configuration
+and persistence. bEd adds its workspace selection, MRU, SSH orchestration and
+application integration on top of that foundation.
+
+The examples show the supported composition boundaries:
+
+- [`bed-example-terminal`](examples/terminal/README.md): core and ordinary terminal panels.
+- [`bed-example-editor`](examples/editor/README.md): text/hex editors with shared
+  documents and undo/redo, without workspace or language-server services.
+- [`bed-example-model`](examples/model/README.md): a typed model shared by two panels,
+  using the same document/history commands.
+- [`bed-example-layouts`](examples/layouts/README.md): optional numbered layouts from
+  [`bed-plugin-layouts`](crates/bed-plugin-layouts/README.md), with application-owned disk persistence.
+
+Plugins register their own namespaced artwork and filename contracts. Hosts can
+override directories per plugin; embedded defaults make the examples independent
+of bEd's resource directory. See the [icon contract](crates/bed-ui/README.md).
+
 Install language servers separately for the languages you use. Open **Settings → Keybindings** to see or change shortcuts.
+
+## Crates and vocabulary
+
+Optional features use `bed-plugin-*`, such as `bed-plugin-editor`,
+`bed-plugin-terminal` and `bed-plugin-layouts`. Foundations and support libraries
+keep domain names: `bed-core`, `bed-desktop`, `bed-documents`, `bed-terminal` and
+`bed-git`. The latter two supply backends; their `bed-plugin-*` counterparts
+supply panels and commands. Example applications use `bed-example-*`.
+
+| Term | Responsibility |
+| --- | --- |
+| Editor | Code editor plugin and its text/hex widgets in `bed-editor-widgets` |
+| Documents | Content, revisions, views, saving and undo/redo |
+| Workbench | Panels, commands, focus and layout |
+| Host | Shared context and request handling for feature plugins |
+| Workspace / App | bEd workspace selection, persistence, restore and SSH policy |
+
+[`bed-api`](crates/bed-api/README.md) holds shared contracts in `workbench`,
+`documents`, `features`, `application`, `settings`, `status` and `gpu` modules.
+Use `bed_core::api` when building on core. The API's default build supports a
+workbench without document services; its `documents` feature adds document
+contracts. `gpu` and `language-services` are separate opt-ins.
+
+[`bed-app`](crates/bed-app/README.md), `bed-app-config` and `bed-app-shell` own
+bEd's application policy. The Workspaces and Settings panels are named
+`bed-plugin-workspaces` and `bed-plugin-settings` because they are Bevy plugins,
+but their UI and actions implement bEd's workspace and configuration policy.
+Other applications can use core and feature plugins without installing these panels.
+
+The [`bed-remote-agent`](crates/bed-remote-agent/README.md) executable serves
+remote filesystem, Git, language-server and process requests without a window.
+Desktop packages include native Linux agents for SSH deployment.
 
 ## License
 

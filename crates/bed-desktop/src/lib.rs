@@ -18,8 +18,10 @@ mod injected_input;
 pub use injected_input::*;
 mod input_map;
 mod input_router;
+mod memory_assets;
 mod platform;
 mod render;
+pub use memory_assets::{BED_MEMORY_SOURCE, BedMemoryAssets};
 #[cfg(test)]
 static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub use platform::DesktopPlatform;
@@ -100,6 +102,7 @@ struct DesktopHostPlugin(DesktopPlugins);
 
 impl Plugin for DesktopHostPlugin {
     fn build(&self, app: &mut App) {
+        BedMemoryAssets::register(app);
         let mut plugins = DefaultPlugins
             .set(bevy::window::WindowPlugin {
                 primary_window: Some(self.0.window.clone()),

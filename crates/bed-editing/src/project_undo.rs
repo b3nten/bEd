@@ -10,7 +10,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use crate::editor_operations::{OpKind, TextOp};
+use crate::editing_operations::{OpKind, TextOp};
 
 const UNDO_FILE_NAME: &str = ".undo-redo-bed.json";
 const MAX_STACK: usize = 50;

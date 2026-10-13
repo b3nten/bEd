@@ -1,13 +1,34 @@
-//! Bundled monochrome SVG icons. The host owns GPU upload and texture lifetimes.
+//! Plugin-owned monochrome SVG icons. The desktop owns realization and lifetimes.
 use crate::presentation::FileIcons;
 use dear_imgui_rs::{StyleColor, TextureId, Ui};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     path::{Path, PathBuf},
 };
 
-const ICON_CATALOG: &str = include_str!("../../../resources/icons/catalog.tsv");
+#[path = "bundled_icons.rs"]
+mod bundled_icons;
+const ICON_CATALOG: &str = include_str!("../assets/icons/catalog.tsv");
+
+/// One local filename in a plugin's icon contract. A directory can replace its
+/// embedded artwork; missing files retain the embedded default when supplied.
+#[derive(Clone, Copy, Debug)]
+pub struct IconDefinition {
+    pub name: &'static str,
+    pub filename: &'static str,
+    pub embedded_svg: Option<&'static [u8]>,
+}
+
+/// Applications choose source directories; plugin registration reads its own entry.
+#[derive(Clone, Debug, Default)]
+pub struct IconDirectories(pub BTreeMap<String, PathBuf>);
+
+impl IconDirectories {
+    pub fn get(&self, plugin: &str) -> Option<&Path> {
+        self.0.get(plugin).map(PathBuf::as_path)
+    }
+}
 
 fn icon_keys() -> impl Iterator<Item = &'static str> {
     ICON_CATALOG
@@ -30,23 +51,116 @@ pub struct Icons {
 }
 
 impl Icons {
+    /// Shared defaults work without a repository or application asset directory.
+    pub fn bundled() -> Self {
+        Self::bundled_with_directory(None).expect("embedded core icon contract is valid")
+    }
+
+    pub fn bundled_with_directory(directory: Option<&Path>) -> io::Result<Self> {
+        let mut icons = Self::default();
+        icons.register("bed.core", bundled_icons::BUNDLED_ICONS, directory)?;
+        Ok(icons)
+    }
+
+    /// Fill shared defaults while preserving source images supplied by the host.
+    /// Resolve the complete directory first so an invalid source publishes nothing.
+    pub fn register_core_defaults(&mut self, directory: Option<&Path>) -> io::Result<()> {
+        let defaults = Self::bundled_with_directory(directory)?;
+        for (key, image) in defaults.images {
+            self.images.entry(key).or_insert(image);
+        }
+        Ok(())
+    }
+
+    /// Access shared embedded artwork when declaring a plugin's own defaults.
+    pub fn bundled_svg(name: &str) -> Option<&'static [u8]> {
+        bundled_icons::BUNDLED_ICONS
+            .iter()
+            .find(|icon| icon.name == name)
+            .and_then(|icon| icon.embedded_svg)
+    }
+
+    /// Publish one complete plugin contribution. Failed source/contract validation
+    /// leaves the existing registry intact. Registered images may later be updated
+    /// in place; the desktop reconciles native and GPU realizations before drawing.
+    pub fn register(
+        &mut self,
+        plugin: &str,
+        definitions: &[IconDefinition],
+        directory: Option<&Path>,
+    ) -> io::Result<()> {
+        if !valid_identifier(plugin) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Invalid icon plugin namespace",
+            ));
+        }
+        let mut pending = BTreeMap::new();
+        let mut filenames = BTreeSet::new();
+        for icon in definitions {
+            let key = format!("{plugin}.{}", icon.name);
+            let file = Path::new(icon.filename);
+            if !valid_identifier(icon.name)
+                || icon.name.contains('.')
+                || file.components().count() != 1
+                || file.file_name().and_then(|name| name.to_str()) != Some(icon.filename)
+                || file.extension().and_then(|ext| ext.to_str()) != Some("svg")
+                || !filenames.insert(icon.filename)
+                || self.images.contains_key(&key)
+                || pending.contains_key(&key)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "Invalid or duplicate icon contract: {key} ({})",
+                        icon.filename
+                    ),
+                ));
+            }
+            let bytes = match directory.map(|directory| fs::read(directory.join(icon.filename))) {
+                Some(Ok(bytes)) => bytes,
+                Some(Err(error)) if error.kind() != io::ErrorKind::NotFound => {
+                    return Err(io::Error::new(
+                        error.kind(),
+                        format!("Icon {key} ({}): {error}", icon.filename),
+                    ));
+                }
+                _ => icon.embedded_svg.map(<[u8]>::to_vec).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("Missing icon {key} ({})", icon.filename),
+                    )
+                })?,
+            };
+            let mut image = rasterize_svg(&bytes).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!("Icon {key} ({}): {error}", icon.filename),
+                )
+            })?;
+            monochrome(&mut image);
+            pending.insert(key, image);
+        }
+        self.images.extend(pending);
+        Ok(())
+    }
+
+    /// Legacy application-directory loading; new plugins register their own sources.
     pub fn load(resources_root: &Path) -> Self {
         let mut icons = Self::default();
         for key in icon_keys() {
             let file = format!("{key}.svg");
-            let Some(path) = resolve_icon_path(resources_root, &file) else {
-                eprintln!("Missing bundled icon: {file}");
-                continue;
-            };
-            match load_svg(&path) {
+            let source = resolve_icon_path(resources_root, &file)
+                .map(|path| load_svg(&path))
+                .unwrap_or_else(|| {
+                    rasterize_svg(Self::bundled_svg(key).expect("catalog has embedded artwork"))
+                });
+            match source {
                 Ok(mut image) => {
-                    // Alpha defines the silhouette; each draw site owns the ink.
-                    for pixel in image.pixels.as_chunks_mut::<4>().0 {
-                        pixel[..3].fill(255);
-                    }
+                    monochrome(&mut image);
                     icons.images.insert(key.to_owned(), image);
                 }
-                Err(error) => eprintln!("Error loading SVG {}: {error}", path.display()),
+                Err(error) => eprintln!("Error loading icon {key}: {error}"),
             }
         }
         icons
@@ -57,9 +171,20 @@ impl Icons {
     }
 
     pub fn get(&self, name: &str) -> Option<TextureId> {
+        self.find(name).or_else(|| self.find("default"))
+    }
+
+    /// Exact plugin keys and legacy shared names; no missing-key artwork fallback.
+    pub fn find(&self, name: &str) -> Option<TextureId> {
         self.textures
             .get(name)
-            .or_else(|| self.textures.get("default"))
+            .or_else(|| {
+                if name.contains('.') {
+                    None
+                } else {
+                    self.textures.get(&format!("bed.core.{name}"))
+                }
+            })
             .copied()
     }
 
@@ -69,6 +194,23 @@ impl Icons {
 
     pub fn file_icon_tint(&self, _filename: &str, text: [f32; 4]) -> [f32; 4] {
         text
+    }
+}
+
+fn valid_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
+}
+
+fn monochrome(image: &mut RgbaImage) {
+    // Alpha defines the silhouette; each draw site owns the ink.
+    for pixel in image.pixels.as_chunks_mut::<4>().0 {
+        pixel[..3].fill(255);
     }
 }
 
@@ -404,7 +546,7 @@ pub fn icon_button(
         },
         size[1],
     ];
-    let Some(texture) = icons.and_then(|icons| icons.textures.get(key)).copied() else {
+    let Some(texture) = icons.and_then(|icons| icons.find(key)) else {
         return ui.button_with_size(format!("{fallback}###{id}"), size);
     };
     let clicked = ui.button_with_size(format!("###{id}"), size);
@@ -447,11 +589,15 @@ pub fn resolve_icon_path(resources_root: &Path, filename: &str) -> Option<PathBu
 
 pub fn load_svg(path: &Path) -> io::Result<RgbaImage> {
     let bytes = fs::read(path)?;
+    rasterize_svg(&bytes)
+}
+
+fn rasterize_svg(bytes: &[u8]) -> io::Result<RgbaImage> {
     let options = resvg::usvg::Options {
         dpi: 96.0,
         ..resvg::usvg::Options::default()
     };
-    let tree = resvg::usvg::Tree::from_data(&bytes, &options).map_err(io::Error::other)?;
+    let tree = resvg::usvg::Tree::from_data(bytes, &options).map_err(io::Error::other)?;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(32, 32)
         .ok_or_else(|| io::Error::other("Unable to allocate icon pixels"))?;
     let scale = 32.0 / tree.size().width().max(tree.size().height());
@@ -481,6 +627,166 @@ pub fn load_svg(path: &Path) -> io::Result<RgbaImage> {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    const SOLID: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="white"/></svg>"#;
+    const DOT: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="3" fill="white"/></svg>"#;
+
+    struct TemporaryDirectory(PathBuf);
+    impl TemporaryDirectory {
+        fn new() -> Self {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let directory =
+                std::env::temp_dir().join(format!("bed-icon-test-{}-{nonce}", std::process::id()));
+            fs::create_dir_all(&directory).unwrap();
+            Self(directory)
+        }
+    }
+    impl Drop for TemporaryDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn plugin_namespaces_keep_identical_local_filenames_independent() {
+        let mut icons = Icons::default();
+        for (plugin, embedded_svg) in [("example.alpha", SOLID), ("example.beta", DOT)] {
+            icons
+                .register(
+                    plugin,
+                    &[IconDefinition {
+                        name: "close",
+                        filename: "close.svg",
+                        embedded_svg: Some(embedded_svg),
+                    }],
+                    None,
+                )
+                .unwrap();
+        }
+        assert_ne!(
+            icons.images["example.alpha.close"],
+            icons.images["example.beta.close"]
+        );
+        icons.set_texture("example.alpha.close", TextureId::new(1));
+        icons.set_texture("example.beta.close", TextureId::new(2));
+        assert_eq!(icons.find("example.alpha.close"), Some(TextureId::new(1)));
+        assert_eq!(icons.find("example.beta.close"), Some(TextureId::new(2)));
+        assert_eq!(icons.find("close"), None);
+    }
+
+    #[test]
+    fn directory_replaces_its_filename_and_missing_files_keep_embedded_defaults() {
+        let directory = TemporaryDirectory::new();
+        fs::write(directory.0.join("close.svg"), DOT).unwrap();
+        let mut icons = Icons::default();
+        icons
+            .register(
+                "example.alpha",
+                &[
+                    IconDefinition {
+                        name: "close",
+                        filename: "close.svg",
+                        embedded_svg: Some(SOLID),
+                    },
+                    IconDefinition {
+                        name: "add",
+                        filename: "add.svg",
+                        embedded_svg: Some(SOLID),
+                    },
+                ],
+                Some(&directory.0),
+            )
+            .unwrap();
+        let mut embedded = Icons::default();
+        embedded
+            .register(
+                "example.beta",
+                &[IconDefinition {
+                    name: "close",
+                    filename: "close.svg",
+                    embedded_svg: Some(SOLID),
+                }],
+                None,
+            )
+            .unwrap();
+        assert_ne!(
+            icons.images["example.alpha.close"],
+            embedded.images["example.beta.close"]
+        );
+        assert_eq!(
+            icons.images["example.alpha.add"],
+            embedded.images["example.beta.close"]
+        );
+    }
+
+    #[test]
+    fn missing_or_invalid_contributions_do_not_publish_partial_batches() {
+        let directory = TemporaryDirectory::new();
+        let mut icons = Icons::default();
+        let definitions = [
+            IconDefinition {
+                name: "close",
+                filename: "close.svg",
+                embedded_svg: Some(SOLID),
+            },
+            IconDefinition {
+                name: "add",
+                filename: "add.svg",
+                embedded_svg: None,
+            },
+        ];
+        let error = icons
+            .register("example.alpha", &definitions, Some(&directory.0))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert!(error.to_string().contains("example.alpha.add"));
+        assert!(icons.images.is_empty());
+        fs::write(directory.0.join("add.svg"), "invalid SVG").unwrap();
+        assert!(
+            icons
+                .register("example.alpha", &definitions, Some(&directory.0))
+                .is_err()
+        );
+        assert!(icons.images.is_empty());
+        icons
+            .register("example.alpha", &definitions[..1], None)
+            .unwrap();
+        assert!(
+            icons
+                .register("example.alpha", &definitions[..1], None)
+                .is_err()
+        );
+        assert_eq!(icons.images.len(), 1);
+    }
+
+    #[test]
+    fn embedded_core_defaults_preserve_legacy_texture_lookups() {
+        let mut icons = Icons::bundled();
+        assert_eq!(icons.images.len(), icon_keys().count());
+        assert!(icons.images.contains_key("bed.core.close"));
+        icons.set_texture("bed.core.close", TextureId::new(4));
+        icons.set_texture("bed.core.default", TextureId::new(5));
+        assert_eq!(icons.find("close"), icons.find("bed.core.close"));
+        assert_eq!(icons.get("unknown.plugin.icon"), Some(TextureId::new(5)));
+        assert_eq!(icons.find("unknown.plugin.icon"), None);
+    }
+
+    #[test]
+    fn core_defaults_preserve_host_images_and_reject_invalid_directory_atomically() {
+        let directory = TemporaryDirectory::new();
+        let mut icons = Icons::default();
+        let custom = rasterize_svg(DOT).unwrap();
+        icons.images.insert("bed.core.close".into(), custom.clone());
+        fs::write(directory.0.join("plus.svg"), "invalid SVG").unwrap();
+        assert!(icons.register_core_defaults(Some(&directory.0)).is_err());
+        assert_eq!(icons.images.len(), 1);
+        icons.register_core_defaults(None).unwrap();
+        assert_eq!(icons.images["bed.core.close"], custom);
+        assert_eq!(icons.images.len(), icon_keys().count());
+    }
 
     #[test]
     fn icon_buttons_keep_clicks_hit_rectangles_and_disabled_theme_tint() {

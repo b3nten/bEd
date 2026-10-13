@@ -75,7 +75,7 @@ fn prepare_with(
     validate_host(&target.host)?;
     let probe = run(HOST_PROBE, None).map_err(|error| contextual("SSH host probe", error))?;
     let (triple, home) = parse_host(&probe)?;
-    let artifact = helpers_dir.join(triple).join("bed-headless");
+    let artifact = helpers_dir.join(triple).join("bed-remote-agent");
     let mut input = File::open(&artifact).map_err(|error| {
         io::Error::new(error.kind(), format!("Bundled SSH helper is unavailable at {}: {error}. Install a Bed package containing Linux remote helpers.", artifact.display()))
     })?;
@@ -87,7 +87,7 @@ fn prepare_with(
         length,
         fingerprint
     );
-    let executable = format!("{cache}/bed-headless");
+    let executable = format!("{cache}/bed-remote-agent");
     let quoted_executable = shell_quote(&executable)?;
     let cached = format!(
         "if test -x {quoted_executable} && version=$({quoted_executable} --protocol-version 2>/dev/null) && test \"$version\" = {PROTOCOL_VERSION}; then printf 'ready\\n'; else printf 'missing\\n'; fi"
@@ -357,7 +357,7 @@ mod tests {
         let helpers = temp.join("bundled");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(helpers.join("aarch64-unknown-linux-musl")).unwrap();
-        let binary = helpers.join("aarch64-unknown-linux-musl/bed-headless");
+        let binary = helpers.join("aarch64-unknown-linux-musl/bed-remote-agent");
         fs::write(
             &binary,
             format!("#!/bin/sh\nprintf '{}\\n'\n", PROTOCOL_VERSION),

@@ -6,7 +6,7 @@ use crate::{
 use arborium::tree_sitter::{self, ParseOptions, Parser};
 use bed_editing::{
     buffer::text_buffer::Snapshot,
-    editor_state::{DocumentKind, EditorState},
+    document_state::{DocumentKind, DocumentState},
     folding::FoldRange,
 };
 use std::{
@@ -32,7 +32,7 @@ struct SourceKey {
 }
 
 impl SourceKey {
-    fn matches(&self, state: &EditorState, generation: u64, revision: u64) -> bool {
+    fn matches(&self, state: &DocumentState, generation: u64, revision: u64) -> bool {
         self.generation == generation
             && self.revision == revision
             && self.path == state.path
@@ -40,7 +40,7 @@ impl SourceKey {
             && self.kind == state.kind
     }
 
-    fn same_source(&self, state: &EditorState, generation: u64) -> bool {
+    fn same_source(&self, state: &DocumentState, generation: u64) -> bool {
         self.generation == generation
             && self.path == state.path
             && self.language_id == state.language_id
@@ -104,7 +104,7 @@ impl FoldingService {
     /// is pending; callers should retain their edit-transformed fold state.
     pub fn update(
         &mut self,
-        state: &EditorState,
+        state: &DocumentState,
         generation: u64,
         revision: u64,
     ) -> Option<&[FoldRange]> {
@@ -130,7 +130,7 @@ impl FoldingService {
             // Manual language selection wins; otherwise recognize full filenames
             // as well as extensions, matching the highlighting service.
             let language =
-                if state.language_id == EditorState::language_id_from_path(&state.path) {
+                if state.language_id == DocumentState::language_id_from_path(&state.path) {
                     language_name(&state.path).or_else(|| language_name(&state.language_id))
                 } else {
                     language_name(&state.language_id)
@@ -463,7 +463,7 @@ mod tests {
     use super::*;
 
     fn folds(language: &str, source: &[u8]) -> Vec<FoldRange> {
-        let mut state = EditorState::new();
+        let mut state = DocumentState::new();
         state.set_from_bytes(source);
         extract(&mut Parser::new(), language, &state.snapshot(), || false).unwrap()
     }
@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn service_rejects_old_revisions_and_unsupported_documents() {
-        let mut state = EditorState::new();
+        let mut state = DocumentState::new();
         state.language_id = "rs".into();
         state.set_from_bytes(b"fn run() {\n    work();\n}\n");
         let mut service = FoldingService::default();

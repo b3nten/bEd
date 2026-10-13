@@ -3,7 +3,7 @@
 use super::{bed_imgui_dock_node_clear_background, bed_imgui_dock_node_select_window};
 use crate::workspace::tiling::{Area, DockPlacement, DockPlan, EXTENT, Layout, Rect};
 use crate::workspace::tiling_state::TilingState;
-use bed_workbench_api::Action;
+use bed_api::workbench::WorkbenchAction;
 use bevy::prelude::Entity;
 use dear_imgui_rs::{
     DrawCornerFlags, FocusedFlags, Key, MouseButton, MouseCursor, StyleColor, StyleVar, Ui,
@@ -240,7 +240,7 @@ pub(crate) struct TilingFrontend {
     pub settings: ChromeSettings,
     pub focused: Option<u64>,
     pub focused_area: Option<u32>,
-    pub requests: Vec<Action>,
+    pub requests: Vec<WorkbenchAction>,
     tab_context: Option<u64>,
 }
 
@@ -327,14 +327,14 @@ impl TilingFrontend {
     fn focus_empty_area(&mut self, area: u32) {
         self.focused = None;
         self.focused_area = Some(area);
-        self.requests.push(Action::FocusArea(area));
+        self.requests.push(WorkbenchAction::FocusArea(area));
     }
 
     fn switch_to_tab(&mut self, index: usize) {
         let tab = &self.tabs[index];
         self.focused = Some(tab.id);
         self.focused_area = self.tiling.area_for(tab.id);
-        self.requests.push(Action::FocusPanel(tab.entity));
+        self.requests.push(WorkbenchAction::FocusPanel(tab.entity));
         if let Some(area) = self.focused_area {
             self.tiling
                 .areas
@@ -1255,7 +1255,7 @@ impl TilingFrontend {
                             self.switch_to_tab(index);
                             if ui.is_mouse_double_clicked(MouseButton::Left) {
                                 self.requests
-                                    .push(Action::KeepPanel(self.tabs[index].entity));
+                                    .push(WorkbenchAction::KeepPanel(self.tabs[index].entity));
                             }
                         }
                         self.tiling_ui.gesture = Some(Gesture::Tab {
@@ -1385,7 +1385,7 @@ impl TilingFrontend {
                 .map(|tab| self.title(tab))
                 .unwrap();
             let title = title.split("###").next().unwrap();
-            bed_workbench_api::draw_panel_drag_label(ui, title);
+            bed_api::workbench::draw_panel_drag_label(ui, title);
         }
     }
 

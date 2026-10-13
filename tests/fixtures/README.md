@@ -34,18 +34,18 @@ padding. These are paint/measurement checks, not GPU, FreeType rasterization,
 whole-frame layout or tooltip activation tests.
 
 ```sh
-cargo test --locked -p bed-editor-ui --test views
+cargo test --locked -p bed-editor-widgets --test views
 ```
 
 ## Terminals
 
-Terminal protocol scenarios are authored directly in `crates/bed-terminal-core/tests`.
+Terminal protocol scenarios are authored directly in `crates/bed-terminal/tests`.
 The presentation suite covers text, styles, colors, Unicode and cursor shapes;
 PTY and input regressions exercise live shells, process cleanup and negotiated
 keyboard/paste behavior. Imported terminal adapter fixtures are no longer used.
 
 ```sh
-cargo test --locked -p bed-terminal-core
+cargo test --locked -p bed-terminal
 ```
 
 ## Model viewers
@@ -56,7 +56,7 @@ Their small generator remains available:
 
 ```sh
 python3 tests/fixtures/gltf/generate.py
-cargo test --locked -p bed-model-viewer
+cargo test --locked -p bed-plugin-model-viewer
 ```
 
 Draco tests also use `gltf/LittlestTokyo.glb`, including its 71 compressed

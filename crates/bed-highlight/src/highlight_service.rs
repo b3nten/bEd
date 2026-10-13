@@ -6,8 +6,8 @@ use crate::{
     tree_sitter::{ColorSpan, ParseKind, ParseResult, ParseSnapshot, ThemeColors, TreeSitter},
 };
 use bed_editing::{
-    editor_operations::{EditorOperations, PendingEdit},
-    editor_state::EditorState,
+    document_state::DocumentState,
+    editing_operations::{EditingOperations, PendingEdit},
 };
 use std::{
     sync::{
@@ -23,7 +23,7 @@ pub const SKIP_TREE_SITTER_BYTES: usize = 100 * 1024 * 1024;
 pub const PRIME_QUERY_LINES: i32 = 128;
 pub const QUERY_CHUNK_LINES: i32 = 384;
 
-pub struct EditorHighlight {
+pub struct SyntaxHighlighter {
     pub enabled: bool,
     tree_sitter: Arc<Mutex<TreeSitter>>,
     cached_colors: ThemeColors,
@@ -37,7 +37,7 @@ pub struct EditorHighlight {
     pending_result: Option<(u64, String, ParseResult)>,
 }
 
-impl Default for EditorHighlight {
+impl Default for SyntaxHighlighter {
     fn default() -> Self {
         let (sender, receiver) = mpsc::channel();
         Self {
@@ -56,7 +56,7 @@ impl Default for EditorHighlight {
     }
 }
 
-impl Drop for EditorHighlight {
+impl Drop for SyntaxHighlighter {
     fn drop(&mut self) {
         self.cancel_highlighting();
         for task in self.tasks.drain(..) {
@@ -65,7 +65,7 @@ impl Drop for EditorHighlight {
     }
 }
 
-impl EditorHighlight {
+impl SyntaxHighlighter {
     pub fn new() -> Self {
         Self::default()
     }
@@ -108,8 +108,8 @@ impl EditorHighlight {
     pub fn force_color_update(
         &mut self,
         colors: ThemeColors,
-        state: &EditorState,
-        operations: &mut EditorOperations,
+        state: &DocumentState,
+        operations: &mut EditingOperations,
     ) {
         self.set_theme_colors(colors);
         if state.path.is_empty() || !self.enabled {
@@ -137,7 +137,7 @@ impl EditorHighlight {
         self.spans.at(row)
     }
 
-    fn sync_lens_from_content(&mut self, state: &EditorState) {
+    fn sync_lens_from_content(&mut self, state: &DocumentState) {
         self.spans.lens = (0..state.line_count())
             .map(|row| state.line_length(row))
             .collect();
@@ -152,7 +152,7 @@ impl EditorHighlight {
         while self.receiver.try_recv().is_ok() {}
     }
 
-    pub fn reset_for_document(&mut self, state: &EditorState, line_count: usize) {
+    pub fn reset_for_document(&mut self, state: &DocumentState, line_count: usize) {
         self.cancel_highlighting();
         self.job_gen += 1;
         self.visual_gen += 1;
@@ -165,7 +165,7 @@ impl EditorHighlight {
         while self.receiver.try_recv().is_ok() {}
     }
 
-    fn morph_spans(&mut self, state: &EditorState, edits: &[PendingEdit]) {
+    fn morph_spans(&mut self, state: &DocumentState, edits: &[PendingEdit]) {
         if self.spans.apply_edits(edits, &state.line_ending) {
             self.visual_gen += 1;
             return;
@@ -201,7 +201,7 @@ impl EditorHighlight {
         }
     }
 
-    fn apply_parse_result(&mut self, state: &EditorState, result: ParseResult) {
+    fn apply_parse_result(&mut self, state: &DocumentState, result: ParseResult) {
         if result.kind == ParseKind::Full {
             if result.full_colors.len() != result.line_count {
                 return;
@@ -228,7 +228,7 @@ impl EditorHighlight {
         }
     }
 
-    fn publish_pending(&mut self, state: &EditorState, operations: &EditorOperations) {
+    fn publish_pending(&mut self, state: &DocumentState, operations: &EditingOperations) {
         self.collect_results();
         let Some((generation, path, result)) = self.pending_result.take() else {
             return;
@@ -244,8 +244,8 @@ impl EditorHighlight {
         &mut self,
         snap: ParseSnapshot,
         generation: u64,
-        state: &EditorState,
-        operations: &EditorOperations,
+        state: &DocumentState,
+        operations: &EditingOperations,
     ) {
         let line_count = snap.text.line_count().max(1) as usize;
         let path = snap.path.clone();
@@ -290,7 +290,7 @@ impl EditorHighlight {
         }));
     }
 
-    fn recolor(&mut self, state: &EditorState, operations: &EditorOperations, edited: bool) {
+    fn recolor(&mut self, state: &DocumentState, operations: &EditingOperations, edited: bool) {
         let bytes = state.byte_size();
         if !self.enabled || bytes > SKIP_TREE_SITTER_BYTES {
             return;
@@ -312,12 +312,12 @@ impl EditorHighlight {
         self.launch_job(snap, generation);
     }
 
-    pub fn poll(&mut self, state: &EditorState, operations: &EditorOperations) {
+    pub fn poll(&mut self, state: &DocumentState, operations: &EditingOperations) {
         self.reap_tasks();
         self.publish_pending(state, operations);
     }
 
-    pub fn highlight_content(&mut self, state: &EditorState, operations: &mut EditorOperations) {
+    pub fn highlight_content(&mut self, state: &DocumentState, operations: &mut EditingOperations) {
         let pending = operations.take_pending();
         let edited = !pending.is_empty();
         if edited {

@@ -1,0 +1,49 @@
+[package]
+name = "bed-app"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = []
+file-explorer = ["dep:bed-plugin-file-explorer"]
+git = ["dep:bed-plugin-git"]
+debugger = ["dep:bed-plugin-debugger"]
+http-client = ["dep:bed-plugin-http-client"]
+
+[dependencies]
+bed-plugin-layouts = { workspace = true }
+bed-workbench = { workspace = true }
+bed-api = { workspace = true, features = ["gpu", "language-services", "documents"] }
+bed-runtime = { workspace = true }
+bevy = { workspace = true }
+bed-app-config = { workspace = true }
+bed-editor-widgets = { workspace = true, features = ["language-services"] }
+bed-ui = { workspace = true, features = ["imgui", "gpu"] }
+bed-editing = { workspace = true }
+bed-files = { workspace = true, features = ["workspace-services"] }
+bed-documents = { workspace = true, features = ["ide-services"] }
+bed-plugin-file-explorer = { workspace = true, optional = true }
+bed-plugin-git = { workspace = true, optional = true }
+bed-plugin-debugger = { workspace = true, optional = true }
+bed-plugin-http-client = { workspace = true, optional = true }
+bed-lsp = { workspace = true }
+bed-remote = { workspace = true }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+serde_json = { workspace = true }
+rfd = { workspace = true }
+
+[dev-dependencies]
+bed-keybindings = { workspace = true }
+bed-plugin-editor = { workspace = true, features = ["language-services"] }
+bed-plugin-color-picker = { workspace = true }
+bed-plugin-csv-table = { workspace = true, features = ["test-support"] }
+bed-plugin-json-tree = { workspace = true }
+bed-plugin-image-viewer = { workspace = true }
+
+[[test]]
+name = "remote_editor"
+path = "tests/remote_editor.rs"
+harness = false

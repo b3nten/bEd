@@ -1,23 +1,27 @@
 //! Exercise viewer choices through the native tree and document context menus.
-#![cfg(all(feature = "editor", feature = "explorer"))]
+#![cfg(all(feature = "editor", feature = "file-explorer"))]
 
 #[path = "support/editor_host.rs"]
 mod editor_host;
 #[path = "support/temp_dir.rs"]
 mod temp_dir;
 
-use bed_document_session::EditorSession;
-use bed_editor_api::{EditorIntents, EditorPanelBinding, HostRequest, ProjectRequest};
-use bed_editor_workbench::{EditorWorkbenchOptions, EditorWorkbenchPlugin, EditorWorkspace};
-use bed_workbench::{
-    PanelPresentation, WorkbenchLayout,
-    workspace::{tiling::Layout, tiling_state::TilingState},
+use bed_api::{
+    application::WorkspaceAction,
+    documents::PanelBinding,
+    features::{HostAction, HostEffects},
 };
+use bed_app::{AppOptions, AppRuntimePlugin, WorkspaceState};
+use bed_documents::DocumentSession;
 use bevy::prelude::*;
 use dear_imgui_rs::{Context, MouseButton, sys};
 use std::{
     path::PathBuf,
     time::{Duration, Instant},
+};
+use {
+    bed_workbench::PanelPresentation, bed_workbench::WorkbenchLayout,
+    bed_workbench::workspace::tiling::Layout, bed_workbench::workspace::tiling_state::TilingState,
 };
 
 struct Fixture {
@@ -28,12 +32,17 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn frame(&mut self) -> (Vec<bed_explorer::file_tree::FileTreeDropTarget>, String) {
+    fn frame(
+        &mut self,
+    ) -> (
+        Vec<bed_plugin_file_explorer::file_tree::FileTreeDropTarget>,
+        String,
+    ) {
         self.app.update();
         let ui = self.context.frame();
         ui.binding()
             .with_bound_context(|| unsafe { sys::igLogToBuffer(-1) });
-        bed_editor_workbench::draw_ui(self.app.world_mut(), ui).unwrap();
+        bed_app::draw_ui(self.app.world_mut(), ui).unwrap();
         let id = self
             .app
             .world()
@@ -45,7 +54,7 @@ impl Fixture {
             rows = self
                 .app
                 .world()
-                .non_send::<bed_explorer::ExplorerState>()
+                .non_send::<bed_plugin_file_explorer::ExplorerState>()
                 .explorer()
                 .file_tree
                 .drop_targets(ui);
@@ -64,15 +73,15 @@ impl Fixture {
             text
         });
         drop(self.context.render_legacy());
-        bed_editor_workbench::process_editor_requests(self.app.world_mut()).unwrap();
+        bed_app::process_app_requests(self.app.world_mut()).unwrap();
         assert!(
             self.app
                 .world()
-                .resource::<EditorWorkspace>()
+                .resource::<WorkspaceState>()
                 .error
                 .is_none(),
             "menu request failed: {:?}",
-            self.app.world().resource::<EditorWorkspace>().error
+            self.app.world().resource::<WorkspaceState>().error
         );
         (rows, log)
     }
@@ -112,7 +121,7 @@ impl Fixture {
     }
 
     fn active_frontend(&self, panel: Entity) -> Entity {
-        bed_editor_workbench::panel_presentation(self.app.world(), panel).unwrap()
+        bed_app::panel_presentation(self.app.world(), panel).unwrap()
     }
 }
 
@@ -129,7 +138,7 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
     let mut app = App::new();
     editor_host::install(
         &mut app,
-        bed_config::Settings::with_paths(
+        bed_app_config::Settings::with_paths(
             directory.path("config"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")),
         )
@@ -138,27 +147,27 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
     .unwrap();
     app.add_plugins((
         bed_runtime::BedRuntimePlugin,
-        EditorWorkbenchPlugin {
-            options: EditorWorkbenchOptions {
+        AppRuntimePlugin {
+            options: AppOptions {
                 working_directory: Some(root.clone()),
                 ..Default::default()
             },
         },
-        bed_editor::EditorPlugin,
-        bed_explorer::ExplorerPlugin,
-        bed_markdown::MarkdownPlugin,
-        bed_sqlite::SqlitePlugin,
+        bed_plugin_editor::EditorPlugin,
+        bed_plugin_file_explorer::FileExplorerPlugin,
+        bed_plugin_markdown_preview::MarkdownPreviewPlugin,
+        bed_plugin_sqlite_browser::SqliteBrowserPlugin,
     ));
     app.update();
-    app.world_mut().resource_mut::<EditorIntents>().push(
+    app.world_mut().resource_mut::<HostEffects>().push(
         None,
-        HostRequest::Project(ProjectRequest::OpenProject(root.clone())),
+        HostAction::Workspace(WorkspaceAction::OpenLocalWorkspace(root.clone())),
     );
     app.update();
-    app.world_mut().resource_mut::<EditorIntents>().push(
+    app.world_mut().resource_mut::<HostEffects>().push(
         None,
-        HostRequest::OpenPanel {
-            panel_type: bed_explorer::PANEL_ID.into(),
+        HostAction::OpenPanel {
+            panel_type: bed_plugin_file_explorer::PANEL_ID.into(),
             document: None,
             state: serde_json::Value::Null,
         },
@@ -166,31 +175,31 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
     app.update();
     let files_frontend = *app
         .world()
-        .non_send::<bed_explorer::ExplorerPanels>()
+        .non_send::<bed_plugin_file_explorer::ExplorerPanels>()
         .0
         .keys()
         .last()
         .unwrap();
     let files = bed_workbench::api::panel_owner(app.world(), files_frontend).unwrap();
-    let panel = bed_editor_workbench::open_file(
+    let panel = bed_app::open_file(
         app.world_mut(),
         &markdown,
-        Some(bed_editor::TEXT_VIEWER),
+        Some(bed_plugin_editor::TEXT_VIEWER),
         false,
         None,
     )
     .unwrap();
-    let text_frontend = bed_editor_workbench::panel_presentation(app.world(), panel).unwrap();
+    let text_frontend = bed_app::panel_presentation(app.world(), panel).unwrap();
     let binding = app
         .world()
-        .get::<EditorPanelBinding>(text_frontend)
+        .get::<PanelBinding>(text_frontend)
         .unwrap()
         .clone();
     let document = binding.document.unwrap();
     let view = binding.view.unwrap();
     let unsaved = b"# Unsaved heading\n\nThis edit must survive viewer switches.\n";
     app.world_mut()
-        .non_send_mut::<EditorSession>()
+        .non_send_mut::<DocumentSession>()
         .with_commands(view, |commands| {
             commands.select_all();
             commands.paste(unsaved);
@@ -217,17 +226,17 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
         .resource_mut::<bed_workbench::WorkbenchAppearance>()
         .animations = false;
     app.world_mut()
-        .resource_mut::<bed_explorer::ExplorerPresentation>()
+        .resource_mut::<bed_plugin_file_explorer::ExplorerPresentation>()
         .tree
         .animations = false;
     app.world_mut()
-        .non_send_mut::<bed_explorer::ExplorerState>()
+        .non_send_mut::<bed_plugin_file_explorer::ExplorerState>()
         .explorer_mut()
         .file_tree
         .preferences
         .hide_hidden = true;
-    bed_editor_workbench::focus_panel(app.world_mut(), panel, true).unwrap();
-    bed_editor_workbench::focus_panel(app.world_mut(), files, true).unwrap();
+    bed_app::focus_panel(app.world_mut(), panel, true).unwrap();
+    bed_app::focus_panel(app.world_mut(), files, true).unwrap();
     let mut context = Context::create();
     editor_host::prepare_ui(app.world_mut(), &mut context).unwrap();
     context.io_mut().set_display_size([1200., 800.]);
@@ -309,7 +318,7 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
         fixture
             .app
             .world()
-            .get::<bed_markdown::MarkdownDocument>(preview_frontend)
+            .get::<bed_plugin_markdown_preview::MarkdownDocument>(preview_frontend)
             .unwrap()
             .0,
         document
@@ -318,7 +327,7 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
     while !fixture
         .app
         .world()
-        .non_send::<bed_markdown::MarkdownStates>()
+        .non_send::<bed_plugin_markdown_preview::MarkdownStates>()
         .get(preview_frontend)
         .unwrap()
         .is_ready()
@@ -351,7 +360,7 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
     let menu = fixture
         .app
         .world()
-        .non_send::<bed_editor::EditorViews>()
+        .non_send::<bed_plugin_editor::EditorViews>()
         .text(text_frontend)
         .unwrap();
     let text_point = [
@@ -376,7 +385,7 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
     let snapshot = fixture
         .app
         .world()
-        .non_send::<EditorSession>()
+        .non_send::<DocumentSession>()
         .snapshot(document)
         .unwrap();
     assert_eq!(snapshot.bytes, unsaved);
@@ -386,19 +395,22 @@ fn markdown_menus_open_and_switch_the_shared_document_without_sqlite_choices() {
         fixture
             .app
             .world()
-            .non_send::<EditorSession>()
+            .non_send::<DocumentSession>()
             .view_count(document),
         1
     );
-    let registry = fixture.app.world().resource::<bed_editor_api::Registry>();
+    let registry = fixture
+        .app
+        .world()
+        .resource::<bed_api::features::FeatureRegistry>();
     assert!(
         registry
             .compatible_viewers(
                 root.join("data.sqlite").to_str().unwrap(),
-                Some(bed_editor_api::DocumentKind::Bytes)
+                Some(bed_api::documents::DocumentKind::Bytes)
             )
             .iter()
-            .any(|viewer| viewer.id == bed_sqlite::VIEWER_ID),
+            .any(|viewer| viewer.id == bed_plugin_sqlite_browser::VIEWER_ID),
         "SQLite viewer should remain available for matching files"
     );
 }

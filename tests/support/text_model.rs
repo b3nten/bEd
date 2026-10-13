@@ -2,8 +2,8 @@
 // at 2d3e9b53b0ebc44c6da6901ff242a95edaa4a1ff. Upstream MIT/X Consortium; see NOTICE.
 // Preserve the upstream one-based byte-coordinate facade over the real model.
 use bed_editing::{
-    editor_operations::{EditorOperations, OpKind, TextOp},
-    editor_state::EditorState,
+    document_state::DocumentState,
+    editing_operations::{EditingOperations, OpKind, TextOp},
     util::utf8::snap_to_utf8_char_boundary,
 };
 
@@ -43,17 +43,17 @@ pub struct SingleEditOperation {
 }
 
 pub struct TextModel {
-    state: EditorState,
-    ops: EditorOperations,
+    state: DocumentState,
+    ops: EditingOperations,
 }
 
 impl TextModel {
     pub fn create(text: &str) -> Self {
-        let mut state = EditorState::new();
+        let mut state = DocumentState::new();
         state.set_from_bytes(text.as_bytes());
         Self {
             state,
-            ops: EditorOperations::new(),
+            ops: EditingOperations::new(),
         }
     }
 
@@ -95,12 +95,12 @@ impl TextModel {
     }
 
     #[allow(dead_code)]
-    pub fn state(&self) -> &EditorState {
+    pub fn state(&self) -> &DocumentState {
         &self.state
     }
 
     #[allow(dead_code)]
-    pub fn state_mut(&mut self) -> &mut EditorState {
+    pub fn state_mut(&mut self) -> &mut DocumentState {
         &mut self.state
     }
 
@@ -148,7 +148,7 @@ impl TextModel {
         let Range(sl, sc, el, ec) = self.clamp_range(range);
         let (sr, sc) = self.to_ned((sl, sc));
         let (er, ec) = self.to_ned((el, ec));
-        let text = EditorOperations::extract_text(&self.state, sr, sc, er, ec);
+        let text = EditingOperations::extract_text(&self.state, sr, sc, er, ec);
         if eol == EndOfLinePreference::TextDefined {
             return text;
         }
@@ -208,8 +208,8 @@ impl TextModel {
         let Range(sl, sc, el, ec) = self.clamp_range(raw.range);
         let (sr, sc) = self.to_ned((sl, sc));
         let (er, ec) = self.to_ned((el, ec));
-        let text = EditorOperations::normalize_line_endings(&self.state, &raw.text);
-        let delete_len = EditorOperations::measure_length(&self.state, sr, sc, er, ec);
+        let text = EditingOperations::normalize_line_endings(&self.state, &raw.text);
+        let delete_len = EditingOperations::measure_length(&self.state, sr, sc, er, ec);
         let mut deleted = Vec::new();
         if delete_len > 0 {
             deleted = self
