@@ -60,6 +60,7 @@ pub struct MenuDispatch {
     pub keyboard: bool,
     pub shift: bool,
 }
+
 impl MenuAction {
     pub fn command_id(self) -> String {
         use MenuAction::*;
@@ -89,6 +90,7 @@ impl MenuAction {
             _ => format!("bed.app.{self:?}"),
         }
     }
+
     pub fn from_command(id: &str) -> Option<Self> {
         use MenuAction::*;
         for (prefix, action) in [
@@ -148,6 +150,7 @@ impl MenuAction {
         .find(|action| action.command_id() == id)
     }
 }
+
 fn requires_workspace(action: MenuAction) -> bool {
     matches!(
         action,
@@ -560,6 +563,7 @@ mod tests {
             matches!(&startup_window.items[9], DesktopMenuItem::SelectedCommand(command) if command.label == "Startup" && command.shortcut.is_none())
         );
     }
+
     #[test]
     fn native_accelerators_preserve_all_modifiers_and_skip_shadowed_or_cleared_bindings() {
         let save = Action::new(

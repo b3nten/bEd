@@ -22,10 +22,12 @@ use std::{
     },
 };
 static CONTEXT_LOCK: Mutex<()> = Mutex::new(());
+
 struct Fixture {
     root: PathBuf,
     app: App,
 }
+
 impl Fixture {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -59,11 +61,13 @@ impl Fixture {
         app.update();
         Self { root, app }
     }
+
     fn write(&self, name: &str, bytes: &[u8]) -> PathBuf {
         let path = self.root.join(name);
         fs::write(&path, bytes).unwrap();
         path
     }
+
     fn request(&mut self, action: EditorAction) -> EditorRequestOutcome {
         let request = capture_editor_request(self.app.world(), action, PanelTarget::LastFocused);
         let id = submit_editor_request(self.app.world_mut(), request);
@@ -72,6 +76,7 @@ impl Fixture {
             .expect("synchronous request receipt")
             .unwrap()
     }
+
     fn open(&mut self, path: &Path) -> (Entity, DocumentId, ViewId) {
         let EditorRequestOutcome::Opened {
             panel,
@@ -91,6 +96,7 @@ impl Fixture {
                 .unwrap(),
         )
     }
+
     fn focus(&mut self, panel: Entity) {
         let request = capture_editor_request_from(
             self.app.world(),
@@ -106,6 +112,7 @@ impl Fixture {
                 .is_ok()
         );
     }
+
     fn bytes(&self, document: DocumentId) -> Vec<u8> {
         self.app
             .world()
@@ -114,6 +121,7 @@ impl Fixture {
             .unwrap()
             .bytes
     }
+
     fn frame(&mut self, context: &mut Context) {
         bed_editor_workbench::tick_editor_services(self.app.world_mut()).unwrap();
         editor_host::prepare_ui(self.app.world_mut(), context).unwrap();
@@ -128,11 +136,13 @@ impl Fixture {
         process_editor_requests(self.app.world_mut()).unwrap();
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
     }
 }
+
 fn context() -> Context {
     let mut context = Context::create();
     context.set_ini_filename(None::<PathBuf>).unwrap();
@@ -216,6 +226,7 @@ fn duplicated_views_share_documents_and_transform_independent_carets() {
         Some(view)
     );
 }
+
 #[test]
 fn panel_identity_is_live_entity_and_stable_persisted_number() {
     let mut fixture = Fixture::new();
@@ -265,6 +276,7 @@ fn panel_identity_is_live_entity_and_stable_persisted_number() {
             .is_some()
     );
 }
+
 #[test]
 fn queued_source_commands_preserve_origin_after_focus_changes() {
     let mut fixture = Fixture::new();
@@ -308,6 +320,7 @@ fn queued_source_commands_preserve_origin_after_focus_changes() {
             .is_some()
     );
 }
+
 #[test]
 fn closed_source_requests_do_not_retarget_current_document() {
     let mut fixture = Fixture::new();
@@ -339,6 +352,7 @@ fn closed_source_requests_do_not_retarget_current_document() {
         1
     );
 }
+
 #[test]
 fn split_uses_canonical_layout_and_preserves_document_view_ownership() {
     let mut fixture = Fixture::new();
@@ -384,6 +398,7 @@ fn split_uses_canonical_layout_and_preserves_document_view_ownership() {
         Some(view)
     );
 }
+
 #[test]
 fn unicode_input_targets_selected_view_without_changing_other_documents() {
     let _lock = CONTEXT_LOCK.lock().unwrap();
@@ -401,6 +416,7 @@ fn unicode_input_targets_selected_view_without_changing_other_documents() {
     assert_eq!(fixture.bytes(document), "雪first".as_bytes());
     assert_eq!(fixture.bytes(other), b"second");
 }
+
 #[test]
 fn presentation_drawing_keeps_session_settings_and_registry_installed() {
     let _lock = CONTEXT_LOCK.lock().unwrap();
@@ -428,6 +444,7 @@ fn presentation_drawing_keeps_session_settings_and_registry_installed() {
             .contains_resource::<bed_editor_api::Registry>()
     );
 }
+
 #[test]
 fn workspace_restore_focus_survives_first_presentation_frames() {
     let _lock = CONTEXT_LOCK.lock().unwrap();
@@ -496,6 +513,7 @@ fn workspace_restore_focus_survives_first_presentation_frames() {
         Some(focused)
     );
 }
+
 #[cfg(feature = "settings")]
 #[test]
 fn focusing_a_tool_preserves_document_carets() {

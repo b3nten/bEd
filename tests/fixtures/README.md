@@ -59,12 +59,23 @@ python3 tests/fixtures/gltf/generate.py
 cargo test --locked -p bed-model-viewer
 ```
 
-Draco tests also use the checked-in `assets/LittlestTokyo.glb`, including its 71
-compressed primitives, eight skinned meshes and four textures. Malformed-stream
-tests isolate a small primitive from that asset. Attribution remains in
-[assets/README.md](../../assets/README.md), together with its pinned source and checksum. Opt-in native
-GPU tests and the application's `--plugin-smoke` check rendering and lifecycle
-behavior separately from these loader fixtures.
+Draco tests also use `gltf/LittlestTokyo.glb`, including its 71 compressed
+primitives, eight skinned meshes and four textures. Malformed-stream tests
+isolate a small primitive from that asset. Opt-in native GPU tests and the
+application's `--plugin-smoke` check rendering and lifecycle behavior separately
+from these loader fixtures.
+
+`LittlestTokyo.glb` is **Littlest Tokyo** by
+[glenatron](https://sketchfab.com/glenatron), licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+[Original model on Sketchfab](https://sketchfab.com/models/94b24a60dc1b48248de50bf087c0f042).
+It was obtained unchanged from the
+[three.js r180 mirror](https://github.com/mrdoob/three.js/blob/r180/examples/models/gltf/LittlestTokyo.glb),
+retaining the original attribution and licence in its asset metadata. The
+complete fixture is checked in so loader tests run without downloads. It is
+4,133,072 bytes; its SHA-256 is
+`8375c2aa6808e28ad1cb9c0d43e1513f57ffd7865244bf66bbbd5bb0e907e06d`.
+Attribution is also retained alongside the fixture in [gltf/licence.txt](gltf/licence.txt).
 
 `fonts/` retains Source Code Pro and DejaVu Sans only for font-viewer and SVG
 regressions, together with their licenses. They are not runtime assets and are

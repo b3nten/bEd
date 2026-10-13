@@ -445,7 +445,8 @@ fn degenerate_authored_tangents_request_regeneration() {
 
 fn tokyo_bytes() -> Vec<u8> {
     std::fs::read(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/LittlestTokyo.glb"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/gltf/LittlestTokyo.glb"),
     )
     .unwrap()
 }

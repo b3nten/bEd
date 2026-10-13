@@ -11,10 +11,12 @@ use bevy::{
 };
 use dear_imgui_rs::render::FrameSnapshot;
 use dear_imgui_wgpu::WgpuSnapshotRenderer;
+
 #[cfg(test)]
 mod tests {
     use bevy::render::renderer::{RenderGraph, RenderGraphSystems};
     #[derive(Resource, Default)]
+
     pub(crate) struct RenderRecovery {
         pub error: Option<(bool, String)>,
         pub replacement: Option<bevy::render::settings::RenderCreation>,

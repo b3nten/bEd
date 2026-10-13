@@ -2,6 +2,7 @@
 use bevy::{app::PluginGroupBuilder, prelude::*};
 
 pub struct BedEditorPlugins;
+
 impl PluginGroup for BedEditorPlugins {
     fn build(self) -> PluginGroupBuilder {
         let group = PluginGroupBuilder::start::<Self>();
@@ -44,7 +45,7 @@ impl PluginGroup for BedEditorPlugins {
         let group = group.add(bed_sqlite::SqlitePlugin);
         #[cfg(feature = "http")]
         let group = group.add(bed_http::HttpPlugin);
-                #[cfg(feature = "settings")]
+        #[cfg(feature = "settings")]
         let group = group.add(bed_settings::SettingsPlugin);
         group
     }
@@ -52,6 +53,7 @@ impl PluginGroup for BedEditorPlugins {
 
 /// The generic Docs panel needs only editor menu metadata at this boundary.
 struct DocsPlugin;
+
 impl Plugin for DocsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(bed_workbench::DocsPlugin);

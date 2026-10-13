@@ -16,6 +16,7 @@ use std::{
 static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct Fixture(PathBuf);
+
 impl Fixture {
     fn new() -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -27,6 +28,7 @@ impl Fixture {
         std::fs::create_dir_all(&path).unwrap();
         Self(path.canonicalize().unwrap())
     }
+
     fn app(&self) -> App {
         let config = self.0.join("config");
         let settings =
@@ -56,6 +58,7 @@ impl Fixture {
         app
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -79,6 +82,7 @@ fn rust_dependency_navigation_reuses_one_server_and_keeps_definitions_visible() 
         bed_editor_workbench::process_editor_requests(app.world_mut()).unwrap();
         std::thread::sleep(Duration::from_millis(10));
     }
+
     fn caret_visible(app: &App, panel: Entity) -> bool {
         let Some(surface) = bed_editor_workbench::panel_presentation(app.world(), panel) else {
             return false;

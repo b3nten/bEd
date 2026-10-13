@@ -72,9 +72,12 @@ struct Smoke {
     children: Vec<std::process::Child>,
     keyboard_save: bool,
 }
+
 #[derive(Component)]
 struct SmokeGameplay(u32);
+
 struct Fixture(PathBuf);
+
 impl Fixture {
     fn new(name: &str) -> io::Result<Self> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -86,6 +89,7 @@ impl Fixture {
         std::fs::create_dir_all(&path)?;
         Ok(Self(path.canonicalize()?))
     }
+
     fn write(&self, name: &str, bytes: impl AsRef<[u8]>) -> io::Result<PathBuf> {
         let path = self.0.join(name);
         std::fs::write(&path, bytes)?;
@@ -97,6 +101,7 @@ impl Drop for Fixture {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+
 impl Drop for Smoke {
     fn drop(&mut self) {
         for child in &mut self.children {
@@ -107,6 +112,7 @@ impl Drop for Smoke {
         }
     }
 }
+
 impl Smoke {
     fn new(options: SmokeOptions) -> Self {
         Self {
@@ -141,20 +147,24 @@ impl Smoke {
             keyboard_save: false,
         }
     }
+
     fn name(&self) -> &str {
         self.options
             .scenarios
             .get(self.scenario)
             .map_or("capture", String::as_str)
     }
+
     fn next(&mut self, world: &World) {
         self.phase += 1;
         self.phase_frame = presented(world);
         eprintln!("bEd smoke: {} phase {}", self.name(), self.phase);
     }
+
     fn elapsed_frames(&self, world: &World) -> u64 {
         presented(world).saturating_sub(self.phase_frame)
     }
+
     fn poll(&mut self, world: &mut World) -> io::Result<()> {
         if let Some(id) = self.inspect
             && let Some(result) = world.resource_mut::<AutomationResults>().take(id)
@@ -170,6 +180,7 @@ impl Smoke {
         }
         Ok(())
     }
+
     fn operation(
         &mut self,
         world: &mut World,
@@ -181,6 +192,7 @@ impl Smoke {
         };
         self.poll_operation(world, id)
     }
+
     fn poll_operation(
         &mut self,
         world: &mut World,
@@ -192,6 +204,7 @@ impl Smoke {
         self.operation = None;
         result.map(Some).map_err(io::Error::other)
     }
+
     fn panels(&self, kind: &str) -> Vec<PanelHandle> {
         self.snapshot.as_ref().map_or_else(Vec::new, |s| {
             s.panels
@@ -201,6 +214,7 @@ impl Smoke {
                 .collect()
         })
     }
+
     fn ready(&self, panel: PanelHandle) -> io::Result<bool> {
         let Some(panel) = self
             .snapshot
@@ -215,6 +229,7 @@ impl Smoke {
             Readiness::Failed(error) => Err(io::Error::other(error.clone())),
         }
     }
+
     fn open(&mut self, world: &mut World, path: PathBuf, viewer: Option<&str>) -> io::Result<bool> {
         if let Some(result) = self.operation(
             world,
@@ -233,6 +248,7 @@ impl Smoke {
             Ok(false)
         }
     }
+
     fn capture(
         &mut self,
         world: &mut World,
@@ -251,6 +267,7 @@ impl Smoke {
             None => Ok(None),
         }
     }
+
     fn complete(&mut self, world: &mut World) {
         eprintln!(
             "bEd: {} passed after {} presented frames",
@@ -276,14 +293,17 @@ impl Smoke {
         }
     }
 }
+
 fn submit(world: &mut World, operation: Operation) -> OperationId {
     world.resource_mut::<AutomationRequests>().submit(operation)
 }
+
 fn presented(world: &World) -> u64 {
     world
         .get_resource::<DesktopRenderStatus>()
         .map_or(0, |status| status.read().completed_frames)
 }
+
 fn ensure(condition: bool, message: impl Into<String>) -> io::Result<()> {
     if condition {
         Ok(())
@@ -291,6 +311,7 @@ fn ensure(condition: bool, message: impl Into<String>) -> io::Result<()> {
         Err(io::Error::other(message.into()))
     }
 }
+
 fn advance(world: &mut World) {
     world.resource_scope(|world, mut smoke: Mut<Smoke>| {
         let result = (|| -> io::Result<()> {
@@ -420,6 +441,7 @@ fn advance(world: &mut World) {
         }
     });
 }
+
 fn basic(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     if let Some(frame) = smoke.capture(world, vec![CaptureTarget::Window])? {
         ensure(
@@ -430,6 +452,7 @@ fn basic(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     }
     Ok(false)
 }
+
 fn setting(world: &mut World, smoke: &mut Smoke, key: &str, value: Value) -> io::Result<bool> {
     Ok(smoke
         .operation(
@@ -441,6 +464,7 @@ fn setting(world: &mut World, smoke: &mut Smoke, key: &str, value: Value) -> io:
         )?
         .is_some())
 }
+
 fn effects(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     #[cfg(feature = "effects")]
     {
@@ -458,6 +482,7 @@ fn effects(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
         Err(io::Error::other("effects smoke requires effects feature"))
     }
 }
+
 fn appearance(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     if smoke.phase == 0 {
         smoke.original_settings = world.non_send::<bed_config::Settings>().settings.clone();
@@ -505,6 +530,7 @@ fn appearance(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
         Ok(smoke.elapsed_frames(world) >= 2)
     }
 }
+
 fn native_window<T>(
     world: &mut World,
     callback: impl FnOnce(&winit::window::Window) -> T,
@@ -522,6 +548,7 @@ fn native_window<T>(
         Ok(callback(window))
     })
 }
+
 fn lifecycle(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     for event in &world.resource::<bed_desktop::DesktopInputEvents>().0 {
         if let winit::event::WindowEvent::Focused(focused) = event.event.event {
@@ -580,6 +607,7 @@ fn lifecycle(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     }
     Ok(false)
 }
+
 fn fixture_workspace(world: &mut World, smoke: &mut Smoke, name: &str) -> io::Result<bool> {
     if smoke.fixture.is_none() {
         smoke.fixture = Some(Fixture::new(name)?);
@@ -594,6 +622,7 @@ fn fixture_workspace(world: &mut World, smoke: &mut Smoke, name: &str) -> io::Re
         )?
         .is_some())
 }
+
 fn canvas(
     world: &World,
     panel: PanelHandle,
@@ -612,6 +641,7 @@ fn canvas(
         .clone();
     Ok((handle, target))
 }
+
 fn plugins(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     #[cfg(all(feature = "images", feature = "models"))]
     {
@@ -914,11 +944,13 @@ fn plugins(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
         Err(io::Error::other("plugin smoke requires images/models"))
     }
 }
+
 fn destroy_device(world: &World) {
     let device = &world.resource::<DesktopGpu>().device;
     device.destroy();
     let _ = device.poll(wgpu::PollType::Poll);
 }
+
 fn visible_pixels(pixels: &[u8]) -> usize {
     pixels
         .as_chunks::<4>()
@@ -927,6 +959,7 @@ fn visible_pixels(pixels: &[u8]) -> usize {
         .filter(|p| p[..3].iter().any(|v| *v > 20))
         .count()
 }
+
 fn compare_recovered_pixels(before: &[u8], after: &[u8]) -> io::Result<()> {
     ensure(
         before.len() == after.len(),
@@ -956,6 +989,7 @@ fn compare_recovered_pixels(before: &[u8], after: &[u8]) -> io::Result<()> {
         format!("recovered model differs from baseline ({difference} across {count} pixels)"),
     )
 }
+
 fn read_target(world: &World, target: &bed_ui::gpu::RenderTarget) -> io::Result<Vec<u8>> {
     let gpu = world.resource::<DesktopGpu>();
     let row = target.size[0] * 4;
@@ -1022,6 +1056,7 @@ fn binding(world: &World, panel: PanelHandle) -> io::Result<EditorPanelBinding> 
         .cloned()
         .ok_or_else(|| io::Error::other("editor binding missing"))
 }
+
 fn document_bytes(world: &World, panel: PanelHandle) -> io::Result<(Vec<u8>, bool, String)> {
     let document = binding(world, panel)?
         .document
@@ -1031,6 +1066,7 @@ fn document_bytes(world: &World, panel: PanelHandle) -> io::Result<(Vec<u8>, boo
         .snapshot(document)?;
     Ok((snapshot.bytes.to_vec(), snapshot.dirty, snapshot.path))
 }
+
 #[cfg(feature = "editor")]
 fn editor_focused(world: &mut World, panel: PanelHandle) -> io::Result<bool> {
     let binding = binding(world, panel)?;
@@ -1061,6 +1097,7 @@ fn editor_focused(world: &mut World, panel: PanelHandle) -> io::Result<bool> {
         });
     Ok(unblocked && focused && native_window(world, |window| window.has_focus())?)
 }
+
 #[cfg(all(target_os = "macos", feature = "editor"))]
 fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     use crate::native_commands::MenuAction;
@@ -1424,10 +1461,12 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     }
     Ok(false)
 }
+
 #[cfg(not(all(target_os = "macos", feature = "editor")))]
 fn menu(_: &mut World, _: &mut Smoke) -> io::Result<bool> {
     Err(io::Error::other("menu smoke requires macOS/editor"))
 }
+
 #[cfg(all(target_os = "macos", feature = "editor"))]
 fn platform(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     use crate::native_commands::MenuAction;
@@ -1654,6 +1693,7 @@ fn platform(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     }
     Ok(false)
 }
+
 #[cfg(not(all(target_os = "macos", feature = "editor")))]
 fn platform(_: &mut World, _: &mut Smoke) -> io::Result<bool> {
     Err(io::Error::other("platform smoke requires macOS/editor"))
@@ -1806,6 +1846,7 @@ fn git(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     }
     Ok(false)
 }
+
 #[cfg(not(feature = "git"))]
 fn git(_: &mut World, _: &mut Smoke) -> io::Result<bool> {
     Err(io::Error::other("Git smoke requires git feature"))
@@ -1914,6 +1955,7 @@ fn debug(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     }
     Ok(false)
 }
+
 #[cfg(not(feature = "debug"))]
 fn debug(_: &mut World, _: &mut Smoke) -> io::Result<bool> {
     Err(io::Error::other("debug smoke requires debug feature"))
@@ -2218,6 +2260,7 @@ fn terminal(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     }
     Ok(false)
 }
+
 #[cfg(feature = "terminal")]
 fn verify_terminal_capture(
     frame: &bed_desktop::DesktopCapturedFrame,
@@ -2272,6 +2315,7 @@ fn terminal_input(text: &str) -> Vec<DesktopInputStep> {
         }]),
     ]
 }
+
 #[cfg(feature = "terminal")]
 fn terminal_panel_focused(world: &mut World, panel: PanelHandle) -> io::Result<bool> {
     let session = binding(world, panel)?.terminal;
@@ -2281,10 +2325,12 @@ fn terminal_panel_focused(world: &mut World, panel: PanelHandle) -> io::Result<b
     };
     Ok(focused && native_window(world, |window| window.has_focus())?)
 }
+
 #[cfg(feature = "terminal")]
 fn terminal_fixture_command() -> &'static str {
     "printf '\\033[2J\\033[H\\r\\nGraphemes: é 日本語 👩‍💻\\r\\n\\033[4:3mcurly\\033[4:2m double\\033[0m\\r\\nAGENTS.md\\tNOTICE\\t\\033[34mvendor\\033[0m\\r\\n\\033]8;;https://example.com\\033\\\\OSC 8 link\\033]8;;\\033\\\\\\r\\n\\033_Ga=T,f=32,s=1,v=1,c=6,r=3,i=1,q=2;/wAA/w==\\033\\\\\\r\\nTERMINAL_GPU_READY\\r\\n'\n"
 }
+
 #[cfg(feature = "terminal")]
 fn terminal_fixture_ready(world: &World) -> io::Result<bool> {
     let terminal = world.non_send::<bed_terminal_core::bed_terminal_core::BedTerminal>();
@@ -2310,6 +2356,7 @@ fn terminal_fixture_ready(world: &World) -> io::Result<bool> {
             .flat_map(|r| r.cells.iter())
             .any(|c| c.hyperlink.as_deref() == Some("https://example.com")))
 }
+
 #[cfg(feature = "terminal")]
 fn verify_terminal_splits(world: &World, smoke: &Smoke) -> io::Result<()> {
     let terminal = world.non_send::<bed_terminal_core::bed_terminal_core::BedTerminal>();
@@ -2346,6 +2393,7 @@ fn verify_terminal_splits(world: &World, smoke: &Smoke) -> io::Result<()> {
         "terminal splits did not create three independent docked shells/leaves",
     )
 }
+
 #[cfg(not(feature = "terminal"))]
 fn terminal(_: &mut World, _: &mut Smoke) -> io::Result<bool> {
     Err(io::Error::other("terminal smoke requires terminal feature"))

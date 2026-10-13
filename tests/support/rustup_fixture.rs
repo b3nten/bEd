@@ -11,10 +11,12 @@ use std::{
 };
 
 pub const TOOLCHAIN: &str = "1.99.0-aarch64-apple-darwin";
+
 pub struct RustupFixture {
     pub dir: temp_dir::TempDir,
     pub config: PathBuf,
 }
+
 impl RustupFixture {
     pub fn new() -> Self {
         let dir = temp_dir::TempDir::new();
@@ -33,17 +35,21 @@ impl RustupFixture {
         })).unwrap().as_slice());
         Self { dir, config }
     }
+
     pub fn root(&self, name: &str) -> PathBuf {
         let root = self.dir.path(name);
         fs::create_dir_all(&root).unwrap();
         root.canonicalize().unwrap()
     }
+
     pub fn config(&self) -> LspConfig {
         LspConfig::load(&self.config).unwrap()
     }
+
     pub fn touch(&self, name: &str) {
         self.dir.write(name, b"");
     }
+
     pub fn calls(&self) -> Vec<Value> {
         fs::read_to_string(self.dir.path("calls.jsonl"))
             .unwrap_or_default()
@@ -51,6 +57,7 @@ impl RustupFixture {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
     }
+
     pub fn messages(&self, root: &Path) -> Vec<Value> {
         fs::read_to_string(root.join("messages.jsonl"))
             .unwrap_or_default()

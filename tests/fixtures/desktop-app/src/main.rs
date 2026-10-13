@@ -17,6 +17,7 @@ struct Counter {
     value: u32,
     button: [f32; 2],
 }
+
 #[derive(Resource)]
 struct Smoke {
     phase: u8,
@@ -26,6 +27,7 @@ struct Smoke {
     font_generation: u64,
     verified: Arc<AtomicBool>,
 }
+
 fn command(id: &str, label: &str, key: Option<Key>) -> DesktopMenuCommand {
     DesktopMenuCommand {
         id: id.into(),
@@ -40,6 +42,7 @@ fn command(id: &str, label: &str, key: Option<Key>) -> DesktopMenuCommand {
         }),
     }
 }
+
 fn main() {
     let smoke = std::env::args().any(|arg| arg == "--smoke");
     let verified = Arc::new(AtomicBool::new(false));
@@ -107,6 +110,7 @@ fn main() {
         println!("desktop consumer smoke PASS");
     }
 }
+
 fn native_commands(mut native: ResMut<DesktopNativeActions>, mut counter: ResMut<Counter>) {
     for action in native.0.drain(..) {
         if action.command == "consumer.increment" {
@@ -114,6 +118,7 @@ fn native_commands(mut native: ResMut<DesktopNativeActions>, mut counter: ResMut
         }
     }
 }
+
 fn counter_ui(ui: &Ui, world: &mut World) {
     let mut counter = world.resource_mut::<Counter>();
     ui.text(format!("Counter: {}", counter.value));
@@ -125,6 +130,7 @@ fn counter_ui(ui: &Ui, world: &mut World) {
     counter.button = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
     ui.text("ImGui, fonts, native commands and GPU presentation supplied by the base.");
 }
+
 fn draw(world: &mut World, ui: &Ui) {
     #[cfg(not(feature = "layout"))]
     ui.window("Desktop application")
@@ -155,6 +161,7 @@ fn draw(world: &mut World, ui: &Ui) {
             .collect();
     }
 }
+
 fn advance(world: &mut World) {
     let mut smoke = world.remove_resource::<Smoke>().expect("smoke installed");
     assert!(
@@ -326,13 +333,16 @@ fn advance(world: &mut World) {
     }
     world.insert_resource(smoke);
 }
+
 #[cfg(feature = "layout")]
 struct CounterPanel;
+
 #[cfg(feature = "layout")]
 impl bed_workbench::Panel for CounterPanel {
     fn title(&self, _: &World) -> String {
         "Counter panel".into()
     }
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -342,10 +352,12 @@ impl bed_workbench::Panel for CounterPanel {
     ) {
         counter_ui(ui, world);
     }
+
     fn save(&self, world: &World) -> serde_json::Value {
         serde_json::json!({"counter":world.resource::<Counter>().value})
     }
 }
+
 #[cfg(feature = "layout")]
 fn install_layout(app: &mut App) {
     app.add_plugins(bed_workbench::WorkbenchPlugin)
@@ -380,6 +392,7 @@ fn install_layout(app: &mut App) {
             .after(DesktopNativeSystems::Prepare),
     );
 }
+
 #[cfg(feature = "layout")]
 fn layout_presentation(
     insets: Res<DesktopContentInsets>,

@@ -228,15 +228,18 @@ fn main() {
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 const STDERR_DRAIN_SENTINEL: &str = "\n[stderr complete]\n";
+
 struct Fixture {
     root: PathBuf,
     client: LspClient,
     document: String,
 }
+
 impl Fixture {
     fn new(scenario: &str) -> Self {
         Self::with_server(scenario, "mock", json!({}))
     }
+
     fn with_server(scenario: &str, server: &str, settings: Value) -> Self {
         let root = std::env::temp_dir().join(format!(
             "bed-lsp-{}-{}",
@@ -259,12 +262,14 @@ impl Fixture {
             document,
         }
     }
+
     fn ready(&mut self) {
         wait_until(|| {
             self.client.poll();
             self.client.is_initialized()
         });
     }
+
     fn request(&mut self, method: &str, params: Value) -> Result<Value, ResponseError> {
         let result = Rc::new(RefCell::new(None));
         let delivered = result.clone();
@@ -279,6 +284,7 @@ impl Fixture {
         });
         result.borrow_mut().take().unwrap()
     }
+
     fn transcript(&mut self) -> Vec<Value> {
         self.request("test/transcript", json!({}))
             .unwrap()
@@ -287,17 +293,20 @@ impl Fixture {
             .clone()
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.client.shutdown();
         let _ = fs::remove_dir_all(&self.root);
     }
 }
+
 fn session(scenario: &str, extra: &[String]) -> RpcSession {
     let mut arguments = vec!["--mock-server".into(), scenario.into()];
     arguments.extend_from_slice(extra);
     RpcSession::start(&std::env::current_exe().unwrap(), &arguments).unwrap()
 }
+
 fn wait_until(mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(3);
     while !condition() {
@@ -305,6 +314,7 @@ fn wait_until(mut condition: impl FnMut() -> bool) {
         thread::sleep(Duration::from_millis(2));
     }
 }
+
 fn rpc_request(session: &mut RpcSession, method: &str) -> Result<Value, ResponseError> {
     let result = Rc::new(RefCell::new(None));
     let delivered = result.clone();
@@ -1018,6 +1028,7 @@ fn initialize_batch_preserves_handshake_order() {
 fn shared_request(client: &Rc<RefCell<LspClient>>, method: &str) -> Value {
     shared_request_params(client, method, json!({}))
 }
+
 fn shared_request_params(client: &Rc<RefCell<LspClient>>, method: &str, params: Value) -> Value {
     let reply = Rc::new(RefCell::new(None));
     let delivered = reply.clone();
@@ -1428,6 +1439,7 @@ struct PoolFixture {
     root: PathBuf,
     pool: WorkspaceLsp,
 }
+
 impl PoolFixture {
     fn new(id: u64, scenario: &str) -> Self {
         let root = std::env::temp_dir().join(format!(
@@ -1450,9 +1462,11 @@ impl PoolFixture {
         let pool = WorkspaceLsp::new(WorkspaceId(id), config, root.clone());
         Self { root, pool }
     }
+
     fn path(&self, name: &str) -> String {
         self.root.join(name).to_string_lossy().into_owned()
     }
+
     fn ready(&mut self) {
         wait_until(|| {
             self.pool.poll();
@@ -1463,6 +1477,7 @@ impl PoolFixture {
                 .all(|status| status.initialized)
         });
     }
+
     fn transcript(&self, language: &str) -> Vec<Value> {
         shared_request(
             &self.pool.client_for_language(language).unwrap(),
@@ -1473,6 +1488,7 @@ impl PoolFixture {
         .clone()
     }
 }
+
 impl Drop for PoolFixture {
     fn drop(&mut self) {
         self.pool.shutdown();
@@ -1827,10 +1843,12 @@ struct NavigationWorkbench {
     sibling_tab: bevy::prelude::Entity,
     path: String,
 }
+
 impl NavigationWorkbench {
     fn new() -> Self {
         Self::with_startup("basic", |_, _, _, _| {})
     }
+
     fn with_startup(
         scenario: &str,
         before_ready: impl FnOnce(
@@ -1978,6 +1996,7 @@ impl NavigationWorkbench {
         result.focus(request_tab);
         result
     }
+
     fn frame(&mut self) {
         self.app.update();
         self.context
@@ -1989,17 +2008,21 @@ impl NavigationWorkbench {
         assert!(self.context.render_legacy().draw_data().total_vtx_count() > 0);
         bed_editor_workbench::process_editor_requests(self.app.world_mut()).unwrap();
     }
+
     fn focus(&mut self, tab: bevy::prelude::Entity) {
         bed_editor_workbench::focus_panel(self.app.world_mut(), tab, true).unwrap();
         self.frame();
         self.frame();
     }
+
     fn session(&self) -> &EditorSession {
         self.app.world().non_send::<EditorSession>()
     }
+
     fn session_mut(&mut self) -> bevy::ecs::change_detection::Mut<'_, EditorSession> {
         self.app.world_mut().non_send_mut::<EditorSession>()
     }
+
     fn panel_count(&mut self, kind: &str) -> usize {
         self.app
             .world_mut()
@@ -2011,12 +2034,14 @@ impl NavigationWorkbench {
             .filter(|(record, _)| record.panel_type == kind)
             .count()
     }
+
     fn active_view(&self) -> Option<ViewId> {
         self.app
             .world()
             .resource::<bed_editor_workbench::EditorNavigation>()
             .active_view
     }
+
     fn close(&mut self, panel: bevy::prelude::Entity) {
         let request = bed_editor_workbench::capture_editor_request_from(
             self.app.world(),
@@ -2033,6 +2058,7 @@ impl NavigationWorkbench {
             ))
         ));
     }
+
     fn configure(&self, result: Value) {
         shared_request_params(
             &self.client,
@@ -2040,9 +2066,11 @@ impl NavigationWorkbench {
             json!({"result":result,"hold":true}),
         );
     }
+
     fn location(&self, row: i32, column: i32) -> Value {
         json!({"uri":LspUri::file_uri_from_path(&self.path).unwrap().to_string(),"range":{"start":{"line":row,"character":column},"end":{"line":row,"character":column+1}}})
     }
+
     fn shortcut(&mut self) {
         use dear_imgui_rs::Key;
         self.focus(self.request_tab);
@@ -2060,10 +2088,12 @@ impl NavigationWorkbench {
             "native F12 must send the request"
         );
     }
+
     fn release(&self) {
         assert_eq!(shared_request(&self.client, "test/definition/release"), 1);
     }
 }
+
 impl Drop for NavigationWorkbench {
     fn drop(&mut self) {
         self.app

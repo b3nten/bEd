@@ -21,6 +21,7 @@ use winit::event::WindowEvent;
 type HostResult<T> = Result<T, Box<dyn Error>>;
 
 struct NativeFileClipboard(bed_desktop::DesktopFileClipboard);
+
 impl bed_editor_api::FileClipboardService for NativeFileClipboard {
     fn read_files(&mut self) -> io::Result<Vec<PathBuf>> {
         self.0.read_files()
@@ -35,6 +36,7 @@ struct NativeFileDrag {
     paths: Vec<PathBuf>,
     panel: Option<Entity>,
 }
+
 #[derive(Resource, Default)]
 struct NativeFailure(std::sync::Arc<std::sync::Mutex<Option<String>>>);
 
@@ -49,6 +51,7 @@ pub enum BedPlatformSystems {
     Prepare,
     Input,
 }
+
 impl Plugin for BedAppPlugin {
     fn build(&self, app: &mut App) {
         bed_workbench::register(app.world_mut(), "bed.desktop", |registrar| {
@@ -153,6 +156,7 @@ fn fail(world: &mut World, error: impl std::fmt::Display) {
         .get_or_insert_with(|| error.to_string());
     world.write_message(AppExit::error());
 }
+
 fn configure(world: &mut World) {
     {
         let mut settings = world.non_send_mut::<Settings>();
@@ -283,6 +287,7 @@ fn configure(world: &mut World) {
     #[cfg(target_os = "macos")]
     update_native_presentation(world);
 }
+
 fn prepare(world: &mut World) {
     if !world.contains_non_send::<DesktopContext>() {
         return;
@@ -313,6 +318,7 @@ fn prepare(world: &mut World) {
     let top = world.resource::<bed_desktop::DesktopContentInsets>().top;
     bed_editor_workbench::set_root_top_inset(world, top);
 }
+
 fn draw(world: &mut World, ui: &Ui) {
     #[cfg(target_os = "macos")]
     if let Some((command, label)) = bed_desktop::native::macos_window::toolbar_drag() {
@@ -394,6 +400,7 @@ fn draw(world: &mut World, ui: &Ui) {
         bed_idle::draw_ui(world, ui);
     }
 }
+
 fn native_input(world: &mut World) {
     let mut actions = Vec::new();
     let mut file_events = Vec::new();
@@ -649,6 +656,7 @@ fn native_file_events(world: &mut World, events: Vec<WindowEvent>) {
         drag.panel = None;
     }
 }
+
 fn native_panel_at(world: &mut World, position: [f32; 2]) -> Option<Entity> {
     world
         .query::<(Entity, &bed_editor_workbench::PanelGeometry)>()
@@ -662,6 +670,7 @@ fn native_panel_at(world: &mut World, position: [f32; 2]) -> Option<Entity> {
         })
         .map(|(entity, _)| entity)
 }
+
 fn submit_native_drag(
     world: &mut World,
     panel: Option<Entity>,
@@ -678,6 +687,7 @@ fn submit_native_drag(
         .resource_mut::<bed_editor_workbench::EditorRequests>()
         .enqueue(request);
 }
+
 fn native_drag_observation(world: &mut World) -> ([f32; 2], bed_editor_api::ExternalFileModifiers) {
     let io = world.non_send::<DesktopContext>().context.io();
     let mut position = io.mouse_pos();
@@ -740,6 +750,7 @@ fn native_drag_observation(world: &mut World) -> ([f32; 2], bed_editor_api::Exte
     }
     (position, modifiers)
 }
+
 fn editor_shortcuts_focused(world: &World) -> bool {
     world
         .resource::<bed_workbench::WorkbenchLayout>()
@@ -791,6 +802,7 @@ fn after_ui(world: &mut World) {
         }
     }
 }
+
 #[cfg(target_os = "macos")]
 fn update_native_presentation(world: &mut World) {
     let toolbar = bed_editor_workbench::toolbar_commands(world);
@@ -964,6 +976,7 @@ pub fn run() -> HostResult<()> {
     }
     Ok(())
 }
+
 fn new_instance_command(
     executable: &Path,
     config_dir: &Path,
@@ -1070,6 +1083,7 @@ enum NativeEditRoute {
     Ignore,
     Shortcut(dear_imgui_rs::Key, bool),
 }
+
 #[cfg(target_os = "macos")]
 fn native_edit_route(
     action: crate::native_commands::MenuAction,
@@ -1231,6 +1245,7 @@ pub(crate) fn smoke_native_menu(
         .ok_or_else(|| io::Error::other("native menu is not initialized"))?
         .perform_for_smoke(&action.command_id())
 }
+
 #[cfg(all(feature = "automation", target_os = "macos"))]
 pub(crate) fn smoke_native_toolbar(world: &World, command: &str) -> bool {
     world
@@ -1239,6 +1254,7 @@ pub(crate) fn smoke_native_toolbar(world: &World, command: &str) -> bool {
         .as_ref()
         .is_some_and(|window| window.click_command(command))
 }
+
 #[cfg(all(feature = "automation", target_os = "macos"))]
 pub(crate) fn smoke_native_chrome(world: &World) -> io::Result<()> {
     let window = world
@@ -1274,15 +1290,19 @@ fn spawn_instance(
     drop(child);
     Ok(())
 }
+
 #[cfg(feature = "automation")]
 #[derive(Resource, Default)]
 pub(crate) struct NativeSmokeMode(pub bool);
+
 #[cfg(feature = "automation")]
 #[derive(Resource, Default)]
 pub(crate) struct NativeSpawnedInstances(pub Vec<std::process::Child>);
+
 #[cfg(all(feature = "automation", target_os = "macos"))]
 #[derive(Resource, Default)]
 pub(crate) struct NativeMenuObservations(pub Vec<crate::native_commands::MenuDispatch>);
+
 #[cfg(all(feature = "automation", target_os = "macos"))]
 pub(crate) fn smoke_native_key_equivalent(
     world: &World,
@@ -1297,6 +1317,7 @@ pub(crate) fn smoke_native_key_equivalent(
         .ok_or_else(|| io::Error::other("native menu is not initialized"))?
         .key_equivalent_for_smoke(characters, key_code, shift)
 }
+
 #[cfg(all(feature = "automation", target_os = "macos"))]
 pub(crate) fn smoke_native_dock_new_window(world: &World) -> io::Result<()> {
     world
@@ -1306,6 +1327,7 @@ pub(crate) fn smoke_native_dock_new_window(world: &World) -> io::Result<()> {
         .ok_or_else(|| io::Error::other("native menu is not initialized"))?
         .perform_dock_for_smoke(&crate::native_commands::MenuAction::NewWindow.command_id())
 }
+
 #[cfg(feature = "automation")]
 pub(crate) fn smoke_focus_window(world: &mut World) {
     let entity = world
@@ -1346,6 +1368,7 @@ fn new_window_command(
     spawn_instance(world, None).map_err(|error| error.to_string())?;
     Ok(Vec::new())
 }
+
 #[cfg(target_os = "macos")]
 fn queue_native_shortcut(context: &mut Context, stroke: bed_keybindings::Stroke) {
     use dear_imgui_rs::Key;
