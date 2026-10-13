@@ -1410,7 +1410,12 @@ mod tests {
         let options = PtyOptions {
             shell: Some(TerminalShell::new(
                 "/bin/sh",
-                vec!["-c".into(), r"printf '\033[6nTAIL'".into()],
+                vec![
+                    "-c".into(),
+                    // Keep the child alive after closing the slave so replying to
+                    // its final query must tolerate hangup before waitpid sees exit.
+                    r"printf '\033[6nTAIL'; exec 0<&- 1>&- 2>&-; sleep 0.05".into(),
+                ],
             )),
             ..PtyOptions::default()
         };

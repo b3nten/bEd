@@ -748,6 +748,14 @@ fn run_worker(
                     }
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
                     Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                    #[cfg(unix)]
+                    Err(error) if error.raw_os_error() == Some(libc::EIO) => {
+                        // The slave can close before the exit is observable. A
+                        // final query may still have queued a reply; discard
+                        // it and keep draining output until the child is reaped.
+                        writes.clear();
+                        break;
+                    }
                     Err(error) => return Err(error),
                 }
             }
