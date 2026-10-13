@@ -15,6 +15,7 @@ pub enum Kind {
     Boolean,
     Null,
 }
+
 impl Kind {
     pub fn container(self) -> bool {
         matches!(self, Self::Object(_) | Self::Array(_))

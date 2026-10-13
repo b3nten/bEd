@@ -23,6 +23,7 @@ pub struct JsonDocument(pub DocumentId);
 /// Main-thread workers and their current tree presentations belong to the app.
 #[derive(Default)]
 pub struct JsonStates(HashMap<Entity, JsonPanel>);
+
 impl JsonStates {
     pub fn get(&self, entity: Entity) -> Option<&JsonPanel> {
         self.0.get(&entity)
@@ -35,6 +36,7 @@ pub enum JsonSystems {
 }
 
 pub struct JsonPlugin;
+
 #[derive(Resource)]
 struct JsonActionHandler(PanelActionSystem);
 
@@ -180,6 +182,7 @@ fn json_action(
 struct JsonFrontend {
     entity: Entity,
 }
+
 impl Panel for JsonFrontend {
     fn title(&self, world: &World) -> String {
         world.non_send::<JsonStates>().get(self.entity).map_or_else(

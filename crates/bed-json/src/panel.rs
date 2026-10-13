@@ -18,6 +18,7 @@ struct ViewState {
     expanded: BTreeSet<String>,
     scroll: [f32; 2],
 }
+
 impl Default for ViewState {
     fn default() -> Self {
         Self {
@@ -41,6 +42,7 @@ pub struct JsonPanel {
     error: Option<String>,
     restore_scroll: bool,
 }
+
 impl JsonPanel {
     pub fn new(document: DocumentId, state: &Value) -> Self {
         let mut state: ViewState = serde_json::from_value(state.clone()).unwrap_or_default();
@@ -70,13 +72,16 @@ impl JsonPanel {
             restore_scroll: true,
         }
     }
+
     /// Whether the structure represents the current immutable host snapshot.
     pub fn is_ready(&self) -> bool {
         self.tree.is_some() && !self.updating && self.error.is_none()
     }
+
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
+
     pub(crate) fn panel_title(&self, host: &HostContext<'_>) -> String {
         host.document(self.document).map_or_else(
             || "JSON Tree".into(),
@@ -90,9 +95,11 @@ impl JsonPanel {
             },
         )
     }
+
     pub(crate) fn saved_state(&self) -> Value {
         serde_json::to_value(&self.state).unwrap_or(Value::Null)
     }
+
     pub(crate) fn apply_action(
         &mut self,
         action: PanelAction,
@@ -110,6 +117,7 @@ impl JsonPanel {
         }
         Ok(true)
     }
+
     pub(crate) fn sync(&mut self, host: &HostContext<'_>) {
         let Some(worker) = self.worker.as_ref() else {
             return;
@@ -171,6 +179,7 @@ impl JsonPanel {
             }
         }
     }
+
     fn rebuild_visible(&mut self) {
         self.visible.clear();
         let Some(tree) = &self.tree else {
@@ -191,6 +200,7 @@ impl JsonPanel {
             };
         }
     }
+
     fn edit_as_text(&self, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         if let Some(menu) = host.viewer_menu
             && let Some(viewer) = menu.choices.iter().find(|viewer| viewer.text_editor)
@@ -207,6 +217,7 @@ impl JsonPanel {
             });
         }
     }
+
     fn draw_tree(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         let Some(tree) = &self.tree else {
             return;
@@ -286,6 +297,7 @@ impl JsonPanel {
             self.rebuild_visible();
         }
     }
+
     /// Parsing is advanced by the feature's ordered preparation system. Drawing
     /// changes only the tree presentation and produces editor intentions.
     pub(crate) fn draw_prepared(
@@ -320,12 +332,15 @@ impl JsonPanel {
     pub fn title(&self, host: &HostContext<'_>) -> String {
         self.panel_title(host)
     }
+
     pub fn attached_document(&self) -> Option<DocumentId> {
         Some(self.document)
     }
+
     pub fn save_state(&self) -> Value {
         self.saved_state()
     }
+
     pub fn action(
         &mut self,
         action: PanelAction,
@@ -334,6 +349,7 @@ impl JsonPanel {
     ) -> Result<bool, String> {
         self.apply_action(action, requests)
     }
+
     pub fn draw(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         self.sync(host);
         self.draw_prepared(ui, host, requests);
@@ -363,6 +379,7 @@ mod tests {
             text: None,
         }
     }
+
     fn sync(panel: &mut JsonPanel, documents: &[PluginDocument]) {
         panel.sync(&HostContext {
             remote: false,
@@ -377,6 +394,7 @@ mod tests {
             diagnostics: &Value::Null,
         });
     }
+
     fn wait(panel: &mut JsonPanel, documents: &[PluginDocument]) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -540,6 +558,7 @@ mod tests {
         let documents = [document(r#"{"nested":{"leaf":42}}"#, (0, 0))];
         let mut panel = JsonPanel::new(documents[0].id, &Value::Null);
         wait(&mut panel, &documents);
+
         fn frame(
             context: &mut Context,
             panel: &mut JsonPanel,
@@ -574,6 +593,7 @@ mod tests {
             drop(context.render_legacy());
             (child_min, row_height)
         }
+
         fn click(
             context: &mut Context,
             panel: &mut JsonPanel,
