@@ -387,6 +387,7 @@ impl std::io::Write for BoundedJson {
         self.0.extend_from_slice(bytes);
         Ok(bytes.len())
     }
+
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }

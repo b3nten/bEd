@@ -20,6 +20,7 @@ fn tick(runtime: &mut HttpRuntime) {
         &mut Vec::new(),
     );
 }
+
 fn snapshot(runtime: &HttpRuntime) -> Value {
     saved_catalog(
         &runtime.catalog,
@@ -27,6 +28,7 @@ fn snapshot(runtime: &HttpRuntime) -> Value {
         runtime.unrestored.as_ref(),
     )
 }
+
 fn restore(runtime: &mut HttpRuntime, state: Option<&Value>, _: &str) {
     restore_catalog(
         &mut runtime.catalog,
@@ -36,6 +38,7 @@ fn restore(runtime: &mut HttpRuntime, state: Option<&Value>, _: &str) {
         state,
     );
 }
+
 fn actions(module: &mut HttpRuntime, actions: impl IntoIterator<Item = Action>) {
     module.catalog.actions.extend(actions);
     tick(module);

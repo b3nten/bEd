@@ -21,6 +21,7 @@ pub struct HttpRuntime {
     pub(crate) next_run: u64,
     pub(crate) unrestored: Option<Value>,
 }
+
 impl Default for HttpRuntime {
     fn default() -> Self {
         Self {
@@ -32,9 +33,12 @@ impl Default for HttpRuntime {
         }
     }
 }
+
 #[derive(Component)]
 pub struct HttpSurface;
+
 pub struct HttpPlugin;
+
 impl Plugin for HttpPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<EditorFrame>()
@@ -69,6 +73,7 @@ impl Plugin for HttpPlugin {
         app.world_mut().spawn(crate::status::items());
     }
 }
+
 fn shutdown(mut exits: MessageReader<AppExit>, mut runtime: NonSendMut<HttpRuntime>) {
     if exits.read().next().is_some() {
         runtime.worker.shutdown();
@@ -82,6 +87,7 @@ fn open(In(invocation): In<CommandInvocation>) -> CommandResult {
         area: Some(invocation.area),
     }])
 }
+
 fn show(
     In(invocation): In<CommandInvocation>,
     panels: Query<Entity, With<HttpSurface>>,
@@ -103,6 +109,7 @@ fn show(
         }]
     })
 }
+
 fn cancel_run(
     In(invocation): In<CommandInvocation>,
     mut runtime: NonSendMut<HttpRuntime>,
@@ -116,6 +123,7 @@ fn cancel_run(
         .push(crate::Action::CancelRun { run });
     Ok(Vec::new())
 }
+
 fn create(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     world.entity_mut(creation.entity).insert(bed_workbench_api::PanelDocumentation::new(&[
         ("Requests", "Create or select a request, then edit its method, URL, headers, and body."),
@@ -127,6 +135,7 @@ fn create(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
         view: HttpView::new(&creation.state),
     }))
 }
+
 fn save_workspace(runtime: NonSend<HttpRuntime>) -> Value {
     saved_catalog(
         &runtime.catalog,
@@ -134,6 +143,7 @@ fn save_workspace(runtime: NonSend<HttpRuntime>) -> Value {
         runtime.unrestored.as_ref(),
     )
 }
+
 fn restore_workspace(
     In(payload): In<EditorWorkspaceRestore>,
     mut runtime: NonSendMut<HttpRuntime>,
@@ -154,6 +164,7 @@ fn restore_workspace(
     );
     Ok(())
 }
+
 fn prepare(
     mut runtime: NonSendMut<HttpRuntime>,
     mut intents: ResMut<EditorIntents>,
@@ -206,13 +217,16 @@ struct HttpFrontend {
     entity: Entity,
     view: HttpView,
 }
+
 impl Panel for HttpFrontend {
     fn title(&self, _: &World) -> String {
         "HTTP Client".into()
     }
+
     fn save(&self, _: &World) -> Value {
         self.view.saved_state()
     }
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -247,6 +261,7 @@ mod tests {
         app.add_plugins((WorkbenchPlugin, HttpPlugin));
         app
     }
+
     fn restore(app: &mut App, value: Value) {
         let handler = app
             .world_mut()
@@ -266,6 +281,7 @@ mod tests {
             .unwrap()
             .unwrap();
     }
+
     #[test]
     fn restoring_definitions_and_opening_frontends_never_runs_requests() {
         let mut app = app();
@@ -286,6 +302,7 @@ mod tests {
         assert_eq!(runtime.next_run, 0);
         assert!(runtime.catalog.results.is_empty());
     }
+
     #[test]
     fn workspace_snapshot_captures_queued_edits_without_executing_run() {
         let mut app = app();
@@ -319,6 +336,7 @@ mod tests {
                 .is_none()
         );
     }
+
     #[test]
     fn unsupported_workspace_is_retained_until_explicit_catalog_creation() {
         let mut app = app();

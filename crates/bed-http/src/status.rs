@@ -7,6 +7,7 @@ use dear_imgui_rs::Ui;
 
 pub(crate) const SHOW_COMMAND: &str = "bed.http.show";
 pub(crate) const CANCEL_COMMAND: &str = "bed.http.cancel-run";
+
 pub(crate) fn items() -> StatusItems {
     StatusItems(vec![
         StatusItem {
@@ -31,6 +32,7 @@ pub(crate) fn items() -> StatusItems {
         },
     ])
 }
+
 pub(super) fn presentation(world: &World, context: StatusContext) -> Option<StatusText> {
     let catalog = &world.get_non_send::<HttpRuntime>()?.catalog;
     let show = StatusCommand {
@@ -128,14 +130,17 @@ pub(super) fn presentation(world: &World, context: StatusContext) -> Option<Stat
     text.commands.push(show);
     Some(text)
 }
+
 fn measure(world: &World, ui: &Ui, context: StatusContext) -> Option<f32> {
     Some(presentation(world, context)?.measure(ui))
 }
+
 fn draw(world: &mut World, ui: &Ui, context: StatusDrawContext, actions: &mut Vec<Action>) {
     if let Some(text) = presentation(world, context.context) {
         text.draw(ui, context, actions);
     }
 }
+
 fn tooltip(world: &World, ui: &Ui, context: StatusContext) {
     if let Some(text) = presentation(world, context) {
         text.tooltip(ui);

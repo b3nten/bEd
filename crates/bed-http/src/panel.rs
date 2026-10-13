@@ -82,6 +82,7 @@ pub struct HttpView {
     draft: Option<RequestDraft>,
     response_cache: Option<ResponseCache>,
 }
+
 impl HttpView {
     pub(crate) fn new(state: &Value) -> Self {
         let mut state: ViewState = serde_json::from_value(state.clone()).unwrap_or_default();
@@ -94,6 +95,7 @@ impl HttpView {
             response_cache: None,
         }
     }
+
     pub(crate) fn saved_state(&self) -> Value {
         serde_json::to_value(&self.state).expect("HTTP presentation state is serializable")
     }
@@ -733,11 +735,14 @@ mod tests {
     use std::{collections::HashMap, sync::Mutex, time::Duration};
 
     static IMGUI_LOCK: Mutex<()> = Mutex::new(());
+
     struct Clipboard(Rc<RefCell<String>>);
+
     impl ClipboardBackend for Clipboard {
         fn get(&mut self) -> Option<String> {
             Some(self.0.borrow().clone())
         }
+
         fn set(&mut self, value: &str) {
             *self.0.borrow_mut() = value.to_owned();
         }
@@ -747,17 +752,21 @@ mod tests {
         view: HttpView,
         shared: Rc<RefCell<Shared>>,
     }
+
     impl std::ops::Deref for UiFixture {
         type Target = HttpView;
+
         fn deref(&self) -> &HttpView {
             &self.view
         }
     }
+
     impl std::ops::DerefMut for UiFixture {
         fn deref_mut(&mut self) -> &mut HttpView {
             &mut self.view
         }
     }
+
     impl UiFixture {
         fn new(shared: Rc<RefCell<Shared>>, state: &Value) -> Self {
             Self {
@@ -765,14 +774,17 @@ mod tests {
                 shared,
             }
         }
+
         fn save_state(&self) -> Value {
             self.view.saved_state()
         }
+
         fn draw(&mut self, ui: &Ui, _: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
             let actions = self.view.draw_catalog(ui, &self.shared.borrow(), requests);
             self.shared.borrow_mut().actions.extend(actions);
         }
     }
+
     fn fixture() -> Rc<RefCell<Shared>> {
         let mut request = Request::new(1);
         request.name = "Example".into();
