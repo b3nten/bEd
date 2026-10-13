@@ -15,6 +15,7 @@ pub struct ShaderSettings {
     pub burnin_intensity: f32,
     pub pulse_intensity: f32,
 }
+
 impl Default for ShaderSettings {
     fn default() -> Self {
         let mut settings = Self::subtle();
@@ -22,6 +23,7 @@ impl Default for ShaderSettings {
         settings
     }
 }
+
 impl ShaderSettings {
     pub fn subtle() -> Self {
         Self {
@@ -39,6 +41,7 @@ impl ShaderSettings {
             pulse_intensity: 0.0,
         }
     }
+
     pub fn legacy() -> Self {
         Self {
             scanline_intensity: 0.41,
@@ -53,6 +56,7 @@ impl ShaderSettings {
             ..Self::subtle()
         }
     }
+
     pub fn from_json(settings: &serde_json::Value) -> Self {
         let base = Self::subtle();
         let number = |key: &str, default| {
@@ -81,6 +85,7 @@ impl ShaderSettings {
             pulse_intensity: number("pulse_intensity", base.pulse_intensity),
         }
     }
+
     pub fn uniform_bytes(&self, width: u32, height: u32, time: f32, output_srgb: bool) -> Vec<u8> {
         [
             width as f32,
