@@ -39,8 +39,8 @@ fn image_from_pixels(
 	use objc2_app_kit::NSImage;
 	use objc2_core_foundation::CGFloat;
 	use objc2_core_graphics::{
-		CGBitmapInfo, CGColorRenderingIntent, CGColorSpaceCreateDeviceRGB,
-		CGDataProviderCreateWithData, CGImageAlphaInfo, CGImageCreate,
+		CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGImage,
+		CGImageAlphaInfo, CGImageByteOrderInfo,
 	};
 	use objc2_foundation::NSSize;
 	use std::{
@@ -64,21 +64,21 @@ fn image_from_pixels(
 
 		// SAFETY: The data pointer and length are valid.
 		// The info pointer can safely be NULL, we don't use it in the `release` callback.
-		unsafe { CGDataProviderCreateWithData(ptr::null_mut(), data_ptr, len, Some(release)) }
+		unsafe { CGDataProvider::with_data(ptr::null_mut(), data_ptr, len, Some(release)) }
 	}
 	.unwrap();
 
-	let colorspace = unsafe { CGColorSpaceCreateDeviceRGB() }.unwrap();
+	let colorspace = CGColorSpace::new_device_rgb().unwrap();
 
 	let cg_image = unsafe {
-		CGImageCreate(
+		CGImage::new(
 			width,
 			height,
 			8,
 			32,
 			4 * width,
 			Some(&colorspace),
-			CGBitmapInfo::ByteOrderDefault | CGBitmapInfo(CGImageAlphaInfo::Last.0),
+			CGBitmapInfo(CGImageByteOrderInfo::OrderDefault.0 | CGImageAlphaInfo::Last.0),
 			Some(&provider),
 			ptr::null_mut(),
 			false,
@@ -88,7 +88,7 @@ fn image_from_pixels(
 	.unwrap();
 
 	let size = NSSize { width: width as CGFloat, height: height as CGFloat };
-	unsafe { NSImage::initWithCGImage_size(NSImage::alloc(), &cg_image, size) }
+	NSImage::initWithCGImage_size(NSImage::alloc(), &cg_image, size)
 }
 
 pub(crate) struct Clipboard {
@@ -346,7 +346,7 @@ impl<'clipboard> Set<'clipboard> {
 		self.clipboard.clear();
 
 		let image_array = NSArray::from_retained_slice(&[ProtocolObject::from_retained(image)]);
-		let success = unsafe { self.clipboard.pasteboard.writeObjects(&image_array) };
+		let success = self.clipboard.pasteboard.writeObjects(&image_array);
 
 		add_clipboard_exclusions(self.clipboard, self.exclude_from_history);
 
