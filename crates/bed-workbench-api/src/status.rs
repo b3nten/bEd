@@ -33,10 +33,12 @@ pub struct StatusContext {
     pub source: Option<Entity>,
     pub area: u32,
 }
+
 impl StatusContext {
     pub fn is_focused(self) -> bool {
         self.focused_frontend == Some(self.publisher) || self.focused_panel == Some(self.publisher)
     }
+
     pub fn invoke(self, command: impl Into<String>, arguments: Value) -> Action {
         Action::Invoke(CommandInvocation {
             command: command.into(),
@@ -52,6 +54,7 @@ pub enum StatusDrawMode {
     Inline,
     Popup,
 }
+
 #[derive(Clone, Copy, Debug)]
 pub struct StatusDrawContext {
     pub context: StatusContext,
@@ -68,6 +71,7 @@ pub struct StatusText {
     pub error: bool,
     pub commands: Vec<StatusCommand>,
 }
+
 #[derive(Clone, Debug)]
 pub struct StatusCommand {
     pub label: &'static str,
@@ -75,6 +79,7 @@ pub struct StatusCommand {
     pub arguments: Value,
     pub enabled: bool,
 }
+
 impl StatusText {
     pub fn new(summary: impl Into<String>, details: impl Into<String>) -> Self {
         Self {
@@ -83,6 +88,7 @@ impl StatusText {
             ..Default::default()
         }
     }
+
     pub fn command(mut self, label: &'static str, command: &'static str) -> Self {
         self.commands.push(StatusCommand {
             label,
@@ -92,6 +98,7 @@ impl StatusText {
         });
         self
     }
+
     pub fn measure(&self, ui: &Ui) -> f32 {
         ui.calc_text_size(
             self.summary
@@ -101,6 +108,7 @@ impl StatusText {
         )[0]
         .max(1.0)
     }
+
     pub fn draw(&self, ui: &Ui, ctx: StatusDrawContext, actions: &mut Vec<Action>) {
         if ctx.mode == StatusDrawMode::Inline {
             let point = ui.cursor_screen_pos();
@@ -142,6 +150,7 @@ impl StatusText {
             }
         }
     }
+
     pub fn tooltip(&self, ui: &Ui) {
         // The renderer supplies a wrap width for tooltips and widget popups.
         ui.text(&self.summary);

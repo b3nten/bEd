@@ -23,12 +23,14 @@ pub enum PinchPhase {
     Ended,
     Cancelled,
 }
+
 #[derive(Clone, Copy, Debug)]
 pub struct PinchEvent {
     pub position: [f32; 2],
     pub delta: f64,
     pub phase: PinchPhase,
 }
+
 #[derive(Resource, Default)]
 pub struct PinchEvents(pub Vec<PinchEvent>);
 
@@ -41,6 +43,7 @@ pub struct PanelPresentation {
     pub viewport: u32,
     pub dock_id: u32,
 }
+
 impl PanelPresentation {
     pub fn new(id: u64) -> Self {
         Self {
@@ -51,12 +54,15 @@ impl PanelPresentation {
             dock_id: 0,
         }
     }
+
     pub fn id(&self) -> u64 {
         self.id
     }
+
     pub fn focus_requested(&self) -> bool {
         self.focus
     }
+
     pub fn viewport_id(&self) -> u32 {
         self.viewport
     }
@@ -161,6 +167,7 @@ pub fn panel_owner(world: &World, entity: Entity) -> Option<Entity> {
 /// Plugins install one component; consequential effects still use request queues.
 #[derive(Component, Clone, Copy)]
 pub struct WorkbenchOverlay(pub fn(&mut World, &Ui));
+
 #[derive(Component, Clone, Debug)]
 pub struct OverlayError(pub String);
 
@@ -204,6 +211,7 @@ pub fn draw_panel_drag_label(ui: &Ui, title: &str) {
 /// intentions. Commands and panel lifecycle run after the frontend returns.
 pub trait Panel: 'static {
     fn title(&self, world: &World) -> String;
+
     fn draw(
         &mut self,
         ui: &Ui,
@@ -211,6 +219,7 @@ pub trait Panel: 'static {
         requests: &mut Vec<Action>,
         shortcuts: &ShortcutInput,
     );
+
     fn save(&self, _world: &World) -> Value {
         Value::Null
     }
@@ -264,8 +273,11 @@ pub enum Action {
 }
 
 pub type CommandResult = Result<Vec<Action>, String>;
+
 pub type PanelResult = Result<Box<dyn Panel>, String>;
+
 pub type CommandSystem = SystemId<In<CommandInvocation>, CommandResult>;
+
 pub type PanelSystem = SystemId<In<PanelCreation>, PanelResult>;
 
 #[derive(Clone)]
@@ -275,6 +287,7 @@ pub struct CommandDefinition {
     pub label: &'static str,
     pub handler: CommandSystem,
 }
+
 #[derive(Clone)]
 pub struct PanelDefinition {
     pub id: &'static str,
@@ -292,6 +305,7 @@ pub struct Registry {
     menus: Vec<&'static str>,
     shortcuts: Vec<ShortcutAction>,
 }
+
 impl Default for Registry {
     fn default() -> Self {
         Self {
@@ -303,25 +317,32 @@ impl Default for Registry {
         }
     }
 }
+
 impl Registry {
     pub fn shortcuts(&self) -> &[ShortcutAction] {
         &self.shortcuts
     }
+
     pub fn commands(&self) -> &[CommandDefinition] {
         &self.commands
     }
+
     pub fn panels(&self) -> &[PanelDefinition] {
         &self.panels
     }
+
     pub fn menus(&self) -> &[&'static str] {
         &self.menus
     }
+
     pub fn command(&self, id: &str) -> Option<&CommandDefinition> {
         self.commands.iter().find(|entry| entry.id == id)
     }
+
     pub fn panel(&self, id: &str) -> Option<&PanelDefinition> {
         self.panels.iter().find(|entry| entry.id == id)
     }
+
     fn ids(&self) -> impl Iterator<Item = &str> {
         self.commands
             .iter()
@@ -335,11 +356,13 @@ struct PendingCommand {
     label: &'static str,
     system: BoxedSystem<In<CommandInvocation>, CommandResult>,
 }
+
 struct PendingPanel {
     id: &'static str,
     label: &'static str,
     system: BoxedSystem<In<PanelCreation>, PanelResult>,
 }
+
 #[derive(Default)]
 pub struct Registrar {
     commands: Vec<PendingCommand>,
@@ -347,6 +370,7 @@ pub struct Registrar {
     menus: Vec<&'static str>,
     shortcuts: Vec<ShortcutAction>,
 }
+
 impl Registrar {
     pub fn command<M>(
         &mut self,
@@ -360,6 +384,7 @@ impl Registrar {
             system: Box::new(IntoSystem::into_system(system)),
         });
     }
+
     pub fn panel<M>(
         &mut self,
         id: &'static str,
@@ -372,6 +397,7 @@ impl Registrar {
             system: Box::new(IntoSystem::into_system(system)),
         });
     }
+
     /// Attach defaults to an application-wide command. Every registered command
     /// is bindable even when this method is not called.
     pub fn global_shortcut(&mut self, command: &'static str, defaults: &[&str]) {
@@ -383,6 +409,7 @@ impl Registrar {
             defaults,
         ));
     }
+
     /// A frontend handles these action IDs using its scoped ShortcutInput.
     pub fn panel_shortcut(
         &mut self,
@@ -399,9 +426,11 @@ impl Registrar {
             defaults,
         ));
     }
+
     pub fn shortcut_action(&mut self, action: ShortcutAction) {
         self.shortcuts.push(action);
     }
+
     pub fn menu(&mut self, command: &'static str) {
         self.menus.push(command);
     }
@@ -523,6 +552,7 @@ pub fn valid_id(id: &str) -> bool {
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
     })
 }
+
 pub fn validate_contribution_ids<'a>(
     owner: &str,
     pending: impl IntoIterator<Item = &'a str>,
@@ -558,12 +588,15 @@ pub struct ShortcutRuntime {
 #[cfg(test)]
 mod shortcut_tests {
     use super::*;
+
     fn command(In(_): In<CommandInvocation>) -> CommandResult {
         Ok(Vec::new())
     }
+
     fn panel(In(_): In<PanelCreation>) -> PanelResult {
         Err("fixture".into())
     }
+
     #[test]
     fn plugins_expose_global_and_panel_actions_and_registration_is_atomic() {
         let mut world = World::new();
