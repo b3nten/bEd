@@ -8,6 +8,7 @@ pub struct LspPresentationOptions {
     pub autocomplete: bool,
     pub completion_delay_ms: u64,
 }
+
 impl Default for LspPresentationOptions {
     fn default() -> Self {
         Self {
@@ -19,6 +20,7 @@ impl Default for LspPresentationOptions {
         }
     }
 }
+
 impl LspPresentationOptions {
     pub fn background_color(&self) -> [f32; 4] {
         self.background_color

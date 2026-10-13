@@ -58,6 +58,7 @@ pub enum NavigationStage {
     Requesting,
     Retrying,
 }
+
 #[derive(Clone, Debug)]
 pub struct NavigationActivity {
     pub view: ViewId,
@@ -65,6 +66,7 @@ pub struct NavigationActivity {
     pub stage: NavigationStage,
     pub elapsed: Duration,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NavigationOutcomeKind {
     Empty,
@@ -72,12 +74,14 @@ pub enum NavigationOutcomeKind {
     TimedOut,
     Cancelled,
 }
+
 #[derive(Clone, Debug)]
 pub struct NavigationOutcome {
     pub view: ViewId,
     pub action: ContextLspAction,
     pub kind: NavigationOutcomeKind,
 }
+
 #[derive(Clone, Debug)]
 pub struct NavigationTiming {
     pub view: ViewId,
@@ -86,6 +90,7 @@ pub struct NavigationTiming {
     pub first_sent: Option<Instant>,
     pub response_received: Option<Instant>,
 }
+
 struct NavigationIntent {
     workspace: WorkspaceId,
     document: DocumentId,
@@ -101,6 +106,7 @@ struct NavigationIntent {
     retries: usize,
     retry_at: Option<Instant>,
 }
+
 impl NavigationIntent {
     fn is_current(&self, session: &EditorSession) -> bool {
         self.workspace == session.workspace_id()
@@ -118,6 +124,7 @@ pub(crate) enum ToolKind {
     References,
     Dashboard,
 }
+
 impl ToolKind {
     pub fn title(self) -> &'static str {
         match self {
@@ -152,6 +159,7 @@ pub struct EditorRuntime {
     diagnostic_warnings: bool,
     diagnostic_other: bool,
 }
+
 impl Default for EditorRuntime {
     fn default() -> Self {
         Self {
@@ -180,6 +188,7 @@ impl Default for EditorRuntime {
         }
     }
 }
+
 impl EditorRuntime {
     pub fn request_lsp_command(
         &mut self,
@@ -194,12 +203,15 @@ impl EditorRuntime {
             self.language_actions.request(session, view, command)
         }
     }
+
     pub(crate) fn language_action_blocks_view(&self, view: ViewId) -> bool {
         self.language_actions.blocks_view(view)
     }
+
     pub(crate) fn completion_visible_for(&self, view: ViewId) -> bool {
         self.completion.visible_for(view)
     }
+
     pub fn request_completion(
         &mut self,
         session: &mut EditorSession,
@@ -207,6 +219,7 @@ impl EditorRuntime {
     ) -> io::Result<()> {
         self.completion.request(session, view, None, false)
     }
+
     pub(crate) fn before_draw(
         &mut self,
         ui: &Ui,
@@ -237,6 +250,7 @@ impl EditorRuntime {
         self.completion
             .before_draw(ui, view, session, &settings, blocked)
     }
+
     pub fn navigation_activity(&self) -> Option<NavigationActivity> {
         self.pending_navigation
             .as_ref()
@@ -247,12 +261,15 @@ impl EditorRuntime {
                 elapsed: intent.started.elapsed(),
             })
     }
+
     pub fn navigation_outcome(&self) -> Option<&NavigationOutcome> {
         self.navigation_outcome.as_ref()
     }
+
     pub fn navigation_timing(&self) -> Option<&NavigationTiming> {
         self.navigation_timing.as_ref()
     }
+
     fn finish_navigation(&mut self, mut intent: NavigationIntent, outcome: NavigationOutcomeKind) {
         // Invalidate the callback before canceling the RPC: cancellation delivers
         // synchronously, and an obsolete reply must never become a new result.
@@ -266,9 +283,11 @@ impl EditorRuntime {
             kind: outcome,
         });
     }
+
     pub fn take_actions(&mut self) -> Vec<EditorAction> {
         std::mem::take(&mut self.actions)
     }
+
     pub(crate) fn drain_requests(
         &mut self,
         session: &EditorSession,
@@ -320,6 +339,7 @@ impl EditorRuntime {
     pub fn set_menu_commands(&mut self, view: ViewId, commands: Vec<EditorMenuCommand>) {
         self.menu_commands.insert(view, commands);
     }
+
     pub fn set_viewer_menu(&mut self, view: ViewId, menu: Option<bed_editor_api::ViewerMenu>) {
         if let Some(menu) = menu {
             self.viewer_menus.insert(view, menu);
@@ -327,12 +347,15 @@ impl EditorRuntime {
             self.viewer_menus.remove(&view);
         }
     }
+
     pub fn context(&self, view: ViewId) -> Option<&CommandContext> {
         self.contexts.get(&view)
     }
+
     pub fn overlay(&self, view: ViewId) -> Overlay {
         self.overlays.get(&view).copied().unwrap_or(Overlay::None)
     }
+
     pub(crate) fn record_overlay(&mut self, view: &EditorView) {
         self.overlays.insert(
             view.id(),
@@ -345,9 +368,11 @@ impl EditorRuntime {
             },
         );
     }
+
     pub fn set_context(&mut self, view: ViewId, context: CommandContext) {
         self.contexts.insert(view, context);
     }
+
     pub fn forget_view(&mut self, view: ViewId) {
         self.language_actions.forget_view(view);
         self.completion.forget_view(view);
@@ -365,6 +390,7 @@ impl EditorRuntime {
         self.overlays.remove(&view);
         self.historical_contexts.remove(&view);
     }
+
     pub fn cancel_requests(&mut self) {
         self.language_actions.cancel();
         self.completion.cancel();
@@ -374,6 +400,7 @@ impl EditorRuntime {
         self.lsp_ui.cancel_requests();
         self.actions.clear();
     }
+
     pub fn retain_requests(&mut self, session: &EditorSession) {
         self.completion.retain(session);
         if self
@@ -395,6 +422,7 @@ impl EditorRuntime {
         self.historical_contexts
             .retain(|view, _| session.document_for_view(*view).is_some());
     }
+
     pub fn capture_context(
         &mut self,
         session: &EditorSession,
@@ -404,9 +432,11 @@ impl EditorRuntime {
         self.contexts.insert(view, context.clone());
         Ok(context)
     }
+
     pub fn selection_context(session: &EditorSession, view: ViewId) -> io::Result<CommandContext> {
         bed_editor_api::selection_context(session, view)
     }
+
     pub(crate) fn after_draw(
         &mut self,
         ui: &Ui,
@@ -526,6 +556,7 @@ impl EditorRuntime {
         }
         Ok(())
     }
+
     pub fn document_lsp_activity(session: &EditorSession, document: DocumentId) -> Option<String> {
         let client = session.lsp()?.client_for_document(document)?;
         let client = client.borrow();
@@ -549,6 +580,7 @@ impl EditorRuntime {
         }
         (!client.is_initialized()).then(|| format!("{server}: starting language server…"))
     }
+
     fn text_context_menu(
         &mut self,
         ui: &Ui,
@@ -699,6 +731,7 @@ impl EditorRuntime {
         }
         Ok(())
     }
+
     pub fn request_lsp(
         &mut self,
         session: &mut EditorSession,
@@ -770,6 +803,7 @@ impl EditorRuntime {
         self.advance_navigation(session, &mut Vec::new(), now)?;
         Ok(())
     }
+
     pub fn tick(
         &mut self,
         session: &mut EditorSession,
@@ -789,6 +823,7 @@ impl EditorRuntime {
         self.language_actions.tick(session, requests)?;
         self.advance_navigation(session, requests, Instant::now())
     }
+
     fn advance_navigation(
         &mut self,
         session: &mut EditorSession,
@@ -934,6 +969,7 @@ impl EditorRuntime {
         }
         Ok(())
     }
+
     fn draw_diagnostics(&mut self, session: &mut EditorSession, ui: &Ui) -> Option<LspAction> {
         let snapshot = session.project_diagnostics();
         let _controls = controls_style(ui);
@@ -1220,6 +1256,7 @@ impl EditorRuntime {
             });
         action
     }
+
     pub fn open_lsp_action(
         &mut self,
         session: &mut EditorSession,
@@ -1268,6 +1305,7 @@ impl EditorRuntime {
         }
         Ok(())
     }
+
     fn draw_extension_menu(
         &mut self,
         ui: &Ui,
@@ -1291,6 +1329,7 @@ impl EditorRuntime {
         }
         Ok(())
     }
+
     pub(crate) fn draw_tool(
         &mut self,
         kind: ToolKind,
@@ -1316,6 +1355,7 @@ impl EditorRuntime {
         Ok(())
     }
 }
+
 fn set_clipboard(ui: &Ui, bytes: &[u8]) {
     if let Ok(text) = CString::new(String::from_utf8_lossy(bytes).as_bytes()) {
         ui.with_bound_context(|| unsafe {
@@ -1323,6 +1363,7 @@ fn set_clipboard(ui: &Ui, bytes: &[u8]) {
         });
     }
 }
+
 fn text_lsp_actions(ui: &Ui, available: bool, ready: bool) -> Option<ContextLspAction> {
     let mut action = None;
     for (title, command) in [
@@ -1341,6 +1382,7 @@ fn text_lsp_actions(ui: &Ui, available: bool, ready: bool) -> Option<ContextLspA
     }
     action
 }
+
 fn get_clipboard(ui: &Ui) -> Option<String> {
     ui.with_bound_context(|| unsafe {
         let text = sys::igGetClipboardText();

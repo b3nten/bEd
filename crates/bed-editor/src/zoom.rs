@@ -12,11 +12,13 @@ use dear_imgui_rs::{PopupQueryFlags, Ui, sys};
 pub const ZOOM_IN: &str = "bed.editor.zoom_in";
 pub const ZOOM_OUT: &str = "bed.editor.zoom_out";
 pub const RESET_ZOOM: &str = "bed.editor.reset_zoom";
+
 #[derive(Component, Clone, Copy)]
 pub(crate) struct EditorWindow {
     root: u32,
     frame: usize,
 }
+
 #[derive(Resource, Default)]
 struct GestureTarget(Option<Entity>);
 
@@ -56,6 +58,7 @@ pub(crate) fn window(ui: &Ui) -> EditorWindow {
         }
     })
 }
+
 fn popup(ui: &Ui) -> bool {
     ui.is_popup_open_with_flags(
         "",
@@ -221,6 +224,7 @@ mod tests {
         app.add_plugins((WorkbenchPlugin, EditorPlugin));
         app
     }
+
     fn open(app: &mut App) -> Entity {
         app.world_mut()
             .resource_mut::<WorkbenchRequests>()
@@ -238,6 +242,7 @@ mod tests {
         );
         app.world().resource::<WorkbenchLayout>().focused.unwrap()
     }
+
     fn focus(app: &mut App, entity: Entity) {
         let system = app.world().get::<EditorPanelFocus>(entity).unwrap().0;
         app.world_mut()
@@ -245,6 +250,7 @@ mod tests {
             .unwrap()
             .unwrap();
     }
+
     fn context() -> Context {
         let mut context = Context::create();
         context
@@ -257,6 +263,7 @@ mod tests {
             .build();
         context
     }
+
     fn draw(app: &mut App, context: &mut Context, entities: &[Entity]) {
         context.prepare_frame(FramePrepareOptions::new([900.0, 420.0], 1.0 / 60.0));
         let ui = context.frame();
@@ -289,6 +296,7 @@ mod tests {
                 .is_empty()
         );
     }
+
     fn zoom(app: &App, entity: Entity) -> f32 {
         app.world()
             .non_send::<EditorViews>()
@@ -296,6 +304,7 @@ mod tests {
             .unwrap()
             .zoom()
     }
+
     fn point(app: &App, entity: Entity) -> [f32; 2] {
         let layout = app
             .world()
@@ -309,6 +318,7 @@ mod tests {
             layout.text_pos[1] + layout.line_height * 0.5,
         ]
     }
+
     fn pinch(app: &mut App, point: [f32; 2], delta: f64, phase: EditorPinchPhase) {
         app.world_mut()
             .resource_mut::<EditorPinchEvents>()

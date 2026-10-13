@@ -33,11 +33,13 @@ pub struct LspServerInfo {
     pub rust_install: Option<RustInstallStatus>,
     pub is_remote: bool,
 }
+
 #[derive(Clone, Debug)]
 enum RestartRequest {
     Server(String),
     Instance(ServerInstanceId),
 }
+
 pub struct LspDashboard {
     show: bool,
     window_pos: [f32; 2],
@@ -47,6 +49,7 @@ pub struct LspDashboard {
     restart_requested: Option<RestartRequest>,
     install_requested: Option<ServerInstanceId>,
 }
+
 impl Default for LspDashboard {
     fn default() -> Self {
         Self {
@@ -60,28 +63,34 @@ impl Default for LspDashboard {
         }
     }
 }
+
 impl LspDashboard {
     pub fn is_visible(&self) -> bool {
         self.show
     }
+
     pub fn toggle_show(&mut self) {
         self.show = !self.show;
     }
+
     pub fn set_show(&mut self, visible: bool, client: &LspClient) {
         self.show = visible;
         if visible {
             self.refresh_server_info(client);
         }
     }
+
     pub fn refresh_server_info(&mut self, client: &LspClient) {
         self.server_infos = client.dashboard_servers();
     }
+
     pub fn set_show_for_workspace(&mut self, visible: bool, workspace: &WorkspaceLsp) {
         self.show = visible;
         if visible {
             self.server_infos = workspace.dashboard_servers();
         }
     }
+
     pub fn take_restart_server(&mut self) -> Option<String> {
         if matches!(self.restart_requested, Some(RestartRequest::Server(_))) {
             match self.restart_requested.take().unwrap() {
@@ -92,9 +101,11 @@ impl LspDashboard {
             None
         }
     }
+
     pub fn take_install_instance(&mut self) -> Option<ServerInstanceId> {
         self.install_requested.take()
     }
+
     pub fn take_restart_instance(&mut self) -> Option<ServerInstanceId> {
         if matches!(self.restart_requested, Some(RestartRequest::Instance(_))) {
             match self.restart_requested.take().unwrap() {
@@ -105,6 +116,7 @@ impl LspDashboard {
             None
         }
     }
+
     pub fn render(
         &mut self,
         ui: &Ui,
@@ -113,6 +125,7 @@ impl LspDashboard {
     ) -> Option<PathBuf> {
         self.render_backend(ui, client, settings)
     }
+
     pub fn render_workspace(
         &mut self,
         ui: &Ui,
@@ -124,6 +137,7 @@ impl LspDashboard {
         }
         self.render_backend(ui, workspace, settings)
     }
+
     fn render_backend(
         &mut self,
         ui: &Ui,
@@ -183,6 +197,7 @@ impl LspDashboard {
         }
         action
     }
+
     /// Draw inside a host-owned dock window. This does not change window
     /// geometry, visibility, input blocking, or the host's window colors.
     pub fn render_workspace_body(
@@ -193,6 +208,7 @@ impl LspDashboard {
         self.server_infos = workspace.dashboard_servers();
         self.render_controls(ui, workspace)
     }
+
     fn render_controls(&mut self, ui: &Ui, client: &mut impl DashboardBackend) -> Option<PathBuf> {
         for info in &mut self.server_infos {
             info.progress = client.dashboard_progress(info);
@@ -306,6 +322,7 @@ impl LspDashboard {
         });
         action
     }
+
     fn render_server_list(&mut self, ui: &Ui) {
         self.server_infos.sort_by_key(|info| {
             !(info.is_active
@@ -486,19 +503,27 @@ impl LspDashboard {
         }
     }
 }
+
 trait DashboardBackend {
     fn dashboard_servers(&self) -> Vec<LspServerInfo>;
+
     fn dashboard_progress(&self, server: &LspServerInfo) -> Vec<WorkDoneProgress>;
+
     fn dashboard_config_path(&self) -> &Path;
+
     fn reload_dashboard_config(&mut self) -> io::Result<()>;
+
     fn dashboard_error(&self) -> Option<&str>;
+
     fn dashboard_config_sources(&self) -> Vec<PathBuf> {
         vec![self.dashboard_config_path().to_owned()]
     }
+
     fn dashboard_is_discovering(&self) -> bool {
         false
     }
 }
+
 impl DashboardBackend for LspClient {
     fn dashboard_progress(&self, server: &LspServerInfo) -> Vec<WorkDoneProgress> {
         if self.current_server() == server.server {
@@ -507,6 +532,7 @@ impl DashboardBackend for LspClient {
             Vec::new()
         }
     }
+
     fn dashboard_servers(&self) -> Vec<LspServerInfo> {
         self.language_servers()
             .iter()
@@ -551,16 +577,20 @@ impl DashboardBackend for LspClient {
             })
             .collect()
     }
+
     fn dashboard_config_path(&self) -> &Path {
         self.config_path()
     }
+
     fn reload_dashboard_config(&mut self) -> io::Result<()> {
         self.reload_config()
     }
+
     fn dashboard_error(&self) -> Option<&str> {
         self.last_error()
     }
 }
+
 impl DashboardBackend for WorkspaceLsp {
     fn dashboard_progress(&self, server: &LspServerInfo) -> Vec<WorkDoneProgress> {
         server
@@ -570,6 +600,7 @@ impl DashboardBackend for WorkspaceLsp {
             .map(|client| client.borrow().progress())
             .unwrap_or_default()
     }
+
     fn dashboard_servers(&self) -> Vec<LspServerInfo> {
         self.server_statuses()
             .into_iter()
@@ -610,18 +641,23 @@ impl DashboardBackend for WorkspaceLsp {
             })
             .collect()
     }
+
     fn dashboard_config_path(&self) -> &Path {
         self.config_path()
     }
+
     fn reload_dashboard_config(&mut self) -> io::Result<()> {
         self.reload_config()
     }
+
     fn dashboard_error(&self) -> Option<&str> {
         self.config_error()
     }
+
     fn dashboard_config_sources(&self) -> Vec<PathBuf> {
         self.configuration_sources()
     }
+
     fn dashboard_is_discovering(&self) -> bool {
         self.is_discovering()
     }
@@ -667,6 +703,7 @@ mod tests {
     use crate::{presentation::LspPresentationOptions, test_support::TempDir};
     use dear_imgui_rs::{Context, FramePrepareOptions};
     use serde_json::json;
+
     #[test]
     fn rust_recovery_card_wraps_in_narrow_dashboard_panels() {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -722,6 +759,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn dashboard_discovery_is_per_configuration_and_cached_until_refresh() {
         let directory = TempDir::new();
@@ -755,6 +793,7 @@ mod tests {
         dashboard.refresh_server_info(&client);
         assert!(dashboard.server_infos.is_empty());
     }
+
     #[test]
     fn native_workspace_dashboard_body_keeps_docked_host_geometry_and_style() {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -802,6 +841,7 @@ mod tests {
         }
         assert!(!dashboard.is_visible());
     }
+
     #[test]
     fn native_dashboard_layout_escape_and_outside_dismissal() {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();

@@ -22,6 +22,7 @@ use std::{io, sync::Arc};
 fn invalid_hover() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "Invalid LSP hover contents")
 }
+
 fn fence_wrap(language: &str, body: &str) -> String {
     if body.is_empty() {
         String::new()
@@ -29,6 +30,7 @@ fn fence_wrap(language: &str, body: &str) -> String {
         format!("```{language}\n{body}\n```")
     }
 }
+
 fn marked_string_text(value: &Value) -> io::Result<String> {
     if let Some(text) = value.as_str() {
         return Ok(text.to_owned());
@@ -43,6 +45,7 @@ fn marked_string_text(value: &Value) -> io::Result<String> {
         .ok_or_else(invalid_hover)?;
     Ok(fence_wrap(language, text))
 }
+
 pub fn format_hover_contents(contents: &Value, _fallback_language: &str) -> io::Result<String> {
     if let Some(kind) = contents.get("kind") {
         kind.as_str().ok_or_else(invalid_hover)?;
@@ -200,6 +203,7 @@ pub struct LspSymbolInfo {
     popup_anchor: Option<[f32; 2]>,
     mouse_origin: Option<LspRequestOrigin>,
 }
+
 impl Default for LspSymbolInfo {
     fn default() -> Self {
         Self {
@@ -215,17 +219,21 @@ impl Default for LspSymbolInfo {
         }
     }
 }
+
 impl LspSymbolInfo {
     pub fn at_caret(&self) -> bool {
         self.at_caret
     }
+
     pub fn origin(&self) -> Option<LspRequestOrigin> {
         self.hover_state.origin()
     }
+
     pub fn popup_contains(&self, mouse: [f32; 2]) -> bool {
         self.popup_rect
             .is_some_and(|rect| hover_rect_contains(rect, mouse))
     }
+
     pub fn get(&mut self, client: &mut LspClient, editor: &Editor) {
         if !client.is_initialized() {
             return;
@@ -234,6 +242,7 @@ impl LspSymbolInfo {
         self.fresh_caret_request = true;
         self.request_at(client, editor, editor.view.row, editor.view.column, None);
     }
+
     pub fn get_with_origin(
         &mut self,
         client: &mut LspClient,
@@ -253,6 +262,7 @@ impl LspSymbolInfo {
             Some(origin),
         );
     }
+
     pub fn set_mouse_origin(&mut self, origin: Option<LspRequestOrigin>) {
         if self.mouse_origin != origin && !self.at_caret {
             self.hide_mouse_hover();
@@ -260,6 +270,7 @@ impl LspSymbolInfo {
         }
         self.mouse_origin = origin;
     }
+
     pub fn retain_request(&mut self, valid: &mut impl FnMut(&LspRequestOrigin) -> bool) {
         if self
             .hover_state
@@ -269,11 +280,13 @@ impl LspSymbolInfo {
             self.cancel();
         }
     }
+
     pub fn cancel(&mut self) {
         self.at_caret = false;
         self.fresh_caret_request = false;
         self.hide_mouse_hover();
     }
+
     fn hide_mouse_hover(&mut self) {
         if self.at_caret {
             return;
@@ -285,6 +298,7 @@ impl LspSymbolInfo {
         self.popup_anchor = None;
         self.hover_state.cancel();
     }
+
     fn request_at(
         &mut self,
         client: &mut LspClient,
@@ -301,6 +315,7 @@ impl LspSymbolInfo {
         self.requested_for_cell = true;
         request_hover(client, editor, row, byte_column, origin, &self.hover_state);
     }
+
     fn update_mouse_hover(
         &mut self,
         ui: &Ui,
@@ -362,6 +377,7 @@ impl LspSymbolInfo {
             self.request_at(client, editor, info.row, info.column, self.mouse_origin);
         }
     }
+
     pub fn render(&mut self, ui: &Ui, client: &mut LspClient, editor: &Editor, view: &LspView<'_>) {
         self.update_mouse_hover(ui, client, editor, view);
         let Some(contents) = self
@@ -535,6 +551,7 @@ mod tests {
             });
         drop(context.render_legacy());
     }
+
     #[test]
     fn hover_shapes_preserve_literal_plaintext_and_single_array_boundaries() {
         assert_eq!(
@@ -629,6 +646,7 @@ mod tests {
             drop(context.render_legacy());
         }
     }
+
     #[test]
     fn typed_hover_changes_document_identity_at_the_same_cell_and_rejects_old_replies() {
         use bed_editing::identity::{DocumentId, ViewId, WorkspaceId};
@@ -678,6 +696,7 @@ mod tests {
         assert!(symbol.origin().is_none());
         assert!(symbol.hover_state.snapshot().is_none());
     }
+
     #[test]
     fn native_hover_tooltip_owns_rect_and_cancellation_rejects_late_reply() {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();

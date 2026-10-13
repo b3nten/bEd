@@ -38,6 +38,7 @@ struct Item {
     resolved: bool,
     resolve_error: Option<String>,
 }
+
 #[derive(Clone, Default, PartialEq)]
 struct Details {
     label: String,
@@ -46,6 +47,7 @@ struct Details {
     markdown: bool,
     resolving: bool,
 }
+
 #[derive(Clone, Debug, Default)]
 struct List {
     items: Vec<Item>,
@@ -55,9 +57,11 @@ struct List {
 fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "Invalid completion response")
 }
+
 fn identifier(c: char) -> bool {
     c == '_' || c.is_alphanumeric()
 }
+
 fn prefix_start(bytes: &[u8], caret: usize) -> usize {
     let Ok(prefix) = std::str::from_utf8(&bytes[..caret]) else {
         return caret;
@@ -68,6 +72,7 @@ fn prefix_start(bytes: &[u8], caret: usize) -> usize {
         .find(|(_, c)| !identifier(*c))
         .map_or(0, |(i, c)| i + c.len_utf8())
 }
+
 fn position_offset(bytes: &[u8], position: &Value) -> io::Result<usize> {
     let line = position["line"]
         .as_u64()
@@ -82,6 +87,7 @@ fn position_offset(bytes: &[u8], position: &Value) -> io::Result<usize> {
         bed_lsp::workspace_edit::Position { line, character },
     )
 }
+
 fn decode_edit(value: &Value, bytes: &[u8]) -> io::Result<ByteEdit> {
     let range = &value["range"];
     let start = position_offset(bytes, &range["start"])?;
@@ -98,6 +104,7 @@ fn decode_edit(value: &Value, bytes: &[u8]) -> io::Result<ByteEdit> {
             .to_vec(),
     })
 }
+
 fn parse_item(
     mut raw: Value,
     defaults: Option<&Value>,
@@ -201,6 +208,7 @@ fn parse_item(
         resolve_error: None,
     }))
 }
+
 fn parse_list(value: Value, bytes: &[u8], caret: usize) -> io::Result<List> {
     if value.is_null() {
         return Ok(List::default());
@@ -224,6 +232,7 @@ fn parse_list(value: Value, bytes: &[u8], caret: usize) -> io::Result<List> {
         incomplete,
     })
 }
+
 fn matches(filter: &str, prefix: &str) -> bool {
     let mut remaining = filter.chars().flat_map(char::to_lowercase);
     prefix
@@ -231,6 +240,7 @@ fn matches(filter: &str, prefix: &str) -> bool {
         .flat_map(char::to_lowercase)
         .all(|c| remaining.by_ref().any(|candidate| c == candidate))
 }
+
 fn transform_range(range: &mut Range<usize>, change: Range<usize>, length: usize) {
     let transform = |offset: usize, end: bool| {
         if offset < change.start || offset == change.start && !end {
@@ -243,6 +253,7 @@ fn transform_range(range: &mut Range<usize>, change: Range<usize>, length: usize
     };
     *range = transform(range.start, false)..transform(range.end, true);
 }
+
 fn transform_item(item: &mut Item, changes: &[(Range<usize>, usize)]) {
     for (change, length) in changes {
         transform_range(&mut item.edit.range, change.clone(), *length);
@@ -285,6 +296,7 @@ struct Active {
     selection_motion: bed_ui::util::transition::Motion,
     docs_transition: bed_ui::util::transition::ContentTransition<Details>,
 }
+
 impl Active {
     fn filter(&mut self) {
         let previous = self.filtered.get(self.selected).copied();
@@ -300,6 +312,7 @@ impl Active {
             .and_then(|previous| self.filtered.iter().position(|i| *i == previous))
             .unwrap_or(0);
     }
+
     fn current(&self, session: &EditorSession) -> bool {
         session.document_for_view(self.view) == Some(self.document)
             && session.document_revision(self.document).ok() == Some(self.revision)
@@ -311,6 +324,7 @@ impl Active {
                         && origin.server_generation == self.origin.server_generation
                 })
     }
+
     fn cancel(&mut self) {
         self.request.cancel();
         self.resolve.cancel();
@@ -321,6 +335,7 @@ impl Active {
             let _ = self.client.borrow_mut().cancel_request(&id);
         }
     }
+
     fn receive(&mut self) {
         if !self.received && !self.request.is_pending() {
             self.received = true;
@@ -378,6 +393,7 @@ impl Active {
             }
         }
     }
+
     fn resolve_selected(&mut self) {
         let Some(index) = self.filtered.get(self.selected).copied() else {
             return;
@@ -445,29 +461,35 @@ pub(crate) struct Completion {
     commands: Vec<(ViewId, Value)>,
     error: Option<String>,
 }
+
 impl Completion {
     pub fn visible_for(&self, view: ViewId) -> bool {
         self.active
             .as_ref()
             .is_some_and(|active| active.view == view)
     }
+
     pub fn take_error(&mut self) -> Option<String> {
         self.error.take()
     }
+
     pub fn take_commands(&mut self) -> Vec<(ViewId, Value)> {
         std::mem::take(&mut self.commands)
     }
+
     pub fn cancel(&mut self) {
         if let Some(mut active) = self.active.take() {
             active.cancel();
         }
         self.scheduled = None;
     }
+
     pub fn forget_view(&mut self, view: ViewId) {
         if self.visible_for(view) || self.scheduled.is_some_and(|(v, _, _, _)| v == view) {
             self.cancel();
         }
     }
+
     pub fn retain(&mut self, session: &EditorSession) {
         if self
             .active
@@ -477,6 +499,7 @@ impl Completion {
             self.cancel();
         }
     }
+
     pub fn request(
         &mut self,
         session: &mut EditorSession,
@@ -605,6 +628,7 @@ impl Completion {
         });
         Ok(())
     }
+
     /// Called before document input so Tab/Enter and list navigation never reach
     /// indentation, newline or caret commands while completion owns them.
     pub fn before_draw(
@@ -717,6 +741,7 @@ impl Completion {
         self.accept_if_ready(session)?;
         Ok(())
     }
+
     pub fn observe(
         &mut self,
         response: &ViewResponse,
@@ -819,6 +844,7 @@ impl Completion {
         }
         Ok(())
     }
+
     fn accept_if_ready(&mut self, session: &mut EditorSession) -> io::Result<()> {
         let Some(active) = &mut self.active else {
             return Ok(());
@@ -872,6 +898,7 @@ impl Completion {
         }
         Ok(())
     }
+
     pub fn render(
         &mut self,
         ui: &Ui,
@@ -1189,6 +1216,7 @@ impl Completion {
         self.accept_if_ready(session)
     }
 }
+
 fn kind_presentation(kind: u32) -> (&'static str, ThemeSlot) {
     match kind {
         2 | 3 => ("fn", ThemeSlot::Function),
@@ -1219,6 +1247,7 @@ fn kind_presentation(kind: u32) -> (&'static str, ThemeSlot) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn lists_decode_ranges_and_defaults_and_reject_snippets() {
         let bytes = "let café😀 = Str".as_bytes();
@@ -1232,6 +1261,7 @@ mod tests {
         assert_eq!(&bytes[list.items[0].edit.range.clone()], b"Str");
         assert_eq!(list.items[0].additional[0].bytes, b"use String;\n");
     }
+
     #[test]
     fn prefix_transforms_extend_replacement_and_shift_import_ranges() {
         let mut list = parse_list(json!([{"label":"String","textEdit":{"newText":"String","insert":{"start":{"line":0,"character":0},"end":{"line":0,"character":2}},"replace":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}}}}]), b"Stxx", 2).unwrap();
@@ -1243,6 +1273,7 @@ mod tests {
         assert!(matches("StringBuilder", "sbd"));
         assert!(!matches("String", "zz"));
     }
+
     #[test]
     fn utf16_ranges_reject_surrogate_splits_and_bad_lines() {
         let bytes = "a😀\r\nbé".as_bytes();
@@ -1257,6 +1288,7 @@ mod tests {
         );
         assert!(position_offset(bytes, &json!({"line":2,"character":0})).is_err());
     }
+
     #[test]
     fn completion_accepts_click_tab_enter_and_imports_are_one_undo() {
         use crate::{EditorConfig, EditorRuntime};
@@ -1381,6 +1413,7 @@ mod tests {
             draw(&mut context, &mut runtime, &mut session, &mut view);
         }
     }
+
     fn native_context() -> dear_imgui_rs::Context {
         let mut context = dear_imgui_rs::Context::create();
         context
@@ -1393,6 +1426,7 @@ mod tests {
             .build();
         context
     }
+
     fn native_frame(
         context: &mut dear_imgui_rs::Context,
         runtime: &mut crate::EditorRuntime,
@@ -1421,6 +1455,7 @@ mod tests {
             "Unexpected language action notification: {requests:?}"
         );
     }
+
     fn wait_completion(
         context: &mut dear_imgui_rs::Context,
         runtime: &mut crate::EditorRuntime,
@@ -1440,6 +1475,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+
     #[test]
     fn native_completion_keyboard_highlight_matches_hovered_row_bounds() {
         use dear_imgui_rs::sys;
@@ -1559,6 +1595,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn native_completion_selection_eases_highlight_and_scroll_together() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -1622,6 +1659,7 @@ mod tests {
             );
         });
     }
+
     #[test]
     fn docked_completion_insertion_keeps_editor_origin_and_ancestor_scroll_fixed() {
         use bed_editor_api::{EditorPanelBinding, PanelInput};
@@ -1894,6 +1932,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn native_completion_acceptance_keeps_horizontal_scroll_stable() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -2023,6 +2062,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn native_completion_tooltips_keep_shared_style_and_reset_late_documentation_scroll() {
         use dear_imgui_rs::sys;
@@ -2145,6 +2185,7 @@ mod tests {
         assert_eq!(context.style().item_spacing(), [17.0, 19.0]);
         assert_eq!(context.style().scrollbar_size(), 23.0);
     }
+
     #[test]
     fn native_completion_kind_name_and_details_remain_readable_on_light_and_dark_rows() {
         use bed_highlight::tree_sitter::ThemeColors;
@@ -2234,6 +2275,7 @@ mod tests {
             });
         }
     }
+
     #[test]
     fn manual_completion_consumes_native_shortcut_text_with_autocomplete_disabled() {
         use bed_keybindings::{Bindings, Overrides, Platform};
@@ -2299,6 +2341,7 @@ mod tests {
             assert!(runtime.completion.active.is_none());
         }
     }
+
     #[test]
     fn unavailable_manual_completion_consumes_its_space_but_ordinary_space_types() {
         use dear_imgui_rs::{FramePrepareOptions, Key};
@@ -2351,6 +2394,7 @@ mod tests {
         native_frame(&mut context, &mut runtime, &mut session, &mut view, &config);
         assert_eq!(session.snapshot(document).unwrap().bytes, b"unchanged ");
     }
+
     #[test]
     fn automatic_delay_setting_and_incomplete_refresh_use_actual_input() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -2457,6 +2501,7 @@ mod tests {
             b"use String;\nlet value = String"
         );
     }
+
     #[test]
     fn delayed_completion_reply_is_discarded_after_caret_movement() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -2484,6 +2529,7 @@ mod tests {
         assert!(runtime.completion.active.is_none());
         assert_eq!(session.snapshot(document).unwrap().bytes, b"let value = St");
     }
+
     #[test]
     fn completion_command_server_edit_joins_the_insertion_undo_group() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();

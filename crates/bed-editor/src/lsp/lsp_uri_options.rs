@@ -94,6 +94,7 @@ impl LspUriOptions {
         }
         selected
     }
+
     fn render_rows(
         &mut self,
         ui: &Ui,
@@ -158,6 +159,7 @@ impl LspUriOptions {
         }
         selected
     }
+
     pub fn render(
         &mut self,
         ui: &Ui,
@@ -299,12 +301,14 @@ mod tests {
             .build();
         context
     }
+
     fn settings(_directory: &TempDir) -> LspPresentationOptions {
         LspPresentationOptions {
             embedded: false,
             ..Default::default()
         }
     }
+
     fn render(
         context: &mut Context,
         picker: &mut LspUriOptions,
@@ -324,6 +328,7 @@ mod tests {
         drop(context.render_legacy());
         selected
     }
+
     fn options() -> Vec<LspLocation> {
         vec![
             LspLocation {
@@ -338,6 +343,7 @@ mod tests {
             },
         ]
     }
+
     #[test]
     fn native_docked_body_keeps_host_window_and_requires_focus_for_keys() {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -405,6 +411,7 @@ mod tests {
         context.io_mut().add_key_event(Key::Enter, true);
         assert!(draw(&mut context, &mut picker, true, true).is_none());
     }
+
     #[test]
     fn native_picker_arrows_wrap_enter_selects_and_escape_dismisses() {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -440,6 +447,7 @@ mod tests {
         assert!(render(&mut context, &mut picker, &options, &mut show, &settings).is_none());
         assert!(!show);
     }
+
     #[test]
     fn native_empty_picker_stays_open_on_enter_and_outside_click_closes() {
         let _context_lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -460,6 +468,7 @@ mod tests {
         render(&mut context, &mut picker, &[], &mut show, &settings);
         assert!(!show);
     }
+
     #[test]
     fn pane_geometry_retains_sequential_clamps_and_display_based_limits() {
         let (pos, size, padding, title, footer) = geometry(

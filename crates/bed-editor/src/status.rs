@@ -65,16 +65,19 @@ pub(crate) fn show_panel(
 fn measure(world: &World, ui: &Ui, context: StatusContext) -> Option<f32> {
     presentation(world, ui, context).map(|status| status.measure(ui))
 }
+
 fn draw(world: &mut World, ui: &Ui, context: StatusDrawContext, actions: &mut Vec<Action>) {
     if let Some(status) = presentation(world, ui, context.context) {
         status.draw(ui, context, actions);
     }
 }
+
 fn tooltip(world: &World, ui: &Ui, context: StatusContext) {
     if let Some(status) = presentation(world, ui, context) {
         status.tooltip(ui);
     }
 }
+
 fn presentation(world: &World, ui: &Ui, context: StatusContext) -> Option<StatusText> {
     let session = world.get_non_send::<EditorSession>()?;
     match context.item_id {
@@ -294,6 +297,7 @@ mod tests {
             area: 7,
         }
     }
+
     fn imgui() -> dear_imgui_rs::Context {
         let mut context = dear_imgui_rs::Context::create();
         context

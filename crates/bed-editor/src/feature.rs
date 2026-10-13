@@ -20,10 +20,12 @@ pub(crate) enum Widget {
     Text(EditorView),
     Hex(RefCell<HexEditor>),
 }
+
 #[derive(Default)]
 pub struct EditorViews {
     pub(crate) widgets: HashMap<Entity, Widget>,
 }
+
 impl EditorViews {
     pub fn text(&self, entity: Entity) -> Option<&EditorView> {
         match self.widgets.get(&entity)? {
@@ -31,12 +33,14 @@ impl EditorViews {
             Widget::Hex(_) => None,
         }
     }
+
     pub fn text_mut(&mut self, entity: Entity) -> Option<&mut EditorView> {
         match self.widgets.get_mut(&entity)? {
             Widget::Text(view) => Some(view),
             Widget::Hex(_) => None,
         }
     }
+
     pub fn hex(&self, entity: Entity) -> Option<std::cell::Ref<'_, HexEditor>> {
         match self.widgets.get(&entity)? {
             Widget::Hex(editor) => Some(editor.borrow()),
@@ -56,6 +60,7 @@ struct Systems {
 /// Register editors against the application's canonical NonSend EditorSession,
 /// EditorConfig and EditorRuntime. This plugin owns widgets, not another session.
 pub struct EditorPlugin;
+
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
         app.world_mut()
@@ -170,6 +175,7 @@ fn open_diagnostics(
         area: Some(invocation.area),
     }])
 }
+
 fn language_command(
     In(invocation): In<bed_workbench_api::CommandInvocation>,
     world: &mut World,
@@ -253,6 +259,7 @@ pub fn draw_embedded(
     emit_runtime_requests(world);
     result
 }
+
 fn create_hex(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     create_editor(world, creation, true)
 }
@@ -430,12 +437,15 @@ fn create_editor(world: &mut World, creation: PanelCreation, hex: bool) -> Panel
 fn create_diagnostics(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     create_tool(creation, world, runtime::ToolKind::Diagnostics)
 }
+
 fn create_references(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     create_tool(creation, world, runtime::ToolKind::References)
 }
+
 fn create_dashboard(In(creation): In<PanelCreation>, world: &mut World) -> PanelResult {
     create_tool(creation, world, runtime::ToolKind::Dashboard)
 }
+
 fn create_tool(creation: PanelCreation, world: &mut World, kind: runtime::ToolKind) -> PanelResult {
     let body = match kind {
         runtime::ToolKind::Diagnostics => {
@@ -461,6 +471,7 @@ pub struct EditorFrontend {
     pub entity: Entity,
     tool: Option<runtime::ToolKind>,
 }
+
 impl Panel for EditorFrontend {
     fn title(&self, world: &World) -> String {
         if let Some(tool) = self.tool {
@@ -755,6 +766,7 @@ pub fn focus_panel(world: &mut World, entity: Entity) -> Result<(), String> {
     }
     Ok(())
 }
+
 /// A pristine default buffer may be replaced until its first edit. Undoing
 /// back to empty contents does not restore that permission.
 pub fn input_is_empty(world: &World, entity: Entity) -> bool {
@@ -771,6 +783,7 @@ pub fn input_is_empty(world: &World, entity: Entity) -> bool {
         input_is_pristine(&frame.context(), state.document, state.initial_revision)
     })
 }
+
 pub fn close_panel(world: &mut World, entity: Entity) -> Result<(), String> {
     with_editor(world, |views, runtime, session| {
         if let Some(Widget::Text(view)) = views.widgets.remove(&entity) {
@@ -784,6 +797,7 @@ pub fn close_panel(world: &mut World, entity: Entity) -> Result<(), String> {
     });
     Ok(())
 }
+
 fn retire_views(world: &mut World) {
     if !world.contains_non_send::<EditorSession>() || !world.contains_non_send::<EditorRuntime>() {
         return;
@@ -799,6 +813,7 @@ fn retire_views(world: &mut World) {
         close_panel(world, entity).expect("retiring a view only releases its owned presentation");
     }
 }
+
 fn prepare(world: &mut World) {
     if !world.contains_non_send::<EditorSession>() || !world.contains_non_send::<EditorRuntime>() {
         return;
@@ -888,6 +903,7 @@ fn emit_runtime_requests(world: &mut World) {
         }
     }
 }
+
 fn shutdown(world: &mut World) {
     if world
         .get_resource::<Messages<AppExit>>()
@@ -901,6 +917,7 @@ fn shutdown(world: &mut World) {
 pub fn save_workspace(world: &World) -> Value {
     json!({"project_check":world.non_send::<EditorRuntime>().project_check.as_ref().map(|config|config.to_json())})
 }
+
 pub fn restore_workspace(world: &mut World, state: Option<&Value>) {
     let mut runtime = world.non_send_mut::<EditorRuntime>();
     runtime.project_check = state.and_then(|value| {
@@ -1036,6 +1053,7 @@ mod tests {
         app.add_plugins((WorkbenchPlugin, EditorPlugin));
         app
     }
+
     fn open(app: &mut App, panel_type: &str) -> Entity {
         app.world_mut()
             .resource_mut::<WorkbenchRequests>()
@@ -1056,6 +1074,7 @@ mod tests {
             .focused
             .unwrap()
     }
+
     fn attach(
         app: &mut App,
         panel_type: &str,

@@ -74,6 +74,7 @@ while True:
 pub(super) fn session() -> (TempDir, EditorSession, DocumentId) {
     session_mode("normal")
 }
+
 pub(crate) fn session_mode(mode: &str) -> (TempDir, EditorSession, DocumentId) {
     let directory = TempDir::new();
     let path = directory

@@ -17,21 +17,25 @@ pub enum Kind {
     Definition,
     References,
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum NavigationError {
     Rpc(ResponseError),
     InvalidResult(String),
     Send(String),
 }
+
 #[derive(Clone)]
 struct NavigationReply {
     result: Result<Vec<LspLocation>, NavigationError>,
     received: Instant,
 }
+
 impl NavigationError {
     pub fn is_retryable(&self) -> bool {
         matches!(self, Self::Rpc(error) if matches!(error.code, -32801 | -32802))
     }
+
     pub fn message(&self) -> String {
         match self {
             Self::Rpc(error) => error.to_string(),
@@ -39,12 +43,14 @@ impl NavigationError {
         }
     }
 }
+
 pub struct LspGoto {
     pub(crate) kind: Kind,
     pub(crate) show: bool,
     state: Arc<LspRequestState<NavigationReply>>,
     rpc_id: Option<RpcId>,
 }
+
 impl LspGoto {
     pub fn new(kind: Kind) -> Self {
         Self {
@@ -54,49 +60,61 @@ impl LspGoto {
             rpc_id: None,
         }
     }
+
     pub fn is_visible(&self) -> bool {
         self.show
     }
+
     pub fn cancel(&mut self) {
         self.show = false;
         self.state.cancel();
         self.rpc_id = None;
     }
+
     pub fn title(&self) -> &'static str {
         match self.kind {
             Kind::Definition => "Goto Definition",
             Kind::References => "Goto Reference",
         }
     }
+
     pub fn snapshot(&self) -> Vec<LspLocation> {
         self.state
             .snapshot()
             .and_then(|reply| reply.result.ok())
             .unwrap_or_default()
     }
+
     pub fn error(&self) -> Option<NavigationError> {
         self.state.snapshot().and_then(|reply| reply.result.err())
     }
+
     pub fn received_at(&self) -> Option<Instant> {
         self.state.snapshot().map(|reply| reply.received)
     }
+
     pub fn rpc_id(&self) -> Option<RpcId> {
         self.rpc_id.clone()
     }
+
     pub fn is_pending(&self) -> bool {
         self.state.is_pending()
     }
+
     pub fn origin(&self) -> Option<LspRequestOrigin> {
         self.state.origin()
     }
+
     pub fn retain_request(&mut self, valid: &mut impl FnMut(&LspRequestOrigin) -> bool) {
         if self.state.origin().is_some_and(|origin| !valid(&origin)) {
             self.cancel();
         }
     }
+
     pub fn get(&mut self, client: &mut LspClient, editor: &Editor) {
         self.get_with_optional_origin(client, editor, None, (editor.view.row, editor.view.column));
     }
+
     pub fn get_with_origin(
         &mut self,
         client: &mut LspClient,
@@ -110,6 +128,7 @@ impl LspGoto {
             (editor.view.row, editor.view.column),
         );
     }
+
     pub fn get_with_origin_at_position(
         &mut self,
         client: &mut LspClient,
@@ -120,6 +139,7 @@ impl LspGoto {
     ) {
         self.get_with_optional_origin(client, editor, Some(origin), (row, column));
     }
+
     fn get_with_optional_origin(
         &mut self,
         client: &mut LspClient,

@@ -18,6 +18,7 @@ pub(crate) const COMMANDS: [(&str, &str); 4] = [
     ("bed.editor.rename", "Rename Symbol"),
     ("bed.editor.quick_fix", "Quick Fix"),
 ];
+
 #[derive(Debug)]
 enum Stage {
     Format,
@@ -41,6 +42,7 @@ enum Stage {
     },
     Command,
 }
+
 struct Pending {
     view: ViewId,
     document: DocumentId,
@@ -56,6 +58,7 @@ struct Pending {
     started: Instant,
     command_generation: Option<u64>,
 }
+
 impl Pending {
     fn lifetime_current(&self, session: &EditorSession) -> bool {
         session.workspace_id() == self.origin.workspace_id
@@ -65,6 +68,7 @@ impl Pending {
                 .and_then(|pool| pool.request_origin(self.document, self.view, self.revision.0, 0))
                 .is_some_and(|origin| origin.server_generation == self.origin.server_generation)
     }
+
     fn current(&self, session: &EditorSession) -> bool {
         session.document_for_view(self.view) == Some(self.document)
             && session.document_revision(self.document).ok() == Some(self.revision)
@@ -73,6 +77,7 @@ impl Pending {
                 matches!(self.stage, Stage::Format) || view.selections == self.selection
             })
     }
+
     fn send(&mut self, method: &str, params: Value, stage: Stage) -> io::Result<()> {
         self.response.cancel();
         if let Some(id) = self.rpc.take() {
@@ -91,12 +96,14 @@ impl Pending {
         self.started = Instant::now();
         Ok(())
     }
+
     fn cancel(&mut self) {
         self.response.cancel();
         if let Some(id) = self.rpc.take() {
             let _ = self.client.borrow_mut().cancel_request(&id);
         }
     }
+
     fn refresh_origin(&mut self, session: &EditorSession) -> io::Result<()> {
         self.revision = session.document_revision(self.document)?;
         self.selection = session.view_snapshot(self.view)?.selections;
@@ -107,16 +114,19 @@ impl Pending {
         Ok(())
     }
 }
+
 #[derive(Default)]
 pub(crate) struct EditorActions {
     pending: Option<Pending>,
     finished_commands: Vec<u64>,
 }
+
 fn notify(requests: &mut Vec<HostRequest>, message: impl Into<String>) {
     requests.push(HostRequest::Notify {
         message: message.into(),
     });
 }
+
 fn command_value(action: &Value) -> Option<Value> {
     if action["command"].is_string() {
         Some(action.clone())
@@ -127,6 +137,7 @@ fn command_value(action: &Value) -> Option<Value> {
             .cloned()
     }
 }
+
 fn quick_fixes(result: Value) -> io::Result<Vec<Value>> {
     if result.is_null() {
         return Ok(Vec::new());
@@ -153,6 +164,7 @@ fn quick_fixes(result: Value) -> io::Result<Vec<Value>> {
     });
     Ok(items)
 }
+
 fn prepare_name(value: &Value, bytes: &[u8]) -> io::Result<String> {
     if value.is_null() {
         return Err(io::Error::other("This symbol cannot be renamed"));
@@ -169,6 +181,7 @@ fn prepare_name(value: &Value, bytes: &[u8]) -> io::Result<String> {
     Ok(String::from_utf8(bytes[edits[0].0.clone()].to_vec())
         .map_err(|error| io::Error::other(error.to_string()))?)
 }
+
 impl EditorActions {
     pub fn cancel(&mut self) {
         if let Some(mut pending) = self.pending.take() {
@@ -178,6 +191,7 @@ impl EditorActions {
             }
         }
     }
+
     pub fn forget_view(&mut self, view: ViewId) {
         if self
             .pending
@@ -187,6 +201,7 @@ impl EditorActions {
             self.cancel();
         }
     }
+
     pub fn blocks_view(&self, view: ViewId) -> bool {
         self.pending.as_ref().is_some_and(|pending| {
             pending.view == view
@@ -196,6 +211,7 @@ impl EditorActions {
                 )
         })
     }
+
     pub fn request(
         &mut self,
         session: &mut EditorSession,
@@ -350,6 +366,7 @@ impl EditorActions {
         self.pending = Some(pending);
         Ok(())
     }
+
     pub fn execute_completion_command(
         &mut self,
         session: &mut EditorSession,
@@ -394,6 +411,7 @@ impl EditorActions {
         self.pending = Some(pending);
         Ok(())
     }
+
     pub fn tick(
         &mut self,
         session: &mut EditorSession,
@@ -535,6 +553,7 @@ impl EditorActions {
         self.pending = Some(pending);
         Ok(())
     }
+
     pub fn render(
         &mut self,
         ui: &Ui,
@@ -661,6 +680,7 @@ impl EditorActions {
         self.tick(session, requests)
     }
 }
+
 fn identifier_name(bytes: &[u8], caret: usize) -> String {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return String::new();
@@ -680,6 +700,7 @@ fn identifier_name(bytes: &[u8], caret: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn quick_fix_filters_refactors_and_prefers_server_preferred_items() {
         let fixes = quick_fixes(json!([
@@ -694,6 +715,7 @@ mod tests {
         assert_eq!(fixes[0]["title"], "preferred");
         assert_eq!(command_value(&fixes[2]).unwrap()["command"], "fix");
     }
+
     #[test]
     fn rename_preparation_validates_utf16_range() {
         let bytes = "let café😀".as_bytes();
@@ -708,6 +730,7 @@ mod tests {
         assert!(prepare_name(&Value::Null, bytes).is_err());
         assert_eq!(identifier_name("let café = 1".as_bytes(), 9), "café");
     }
+
     fn pump(
         actions: &mut EditorActions,
         session: &mut EditorSession,
@@ -724,6 +747,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
+
     #[test]
     fn prepare_rename_lazy_quick_fix_and_format_use_real_transport() {
         let (_dir, mut session, document) = super::super::test_fixture::session();
@@ -827,6 +851,7 @@ mod tests {
         session.undo_document(document).unwrap();
         assert_eq!(session.snapshot(document).unwrap().bytes, b"let value = St");
     }
+
     #[test]
     fn manual_action_replies_cannot_mutate_changed_documents_or_selections() {
         let (_dir, mut session, document) = super::super::test_fixture::session();
@@ -876,6 +901,7 @@ mod tests {
         session.tick();
         assert_eq!(session.snapshot(document).unwrap().bytes, b"let value = St");
     }
+
     #[test]
     fn native_rename_popup_owns_typing_and_enter_and_quick_fix_picker_owns_keys() {
         use dear_imgui_rs::{Condition, Context, FramePrepareOptions, Key};

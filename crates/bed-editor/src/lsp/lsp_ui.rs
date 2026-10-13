@@ -28,10 +28,12 @@ pub struct LspView<'a> {
     pub tooltip_arbiter: &'a TooltipArbiter,
     pub caret_position: Option<[f32; 2]>,
 }
+
 pub struct LspPane<'a> {
     pub editor: &'a Editor,
     pub view: LspView<'a>,
 }
+
 #[derive(Clone, Debug)]
 pub enum LspAction {
     OpenLocation(LspLocation),
@@ -40,12 +42,14 @@ pub enum LspAction {
     RestartInstance(ServerInstanceId),
     InstallRustTooling(ServerInstanceId),
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContextLspAction {
     Definition,
     References,
     Symbol,
 }
+
 #[derive(Clone, Debug)]
 pub struct NavigationResults {
     pub origin: Option<LspRequestOrigin>,
@@ -55,6 +59,7 @@ pub struct NavigationResults {
     pub rpc_id: Option<RpcId>,
     pub received_at: Option<Instant>,
 }
+
 pub struct LspUi {
     pub dashboard: LspDashboard,
     symbol_info: LspSymbolInfo,
@@ -63,6 +68,7 @@ pub struct LspUi {
     uri_options: LspUriOptions,
     navigation_origin: Option<LspRequestOrigin>,
 }
+
 impl Default for LspUi {
     fn default() -> Self {
         Self {
@@ -75,6 +81,7 @@ impl Default for LspUi {
         }
     }
 }
+
 impl LspUi {
     pub fn request_at(
         &mut self,
@@ -99,6 +106,7 @@ impl LspUi {
         }
         true
     }
+
     /// Request navigation at a clicked byte position without moving the view's
     /// cursor or changing its selections.
     pub fn request_at_position(
@@ -122,6 +130,7 @@ impl LspUi {
         goto.show = false;
         true
     }
+
     pub fn navigation_results(&self, action: ContextLspAction) -> Option<NavigationResults> {
         let goto = match action {
             ContextLspAction::Definition => &self.goto_definition,
@@ -137,6 +146,7 @@ impl LspUi {
             received_at: goto.received_at(),
         })
     }
+
     pub fn cancel_navigation(&mut self, action: ContextLspAction) {
         match action {
             ContextLspAction::Definition => self.goto_definition.cancel(),
@@ -144,6 +154,7 @@ impl LspUi {
             ContextLspAction::Symbol => {}
         }
     }
+
     pub fn render_navigation_body(
         &mut self,
         ui: &Ui,
@@ -165,6 +176,7 @@ impl LspUi {
         }
         selected.map(LspAction::OpenLocation)
     }
+
     pub fn render_workspace_dashboard_body(
         &mut self,
         ui: &Ui,
@@ -179,6 +191,7 @@ impl LspUi {
         }
         path.map(LspAction::OpenConfig)
     }
+
     /// Accept the same primary modifiers as the editor's keyboard dispatcher.
     pub fn keybinds(
         &mut self,
@@ -189,6 +202,7 @@ impl LspUi {
     ) -> bool {
         self.keybinds_optional_origin(ui, client, editor, settings, None)
     }
+
     pub fn keybinds_with_origin(
         &mut self,
         ui: &Ui,
@@ -199,6 +213,7 @@ impl LspUi {
     ) -> bool {
         self.keybinds_optional_origin(ui, client, editor, settings, Some(origin))
     }
+
     fn keybinds_optional_origin(
         &mut self,
         ui: &Ui,
@@ -238,26 +253,33 @@ impl LspUi {
         }
         shortcut_pressed
     }
+
     pub fn symbol_at_caret(&self) -> bool {
         self.symbol_info.at_caret()
     }
+
     pub fn symbol_origin(&self) -> Option<LspRequestOrigin> {
         self.symbol_info.origin()
     }
+
     pub fn symbol_popup_contains(&self, mouse: [f32; 2]) -> bool {
         self.symbol_info.popup_contains(mouse)
     }
+
     pub fn set_mouse_origin(&mut self, origin: Option<LspRequestOrigin>) {
         self.symbol_info.set_mouse_origin(origin);
     }
+
     pub fn retain_requests(&mut self, mut valid: impl FnMut(&LspRequestOrigin) -> bool) {
         self.symbol_info.retain_request(&mut valid);
         self.goto_definition.retain_request(&mut valid);
         self.goto_references.retain_request(&mut valid);
     }
+
     pub fn take_navigation_origin(&mut self) -> Option<LspRequestOrigin> {
         self.navigation_origin.take()
     }
+
     /// Consume a completed, unambiguous definition while retaining the view
     /// that requested it for the host's generation checks and focus routing.
     pub fn take_single_definition(&mut self) -> Option<LspAction> {
@@ -274,16 +296,19 @@ impl LspUi {
             locations.into_iter().next().unwrap(),
         ))
     }
+
     pub fn is_overlay_visible(&self) -> bool {
         self.goto_definition.is_visible()
             || self.goto_references.is_visible()
             || self.dashboard.is_visible()
     }
+
     pub fn cancel_requests(&mut self) {
         self.symbol_info.cancel();
         self.goto_definition.cancel();
         self.goto_references.cancel();
     }
+
     pub fn render(
         &mut self,
         ui: &Ui,
@@ -295,6 +320,7 @@ impl LspUi {
         self.symbol_info.render(ui, client, editor, &view);
         self.render_options(ui, client, settings, view.layout)
     }
+
     /// Render only symbol information for the supplied document/view. Docked
     /// workspaces render dashboard and navigation content in their own tabs.
     pub fn render_hover(
@@ -307,6 +333,7 @@ impl LspUi {
     ) {
         self.symbol_info.render(ui, client, editor, &view);
     }
+
     /// Split panes retain keyboard navigation on the focused document while
     /// mouse hover uses the document underneath the pointer, as in Workbench.
     pub fn render_panes(
@@ -319,6 +346,7 @@ impl LspUi {
     ) -> Option<LspAction> {
         self.render_panes_inner(ui, client, settings, active, hovered, true)
     }
+
     pub fn render_panes_workspace(
         &mut self,
         ui: &Ui,
@@ -329,6 +357,7 @@ impl LspUi {
     ) -> Option<LspAction> {
         self.render_panes_inner(ui, client, settings, active, hovered, false)
     }
+
     fn render_panes_inner(
         &mut self,
         ui: &Ui,
@@ -346,6 +375,7 @@ impl LspUi {
         self.symbol_info.render(ui, client, pane.editor, &pane.view);
         self.render_options_inner(ui, client, settings, active.view.layout, dashboard)
     }
+
     fn render_options(
         &mut self,
         ui: &Ui,
@@ -355,6 +385,7 @@ impl LspUi {
     ) -> Option<LspAction> {
         self.render_options_inner(ui, client, settings, layout, true)
     }
+
     pub fn render_workspace_dashboard(
         &mut self,
         ui: &Ui,
@@ -370,6 +401,7 @@ impl LspUi {
         }
         path.map(LspAction::OpenConfig)
     }
+
     fn render_options_inner(
         &mut self,
         ui: &Ui,
@@ -408,6 +440,7 @@ mod tests {
     use bed_document_session::EditorSession;
     use bed_editor_ui::{EditorView, EditorViewOptions};
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions, Key};
+
     #[test]
     fn native_dashboard_blocks_document_input_and_releases_after_escape_frame() {
         let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();

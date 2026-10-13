@@ -58,6 +58,7 @@ pub struct EditorConfig {
     pub navigation_animations: bool,
     pub lsp: crate::presentation::LspPresentationOptions,
 }
+
 impl Default for EditorConfig {
     fn default() -> Self {
         let options = EditorViewOptions::default();
