@@ -68,6 +68,7 @@ pub struct DesktopPlugins {
     pub wgpu: WgpuSettings,
     pub close_when_requested: bool,
 }
+
 impl Default for DesktopPlugins {
     fn default() -> Self {
         Self {
@@ -94,7 +95,9 @@ impl PluginGroup for DesktopPlugins {
             .add(DesktopCanvasPlugin)
     }
 }
+
 struct DesktopHostPlugin(DesktopPlugins);
+
 impl Plugin for DesktopHostPlugin {
     fn build(&self, app: &mut App) {
         let mut plugins = DefaultPlugins
@@ -177,6 +180,7 @@ pub struct DesktopContext {
     pub platform: DesktopPlatform,
     pub snapshot_context: Option<WgpuSnapshotContext>,
 }
+
 impl Drop for DesktopContext {
     fn drop(&mut self) {
         self.snapshot_context.take();
@@ -187,6 +191,7 @@ impl Drop for DesktopContext {
 /// A custom frontend owns its entire prepare/draw/capture transaction.
 #[derive(Resource)]
 pub struct DesktopFrontend(pub fn(&mut World, &mut DesktopContext));
+
 /// Default frontend callback. Its Ui borrow ends before commands/gameplay run.
 #[derive(Resource)]
 pub struct DesktopUi(pub fn(&mut World, &Ui));
@@ -199,13 +204,16 @@ pub struct DesktopInputEvent {
     /// a terminal owns keys that it consumes before a command changes focus.
     pub gameplay_consumed: bool,
 }
+
 #[derive(Resource, Default)]
 pub struct DesktopInputEvents(pub Vec<DesktopInputEvent>);
+
 #[derive(Resource, Default, Clone, Copy)]
 pub struct DesktopCapture {
     pub keyboard: bool,
     pub pointer: bool,
 }
+
 #[derive(Resource, Default)]
 pub struct DesktopFrame {
     pub snapshot: Option<FrameSnapshot>,
@@ -213,6 +221,7 @@ pub struct DesktopFrame {
     pub size: [u32; 2],
     pub panels: Vec<DesktopPanelGeometry>,
 }
+
 impl DesktopFrame {
     pub fn publish_panel(&mut self, geometry: DesktopPanelGeometry) {
         self.panels.push(geometry);
@@ -220,6 +229,7 @@ impl DesktopFrame {
 }
 
 type RendererOwner = Arc<Mutex<Option<WgpuSnapshotRenderer>>>;
+
 #[derive(Resource, Clone)]
 pub struct DesktopGpu {
     pub device: wgpu::Device,
@@ -229,6 +239,7 @@ pub struct DesktopGpu {
     pub generation: u64,
     renderer: RendererOwner,
 }
+
 impl DesktopGpu {
     /// Upload a validated packed RGBA image on this generation's shared device.
     /// The caller owns the texture and its external registration lifetime.
@@ -278,12 +289,14 @@ impl DesktopGpu {
         );
         Ok(texture)
     }
+
     pub fn register_external_texture(
         &self,
         view: &wgpu::TextureView,
     ) -> Result<ExternalTextureId, String> {
         self.with_renderer(|renderer| renderer.register_external_texture(view))
     }
+
     pub fn update_external_texture(
         &self,
         texture: ExternalTextureId,
@@ -291,9 +304,11 @@ impl DesktopGpu {
     ) -> Result<(), String> {
         self.with_renderer(|renderer| renderer.update_external_texture(texture, view))
     }
+
     pub fn unregister_external_texture(&self, texture: ExternalTextureId) -> Result<(), String> {
         self.with_renderer(|renderer| renderer.unregister_external_texture(texture))
     }
+
     fn with_renderer<T>(
         &self,
         action: impl FnOnce(&mut WgpuSnapshotRenderer) -> dear_imgui_wgpu::RendererResult<T>,
@@ -314,8 +329,10 @@ pub struct DesktopRenderState {
     pub recoveries: u64,
     pub recovering: bool,
 }
+
 #[derive(Resource, Clone, Default)]
 pub struct DesktopRenderStatus(Arc<Mutex<DesktopRenderState>>);
+
 impl DesktopRenderStatus {
     pub fn read(&self) -> DesktopRenderState {
         self.0
@@ -323,6 +340,7 @@ impl DesktopRenderStatus {
             .expect("desktop status mutex poisoned")
             .clone()
     }
+
     pub fn take_error(&self) -> Option<String> {
         self.0
             .lock()
@@ -331,10 +349,12 @@ impl DesktopRenderStatus {
             .take()
     }
 }
+
 #[derive(Resource, Default)]
 pub struct DesktopScreenshotRequest {
     pub path: Option<PathBuf>,
 }
+
 #[derive(Resource, Default)]
 pub struct DesktopScreenshotResult {
     pub completed: Option<PathBuf>,
@@ -349,6 +369,7 @@ struct Devices {
     instance: wgpu::Instance,
     generation: u64,
 }
+
 #[derive(Resource, Clone, Default)]
 struct DeviceBridge(Arc<Mutex<(u64, Option<Devices>)>>);
 
@@ -792,6 +813,7 @@ fn shutdown_on_exit(world: &mut World) {
 
 #[derive(Resource, Default)]
 struct ScreenshotPending(Vec<(DesktopCaptureId, PathBuf)>);
+
 fn request_screenshot(world: &mut World) {
     if let Some(path) = world.resource_mut::<DesktopScreenshotRequest>().path.take() {
         let id = world.resource_mut::<DesktopCaptureRequests>().submit(

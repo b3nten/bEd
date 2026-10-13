@@ -200,6 +200,7 @@ fn render_desktop(world: &mut World) {
 /// The final texture is the authoritative pixel image for presentation and capture.
 #[derive(Resource)]
 struct FinalTarget(DesktopRenderer);
+
 struct Readback {
     buffer: wgpu::Buffer,
     ids: Vec<DesktopCaptureId>,
@@ -207,6 +208,7 @@ struct Readback {
     stride: usize,
     format: wgpu::TextureFormat,
 }
+
 #[derive(Resource, Default)]
 struct Readbacks(Vec<Readback>);
 
@@ -428,6 +430,7 @@ impl DesktopRenderer {
             format.is_srgb(),
         )
     }
+
     fn with_source(
         device: &wgpu::Device,
         size: [u32; 2],

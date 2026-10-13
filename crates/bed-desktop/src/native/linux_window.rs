@@ -100,6 +100,7 @@ fn pointer_coordinates(root: [i32; 2], origin: [i32; 2], scale: f64) -> Option<[
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn x11_coordinates_match_viewport_and_single_window_backend_units() {
         assert_eq!(

@@ -35,7 +35,9 @@ define_class!(
     #[thread_kind = MainThreadOnly]
     #[ivars = MenuTargetState]
     struct MenuTarget;
+
     unsafe impl NSObjectProtocol for MenuTarget {}
+
     impl MenuTarget {
         #[unsafe(method(performMenuAction:))]
         fn perform(&self, sender: Option<&AnyObject>) {
@@ -52,6 +54,7 @@ define_class!(
         }
     }
 );
+
 struct DockActionsState {
     commands: Vec<DesktopMenuCommand>,
     pending: Rc<RefCell<Vec<DesktopNativeAction>>>,
@@ -63,7 +66,9 @@ define_class!(
     #[thread_kind = MainThreadOnly]
     #[ivars = DockActionsState]
     struct DockMenuActions;
+
     unsafe impl NSObjectProtocol for DockMenuActions {}
+
     impl DockMenuActions {
         #[unsafe(method(performDockCommand:))]
         fn perform(&self, sender: Option<&NSMenuItem>) {
@@ -90,12 +95,14 @@ extern "C-unwind" fn application_dock_menu(
             .cast()
     }
 }
+
 struct DockMenu {
     _actions: Retained<DockMenuActions>,
     delegate: Retained<ProtocolObject<dyn NSApplicationDelegate>>,
     original_class: &'static AnyClass,
     menu_class: &'static AnyClass,
 }
+
 impl DockMenu {
     fn install(
         application: &NSApplication,
@@ -170,6 +177,7 @@ impl DockMenu {
         })
     }
 }
+
 impl Drop for DockMenu {
     fn drop(&mut self) {
         let object: &AnyObject = self.delegate.as_ref();
@@ -198,6 +206,7 @@ pub struct MacOsMenu {
     pending: Rc<RefCell<Vec<DesktopNativeAction>>>,
     dock: Option<DockMenu>,
 }
+
 fn append_items(
     submenu: &Submenu,
     entries: &[DesktopMenuItem],
@@ -363,6 +372,7 @@ impl MacOsMenu {
         this.attach_native_targets(mtm)?;
         Ok(this)
     }
+
     pub fn update(
         &mut self,
         definitions: &[DesktopMenu],
@@ -394,11 +404,13 @@ impl MacOsMenu {
         self.pending.borrow_mut().extend(queued);
         Ok(())
     }
+
     pub fn poll(&self) -> Vec<DesktopNativeAction> {
         // Drain Muda's delivery for our IDs; proxies already recorded complete origin metadata.
         for _event in MenuEvent::receiver().try_iter() {}
         std::mem::take(&mut *self.pending.borrow_mut())
     }
+
     fn attach_native_targets(&mut self, mtm: MainThreadMarker) -> io::Result<()> {
         // SAFETY: Muda owns this live native menu.
         let root = unsafe { self.menu.ns_menu().cast::<NSMenu>().as_ref() }
@@ -411,6 +423,7 @@ impl MacOsMenu {
         }
         Ok(())
     }
+
     fn attach_menu_targets(
         &mut self,
         submenu: &NSMenu,
@@ -457,6 +470,7 @@ impl MacOsMenu {
         }
         Ok(())
     }
+
     pub fn is_installed(&self) -> bool {
         MainThreadMarker::new().is_some_and(|mtm| {
             NSApplication::sharedApplication(mtm)
@@ -466,6 +480,7 @@ impl MacOsMenu {
                 })
         })
     }
+
     pub fn perform_for_smoke(&self, id: &str) -> io::Result<()> {
         let root = unsafe { self.menu.ns_menu().cast::<NSMenu>().as_ref() }
             .ok_or_else(|| io::Error::other("native menu is missing"))?;
@@ -481,9 +496,11 @@ impl MacOsMenu {
             "native menu command is missing: {id}"
         )))
     }
+
     pub fn perform_plugin_for_smoke(&self, id: &str) -> io::Result<()> {
         self.perform_for_smoke(id)
     }
+
     pub fn perform_dock_for_smoke(&self, id: &str) -> io::Result<()> {
         let index = self
             .dock_definitions
@@ -502,6 +519,7 @@ impl MacOsMenu {
         menu.performActionForItemAtIndex(index as isize);
         Ok(())
     }
+
     pub fn key_equivalent_for_smoke(
         &self,
         characters: &str,
@@ -527,6 +545,7 @@ impl MacOsMenu {
         }
         Ok(())
     }
+
     fn restore(&mut self) {
         for (item, target) in self.targets.drain(..) {
             // SAFETY: Restore retained original targets before proxies are released.
@@ -543,11 +562,13 @@ impl MacOsMenu {
         }
     }
 }
+
 impl Drop for MacOsMenu {
     fn drop(&mut self) {
         self.restore();
     }
 }
+
 fn modifier_flags(flags: NSEventModifierFlags) -> DesktopModifiers {
     DesktopModifiers {
         ctrl: flags.contains(NSEventModifierFlags::Control),
@@ -556,6 +577,7 @@ fn modifier_flags(flags: NSEventModifierFlags) -> DesktopModifiers {
         super_key: flags.contains(NSEventModifierFlags::Command),
     }
 }
+
 fn accelerator(shortcut: &DesktopShortcut) -> io::Result<Accelerator> {
     let mut modifiers = Modifiers::empty();
     if shortcut.modifiers.ctrl {
@@ -578,6 +600,7 @@ fn accelerator(shortcut: &DesktopShortcut) -> io::Result<Accelerator> {
     })?;
     Ok(Accelerator::new(modifiers, code))
 }
+
 fn key_code(key: Key) -> Option<Code> {
     use Key::*;
     Some(match key {

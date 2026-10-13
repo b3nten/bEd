@@ -17,6 +17,7 @@ pub struct DesktopModifiers {
     pub alt: bool,
     pub super_key: bool,
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum DesktopInjectedEvent {
     PointerMoved([f32; 2]),
@@ -35,32 +36,39 @@ pub enum DesktopInjectedEvent {
     /// Horizontal/vertical scroll in lines, matching native line-wheel input.
     Scroll([f32; 2]),
 }
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DesktopInputStep {
     pub events: Vec<DesktopInjectedEvent>,
 }
+
 impl From<Vec<DesktopInjectedEvent>> for DesktopInputStep {
     fn from(events: Vec<DesktopInjectedEvent>) -> Self {
         Self { events }
     }
 }
+
 #[derive(Clone, Debug)]
 pub struct DesktopInjectedInputEvent {
     pub event: DesktopInjectedEvent,
     pub consumed: bool,
     pub gameplay_consumed: bool,
 }
+
 /// Hosts can intercept injected semantic events in `InterceptInput`, just like
 /// native events. Logical pointer coordinates use the current window origin.
 #[derive(Resource, Default)]
 pub struct DesktopInjectedInputEvents(pub Vec<DesktopInjectedInputEvent>);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DesktopInputId(pub u64);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesktopInputStatus {
     Pending,
     Complete,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DesktopInputError {
     InvalidEvent,
@@ -68,17 +76,21 @@ pub enum DesktopInputError {
     Cancelled,
     DesktopStopped,
 }
+
 impl std::fmt::Display for DesktopInputError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
     }
 }
+
 impl std::error::Error for DesktopInputError {}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DesktopInputReceipt {
     pub last_ui_frame: DesktopFrameId,
     pub steps: u32,
 }
+
 struct Sequence {
     steps: Vec<DesktopInputStep>,
     next: usize,
@@ -88,21 +100,26 @@ struct Sequence {
     failure: Option<DesktopInputError>,
     result: Option<Result<DesktopInputReceipt, DesktopInputError>>,
 }
+
 #[derive(Default)]
 struct InputState {
     next: u64,
     sequences: BTreeMap<DesktopInputId, Sequence>,
 }
+
 #[derive(Resource, Clone, Default)]
 pub(crate) struct InputQueue(Arc<Mutex<InputState>>);
+
 #[derive(Resource, Clone, Default)]
 pub struct DesktopInputRequests {
     queue: InputQueue,
 }
+
 #[derive(Resource, Clone, Default)]
 pub struct DesktopInputResults {
     queue: InputQueue,
 }
+
 impl DesktopInputRequests {
     /// Each step occupies one produced UI frame. Held inputs are released in a
     /// final cleanup frame before the receipt completes. Text never comes from keys.
@@ -124,6 +141,7 @@ impl DesktopInputRequests {
         );
         id
     }
+
     pub fn cancel(&mut self, id: DesktopInputId) {
         if let Some(sequence) = self
             .queue
@@ -137,6 +155,7 @@ impl DesktopInputRequests {
         }
     }
 }
+
 impl DesktopInputResults {
     pub fn status(&self, id: DesktopInputId) -> Option<DesktopInputStatus> {
         self.queue
@@ -153,6 +172,7 @@ impl DesktopInputResults {
                 }
             })
     }
+
     pub fn take(
         &mut self,
         id: DesktopInputId,
@@ -162,12 +182,14 @@ impl DesktopInputResults {
         state.sequences.remove(&id)?.result
     }
 }
+
 #[derive(Resource, Default)]
 pub(crate) struct InjectedState {
     keys: HashMap<KeyCode, Key>,
     buttons: HashSet<MouseButton>,
     modifiers: DesktopModifiers,
 }
+
 impl InputQueue {
     pub(crate) fn install(&self, world: &mut World) {
         world.insert_resource(DesktopInputRequests {
@@ -179,6 +201,7 @@ impl InputQueue {
         world.init_resource::<DesktopInjectedInputEvents>();
         world.init_resource::<InjectedState>();
     }
+
     pub(crate) fn stop(&self) {
         for sequence in self
             .0
@@ -193,6 +216,7 @@ impl InputQueue {
         }
     }
 }
+
 impl InjectedState {
     fn release(&self) -> Vec<DesktopInjectedEvent> {
         let mut events: Vec<_> = self
@@ -215,6 +239,7 @@ impl InjectedState {
         events.push(DesktopInjectedEvent::Modifiers(DesktopModifiers::default()));
         events
     }
+
     pub(crate) fn observe(&mut self, event: &DesktopInjectedEvent) {
         match event {
             DesktopInjectedEvent::Key {
@@ -340,6 +365,7 @@ pub(crate) fn feed(context: &mut DesktopContext, event: &DesktopInjectedEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn receipt_requires_a_new_ui_frame_and_cleanup_before_next_sequence() {
         let mut app = App::new();

@@ -40,11 +40,13 @@ pub struct DesktopFrameInfo {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DesktopCaptureId(pub u64);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesktopCaptureTarget {
     Window,
     Panel(Entity),
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesktopCaptureStatus {
     Pending,
@@ -60,6 +62,7 @@ pub enum DesktopCaptureError {
     Gpu(String),
     DesktopStopped,
 }
+
 impl std::fmt::Display for DesktopCaptureError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -74,6 +77,7 @@ impl std::fmt::Display for DesktopCaptureError {
         }
     }
 }
+
 impl std::error::Error for DesktopCaptureError {}
 
 /// Packed, display-encoded RGBA8 pixels, row-major, with the presented alpha.
@@ -82,6 +86,7 @@ pub struct OwnedRgba {
     pub size: [u32; 2],
     pub pixels: Vec<u8>,
 }
+
 impl OwnedRgba {
     fn validate(&self) -> std::io::Result<()> {
         let expected = u64::from(self.size[0])
@@ -92,6 +97,7 @@ impl OwnedRgba {
         }
         Ok(())
     }
+
     pub fn write_png(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         self.validate()?;
         image::save_buffer_with_format(
@@ -104,6 +110,7 @@ impl OwnedRgba {
         )
         .map_err(std::io::Error::other)
     }
+
     pub fn write_ppm(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         use std::io::Write;
         self.validate()?;
@@ -114,6 +121,7 @@ impl OwnedRgba {
         }
         file.flush()
     }
+
     fn crop(&self, rect: [u32; 4]) -> Self {
         let [x, y, width, height] = rect;
         let mut pixels = Vec::with_capacity((width as usize) * (height as usize) * 4);
@@ -127,6 +135,7 @@ impl OwnedRgba {
         }
     }
 }
+
 #[derive(Clone, Debug)]
 pub struct DesktopCapturedImage {
     pub target: DesktopCaptureTarget,
@@ -134,6 +143,7 @@ pub struct DesktopCapturedImage {
     pub physical_rect: [u32; 4],
     pub rgba: OwnedRgba,
 }
+
 #[derive(Clone, Debug)]
 pub struct DesktopCapturedFrame {
     pub info: DesktopFrameInfo,
@@ -148,21 +158,26 @@ struct Request {
     result: Option<Result<DesktopCapturedFrame, DesktopCaptureError>>,
     last_error: Option<DesktopCaptureError>,
 }
+
 #[derive(Default)]
 struct CaptureState {
     next: u64,
     requests: BTreeMap<DesktopCaptureId, Request>,
 }
+
 #[derive(Resource, Clone, Default)]
 pub(crate) struct CaptureBridge(Arc<Mutex<CaptureState>>);
+
 #[derive(Resource, Clone, Default)]
 pub struct DesktopCaptureRequests {
     bridge: CaptureBridge,
 }
+
 #[derive(Resource, Clone, Default)]
 pub struct DesktopCaptureResults {
     bridge: CaptureBridge,
 }
+
 impl DesktopCaptureRequests {
     /// Capture every target from one future rendered frame. `after_frame` is exclusive.
     /// An occluded native surface can still capture the current owned composition.
@@ -190,6 +205,7 @@ impl DesktopCaptureRequests {
         id
     }
 }
+
 impl DesktopCaptureResults {
     pub fn status(&self, id: DesktopCaptureId) -> Option<DesktopCaptureStatus> {
         self.bridge.expire(Instant::now());
@@ -207,6 +223,7 @@ impl DesktopCaptureResults {
                 }
             })
     }
+
     pub fn take(
         &mut self,
         id: DesktopCaptureId,
@@ -217,6 +234,7 @@ impl DesktopCaptureResults {
         state.requests.remove(&id)?.result
     }
 }
+
 impl CaptureBridge {
     pub(crate) fn install(&self, world: &mut World) {
         world.insert_resource(DesktopCaptureRequests {
@@ -226,6 +244,7 @@ impl CaptureBridge {
             bridge: self.clone(),
         });
     }
+
     pub(crate) fn expire(&self, now: Instant) {
         for request in self
             .0
@@ -242,6 +261,7 @@ impl CaptureBridge {
             }
         }
     }
+
     pub(crate) fn wants_frame(&self, info: &DesktopFrameInfo) -> bool {
         self.0
             .lock()
@@ -254,6 +274,7 @@ impl CaptureBridge {
                     && request.after_frame.is_none_or(|after| info.frame > after)
             })
     }
+
     pub(crate) fn begin(&self, info: &DesktopFrameInfo) -> Vec<DesktopCaptureId> {
         self.expire(Instant::now());
         let mut state = self.0.lock().expect("capture state poisoned");
@@ -269,6 +290,7 @@ impl CaptureBridge {
         }
         ids
     }
+
     pub(crate) fn finish(
         &self,
         ids: &[DesktopCaptureId],
@@ -311,6 +333,7 @@ impl CaptureBridge {
             }));
         }
     }
+
     pub(crate) fn retry_generation(&self, generation: u64) {
         for request in self
             .0
@@ -327,6 +350,7 @@ impl CaptureBridge {
             }
         }
     }
+
     pub(crate) fn stop(&self) {
         for request in self
             .0
@@ -415,6 +439,7 @@ pub(crate) fn unpack_pixels(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn batch_crops_the_same_frame_with_scale_display_origin_and_clip() {
         let bridge = CaptureBridge::default();
@@ -474,6 +499,7 @@ mod tests {
             vec![7, 8, 9, 10, 13, 14, 15, 16]
         );
     }
+
     #[test]
     fn replacement_retries_and_ignores_old_callbacks_and_deadlines_complete() {
         let bridge = CaptureBridge::default();
@@ -534,6 +560,7 @@ mod tests {
             DesktopCaptureError::DeadlineExceeded
         );
     }
+
     #[test]
     fn bgra_padding_png_and_invalid_pixels_are_checked_at_boundary() {
         let pixels = unpack_pixels(

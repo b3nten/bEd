@@ -100,6 +100,7 @@ fn main() {
     );
     app.run();
 }
+
 fn draw(world: &mut World, ui: &Ui) {
     let mut proof = world.remove_resource::<Proof>().unwrap();
     let background = ui.get_background_draw_list();
@@ -152,6 +153,7 @@ fn draw(world: &mut World, ui: &Ui) {
     proof.ctrl = ui.io().key_ctrl();
     world.insert_resource(proof);
 }
+
 fn advance(world: &mut World) {
     let mut proof = world.remove_resource::<Proof>().unwrap();
     assert!(
@@ -345,6 +347,7 @@ fn advance(world: &mut World) {
     }
     world.insert_resource(proof);
 }
+
 fn assert_batch(captured: &DesktopCapturedFrame, panel: Entity, rgb: [u8; 3]) {
     assert_eq!(captured.images.len(), 2);
     let window = &captured.images[0];

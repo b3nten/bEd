@@ -72,6 +72,7 @@ impl DesktopPlatform {
     pub fn set_ime_auto_management(&mut self, enabled: bool) {
         self.ime_auto_management = enabled;
     }
+
     pub fn shutdown(&mut self, context: &mut Context) {
         IME_CARETS.with(|carets| {
             carets.borrow_mut().remove(&self.context_address);
@@ -82,6 +83,7 @@ impl DesktopPlatform {
             (*dear_imgui_rs::sys::igGetPlatformIO_Nil()).Platform_SetImeDataFn = None;
         });
     }
+
     pub fn hidpi_factor(&self, window: &Window) -> f64 {
         window.scale_factor()
     }
@@ -161,6 +163,7 @@ impl DesktopPlatform {
             context.io_mut().add_key_event(key, pressed);
         }
     }
+
     pub(crate) fn handle_injected(
         &mut self,
         context: &mut Context,

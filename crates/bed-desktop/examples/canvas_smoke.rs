@@ -16,6 +16,7 @@ struct Source {
     panic: bool,
     calls: u32,
 }
+
 #[derive(Resource)]
 struct Proof {
     first: Entity,
@@ -27,6 +28,7 @@ struct Proof {
     generation: u64,
     deadline: Instant,
 }
+
 fn main() {
     let mut app = App::new();
     app.add_plugins(DesktopPlugins {
@@ -95,6 +97,7 @@ fn main() {
     );
     app.run();
 }
+
 fn clear(
     In(input): In<CanvasRenderInvocation>,
     mut sources: Query<&mut Source>,
@@ -123,6 +126,7 @@ fn clear(
     }
     Ok(vec![encoder.finish()])
 }
+
 fn draw(world: &mut World, ui: &Ui) {
     let draw = ui.get_background_draw_list();
     draw.add_rect([0., 0.], ui.io().display_size(), Color::BLACK)
@@ -151,6 +155,7 @@ fn draw(world: &mut World, ui: &Ui) {
         );
     }
 }
+
 fn capture(world: &mut World, proof: &mut Proof) {
     proof.capture = Some(world.resource_mut::<DesktopCaptureRequests>().submit(
         vec![DesktopCaptureTarget::Window],
@@ -158,6 +163,7 @@ fn capture(world: &mut World, proof: &mut Proof) {
         None,
     ));
 }
+
 fn advance(world: &mut World) {
     let mut proof = world.remove_resource::<Proof>().unwrap();
     assert!(
@@ -283,6 +289,7 @@ fn advance(world: &mut World) {
     }
     world.insert_resource(proof);
 }
+
 fn pixel(image: &DesktopCapturedFrame, x: f32, expected: [u8; 3]) {
     let rgba = &image.images[0].rgba;
     let scale = image.info.framebuffer_scale;

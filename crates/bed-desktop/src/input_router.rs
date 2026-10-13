@@ -47,6 +47,7 @@ pub(super) struct InputBridge {
     injected_modifiers: crate::DesktopModifiers,
     pointer: Option<bevy::math::Vec2>,
 }
+
 impl Default for InputBridge {
     fn default() -> Self {
         Self {
@@ -69,6 +70,7 @@ impl Default for InputBridge {
         }
     }
 }
+
 impl InputBridge {
     /// Save this native batch before the UI establishes input capture. The
     /// aggregate preserves ordering between focus, keys, buttons and motion.
@@ -494,6 +496,7 @@ fn release_mouse(world: &mut World, buttons: &mut Vec<MouseButton>, window: Enti
         );
     }
 }
+
 fn forward<M: Message + Clone + Into<BevyWindowEvent>>(world: &mut World, input: M) {
     world.write_message(input.clone());
     if let Some(mut events) = world.get_resource_mut::<Messages<BevyWindowEvent>>() {
@@ -516,6 +519,7 @@ mod tests {
         prelude::*,
     };
     use dear_imgui_rs::Context;
+
     fn app() -> App {
         let mut app = App::new();
         app.add_plugins(bevy::input::InputPlugin);
@@ -524,6 +528,7 @@ mod tests {
         app.add_message::<Ime>();
         app
     }
+
     fn key(state: ButtonState) -> PendingInput {
         PendingInput::Keyboard(
             KeyboardInput {
@@ -537,6 +542,7 @@ mod tests {
             false,
         )
     }
+
     fn mouse(state: ButtonState) -> PendingInput {
         PendingInput::Button(
             MouseButtonInput {
@@ -726,6 +732,7 @@ mod tests {
                 .pressed(MouseButton::Left)
         );
     }
+
     #[test]
     fn normalized_batches_are_routed_once_before_input_systems() {
         let mut app = app();
@@ -1115,6 +1122,7 @@ mod tests {
             Vec2::ZERO
         );
     }
+
     #[test]
     fn consumed_presses_are_filtered_and_releases_pass_capture() {
         let mut app = app();
@@ -1148,6 +1156,7 @@ mod tests {
                 .pressed(KeyCode::KeyW)
         );
     }
+
     #[test]
     fn focus_loss_releases_keys_and_mouse_and_blocks_scroll() {
         let mut app = app();
@@ -1182,6 +1191,7 @@ mod tests {
             Vec2::ZERO
         );
     }
+
     #[test]
     fn focus_loss_in_the_press_batch_does_not_leave_logical_or_mouse_buttons_held() {
         let mut app = app();
@@ -1209,6 +1219,7 @@ mod tests {
                 .pressed(MouseButton::Left)
         );
     }
+
     #[test]
     fn injected_key_text_pointer_and_wheel_use_current_capture_without_replay() {
         use crate::DesktopInjectedEvent as E;
@@ -1281,6 +1292,7 @@ mod tests {
             assert!(app.world().resource::<Messages<Ime>>().is_empty());
         }
     }
+
     #[test]
     fn injected_cleanup_keeps_native_key_and_button_held_until_native_release() {
         use crate::DesktopInjectedEvent as E;
@@ -1368,6 +1380,7 @@ mod tests {
                 .pressed(MouseButton::Left)
         );
     }
+
     #[test]
     fn modifier_changes_do_not_leave_previous_logical_values_held() {
         let mut app = app();

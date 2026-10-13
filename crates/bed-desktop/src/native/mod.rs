@@ -19,6 +19,7 @@ pub struct DesktopShortcut {
     pub key: Key,
     pub modifiers: DesktopModifiers,
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DesktopMenuCommand {
     pub id: String,
@@ -26,6 +27,7 @@ pub struct DesktopMenuCommand {
     pub enabled: bool,
     pub shortcut: Option<DesktopShortcut>,
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum DesktopMenuItem {
     Command(DesktopMenuCommand),
@@ -52,12 +54,14 @@ pub enum DesktopMenuItem {
     Maximize,
     BringAllToFront,
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DesktopMenu {
     pub label: String,
     pub items: Vec<DesktopMenuItem>,
     pub windows_menu: bool,
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DesktopToolbarItem {
     pub id: String,
@@ -65,6 +69,7 @@ pub struct DesktopToolbarItem {
     pub icon: Option<String>,
     pub enabled: bool,
 }
+
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct DesktopNativePresentation {
     pub opacity: f32,
@@ -75,6 +80,7 @@ pub struct DesktopNativePresentation {
     pub toolbar: Vec<DesktopToolbarItem>,
     pub dock: Vec<DesktopMenuCommand>,
 }
+
 impl Default for DesktopNativePresentation {
     fn default() -> Self {
         Self {
@@ -88,6 +94,7 @@ impl Default for DesktopNativePresentation {
         }
     }
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DesktopNativeAction {
     pub command: String,
@@ -95,12 +102,15 @@ pub struct DesktopNativeAction {
     pub modifiers: DesktopModifiers,
     pub quit: bool,
 }
+
 #[derive(Resource, Default)]
 pub struct DesktopNativeActions(pub Vec<DesktopNativeAction>);
+
 #[derive(Resource, Default, Clone, Copy, Debug)]
 pub struct DesktopContentInsets {
     pub top: f32,
 }
+
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct DesktopNativeCapabilities {
     pub menus: bool,
@@ -109,6 +119,7 @@ pub struct DesktopNativeCapabilities {
     pub clipboard: bool,
     pub file_clipboard: bool,
 }
+
 impl Default for DesktopNativeCapabilities {
     fn default() -> Self {
         Self {
@@ -120,8 +131,10 @@ impl Default for DesktopNativeCapabilities {
         }
     }
 }
+
 #[derive(Resource, Default)]
 pub struct DesktopNativeErrors(pub Vec<String>);
+
 #[cfg(target_os = "macos")]
 #[derive(Resource)]
 pub(crate) struct NativeClosePolicy(pub bool);
@@ -129,6 +142,7 @@ pub(crate) struct NativeClosePolicy(pub bool);
 /// Clipboard ownership remains on the native/UI thread.
 #[derive(Clone)]
 pub struct DesktopFileClipboard(std::rc::Rc<std::cell::RefCell<arboard::Clipboard>>);
+
 impl DesktopFileClipboard {
     pub fn read_files(&mut self) -> io::Result<Vec<PathBuf>> {
         self.0
@@ -137,6 +151,7 @@ impl DesktopFileClipboard {
             .file_list()
             .map_err(io::Error::other)
     }
+
     pub fn write_files(&mut self, paths: &[PathBuf]) -> io::Result<()> {
         self.0
             .borrow_mut()
@@ -144,6 +159,7 @@ impl DesktopFileClipboard {
             .file_list(paths)
             .map_err(io::Error::other)
     }
+
     /// Files for an explicit paste, including a temporary PNG for a copied image.
     /// An empty list means the caller should use its ordinary text clipboard.
     pub fn read_paste_files(&mut self) -> io::Result<Vec<PathBuf>> {
@@ -160,11 +176,14 @@ impl DesktopFileClipboard {
         }
     }
 }
+
 struct TextClipboard(arboard::Clipboard);
+
 impl ClipboardBackend for TextClipboard {
     fn get(&mut self) -> Option<String> {
         self.0.get_text().ok()
     }
+
     fn set(&mut self, text: &str) {
         let _ = self.0.set_text(text);
     }
@@ -185,7 +204,9 @@ pub enum DesktopNativeSystems {
     Poll,
     Prepare,
 }
+
 pub struct DesktopNativePlugin;
+
 impl Plugin for DesktopNativePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DesktopNativePresentation>()
@@ -209,6 +230,7 @@ impl Plugin for DesktopNativePlugin {
             .add_systems(Last, shutdown.after(bevy::app::OnAppExitSystems));
     }
 }
+
 fn poll(world: &mut World) {
     #[cfg(target_os = "macos")]
     {
@@ -232,6 +254,7 @@ fn poll(world: &mut World) {
     #[cfg(not(target_os = "macos"))]
     let _ = world;
 }
+
 fn prepare(world: &mut World) {
     let primary = world
         .query_filtered::<Entity, With<PrimaryWindow>>()
@@ -340,6 +363,7 @@ fn prepare(world: &mut World) {
         }
     }
 }
+
 fn shutdown(world: &mut World) {
     if !world.resource::<Messages<AppExit>>().is_empty() {
         world.remove_non_send::<DesktopNativePlatform>();

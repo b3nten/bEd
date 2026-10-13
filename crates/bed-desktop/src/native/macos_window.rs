@@ -108,6 +108,7 @@ define_class!(
     #[thread_kind = MainThreadOnly]
     #[ivars = ToolbarGesture]
     struct ToolbarButton;
+
     impl ToolbarButton {
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
@@ -116,6 +117,7 @@ define_class!(
             self.ivars().dragging.set(false);
             self.setHighlighted(true);
         }
+
         #[unsafe(method(mouseDragged:))]
         fn mouse_dragged(&self, event: &NSEvent) {
             let Some(start) = *self.ivars().press.borrow() else { return; };
@@ -129,6 +131,7 @@ define_class!(
                 )));
             }
         }
+
         #[unsafe(method(mouseUp:))]
         fn mouse_up(&self, event: &NSEvent) {
             let pressed = self.ivars().press.borrow_mut().take().is_some();
@@ -143,8 +146,10 @@ define_class!(
                 unsafe { self.performClick(None); }
             }
         }
+
         #[unsafe(method(alignmentRectForFrame:))]
         fn alignment_rect_for_frame(&self, frame: NSRect) -> NSRect { frame }
+
         #[unsafe(method(frameForAlignmentRect:))]
         fn frame_for_alignment_rect(&self, frame: NSRect) -> NSRect { frame }
     }
@@ -157,7 +162,9 @@ define_class!(
     #[thread_kind = MainThreadOnly]
     #[ivars = Actions]
     struct NativeActions;
+
     unsafe impl NSObjectProtocol for NativeActions {}
+
     impl NativeActions {
         #[unsafe(method(performCommand:))]
         fn perform_command(&self, sender: Option<&NSButton>) {
@@ -178,6 +185,7 @@ define_class!(
     #[name = "BedTitleLabel"]
     #[thread_kind = MainThreadOnly]
     struct TitleLabel;
+
     impl TitleLabel {
         #[unsafe(method(hitTest:))]
         fn hit_test(&self, _point: NSPoint) -> *mut NSView { std::ptr::null_mut() }
@@ -189,6 +197,7 @@ define_class!(
     #[name = "BedBackgroundMaterial"]
     #[thread_kind = MainThreadOnly]
     struct BackgroundMaterial;
+
     impl BackgroundMaterial {
         #[unsafe(method(hitTest:))]
         fn hit_test(&self, _point: NSPoint) -> *mut NSView { std::ptr::null_mut() }
@@ -304,6 +313,7 @@ impl MacOsWindow {
         // or unfocused startup windows. Chrome must not raise them.
         Ok(result)
     }
+
     pub fn take_actions(&mut self) -> Vec<DesktopNativeAction> {
         let mouse = self.window.mouseLocationOutsideOfEventStream();
         for button in &self.buttons {
@@ -329,6 +339,7 @@ impl MacOsWindow {
         }
         std::mem::take(&mut *self.actions.ivars().pending.borrow_mut())
     }
+
     /// Rebuild only for structural changes; enabled state updates in place.
     pub fn set_commands(&mut self, commands: &[CommandItem]) -> io::Result<()> {
         if self.commands == commands {
@@ -368,6 +379,7 @@ impl MacOsWindow {
         self.theme = None;
         Ok(())
     }
+
     pub fn set_title(&mut self, title: &str) {
         if self.title_text == title {
             return;
@@ -380,6 +392,7 @@ impl MacOsWindow {
         }
         self.title_text = title.to_owned();
     }
+
     pub fn titlebar_inset(&self) -> f32 {
         if !self.window.styleMask().contains(NSWindowStyleMask::Titled) {
             return 0.0;
@@ -388,6 +401,7 @@ impl MacOsWindow {
             self.content.bounds().size.height - self.window.contentLayoutRect().size.height;
         if height > 1.0 { height as f32 } else { 28.0 }
     }
+
     pub fn update(&mut self, opacity: f32, blur: bool) -> io::Result<()> {
         let mtm = MainThreadMarker::new()
             .ok_or_else(|| io::Error::other("AppKit requires the main thread"))?;
@@ -478,6 +492,7 @@ impl MacOsWindow {
         }
         Ok(())
     }
+
     pub fn update_theme(&mut self, text: [f32; 4], background: [f32; 4]) -> io::Result<()> {
         let text = ensure_contrast(text, background, 4.5);
         if self.theme == Some((text, background)) {
@@ -495,6 +510,7 @@ impl MacOsWindow {
         self.theme = Some((text, background));
         Ok(())
     }
+
     /// Apply the presentation theme to a borrowed native window.
     pub fn apply_theme_to_window(
         window: &Window,
@@ -518,20 +534,25 @@ impl MacOsWindow {
         }
         Ok(())
     }
+
     pub fn preserves_winit_content_view(&self) -> bool {
         self.window
             .contentView()
             .is_some_and(|view| std::ptr::eq(&*view, &*self.content))
     }
+
     pub fn material_is_visible(&self) -> bool {
         !self.material.isHidden()
     }
+
     pub fn content_opacity(&self) -> Option<f32> {
         self.metal.as_ref().map(|layer| layer.opacity())
     }
+
     pub fn content_is_opaque(&self) -> Option<bool> {
         self.metal.as_ref().map(|layer| layer.isOpaque())
     }
+
     /// Actual AppKit rectangles in the accessory's coordinate space, after layout.
     pub fn control_frames(&self) -> Vec<[f64; 4]> {
         let Some(accessory) = &self.accessory else {
@@ -552,6 +573,7 @@ impl MacOsWindow {
             })
             .collect()
     }
+
     /// Native acceptance checks use rendered geometry, rather than stack settings.
     pub fn validate_control_layout(&self) -> io::Result<()> {
         if !self.window.styleMask().contains(NSWindowStyleMask::Titled) {
@@ -612,6 +634,7 @@ impl MacOsWindow {
         }
         Ok(())
     }
+
     /// Invoke the native control through AppKit's target/action path for smoke tests.
     pub fn click_command(&self, id: &str) -> bool {
         let Some(button) = self
@@ -682,6 +705,7 @@ impl MacOsWindow {
         self.title = Some(label);
     }
 }
+
 impl Drop for MacOsWindow {
     fn drop(&mut self) {
         // The host's view/delegate are never replaced. Remove only our own views.
@@ -723,6 +747,7 @@ fn native_color(color: [f32; 4]) -> Retained<NSColor> {
         color[3] as f64,
     )
 }
+
 fn tint_native_title(view: &NSView, color: &NSColor) {
     let object: &AnyObject = view;
     if let Some(field) = object.downcast_ref::<NSTextField>() {
@@ -732,6 +757,7 @@ fn tint_native_title(view: &NSView, color: &NSColor) {
         tint_native_title(&child, color);
     }
 }
+
 fn set_native_appearance(window: &NSWindow, background: [f32; 4]) -> io::Result<()> {
     MainThreadMarker::new().ok_or_else(|| io::Error::other("AppKit requires the main thread"))?;
     let class = AnyClass::get(c"NSAppearance")
@@ -752,6 +778,7 @@ fn set_native_appearance(window: &NSWindow, background: [f32; 4]) -> io::Result<
     window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
     Ok(())
 }
+
 fn find_metal_layer(root: &CALayer) -> Option<Retained<CALayer>> {
     if root.isKindOfClass(CAMetalLayer::class()) {
         return Some(root.retain());
@@ -760,6 +787,7 @@ fn find_metal_layer(root: &CALayer) -> Option<Retained<CALayer>> {
         .iter()
         .find_map(|layer| find_metal_layer(&layer))
 }
+
 fn install_controls(
     window: &NSWindow,
     target: &NativeActions,

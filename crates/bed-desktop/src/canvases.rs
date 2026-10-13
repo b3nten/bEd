@@ -17,7 +17,9 @@ pub enum DesktopCanvasSystems {
     Prepare,
     Render,
 }
+
 pub struct DesktopCanvasPlugin;
+
 impl Plugin for DesktopCanvasPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CanvasTextures>()
@@ -40,15 +42,18 @@ impl Plugin for DesktopCanvasPlugin {
             );
     }
 }
+
 struct CanvasTexture {
     external: ExternalTextureId,
     target: RenderTarget,
 }
+
 struct IconTexture {
     source: bed_ui::icons::RgbaImage,
     _texture: wgpu::Texture,
     external: ExternalTextureId,
 }
+
 /// Target handles are readable for diagnostics; only DesktopCanvasPlugin changes them.
 #[derive(Resource, Default)]
 pub struct DesktopCanvasTargets {
@@ -56,14 +61,17 @@ pub struct DesktopCanvasTargets {
     targets: HashMap<TextureHandle, CanvasTexture>,
     icons: HashMap<String, IconTexture>,
 }
+
 impl DesktopCanvasTargets {
     pub fn generation(&self) -> u64 {
         self.generation
     }
+
     pub fn target(&self, handle: TextureHandle) -> Option<&RenderTarget> {
         self.targets.get(&handle).map(|texture| &texture.target)
     }
 }
+
 #[derive(Component, Clone, Debug)]
 pub struct CanvasFailure(pub String);
 
@@ -72,8 +80,10 @@ pub struct DesktopCanvasError {
     pub entity: Option<Entity>,
     pub message: String,
 }
+
 #[derive(Resource, Default)]
 pub struct DesktopCanvasErrors(pub Vec<DesktopCanvasError>);
+
 fn report(world: &mut World, entity: Option<Entity>, error: String) {
     world
         .resource_mut::<DesktopCanvasErrors>()
@@ -91,6 +101,7 @@ fn outputs(world: &mut World) -> Vec<(Entity, bed_ui::gpu::RenderOutput)> {
         .map(|(entity, output)| (entity, output.0))
         .collect()
 }
+
 fn sync(world: &mut World, gpu: &DesktopGpu, outputs: &[(Entity, bed_ui::gpu::RenderOutput)]) {
     for &(entity, output) in outputs {
         let current = world
@@ -126,6 +137,7 @@ fn sync(world: &mut World, gpu: &DesktopGpu, outputs: &[(Entity, bed_ui::gpu::Re
         }
     }
 }
+
 fn prepare(world: &mut World) {
     let Some(gpu) = world.get_resource::<DesktopGpu>().cloned() else {
         return;
@@ -166,6 +178,7 @@ fn prepare(world: &mut World) {
     sync(world, &gpu, &outputs);
     upload_icons(world, &gpu);
 }
+
 fn upload_icons(world: &mut World, gpu: &DesktopGpu) {
     if world.get_non_send::<bed_ui::icons::Icons>().is_none() {
         return;
@@ -271,6 +284,7 @@ fn render(world: &mut World) {
         }
     }
 }
+
 /// A panicking renderer is quarantined on its presentation entity. Its command
 /// batch is dropped; another panel's registered renderer remains callable.
 fn run_canvas_system(
@@ -308,17 +322,20 @@ fn run_canvas_system(
 mod tests {
     use super::*;
     use std::time::Duration;
+
     #[test]
     #[ignore = "requires a native GPU adapter; run with --ignored on desktop CI"]
     fn registered_canvas_panic_discards_its_gpu_batch_and_preserves_sibling_rendering() {
         use bed_ui::gpu::{
             CanvasRenderInvocation, CanvasRenderResult, RenderOutput, renderer_device_descriptor,
         };
+
         #[derive(Resource, Default)]
         struct Calls {
             failed: usize,
             healthy: usize,
         }
+
         fn record_clear(
             invocation: &CanvasRenderInvocation,
             colour: wgpu::Color,

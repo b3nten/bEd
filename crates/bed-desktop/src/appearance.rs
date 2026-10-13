@@ -6,10 +6,12 @@ use bevy::prelude::*;
 
 #[derive(Resource, Clone, Default, PartialEq)]
 pub struct DesktopAppearance(pub UiAppearance);
+
 #[derive(Resource, Default)]
 pub struct DesktopAppearanceErrors(pub Vec<String>);
 
 pub struct DesktopAppearancePlugin;
+
 impl Plugin for DesktopAppearancePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DesktopAppearance>()
@@ -38,6 +40,7 @@ fn prepare(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn rejected_font_size_preserves_live_style_and_atlas() {
         let _guard = crate::IMGUI_TEST_LOCK.lock().unwrap();
