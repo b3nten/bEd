@@ -11,6 +11,7 @@ pub struct KeybindsManager {
     disk_contents: Option<Vec<u8>>,
     pub reload_error: Option<String>,
 }
+
 impl KeybindsManager {
     pub fn new(config_dir: &Path) -> Self {
         Self {
@@ -20,9 +21,11 @@ impl KeybindsManager {
             reload_error: None,
         }
     }
+    
     pub fn path(&self) -> &Path {
         &self.path
     }
+    
     pub fn load_keybinds(&mut self) -> io::Result<bool> {
         if !self.path.exists() {
             crate::persistence::write_atomic_new(
@@ -39,6 +42,7 @@ impl KeybindsManager {
             }
         }
     }
+    
     pub fn check_keybinds_file(&mut self) -> io::Result<bool> {
         let result: io::Result<bool> = (|| {
             let bytes = fs::read(&self.path)?;
@@ -66,6 +70,7 @@ impl KeybindsManager {
             )
         })
     }
+    
     fn commit(&mut self, overrides: Overrides) -> io::Result<()> {
         self.check_keybinds_file()?;
         crate::persistence::write_atomic(&self.path, &serde_json::to_value(&overrides)?)?;
@@ -73,6 +78,7 @@ impl KeybindsManager {
         self.overrides = overrides;
         Ok(())
     }
+    
     pub fn assign(
         &mut self,
         action: &Action,
@@ -86,18 +92,21 @@ impl KeybindsManager {
             .map_err(io::Error::other)?;
         self.commit(overrides)
     }
+    
     pub fn remove(&mut self, action: &Action, index: usize) -> io::Result<()> {
         self.check_keybinds_file()?;
         let mut overrides = self.overrides.clone();
         overrides.remove(action, index).map_err(io::Error::other)?;
         self.commit(overrides)
     }
+    
     pub fn clear(&mut self, id: &str) -> io::Result<()> {
         self.check_keybinds_file()?;
         let mut overrides = self.overrides.clone();
         overrides.actions.insert(id.into(), Vec::new());
         self.commit(overrides)
     }
+    
     pub fn restore(&mut self, id: &str) -> io::Result<()> {
         self.check_keybinds_file()?;
         let mut overrides = self.overrides.clone();
@@ -110,6 +119,7 @@ impl KeybindsManager {
 mod tests {
     use super::*;
     use bed_keybindings::{Bindings, Platform, Scope};
+    
     #[test]
     fn saved_overrides_reload_and_malformed_edits_preserve_last_good_bindings() {
         let dir = crate::test_support::TempDir::new();

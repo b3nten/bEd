@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use std::{fs, io, path::Path};
 
 pub const DEFAULT_THEME: &str = "tokyo";
+
 pub const BUILTIN_THEMES: &[&str] = &[
     "tokyo",
     "solarized-light",
@@ -105,6 +106,7 @@ impl Theme {
             .map_err(|e| invalid(format!("{}: {e}", path.display())))?;
         Self::from_json(&value).map_err(|e| invalid(format!("{}: {e}", path.display())))
     }
+    
     pub fn from_json(value: &Value) -> io::Result<Self> {
         let name = value["name"]
             .as_str()
