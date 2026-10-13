@@ -69,6 +69,7 @@ pub(crate) fn shortcut_actions() -> Vec<bed_keybindings::Action> {
         ),
     ]
 }
+
 pub(crate) fn default_shortcuts() -> bed_keybindings::ShortcutInput {
     bed_keybindings::ShortcutInput::new(bed_keybindings::Bindings::new(
         bed_keybindings::common_actions()

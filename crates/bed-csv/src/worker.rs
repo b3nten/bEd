@@ -20,21 +20,25 @@ pub struct Job {
     pub filters: Vec<ColumnFilter>,
     pub sort: Option<Sort>,
 }
+
 pub struct Output {
     pub serial: u64,
     pub revision: Revision,
     pub result: Result<View, String>,
 }
+
 pub struct View {
     pub table: Arc<Table>,
     pub rows: Arc<[usize]>,
     pub header: bool,
 }
+
 pub struct Worker {
     sender: Option<mpsc::SyncSender<Job>>,
     receiver: mpsc::Receiver<Output>,
     serial: Arc<AtomicU64>,
 }
+
 impl Worker {
     pub fn new() -> Self {
         let (sender, jobs) = mpsc::sync_channel::<Job>(1);
@@ -109,18 +113,22 @@ impl Worker {
             serial,
         }
     }
+
     pub fn invalidate(&self) -> u64 {
         self.serial.fetch_add(1, Ordering::Relaxed) + 1
     }
+
     pub fn submit(&self, job: Job) -> bool {
         self.sender
             .as_ref()
             .is_some_and(|sender| sender.try_send(job).is_ok())
     }
+
     pub fn poll(&self) -> impl Iterator<Item = Output> + '_ {
         self.receiver.try_iter()
     }
 }
+
 impl Drop for Worker {
     fn drop(&mut self) {
         self.invalidate();

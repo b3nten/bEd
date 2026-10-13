@@ -23,10 +23,12 @@ pub struct CsvDocument(pub DocumentId);
 /// Main-thread workers and their table presentations belong to the app.
 #[derive(Default)]
 pub struct CsvStates(HashMap<Entity, CsvPanel>);
+
 impl CsvStates {
     pub fn get(&self, entity: Entity) -> Option<&CsvPanel> {
         self.0.get(&entity)
     }
+
     /// Set up a real in-progress cell edit for cross-crate host regression tests.
     #[cfg(feature = "test-support")]
     pub fn set_cell_draft(
@@ -41,10 +43,12 @@ impl CsvStates {
             .ok_or("CSV presentation is missing")?
             .set_cell_draft(row, column, text)
     }
+
     #[cfg(feature = "test-support")]
     pub fn draft_text(&self, entity: Entity) -> Option<&str> {
         self.0.get(&entity)?.draft_text()
     }
+
     #[cfg(test)]
     pub(crate) fn get_mut(&mut self, entity: Entity) -> Option<&mut CsvPanel> {
         self.0.get_mut(&entity)
@@ -57,6 +61,7 @@ pub enum CsvSystems {
 }
 
 pub struct CsvPlugin;
+
 #[derive(Resource)]
 struct CsvOperationHandlers {
     action: PanelActionSystem,
@@ -256,6 +261,7 @@ fn csv_edit_result(
 struct CsvFrontend {
     entity: Entity,
 }
+
 impl Panel for CsvFrontend {
     fn title(&self, world: &World) -> String {
         world.non_send::<CsvStates>().get(self.entity).map_or_else(

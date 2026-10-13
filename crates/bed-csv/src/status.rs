@@ -17,6 +17,7 @@ pub(crate) fn items() -> StatusItems {
         tooltip,
     }])
 }
+
 fn presentation(world: &World, context: StatusContext) -> Option<StatusText> {
     if !context.is_focused() {
         return None;
@@ -28,14 +29,17 @@ fn presentation(world: &World, context: StatusContext) -> Option<StatusText> {
             .status(),
     )
 }
+
 fn measure(world: &World, ui: &Ui, context: StatusContext) -> Option<f32> {
     Some(presentation(world, context)?.measure(ui))
 }
+
 fn draw(world: &mut World, ui: &Ui, context: StatusDrawContext, actions: &mut Vec<Action>) {
     if let Some(text) = presentation(world, context.context) {
         text.draw(ui, context, actions);
     }
 }
+
 fn tooltip(world: &World, ui: &Ui, context: StatusContext) {
     if let Some(text) = presentation(world, context) {
         text.tooltip(ui);

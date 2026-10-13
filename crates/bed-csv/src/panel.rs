@@ -19,6 +19,7 @@ struct Selection {
     anchor: [usize; 2],
     focus: [usize; 2],
 }
+
 impl Selection {
     fn single(row: usize, column: usize) -> Self {
         Self {
@@ -26,12 +27,15 @@ impl Selection {
             focus: [row, column],
         }
     }
+
     fn rows(self) -> RangeInclusive<usize> {
         self.anchor[0].min(self.focus[0])..=self.anchor[0].max(self.focus[0])
     }
+
     fn columns(self) -> RangeInclusive<usize> {
         self.anchor[1].min(self.focus[1])..=self.anchor[1].max(self.focus[1])
     }
+
     fn contains(self, row: usize, column: usize) -> bool {
         self.rows().contains(&row) && self.columns().contains(&column)
     }
@@ -86,6 +90,7 @@ pub struct CsvPanel {
     reveal_selection: bool,
     drag_selecting: bool,
 }
+
 impl CsvPanel {
     pub(crate) fn status(&self) -> bed_workbench_api::StatusText {
         let summary = if let Some(view) = &self.view {
@@ -121,14 +126,17 @@ impl CsvPanel {
         text.error = self.error().is_some();
         text
     }
+
     /// Whether the grid has caught up with the current document and interpretation.
     pub fn is_ready(&self) -> bool {
         self.ready()
     }
+
     /// Current parse or edit error, for embedding hosts and diagnostics.
     pub fn error(&self) -> Option<&str> {
         self.parse_error.as_deref().or(self.message.as_deref())
     }
+
     #[cfg(feature = "test-support")]
     pub(crate) fn set_cell_draft(
         &mut self,
@@ -149,6 +157,7 @@ impl CsvPanel {
         self.begin_edit(row, column, Some(text), false);
         Ok(())
     }
+
     #[cfg(feature = "test-support")]
     pub(crate) fn draft_text(&self) -> Option<&str> {
         self.draft
@@ -156,9 +165,11 @@ impl CsvPanel {
             .or(self.pending_draft.as_ref())
             .map(|draft| draft.text.as_str())
     }
+
     pub(crate) fn preparing(&self) -> bool {
         self.updating || self.awaiting_revision
     }
+
     pub fn new(document: DocumentId, state: &Value) -> Self {
         let mut state: ViewState = serde_json::from_value(state.clone()).unwrap_or_default();
         state.widths.truncate(510);
@@ -205,6 +216,7 @@ impl CsvPanel {
             drag_selecting: false,
         }
     }
+
     fn invalidate(&mut self) {
         // A filter can hide the edited record; keep its draft reachable above the grid.
         if let Some(draft) = &mut self.draft {
@@ -215,6 +227,7 @@ impl CsvPanel {
         self.updating = true;
         self.parse_error = None;
     }
+
     pub(crate) fn sync(&mut self, host: &HostContext<'_>) {
         let Some(document) = host.document(self.document) else {
             self.parse_error = Some("This document is no longer open.".into());
@@ -279,6 +292,7 @@ impl CsvPanel {
             }
         }
     }
+
     fn ready(&self) -> bool {
         self.view.is_some()
             && !self.updating
@@ -286,11 +300,13 @@ impl CsvPanel {
             && self.pending_token.is_none()
             && self.loaded_revision == self.revision
     }
+
     fn transformed(&self) -> bool {
         self.state.sort.is_some()
             || !self.state.global_filter.is_empty()
             || !self.state.filters.is_empty()
     }
+
     fn clamp_selection(&mut self) {
         let Some(view) = &self.view else {
             return;
@@ -309,6 +325,7 @@ impl CsvPanel {
             }
         }
     }
+
     fn select_all(&mut self) {
         if !self.ready() {
             self.select_all_pending = true;
@@ -324,6 +341,7 @@ impl CsvPanel {
             self.select_all_pending = true;
         }
     }
+
     fn select(&mut self, row: usize, column: usize, extend: bool) {
         if extend && let Some(selection) = &mut self.state.selection {
             selection.focus = [row, column];
@@ -331,6 +349,7 @@ impl CsvPanel {
             self.state.selection = Some(Selection::single(row, column));
         }
     }
+
     fn begin_edit(
         &mut self,
         row: usize,
@@ -349,6 +368,7 @@ impl CsvPanel {
         };
         self.begin_record_edit(record, column, replacement, expanded);
     }
+
     fn begin_record_edit(
         &mut self,
         record: usize,
@@ -373,6 +393,7 @@ impl CsvPanel {
         });
         self.message = None;
     }
+
     fn queue_edits(
         &mut self,
         result: Result<Vec<ByteEdit>, String>,
@@ -394,6 +415,7 @@ impl CsvPanel {
         self.message = None;
         Ok(())
     }
+
     fn commit(
         &mut self,
         host: &HostContext<'_>,
@@ -434,6 +456,7 @@ impl CsvPanel {
         }
         Ok(())
     }
+
     fn operation(
         &mut self,
         operation: impl FnOnce(&Table) -> Result<Vec<ByteEdit>, String>,
@@ -447,6 +470,7 @@ impl CsvPanel {
             self.message = Some(error);
         }
     }
+
     fn selected_records(&self) -> Vec<usize> {
         match (&self.view, self.state.selection) {
             (Some(view), Some(selection)) => selection
@@ -456,6 +480,7 @@ impl CsvPanel {
             _ => Vec::new(),
         }
     }
+
     pub(crate) fn clipboard_operation(
         &mut self,
         action: bed_editor_api::ClipboardAction,
@@ -487,6 +512,7 @@ impl CsvPanel {
             }
         }
     }
+
     fn copy(&self, ui: &Ui) {
         if let (Some(view), Some(selection)) = (&self.view, self.state.selection) {
             let text = view
@@ -499,6 +525,7 @@ impl CsvPanel {
             }
         }
     }
+
     fn clear(&mut self, requests: &mut Vec<HostRequest>) {
         let Some(selection) = self.state.selection else {
             return;
@@ -514,6 +541,7 @@ impl CsvPanel {
             .collect();
         self.operation(|table| table.replace_cells(&cells), requests);
     }
+
     fn paste(&mut self, ui: &Ui, requests: &mut Vec<HostRequest>) {
         if !self.ready() || self.draft.is_some() {
             return;
@@ -531,6 +559,7 @@ impl CsvPanel {
         };
         self.paste_text(&text, requests);
     }
+
     fn paste_text(&mut self, text: &str, requests: &mut Vec<HostRequest>) {
         if !self.ready() || self.draft.is_some() {
             return;
@@ -547,6 +576,7 @@ impl CsvPanel {
             self.message = Some(error);
         }
     }
+
     fn insert_row(&mut self, after: bool, requests: &mut Vec<HostRequest>) {
         if self.transformed() {
             self.message = Some("Clear sorting and filters before inserting rows.".into());
@@ -564,12 +594,14 @@ impl CsvPanel {
             });
         self.operation(|table| table.insert_row(record), requests);
     }
+
     fn delete_rows(&mut self, requests: &mut Vec<HostRequest>) {
         let rows = self.selected_records();
         if !rows.is_empty() {
             self.operation(|table| table.delete_rows(&rows), requests);
         }
     }
+
     fn insert_column(&mut self, column: usize, requests: &mut Vec<HostRequest>) {
         let header = self.view.as_ref().is_some_and(|view| view.header);
         self.operation(|table| table.insert_column(column, header), requests);
@@ -589,6 +621,7 @@ impl CsvPanel {
             }
         }
     }
+
     fn delete_columns(&mut self, requests: &mut Vec<HostRequest>) {
         let Some(selection) = self.state.selection else {
             return;
@@ -622,6 +655,7 @@ impl CsvPanel {
             }
         }
     }
+
     fn next_cell(&mut self, backwards: bool) {
         let Some(view) = &self.view else {
             return;
@@ -645,6 +679,7 @@ impl CsvPanel {
         ));
         self.reveal_selection = true;
     }
+
     fn find_next(&mut self, backwards: bool) {
         let Some(view) = &self.view else {
             return;
@@ -679,6 +714,7 @@ impl CsvPanel {
         }
         self.message = Some("No matching visible cells.".into());
     }
+
     fn cycle_sort(&mut self, column: usize) {
         self.state.sort = match self.state.sort.take() {
             Some(sort) if sort.column == column && sort.descending => None,
@@ -694,6 +730,7 @@ impl CsvPanel {
         };
         self.invalidate();
     }
+
     fn keyboard(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         if !ui.is_window_focused_with_flags(FocusedFlags::ROOT_AND_CHILD_WINDOWS) {
             return;
@@ -805,6 +842,7 @@ impl CsvPanel {
         }
         let _ = host;
     }
+
     fn toolbar(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         if ui.button("Find") {
             self.find_open = !self.find_open;
@@ -913,6 +951,7 @@ impl CsvPanel {
             }
         }
     }
+
     fn expanded_editor(
         &mut self,
         ui: &Ui,
@@ -976,6 +1015,7 @@ impl CsvPanel {
         }
         ui.separator();
     }
+
     fn cell_menu(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         if ui.menu_item("Edit cell…")
             && let Some(selection) = self.state.selection
@@ -997,6 +1037,7 @@ impl CsvPanel {
         }
         let _ = host;
     }
+
     fn row_menu(&mut self, ui: &Ui, requests: &mut Vec<HostRequest>) {
         let insert_enabled = self.ready() && !self.transformed() && self.draft.is_none();
         if ui.menu_item_enabled_selected_no_shortcut("Insert row above", false, insert_enabled) {
@@ -1012,6 +1053,7 @@ impl CsvPanel {
             self.delete_rows(requests);
         }
     }
+
     fn column_menu(&mut self, ui: &Ui, column: usize, requests: &mut Vec<HostRequest>) {
         let header = self.view.as_ref().is_some_and(|view| view.header);
         if header && ui.menu_item("Rename header…") {
@@ -1092,6 +1134,7 @@ impl CsvPanel {
             self.invalidate();
         }
     }
+
     fn grid(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         let Some(view) = &self.view else {
             return;
@@ -1404,9 +1447,11 @@ impl CsvPanel {
             },
         )
     }
+
     pub(crate) fn saved_state(&self) -> Value {
         serde_json::to_value(&self.state).unwrap_or(Value::Null)
     }
+
     pub(crate) fn acknowledge_edit(&mut self, token: EditToken, result: Result<Revision, String>) {
         if self.pending_token != Some(token) {
             return;
@@ -1432,6 +1477,7 @@ impl CsvPanel {
             }
         }
     }
+
     pub(crate) fn apply_action(
         &mut self,
         action: PanelAction,
@@ -1459,6 +1505,7 @@ impl CsvPanel {
         }
         Ok(true)
     }
+
     pub(crate) fn draw_prepared(
         &mut self,
         ui: &Ui,
@@ -1511,15 +1558,19 @@ impl CsvPanel {
     pub fn title(&self, host: &HostContext<'_>) -> String {
         self.panel_title(host)
     }
+
     pub fn attached_document(&self) -> Option<DocumentId> {
         Some(self.document)
     }
+
     pub fn save_state(&self) -> Value {
         self.saved_state()
     }
+
     pub fn edit_result(&mut self, token: EditToken, result: Result<Revision, String>) {
         self.acknowledge_edit(token, result);
     }
+
     pub fn action(
         &mut self,
         action: PanelAction,
@@ -1528,6 +1579,7 @@ impl CsvPanel {
     ) -> Result<bool, String> {
         self.apply_action(action, host, requests)
     }
+
     pub fn draw(&mut self, ui: &Ui, host: &HostContext<'_>, requests: &mut Vec<HostRequest>) {
         self.sync(host);
         self.draw_prepared(ui, host, requests);
@@ -1542,12 +1594,14 @@ fn delimiter_name(delimiter: u8) -> &'static str {
         _ => "comma",
     }
 }
+
 fn same_line_or_wrap(ui: &Ui, width: f32) {
     ui.same_line();
     if ui.content_region_avail()[0] < width {
         ui.new_line();
     }
 }
+
 fn display_cell(value: &str) -> String {
     let mut display = String::new();
     for character in value.chars().take(160) {
@@ -1565,6 +1619,7 @@ fn display_cell(value: &str) -> String {
     // ImGui's double hash suffix is an ID delimiter; the visible text must remain literal.
     display.replace("##", "#\u{200b}#")
 }
+
 fn paste_cells(
     view: &View,
     anchor: [usize; 2],
@@ -1931,6 +1986,7 @@ mod tests {
         panel.state.selection = Some(Selection::single(0, 0));
         panel
     }
+
     #[test]
     fn status_tracks_filtered_rows_selection_and_pending_updates() {
         let mut panel = ready_panel();
@@ -1947,6 +2003,7 @@ mod tests {
         assert!(panel.status().error);
         assert_eq!(panel.status().details, "Invalid encoding");
     }
+
     #[test]
     fn rejected_commit_preserves_the_exact_draft_and_clears_pending_state() {
         let mut panel = ready_panel();
@@ -1986,6 +2043,7 @@ mod tests {
         assert!(panel.pending_token.is_none());
         assert!(!panel.awaiting_revision);
     }
+
     #[test]
     fn rejected_structural_edit_restores_column_preferences_and_readiness() {
         let mut panel = ready_panel();
@@ -2005,6 +2063,7 @@ mod tests {
             "same-revision acknowledgements must not leave edits waiting forever"
         );
     }
+
     #[test]
     fn paste_maps_visible_rows_and_rejects_overflow_atomically() {
         let table = Arc::new(
@@ -2028,6 +2087,7 @@ mod tests {
         assert!(paste_cells(&view, [1, 1], &[vec!["x".into()], vec!["y".into()]], true).is_err());
         assert!(paste_cells(&view, [0, 1], &[vec!["x".into(), "y".into()]], true).is_err());
     }
+
     #[test]
     fn plain_paste_can_append_records_and_columns() {
         let table = Arc::new(
@@ -2050,6 +2110,7 @@ mod tests {
             vec![(0, 0, "x".into()), (0, 1, "y".into()), (1, 0, "z".into())]
         );
     }
+
     #[test]
     fn saved_view_state_round_trips_and_clamps_untrusted_widths() {
         let state = serde_json::json!({ "delimiter": 9, "header": true, "widths": [-10.0, 4500.0], "scroll": [-3.0, 21.0], "global_filter": "abc", "selection": {"anchor":[0,1],"focus":[4,2]} });

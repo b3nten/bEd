@@ -13,10 +13,12 @@ use std::{
 };
 
 struct Clipboard(Rc<RefCell<String>>);
+
 impl dear_imgui_rs::ClipboardBackend for Clipboard {
     fn get(&mut self) -> Option<String> {
         Some(self.0.borrow().clone())
     }
+
     fn set(&mut self, text: &str) {
         *self.0.borrow_mut() = text.to_owned();
     }
