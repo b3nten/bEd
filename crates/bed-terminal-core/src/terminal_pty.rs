@@ -8,6 +8,7 @@ use crate::terminal::{SelectionSnap, Terminal, TerminalEvent, TerminalSnapshot, 
 use crate::terminal_input::{
     KeyboardModes, TerminalKeyEvent, encode_key, encode_paste, encode_text,
 };
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WindowSize {
     pub num_cols: u16,
@@ -15,6 +16,7 @@ pub struct WindowSize {
     pub cell_width: u16,
     pub cell_height: u16,
 }
+
 enum ChildEvent {
     Exited(Option<ExitStatus>),
 }
@@ -48,6 +50,7 @@ pub struct TerminalShell {
     pub args: Vec<String>,
     pub login: bool,
 }
+
 impl TerminalShell {
     pub fn new(program: impl Into<String>, args: Vec<String>) -> Self {
         Self {
@@ -67,6 +70,7 @@ pub struct PtyOptions {
     /// entries in `env` take precedence over removal, without changing the host.
     pub env_remove: Vec<String>,
 }
+
 impl PtyOptions {
     /// Run an interactive remote login shell through the system SSH client.
     /// The target directory is never used as a local child working directory.
@@ -112,15 +116,18 @@ struct QueuedWrite {
     offset: usize,
     _reservation: InputReservation,
 }
+
 struct InputReservation {
     budget: Arc<AtomicUsize>,
     bytes: usize,
 }
+
 impl Drop for InputReservation {
     fn drop(&mut self) {
         self.budget.fetch_sub(self.bytes, Ordering::AcqRel);
     }
 }
+
 fn reserve_bytes(
     budget: &Arc<AtomicUsize>,
     bytes: usize,
@@ -148,6 +155,7 @@ fn reserve_bytes(
         }
     }
 }
+
 #[allow(clippy::large_enum_variant)] // Only 64 inline commands; avoid allocating each keystroke.
 enum PtyCommand {
     Write(QueuedWrite),
@@ -292,12 +300,14 @@ impl TerminalPty {
     pub fn snapshot(&self) -> Arc<TerminalSnapshot> {
         self.snapshot.lock().unwrap().clone()
     }
+
     /// Coalesces requests; the worker publishes at most one snapshot per request.
     pub fn request_snapshot(&self) {
         if !self.snapshot_requested.swap(true, Ordering::AcqRel) {
             let _ = self.poller.notify();
         }
     }
+
     pub fn command(&self, command: TerminalCommand) -> io::Result<()> {
         let reserve = match &command {
             TerminalCommand::Key(event) => {
@@ -331,13 +341,16 @@ impl TerminalPty {
     pub fn process_id(&self) -> u32 {
         self.process_id
     }
+
     pub fn shell_name(&self) -> &str {
         &self.shell_name
     }
+
     /// Cached by the PTY worker; reading a tab label never queries the OS.
     pub fn foreground_process_name(&self) -> Option<String> {
         self.foreground_process.lock().unwrap().clone()
     }
+
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::Acquire)
     }
@@ -424,6 +437,7 @@ impl TerminalPty {
         }
     }
 }
+
 impl Drop for TerminalPty {
     fn drop(&mut self) {
         self.shutdown();
@@ -476,6 +490,7 @@ fn enqueue_reserved(
     });
     Ok(())
 }
+
 fn enqueue_reply(
     writes: &mut VecDeque<QueuedWrite>,
     budget: &Arc<AtomicUsize>,
@@ -888,9 +903,11 @@ mod platform {
         pub fn process_id(&self) -> u32 {
             self.process.id()
         }
+
         pub fn shell_name(&self) -> &str {
             &self.program
         }
+
         pub fn foreground_process_name(&self) -> Option<String> {
             let group = unsafe { libc::tcgetpgrp(self.master.as_ref()?.as_raw_fd()) };
             crate::process_title::process_name(if group > 0 {
@@ -899,6 +916,7 @@ mod platform {
                 self.process.id() as _
             })
         }
+
         pub fn resize(&mut self, size: WindowSize) -> io::Result<()> {
             let master = self
                 .master
@@ -910,9 +928,11 @@ mod platform {
             }
             Ok(())
         }
+
         pub fn io(&mut self) -> &mut File {
             self.master.as_mut().expect("worker owns an open PTY")
         }
+
         pub unsafe fn register(
             &mut self,
             poller: &Arc<Poller>,
@@ -921,6 +941,7 @@ mod platform {
         ) -> io::Result<()> {
             unsafe { poller.add_with_mode(&*self.io(), event, mode) }
         }
+
         pub fn reregister(
             &mut self,
             poller: &Arc<Poller>,
@@ -929,6 +950,7 @@ mod platform {
         ) -> io::Result<()> {
             poller.modify_with_mode(self.io(), event, mode)
         }
+
         pub fn deregister(&mut self, poller: &Arc<Poller>) -> io::Result<()> {
             match &self.master {
                 Some(master) => poller.delete(master),
@@ -1030,11 +1052,13 @@ mod platform {
                 }
             }
         }
+
         pub fn shutdown(&mut self) {
             self.terminate();
             self.master = None;
         }
     }
+
     impl Drop for Pty {
         fn drop(&mut self) {
             self.shutdown();
@@ -1049,6 +1073,7 @@ mod platform {
             ws_ypixel: size.cell_height.saturating_mul(size.num_lines),
         }
     }
+
     fn account() -> io::Result<[String; 3]> {
         let suggested = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
         let mut buffer = vec![
@@ -1110,6 +1135,7 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn ssh_terminal_uses_remote_root_and_literal_shell_quoting() {
         let target = bed_remote::SshTarget {
@@ -1136,6 +1162,7 @@ mod tests {
         assert!(base.for_ssh(&target, "relative").is_err());
         assert!(base.for_ssh(&target, "/nul\0path").is_err());
     }
+
     #[test]
     fn validates_dimensions_before_native_resize_or_spawn() {
         assert!(

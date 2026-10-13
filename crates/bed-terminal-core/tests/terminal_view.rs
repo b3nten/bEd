@@ -10,6 +10,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 static IMGUI_LOCK: Mutex<()> = Mutex::new(());
+
 fn context_and_fonts() -> (Context, TerminalFonts) {
     let mut context = Context::create();
     context.set_ini_filename(None::<PathBuf>).unwrap();
@@ -23,6 +24,7 @@ fn context_and_fonts() -> (Context, TerminalFonts) {
         .build();
     (context, fonts)
 }
+
 fn draw(
     context: &mut Context,
     renderer: &TerminalRenderer,
@@ -48,6 +50,7 @@ fn draw(
         });
     context.render_legacy().draw_data().total_vtx_count()
 }
+
 #[test]
 fn protocol_scenarios_produce_textured_glyph_geometry() {
     let _guard = IMGUI_LOCK.lock().unwrap();
@@ -86,6 +89,7 @@ fn protocol_scenarios_produce_textured_glyph_geometry() {
         renderer.clear(&mut context);
     }
 }
+
 #[test]
 fn selection_and_cursor_blink_reuse_shaped_rows_and_uploads() {
     let _guard = IMGUI_LOCK.lock().unwrap();
@@ -125,6 +129,7 @@ fn selection_and_cursor_blink_reuse_shaped_rows_and_uploads() {
     assert_eq!(renderer.stats().prepared_rows, after.prepared_rows + 1);
     renderer.clear(&mut context);
 }
+
 #[test]
 fn dpi_and_resource_reset_rebuild_textures_without_terminal_reset() {
     let _guard = IMGUI_LOCK.lock().unwrap();
@@ -160,6 +165,7 @@ fn dpi_and_resource_reset_rebuild_textures_without_terminal_reset() {
     }
     renderer.clear(&mut context);
 }
+
 #[test]
 fn images_upload_progressively_and_retire_when_their_placement_disappears() {
     let _guard = IMGUI_LOCK.lock().unwrap();

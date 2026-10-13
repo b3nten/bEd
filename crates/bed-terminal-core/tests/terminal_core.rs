@@ -179,6 +179,7 @@ fn oversized_header_is_rejected_before_decode_and_text_continues() {
 #[test]
 fn core_and_snapshot_can_cross_the_worker_boundary() {
     fn send<T: Send>() {}
+
     fn sync<T: Sync>() {}
     send::<Terminal>();
     send::<bed_terminal_core::terminal::TerminalSnapshot>();

@@ -98,7 +98,9 @@ fn main() {
 }
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
 struct Directory(PathBuf);
+
 impl Directory {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
@@ -110,11 +112,13 @@ impl Directory {
         Self(path)
     }
 }
+
 impl Drop for Directory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
 fn size(cols: u16, rows: u16) -> WindowSize {
     WindowSize {
         num_cols: cols,
@@ -123,6 +127,7 @@ fn size(cols: u16, rows: u16) -> WindowSize {
         cell_height: 16,
     }
 }
+
 fn options(scenario: &str) -> PtyOptions {
     PtyOptions {
         shell: Some(TerminalShell::new(
@@ -132,9 +137,11 @@ fn options(scenario: &str) -> PtyOptions {
         ..PtyOptions::default()
     }
 }
+
 fn spawn(scenario: &str) -> TerminalPty {
     TerminalPty::spawn(&options(scenario), size(512, 48)).unwrap()
 }
+
 fn snapshot_text(pty: &TerminalPty) -> String {
     pty.snapshot()
         .lines
@@ -148,6 +155,7 @@ fn snapshot_text(pty: &TerminalPty) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
 fn wait_production_exit(pty: &mut TerminalPty) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
@@ -162,6 +170,7 @@ fn wait_production_exit(pty: &mut TerminalPty) {
     }
     panic!("Production child did not finish");
 }
+
 fn input_pressure_reply() {
     let mut pty = spawn("pressure_reply");
     let mut capture = ready(&mut pty);
@@ -172,6 +181,7 @@ fn input_pressure_reply() {
     assert!(capture.wait_exit(&mut pty).success());
     bounded_shutdown(&mut pty);
 }
+
 fn stop_sync_output() {
     let directory = Directory::new();
     let flag = directory.0.join("output-written");
@@ -204,6 +214,7 @@ fn stop_sync_output() {
     );
     bounded_shutdown(&mut pty);
 }
+
 fn background_output() {
     let mut pty = TerminalPty::spawn_terminal(
         &options("background_flood"),
@@ -218,6 +229,7 @@ fn background_output() {
     assert!(snapshot_text(&pty).contains("BACKGROUND_FLOOD_END"));
     bounded_shutdown(&mut pty);
 }
+
 struct Capture {
     bytes: Vec<u8>,
     model: Terminal,
@@ -225,6 +237,7 @@ struct Capture {
     exited: bool,
     parse_output: bool,
 }
+
 impl Capture {
     fn new() -> Self {
         Self {
@@ -235,6 +248,7 @@ impl Capture {
             parse_output: true,
         }
     }
+
     fn poll(&mut self, pty: &mut TerminalPty) {
         for event in pty.poll() {
             match event {
@@ -254,6 +268,7 @@ impl Capture {
             }
         }
     }
+
     fn visible(&self) -> String {
         let mut output = String::new();
         for row in 0..self.model.rows() {
@@ -264,12 +279,14 @@ impl Capture {
         }
         output
     }
+
     fn contains(&self, text: &str) -> bool {
         self.bytes
             .windows(text.len())
             .any(|bytes| bytes == text.as_bytes())
             || self.visible().contains(text)
     }
+
     fn wait(&mut self, pty: &mut TerminalPty, text: &str) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
@@ -286,6 +303,7 @@ impl Capture {
             String::from_utf8_lossy(&self.bytes[self.bytes.len().saturating_sub(512)..])
         );
     }
+
     fn wait_exit(&mut self, pty: &mut TerminalPty) -> ExitStatus {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
@@ -298,11 +316,13 @@ impl Capture {
         panic!("Child did not exit");
     }
 }
+
 fn ready(pty: &mut TerminalPty) -> Capture {
     let mut capture = Capture::new();
     capture.wait(pty, "PTY_READY");
     capture
 }
+
 fn bounded_shutdown(pty: &mut TerminalPty) {
     let start = Instant::now();
     pty.shutdown();
@@ -365,6 +385,7 @@ fn child_environment() {
     #[cfg(unix)]
     assert_eq!(sigchld_handler(), host_sigchld);
 }
+
 fn resize() {
     let mut pty = spawn("interactive");
     let mut capture = ready(&mut pty);
@@ -377,6 +398,7 @@ fn resize() {
     assert!(capture.contains("PIXELS:728,592"));
     bounded_shutdown(&mut pty);
 }
+
 fn child_environment_removals() {
     let host_path = std::env::var_os("PATH");
     let mut configuration = options("interactive");
@@ -394,6 +416,7 @@ fn child_environment_removals() {
     assert_eq!(std::env::var_os("PATH"), host_path);
     bounded_shutdown(&mut pty);
 }
+
 fn input() {
     let mut pty = spawn("interactive");
     let mut capture = ready(&mut pty);
@@ -417,6 +440,7 @@ fn input() {
     capture.wait(&mut pty, "HEX:1b5b41007f0a");
     bounded_shutdown(&mut pty);
 }
+
 fn parser_replies() {
     let mut pty = spawn("interactive");
     let mut capture = ready(&mut pty);
@@ -424,6 +448,7 @@ fn parser_replies() {
     capture.wait(&mut pty, "REPLY:1b5b313b3152");
     bounded_shutdown(&mut pty);
 }
+
 fn exit_drain() {
     let mut pty = spawn("interactive");
     let mut capture = ready(&mut pty);
@@ -434,6 +459,7 @@ fn exit_drain() {
     assert!(capture.contains("FINAL_STDERR"));
     bounded_shutdown(&mut pty);
 }
+
 fn simultaneous() {
     let mut one = spawn("interactive");
     let mut two = spawn("interactive");
@@ -450,6 +476,7 @@ fn simultaneous() {
     capture_two.wait(&mut two, "ECHOED:still alive");
     bounded_shutdown(&mut two);
 }
+
 fn bounded_input() {
     let mut pty = spawn("silent");
     let _capture = ready(&mut pty);
@@ -468,6 +495,7 @@ fn bounded_input() {
     );
     bounded_shutdown(&mut pty);
 }
+
 fn bounded_output() {
     let mut pty = spawn("interactive");
     let _capture = ready(&mut pty);
@@ -476,6 +504,7 @@ fn bounded_output() {
     thread::sleep(Duration::from_millis(200));
     bounded_shutdown(&mut pty);
 }
+
 fn spawn_errors() {
     let mut existing = spawn("interactive");
     let mut capture = ready(&mut existing);
@@ -497,6 +526,7 @@ fn spawn_errors() {
     capture.wait(&mut existing, "ECHOED:survived");
     bounded_shutdown(&mut existing);
 }
+
 #[cfg(unix)]
 fn output_drain() {
     let mut pty = spawn("interactive");
@@ -513,6 +543,7 @@ fn output_drain() {
     );
     bounded_shutdown(&mut pty);
 }
+
 #[cfg(unix)]
 fn foreground_signal() {
     use std::os::unix::process::ExitStatusExt;
@@ -531,6 +562,7 @@ fn foreground_signal() {
     assert_eq!(unrelated.wait().unwrap().code(), Some(9));
     assert_eq!(sigchld_handler(), before);
 }
+
 #[cfg(unix)]
 fn stubborn_teardown() {
     let mut pty = spawn("stubborn");
@@ -539,6 +571,7 @@ fn stubborn_teardown() {
     bounded_shutdown(&mut pty);
     assert_reaped(pid);
 }
+
 #[cfg(unix)]
 fn stop_foreground_job() {
     let directory = Directory::new();
@@ -584,6 +617,7 @@ fn stop_foreground_job() {
     assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
     bounded_shutdown(&mut pty);
 }
+
 #[cfg(unix)]
 fn real_shell() {
     let directory = Directory::new();
@@ -915,6 +949,7 @@ fn child(scenario: &str) {
         io::stdout().flush().unwrap();
     }
 }
+
 fn read_until(last: u8) -> Vec<u8> {
     let mut bytes = Vec::new();
     loop {
@@ -930,9 +965,11 @@ fn read_until(last: u8) -> Vec<u8> {
         );
     }
 }
+
 fn hexadecimal(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
+
 #[cfg(unix)]
 fn raw_child_stdio() {
     let mut attributes = std::mem::MaybeUninit::<libc::termios>::uninit();
@@ -942,6 +979,7 @@ fn raw_child_stdio() {
     attributes.c_lflag |= libc::ISIG;
     assert_eq!(unsafe { libc::tcsetattr(0, libc::TCSANOW, &attributes) }, 0);
 }
+
 #[cfg(unix)]
 fn child_size() {
     let mut size = std::mem::MaybeUninit::<libc::winsize>::uninit();
@@ -953,6 +991,7 @@ fn child_size() {
     println!("SIZE:{},{}", size.ws_col, size.ws_row);
     println!("PIXELS:{},{}", size.ws_xpixel, size.ws_ypixel);
 }
+
 #[cfg(unix)]
 fn sigchld_handler() -> (usize, i32) {
     let mut action = std::mem::MaybeUninit::<libc::sigaction>::uninit();
@@ -963,6 +1002,7 @@ fn sigchld_handler() -> (usize, i32) {
     let action = unsafe { action.assume_init() };
     (action.sa_sigaction, action.sa_flags)
 }
+
 #[cfg(unix)]
 fn assert_reaped(pid: u32) {
     let mut status = 0;

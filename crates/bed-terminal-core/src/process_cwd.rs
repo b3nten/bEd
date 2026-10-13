@@ -104,6 +104,7 @@ mod tests {
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
     struct Directory(PathBuf);
+
     impl Directory {
         fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
@@ -115,6 +116,7 @@ mod tests {
             Self(path)
         }
     }
+
     impl Drop for Directory {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
@@ -122,6 +124,7 @@ mod tests {
     }
 
     struct Process(Child);
+
     impl Drop for Process {
         fn drop(&mut self) {
             let _ = self.0.kill();

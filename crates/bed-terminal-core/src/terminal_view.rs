@@ -12,6 +12,7 @@ use dear_imgui_rs::{Context, MouseButton, Ui, sys};
 use std::io;
 
 const BORDER: f32 = 2.0;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum MouseGesture {
     #[default]
@@ -22,6 +23,7 @@ enum MouseGesture {
         x10: bool,
     },
 }
+
 #[derive(Clone, Copy, Debug)]
 pub struct PaintMetrics {
     pub cw: f32,
@@ -33,7 +35,9 @@ pub struct PaintMetrics {
 
 pub trait TerminalIo {
     fn write(&mut self, bytes: &[u8]) -> io::Result<()>;
+
     fn command(&mut self, command: TerminalCommand) -> io::Result<()>;
+
     fn resize(&mut self, cols: usize, rows: usize, cw: f32, ch: f32) -> io::Result<()>;
 }
 
@@ -62,6 +66,7 @@ pub struct TerminalView {
     context_link: Option<String>,
     preedit: String,
 }
+
 impl Default for TerminalView {
     fn default() -> Self {
         Self {
@@ -97,6 +102,7 @@ impl Default for TerminalView {
         }
     }
 }
+
 impl TerminalView {
     pub fn prepare_frame(
         &mut self,
@@ -135,19 +141,24 @@ impl TerminalView {
         }
         Ok(())
     }
+
     pub fn invalidate_textures(&mut self) {
         self.renderer.invalidate_textures();
         self.prepared = false;
     }
+
     pub fn clear(&mut self, context: &mut Context) {
         self.renderer.clear(context);
     }
+
     pub fn set_preedit(&mut self, text: String) {
         self.preedit = text;
     }
+
     pub fn take_open_link(&mut self) -> Option<String> {
         self.open_link.take()
     }
+
     pub fn has_pending_uploads(&self) -> bool {
         !self.prepared
             || self
@@ -340,9 +351,11 @@ impl TerminalView {
         }
         [col, row]
     }
+
     fn hovered_link(&self, row: usize, col: usize) -> Option<&TerminalLink> {
         self.links.iter().find(|link| link.contains(row, col))
     }
+
     fn draw_hover(&self, ui: &Ui, terminal: &TerminalSnapshot, origin: [f32; 2]) {
         if !ui.is_item_hovered() {
             return;
@@ -366,12 +379,14 @@ impl TerminalView {
             }
         }
     }
+
     fn paste(&self, io: &mut impl TerminalIo) -> io::Result<()> {
         if let Some(text) = clipboard_text() {
             io.command(TerminalCommand::Paste(text))?;
         }
         Ok(())
     }
+
     fn dispatch_mouse(
         &mut self,
         ui: &Ui,
@@ -591,12 +606,14 @@ pub fn pixel_to_cell(
         cell.min(limits[axis])
     })
 }
+
 fn mouse_mode_bits(m: &TerminalModes) -> u8 {
     [m.mouse_x10, m.mouse_button, m.mouse_motion, m.mouse_many]
         .into_iter()
         .enumerate()
         .fold(0, |mask, (bit, enabled)| mask | (u8::from(enabled) << bit))
 }
+
 /// Xterm mouse reports: SGR keeps button identity on release; the legacy
 /// byte protocol uses release button 3 and clamps coordinates to 223.
 pub fn mouse_packet(
@@ -620,6 +637,7 @@ pub fn mouse_packet(
     report.extend([col, row].map(|value| 32 + value.saturating_add(1).min(223) as u8));
     report
 }
+
 pub(crate) fn clipboard_text() -> Option<String> {
     let pointer = unsafe { sys::igGetClipboardText() };
     if pointer.is_null() {
@@ -628,6 +646,7 @@ pub(crate) fn clipboard_text() -> Option<String> {
     let text = unsafe { std::ffi::CStr::from_ptr(pointer) };
     Some(text.to_string_lossy().into_owned())
 }
+
 pub(crate) fn set_clipboard_text(text: &str) {
     let prefix = text.split('\0').next().expect("split has a first part");
     let value = std::ffi::CString::new(prefix).expect("prefix contains no NUL");
@@ -639,24 +658,29 @@ pub(crate) fn set_clipboard_text(text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[derive(Default)]
     struct RecordedIo {
         writes: Vec<Vec<u8>>,
         commands: Vec<TerminalCommand>,
     }
+
     impl TerminalIo for RecordedIo {
         fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
             self.writes.push(bytes.to_vec());
             Ok(())
         }
+
         fn command(&mut self, command: TerminalCommand) -> io::Result<()> {
             self.commands.push(command);
             Ok(())
         }
+
         fn resize(&mut self, _: usize, _: usize, _: f32, _: f32) -> io::Result<()> {
             Ok(())
         }
     }
+
     #[test]
     fn font_density_follows_the_framebuffer_instead_of_monitor_dpi() {
         use dear_imgui_rs::{Condition, FramePrepareOptions};
@@ -694,6 +718,7 @@ mod tests {
         assert_eq!(view.renderer.density(), 1.0);
         view.clear(&mut context);
     }
+
     #[test]
     fn native_focus_loss_preserves_canvas_focus_but_hiding_does_not() {
         let mut view = TerminalView::default();
@@ -718,6 +743,7 @@ mod tests {
             [true, false, true, false]
         );
     }
+
     #[test]
     fn wheel_accumulates_fractional_motion_and_retains_burst_remainder() {
         let mut remainder = 0.0;
@@ -836,6 +862,7 @@ mod tests {
                 .any(|command| matches!(command, TerminalCommand::SelectionStart { .. }))
         );
     }
+
     #[test]
     fn cell_hit_testing_clips_negative_and_outside_coordinates() {
         let m = PaintMetrics {
@@ -854,6 +881,7 @@ mod tests {
             [79, 23]
         );
     }
+
     #[test]
     fn sgr_mouse_keeps_large_coordinates_and_release_identity() {
         assert_eq!(

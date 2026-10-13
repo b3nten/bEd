@@ -10,6 +10,7 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
+
 fn main() {
     let mut context = Context::create();
     let mut fonts = TerminalFonts::default();

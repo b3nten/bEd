@@ -45,11 +45,13 @@ pub struct TerminalRendererStats {
     pub image_resident_textures: usize,
     pub rejected_images: u64,
 }
+
 #[derive(Clone, Copy, Hash, Eq, PartialEq)]
 struct GlyphKey {
     font: usize,
     glyph: u16,
 }
+
 #[derive(Clone, Copy)]
 struct AtlasGlyph {
     page: usize,
@@ -61,12 +63,14 @@ struct AtlasGlyph {
     height: f32,
     color: bool,
 }
+
 struct GlyphPage {
     texture: ManagedTextureId,
     x: u32,
     y: u32,
     shelf_height: u32,
 }
+
 impl GlyphPage {
     fn allocate(&mut self, width: u32, height: u32) -> Option<[u32; 2]> {
         // One transparent pixel separates glyphs, including at page edges.
@@ -89,6 +93,7 @@ impl GlyphPage {
         Some(position)
     }
 }
+
 #[derive(Clone, Copy)]
 struct Quad {
     page: usize,
@@ -101,29 +106,34 @@ struct Quad {
     column: usize,
     end_column: usize,
 }
+
 struct ContextCellShape {
     font: usize,
     end_column: usize,
     glyphs: Vec<(u16, f32, f32)>,
 }
+
 struct Background {
     x0: f32,
     x1: f32,
     color: u32,
     default: bool,
 }
+
 struct Decoration {
     p0: [f32; 2],
     p1: [f32; 2],
     color: u32,
     blink: bool,
 }
+
 #[derive(Default)]
 struct PreparedRow {
     quads: Vec<Quad>,
     backgrounds: Vec<Background>,
     decorations: Vec<Decoration>,
 }
+
 struct ImageTile {
     texture: ManagedTextureId,
     x: usize,
@@ -131,6 +141,7 @@ struct ImageTile {
     width: usize,
     height: usize,
 }
+
 struct PreparedImage {
     revision: u64,
     width: usize,
@@ -162,6 +173,7 @@ pub struct TerminalRenderer {
     stats: TerminalRendererStats,
     warning: Option<String>,
 }
+
 impl Default for TerminalRenderer {
     fn default() -> Self {
         Self {
@@ -187,28 +199,35 @@ impl Default for TerminalRenderer {
         }
     }
 }
+
 impl TerminalRenderer {
     pub fn metrics(&self) -> [f32; 2] {
         [self.metrics[0], self.metrics[1]]
     }
+
     pub fn density(&self) -> f32 {
         self.density
     }
+
     pub fn stats(&self) -> TerminalRendererStats {
         self.stats
     }
+
     pub fn invalidate_textures(&mut self) {
         self.reset_atlas = true;
         self.reset_images = true;
     }
+
     pub fn warning(&self) -> Option<&str> {
         self.warning.as_deref()
     }
+
     pub fn has_pending_uploads(&self) -> bool {
         self.images
             .values()
             .any(|image| image.next_tile < image.tile_count)
     }
+
     /// Retire this session's textures between frames. Context retains any
     /// references held by render snapshots until the GPU has consumed them.
     pub fn clear(&mut self, context: &mut Context) {
@@ -229,6 +248,7 @@ impl TerminalRenderer {
         self.stats.image_resident_bytes = 0;
         self.stats.image_resident_textures = 0;
     }
+
     pub fn prepare(
         &mut self,
         context: &mut Context,
@@ -298,6 +318,7 @@ impl TerminalRenderer {
         self.prepare_images(context, snapshot)?;
         Ok(())
     }
+
     fn prepare_row(
         &mut self,
         context: &mut Context,
@@ -462,6 +483,7 @@ impl TerminalRenderer {
         row.quads.retain(|q| q.p1[0] > q.p0[0] && q.p1[1] > q.p0[1]);
         Ok(row)
     }
+
     fn glyph(
         &mut self,
         context: &mut Context,
@@ -600,6 +622,7 @@ impl TerminalRenderer {
         self.glyphs.insert(key, Some(glyph));
         Ok(Some(glyph))
     }
+
     fn prepare_images(
         &mut self,
         context: &mut Context,
@@ -736,6 +759,7 @@ impl TerminalRenderer {
         }
         Ok(())
     }
+
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
@@ -878,6 +902,7 @@ impl TerminalRenderer {
             }
         }
     }
+
     fn draw_quads(
         &self,
         ui: &Ui,
@@ -926,6 +951,7 @@ impl TerminalRenderer {
             start = end;
         }
     }
+
     fn draw_images(
         &self,
         draw: &dear_imgui_rs::DrawListMut<'_>,
@@ -985,6 +1011,7 @@ impl TerminalRenderer {
         }
     }
 }
+
 fn image_layer(z_index: i32) -> u8 {
     if z_index < -(1 << 30) {
         0
@@ -1088,12 +1115,14 @@ fn shape_contextual_cells(
     }
     result
 }
+
 fn script_for(text: &str) -> Script {
     text.chars()
         .map(|ch| ch.properties().script())
         .find(|s| !matches!(s, Script::Common | Script::Inherited | Script::Unknown))
         .unwrap_or(Script::Latin)
 }
+
 fn choose_font(fonts: &TerminalFonts, style: usize, text: &str) -> usize {
     let primary = fonts.shape_styles[style];
     if text.is_ascii() {
@@ -1137,6 +1166,7 @@ fn choose_font(fonts: &TerminalFonts, style: usize, text: &str) -> usize {
     }
     best
 }
+
 fn resolve(color: TerminalColor, palette: &[[u8; 3]; 260]) -> u32 {
     let [r, g, b] = match color {
         TerminalColor::Rgb(rgb) => rgb,
@@ -1144,6 +1174,7 @@ fn resolve(color: TerminalColor, palette: &[[u8; 3]; 260]) -> u32 {
     };
     rgb(r, g, b)
 }
+
 fn colors(cell: &TerminalCell, snapshot: &TerminalSnapshot) -> (u32, u32) {
     let mut fg = resolve(cell.fg, &snapshot.palette);
     let mut bg = resolve(cell.bg, &snapshot.palette);
@@ -1175,6 +1206,7 @@ fn colors(cell: &TerminalCell, snapshot: &TerminalSnapshot) -> (u32, u32) {
     }
     (fg, bg)
 }
+
 fn clip_quad(q: &mut Quad, min: [f32; 2], max: [f32; 2]) {
     for axis in 0..2 {
         let length = q.p1[axis] - q.p0[axis];
@@ -1190,6 +1222,7 @@ fn clip_quad(q: &mut Quad, min: [f32; 2], max: [f32; 2]) {
         q.uv1[axis] -= uv_length * high / length;
     }
 }
+
 #[allow(clippy::too_many_arguments)]
 fn decorations(
     out: &mut Vec<Decoration>,
@@ -1264,6 +1297,7 @@ fn decorations(
 fn rgba(r: u8, g: u8, b: u8, a: u8) -> u32 {
     u32::from(r) | (u32::from(g) << 8) | (u32::from(b) << 16) | (u32::from(a) << 24)
 }
+
 fn rgb(r: u8, g: u8, b: u8) -> u32 {
     rgba(r, g, b, 255)
 }
@@ -1272,6 +1306,7 @@ fn rgb(r: u8, g: u8, b: u8) -> u32 {
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
     #[test]
     fn text_quads_stay_on_physical_pixels_in_fractionally_positioned_panes() {
         use dear_imgui_rs::{Condition, FramePrepareOptions};
@@ -1333,6 +1368,7 @@ mod tests {
         }
         renderer.clear(&mut context);
     }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn arabic_uses_neighbor_context_without_reordering_terminal_cells() {
@@ -1360,6 +1396,7 @@ mod tests {
         assert_eq!(joined[&0].end_column, 1);
         assert_eq!(joined[&1].end_column, 2);
     }
+
     #[test]
     fn ls_column_tabs_keep_spacing_without_emitting_missing_glyphs() {
         let _guard = crate::IMGUI_TEST_LOCK.lock().unwrap();
@@ -1407,6 +1444,7 @@ mod tests {
         assert!(renderer.glyphs.keys().all(|key| key.glyph != 0));
         renderer.clear(&mut context);
     }
+
     #[test]
     fn whole_graphemes_fit_their_terminal_cells() {
         let _guard = crate::IMGUI_TEST_LOCK.lock().unwrap();

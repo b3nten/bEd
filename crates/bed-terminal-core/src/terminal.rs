@@ -50,6 +50,7 @@ pub struct TerminalTheme {
     foreground: [f32; 4],
     ansi: [[f32; 4]; 16],
 }
+
 impl TerminalTheme {
     pub fn new(background: [f32; 4], foreground: [f32; 4], ansi: [[f32; 4]; 16]) -> Self {
         Self {
@@ -58,6 +59,7 @@ impl TerminalTheme {
             ansi,
         }
     }
+
     fn palette(&self) -> [[u8; 3]; 260] {
         let mut palette = default_palette();
         let background = [
@@ -77,6 +79,7 @@ impl TerminalTheme {
         palette
     }
 }
+
 fn rgba(rgb: [u8; 3]) -> [f32; 4] {
     [
         rgb[0] as f32 / 255.0,
@@ -85,6 +88,7 @@ fn rgba(rgb: [u8; 3]) -> [f32; 4] {
         1.0,
     ]
 }
+
 fn rgb8(color: [f32; 4], background: [f32; 4]) -> [u8; 3] {
     let rendered = blend(color, background, color[3]);
     std::array::from_fn(|index| (rendered[index].clamp(0.0, 1.0) * 255.0).round() as u8)
@@ -95,6 +99,7 @@ pub enum TerminalColor {
     Indexed(usize),
     Rgb([u8; 3]),
 }
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TerminalUnderline {
     #[default]
@@ -105,6 +110,7 @@ pub enum TerminalUnderline {
     Dotted,
     Dashed,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TerminalCell {
     /// First scalar, retained for text-only consumers. Render `text` as one cluster.
@@ -119,6 +125,7 @@ pub struct TerminalCell {
     pub underline_color: Option<TerminalColor>,
     pub hyperlink: Option<Arc<str>>,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalCursor {
     pub row: usize,
@@ -128,6 +135,7 @@ pub struct TerminalCursor {
     pub blinking: bool,
     pub visible: bool,
 }
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TerminalModes {
     pub app_cursor: bool,
@@ -150,6 +158,7 @@ pub struct TerminalModes {
     pub modify_other_keys: u8,
     pub grapheme_clustering: bool,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TerminalEvent {
     Write(Vec<u8>),
@@ -157,6 +166,7 @@ pub enum TerminalEvent {
     Bell,
     Error(String),
 }
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SelectionSnap {
     #[default]
@@ -164,18 +174,21 @@ pub enum SelectionSnap {
     Word,
     Line,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalRow {
     pub revision: u64,
     pub cells: Vec<TerminalCell>,
     pub wrapped: bool,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalSelectionSpan {
     pub row: usize,
     pub start: usize,
     pub end: usize,
 }
+
 #[derive(Clone, Debug)]
 pub struct TerminalImage {
     pub id: u64,
@@ -184,6 +197,7 @@ pub struct TerminalImage {
     pub height: usize,
     pub rgba: Arc<[u8]>,
 }
+
 #[derive(Clone, Debug)]
 pub struct TerminalImagePlacement {
     pub image: Arc<TerminalImage>,
@@ -194,6 +208,7 @@ pub struct TerminalImagePlacement {
     pub source_rect: [f32; 4],
     pub z_index: i32,
 }
+
 #[derive(Clone, Debug)]
 pub struct TerminalSnapshot {
     pub revision: u64,
@@ -214,51 +229,66 @@ pub struct TerminalSnapshot {
     pub images: Vec<TerminalImagePlacement>,
     pub warnings: Vec<Arc<str>>,
 }
+
 impl TerminalSnapshot {
     pub fn cols(&self) -> usize {
         self.cols
     }
+
     pub fn rows(&self) -> usize {
         self.rows
     }
+
     pub fn display_cell(&self, row: usize, col: usize) -> TerminalCell {
         self.lines[row].cells[col].clone()
     }
+
     pub fn cell(&self, row: usize, col: usize) -> TerminalCell {
         self.display_cell(row, col)
     }
+
     pub fn palette(&self) -> &[[u8; 3]; 260] {
         &self.palette
     }
+
     pub fn title(&self) -> &str {
         &self.title
     }
+
     pub fn modes(&self) -> TerminalModes {
         self.modes
     }
+
     pub fn cursor(&self) -> TerminalCursor {
         self.cursor
     }
+
     pub fn revision(&self) -> u64 {
         self.revision
     }
+
     pub fn cursor_revision(&self) -> u64 {
         self.cursor_revision
     }
+
     pub fn display_offset(&self) -> usize {
         self.display_offset
     }
+
     pub fn history_size(&self) -> usize {
         self.history_size
     }
+
     pub fn selection_text(&self) -> Option<String> {
         self.selection_text.as_ref().map(ToString::to_string)
     }
+
     pub fn is_selected(&self, col: usize, row: usize) -> bool {
         self.selection
             .iter()
             .any(|span| span.row == row && col >= span.start && col < span.end)
     }
+
     #[cfg(feature = "ui")]
     pub(crate) fn faint_color(&self, color: TerminalColor) -> Option<[u8; 3]> {
         let TerminalColor::Indexed(index) = color else {
@@ -273,11 +303,13 @@ impl TerminalSnapshot {
 
 #[derive(Clone, Default)]
 struct EventQueue(Arc<Mutex<Vec<RioEvent>>>);
+
 impl EventListener for EventQueue {
     fn send_event(&self, event: RioEvent, _: WindowId) {
         self.0.lock().unwrap().push(event);
     }
 }
+
 pub struct Terminal {
     term: Crosswords<EventQueue>,
     parser: Processor,
@@ -299,11 +331,13 @@ pub struct Terminal {
     warnings: Vec<Arc<str>>,
     last_snapshot: Option<Arc<TerminalSnapshot>>,
 }
+
 impl Default for Terminal {
     fn default() -> Self {
         Self::new(80, 24)
     }
 }
+
 impl Terminal {
     pub fn new(cols: usize, rows: usize) -> Self {
         let events = EventQueue::default();
@@ -350,33 +384,42 @@ impl Terminal {
         terminal.snapshot();
         terminal
     }
+
     pub fn cols(&self) -> usize {
         self.term.columns()
     }
+
     pub fn rows(&self) -> usize {
         self.term.screen_lines()
     }
+
     pub fn palette(&self) -> &[[u8; 3]; 260] {
         &self.palette
     }
+
     pub fn title(&self) -> &str {
         &self.term.title
     }
+
     pub fn revision(&self) -> u64 {
         self.revision
     }
+
     pub fn cursor_revision(&self) -> u64 {
         self.cursor_revision
     }
+
     pub fn wrap_pending(&self) -> bool {
         self.term.grid.cursor.should_wrap
     }
+
     pub fn set_num_lock(&mut self, value: bool) {
         if self.num_lock != value {
             self.num_lock = value;
             self.changed();
         }
     }
+
     pub fn modes(&self) -> TerminalModes {
         let mode = self.term.mode();
         TerminalModes {
@@ -398,6 +441,7 @@ impl Terminal {
             ..Default::default()
         }
     }
+
     pub fn cursor(&self) -> TerminalCursor {
         let cursor = self.term.cursor();
         let blinking = self.term.blinking_cursor;
@@ -414,12 +458,15 @@ impl Terminal {
             visible: cursor.content != CursorShape::Hidden,
         }
     }
+
     pub fn cell(&self, row: usize, col: usize) -> TerminalCell {
         self.grid_cell(Line(row as i32), Column(col))
     }
+
     pub fn display_cell(&self, row: usize, col: usize) -> TerminalCell {
         self.grid_cell(Line(row as i32 - self.display_offset() as i32), Column(col))
     }
+
     fn grid_cell(&self, row: Line, col: Column) -> TerminalCell {
         let square = self.term.grid[row][col];
         let style = self.term.grid.style_of(&square);
@@ -496,12 +543,15 @@ impl Terminal {
                 .map(|link| Arc::from(link.uri())),
         }
     }
+
     pub fn display_offset(&self) -> usize {
         self.term.display_offset()
     }
+
     pub fn history_size(&self) -> usize {
         self.term.history_size()
     }
+
     pub fn scroll_display(&mut self, lines: i32) {
         let before = self.display_offset();
         self.term.scroll_display(Scroll::Delta(lines));
@@ -509,6 +559,7 @@ impl Terminal {
             self.changed();
         }
     }
+
     pub fn scroll_to_bottom(&mut self) {
         let before = self.display_offset();
         self.term.scroll_display(Scroll::Bottom);
@@ -516,6 +567,7 @@ impl Terminal {
             self.changed();
         }
     }
+
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<TerminalEvent> {
         let cursor = self.cursor();
         self.parser.advance(&mut self.term, bytes);
@@ -530,12 +582,15 @@ impl Terminal {
         events.extend(self.process_graphics());
         events
     }
+
     pub fn feed_echo(&mut self, bytes: &[u8]) -> Vec<TerminalEvent> {
         self.feed(bytes)
     }
+
     pub fn sync_deadline(&self) -> Option<Instant> {
         self.parser.sync_timeout().sync_timeout()
     }
+
     pub fn flush_sync(&mut self) -> Vec<TerminalEvent> {
         if !self
             .sync_deadline()
@@ -545,6 +600,7 @@ impl Terminal {
         }
         self.finish_output()
     }
+
     pub fn finish_output(&mut self) -> Vec<TerminalEvent> {
         if self.sync_deadline().is_none() {
             return Vec::new();
@@ -556,6 +612,7 @@ impl Terminal {
         events.extend(self.process_graphics());
         events
     }
+
     fn drain_events(&mut self) -> Vec<TerminalEvent> {
         let native = std::mem::take(&mut *self.events.0.lock().unwrap());
         let mut outgoing = Vec::new();
@@ -600,9 +657,11 @@ impl Terminal {
         }
         outgoing
     }
+
     fn changed(&mut self) {
         self.revision += 1;
     }
+
     pub fn resize(&mut self, cols: usize, rows: usize) {
         self.resize_with_pixels(
             cols,
@@ -611,6 +670,7 @@ impl Terminal {
             self.term.graphics.cell_height as u32,
         );
     }
+
     pub fn resize_with_pixels(
         &mut self,
         cols: usize,
@@ -638,6 +698,7 @@ impl Terminal {
         self.changed();
         self.cursor_revision += 1;
     }
+
     pub fn set_theme(&mut self, theme: &TerminalTheme) -> bool {
         if self.theme.as_ref() == Some(theme) {
             return false;
@@ -648,6 +709,7 @@ impl Terminal {
         self.changed();
         true
     }
+
     fn refresh_palette(&mut self) {
         let mut palette = self.theme_palette;
         for (index, rgb) in palette.iter_mut().enumerate() {
@@ -680,18 +742,21 @@ impl Terminal {
             }
         }
     }
+
     fn viewport_pos(&self, col: usize, row: usize) -> Pos {
         Pos::new(
             Line(row.min(self.rows() - 1) as i32 - self.display_offset() as i32),
             Column(col.min(self.cols() - 1)),
         )
     }
+
     pub fn clear_selection(&mut self) {
         if self.term.selection.take().is_some() {
             self.changed();
         }
         self.selection_anchor = None;
     }
+
     pub fn select_start(&mut self, col: usize, row: usize, snap: SelectionSnap) {
         let pos = self.viewport_pos(col, row);
         self.selection_anchor = Some(pos);
@@ -706,6 +771,7 @@ impl Terminal {
         ));
         self.changed();
     }
+
     pub fn select_extend(&mut self, col: usize, row: usize, rectangular: bool, _done: bool) {
         let pos = self.viewport_pos(col, row);
         if let Some(selection) = self.term.selection.as_mut() {
@@ -721,6 +787,7 @@ impl Terminal {
             self.changed();
         }
     }
+
     pub fn select_all(&mut self) {
         let mut selection = Selection::new(
             SelectionType::Lines,
@@ -735,6 +802,7 @@ impl Terminal {
         self.selection_anchor = None;
         self.changed();
     }
+
     pub fn is_selected(&self, col: usize, row: usize) -> bool {
         self.term
             .selection
@@ -742,9 +810,11 @@ impl Terminal {
             .and_then(|selection| selection.to_range(&self.term))
             .is_some_and(|range| range.contains(self.viewport_pos(col, row)))
     }
+
     pub fn selection_text(&self) -> Option<String> {
         self.term.selection_to_string()
     }
+
     pub fn snapshot(&mut self) -> Arc<TerminalSnapshot> {
         // A begin marker and its following bytes can arrive in the same read.
         // Freeze presentation until ESU or timeout, regardless of read boundaries.
@@ -838,6 +908,7 @@ impl Terminal {
         self.last_snapshot = Some(snapshot.clone());
         snapshot
     }
+
     fn snapshot_images(&mut self) -> Vec<TerminalImagePlacement> {
         self.process_graphics();
         // Images may have been evicted from the frontend's bounded store. A
@@ -990,6 +1061,7 @@ impl Terminal {
         placements.sort_by_key(|placement| placement.z_index);
         placements
     }
+
     fn process_graphics(&mut self) -> Vec<TerminalEvent> {
         let mut events = Vec::new();
         if std::mem::take(&mut self.term.graphics.budget_rejected)
@@ -1020,6 +1092,7 @@ impl Terminal {
         }
         events
     }
+
     fn consume_graphics_queues(
         &mut self,
         queues: rio_vt::ansi::graphics::UpdateQueues,
@@ -1040,6 +1113,7 @@ impl Terminal {
         }
         events
     }
+
     fn store_image(&mut self, key: u64, image: GraphicData) -> Option<String> {
         let bytes = image
             .width
@@ -1163,6 +1237,7 @@ impl Terminal {
         self.images.insert(key, image);
         None
     }
+
     fn image_resident_bytes(&mut self) -> usize {
         // Each admission adds exactly one weak reference, keyed by its unique
         // image revision rather than the protocol ID which clients can reuse.
@@ -1173,6 +1248,7 @@ impl Terminal {
             .map(|image| image.rgba.len())
             .sum()
     }
+
     fn image_warning(&mut self, text: &str) -> Option<String> {
         if self
             .warnings
@@ -1187,6 +1263,7 @@ impl Terminal {
         Some(text.into())
     }
 }
+
 fn native_color_index(index: usize) -> usize {
     match index {
         256 => 258,
@@ -1195,6 +1272,7 @@ fn native_color_index(index: usize) -> usize {
         _ => index,
     }
 }
+
 fn map_color_index(index: usize) -> usize {
     match index {
         256 => 258,
@@ -1205,6 +1283,7 @@ fn map_color_index(index: usize) -> usize {
         _ => index,
     }
 }
+
 fn color(value: AnsiColor) -> TerminalColor {
     match value {
         AnsiColor::Indexed(index) => TerminalColor::Indexed(index as usize),
@@ -1248,6 +1327,7 @@ fn default_palette() -> [[u8; 3]; 260] {
         _ => ANSI[0],
     })
 }
+
 /// XParseColor-style names, #RGB/#RRGGBB/#RRRRGGGGBBBB and rgb:R/G/B.
 /// Names come directly from X.Org's separately licensed color database.
 pub fn parse_color(spec: &str) -> Option<[u8; 3]> {

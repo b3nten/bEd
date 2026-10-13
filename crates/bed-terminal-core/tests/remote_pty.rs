@@ -36,6 +36,7 @@ fn size(cols: u16, rows: u16) -> WindowSize {
         cell_height: 16,
     }
 }
+
 fn collect_until(pty: &mut TerminalPty, done: impl Fn(&str) -> bool) -> String {
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut bytes = Vec::new();

@@ -44,6 +44,7 @@ struct Session {
     pending_theme: Option<TerminalTheme>,
     rendered: bool,
 }
+
 impl Session {
     fn new(id: u64, ssh_target: Option<bed_remote::SshTarget>) -> Self {
         Self {
@@ -67,9 +68,11 @@ impl Session {
             rendered: false,
         }
     }
+
     fn alive(&self) -> bool {
         self.pty.is_some() && !self.ended
     }
+
     fn title(&self) -> String {
         if let Some(title) = &self.command_title {
             return tab_title(title);
@@ -87,6 +90,7 @@ impl Session {
             .unwrap_or("Terminal");
         tab_title(title)
     }
+
     fn shutdown(&mut self) {
         if let Some(mut pty) = self.pty.take() {
             pty.shutdown();
@@ -110,11 +114,13 @@ pub struct BedTerminal {
     pending_links: Vec<(u64, String)>,
     retired_views: Vec<TerminalView>,
 }
+
 impl Default for BedTerminal {
     fn default() -> Self {
         Self::new()
     }
 }
+
 impl BedTerminal {
     /// A panel host starts with no shell sessions; closing the last leaves it empty.
     pub fn new_empty() -> Self {
@@ -123,6 +129,7 @@ impl BedTerminal {
         terminal.next_id = 1;
         terminal
     }
+
     /// Capture the working directory now; project switches do not move existing shells.
     pub fn new_session(&mut self) -> u64 {
         let directory = if !self.project_root.as_os_str().is_empty() {
@@ -139,6 +146,7 @@ impl BedTerminal {
         self.focus_request = Some(self.sessions[self.active].id);
         self.sessions[self.active].id
     }
+
     pub fn new_session_at(&mut self, root: impl AsRef<Path>) -> u64 {
         self.add_session();
         self.sessions[self.active].working_directory = Some(root.as_ref().to_owned());
@@ -146,6 +154,7 @@ impl BedTerminal {
         self.focus_request = Some(self.sessions[self.active].id);
         self.sessions[self.active].id
     }
+
     /// Launch an owned local command immediately, without a shell wrapper.
     /// Arguments and environment are passed literally through `PtyOptions`.
     /// The returned child PID can answer a DAP `runInTerminal` request. These
@@ -178,6 +187,7 @@ impl BedTerminal {
         self.needs_font_resync = true;
         Ok((session.id, process_id))
     }
+
     /// Command transcripts should not be restored as ordinary shell sessions.
     pub fn is_command_session(&self, id: u64) -> bool {
         self.sessions
@@ -185,6 +195,7 @@ impl BedTerminal {
             .find(|session| session.id == id)
             .is_some_and(|session| session.command_title.is_some())
     }
+
     /// Terminate the child while retaining its terminal screen and scrollback.
     pub fn stop_session_id(&mut self, id: u64) -> bool {
         let Some(session) = self.sessions.iter_mut().find(|session| session.id == id) else {
@@ -200,15 +211,18 @@ impl BedTerminal {
         session.current_directory = None;
         true
     }
+
     pub fn session_ids(&self) -> Vec<u64> {
         self.sessions.iter().map(|s| s.id).collect()
     }
+
     pub fn process_id(&self, id: u64) -> Option<u32> {
         self.sessions
             .iter()
             .find(|session| session.id == id && session.alive())
             .and_then(|session| session.pty.as_ref().map(TerminalPty::process_id))
     }
+
     pub fn live_working_directory(&self, id: u64) -> io::Result<PathBuf> {
         let session = self
             .sessions
@@ -225,18 +239,22 @@ impl BedTerminal {
             .ok_or_else(|| io::Error::other("The selected terminal has no running process"))?;
         crate::process_cwd::for_process(pid)
     }
+
     pub fn configure_shell_environment(&mut self, env: HashMap<String, String>) {
         self.pty_options.env.extend(env);
     }
+
     pub fn configure_shell(&mut self, shell: crate::terminal_pty::TerminalShell) {
         self.pty_options.shell = Some(shell);
     }
+
     pub fn session_for_pane(&self, pane: &str) -> Option<u64> {
         self.sessions
             .iter()
             .find(|session| session.pane == pane)
             .map(|session| session.id)
     }
+
     /// A short display label; the host should retain the session ID as its tab ID.
     pub fn session_title(&self, id: u64) -> Option<String> {
         self.sessions
@@ -244,6 +262,7 @@ impl BedTerminal {
             .find(|session| session.id == id)
             .map(Session::title)
     }
+
     pub fn working_directory(&self, id: u64) -> Option<&Path> {
         self.sessions
             .iter()
@@ -251,6 +270,7 @@ impl BedTerminal {
             .working_directory
             .as_deref()
     }
+
     /// Last observed local process directory. Polling owns the OS query; readers
     /// never substitute a launch directory for a live one.
     pub fn cached_working_directory(&self, id: u64) -> Option<&Path> {
@@ -260,6 +280,7 @@ impl BedTerminal {
             .current_directory
             .as_deref()
     }
+
     /// Directory reported by the shell with OSC 7, including SSH shells.
     pub fn reported_working_directory(&self, id: u64) -> Option<&Path> {
         self.sessions
@@ -269,6 +290,7 @@ impl BedTerminal {
             .current_directory
             .as_deref()
     }
+
     pub fn session_state(&self, id: u64) -> Option<TerminalSessionState> {
         self.sessions
             .iter()
@@ -283,6 +305,7 @@ impl BedTerminal {
                 }
             })
     }
+
     pub fn focus_session(&mut self, id: u64) -> bool {
         let Some(index) = self.sessions.iter().position(|s| s.id == id) else {
             return false;
@@ -296,6 +319,7 @@ impl BedTerminal {
     pub fn cancel_focus_request(&mut self) {
         self.focus_request = None;
     }
+
     pub fn close_session_id(&mut self, id: u64) -> bool {
         let Some(index) = self.sessions.iter().position(|s| s.id == id) else {
             return false;
@@ -316,6 +340,7 @@ impl BedTerminal {
         }
         true
     }
+
     /// Draw one ordinary docking-window body, with no nested terminal tab strip.
     pub fn render_session(&mut self, ui: &Ui, fonts: &TerminalFonts, id: u64) -> io::Result<bool> {
         let Some(index) = self.sessions.iter().position(|s| s.id == id) else {
@@ -368,9 +393,11 @@ impl BedTerminal {
         }
         result
     }
+
     pub fn new() -> Self {
         Self::with_pty_options(PtyOptions::default())
     }
+
     pub fn with_pty_options(pty_options: PtyOptions) -> Self {
         let mut terminal = Self {
             sessions: Vec::new(),
@@ -391,9 +418,11 @@ impl BedTerminal {
         terminal.add_session();
         terminal
     }
+
     pub fn set_project_root(&mut self, root: &str) {
         self.project_root = PathBuf::from(root);
     }
+
     /// Update current sessions and the defaults used by future/restarted shells.
     pub fn set_theme(
         &mut self,
@@ -422,16 +451,20 @@ impl BedTerminal {
         self.theme = Some(theme);
         true
     }
+
     /// Configure future sessions. Existing sessions retain their original host.
     pub fn set_ssh_target(&mut self, target: Option<bed_remote::SshTarget>) {
         self.ssh_target = target;
     }
+
     pub fn visible(&self) -> bool {
         self.visible
     }
+
     pub fn is_visible(&self) -> bool {
         self.visible
     }
+
     pub fn is_focused(&self) -> bool {
         self.visible
             && self.window_focused
@@ -440,12 +473,15 @@ impl BedTerminal {
                 .get(self.active)
                 .is_some_and(|session| session.view.focused)
     }
+
     pub fn is_started(&self) -> bool {
         self.sessions.iter().any(Session::alive)
     }
+
     pub fn active_terminal(&self) -> Option<&TerminalSnapshot> {
         self.sessions.get(self.active).map(|s| s.terminal.as_ref())
     }
+
     pub fn write_active(&self, bytes: &[u8]) -> io::Result<()> {
         self.sessions
             .get(self.active)
@@ -453,12 +489,15 @@ impl BedTerminal {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "terminal is not started"))?
             .write(bytes)
     }
+
     pub fn session_count(&self) -> usize {
         self.sessions.len()
     }
+
     pub fn active_session_id(&self) -> Option<u64> {
         self.sessions.get(self.active).map(|s| s.id)
     }
+
     pub fn hide(&mut self) -> io::Result<()> {
         self.set_visible(false, false)
     }
@@ -487,9 +526,11 @@ impl BedTerminal {
         }
         Ok(())
     }
+
     pub fn toggle(&mut self) -> io::Result<()> {
         self.set_visible(!self.visible, true)
     }
+
     pub fn set_visible(&mut self, on: bool, focus: bool) -> io::Result<()> {
         let was_visible = self.visible;
         self.visible = on;
@@ -506,6 +547,7 @@ impl BedTerminal {
         }
         self.ensure_shell(self.active)
     }
+
     pub fn shutdown(&mut self) {
         for session in &mut self.sessions {
             session.shutdown();
@@ -516,16 +558,20 @@ impl BedTerminal {
         self.visible = false;
         self.focus_request = None;
     }
+
     pub fn configured_font_px(&self) -> f32 {
         self.font_px
     }
+
     pub fn consume_needs_font_resync(&mut self) -> bool {
         std::mem::take(&mut self.needs_font_resync)
     }
+
     /// The host applies native font changes before NewFrame and retains atlas ownership.
     pub fn reload_terminal_fonts(&mut self, desired_px: f32) {
         self.font_px = if desired_px < 6.0 { 16.0 } else { desired_px };
     }
+
     fn add_session(&mut self) {
         let id = self.next_id;
         self.next_id = self
@@ -541,6 +587,7 @@ impl BedTerminal {
         self.sessions.push(session);
         self.active = self.sessions.len() - 1;
     }
+
     fn close_session(&mut self, index: usize) {
         if index >= self.sessions.len() {
             return;
@@ -561,6 +608,7 @@ impl BedTerminal {
             self.active = self.sessions.len() - 1;
         }
     }
+
     fn ensure_shell(&mut self, index: usize) -> io::Result<()> {
         if self.sessions[index].alive() || self.sessions[index].command_title.is_some() {
             return Ok(());
@@ -614,6 +662,7 @@ impl BedTerminal {
         self.needs_font_resync = true;
         Ok(())
     }
+
     /// Receive immutable state; all parsing and mutations remain on the worker.
     pub fn poll(&mut self) -> io::Result<bool> {
         let mut changed = false;
@@ -697,19 +746,23 @@ impl BedTerminal {
         }
         Ok(())
     }
+
     pub fn invalidate_textures(&mut self) {
         for session in &mut self.sessions {
             session.view.invalidate_textures();
         }
     }
+
     pub fn has_pending_uploads(&self) -> bool {
         self.sessions
             .iter()
             .any(|session| session.rendered && session.view.has_pending_uploads())
     }
+
     pub fn take_open_links(&mut self) -> Vec<(u64, String)> {
         std::mem::take(&mut self.pending_links)
     }
+
     pub fn ssh_target(&self, id: u64) -> Option<&bed_remote::SshTarget> {
         self.sessions
             .iter()
@@ -717,6 +770,7 @@ impl BedTerminal {
             .ssh_target
             .as_ref()
     }
+
     fn command_active(&self, command: TerminalCommand) -> io::Result<()> {
         self.sessions
             .get(self.active)
@@ -724,27 +778,34 @@ impl BedTerminal {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "Terminal is not started"))?
             .command(command)
     }
+
     pub fn queue_key(&self, event: crate::terminal_input::TerminalKeyEvent) -> io::Result<()> {
         self.command_active(TerminalCommand::Key(event))
     }
+
     pub fn queue_ime_preedit(&mut self, text: String) {
         if let Some(session) = self.sessions.get_mut(self.active) {
             session.view.set_preedit(text);
         }
     }
+
     pub fn queue_ime_commit(&mut self, text: String) -> io::Result<()> {
         self.queue_ime_preedit(String::new());
         self.command_active(TerminalCommand::Text(text))
     }
+
     pub fn native_copy(&self) -> Option<String> {
         self.active_terminal()?.selection_text()
     }
+
     pub fn native_paste(&self, text: String) -> io::Result<()> {
         self.command_active(TerminalCommand::Paste(text))
     }
+
     pub fn native_select_all(&self) -> io::Result<()> {
         self.command_active(TerminalCommand::SelectAll)
     }
+
     pub fn render_panel(&mut self, ui: &Ui, fonts: &TerminalFonts) -> io::Result<bool> {
         if !self.visible {
             return Ok(false);
@@ -865,6 +926,7 @@ fn tab_title(title: &str) -> String {
 #[cfg(test)]
 mod title_tests {
     use super::*;
+
     #[test]
     fn tab_titles_are_bounded_and_safe_for_imgui_labels() {
         assert_eq!(tab_title("codex\0\n###title"), "codex# # #title");
@@ -872,6 +934,7 @@ mod title_tests {
         assert_eq!(tab_title(&"😀".repeat(100)).chars().count(), 64);
     }
 }
+
 impl Drop for BedTerminal {
     fn drop(&mut self) {
         self.shutdown();
@@ -881,13 +944,16 @@ impl Drop for BedTerminal {
 struct SessionPipe<'a> {
     pty: Option<&'a TerminalPty>,
 }
+
 impl TerminalIo for SessionPipe<'_> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
         self.pty.map_or(Ok(()), |pty| pty.write(bytes))
     }
+
     fn command(&mut self, command: TerminalCommand) -> io::Result<()> {
         self.pty.map_or(Ok(()), |pty| pty.command(command))
     }
+
     fn resize(&mut self, cols: usize, rows: usize, cw: f32, ch: f32) -> io::Result<()> {
         self.pty.map_or(Ok(()), |pty| {
             pty.resize(WindowSize {
@@ -1167,6 +1233,7 @@ mod tests {
         assert_eq!(terminal.sessions[0].ssh_target, None);
         assert_eq!(terminal.sessions[1].ssh_target, Some(target));
     }
+
     #[cfg(unix)]
     #[test]
     fn ended_panel_keeps_output_without_automatically_restarting_shell() {
@@ -1231,6 +1298,7 @@ mod tests {
         assert!(terminal.close_session_id(id));
         assert!(terminal.session_ids().is_empty());
     }
+
     #[test]
     fn shell_tokens_do_not_route_to_a_replacement_session() {
         let mut terminal = BedTerminal::new_empty();
@@ -1294,6 +1362,7 @@ mod tests {
         assert!(!terminal.is_started());
     }
     use super::*;
+
     #[cfg(unix)]
     #[test]
     fn final_query_output_does_not_drop_exit_or_following_text() {
@@ -1330,6 +1399,7 @@ mod tests {
             "TAIL"
         );
     }
+
     #[test]
     fn fixed_session_ids_and_active_index_survive_closing_neighbors() {
         let mut terminal = BedTerminal::new();
@@ -1354,6 +1424,7 @@ mod tests {
         terminal.add_session();
         assert_eq!(terminal.active_session_id(), Some(5));
     }
+
     #[test]
     fn font_resync_is_consumed_once_and_hiding_keeps_sessions() {
         let mut terminal = BedTerminal::new();

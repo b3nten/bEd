@@ -22,13 +22,16 @@ pub(crate) static IMGUI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(
 /// Process sessions are shared by terminal presentations and debugger launches.
 #[derive(bevy::prelude::Resource, Default)]
 pub struct TerminalRetentions(pub std::collections::HashSet<u64>);
+
 #[derive(bevy::prelude::Component, Clone, Copy, Debug)]
 pub struct TerminalAttachment {
     pub session: u64,
     pub command: bool,
 }
+
 #[cfg(feature = "ui")]
 pub struct TerminalCorePlugin;
+
 #[cfg(feature = "ui")]
 impl bevy::app::Plugin for TerminalCorePlugin {
     fn build(&self, app: &mut bevy::app::App) {
@@ -66,11 +69,13 @@ fn shutdown(
 pub enum TerminalCoreSystems {
     Poll,
 }
+
 #[derive(bevy::prelude::Resource, Default)]
 pub struct TerminalActivity {
     pub changed: bool,
     pub error: Option<String>,
 }
+
 #[cfg(feature = "ui")]
 fn poll(
     mut terminal: bevy::prelude::NonSendMut<bed_terminal_core::BedTerminal>,

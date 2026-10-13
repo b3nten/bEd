@@ -22,6 +22,7 @@ pub(crate) struct TerminalShapeFont {
     em_scale: f32,
     pub color: bool,
 }
+
 impl TerminalShapeFont {
     fn new(bytes: Arc<[u8]>, index: usize, color: bool) -> Option<Self> {
         let font = FontRef::from_index(&bytes, index)?;
@@ -48,6 +49,7 @@ impl TerminalShapeFont {
         }
         Some(result)
     }
+
     pub(crate) fn font(&self) -> FontRef<'_> {
         FontRef {
             data: &self.bytes,
@@ -55,6 +57,7 @@ impl TerminalShapeFont {
             key: self.key,
         }
     }
+
     pub(crate) fn shaping_size(&self, size: f32) -> f32 {
         size * self.em_scale
     }
@@ -67,6 +70,7 @@ pub(crate) struct TerminalFontRasterizer {
     face: sys::freetype::FT_Face,
     _bytes: Arc<[u8]>,
 }
+
 impl TerminalFontRasterizer {
     pub(crate) fn new(font: &TerminalShapeFont, height: f32) -> io::Result<Self> {
         use sys::freetype as ft;
@@ -102,6 +106,7 @@ impl TerminalFontRasterizer {
         }
         Ok(result)
     }
+
     pub(crate) fn metrics(&mut self) -> io::Result<[f32; 3]> {
         use sys::freetype as ft;
         unsafe {
@@ -119,6 +124,7 @@ impl TerminalFontRasterizer {
             ])
         }
     }
+
     pub(crate) fn rasterize(&mut self, glyph: u16) -> io::Result<Image> {
         use sys::freetype as ft;
         unsafe {
@@ -168,6 +174,7 @@ impl TerminalFontRasterizer {
         }
     }
 }
+
 impl Drop for TerminalFontRasterizer {
     fn drop(&mut self) {
         unsafe {
@@ -187,13 +194,16 @@ struct FaceData {
     bytes: Arc<[u8]>,
     faces: Vec<(i32, bool, bool)>,
 }
+
 impl FaceData {
     fn read(path: &Path) -> Option<Self> {
         Self::from_bytes(Arc::from(fs::read(path).ok()?))
     }
+
     fn resolved(source: &FontSourceData) -> Option<Self> {
         Self::from_bytes(source.read().ok()?)
     }
+
     fn from_bytes(bytes: Arc<[u8]>) -> Option<Self> {
         i32::try_from(bytes.len()).ok()?;
         let count = ttf_parser::fonts_in_collection(&bytes)
@@ -210,10 +220,12 @@ impl FaceData {
         }
         Some(FaceData { bytes, faces })
     }
+
     fn source(&self, size: f32, config: FontConfig) -> FontSource<'_> {
         // add_font copies the validated container into atlas-owned storage.
         unsafe { FontSource::ttf_data_with_size(&self.bytes, size) }.with_config(config)
     }
+
     fn matching(&self, bold: bool, italic: bool) -> (i32, bool, bool) {
         self.faces
             .iter()
@@ -241,10 +253,12 @@ impl TerminalFonts {
     pub fn generation(&self) -> u64 {
         self.generation
     }
+
     pub fn for_style(&self, index: usize) -> Option<FontId> {
         let styles = [self.regular, self.bold, self.italic, self.bold_italic];
         styles.get(index).copied().flatten()
     }
+
     pub fn shaped_metrics(&self) -> [f32; 3] {
         match self.shape_fonts.get(self.shape_styles[0]) {
             None => [8.0, 16.0, 12.0],
@@ -262,6 +276,7 @@ impl TerminalFonts {
             }
         }
     }
+
     pub fn metrics(&self, ui: &Ui) -> [f32; 2] {
         match self.regular.and_then(|id| ui.baked_font(id, self.size)) {
             None => [8.0, 16.0],
@@ -275,12 +290,14 @@ impl TerminalFonts {
             }
         }
     }
+
     pub fn reload(&mut self, context: &mut Context, root: &Path, size: f32) -> io::Result<()> {
         let override_path = std::env::var_os("TERMINAL_FONT")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
         self.reload_from(context, root, size, override_path.as_deref())
     }
+
     fn reload_from(
         &mut self,
         context: &mut Context,
@@ -290,6 +307,7 @@ impl TerminalFonts {
     ) -> io::Result<()> {
         self.reload_sources(context, root, size, override_path, None)
     }
+
     /// Face descriptors are supplied by the desktop's shared font resolver.
     pub fn reload_resolved(
         &mut self,
@@ -305,6 +323,7 @@ impl TerminalFonts {
             Some((&resolved.faces, &resolved.fallbacks)),
         )
     }
+
     #[allow(clippy::type_complexity)]
     fn reload_sources(
         &mut self,
@@ -517,6 +536,7 @@ fn system_variant(style: usize) -> Option<PathBuf> {
     let _ = style;
     None
 }
+
 fn system_fallbacks() -> Vec<Vec<(&'static str, bool)>> {
     #[cfg(target_os = "macos")]
     return vec![
@@ -546,6 +566,7 @@ fn system_fallbacks() -> Vec<Vec<(&'static str, bool)>> {
         ],
     ];
 }
+
 fn joining_script_fonts() -> &'static [&'static str] {
     #[cfg(target_os = "macos")]
     return &[
