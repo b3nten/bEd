@@ -14,6 +14,7 @@ pub enum Platform {
     Mac,
     Other,
 }
+
 impl Platform {
     pub const fn current() -> Self {
         if cfg!(target_os = "macos") {
@@ -32,6 +33,7 @@ pub struct Modifiers {
     pub alt: bool,
     pub super_key: bool,
 }
+
 impl Modifiers {
     pub fn resolved(mut self, platform: Platform) -> Self {
         if self.primary {
@@ -44,6 +46,7 @@ impl Modifiers {
         self.primary = false;
         self
     }
+
     pub fn from_ui(ui: &Ui) -> Self {
         let io = ui.io();
         // ImGui swaps physical Command and Control when Mac behaviors are enabled.
@@ -60,15 +63,18 @@ impl Modifiers {
             primary: false,
         }
     }
+
     pub fn modified(self) -> bool {
         self.ctrl || self.alt || self.super_key || self.primary
     }
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Stroke {
     pub key: Key,
     pub modifiers: Modifiers,
 }
+
 impl Stroke {
     pub fn resolved(self, platform: Platform) -> Self {
         Self {
@@ -76,10 +82,12 @@ impl Stroke {
             ..self
         }
     }
+
     pub fn label(self, platform: Platform) -> String {
         self.resolved(platform).to_string()
     }
 }
+
 impl fmt::Display for Stroke {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (set, name) in [
@@ -100,8 +108,10 @@ impl fmt::Display for Stroke {
         )
     }
 }
+
 impl FromStr for Stroke {
     type Err = String;
+
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         let mut parts = text.split('+').map(str::trim).collect::<Vec<_>>();
         let key = parse_key(parts.pop().unwrap_or_default())
@@ -124,11 +134,13 @@ impl FromStr for Stroke {
         Ok(Self { key, modifiers })
     }
 }
+
 impl Serialize for Stroke {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&self.to_string())
     }
 }
+
 impl<'de> Deserialize<'de> for Stroke {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         String::deserialize(d)?.parse().map_err(D::Error::custom)
@@ -137,6 +149,7 @@ impl<'de> Deserialize<'de> for Stroke {
 
 /// Editor is a reusable widget scope, independent of its containing panel type.
 pub const EDITOR_SCOPE: &str = "bed.editor.text-panel";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Scope {
     Global,
@@ -144,11 +157,13 @@ pub enum Scope {
     Focused,
     Panel(String),
 }
+
 impl Scope {
     pub fn panel(id: impl Into<String>) -> Self {
         Self::Panel(id.into())
     }
 }
+
 #[derive(Clone, Debug)]
 pub struct Action {
     pub id: String,
@@ -158,6 +173,7 @@ pub struct Action {
     pub defaults: Vec<Stroke>,
     pub repeat: bool,
 }
+
 impl Action {
     pub fn new(id: &str, label: &str, owner: &str, scope: Scope, defaults: &[&str]) -> Self {
         Self {
@@ -172,6 +188,7 @@ impl Action {
             repeat: false,
         }
     }
+
     pub fn repeating(mut self) -> Self {
         self.repeat = true;
         self
@@ -272,12 +289,14 @@ pub struct Assignment {
     pub shortcut: Stroke,
     pub order: u64,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Overrides {
     pub version: u32,
     pub actions: BTreeMap<String, Vec<Assignment>>,
 }
+
 impl Default for Overrides {
     fn default() -> Self {
         Self {
@@ -286,6 +305,7 @@ impl Default for Overrides {
         }
     }
 }
+
 impl Overrides {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let mut value: Self = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
@@ -311,6 +331,7 @@ impl Overrides {
         }
         Ok(value)
     }
+
     pub fn replace(
         &mut self,
         action: &Action,
@@ -345,6 +366,7 @@ impl Overrides {
         deduplicate(entries);
         Ok(())
     }
+
     pub fn remove(&mut self, action: &Action, index: usize) -> Result<(), String> {
         let entries = self.actions.entry(action.id.clone()).or_insert_with(|| {
             action
@@ -360,6 +382,7 @@ impl Overrides {
         Ok(())
     }
 }
+
 fn deduplicate(entries: &mut Vec<Assignment>) {
     let mut unique: Vec<Assignment> = Vec::new();
     for entry in entries.drain(..) {
@@ -375,6 +398,7 @@ fn deduplicate(entries: &mut Vec<Assignment>) {
     }
     *entries = unique;
 }
+
 fn valid_id(id: &str) -> bool {
     id.split('.').all(|s| {
         !s.is_empty()
@@ -382,6 +406,7 @@ fn valid_id(id: &str) -> bool {
                 .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
     })
 }
+
 #[derive(Clone, Debug)]
 pub struct Binding {
     pub action: String,
@@ -390,18 +415,21 @@ pub struct Binding {
     pub order: u64,
     pub repeat: bool,
 }
+
 #[derive(Clone, Debug)]
 pub struct Bindings {
     pub actions: Vec<Action>,
     pub entries: Vec<Binding>,
     pub platform: Platform,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CollisionKind {
     Conflict,
     Overlap,
     Reuse,
 }
+
 #[derive(Clone, Debug)]
 pub struct Collision {
     pub shortcut: Stroke,
@@ -410,6 +438,7 @@ pub struct Collision {
     pub kind: CollisionKind,
     pub winner: Option<String>,
 }
+
 impl Bindings {
     pub fn new(actions: Vec<Action>, overrides: &Overrides, platform: Platform) -> Self {
         let mut entries = Vec::new();
@@ -450,6 +479,7 @@ impl Bindings {
             platform,
         }
     }
+
     pub fn winner(&self, scope: &Scope, shortcut: Stroke) -> Option<&Binding> {
         let shortcut = shortcut.resolved(self.platform);
         self.entries
@@ -457,9 +487,11 @@ impl Bindings {
             .filter(|b| &b.scope == scope && b.shortcut == shortcut)
             .max_by(|a, b| (a.order, &a.action).cmp(&(b.order, &b.action)))
     }
+
     pub fn for_action(&self, id: &str) -> Vec<&Binding> {
         self.entries.iter().filter(|b| b.action == id).collect()
     }
+
     pub fn active_winner(&self, scope: &Scope, shortcut: Stroke) -> Option<&Binding> {
         let shortcut = shortcut.resolved(self.platform);
         let global = self.winner(&Scope::Global, shortcut);
@@ -471,6 +503,7 @@ impl Bindings {
             .filter(|b| (b.scope == *scope || b.scope == Scope::Focused) && b.shortcut == shortcut)
             .max_by(|a, b| (a.order, &a.action).cmp(&(b.order, &b.action)))
     }
+
     pub fn collisions(&self) -> Vec<Collision> {
         let mut result = Vec::new();
         for (index, a) in self.entries.iter().enumerate() {
@@ -505,17 +538,20 @@ impl Bindings {
         result
     }
 }
+
 impl Default for Bindings {
     fn default() -> Self {
         Self::new(Vec::new(), &Overrides::default(), Platform::current())
     }
 }
+
 #[derive(Debug, Default)]
 struct Frame {
     consumed: HashSet<Stroke>,
     suppressed: bool,
     frame: Option<usize>,
 }
+
 /// Scoped view of one frame's input. Clones share consumption, never a second dispatcher.
 #[derive(Clone, Debug)]
 pub struct ShortcutInput {
@@ -523,11 +559,13 @@ pub struct ShortcutInput {
     pub scope: Scope,
     frame: Rc<RefCell<Frame>>,
 }
+
 impl Default for ShortcutInput {
     fn default() -> Self {
         Self::new(Bindings::default())
     }
 }
+
 impl ShortcutInput {
     pub fn new(bindings: Bindings) -> Self {
         Self {
@@ -536,12 +574,14 @@ impl ShortcutInput {
             frame: Default::default(),
         }
     }
+
     pub fn with_scope(&self, scope: Scope) -> Self {
         Self {
             scope,
             ..self.clone()
         }
     }
+
     pub fn begin_frame(&self, ui: &Ui) {
         let mut frame = self.frame.borrow_mut();
         if frame.frame != Some(ui.frame_count()) {
@@ -551,14 +591,17 @@ impl ShortcutInput {
             };
         }
     }
+
     pub fn suppress(&self, ui: &Ui) {
         self.begin_frame(ui);
         self.frame.borrow_mut().suppressed = true;
     }
+
     pub fn suppressed(&self, ui: &Ui) -> bool {
         self.begin_frame(ui);
         self.frame.borrow().suppressed
     }
+
     pub fn take(&self, ui: &Ui, action: &str) -> bool {
         self.begin_frame(ui);
         if self.frame.borrow().suppressed {
@@ -596,6 +639,7 @@ impl ShortcutInput {
         }
         false
     }
+
     /// Owners which run before text input may already have consumed its key.
     /// Reading consumption does not dispatch the action a second time.
     pub fn consumed(&self, ui: &Ui, action: &str) -> bool {
@@ -611,6 +655,7 @@ impl ShortcutInput {
                     .is_some_and(|winner| winner.action == action)
         })
     }
+
     /// Modified application shortcuts must not turn into text in custom widgets.
     pub fn global_pending(&self, ui: &Ui) -> bool {
         let modifiers = Modifiers::from_ui(ui);
@@ -621,6 +666,7 @@ impl ShortcutInput {
                     && ui.is_key_pressed_with_repeat(b.shortcut.key, b.repeat)
             })
     }
+
     /// Custom widgets claim ordinary typing before panel/global action dispatch.
     pub fn claim_text(&self, ui: &Ui) {
         self.begin_frame(ui);
@@ -649,6 +695,7 @@ impl ShortcutInput {
             }
         }
     }
+
     pub fn held(&self, ui: &Ui, action: &str) -> bool {
         !self.suppressed(ui)
             && self.bindings.for_action(action).iter().any(|b| {
@@ -693,12 +740,14 @@ pub fn parse_key(text: &str) -> Option<Key> {
         .find(|(_, name)| name.eq_ignore_ascii_case(alias))
         .map(|(key, _)| *key)
 }
+
 pub fn key_name(key: Key) -> Option<&'static str> {
     KEY_NAMES
         .iter()
         .find(|(k, _)| *k == key)
         .map(|(_, name)| *name)
 }
+
 pub fn record(ui: &Ui) -> Option<Stroke> {
     KEY_NAMES
         .iter()
@@ -819,9 +868,11 @@ pub const KEY_NAMES: &[(Key, &str)] = &[
 mod tests {
     static IMGUI_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     use super::*;
+
     fn action(id: &str, scope: Scope, keys: &[&str]) -> Action {
         Action::new(id, id, "fixture", scope, keys)
     }
+
     #[test]
     fn exact_modifiers_aliases_and_primary_follow_the_platform() {
         let portable: Stroke = "Primary+Shift+F12".parse().unwrap();
@@ -851,6 +902,7 @@ mod tests {
             assert!(invalid.parse::<Stroke>().is_err(), "{invalid}");
         }
     }
+
     #[test]
     fn alternatives_unbinding_restore_and_assignment_priority_are_persisted() {
         let a = action("fixture.a", Scope::Global, &["Primary+S", "F12"]);
@@ -897,6 +949,7 @@ mod tests {
             2
         );
     }
+
     #[test]
     fn collisions_warn_for_all_scopes_and_defaults_do_not_depend_on_registration_order() {
         let global = action("fixture.global", Scope::Global, &["Ctrl+K"]);
@@ -931,6 +984,7 @@ mod tests {
             "fixture.b"
         );
     }
+
     #[test]
     fn unknown_plugin_overrides_survive_and_malformed_input_is_rejected() {
         let value =
@@ -953,6 +1007,7 @@ mod tests {
             assert!(Overrides::parse(text.as_bytes()).is_err());
         }
     }
+
     #[test]
     fn global_chords_win_over_local_bindings_and_recording_suppresses_dispatch() {
         let _lock = IMGUI_LOCK.lock().unwrap();
@@ -1016,6 +1071,7 @@ mod tests {
         assert_eq!(record(ui).unwrap().to_string(), "Ctrl+K");
         drop(context.render_legacy());
     }
+
     #[test]
     fn shared_bindings_follow_focus() {
         let overrides = Overrides::parse(
@@ -1066,6 +1122,7 @@ mod tests {
             drop(context.render_legacy());
         }
     }
+
     #[test]
     fn physical_command_and_control_match_exactly_with_both_imgui_mac_modes() {
         let _lock = IMGUI_LOCK.lock().unwrap();
