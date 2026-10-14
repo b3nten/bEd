@@ -122,7 +122,7 @@ fn main() -> io::Result<()> {
                             id,
                             label: id,
                             priority,
-                            icon: "bedtime.core.default",
+                            icon: "default",
                             prefer_icon: false,
                             measure,
                             draw,

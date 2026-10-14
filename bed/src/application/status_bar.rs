@@ -25,7 +25,7 @@ pub(crate) fn publish_identity(world: &mut World) {
         &world.resource::<bedtime_files::FileContext>().directory,
     );
     world.insert_resource(bedtime_api::status::StatusBarIdentity {
-        icon: "bedtime.core.folder".into(),
+        icon: "folder".into(),
         summary,
         details,
     });

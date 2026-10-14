@@ -19,7 +19,7 @@ pub(super) fn install(app: &mut App) {
                 id,
                 label,
                 priority,
-                icon: "bedtime.debug.debug",
+                icon: "debug",
                 prefer_icon: false,
                 measure,
                 draw,

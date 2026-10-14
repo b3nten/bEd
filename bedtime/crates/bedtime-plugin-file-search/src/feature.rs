@@ -78,9 +78,9 @@ impl Plugin for FileSearchPlugin {
             registrar.command(NEW_COMMAND, "New Search Panel", open);
             registrar.command(CANCEL_COMMAND, "Cancel Search", cancel);
             registrar.global_shortcut(SHOW_COMMAND, &["Primary+Shift+F"]);
-            registrar.command_icon(NEW_COMMAND, "bedtime.core.search");
-            registrar.command_icon(CANCEL_COMMAND, "bedtime.core.search");
-            registrar.panel_icon(PANEL_ID, "bedtime.core.search");
+            registrar.command_icon(NEW_COMMAND, "search");
+            registrar.command_icon(CANCEL_COMMAND, "search");
+            registrar.panel_icon(PANEL_ID, "search");
             registrar.toolbar(NEW_COMMAND);
         })
         .expect("FileSearchPlugin is installed once");

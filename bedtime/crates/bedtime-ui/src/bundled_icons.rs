@@ -1,17 +1,15 @@
-//! Default shared artwork. Each filename is also its local registration key.
-use super::IconDefinition;
+//! Default shared artwork. Each filename stem is its shared registry key.
 
 macro_rules! bundled {
     ($name:literal) => {
-        IconDefinition {
-            name: $name,
-            filename: concat!($name, ".svg"),
-            embedded_svg: Some(include_bytes!(concat!("../assets/icons/", $name, ".svg"))),
-        }
+        (
+            $name,
+            include_bytes!(concat!("../assets/icons/", $name, ".svg")).as_slice(),
+        )
     };
 }
 
-pub(super) const BUNDLED_ICONS: &[IconDefinition] = &[
+pub(super) const BUNDLED_ICONS: &[(&str, &[u8])] = &[
     bundled!("default"),
     bundled!("code"),
     bundled!("config"),

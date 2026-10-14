@@ -1,33 +1,38 @@
-//! Plugin-owned monochrome SVG icons. The desktop owns realization and lifetimes.
+//! Shared monochrome icon vocabulary. Applications replace packs; plugins consume keys.
+//! The desktop owns native/GPU realization and texture lifetimes.
 use crate::presentation::FileIcons;
 use dear_imgui_rs::{StyleColor, TextureId, Ui};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs, io,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, fs, io, path::Path, sync::OnceLock};
 
 #[path = "bundled_icons.rs"]
 mod bundled_icons;
 #[cfg(test)]
 const ICON_CATALOG: &str = include_str!("../assets/icons/catalog.tsv");
 
-/// One local filename in a plugin's icon contract. A directory can replace its
-/// embedded artwork; missing files retain the embedded default when supplied.
-#[derive(Clone, Copy, Debug)]
-pub struct IconDefinition {
-    pub name: &'static str,
-    pub filename: &'static str,
-    pub embedded_svg: Option<&'static [u8]>,
-}
-
-/// Applications choose source directories; plugin registration reads its own entry.
+/// SVG overrides keyed by the shared vocabulary in assets/icons/catalog.tsv.
+/// An empty pack restores defaults; omitted keys always use embedded artwork.
 #[derive(Clone, Debug, Default)]
-pub struct IconDirectories(pub BTreeMap<String, PathBuf>);
+pub struct IconPack(pub BTreeMap<String, Vec<u8>>);
 
-impl IconDirectories {
-    pub fn get(&self, plugin: &str) -> Option<&Path> {
-        self.0.get(plugin).map(PathBuf::as_path)
+impl IconPack {
+    /// Read <key>.svg files from a flat directory. Non-SVG files are ignored so
+    /// packs can include attribution. replace_pack validates keys and artwork.
+    pub fn from_directory(directory: &Path) -> io::Result<Self> {
+        let mut overrides = BTreeMap::new();
+        for entry in fs::read_dir(directory)? {
+            let path = entry?.path();
+            if path.extension().is_none_or(|extension| extension != "svg") {
+                continue;
+            }
+            let key = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "Icon filename must be UTF-8")
+                })?;
+            overrides.insert(key.to_owned(), fs::read(&path)?);
+        }
+        Ok(Self(overrides))
     }
 }
 
@@ -46,138 +51,91 @@ pub struct RgbaImage {
     pub pixels: Vec<u8>,
 }
 
-#[derive(Default)]
 pub struct Icons {
-    pub images: BTreeMap<String, RgbaImage>,
-    pub textures: BTreeMap<String, TextureId>,
+    images: BTreeMap<String, RgbaImage>,
+    textures: BTreeMap<String, TextureId>,
+}
+
+fn defaults() -> &'static BTreeMap<String, RgbaImage> {
+    static DEFAULTS: OnceLock<BTreeMap<String, RgbaImage>> = OnceLock::new();
+    DEFAULTS.get_or_init(|| {
+        bundled_icons::BUNDLED_ICONS
+            .iter()
+            .map(|(key, svg)| {
+                let mut image = rasterize_svg(svg).expect("embedded icon artwork is valid");
+                monochrome(&mut image);
+                ((*key).to_owned(), image)
+            })
+            .collect()
+    })
+}
+
+impl Default for Icons {
+    fn default() -> Self {
+        Self {
+            images: defaults().clone(),
+            textures: BTreeMap::new(),
+        }
+    }
 }
 
 impl Icons {
-    /// Shared defaults work without a repository or application asset directory.
     pub fn bundled() -> Self {
-        Self::bundled_with_directory(None).expect("embedded core icon contract is valid")
+        Self::default()
     }
 
-    pub fn bundled_with_directory(directory: Option<&Path>) -> io::Result<Self> {
-        let mut icons = Self::default();
-        icons.register("bedtime.core", bundled_icons::BUNDLED_ICONS, directory)?;
-        Ok(icons)
-    }
-
-    /// Fill shared defaults while preserving source images supplied by the host.
-    /// Resolve the complete directory first so an invalid source publishes nothing.
-    pub fn register_core_defaults(&mut self, directory: Option<&Path>) -> io::Result<()> {
-        let defaults = Self::bundled_with_directory(directory)?;
-        for (key, image) in defaults.images {
-            self.images.entry(key).or_insert(image);
-        }
-        Ok(())
-    }
-
-    /// Access shared embedded artwork when declaring a plugin's own defaults.
-    pub fn bundled_svg(name: &str) -> Option<&'static [u8]> {
-        bundled_icons::BUNDLED_ICONS
-            .iter()
-            .find(|icon| icon.name == name)
-            .and_then(|icon| icon.embedded_svg)
-    }
-
-    /// Publish one complete plugin contribution. Failed source/contract validation
-    /// leaves the existing registry intact. Registered images may later be updated
-    /// in place; the desktop reconciles native and GPU realizations before drawing.
-    pub fn register(
-        &mut self,
-        plugin: &str,
-        definitions: &[IconDefinition],
-        directory: Option<&Path>,
-    ) -> io::Result<()> {
-        if !valid_identifier(plugin) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Invalid icon plugin namespace",
-            ));
-        }
-        let mut pending = BTreeMap::new();
-        let mut filenames = BTreeSet::new();
-        for icon in definitions {
-            let key = format!("{plugin}.{}", icon.name);
-            let file = Path::new(icon.filename);
-            if !valid_identifier(icon.name)
-                || icon.name.contains('.')
-                || file.components().count() != 1
-                || file.file_name().and_then(|name| name.to_str()) != Some(icon.filename)
-                || file.extension().and_then(|ext| ext.to_str()) != Some("svg")
-                || !filenames.insert(icon.filename)
-                || self.images.contains_key(&key)
-                || pending.contains_key(&key)
-            {
+    /// Replace the active pack atomically, including at runtime. Resolve against
+    /// defaults rather than the previous pack. Failure preserves live artwork and
+    /// texture IDs. The desktop reconciles changed images before the next draw;
+    /// consumers must look up keys each frame rather than retain texture IDs.
+    pub fn replace_pack(&mut self, pack: &IconPack) -> io::Result<()> {
+        let mut images = defaults().clone();
+        for (key, svg) in &pack.0 {
+            if !defaults().contains_key(key) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    format!(
-                        "Invalid or duplicate icon contract: {key} ({})",
-                        icon.filename
-                    ),
+                    format!("Unknown icon key: {key}"),
                 ));
             }
-            let bytes = match directory.map(|directory| fs::read(directory.join(icon.filename))) {
-                Some(Ok(bytes)) => bytes,
-                Some(Err(error)) if error.kind() != io::ErrorKind::NotFound => {
-                    return Err(io::Error::new(
-                        error.kind(),
-                        format!("Icon {key} ({}): {error}", icon.filename),
-                    ));
-                }
-                _ => icon.embedded_svg.map(<[u8]>::to_vec).ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!("Missing icon {key} ({})", icon.filename),
-                    )
-                })?,
-            };
-            let mut image = rasterize_svg(&bytes).map_err(|error| {
-                io::Error::new(
-                    error.kind(),
-                    format!("Icon {key} ({}): {error}", icon.filename),
-                )
-            })?;
+            let mut image = rasterize_svg(svg)
+                .map_err(|error| io::Error::new(error.kind(), format!("Icon {key}: {error}")))?;
             monochrome(&mut image);
-            pending.insert(key, image);
+            images.insert(key.clone(), image);
         }
-        self.images.extend(pending);
+        self.images = images;
         Ok(())
     }
 
+    pub fn images(&self) -> &BTreeMap<String, RgbaImage> {
+        &self.images
+    }
+
+    /// Desktop realization API; plugins only read texture IDs.
     pub fn set_texture(&mut self, key: &str, texture: TextureId) {
         self.textures.insert(key.to_owned(), texture);
     }
 
-    pub fn get(&self, name: &str) -> Option<TextureId> {
-        self.find(name)
-            .or_else(|| self.find("bedtime.core.default"))
+    pub fn clear_textures(&mut self) {
+        self.textures.clear();
     }
 
-    /// Resolve an exact namespaced key; no legacy shorthand is accepted.
+    /// Exact shared-key lookup. Missing control icons are not generic file icons.
+    pub fn get(&self, name: &str) -> Option<TextureId> {
+        self.find(name)
+    }
+
     pub fn find(&self, name: &str) -> Option<TextureId> {
         self.textures.get(name).copied()
     }
 
     pub fn get_for_file(&self, filename: &str) -> Option<TextureId> {
-        self.get(icon_key_for_file(filename))
+        self.find(icon_key_for_file(filename))
+            .or_else(|| self.find("default"))
     }
 
     pub fn file_icon_tint(&self, _filename: &str, text: [f32; 4]) -> [f32; 4] {
         text
     }
-}
-
-fn valid_identifier(value: &str) -> bool {
-    !value.is_empty()
-        && value.split('.').all(|part| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        })
 }
 
 fn monochrome(image: &mut RgbaImage) {
@@ -191,11 +149,9 @@ impl FileIcons for Icons {
     fn get(&self, name: &str) -> Option<TextureId> {
         self.get(name)
     }
-
     fn get_for_file(&self, filename: &str) -> Option<TextureId> {
         self.get_for_file(filename)
     }
-
     fn file_icon_tint(&self, filename: &str, text: [f32; 4]) -> [f32; 4] {
         self.file_icon_tint(filename, text)
     }
@@ -203,157 +159,139 @@ impl FileIcons for Icons {
 
 // Exact filenames take precedence over extension associations.
 const FILE_NAMES: &[(&str, &str)] = &[
-    ("CMakeLists.txt", "bedtime.core.cmake"),
-    ("cmake", "bedtime.core.cmake"),
-    (".clangd", "bedtime.core.llvm"),
-    (".clang-format", "bedtime.core.llvm"),
-    ("Dockerfile", "bedtime.core.docker"),
-    ("Containerfile", "bedtime.core.docker"),
-    (".dockerignore", "bedtime.core.docker"),
-    ("docker-compose.yml", "bedtime.core.docker"),
-    ("docker-compose.yaml", "bedtime.core.docker"),
-    (".gitignore", "bedtime.core.git"),
-    (".gitmodules", "bedtime.core.git"),
-    (".gitattributes", "bedtime.core.git"),
-    (".editorconfig", "bedtime.core.editorconfig"),
-    (".env", "bedtime.core.config"),
-    ("Cargo.toml", "bedtime.core.rust"),
-    ("Cargo.lock", "bedtime.core.lock"),
-    ("package.json", "bedtime.core.npm"),
-    ("package-lock.json", "bedtime.core.lock"),
-    ("yarn.lock", "bedtime.core.lock"),
-    ("tsconfig.json", "bedtime.core.typescript"),
-    (".babelrc", "bedtime.core.babel"),
-    (".eslintrc", "bedtime.core.eslint"),
-    ("Makefile", "bedtime.core.config"),
-    ("makefile", "bedtime.core.config"),
-    ("GNUmakefile", "bedtime.core.config"),
-    ("LICENSE", "bedtime.core.license"),
-    ("LICENSE.txt", "bedtime.core.license"),
-    ("LICENSE.md", "bedtime.core.license"),
-    ("COPYING", "bedtime.core.license"),
-    ("README", "bedtime.core.text"),
-    ("NOTICE", "bedtime.core.text"),
+    ("CMakeLists.txt", "cmake"),
+    ("cmake", "cmake"),
+    (".clangd", "llvm"),
+    (".clang-format", "llvm"),
+    ("Dockerfile", "docker"),
+    ("Containerfile", "docker"),
+    (".dockerignore", "docker"),
+    ("docker-compose.yml", "docker"),
+    ("docker-compose.yaml", "docker"),
+    (".gitignore", "git"),
+    (".gitmodules", "git"),
+    (".gitattributes", "git"),
+    (".editorconfig", "editorconfig"),
+    (".env", "config"),
+    ("Cargo.toml", "rust"),
+    ("Cargo.lock", "lock"),
+    ("package.json", "npm"),
+    ("package-lock.json", "lock"),
+    ("yarn.lock", "lock"),
+    ("tsconfig.json", "typescript"),
+    (".babelrc", "babel"),
+    (".eslintrc", "eslint"),
+    ("Makefile", "config"),
+    ("makefile", "config"),
+    ("GNUmakefile", "config"),
+    ("LICENSE", "license"),
+    ("LICENSE.txt", "license"),
+    ("LICENSE.md", "license"),
+    ("COPYING", "license"),
+    ("README", "text"),
+    ("NOTICE", "text"),
 ];
 
 // One canonical asset per language/tool or generic file category.
 const FILE_EXTENSIONS: &[(&[&str], &str)] = &[
-    (&["rs", "rust"], "bedtime.core.rust"),
-    (&["py", "pyi", "pyw", "python"], "bedtime.core.python"),
-    (
-        &["js", "mjs", "cjs", "javascript"],
-        "bedtime.core.javascript",
-    ),
+    (&["rs", "rust"], "rust"),
+    (&["py", "pyi", "pyw", "python"], "python"),
+    (&["js", "mjs", "cjs", "javascript"], "javascript"),
     (
         &["ts", "mts", "cts", "typescript", "tsconfig"],
-        "bedtime.core.typescript",
+        "typescript",
     ),
-    (&["jsx", "tsx", "cjsx", "react"], "bedtime.core.react"),
-    (&["rb", "ruby"], "bedtime.core.ruby"),
-    (&["cmake"], "bedtime.core.cmake"),
-    (&["clangd", "clang-format"], "bedtime.core.llvm"),
-    (&["docker", "dockerfile"], "bedtime.core.docker"),
-    (&["sh", "bash", "zsh", "fish", "shell"], "bedtime.core.bash"),
-    (&["c", "h"], "bedtime.core.c"),
-    (
-        &["cpp", "cc", "cxx", "hpp", "hh", "hxx"],
-        "bedtime.core.cpp",
-    ),
+    (&["jsx", "tsx", "cjsx", "react"], "react"),
+    (&["rb", "ruby"], "ruby"),
+    (&["cmake"], "cmake"),
+    (&["clangd", "clang-format"], "llvm"),
+    (&["docker", "dockerfile"], "docker"),
+    (&["sh", "bash", "zsh", "fish", "shell"], "bash"),
+    (&["c", "h"], "c"),
+    (&["cpp", "cc", "cxx", "hpp", "hh", "hxx"], "cpp"),
     (
         &["cs", "csproj", "c-sharp", "vb", "vbproj", "fsproj"],
-        "bedtime.core.dotnet",
+        "dotnet",
     ),
-    (&["fs", "fsi", "fsx", "f-sharp"], "bedtime.core.fsharp"),
-    (&["r", "rmd"], "bedtime.core.r-language"),
-    (
-        &["html", "htm", "xhtml", "html_erb", "cshtml"],
-        "bedtime.core.html",
-    ),
-    (&["css"], "bedtime.core.css"),
-    (&["md", "markdown", "mdx", "mdo"], "bedtime.core.markdown"),
-    (&["json", "jsonc", "json5"], "bedtime.core.json"),
-    (&["yml", "yaml"], "bedtime.core.yaml"),
+    (&["fs", "fsi", "fsx", "f-sharp"], "fsharp"),
+    (&["r", "rmd"], "r-language"),
+    (&["html", "htm", "xhtml", "html_erb", "cshtml"], "html"),
+    (&["css"], "css"),
+    (&["md", "markdown", "mdx", "mdo"], "markdown"),
+    (&["json", "jsonc", "json5"], "json"),
+    (&["yml", "yaml"], "yaml"),
     (
         &["git", "gitignore", "gitmodule", "git_ignore", "git_folder"],
-        "bedtime.core.git",
+        "git",
     ),
-    (&["github"], "bedtime.core.github"),
-    (&["gitlab"], "bedtime.core.gitlab"),
-    (&["go", "go2", "mod", "sum"], "bedtime.core.go"),
-    (&["gd", "godot", "tscn", "tres"], "bedtime.core.godot"),
-    (&["dart"], "bedtime.core.dart"),
-    (
-        &["ex", "exs", "elixir", "elixir_script"],
-        "bedtime.core.elixir",
-    ),
-    (&["elm"], "bedtime.core.elm"),
-    (&["eslint"], "bedtime.core.eslint"),
-    (&["ethereum", "sol"], "bedtime.core.ethereum"),
-    (&["firebase"], "bedtime.core.firebase"),
-    (&["firefox"], "bedtime.core.firefox"),
-    (&["gradle"], "bedtime.core.gradle"),
-    (&["graphql", "gql"], "bedtime.core.graphql"),
-    (&["grunt"], "bedtime.core.grunt"),
-    (&["gulp"], "bedtime.core.gulp"),
-    (&["hs", "lhs", "haskell"], "bedtime.core.haskell"),
-    (&["hx", "haxe"], "bedtime.core.haxe"),
-    (&["ionic"], "bedtime.core.ionic"),
-    (&["jenkins"], "bedtime.core.jenkins"),
-    (&["jinja", "jinja2", "j2"], "bedtime.core.jinja"),
-    (&["jl", "julia"], "bedtime.core.julia"),
-    (&["kt", "kts", "kotlin"], "bedtime.core.kotlin"),
-    (&["less"], "bedtime.core.less"),
-    (&["lua"], "bedtime.core.lua"),
-    (&["maven"], "bedtime.core.maven"),
-    (&["nim", "nims"], "bedtime.core.nim"),
-    (&["npm", "npm_ignored"], "bedtime.core.npm"),
-    (&["nunjucks", "njk"], "bedtime.core.nunjucks"),
-    (&["ml", "mli", "ocaml"], "bedtime.core.ocaml"),
-    (&["pl", "pm", "perl"], "bedtime.core.perl"),
-    (&["php", "phtml", "cake_php"], "bedtime.core.php"),
-    (&["platformio"], "bedtime.core.platformio"),
-    (&["prisma"], "bedtime.core.prisma"),
-    (&["pug", "jade"], "bedtime.core.pug"),
-    (&["pp", "puppet"], "bedtime.core.puppet"),
-    (&["purs", "purescript"], "bedtime.core.purescript"),
-    (&["re", "rei", "reasonml"], "bedtime.core.reason"),
-    (&["res", "resi", "rescript"], "bedtime.core.rescript"),
-    (&["rollup"], "bedtime.core.rollup"),
-    (&["rails", "erb"], "bedtime.core.rails"),
-    (&["sass", "scss"], "bedtime.core.code"),
-    (&["scala", "sc"], "bedtime.core.scala"),
-    (&["spring"], "bedtime.core.spring"),
-    (&["stylelint"], "bedtime.core.stylelint"),
-    (&["styl", "stylus"], "bedtime.core.stylus"),
+    (&["github"], "github"),
+    (&["gitlab"], "gitlab"),
+    (&["go", "go2", "mod", "sum"], "go"),
+    (&["gd", "godot", "tscn", "tres"], "godot"),
+    (&["dart"], "dart"),
+    (&["ex", "exs", "elixir", "elixir_script"], "elixir"),
+    (&["elm"], "elm"),
+    (&["eslint"], "eslint"),
+    (&["ethereum", "sol"], "ethereum"),
+    (&["firebase"], "firebase"),
+    (&["firefox"], "firefox"),
+    (&["gradle"], "gradle"),
+    (&["graphql", "gql"], "graphql"),
+    (&["grunt"], "grunt"),
+    (&["gulp"], "gulp"),
+    (&["hs", "lhs", "haskell"], "haskell"),
+    (&["hx", "haxe"], "haxe"),
+    (&["ionic"], "ionic"),
+    (&["jenkins"], "jenkins"),
+    (&["jinja", "jinja2", "j2"], "jinja"),
+    (&["jl", "julia"], "julia"),
+    (&["kt", "kts", "kotlin"], "kotlin"),
+    (&["less"], "less"),
+    (&["lua"], "lua"),
+    (&["maven"], "maven"),
+    (&["nim", "nims"], "nim"),
+    (&["npm", "npm_ignored"], "npm"),
+    (&["nunjucks", "njk"], "nunjucks"),
+    (&["ml", "mli", "ocaml"], "ocaml"),
+    (&["pl", "pm", "perl"], "perl"),
+    (&["php", "phtml", "cake_php"], "php"),
+    (&["platformio"], "platformio"),
+    (&["prisma"], "prisma"),
+    (&["pug", "jade"], "pug"),
+    (&["pp", "puppet"], "puppet"),
+    (&["purs", "purescript"], "purescript"),
+    (&["re", "rei", "reasonml"], "reason"),
+    (&["res", "resi", "rescript"], "rescript"),
+    (&["rollup"], "rollup"),
+    (&["rails", "erb"], "rails"),
+    (&["sass", "scss"], "code"),
+    (&["scala", "sc"], "scala"),
+    (&["spring"], "spring"),
+    (&["stylelint"], "stylelint"),
+    (&["styl", "stylus"], "stylus"),
     (
         &["sublime", "sublime-project", "sublime-workspace"],
-        "bedtime.core.sublime",
+        "sublime",
     ),
-    (&["svelte"], "bedtime.core.svelte"),
-    (&["swift"], "bedtime.core.swift"),
-    (&["tf", "tfvars", "terraform"], "bedtime.core.terraform"),
-    (&["tex", "latex", "bib"], "bedtime.core.tex"),
-    (&["vala", "vapi"], "bedtime.core.code"),
-    (&["vue"], "bedtime.core.code"),
-    (&["wasm", "wat"], "bedtime.core.wasm"),
-    (&["webpack"], "bedtime.core.code"),
-    (&["yarn"], "bedtime.core.yarn"),
-    (&["zig", "zon"], "bedtime.core.zig"),
-    (&["babel"], "bedtime.core.babel"),
-    (&["bazel", "bzl"], "bedtime.core.bazel"),
-    (&["bower"], "bedtime.core.bower"),
-    (&["coffee", "coffee_erb", "cake"], "bedtime.core.coffee"),
-    (
-        &["cr", "crystal", "crystal_embedded"],
-        "bedtime.core.crystal",
-    ),
-    (&["editorconfig"], "bedtime.core.editorconfig"),
-    (&["groovy", "grails"], "bedtime.core.groovy"),
-    (
-        &["clj", "cljs", "cljc", "edn", "clojure"],
-        "bedtime.core.clojure",
-    ),
-    (&["ejs"], "bedtime.core.ejs"),
+    (&["svelte"], "svelte"),
+    (&["swift"], "swift"),
+    (&["tf", "tfvars", "terraform"], "terraform"),
+    (&["tex", "latex", "bib"], "tex"),
+    (&["vala", "vapi"], "code"),
+    (&["vue"], "code"),
+    (&["wasm", "wat"], "wasm"),
+    (&["webpack"], "code"),
+    (&["yarn"], "yarn"),
+    (&["zig", "zon"], "zig"),
+    (&["babel"], "babel"),
+    (&["bazel", "bzl"], "bazel"),
+    (&["bower"], "bower"),
+    (&["coffee", "coffee_erb", "cake"], "coffee"),
+    (&["cr", "crystal", "crystal_embedded"], "crystal"),
+    (&["editorconfig"], "editorconfig"),
+    (&["groovy", "grails"], "groovy"),
+    (&["clj", "cljs", "cljc", "edn", "clojure"], "clojure"),
+    (&["ejs"], "ejs"),
     (
         &[
             "ini",
@@ -368,7 +306,7 @@ const FILE_EXTENSIONS: &[(&[&str], &str)] = &[
             "todo",
             "happenings",
         ],
-        "bedtime.core.config",
+        "config",
     ),
     (
         &[
@@ -419,13 +357,13 @@ const FILE_EXTENSIONS: &[(&[&str], &str)] = &[
             "stl",
             "blend",
         ],
-        "bedtime.core.code",
+        "code",
     ),
     (
         &[
             "txt", "text", "log", "rst", "rtf", "doc", "docx", "word", "pdf", "argdown",
         ],
-        "bedtime.core.text",
+        "text",
     ),
     (
         &[
@@ -452,35 +390,29 @@ const FILE_EXTENSIONS: &[(&[&str], &str)] = &[
             "favicon",
             "image",
         ],
-        "bedtime.core.image",
+        "image",
     ),
     (
         &[
             "mp3", "wav", "flac", "ogg", "m4a", "aac", "aiff", "opus", "audio",
         ],
-        "bedtime.core.audio",
+        "audio",
     ),
     (
         &["mp4", "mov", "mkv", "avi", "webm", "m4v", "video"],
-        "bedtime.core.video",
+        "video",
     ),
     (
         &["zip", "tar", "gz", "bz2", "xz", "7z", "rar", "zst"],
-        "bedtime.core.archive",
+        "archive",
     ),
-    (
-        &["csv", "tsv", "xls", "xlsx", "ods"],
-        "bedtime.core.spreadsheet",
-    ),
-    (
-        &["ttf", "otf", "woff", "woff2", "font"],
-        "bedtime.core.font",
-    ),
-    (&["db", "sqlite", "sqlite3", "sql"], "bedtime.core.database"),
-    (&["lock"], "bedtime.core.lock"),
-    (&["ipynb", "notebook"], "bedtime.core.notebook"),
-    (&["license"], "bedtime.core.license"),
-    (&["bin", "hex"], "bedtime.core.hex"),
+    (&["csv", "tsv", "xls", "xlsx", "ods"], "spreadsheet"),
+    (&["ttf", "otf", "woff", "woff2", "font"], "font"),
+    (&["db", "sqlite", "sqlite3", "sql"], "database"),
+    (&["lock"], "lock"),
+    (&["ipynb", "notebook"], "notebook"),
+    (&["license"], "license"),
+    (&["bin", "hex"], "hex"),
 ];
 
 pub fn icon_key_for_file(filename: &str) -> &'static str {
@@ -503,25 +435,25 @@ pub fn icon_key_for_file(filename: &str) -> &'static str {
                 .iter()
                 .any(|ext| ext.eq_ignore_ascii_case(extension))
         })
-        .map_or("bedtime.core.default", |(_, key)| key)
+        .map_or("default", |(_, key)| key)
 }
 
 /// Map existing command identifiers to the artwork used in panels.
 pub fn command_icon_key(name: Option<&str>) -> &'static str {
     match name {
-        Some("files" | "filetree" | "sidebar") => "bedtime.core.files",
-        Some("terminal") => "bedtime.core.terminal",
-        Some("search") => "bedtime.core.search",
-        Some("structure") => "bedtime.core.structure",
-        Some("diagnostics") => "bedtime.core.diagnostics",
-        Some("debug") => "bedtime.core.debug",
-        Some("git") => "bedtime.core.git-branch",
-        Some("split_right") => "bedtime.core.split_right",
-        Some("split_down") => "bedtime.core.split_down",
-        Some("gear" | "settings") => "bedtime.core.settings",
-        Some("image") => "bedtime.core.viewer-image",
-        Some("hex") => "bedtime.core.hex",
-        _ => "bedtime.core.extension",
+        Some("files" | "filetree" | "sidebar") => "files",
+        Some("terminal") => "terminal",
+        Some("search") => "search",
+        Some("structure") => "structure",
+        Some("diagnostics") => "diagnostics",
+        Some("debug") => "debug",
+        Some("git") => "git-branch",
+        Some("split_right") => "split_right",
+        Some("split_down") => "split_down",
+        Some("gear" | "settings") => "settings",
+        Some("image") => "viewer-image",
+        Some("hex") => "hex",
+        _ => "extension",
     }
 }
 
@@ -604,7 +536,7 @@ fn rasterize_svg(bytes: &[u8]) -> io::Result<RgbaImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
+    use std::{collections::BTreeSet, path::PathBuf};
 
     const SOLID: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="white"/></svg>"#;
     const DOT: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="3" fill="white"/></svg>"#;
@@ -629,144 +561,89 @@ mod tests {
     }
 
     #[test]
-    fn plugin_namespaces_keep_identical_local_filenames_independent() {
+    fn packs_replace_defaults_without_inheriting_previous_overrides() {
         let mut icons = Icons::default();
-        for (plugin, embedded_svg) in [("example.alpha", SOLID), ("example.beta", DOT)] {
-            icons
-                .register(
-                    plugin,
-                    &[IconDefinition {
-                        name: "close",
-                        filename: "close.svg",
-                        embedded_svg: Some(embedded_svg),
-                    }],
-                    None,
-                )
-                .unwrap();
-        }
-        assert_ne!(
-            icons.images["example.alpha.close"],
-            icons.images["example.beta.close"]
-        );
-        icons.set_texture("example.alpha.close", TextureId::new(1));
-        icons.set_texture("example.beta.close", TextureId::new(2));
-        assert_eq!(icons.find("example.alpha.close"), Some(TextureId::new(1)));
-        assert_eq!(icons.find("example.beta.close"), Some(TextureId::new(2)));
-        assert_eq!(icons.find("close"), None);
+        let baseline = icons.images.clone();
+        icons.set_texture("close", TextureId::new(4));
+        icons
+            .replace_pack(&IconPack(BTreeMap::from([
+                ("close".into(), SOLID.to_vec()),
+                ("plus".into(), DOT.to_vec()),
+            ])))
+            .unwrap();
+        assert_ne!(icons.images["close"], baseline["close"]);
+        assert_eq!(icons.images["folder"], baseline["folder"]);
+        icons
+            .replace_pack(&IconPack(BTreeMap::from([("close".into(), DOT.to_vec())])))
+            .unwrap();
+        assert_eq!(icons.images["plus"], baseline["plus"]);
+        assert_eq!(icons.find("close"), Some(TextureId::new(4)));
+        icons.replace_pack(&IconPack::default()).unwrap();
+        assert_eq!(icons.images, baseline);
     }
 
     #[test]
-    fn directory_replaces_its_filename_and_missing_files_keep_embedded_defaults() {
+    fn invalid_packs_preserve_artwork_and_live_texture_ids() {
+        let mut icons = Icons::default();
+        icons
+            .replace_pack(&IconPack(BTreeMap::from([("close".into(), DOT.to_vec())])))
+            .unwrap();
+        icons.set_texture("close", TextureId::new(4));
+        let before = icons.images.clone();
+        for invalid in ["unknown", "../close", "bedtime.core.close", "plus"] {
+            let pack = IconPack(BTreeMap::from([
+                ("close".into(), SOLID.to_vec()),
+                (invalid.into(), b"invalid SVG".to_vec()),
+            ]));
+            assert!(icons.replace_pack(&pack).is_err());
+            assert_eq!(icons.images, before);
+            assert_eq!(icons.find("close"), Some(TextureId::new(4)));
+        }
+    }
+
+    #[test]
+    fn directory_pack_overrides_shared_keys_and_preserves_missing_defaults() {
         let directory = TemporaryDirectory::new();
         fs::write(directory.0.join("close.svg"), DOT).unwrap();
+        fs::write(directory.0.join("ATTRIBUTION.txt"), "Artwork attribution").unwrap();
+        let pack = IconPack::from_directory(&directory.0).unwrap();
         let mut icons = Icons::default();
-        icons
-            .register(
-                "example.alpha",
-                &[
-                    IconDefinition {
-                        name: "close",
-                        filename: "close.svg",
-                        embedded_svg: Some(SOLID),
-                    },
-                    IconDefinition {
-                        name: "add",
-                        filename: "add.svg",
-                        embedded_svg: Some(SOLID),
-                    },
-                ],
-                Some(&directory.0),
-            )
-            .unwrap();
-        let mut embedded = Icons::default();
-        embedded
-            .register(
-                "example.beta",
-                &[IconDefinition {
-                    name: "close",
-                    filename: "close.svg",
-                    embedded_svg: Some(SOLID),
-                }],
-                None,
-            )
-            .unwrap();
-        assert_ne!(
-            icons.images["example.alpha.close"],
-            embedded.images["example.beta.close"]
-        );
-        assert_eq!(
-            icons.images["example.alpha.add"],
-            embedded.images["example.beta.close"]
-        );
-    }
-
-    #[test]
-    fn missing_or_invalid_contributions_do_not_publish_partial_batches() {
-        let directory = TemporaryDirectory::new();
-        let mut icons = Icons::default();
-        let definitions = [
-            IconDefinition {
-                name: "close",
-                filename: "close.svg",
-                embedded_svg: Some(SOLID),
-            },
-            IconDefinition {
-                name: "add",
-                filename: "add.svg",
-                embedded_svg: None,
-            },
-        ];
-        let error = icons
-            .register("example.alpha", &definitions, Some(&directory.0))
-            .unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::NotFound);
-        assert!(error.to_string().contains("example.alpha.add"));
-        assert!(icons.images.is_empty());
-        fs::write(directory.0.join("add.svg"), "invalid SVG").unwrap();
-        assert!(
-            icons
-                .register("example.alpha", &definitions, Some(&directory.0))
-                .is_err()
-        );
-        assert!(icons.images.is_empty());
-        icons
-            .register("example.alpha", &definitions[..1], None)
-            .unwrap();
-        assert!(
-            icons
-                .register("example.alpha", &definitions[..1], None)
-                .is_err()
-        );
-        assert_eq!(icons.images.len(), 1);
-    }
-
-    #[test]
-    fn embedded_core_defaults_require_namespaced_texture_keys() {
-        let mut icons = Icons::bundled();
-        assert_eq!(icons.images.len(), icon_keys().count());
-        assert!(icons.images.contains_key("bedtime.core.close"));
-        icons.set_texture("bedtime.core.close", TextureId::new(4));
-        icons.set_texture("bedtime.core.default", TextureId::new(5));
-        assert_eq!(icons.find("close"), None);
-        assert_eq!(icons.find("bedtime.core.close"), Some(TextureId::new(4)));
-        assert_eq!(icons.get("unknown.plugin.icon"), Some(TextureId::new(5)));
-        assert_eq!(icons.find("unknown.plugin.icon"), None);
-    }
-
-    #[test]
-    fn core_defaults_preserve_host_images_and_reject_invalid_directory_atomically() {
-        let directory = TemporaryDirectory::new();
-        let mut icons = Icons::default();
-        let custom = rasterize_svg(DOT).unwrap();
-        icons
-            .images
-            .insert("bedtime.core.close".into(), custom.clone());
+        let baseline = icons.images.clone();
+        icons.replace_pack(&pack).unwrap();
+        assert_ne!(icons.images["close"], baseline["close"]);
+        assert_eq!(icons.images["folder"], baseline["folder"]);
         fs::write(directory.0.join("plus.svg"), "invalid SVG").unwrap();
-        assert!(icons.register_core_defaults(Some(&directory.0)).is_err());
-        assert_eq!(icons.images.len(), 1);
-        icons.register_core_defaults(None).unwrap();
-        assert_eq!(icons.images["bedtime.core.close"], custom);
+        let before = icons.images.clone();
+        assert!(
+            icons
+                .replace_pack(&IconPack::from_directory(&directory.0).unwrap())
+                .is_err()
+        );
+        assert_eq!(icons.images, before);
+    }
+
+    #[test]
+    fn full_pack_can_replace_every_default_and_control_lookup_is_exact() {
+        let mut icons = Icons::default();
+        let pack = IconPack(
+            icon_keys()
+                .map(|key| (key.to_owned(), DOT.to_vec()))
+                .collect(),
+        );
+        icons.replace_pack(&pack).unwrap();
         assert_eq!(icons.images.len(), icon_keys().count());
+        assert!(
+            icons
+                .images
+                .values()
+                .all(|image| image == &icons.images["close"])
+        );
+        icons.set_texture("close", TextureId::new(4));
+        icons.set_texture("default", TextureId::new(5));
+        assert_eq!(icons.get("close"), Some(TextureId::new(4)));
+        assert_eq!(icons.get("missing"), None);
+        assert_eq!(icons.find("bedtime.core.close"), None);
+        assert_eq!(icons.get_for_file("unknown.xyz"), Some(TextureId::new(5)));
     }
 
     #[test]
@@ -879,21 +756,20 @@ mod tests {
             ("unknown.xyz", "default"),
             ("no-extension", "default"),
         ] {
-            assert_eq!(
-                icon_key_for_file(file),
-                format!("bedtime.core.{key}"),
-                "{file}"
-            );
+            assert_eq!(icon_key_for_file(file), key, "{file}");
         }
     }
 
     #[test]
     fn textures_fall_back_and_all_file_icons_follow_theme_ink() {
         let mut icons = Icons::default();
-        icons.set_texture("bedtime.core.default", TextureId::new(1));
-        icons.set_texture("bedtime.core.rust", TextureId::new(2));
+        icons.set_texture("default", TextureId::new(1));
+        icons.set_texture("rust", TextureId::new(2));
         assert_eq!(icons.get_for_file("lib.rs"), Some(TextureId::new(2)));
-        assert_eq!(icons.get("missing"), Some(TextureId::new(1)));
+        assert_eq!(
+            icons.get_for_file("missing.rs-without-icon"),
+            Some(TextureId::new(1))
+        );
         for ink in [[0.9, 0.9, 0.9, 1.0], [0.1, 0.1, 0.1, 1.0]] {
             let provider: &dyn FileIcons = &icons;
             for filename in ["lib.rs", "main.py", "Cargo.lock", "unknown.xyz"] {
@@ -916,7 +792,7 @@ mod tests {
             .collect();
         assert_eq!(assets, keys.iter().map(|key| (*key).to_owned()).collect());
         for key in &keys {
-            let image = &icons.images[&format!("bedtime.core.{key}")];
+            let image = &icons.images[*key];
             assert_eq!(
                 (image.width, image.height, image.pixels.len()),
                 (32, 32, 4096)

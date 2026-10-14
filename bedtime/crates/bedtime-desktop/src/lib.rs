@@ -177,6 +177,7 @@ impl Plugin for DesktopIntegrationPlugin {
             platform,
             snapshot_context: None,
         })
+        .init_non_send::<bedtime_ui::icons::Icons>()
         .init_resource::<DesktopFrame>()
         .init_resource::<DesktopFrameInfo>()
         .insert_resource(frame_timings::FrameTimings::from_environment())

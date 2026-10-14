@@ -59,16 +59,10 @@ fn main() -> std::io::Result<()> {
             ..Default::default()
         },
         |app| {
-            let mut icons = bedtime::ui::icons::Icons::default();
-            icons.images.insert(
-                "proof".into(),
-                bedtime::ui::icons::RgbaImage {
-                    width: 1,
-                    height: 1,
-                    pixels: vec![255, 240, 80, 255],
-                },
-            );
-            app.insert_non_send(icons);
+            let pack = bedtime::ui::icons::IconPack(std::collections::BTreeMap::from([
+                ("default".into(), br#"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="white"/></svg>"#.to_vec()),
+            ]));
+            app.world_mut().non_send_mut::<bedtime::ui::icons::Icons>().replace_pack(&pack)?;
             let mut canvas = |handle, color| {
                 let entity = app
                     .world_mut()
@@ -174,7 +168,7 @@ fn draw(world: &mut World, ui: &Ui) {
     if let Some(texture) = world
         .get_non_send::<bedtime::ui::icons::Icons>()
         .unwrap()
-        .get("proof")
+        .get("default")
     {
         draw.add_image(
             texture,
@@ -182,7 +176,7 @@ fn draw(world: &mut World, ui: &Ui) {
             [96., 24.],
             [0.; 2],
             [1.; 2],
-            Color::WHITE,
+            Color::from_rgba_bytes(255, 240, 80, 255),
         );
     }
 }

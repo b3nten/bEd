@@ -19,9 +19,9 @@ handler forwards shell invocations before GUI startup. Install `TerminalPlugin`
 in the desktop callback; it installs its directory, lifecycle and clipboard integration.
 
 Open `bedtime.terminal.panel` through workbench requests or use the contributed
-`bedtime.terminal.new` command. The icon contract is `terminal.svg`, with embedded
-default and exact key `bedtime.terminal.terminal`; applications can override its
-owner directory through launcher `IconDirectories`.
+`bedtime.terminal.new` command. The panel consumes the shared `terminal`
+icon; applications can override `terminal.svg` through an `IconPack`, including
+at runtime.
 
 `TerminalPlugin` projects shared file context into new-shell launch context and adds
 panel lifecycle, clipboard and file-link integration.

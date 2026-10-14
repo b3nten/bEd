@@ -91,23 +91,6 @@ pub struct DebuggerPlugin;
 
 impl Plugin for DebuggerPlugin {
     fn build(&self, app: &mut App) {
-        app.init_non_send::<bedtime_ui::icons::Icons>();
-        let directory = app
-            .world()
-            .get_non_send::<bedtime_ui::icons::IconDirectories>()
-            .and_then(|sources| sources.get(MODULE_ID))
-            .map(std::path::Path::to_path_buf);
-        let definitions = [("debug", "debug.svg", "debug")].map(|(name, filename, bundled)| {
-            bedtime_ui::icons::IconDefinition {
-                name,
-                filename,
-                embedded_svg: bedtime_ui::icons::Icons::bundled_svg(bundled),
-            }
-        });
-        app.world_mut()
-            .non_send_mut::<bedtime_ui::icons::Icons>()
-            .register(MODULE_ID, &definitions, directory.as_deref())
-            .expect("plugin icon contract and configured sources are valid");
         app.world_mut()
             .init_non_send::<bedtime_documents::DocumentSession>();
         app.configure_sets(
@@ -169,8 +152,8 @@ impl Plugin for DebuggerPlugin {
                 "Apply debugger source action",
                 source_action,
             );
-            registrar.panel_icon(PANEL_ID, "bedtime.debug.debug");
-            registrar.command_icon(SHOW_COMMAND, "bedtime.debug.debug");
+            registrar.panel_icon(PANEL_ID, "debug");
+            registrar.command_icon(SHOW_COMMAND, "debug");
             registrar.toolbar(SHOW_COMMAND);
             registrar.menu(SHOW_COMMAND);
         })

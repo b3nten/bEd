@@ -35,8 +35,8 @@ impl Plugin for SourceOutlinePlugin {
             registrar.panel(PANEL_ID, "Structure", create);
             registrar.command(OPEN_COMMAND, "Structure", open);
             registrar.menu(OPEN_COMMAND);
-            registrar.command_icon(OPEN_COMMAND, "bedtime.core.structure");
-            registrar.panel_icon(PANEL_ID, "bedtime.core.structure");
+            registrar.command_icon(OPEN_COMMAND, "structure");
+            registrar.panel_icon(PANEL_ID, "structure");
             registrar.toolbar(OPEN_COMMAND);
         })
         .expect("SourceOutlinePlugin is installed once");

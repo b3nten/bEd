@@ -66,18 +66,6 @@ impl Plugin for FoundationPlugin {
             // validation and saves, including when callers replace the window.
             close_when_requested: false,
         });
-        app.init_non_send::<bedtime_ui::icons::IconDirectories>();
-        let directory = app
-            .world()
-            .non_send::<bedtime_ui::icons::IconDirectories>()
-            .0
-            .get("bedtime.core")
-            .cloned();
-        app.world_mut().init_non_send::<bedtime_ui::icons::Icons>();
-        app.world_mut()
-            .non_send_mut::<bedtime_ui::icons::Icons>()
-            .register_core_defaults(directory.as_deref())
-            .expect("valid core icon directory");
         app.add_plugins(DocumentHostPlugin)
             .add_message::<NativeCommandDispatched>()
             .configure_sets(

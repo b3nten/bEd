@@ -79,9 +79,9 @@ impl Plugin for ImageViewerPlugin {
             registrar.command(OPEN_COMMAND, "Open Image…", image_command);
             registrar.command(OPEN_FILE_COMMAND, "Open in Image Viewer", image_command);
             registrar.menu(OPEN_COMMAND);
-            registrar.command_icon(OPEN_COMMAND, "bedtime.core.viewer-image");
-            registrar.command_icon(OPEN_FILE_COMMAND, "bedtime.core.viewer-image");
-            registrar.panel_icon(PANEL_ID, "bedtime.core.viewer-image");
+            registrar.command_icon(OPEN_COMMAND, "viewer-image");
+            registrar.command_icon(OPEN_FILE_COMMAND, "viewer-image");
+            registrar.panel_icon(PANEL_ID, "viewer-image");
         })
         .expect("Image systems must register exactly once");
     }

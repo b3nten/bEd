@@ -47,23 +47,6 @@ pub struct HttpClientPlugin;
 
 impl Plugin for HttpClientPlugin {
     fn build(&self, app: &mut App) {
-        app.init_non_send::<bedtime_ui::icons::Icons>();
-        let directory = app
-            .world()
-            .get_non_send::<bedtime_ui::icons::IconDirectories>()
-            .and_then(|sources| sources.get(MODULE_ID))
-            .map(std::path::Path::to_path_buf);
-        let definitions = [("request", "request.svg", "html")].map(|(name, filename, bundled)| {
-            bedtime_ui::icons::IconDefinition {
-                name,
-                filename,
-                embedded_svg: bedtime_ui::icons::Icons::bundled_svg(bundled),
-            }
-        });
-        app.world_mut()
-            .non_send_mut::<bedtime_ui::icons::Icons>()
-            .register(MODULE_ID, &definitions, directory.as_deref())
-            .expect("plugin icon contract and configured sources are valid");
         app.init_resource::<HttpPersistence>()
             .init_resource::<HostEffects>()
             .init_resource::<FeatureRegistry>()
@@ -91,8 +74,8 @@ impl Plugin for HttpClientPlugin {
                 cancel_run,
             );
             registrar.menu(OPEN_COMMAND);
-            registrar.panel_icon(PANEL_ID, "bedtime.http.request");
-            registrar.command_icon(OPEN_COMMAND, "bedtime.http.request");
+            registrar.panel_icon(PANEL_ID, "html");
+            registrar.command_icon(OPEN_COMMAND, "html");
         })
         .expect("HttpClientPlugin is installed once");
         app.world_mut().spawn(crate::status::items());

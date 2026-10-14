@@ -281,7 +281,7 @@ impl MacOsWindow {
             buttons: Vec::new(),
             commands: commands.to_vec(),
             icons: native_icons,
-            icon_sources: icons.images.clone(),
+            icon_sources: icons.images().clone(),
             title: None,
             title_width: None,
             title_text,
@@ -323,10 +323,10 @@ impl MacOsWindow {
         std::mem::take(&mut *self.actions.ivars().pending.borrow_mut())
     }
 
-    /// Reconcile the same source artwork consumed by the GPU owner. Late plugin
-    /// contributions and runtime replacement update existing native buttons.
+    /// Reconcile the same active pack consumed by the GPU owner. Runtime
+    /// replacement updates existing native buttons.
     pub fn set_icons(&mut self, icons: &Icons) -> io::Result<()> {
-        if self.icon_sources == icons.images {
+        if &self.icon_sources == icons.images() {
             return Ok(());
         }
         let realized = realize_icons(icons)?;
@@ -334,7 +334,7 @@ impl MacOsWindow {
             set_command_image(button, command, &realized);
         }
         self.icons = realized;
-        self.icon_sources = icons.images.clone();
+        self.icon_sources = icons.images().clone();
         Ok(())
     }
 
@@ -789,7 +789,7 @@ fn find_metal_layer(root: &CALayer) -> Option<Retained<CALayer>> {
 
 fn realize_icons(icons: &Icons) -> io::Result<BTreeMap<String, Retained<NSImage>>> {
     let mut realized = BTreeMap::new();
-    for (key, raster) in &icons.images {
+    for (key, raster) in icons.images() {
         let mut png = Vec::new();
         image::codecs::png::PngEncoder::new(&mut png)
             .write_image(
@@ -814,22 +814,8 @@ fn command_image<'a>(
     icons: &'a BTreeMap<String, Retained<NSImage>>,
     key: Option<&str>,
 ) -> Option<&'a Retained<NSImage>> {
-    // Plugin contributions use exact namespaced keys. Legacy host metadata may
-    // still use shared names or aliases while its contributions are migrated.
-    if let Some(key) = key.filter(|key| key.contains('.')) {
-        return icons.get(key);
-    }
-    key.and_then(|key| {
-        icons
-            .get(key)
-            .or_else(|| icons.get(&format!("bedtime.core.{key}")))
-    })
-    .or_else(|| {
-        let legacy = command_icon_key(key);
-        icons
-            .get(legacy)
-            .or_else(|| icons.get(&format!("bedtime.core.{legacy}")))
-    })
+    key.and_then(|key| icons.get(key))
+        .or_else(|| icons.get(command_icon_key(key)))
 }
 
 fn set_command_image(

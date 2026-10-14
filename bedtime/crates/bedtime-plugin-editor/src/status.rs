@@ -25,20 +25,10 @@ const DOCUMENT: &str = "bedtime.editor.document-status";
 pub(crate) fn install(app: &mut App) {
     app.world_mut().spawn(StatusItems(
         [
-            (NAVIGATION, "Navigation", 300, "bedtime.editor.navigation"),
-            (
-                LSP,
-                "Language servers",
-                200,
-                "bedtime.editor.language-server",
-            ),
-            (
-                DIAGNOSTICS,
-                "Diagnostics",
-                100,
-                "bedtime.editor.diagnostics",
-            ),
-            (DOCUMENT, "Document", 50, "bedtime.editor.document"),
+            (NAVIGATION, "Navigation", 300, "search"),
+            (LSP, "Language servers", 200, "code"),
+            (DIAGNOSTICS, "Diagnostics", 100, "diagnostics"),
+            (DOCUMENT, "Document", 50, "text"),
         ]
         .map(|(id, label, priority, icon)| StatusItem {
             id,

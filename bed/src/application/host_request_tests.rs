@@ -21,6 +21,52 @@ fn capture(world: &World, source: Option<Entity>, request: HostAction) -> HostRe
 }
 
 #[test]
+fn closing_a_drawn_mascot_does_not_report_a_stale_redraw_origin() {
+    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+    let dir = TempDir::new();
+    let mut app = unstarted_app(&dir);
+    app.add_plugins(bedtime_plugin_mascots::BedMascotPlugin);
+    app.update();
+    let panel = open_panel(
+        app.world_mut(),
+        "bedtime.mascot.panel",
+        PanelInput::None,
+        Value::Null,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+    let frontend = panel_presentation(app.world(), panel).unwrap();
+    let mut imgui = navigation_context();
+    let ui = imgui.frame();
+    ui.window("mascot").build(|| {
+        bedtime_workbench::render_panel(app.world_mut(), frontend, ui).unwrap();
+    });
+    drop(imgui.render_legacy());
+    let effects = app.world_mut().resource_mut::<HostEffects>().take();
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect.action, HostAction::Invalidate))
+    );
+    for effect in effects {
+        app.world_mut()
+            .resource_mut::<HostEffects>()
+            .push_effect(effect);
+    }
+    // A merge enqueues the close after drawing, before the host admits the
+    // frontend's effects.
+    app.world_mut()
+        .resource_mut::<WorkbenchRequests>()
+        .push(WorkbenchAction::ClosePanel(panel));
+    process_app_requests(app.world_mut()).unwrap();
+    crate::application::runtime::update_application_policy(app.world_mut());
+    assert!(!app.world().entities().contains(panel));
+    assert_eq!(app.world().resource::<ApplicationState>().error, None);
+}
+
+#[test]
 fn emitted_document_requests_interleave_with_panel_commands_before_admission() {
     #[derive(Resource, Default)]
     struct Observed(Vec<Vec<u8>>);

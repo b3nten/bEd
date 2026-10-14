@@ -445,7 +445,7 @@ fn draw_key_row(ui: &Ui, row: &KeyRow, icons: Option<&bedtime_ui::icons::Icons>)
                     "Ctrl" => Some("key-control"),
                     _ => None,
                 };
-                let texture = key.and_then(|key| icons?.textures.get(key).copied());
+                let texture = key.and_then(|key| icons?.find(key));
                 let width = texture.map_or_else(|| ui.calc_text_size(part)[0], |_| side);
                 if !first && ui.item_rect_max()[0] + gap + width <= right {
                     ui.same_line_with_spacing(0.0, gap);

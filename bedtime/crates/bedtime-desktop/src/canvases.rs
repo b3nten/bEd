@@ -150,7 +150,7 @@ fn prepare(world: &mut World) {
         };
         world.resource_mut::<CanvasTextures>().0.clear();
         if let Some(mut icons) = world.get_non_send_mut::<bedtime_ui::icons::Icons>() {
-            icons.textures.clear();
+            icons.clear_textures();
         }
     }
     let outputs = outputs(world);
@@ -191,24 +191,8 @@ fn upload_icons(world: &mut World, gpu: &DesktopGpu) {
     let (mut icons, mut cache, mut errors) = state
         .get_mut(world)
         .expect("canonical canvas/icon resources installed");
-    let bedtime_ui::icons::Icons { images, textures } = &mut *icons;
-    let retired: Vec<_> = cache
-        .icons
-        .keys()
-        .filter(|key| !images.contains_key(*key))
-        .cloned()
-        .collect();
-    for key in retired {
-        let icon = cache.icons.remove(&key).unwrap();
-        if let Err(message) = gpu.unregister_external_texture(icon.external) {
-            errors.0.push(DesktopCanvasError {
-                entity: None,
-                message,
-            });
-        }
-        textures.remove(&key);
-    }
-    for (key, image) in images.iter() {
+    let mut uploaded = Vec::new();
+    for (key, image) in icons.images() {
         let cached = cache.icons.get(key);
         if cached.is_some_and(|cached| cached.source == *image) {
             continue;
@@ -231,7 +215,7 @@ fn upload_icons(world: &mut World, gpu: &DesktopGpu) {
             });
         match result {
             Ok(icon) => {
-                textures.insert(key.clone(), icon.external.texture_id());
+                uploaded.push((key.clone(), icon.external.texture_id()));
                 cache.icons.insert(key.clone(), icon);
             }
             Err(message) => errors.0.push(DesktopCanvasError {
@@ -239,6 +223,9 @@ fn upload_icons(world: &mut World, gpu: &DesktopGpu) {
                 message,
             }),
         }
+    }
+    for (key, texture) in uploaded {
+        icons.set_texture(&key, texture);
     }
 }
 

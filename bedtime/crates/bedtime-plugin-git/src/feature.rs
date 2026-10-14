@@ -53,32 +53,6 @@ pub struct GitPlugin;
 
 impl Plugin for GitPlugin {
     fn build(&self, app: &mut App) {
-        app.init_non_send::<bedtime_ui::icons::Icons>();
-        let directory = app
-            .world()
-            .get_non_send::<bedtime_ui::icons::IconDirectories>()
-            .and_then(|sources| sources.get(MODULE_ID))
-            .map(std::path::Path::to_path_buf);
-        let definitions = [
-            ("branch", "branch.svg", "git-branch"),
-            ("refresh", "refresh.svg", "refresh-cw"),
-            ("fetch", "fetch.svg", "cloud-download"),
-            ("pull", "pull.svg", "arrow-down-to-line"),
-            ("push", "push.svg", "arrow-up-from-line"),
-            ("stage", "stage.svg", "plus"),
-            ("unstage", "unstage.svg", "minus"),
-        ]
-        .map(
-            |(name, filename, bundled)| bedtime_ui::icons::IconDefinition {
-                name,
-                filename,
-                embedded_svg: bedtime_ui::icons::Icons::bundled_svg(bundled),
-            },
-        );
-        app.world_mut()
-            .non_send_mut::<bedtime_ui::icons::Icons>()
-            .register(MODULE_ID, &definitions, directory.as_deref())
-            .expect("plugin icon contract and configured sources are valid");
         app.world_mut()
             .init_non_send::<bedtime_documents::DocumentSession>();
         app.world_mut().init_non_send::<GitState>();
@@ -120,9 +94,9 @@ impl Plugin for GitPlugin {
                 "Apply Git source action",
                 source_action,
             );
-            registrar.panel_icon(PANEL_ID, "bedtime.git.branch");
-            registrar.panel_icon(DIFF_PANEL_ID, "bedtime.git.branch");
-            registrar.command_icon(SHOW_COMMAND, "bedtime.git.branch");
+            registrar.panel_icon(PANEL_ID, "git-branch");
+            registrar.panel_icon(DIFF_PANEL_ID, "git-branch");
+            registrar.command_icon(SHOW_COMMAND, "git-branch");
             registrar.toolbar(SHOW_COMMAND);
             registrar.menu(SHOW_COMMAND);
         })

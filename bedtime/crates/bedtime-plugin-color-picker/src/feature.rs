@@ -48,8 +48,8 @@ impl Plugin for ColorPickerPlugin {
             registrar.command(OPEN_COMMAND, "Color Picker", open_panel);
             registrar.command(APPLY_COMMAND, "Apply color", apply_color);
             registrar.menu(OPEN_COMMAND);
-            registrar.command_icon(OPEN_COMMAND, "bedtime.core.viewer-image");
-            registrar.panel_icon(PANEL_ID, "bedtime.core.viewer-image");
+            registrar.command_icon(OPEN_COMMAND, "viewer-image");
+            registrar.panel_icon(PANEL_ID, "viewer-image");
         })
         .expect("ColorPickerPlugin must be installed once");
     }

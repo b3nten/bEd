@@ -75,7 +75,7 @@ impl Plugin for BedMascotPlugin {
             registrar.panel("bedtime.mascot.panel", "Bed", create_bed);
             registrar.command("bedtime.mascot.open", "Bed", bed_command);
             registrar.menu("bedtime.mascot.open");
-            registrar.command_icon("bedtime.mascot.open", "bedtime.core.extension");
+            registrar.command_icon("bedtime.mascot.open", "extension");
         })
         .expect("Bed systems must register exactly once");
     }

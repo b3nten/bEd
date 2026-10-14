@@ -123,7 +123,7 @@ impl Fixture {
                 world,
                 ui,
                 bedtime_workbench::StatusBarHost {
-                    icon: "bedtime.core.default",
+                    icon: "default",
                     summary: "Minimal workbench",
                     details: "",
                 },

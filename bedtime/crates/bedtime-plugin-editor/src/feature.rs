@@ -25,30 +25,7 @@ pub struct EditorPlugin;
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
         register_settings(app.world_mut());
-        app.init_non_send::<bedtime_ui::icons::Icons>();
-        let directory = app
-            .world()
-            .get_non_send::<bedtime_ui::icons::IconDirectories>()
-            .and_then(|sources| sources.get(MODULE_ID))
-            .map(std::path::Path::to_path_buf);
-        let definitions = [
-            ("diagnostics", "diagnostics.svg", "diagnostics"),
-            ("language-server", "language-server.svg", "code"),
-            ("document", "document.svg", "text"),
-            ("hex", "hex.svg", "hex"),
-            ("navigation", "navigation.svg", "search"),
-        ]
-        .map(
-            |(name, filename, bundled)| bedtime_ui::icons::IconDefinition {
-                name,
-                filename,
-                embedded_svg: bedtime_ui::icons::Icons::bundled_svg(bundled),
-            },
-        );
-        app.world_mut()
-            .non_send_mut::<bedtime_ui::icons::Icons>()
-            .register(MODULE_ID, &definitions, directory.as_deref())
-            .expect("plugin icon contract and configured sources are valid");
+
         app.world_mut()
             .init_non_send::<bedtime_documents::DocumentSession>();
         app.init_non_send::<EditorViews>()
@@ -158,14 +135,14 @@ impl Plugin for EditorPlugin {
                 "Language Servers",
                 create_dashboard,
             );
-            registrar.panel_icon(TEXT_PANEL_TYPE, "bedtime.editor.document");
-            registrar.panel_icon(HEX_PANEL_TYPE, "bedtime.editor.hex");
-            registrar.panel_icon(DIAGNOSTICS_PANEL_TYPE, "bedtime.editor.diagnostics");
-            registrar.panel_icon(LSP_DASHBOARD_PANEL_TYPE, "bedtime.editor.language-server");
-            registrar.panel_icon(REFERENCES_PANEL_TYPE, "bedtime.editor.navigation");
-            registrar.command_icon(SHOW_DIAGNOSTICS_COMMAND, "bedtime.editor.diagnostics");
-            registrar.command_icon(NEW_DIAGNOSTICS_COMMAND, "bedtime.editor.diagnostics");
-            registrar.command_icon(SHOW_LSP_COMMAND, "bedtime.editor.language-server");
+            registrar.panel_icon(TEXT_PANEL_TYPE, "text");
+            registrar.panel_icon(HEX_PANEL_TYPE, "hex");
+            registrar.panel_icon(DIAGNOSTICS_PANEL_TYPE, "diagnostics");
+            registrar.panel_icon(LSP_DASHBOARD_PANEL_TYPE, "code");
+            registrar.panel_icon(REFERENCES_PANEL_TYPE, "search");
+            registrar.command_icon(SHOW_DIAGNOSTICS_COMMAND, "diagnostics");
+            registrar.command_icon(NEW_DIAGNOSTICS_COMMAND, "diagnostics");
+            registrar.command_icon(SHOW_LSP_COMMAND, "code");
             registrar.toolbar(NEW_DIAGNOSTICS_COMMAND);
         })
         .expect("EditorPlugin must be installed once");

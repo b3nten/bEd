@@ -80,24 +80,6 @@ pub struct TerminalPlugin;
 
 impl Plugin for TerminalPlugin {
     fn build(&self, app: &mut App) {
-        app.init_non_send::<bedtime_ui::icons::Icons>();
-        let directory = app
-            .world()
-            .get_non_send::<bedtime_ui::icons::IconDirectories>()
-            .and_then(|sources| sources.get(MODULE_ID))
-            .map(std::path::Path::to_path_buf);
-        let definitions =
-            [("terminal", "terminal.svg", "terminal")].map(|(name, filename, bundled)| {
-                bedtime_ui::icons::IconDefinition {
-                    name,
-                    filename,
-                    embedded_svg: bedtime_ui::icons::Icons::bundled_svg(bundled),
-                }
-            });
-        app.world_mut()
-            .non_send_mut::<bedtime_ui::icons::Icons>()
-            .register(MODULE_ID, &definitions, directory.as_deref())
-            .expect("plugin icon contract and configured sources are valid");
         if !app.is_plugin_added::<bedtime_terminal::TerminalCorePlugin>() {
             app.add_plugins(bedtime_terminal::TerminalCorePlugin);
         }
@@ -126,8 +108,8 @@ impl Plugin for TerminalPlugin {
             registrar.command("bedtime.terminal.show", "Show Terminal", show_panel);
             registrar.global_shortcut("bedtime.terminal.show", &["Ctrl+Grave"]);
             registrar.global_shortcut(NEW_COMMAND, &["Ctrl+Shift+Grave"]);
-            registrar.panel_icon(PANEL_ID, "bedtime.terminal.terminal");
-            registrar.command_icon(NEW_COMMAND, "bedtime.terminal.terminal");
+            registrar.panel_icon(PANEL_ID, "terminal");
+            registrar.command_icon(NEW_COMMAND, "terminal");
             registrar.toolbar(NEW_COMMAND);
         })
         .expect("TerminalPlugin must be installed once");
@@ -288,7 +270,7 @@ fn create_panel(In(creation): In<PanelCreation>, world: &mut World) -> PanelResu
             id: "bedtime.terminal.session",
             label: "Terminal",
             priority: 50,
-            icon: "bedtime.terminal.terminal",
+            icon: "terminal",
             prefer_icon: false,
             measure: status_measure,
             draw: status_draw,

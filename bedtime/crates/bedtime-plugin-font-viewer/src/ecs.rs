@@ -68,9 +68,9 @@ impl Plugin for FontViewerPlugin {
             registrar.command(OPEN_COMMAND, "Open Font…", font_command);
             registrar.command(OPEN_FILE_COMMAND, "Open in Font Viewer", font_command);
             registrar.menu(OPEN_COMMAND);
-            registrar.command_icon(OPEN_COMMAND, "bedtime.core.font");
-            registrar.command_icon(OPEN_FILE_COMMAND, "bedtime.core.font");
-            registrar.panel_icon(PANEL_ID, "bedtime.core.font");
+            registrar.command_icon(OPEN_COMMAND, "font");
+            registrar.command_icon(OPEN_FILE_COMMAND, "font");
+            registrar.panel_icon(PANEL_ID, "font");
         })
         .expect("Font systems must register exactly once");
     }

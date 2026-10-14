@@ -22,7 +22,7 @@ application integrations.
 
 Register `bedtime_plugin_terminal::launchers()` on `LaunchBuilder` to support
 shell helpers and file links. See the [application SDK documentation](../../crates/bedtime/README.md)
-for launch integration and plugin-owned icon directory contracts.
+for launch integration and shared icon pack overrides.
 
 Native smoke verifies independent split shells, Unicode glyphs, hyperlinks, Kitty
 images, CSV/image companions and captured GPU output without bEd configuration

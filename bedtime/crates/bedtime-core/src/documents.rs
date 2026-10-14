@@ -2500,6 +2500,11 @@ fn validate_request_origin(world: &World, request: &HostRequest) -> Result<(), S
     if request.session_id() != world.non_send::<DocumentSession>().session_id() {
         return Err("Document session was replaced".into());
     }
+    // Redraw invalidates the application frame, without accessing its source.
+    // A layout gesture can close a drawn panel before its redraw is admitted.
+    if matches!(request.action(), HostAction::Invalidate) {
+        return Ok(());
+    }
     if let Some(source) = request.source() {
         let owner = bedtime_api::workbench::panel_owner(world, source)
             .ok_or("Originating panel is unavailable")?;

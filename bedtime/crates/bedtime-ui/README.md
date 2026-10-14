@@ -1,40 +1,25 @@
 # bedtime-ui
 
-Shared presentation types, ImGui helpers and plugin-owned icon sources. The
-desktop handles native images and GPU textures; plugins register source artwork.
+Shared presentation types, ImGui helpers, and a shared icon vocabulary.
+Applications select artwork; plugins consume keys. The desktop owns native
+images, GPU textures, and their lifetimes.
 
-## Icon contracts
+## Icons and runtime packs
 
-Each plugin declares local filenames and registers them under its own namespace.
-For example, `example.graph` can declare `node.svg` and reference the resulting
-key `example.graph.node`. Another plugin can declare its own `node.svg` without
-sharing artwork or configuration.
+`Icons::default()` provides embedded monochrome artwork for every key in the
+[shared catalog](assets/icons/catalog.tsv). Plugins reference keys such as
+`folder`, `terminal`, and `git-branch` through `get`/`find`, `panel_icon`, or
+`command_icon`. Exact lookups return `None` for missing textures; `get_for_file`
+selects a filename/extension association and falls back to `default`.
 
-```rust,ignore
-use bedtime_ui::icons::{IconDefinition, IconDirectories, Icons};
-
-let directory = world.non_send::<IconDirectories>()
-    .get("example.graph").map(std::path::Path::to_path_buf);
-world.non_send_mut::<Icons>().register(
-    "example.graph",
-    &[IconDefinition {
-        name: "node",
-        filename: "node.svg",
-        embedded_svg: Some(include_bytes!("assets/node.svg")),
-    }],
-    directory.as_deref(),
-)?;
-```
-
-The owned application launcher accepts `IconDirectories` before installing the
-foundation and feature plugins. Each entry chooses a directory for one plugin:
+Applications supply partial or complete SVG overrides:
 
 ```rust,ignore
-let mut directories = IconDirectories::default();
-directories.0.insert("bedtime.terminal".into(), "my-icons/terminal".into());
-directories.0.insert("bedtime.core".into(), "my-icons/chrome".into());
+use bedtime_ui::icons::{IconPack, Icons};
+
+let pack = IconPack::from_directory(std::path::Path::new("my-icons"))?;
 let options = bedtime::DesktopOptions {
-    icon_directories: directories,
+    icon_pack: pack,
     ..Default::default()
 };
 launch.run(options, |app| {
@@ -43,35 +28,28 @@ launch.run(options, |app| {
 })?;
 ```
 
-A directory file overrides that plugin's embedded default. A missing file keeps
-its embedded default. Missing required artwork, malformed SVG, invalid names or
-duplicate contracts return an error before any of the registration is published.
-Third-party SVG sets may be embedded or provided in directories using the
-plugin's filenames. SVG silhouettes are converted to monochrome images and
-tinted using the current theme.
+Directory filenames are shared keys with `.svg`, for example `folder.svg`.
+Non-SVG files are ignored, allowing attribution files in the pack. Applications
+can also construct `IconPack` directly from a map of keys to SVG bytes.
 
-The built-in contracts are:
+To switch packs at runtime, replace the pack before desktop preparation:
 
-| Namespace | Local filenames |
-| --- | --- |
-| `bedtime.core` | Keys in the [shared catalog](assets/icons/catalog.tsv), each with `.svg` |
-| `bedtime.terminal` | `terminal.svg` |
-| `bedtime.http` | `request.svg` |
-| `bedtime.explorer` | `files.svg`, `folder.svg`, `folder-open.svg`, `chevron-right.svg`, `chevron-down.svg` |
-| `bedtime.git` | `branch.svg`, `refresh.svg`, `fetch.svg`, `pull.svg`, `push.svg`, `stage.svg`, `unstage.svg` |
-| `bedtime.debug` | `debug.svg` |
-| `bedtime.editor` | `diagnostics.svg`, `language-server.svg`, `document.svg`, `hex.svg`, `navigation.svg` |
+```rust,ignore
+world.non_send_mut::<Icons>().replace_pack(&next_pack)?;
+// An empty pack restores all embedded defaults.
+world.non_send_mut::<Icons>().replace_pack(&IconPack::default())?;
+```
 
-`Icons::bundled()` supplies shared `bedtime.core.*` artwork without an application
-asset directory. `register_core_defaults` fills missing shared images while
-preserving images already supplied by a host. A plugin can reuse bundled artwork
-through `Icons::bundled_svg` while retaining its own namespace and override
-directory. Panel and command contributions reference these exact keys through
-`panel_icon` and `command_icon` in the workbench API.
+Replacement validates and rasterizes the whole pack before publishing anything.
+Unknown keys or malformed SVGs preserve the current artwork and texture IDs.
+Every replacement resolves against embedded defaults, never the previous pack.
+Omitted keys therefore return to defaults when switching packs.
 
-`Icons::images` owns source images. The desktop refreshes native and GPU images
-when those sources change and recreates GPU textures after device replacement.
-Namespaced keys resolve exactly in both ImGui and native toolbars. All lookups use exact namespaced keys such as `bedtime.core.close`.
+Source images are read-only through `Icons::images()`. The desktop reconciles
+changed native and GPU images before drawing and recreates GPU textures after
+device replacement. Plugins look up texture IDs each frame rather than retaining
+them. Artwork defines monochrome silhouettes; draw sites tint them with current
+UI colors. Color themes and icon packs remain independent.
 
 ## Shared controls and live themes
 

@@ -37,8 +37,8 @@ impl Plugin for WorkspacesPlugin {
         register(app.world_mut(), MODULE_ID, |registrar| {
             registrar.panel(PANEL_ID, "Workspaces", create_panel);
             registrar.command(NEW_COMMAND, "New Workspaces Panel", open_panel);
-            registrar.command_icon(NEW_COMMAND, "bedtime.core.folder");
-            registrar.panel_icon(PANEL_ID, "bedtime.core.folder");
+            registrar.command_icon(NEW_COMMAND, "folder");
+            registrar.panel_icon(PANEL_ID, "folder");
         })
         .expect("WorkspacesPlugin must be installed once");
     }

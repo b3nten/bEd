@@ -1215,9 +1215,9 @@ impl FileTree {
         let icon = icons.and_then(|icons| {
             if node.is_directory {
                 icons.get(if node.is_open {
-                    "bedtime.explorer.folder-open"
+                    "folder-open"
                 } else {
-                    "bedtime.explorer.folder"
+                    "folder"
                 })
             } else {
                 icons.get_for_file(&node.name)
@@ -1519,9 +1519,9 @@ impl FileTree {
             let side = font_size * 0.7;
             if let Some(texture) = icons.and_then(|icons| {
                 icons.get(if node.is_open {
-                    "bedtime.explorer.chevron-down"
+                    "chevron-down"
                 } else {
-                    "bedtime.explorer.chevron-right"
+                    "chevron-right"
                 })
             }) {
                 ui.get_window_draw_list().add_image(

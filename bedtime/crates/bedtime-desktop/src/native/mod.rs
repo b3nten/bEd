@@ -309,14 +309,12 @@ fn prepare(world: &mut World) {
                 })],
             });
         }
-        let empty_icons = bedtime_ui::icons::Icons::default();
         let result = {
             let mut state = SystemState::<(
                 NonSendMut<DesktopNativePlatform>,
-                Option<NonSend<bedtime_ui::icons::Icons>>,
+                NonSend<bedtime_ui::icons::Icons>,
             )>::new(world);
             let (mut native, icons) = state.get_mut(world).expect("native resources installed");
-            let icons = icons.as_deref().unwrap_or(&empty_icons);
             bevy::winit::WINIT_WINDOWS.with(|windows| -> io::Result<f32> {
                 let windows = windows.borrow();
                 let window = primary
@@ -327,12 +325,12 @@ fn prepare(world: &mut World) {
                         window,
                         requested.opacity,
                         requested.blur,
-                        icons,
+                        &icons,
                         &requested.toolbar,
                     )?);
                 }
                 let chrome = native.window.as_mut().expect("native chrome installed");
-                chrome.set_icons(icons)?;
+                chrome.set_icons(&icons)?;
                 chrome.update(requested.opacity, requested.blur)?;
                 chrome.set_commands(&requested.toolbar)?;
                 chrome.update_theme(requested.foreground, requested.background)?;

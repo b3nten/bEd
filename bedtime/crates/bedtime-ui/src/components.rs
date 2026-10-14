@@ -338,6 +338,7 @@ mod tests {
 
     #[test]
     fn item_popup_style_is_lazy_and_retained_for_an_open_popup() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
         use dear_imgui_rs::{Context, FramePrepareOptions};
         let mut context = Context::create();
         context

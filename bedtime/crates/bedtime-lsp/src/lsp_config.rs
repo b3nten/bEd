@@ -637,6 +637,11 @@ pub fn resolve_server_paths_with_environment(
         {
             directories.push(bin);
         }
+        if configured == "gopls"
+            && let Some(home) = &environment.home
+        {
+            directories.push(home.join("go/bin"));
+        }
         for directory in directories {
             let candidate = environment.absolute(&directory).join(path);
             if executable_file(&candidate) {

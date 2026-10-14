@@ -24,10 +24,10 @@ impl Plugin for DocumentCommandsPlugin {
             registrar.global_shortcut("bedtime.documents.open_file", &["Primary+O"]);
             registrar.global_shortcut("bedtime.documents.save", &["Primary+S"]);
             registrar.global_shortcut("bedtime.documents.save_as", &["Primary+Shift+S"]);
-            registrar.command_icon("bedtime.documents.save", "bedtime.core.text");
+            registrar.command_icon("bedtime.documents.save", "text");
             registrar.command("bedtime.documents.new", "New document", new_document);
             registrar.global_shortcut("bedtime.documents.new", &["Primary+N"]);
-            registrar.command_icon("bedtime.documents.new", "bedtime.core.text");
+            registrar.command_icon("bedtime.documents.new", "text");
             for id in [
                 "bedtime.documents.new",
                 "bedtime.documents.open_file",

@@ -18,7 +18,7 @@ pub(crate) fn install(app: &mut App) {
                 id,
                 label,
                 priority,
-                icon: "bedtime.git.branch",
+                icon: "git-branch",
                 prefer_icon: false,
                 measure,
                 draw,

@@ -46,7 +46,7 @@ pub struct DesktopOptions {
     pub config_directory: Option<PathBuf>,
     pub workspace_directory_name: Option<String>,
     pub desktop: bedtime_desktop::DesktopPlugins,
-    pub icon_directories: bedtime_ui::icons::IconDirectories,
+    pub icon_pack: bedtime_ui::icons::IconPack,
     pub theme: Option<bedtime_ui::appearance::UiTheme>,
 }
 
@@ -61,7 +61,7 @@ impl Default for DesktopOptions {
             config_directory: None,
             workspace_directory_name: None,
             desktop,
-            icon_directories: Default::default(),
+            icon_pack: Default::default(),
             theme: None,
         }
     }
@@ -195,7 +195,9 @@ impl DesktopLaunch {
         let mut app = App::new();
         app.insert_resource(paths)
             .insert_resource(ApplicationInfo(self.identity));
-        app.insert_non_send(options.icon_directories);
+        let mut icons = bedtime_ui::icons::Icons::default();
+        icons.replace_pack(&options.icon_pack)?;
+        app.insert_non_send(icons);
         app.add_plugins(bedtime_core::FoundationPlugin {
             desktop: options.desktop,
         });

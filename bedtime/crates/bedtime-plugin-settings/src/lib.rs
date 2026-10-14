@@ -38,8 +38,8 @@ impl Plugin for SettingsPlugin {
             registrar.command(NEW_COMMAND, "New Settings", open);
             registrar.command("bedtime.settings.show", "Show Settings", show);
             registrar.global_shortcut("bedtime.settings.show", &["Primary+Comma"]);
-            registrar.command_icon(NEW_COMMAND, "bedtime.core.settings");
-            registrar.panel_icon(PANEL_ID, "bedtime.core.settings");
+            registrar.command_icon(NEW_COMMAND, "settings");
+            registrar.panel_icon(PANEL_ID, "settings");
             registrar.toolbar(NEW_COMMAND);
         })
         .expect("Settings panel installs once");

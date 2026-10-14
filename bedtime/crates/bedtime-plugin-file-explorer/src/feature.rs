@@ -113,30 +113,7 @@ impl Plugin for FileExplorerPlugin {
             ],
         )
         .expect("Explorer preferences install once");
-        app.init_non_send::<bedtime_ui::icons::Icons>();
-        let directory = app
-            .world()
-            .get_non_send::<bedtime_ui::icons::IconDirectories>()
-            .and_then(|sources| sources.get(MODULE_ID))
-            .map(std::path::Path::to_path_buf);
-        let definitions = [
-            ("files", "files.svg", "files"),
-            ("folder", "folder.svg", "folder"),
-            ("folder-open", "folder-open.svg", "folder-open"),
-            ("chevron-right", "chevron-right.svg", "chevron-right"),
-            ("chevron-down", "chevron-down.svg", "chevron-down"),
-        ]
-        .map(
-            |(name, filename, bundled)| bedtime_ui::icons::IconDefinition {
-                name,
-                filename,
-                embedded_svg: bedtime_ui::icons::Icons::bundled_svg(bundled),
-            },
-        );
-        app.world_mut()
-            .non_send_mut::<bedtime_ui::icons::Icons>()
-            .register(MODULE_ID, &definitions, directory.as_deref())
-            .expect("plugin icon contract and configured sources are valid");
+
         app.world_mut().init_non_send::<ExplorerState>();
         app.world_mut().init_non_send::<DocumentSession>();
         app.world_mut().init_non_send::<ExplorerPanels>();
@@ -179,8 +156,8 @@ impl Plugin for FileExplorerPlugin {
             registrar.command(FIND_COMMAND, "Find File", find);
             registrar.global_shortcut(FIND_COMMAND, &["Primary+P"]);
             registrar.global_shortcut(SHOW_COMMAND, &["Primary+Shift+E"]);
-            registrar.panel_icon(PANEL_ID, "bedtime.explorer.files");
-            registrar.command_icon(NEW_COMMAND, "bedtime.explorer.files");
+            registrar.panel_icon(PANEL_ID, "files");
+            registrar.command_icon(NEW_COMMAND, "files");
             registrar.toolbar(NEW_COMMAND);
         })
         .expect("FileExplorerPlugin is installed once");
@@ -822,26 +799,14 @@ mod tests {
         let old = dear_imgui_rs::TextureId::from(23usize);
         let current = dear_imgui_rs::TextureId::from(148usize);
         let tree_icons = [
-            (
-                "bedtime.explorer.folder-open",
-                dear_imgui_rs::TextureId::from(200usize),
-            ),
-            (
-                "bedtime.explorer.folder",
-                dear_imgui_rs::TextureId::from(201usize),
-            ),
-            (
-                "bedtime.explorer.chevron-down",
-                dear_imgui_rs::TextureId::from(202usize),
-            ),
-            (
-                "bedtime.explorer.chevron-right",
-                dear_imgui_rs::TextureId::from(203usize),
-            ),
+            ("folder-open", dear_imgui_rs::TextureId::from(200usize)),
+            ("folder", dear_imgui_rs::TextureId::from(201usize)),
+            ("chevron-down", dear_imgui_rs::TextureId::from(202usize)),
+            ("chevron-right", dear_imgui_rs::TextureId::from(203usize)),
         ];
         let mut app = App::new();
         let mut icons = Icons::default();
-        icons.set_texture("bedtime.core.default", old);
+        icons.set_texture("default", old);
         app.world_mut().insert_non_send(icons);
         app.add_plugins((WorkbenchPlugin, FileExplorerPlugin));
         app.world_mut()
@@ -889,11 +854,11 @@ mod tests {
         // preparation and before UI. The frontend must read this new mapping.
         {
             let mut icons = app.world_mut().non_send_mut::<Icons>();
-            icons.set_texture("bedtime.core.default", current);
+            icons.set_texture("default", current);
             for (key, texture) in tree_icons {
                 // Match desktop upload: only registered source artwork acquires
-                // a texture. This also exercises the plugin's icon contract.
-                if icons.images.contains_key(key) {
+                // a texture. Shared defaults supply the tree artwork.
+                if icons.images().contains_key(key) {
                     icons.set_texture(key, texture);
                 }
             }

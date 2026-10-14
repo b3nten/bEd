@@ -171,10 +171,10 @@ nothing by itself. A saved workspace is optional.
 
 ## Icons, themes and assets
 
-Plugins register exact namespaced icon contracts and embedded defaults through
-[`bedtime-ui`](../bedtime-ui/README.md). `DesktopOptions::icon_directories` selects per-owner
-artwork directories before feature plugins build. Core fills its embedded `bedtime.core.*`
-artwork without discovering bEd configuration or resources.
+Plugins consume the shared icon vocabulary from
+[`bedtime-ui`](../bedtime-ui/README.md). `DesktopOptions::icon_pack` supplies initial
+SVG overrides; `Icons::replace_pack` switches packs at runtime. Omitted keys use
+embedded defaults without discovering bEd configuration or resources.
 
 The launcher accepts one `UiTheme`. The desktop prepares a complete
 `UiFrameContext` snapshot for shared controls and custom frontends. The desktop

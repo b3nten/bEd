@@ -21,27 +21,7 @@ impl Plugin for EditorPlugin {
         if !app.is_plugin_added::<bedtime_workbench::WorkbenchPlugin>() {
             app.add_plugins(bedtime_workbench::WorkbenchPlugin);
         }
-        app.init_non_send::<bedtime_ui::icons::Icons>();
-        let directory = app
-            .world()
-            .get_non_send::<bedtime_ui::icons::IconDirectories>()
-            .and_then(|sources| sources.get(MODULE_ID))
-            .map(Path::to_path_buf);
-        let definitions = [
-            ("document", "document.svg", "text"),
-            ("hex", "hex.svg", "hex"),
-        ]
-        .map(
-            |(name, filename, bundled)| bedtime_ui::icons::IconDefinition {
-                name,
-                filename,
-                embedded_svg: bedtime_ui::icons::Icons::bundled_svg(bundled),
-            },
-        );
-        app.world_mut()
-            .non_send_mut::<bedtime_ui::icons::Icons>()
-            .register(MODULE_ID, &definitions, directory.as_deref())
-            .expect("editor icons have valid definitions and sources");
+
         app.init_non_send::<DocumentSession>()
             .init_non_send::<EditorViews>()
             .init_non_send::<EditorConfig>()
@@ -81,8 +61,8 @@ impl Plugin for EditorPlugin {
         register(app.world_mut(), MODULE_ID, |registrar| {
             registrar.panel(TEXT_PANEL_TYPE, "Text editor", create_text);
             registrar.panel(HEX_PANEL_TYPE, "Hex editor", create_hex);
-            registrar.panel_icon(TEXT_PANEL_TYPE, "bedtime.editor.document");
-            registrar.panel_icon(HEX_PANEL_TYPE, "bedtime.editor.hex");
+            registrar.panel_icon(TEXT_PANEL_TYPE, "text");
+            registrar.panel_icon(HEX_PANEL_TYPE, "hex");
             for action in bedtime_editor_widgets::shortcuts::actions()
                 .into_iter()
                 .chain(bedtime_editor_widgets::shortcuts::hex_actions())

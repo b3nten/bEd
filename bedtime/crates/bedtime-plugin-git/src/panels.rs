@@ -118,21 +118,21 @@ impl GitPanel {
             }
             for (key, id, fallback, tooltip, operation) in [
                 (
-                    "bedtime.git.fetch",
+                    "cloud-download",
                     "git-fetch",
                     "↓",
                     "Fetch changes from the remote",
                     Some(Operation::Fetch),
                 ),
                 (
-                    "bedtime.git.pull",
+                    "arrow-down-to-line",
                     "git-pull",
                     "↓",
                     "Pull remote changes into this branch",
                     Some(Operation::Pull),
                 ),
                 (
-                    "bedtime.git.push",
+                    "arrow-up-from-line",
                     "git-push",
                     "↑",
                     if status
@@ -146,7 +146,7 @@ impl GitPanel {
                     Some(Operation::Push),
                 ),
                 (
-                    "bedtime.git.refresh",
+                    "refresh-cw",
                     "git-refresh",
                     "↻",
                     "Refresh repository status",
@@ -915,12 +915,12 @@ mod tests {
             "default",
             "rust",
             "git-branch",
-            "bedtime.git.stage",
-            "bedtime.git.unstage",
-            "bedtime.git.fetch",
-            "bedtime.git.pull",
-            "bedtime.git.push",
-            "bedtime.git.refresh",
+            "plus",
+            "minus",
+            "cloud-download",
+            "arrow-down-to-line",
+            "arrow-up-from-line",
+            "refresh-cw",
         ] {
             icons.set_texture(key, TextureId::new(1));
         }
