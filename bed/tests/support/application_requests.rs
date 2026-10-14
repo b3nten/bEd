@@ -367,10 +367,8 @@ impl AppRequests {
 
 pub fn process_app_requests(world: &mut World) -> io::Result<()> {
     bedtime_core::resolve_documents(world);
-    #[cfg(feature = "workspaces")]
     bedtime_plugin_workspaces::resolve_workspace_requests(world);
     bedtime_core::resolve_documents(world);
-    #[cfg(feature = "workspaces")]
     bedtime_plugin_workspaces::resolve_workspace_requests(world);
     bedtime_core::resolve_documents(world);
     bedtime_plugin_layouts::poll::<LayoutSlot, bedtime_core::layouts::DocumentLayouts>(world);
@@ -634,12 +632,11 @@ pub fn submit_app_request(world: &mut World, mut request: AppRequest) -> AppRequ
             }
             AppAction::SetWorkspace(spec) => {
                 if matches!(spec.target, WorkspaceTarget::Local)
-                    && (!cfg!(feature = "workspaces")
-                        || world
-                            .resource::<WorkspaceRepositoryResource>()
-                            .0
-                            .find(&spec)?
-                            .is_none())
+                    && world
+                        .resource::<WorkspaceRepositoryResource>()
+                        .0
+                        .find(&spec)?
+                        .is_none()
                 {
                     Some(HostAction::OpenDirectory {
                         location: bedtime_files::FileLocation {
@@ -725,9 +722,6 @@ fn workspace_receipt(
     request: &AppRequest,
     action: WorkspaceAction,
 ) -> io::Result<Receipt> {
-    if !cfg!(feature = "workspaces") {
-        return Err(io::Error::other("Workspace support is disabled"));
-    }
     Ok(Receipt::Workspace(
         bedtime_plugin_workspaces::submit_workspace_request(
             world,

@@ -4,18 +4,15 @@ compile_error!("Bed supports macOS and Linux only.");
 
 pub mod app;
 pub mod application;
-#[cfg(feature = "automation")]
 pub(crate) mod automation;
 pub mod builtins;
 pub mod config;
 pub mod native_commands;
 mod remote_helpers;
-#[cfg(feature = "settings")]
 pub mod settings_view;
-#[cfg(feature = "automation")]
 mod smoke;
 mod startup;
-#[cfg(all(test, feature = "terminal", feature = "editor", unix))]
+#[cfg(all(test, unix))]
 mod terminal_tests;
 pub mod themes;
 #[cfg(test)]

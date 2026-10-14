@@ -82,17 +82,8 @@ impl Startup {
         paths: &ApplicationPaths,
     ) -> io::Result<crate::application::AppOptions> {
         use crate::application::{AppOptions, OpenFileOptions};
-        let store = if cfg!(feature = "workspaces") {
-            crate::application::workspace::store::WorkspaceStore::load(paths)?
-        } else {
-            crate::application::workspace::store::WorkspaceStore::empty(paths)
-        };
-        let workspace = if !cfg!(feature = "workspaces") {
-            if self.requested_workspace.is_some() {
-                return Err(io::Error::other("Workspace support is disabled"));
-            }
-            None
-        } else if let Some(spec) = self.requested_workspace {
+        let store = crate::application::workspace::store::WorkspaceStore::load(paths)?;
+        let workspace = if let Some(spec) = self.requested_workspace {
             Some(spec)
         } else if let Some(root) = self.workspace.as_ref() {
             store.stored_spec(&WorkspaceSpec::local(root.to_string_lossy()))?
@@ -188,7 +179,6 @@ mod tests {
         }
     }
     #[test]
-    #[cfg(feature = "workspaces")]
     fn only_exact_saved_folder_roots_attach() {
         let fixture = Fixture::new();
         let saved = fixture.project("saved");
@@ -286,16 +276,10 @@ mod tests {
         }
         let saved = fixture.project("explicit");
         let options = fixture.options(StartupOptions::default(), vec![PathBuf::from(&saved.root)]);
-        if cfg!(feature = "workspaces") {
-            assert_eq!(options.workspace, Some(saved.clone()));
-            assert!(options.initial_layout.is_none());
-        } else {
-            assert!(options.workspace.is_none());
-            assert_eq!(options.initial_layout, Some(LayoutSlot::Layout1));
-        }
+        assert_eq!(options.workspace, Some(saved.clone()));
+        assert!(options.initial_layout.is_none());
     }
     #[test]
-    #[cfg(feature = "workspaces")]
     fn an_implicit_launch_directory_does_not_attach_a_saved_workspace() {
         let fixture = Fixture::new();
         let saved = fixture.project("implicit-home");
@@ -313,7 +297,6 @@ mod tests {
         assert_eq!(options.initial_layout, Some(LayoutSlot::Startup));
     }
     #[test]
-    #[cfg(feature = "workspaces")]
     fn explicit_remote_workspace_wins_over_preferences_without_local_canonicalization() {
         let fixture = Fixture::new();
         let spec = WorkspaceSpec {
@@ -333,20 +316,6 @@ mod tests {
         assert_eq!(options.workspace, Some(spec));
         assert!(options.initial_layout.is_none());
     }
-    #[test]
-    #[cfg(not(feature = "workspaces"))]
-    fn disabled_workspace_integration_ignores_unusable_saved_workspace_state() {
-        let fixture = Fixture::new();
-        std::fs::write(
-            fixture.settings.config_dir.join("registry.json"),
-            b"not valid JSON",
-        )
-        .unwrap();
-        let options = fixture.options(StartupOptions::default(), vec![fixture.root.clone()]);
-        assert!(options.workspace.is_none());
-        assert_eq!(options.initial_layout, Some(LayoutSlot::Layout1));
-    }
-
     #[test]
     fn launch_directory_validates_and_defaults_to_home() {
         let home = std::env::temp_dir();
@@ -408,7 +377,7 @@ impl Launch {
             match argument.to_str() {
                 Some("--help" | "-h") => {
                     println!(
-                        "Usage: bed [FILE_OR_FOLDER ...] [--cwd DIRECTORY] [--config-dir DIRECTORY]\n  --new-window     Open a standalone instance\n  --workspace JSON\n  --capture-frame OUTPUT.png|OUTPUT.ppm [--capture-after-frames N]\n  --smoke-test | --main-only-smoke | --appearance-smoke\n  --platform-smoke | --menu-smoke | --term-promotion-smoke\n\nSmoke and screenshot commands require --features automation.\nWindows without launch paths open the configurable Startup layout.\nExplicit files and folders use layout 1; saved workspace roots restore their selected layout.\nOnly exact saved folder roots attach at launch; workspaces must be requested explicitly."
+                        "Usage: bed [FILE_OR_FOLDER ...] [--cwd DIRECTORY] [--config-dir DIRECTORY]\n  --new-window     Open a standalone instance\n  --workspace JSON\n  --capture-frame OUTPUT.png|OUTPUT.ppm [--capture-after-frames N]\n  --smoke-test | --main-only-smoke | --appearance-smoke\n  --platform-smoke | --menu-smoke | --term-promotion-smoke\n\nWindows without launch paths open the configurable Startup layout.\nExplicit files and folders use layout 1; saved workspace roots restore their selected layout.\nOnly exact saved folder roots attach at launch; workspaces must be requested explicitly."
                     );
                     return Ok(None);
                 }

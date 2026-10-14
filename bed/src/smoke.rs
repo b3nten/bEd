@@ -1,16 +1,11 @@
 //! Native acceptance scenarios drive the same captured operations as editor clients.
-#[cfg(feature = "terminal")]
 use crate::startup::SmokeOptions;
-#[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
 use bedtime_api::documents::PanelBinding;
-#[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
 use bedtime_core::panel_presentation;
-#[cfg(all(target_os = "macos", feature = "editor"))]
+#[cfg(target_os = "macos")]
 use bedtime_desktop::DesktopContext;
 use bedtime_desktop::{DesktopGpu, DesktopRenderStatus};
-#[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
 use bedtime_desktop::{DesktopInjectedEvent, DesktopInputStep};
-#[cfg(feature = "terminal")]
 use bedtime_plugin_automation::Readiness;
 use bedtime_plugin_automation::{
     AutomationRequests, AutomationResults, CaptureTarget, Operation, OperationId, OperationValue,
@@ -18,7 +13,6 @@ use bedtime_plugin_automation::{
 };
 use bevy::{prelude::*, window::PrimaryWindow, winit::WINIT_WINDOWS};
 use serde_json::{Value, json};
-#[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
 use std::collections::HashSet;
 use std::{
     io,
@@ -65,20 +59,16 @@ struct Smoke {
     other: Option<PanelHandle>,
     entities: Vec<Entity>,
     original_settings: Value,
-    #[cfg(feature = "terminal")]
     terminal_ids: Vec<(u64, u32)>,
-    #[cfg(feature = "terminal")]
     terminal_panel: Option<Entity>,
-    #[cfg(feature = "terminal")]
     terminal_window: Option<winit::window::WindowId>,
     children: Vec<std::process::Child>,
-    #[cfg(all(target_os = "macos", feature = "editor"))]
+    #[cfg(target_os = "macos")]
     keyboard_save: bool,
 }
 
 struct Fixture(PathBuf);
 
-#[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
 impl Fixture {
     fn new(name: &str) -> io::Result<Self> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -134,14 +124,11 @@ impl Smoke {
             other: None,
             entities: Vec::new(),
             original_settings: Value::Null,
-            #[cfg(feature = "terminal")]
             terminal_ids: Vec::new(),
-            #[cfg(feature = "terminal")]
             terminal_panel: None,
-            #[cfg(feature = "terminal")]
             terminal_window: None,
             children: Vec::new(),
-            #[cfg(all(target_os = "macos", feature = "editor"))]
+            #[cfg(target_os = "macos")]
             keyboard_save: false,
         }
     }
@@ -220,7 +207,6 @@ impl Smoke {
         result.map(Some).map_err(io::Error::other)
     }
 
-    #[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
     fn panels(&self, kind: &str) -> Vec<PanelHandle> {
         self.snapshot.as_ref().map_or_else(Vec::new, |s| {
             s.panels
@@ -231,7 +217,6 @@ impl Smoke {
         })
     }
 
-    #[cfg(feature = "terminal")]
     fn ready(&self, panel: PanelHandle) -> io::Result<bool> {
         let Some(panel) = self
             .snapshot
@@ -247,7 +232,6 @@ impl Smoke {
         }
     }
 
-    #[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
     fn open(&mut self, world: &mut World, path: PathBuf, viewer: Option<&str>) -> io::Result<bool> {
         if let Some(result) = self.app_operation(
             world,
@@ -342,7 +326,6 @@ fn advance(world: &mut World) {
                 return Ok(());
             }
             smoke.poll(world)?;
-            #[cfg(feature = "terminal")]
             if smoke.name().contains("terminal") || smoke.name().contains("term-promotion") {
                 let events = &world.resource::<bedtime_desktop::DesktopInjectedInputEvents>().0;
                 ensure(
@@ -433,7 +416,7 @@ fn advance(world: &mut World) {
                 let resolution = world.query_filtered::<&Window, With<PrimaryWindow>>().iter(world).next().map(|window| window.resolution.physical_size());
                 eprintln!("smoke window observation: native {size:?}, Bevy {resolution:?}");
             }
-            #[cfg(all(target_os = "macos", feature = "editor"))]
+            #[cfg(target_os = "macos")]
             if smoke.name() == "--menu-smoke"
                 && let Some(panel) = smoke.panel
             {
@@ -454,7 +437,6 @@ fn advance(world: &mut World) {
                     eprintln!("smoke menu history: {history}");
                 }
             }
-            #[cfg(feature = "terminal")]
             if smoke.name().contains("terminal") || smoke.name().contains("term-promotion") {
                 let terminal = world.non_send::<bedtime_terminal::bedtime_terminal::BedTerminal>();
                 eprintln!(
@@ -578,7 +560,7 @@ fn native_window<T>(
     })
 }
 
-#[cfg(all(target_os = "macos", feature = "editor"))]
+#[cfg(target_os = "macos")]
 fn fixture_workspace(world: &mut World, smoke: &mut Smoke, name: &str) -> io::Result<bool> {
     if smoke.fixture.is_none() {
         smoke.fixture = Some(Fixture::new(name)?);
@@ -609,7 +591,6 @@ fn visible_pixels(pixels: &[u8]) -> usize {
         .count()
 }
 
-#[cfg(any(all(target_os = "macos", feature = "editor"), feature = "terminal"))]
 fn binding(world: &World, panel: PanelHandle) -> io::Result<PanelBinding> {
     let entity = panel_presentation(world, panel.entity())
         .ok_or_else(|| io::Error::other("presentation missing"))?;
@@ -619,7 +600,7 @@ fn binding(world: &World, panel: PanelHandle) -> io::Result<PanelBinding> {
         .ok_or_else(|| io::Error::other("editor binding missing"))
 }
 
-#[cfg(all(target_os = "macos", feature = "editor"))]
+#[cfg(target_os = "macos")]
 fn document_bytes(world: &World, panel: PanelHandle) -> io::Result<(Vec<u8>, bool, String)> {
     let document = binding(world, panel)?
         .document
@@ -630,7 +611,7 @@ fn document_bytes(world: &World, panel: PanelHandle) -> io::Result<(Vec<u8>, boo
     Ok((snapshot.bytes.to_vec(), snapshot.dirty, snapshot.path))
 }
 
-#[cfg(all(target_os = "macos", feature = "editor"))]
+#[cfg(target_os = "macos")]
 fn editor_focused(world: &mut World, panel: PanelHandle) -> io::Result<bool> {
     let binding = binding(world, panel)?;
     let Some(view) = binding.view else {
@@ -661,7 +642,7 @@ fn editor_focused(world: &mut World, panel: PanelHandle) -> io::Result<bool> {
     Ok(unblocked && focused && native_window(world, |window| window.has_focus())?)
 }
 
-#[cfg(all(target_os = "macos", feature = "editor"))]
+#[cfg(target_os = "macos")]
 fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     use crate::native_commands::MenuAction;
     let observations =
@@ -1075,12 +1056,12 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     Ok(false)
 }
 
-#[cfg(not(all(target_os = "macos", feature = "editor")))]
+#[cfg(not(target_os = "macos"))]
 fn menu(_: &mut World, _: &mut Smoke) -> io::Result<bool> {
-    Err(io::Error::other("menu smoke requires macOS/editor"))
+    Err(io::Error::other("menu smoke requires macOS"))
 }
 
-#[cfg(all(target_os = "macos", feature = "editor"))]
+#[cfg(target_os = "macos")]
 fn platform(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     use crate::native_commands::MenuAction;
     crate::app::smoke_native_chrome(world)?;
@@ -1325,12 +1306,11 @@ fn platform(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     Ok(false)
 }
 
-#[cfg(not(all(target_os = "macos", feature = "editor")))]
+#[cfg(not(target_os = "macos"))]
 fn platform(_: &mut World, _: &mut Smoke) -> io::Result<bool> {
-    Err(io::Error::other("platform smoke requires macOS/editor"))
+    Err(io::Error::other("platform smoke requires macOS"))
 }
 
-#[cfg(feature = "terminal")]
 fn terminal(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     use bedtime_terminal::bedtime_terminal::BedTerminal;
     match smoke.phase {
@@ -1673,7 +1653,6 @@ fn terminal(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
     Ok(false)
 }
 
-#[cfg(feature = "terminal")]
 fn verify_terminal_capture(
     frame: &bedtime_desktop::DesktopCapturedFrame,
     panel: PanelHandle,
@@ -1708,7 +1687,6 @@ fn verify_terminal_capture(
     )
 }
 
-#[cfg(feature = "terminal")]
 fn terminal_input(text: &str) -> Vec<DesktopInputStep> {
     use winit::keyboard::{Key, KeyCode, NamedKey};
     vec![
@@ -1728,7 +1706,6 @@ fn terminal_input(text: &str) -> Vec<DesktopInputStep> {
     ]
 }
 
-#[cfg(feature = "terminal")]
 fn terminal_panel_focused(world: &mut World, panel: PanelHandle) -> io::Result<bool> {
     let session = binding(world, panel)?.terminal;
     let focused = {
@@ -1738,19 +1715,16 @@ fn terminal_panel_focused(world: &mut World, panel: PanelHandle) -> io::Result<b
     Ok(focused && native_window(world, |window| window.has_focus())?)
 }
 
-#[cfg(feature = "terminal")]
 fn terminal_fixture_command() -> &'static str {
     "printf '\\033[2J\\033[H\\r\\nGraphemes: é 日本語 👩‍💻\\r\\n\\033[4:3mcurly\\033[4:2m double\\033[0m\\r\\nAGENTS.md\\tNOTICE\\t\\033[34mvendor\\033[0m\\r\\n\\033]8;;https://example.com\\033\\\\OSC 8 link\\033]8;;\\033\\\\\\r\\n\\033_Ga=T,f=32,s=1,v=1,c=6,r=3,i=1,q=2;/wAA/w==\\033\\\\\\r\\nTERMINAL_GPU_READY\\r\\n'\n"
 }
 
-#[cfg(feature = "terminal")]
 fn terminal_fixture_text_ready(text: &str) -> bool {
     ["é", "日本語", "👩‍💻", "TERMINAL_GPU_READY"]
         .iter()
         .all(|value| text.contains(value))
 }
 
-#[cfg(feature = "terminal")]
 fn terminal_fixture_ready(world: &World) -> io::Result<bool> {
     let terminal = world.non_send::<bedtime_terminal::bedtime_terminal::BedTerminal>();
     let Some(snapshot) = terminal.active_terminal() else {
@@ -1774,7 +1748,6 @@ fn terminal_fixture_ready(world: &World) -> io::Result<bool> {
             .any(|c| c.hyperlink.as_deref() == Some("https://example.com")))
 }
 
-#[cfg(feature = "terminal")]
 fn verify_terminal_splits(world: &World, smoke: &Smoke) -> io::Result<()> {
     let terminal = world.non_send::<bedtime_terminal::bedtime_terminal::BedTerminal>();
     let processes = terminal
@@ -1813,15 +1786,9 @@ fn verify_terminal_splits(world: &World, smoke: &Smoke) -> io::Result<()> {
     )
 }
 
-#[cfg(not(feature = "terminal"))]
-fn terminal(_: &mut World, _: &mut Smoke) -> io::Result<bool> {
-    Err(io::Error::other("terminal smoke requires terminal feature"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "terminal")]
     #[test]
     fn shell_input_separates_committed_unicode_text_and_enter_frames() {
         let steps = terminal_input("printf 'é 日本語 👩‍💻'\n");

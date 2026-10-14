@@ -69,10 +69,7 @@ impl MenuAction {
             DuplicateView => "bedtime.workbench.duplicate_view".into(),
             Close => "bedtime.core.close".into(),
             Quit => "bedtime.core.quit".into(),
-            OpenFolder if cfg!(feature = "workspaces") => {
-                "bedtime.workspaces.lifecycle.action".into()
-            }
-            OpenFolder => "bedtime.documents.open_folder".into(),
+            OpenFolder => "bedtime.workspaces.lifecycle.action".into(),
             NewContentSearch => "bedtime.search.new".into(),
             NewDiagnostics => "bedtime.editor.new_diagnostics".into(),
             NewReferences => "bedtime.editor.new_references".into(),
@@ -172,7 +169,7 @@ pub fn layout(active_layout: LayoutSlot) -> bedtime_api::menus::MenuLayout {
     use bedtime_api::menus::{Menu, MenuCommand, MenuEntry as E, MenuLayout};
     let item = |action: A, label: &str| {
         let mut command = MenuCommand::new(action.command_id()).labeled(label);
-        if action == A::OpenFolder && cfg!(feature = "workspaces") {
+        if action == A::OpenFolder {
             command.arguments = serde_json::json!({"action":"open_folder"});
         }
         E::Command(command)
@@ -233,7 +230,6 @@ pub fn layout(active_layout: LayoutSlot) -> bedtime_api::menus::MenuLayout {
         item(A::NewExplorer, "File Explorer"),
         item(A::NewTerminal, "Terminal"),
         item(A::NewSettings, "Settings"),
-        #[cfg(feature = "workspaces")]
         item(A::NewWorkspaces, "Workspaces"),
         item(A::NewContentSearch, "Project Search"),
         item(A::NewDiagnostics, "Diagnostics"),
@@ -319,15 +315,11 @@ mod tests {
     fn folder_menu_preserves_the_apps_saved_workspace_policy() {
         let layout = layout(LayoutSlot::Layout1);
         let id = MenuAction::OpenFolder.command_id();
-        if cfg!(feature = "workspaces") {
-            assert_eq!(id, "bedtime.workspaces.lifecycle.action");
-            assert_eq!(
-                layout.arguments(&id).unwrap(),
-                serde_json::json!({"action":"open_folder"})
-            );
-        } else {
-            assert_eq!(id, "bedtime.documents.open_folder");
-        }
+        assert_eq!(id, "bedtime.workspaces.lifecycle.action");
+        assert_eq!(
+            layout.arguments(&id).unwrap(),
+            serde_json::json!({"action":"open_folder"})
+        );
     }
 
     #[test]

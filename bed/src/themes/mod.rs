@@ -1,5 +1,4 @@
 //! bEd's theme catalog, color-file editing and ordered runtime projection.
-#[cfg(feature = "settings")]
 pub(crate) mod editor;
 mod file;
 mod files;

@@ -107,7 +107,6 @@ fn request(world: &mut World, source: Entity, host: HostAction) -> AppRequestOut
     wait_app_request(world, id).unwrap()
 }
 
-#[cfg(feature = "workspaces")]
 fn workspace_request(
     world: &mut World,
     source: Entity,
@@ -124,7 +123,6 @@ fn workspace_request(
 }
 
 #[test]
-#[cfg(feature = "workspaces")]
 fn promotion_reuses_the_saved_terminal_slot_without_rebuilding_the_calling_frontend() {
     let dir = TempDir::new();
     let file = dir.write("project/dirty.txt", b"before");
@@ -217,7 +215,6 @@ fn promotion_reuses_the_saved_terminal_slot_without_rebuilding_the_calling_front
 }
 
 #[test]
-#[cfg(feature = "workspaces")]
 fn promotion_uses_default_terminal_placement_and_opens_later_roots_in_another_window() {
     let dir = TempDir::new();
     std::fs::create_dir(dir.path("project")).unwrap();

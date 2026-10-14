@@ -1,5 +1,25 @@
 # Software Engineering Rules for AI Coding Agents
 
+## Local validation workflow
+
+- During iteration, run the smallest relevant test target and test filter. For Bed,
+  use `cargo bed-test --lib FILTER` or `cargo bed-test --test TARGET FILTER`.
+  Bed has one fixed application composition, including automation.
+- For reusable crates, select the affected package and the feature set needed by
+  the changed behavior. Do not sweep feature combinations after ordinary edits.
+- Once relevant checks pass, stop testing unless another change, a failure, or an
+  unresolved concern warrants more checks. Run `cargo test-full` only when the
+  user requests broad validation or a cross-workspace change requires it; CI runs
+  the full suite and reusable-crate feature matrix.
+- Native window, focus, menu, and GPU smokes belong to explicit desktop validation.
+  Do not launch them during routine coding or headless test work. They can focus
+  windows and consume the user's typing. Run them locally only when the user
+  explicitly requests that smoke session; otherwise use CI.
+- Avoid changing profiles, RUSTFLAGS, target directories, or reusable-crate feature sets
+  between routine reruns. Cargo caches variants, but switching can require
+  separate dependency builds and links. Do not clear caches or disable macOS
+  executable verification to speed up tests.
+
 ## Purpose of This Document
 
 These rules define how you, the coding agent, should reason about software design, implementation, refactoring, testing, and architecture.

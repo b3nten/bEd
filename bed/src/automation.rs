@@ -30,7 +30,7 @@ pub(crate) fn poll(world: &mut World, id: AppRequestId) -> Option<io::Result<App
         .map(|result| result.map_err(|error| io::Error::new(error.kind, error.message)))
 }
 
-#[cfg(all(test, feature = "editor"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::application::test_support::TempDir;
@@ -41,7 +41,6 @@ mod tests {
         AutomationPlugin, AutomationRequests, AutomationResults, DocumentInfo, Operation,
         OperationValue, Readiness, Snapshot,
     };
-    #[cfg(feature = "workspaces")]
     use serde_json::Value;
     use std::{
         fs,
@@ -249,7 +248,6 @@ mod tests {
             fs::canonicalize(&directory).unwrap()
         );
         assert!(!directory.join(".bed").exists());
-        #[cfg(feature = "workspaces")]
         assert_eq!(
             fixture
                 .app
@@ -259,7 +257,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "workspaces")]
     #[test]
     fn attachment_preserves_handles_and_replacement_retires_them() {
         let mut fixture = Fixture::new();

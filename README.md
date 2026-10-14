@@ -88,6 +88,34 @@ of bEd's resource directory. See the [icon contract](bedtime/crates/bedtime-ui/R
 
 Install language servers separately for the languages you use. Open **Settings → Keybindings** to see or change shortcuts.
 
+## Testing during development
+
+Use a focused check while iterating:
+
+```sh
+cargo bed-test --lib application::runtime::layouts::tests
+cargo bed-test --test lsp_transport initialize_and_latest_queued_open -- --exact
+cargo bed-test --test app_remote_editor -- --list
+cargo test --locked -p bedtime-editing --lib
+```
+
+Bed always includes its built-in plugins and automation; it has no Cargo feature
+switches. Reusable Bedtime crates retain their own features. Both subprocess
+fixture suites (`lsp_transport` and `app_remote_editor`) support name filters,
+`--exact`, `--skip`, and `--list`, and print per-test timings. They run sequentially
+because some cases own the process-global ImGui context.
+
+Use `cargo test-full` for the full workspace check. It also compiles all targets;
+it is intended for broad validation, rather than each edit. CI separately runs the
+reusable-crate feature matrix and native smokes. Native smokes can focus windows and accept real
+keyboard input, so run them in a deliberate desktop test session.
+
+Cargo caches feature combinations separately. Keep the same command, features,
+profile, and target directory for routine reruns. Switching between a package
+command and a workspace command can also change unified dependency features.
+The first run of another combination may need new artifacts; returning to an
+unchanged cached combination should reuse them.
+
 ## Crates and vocabulary
 
 Optional features use `bedtime-plugin-*`, such as `bedtime-plugin-editor`,

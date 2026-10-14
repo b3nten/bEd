@@ -1,5 +1,4 @@
 //! Exercise viewer choices through the native tree and document context menus.
-#![cfg(all(feature = "editor", feature = "file-explorer"))]
 
 #[path = "support/application_requests.rs"]
 mod application_requests;

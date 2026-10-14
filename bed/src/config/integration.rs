@@ -91,7 +91,6 @@ mod tests {
         );
         assert!(!settings.config_dir.exists());
     }
-    #[cfg(all(feature = "editor", feature = "effects", feature = "idle"))]
     #[test]
     fn fresh_profile_applies_application_defaults_after_plugin_definitions() {
         let temp = TempDir::new();

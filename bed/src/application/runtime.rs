@@ -113,7 +113,6 @@ impl WorkspacePersistence {
         Self { store }
     }
     pub(crate) fn install(app: &mut App, store: WorkspaceStore) {
-        #[cfg(feature = "workspaces")]
         app.add_plugins(bedtime_plugin_workspaces::WorkspacePersistencePlugin::new(
             store.repository(),
         ));
@@ -131,9 +130,6 @@ pub(crate) struct InitialAppOptions(pub(crate) Option<AppOptions>);
 pub(crate) struct AppInitialized(pub(crate) bool);
 #[derive(Resource, Default)]
 struct AppObservation {
-    #[cfg(not(feature = "workspaces"))]
-    context_generation: u64,
-    #[cfg(feature = "workspaces")]
     workspace_error: Option<String>,
     notices: bevy::ecs::message::MessageCursor<bedtime_core::CoreNotice>,
 }
@@ -143,11 +139,9 @@ impl Plugin for AppRuntimePlugin {
         if !app.is_plugin_added::<bedtime_core::DocumentHostPlugin>() {
             app.add_plugins(bedtime_core::DocumentHostPlugin);
         }
-        #[cfg(feature = "workspaces")]
         if !app.is_plugin_added::<bedtime_plugin_workspaces::WorkspacesIntegrationPlugin>() {
             app.add_plugins(bedtime_plugin_workspaces::WorkspacesIntegrationPlugin);
         }
-        #[cfg(feature = "workspaces")]
         if !app.is_plugin_added::<bedtime_plugin_workspaces::WorkspacePersistencePlugin>()
             && app.world().contains_non_send::<WorkspacePersistence>()
         {
@@ -221,7 +215,6 @@ impl Plugin for AppRuntimePlugin {
             persist_workspace(world).map_err(|error| error.to_string())
         });
         world.insert_resource(bedtime_plugin_layouts::LayoutPersistence(persist));
-        #[cfg(feature = "workspaces")]
         {
             let snapshot = world.register_system(|world: &mut World| -> Value {
                 layouts::snapshot(world).expect("bEd layout snapshot is valid")
@@ -258,7 +251,6 @@ impl Plugin for AppRuntimePlugin {
     }
 }
 
-#[cfg(feature = "workspaces")]
 fn validate_numbered_workspace_layout(value: &Value) -> Result<(), String> {
     LayoutSlot::from_value(&value["active_layout_slot"]).ok_or("Invalid active layout slot")?;
     let layouts = value["layouts"]
@@ -272,7 +264,6 @@ fn validate_numbered_workspace_layout(value: &Value) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "workspaces")]
 fn restore_numbered_workspace_layout(
     In(restore): In<bedtime_plugin_workspaces::WorkspaceRestore>,
     world: &mut World,
@@ -386,7 +377,6 @@ fn initialize_app(world: &mut World) {
 }
 
 pub fn update_application_policy(world: &mut World) {
-    #[cfg(feature = "workspaces")]
     {
         let error = world
             .get_resource::<bedtime_plugin_workspaces::WorkspacesState>()
@@ -408,20 +398,6 @@ pub fn update_application_policy(world: &mut World) {
     if let Some(notice) = notice {
         world.resource_mut::<ApplicationState>().error = Some(notice);
     }
-    // With Workspaces installed, its directory-entered hook owns this policy.
-    #[cfg(not(feature = "workspaces"))]
-    {
-        let generation = world.resource::<bedtime_files::FileContext>().generation;
-        let previous = world.resource::<AppObservation>().context_generation;
-        world.resource_mut::<AppObservation>().context_generation = generation;
-        if previous != 0
-            && previous != generation
-            && world.resource::<AppInitialized>().0
-            && let Err(error) = layouts::enter_directory(world)
-        {
-            world.resource_mut::<ApplicationState>().error = Some(error.to_string());
-        }
-    }
     let pending = std::mem::take(&mut world.resource_mut::<LayoutNotifications>().0);
     for id in pending {
         match take_layout_result(world, id) {
@@ -437,12 +413,11 @@ pub fn publish_app_state(world: &mut World) {
 }
 fn open_startup_workspace(world: &mut World, spec: WorkspaceSpec) -> io::Result<()> {
     let action = if matches!(spec.target, WorkspaceTarget::Local)
-        && (!cfg!(feature = "workspaces")
-            || world
-                .resource::<WorkspaceRepositoryResource>()
-                .0
-                .find(&spec)?
-                .is_none())
+        && world
+            .resource::<WorkspaceRepositoryResource>()
+            .0
+            .find(&spec)?
+            .is_none()
     {
         bedtime_core::submit_host_request(
             world,
@@ -459,12 +434,6 @@ fn open_startup_workspace(world: &mut World, spec: WorkspaceSpec) -> io::Result<
     } else {
         WorkspaceAction::OpenWorkspace(spec)
     };
-    if !cfg!(feature = "workspaces") {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Workspace support is disabled",
-        ));
-    }
     let area = world
         .resource::<WorkbenchLayout>()
         .tiling
@@ -500,11 +469,9 @@ fn restore_layout_with_terminal(
 ) -> io::Result<()> {
     bedtime_core::restore_document_layout(world, value, attach, terminal).map_err(io::Error::other)
 }
-#[cfg(any(test, feature = "workspaces"))]
 fn compose_default_layout(world: &mut World) -> io::Result<()> {
     compose_default_layout_with_terminal(world, None)
 }
-#[cfg(any(test, feature = "workspaces"))]
 fn compose_default_layout_with_terminal(
     world: &mut World,
     terminal: Option<Entity>,
@@ -513,13 +480,11 @@ fn compose_default_layout_with_terminal(
     restore_layout_with_terminal(world, &layouts::template(world, slot), true, terminal)
 }
 pub fn persist_workspace(world: &mut World) -> io::Result<()> {
-    if cfg!(feature = "workspaces") {
-        bedtime_plugin_workspaces::persist_workspace(world)?;
-        world
-            .non_send_mut::<WorkspacePersistence>()
-            .store
-            .reload()?;
-    }
+    bedtime_plugin_workspaces::persist_workspace(world)?;
+    world
+        .non_send_mut::<WorkspacePersistence>()
+        .store
+        .reload()?;
     Ok(())
 }
 pub fn save_current_workspace(

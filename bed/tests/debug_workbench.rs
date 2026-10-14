@@ -1,5 +1,3 @@
-#![cfg(all(feature = "editor", feature = "debugger"))]
-
 #[path = "support/application_requests.rs"]
 mod application_requests;
 use application_requests::*;

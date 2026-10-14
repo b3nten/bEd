@@ -131,7 +131,7 @@ fn draw_themes(
         .insert(context.panel, draft);
 }
 
-#[cfg(all(test, feature = "editor"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::TempDir;

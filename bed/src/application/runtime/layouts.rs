@@ -10,7 +10,6 @@ use bedtime_workbench::workspace::tiling_state::TilingState;
 type LiveLayout = bedtime_plugin_layouts::LiveLayout<DocumentNavigation>;
 pub type LayoutSlots = bedtime_plugin_layouts::LayoutSlots<LayoutSlot, DocumentNavigation>;
 
-#[cfg(any(test, feature = "workspaces"))]
 pub(in crate::application) fn load_snapshot(
     world: &mut World,
     value: &Value,
@@ -93,7 +92,6 @@ pub(in crate::application) fn enter_directory(world: &mut World) -> io::Result<(
 }
 
 /// Attachment keeps standalone panels and processes, but adopts workspace slots.
-#[cfg(any(test, feature = "workspaces"))]
 pub(in crate::application) fn attach(
     world: &mut World,
     terminal: Option<Entity>,
@@ -173,7 +171,6 @@ pub(in crate::application) fn request_switch(
     bedtime_plugin_layouts::submit_transition::<LayoutSlot, DocumentLayouts>(world, slot, template)
 }
 
-#[cfg(any(test, feature = "workspaces"))]
 pub(in crate::application) fn clear(world: &mut World) {
     bedtime_plugin_layouts::cancel_requests::<LayoutSlot>(
         world,
@@ -314,7 +311,6 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    #[cfg(feature = "workspaces")]
     fn a_new_temporary_directory_selects_one_and_keeps_other_numbered_panels() {
         let dir = TempDir::new();
         let mut app = app(&dir, false);
@@ -590,7 +586,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "workspaces")]
     fn slots_roundtrip_and_global_updates_wait_for_workspace_reset() {
         let dir = TempDir::new();
         let mut original = app(&dir, false);
@@ -646,7 +641,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "workspaces")]
     fn suspended_startup_terminals_survive_attachment_without_restarting() {
         let dir = TempDir::new();
         let mut app = app(&dir, false);
@@ -782,7 +776,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "workspaces")]
     fn persistence_failure_keeps_current_slot_and_panels_active() {
         let dir = TempDir::new();
         let mut app = app(&dir, false);
@@ -926,7 +919,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "workspaces")]
     fn saved_workspace_autosaves_added_tabs_and_restores_them_after_restart() {
         let dir = TempDir::new();
         let start = |restore: bool| {
@@ -1097,7 +1089,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "workspaces")]
     fn persistence_calls_workspace_hooks_once_with_multiple_live_slots() {
         #[derive(Resource, Default)]
         struct Saves(usize);
@@ -1163,7 +1154,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "workspaces")]
     fn workspace_attachment_and_replacement_account_for_inactive_slots() {
         let dir = TempDir::new();
         let mut app = app(&dir, false);

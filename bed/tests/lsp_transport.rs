@@ -10,6 +10,9 @@ mod editor_host;
 use bed::config::AppConfig;
 use std::io;
 
+#[path = "support/runner.rs"]
+mod runner;
+
 use bedtime_documents::{
     document_runtime::DocumentRuntime,
     session::{ClosePolicy, DocumentId, DocumentSession, SessionId, SessionOptions, ViewId},
@@ -221,13 +224,7 @@ fn main() {
             workspace_config_reload_rebinds_documents_and_parse_failure_keeps_live_servers,
         ),
     ];
-    for (name, test) in tests {
-        print!("test {name} ... ");
-        io::stdout().flush().unwrap();
-        test();
-        println!("ok");
-    }
-    println!("test result: ok. {} passed", tests.len());
+    runner::run(tests);
 }
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -1903,8 +1900,6 @@ impl NavigationWorkbench {
             app.world_mut(),
             &bedtime_api::settings::SettingsRequest::batch(
                 [
-                    ("bed.application", "terminal_visible"),
-                    ("bed.application", "sidebar_visible"),
                     ("bedtime.editor", "treesitter"),
                     ("bedtime.editor", "git_changed_lines"),
                     ("bedtime.editor", "minimap"),

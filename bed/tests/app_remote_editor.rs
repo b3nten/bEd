@@ -22,6 +22,9 @@ use application_requests::*;
 mod support;
 use support::TempDir;
 
+#[path = "support/runner.rs"]
+mod runner;
+
 fn remote_app(directory: &TempDir, restore: bool) -> App {
     remote_app_with_target(directory, restore, SshTarget::new("fixture"))
 }
@@ -191,7 +194,6 @@ fn service_publication_retains_the_authenticated_ssh_target() {
         },
         root: directory.root().to_string_lossy().into_owned(),
     };
-    #[cfg(feature = "workspaces")]
     {
         app.world_mut()
             .resource_mut::<bedtime_plugin_workspaces::WorkspaceRepositoryResource>()
@@ -217,7 +219,6 @@ fn service_publication_retains_the_authenticated_ssh_target() {
                 .saved()
                 .is_none()
         );
-        #[cfg(feature = "workspaces")]
         {
             assert_eq!(
                 app.world()
@@ -577,7 +578,6 @@ fn submit_delayed_save(app: &mut App, panel: Entity, bytes: &[u8]) -> AppRequest
     submit(app, AppAction::SaveDocuments(vec![document]), Some(panel))
 }
 
-#[cfg(feature = "workspaces")]
 fn workspace_snapshot_waits_for_an_earlier_write_without_committing_drafts() {
     let directory = TempDir::new();
     let path = directory.write("snapshot.txt", b"original");
@@ -666,7 +666,6 @@ fn workspace_snapshot_waits_for_an_earlier_write_without_committing_drafts() {
     shutdown(&mut app);
 }
 
-#[cfg(feature = "workspaces")]
 fn workspace_replacement_waits_for_an_earlier_write() {
     let directory = TempDir::new();
     let path = directory.write("transition.txt", b"original");
@@ -1275,22 +1274,54 @@ fn main() {
     if !cfg!(unix) {
         return;
     }
-    service_publication_retains_the_authenticated_ssh_target();
-    remote_retained_panel_keeps_its_identity_and_rejects_changed_roots_before_retirement();
-    captured_destination_and_cancellation();
-    restoration_keeps_reserved_identity_and_group_selection();
-    save_and_close_receipts_wait_for_acknowledged_bytes();
-    #[cfg(feature = "workspaces")]
-    {
-        workspace_snapshot_waits_for_an_earlier_write_without_committing_drafts();
-        workspace_replacement_waits_for_an_earlier_write();
-    }
-    quit_waits_for_an_earlier_write();
-    preview_selections_and_double_clicks_supersede_pending_remote_opens();
-    location_navigation_replaces_a_remote_preview_and_finishes_the_jump();
-    terminal_file_links_finish_the_jump_after_a_remote_read();
-    terminal_multi_file_completion_waits_for_both_remote_reads_in_one_editor_area();
-    println!(
-        "remote editor: SSH target retention, captured destinations, cancellation, shared restoration, delayed save and transition receipts, preview supersession and location navigation passed"
-    );
+    runner::run(&[
+        (
+            "service_publication_retains_the_authenticated_ssh_target",
+            service_publication_retains_the_authenticated_ssh_target,
+        ),
+        (
+            "remote_retained_panel_keeps_its_identity_and_rejects_changed_roots_before_retirement",
+            remote_retained_panel_keeps_its_identity_and_rejects_changed_roots_before_retirement,
+        ),
+        (
+            "captured_destination_and_cancellation",
+            captured_destination_and_cancellation,
+        ),
+        (
+            "restoration_keeps_reserved_identity_and_group_selection",
+            restoration_keeps_reserved_identity_and_group_selection,
+        ),
+        (
+            "save_and_close_receipts_wait_for_acknowledged_bytes",
+            save_and_close_receipts_wait_for_acknowledged_bytes,
+        ),
+        (
+            "workspace_snapshot_waits_for_an_earlier_write_without_committing_drafts",
+            workspace_snapshot_waits_for_an_earlier_write_without_committing_drafts,
+        ),
+        (
+            "workspace_replacement_waits_for_an_earlier_write",
+            workspace_replacement_waits_for_an_earlier_write,
+        ),
+        (
+            "quit_waits_for_an_earlier_write",
+            quit_waits_for_an_earlier_write,
+        ),
+        (
+            "preview_selections_and_double_clicks_supersede_pending_remote_opens",
+            preview_selections_and_double_clicks_supersede_pending_remote_opens,
+        ),
+        (
+            "location_navigation_replaces_a_remote_preview_and_finishes_the_jump",
+            location_navigation_replaces_a_remote_preview_and_finishes_the_jump,
+        ),
+        (
+            "terminal_file_links_finish_the_jump_after_a_remote_read",
+            terminal_file_links_finish_the_jump_after_a_remote_read,
+        ),
+        (
+            "terminal_multi_file_completion_waits_for_both_remote_reads_in_one_editor_area",
+            terminal_multi_file_completion_waits_for_both_remote_reads_in_one_editor_area,
+        ),
+    ]);
 }

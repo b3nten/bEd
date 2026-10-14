@@ -67,9 +67,9 @@ jobs:
       - name: Crate boundaries
         run: python3 scripts/check-crate-boundaries.py
       - name: Lint
-        run: cargo clippy --workspace --locked --all-targets --features bed/automation -- -D warnings
+        run: cargo clippy --workspace --locked --all-targets -- -D warnings
       - name: Native tests and binary build
-        run: cargo test --workspace --locked --all-targets --features bed/automation
+        run: cargo test --workspace --locked --all-targets
       - name: Minimal desktop composition
         run: |
           cargo check --locked -p bedtime -p bedtime-core -p bedtime-plugin-layouts -p bedtime-plugin-settings -p bedtime-storage
@@ -77,7 +77,6 @@ jobs:
           cargo check --locked -p bedtime-example-layouts -p bedtime-example-terminal -p bedtime-example-editor -p bedtime-example-model -p bedtime-example-game-editor -p bedtime-example-game-runtime
           cargo check --locked -p bedtime-ui --no-default-features
           python3 scripts/check-desktop-consumer.py
-          cargo check --locked -p bed --no-default-features --bins
           cargo test --locked -p bedtime-workbench -p bedtime-core -p bedtime-documents -p bedtime-plugin-layouts -p bedtime-storage -p bedtime-plugin-workspaces
           cargo run --locked -p bedtime-example-editor -- --headless-smoke
       - name: Shared API feature combinations
@@ -88,13 +87,8 @@ jobs:
             cargo check --locked -p bedtime-api --no-default-features --features "$features" --all-targets
           done
           cargo test --locked -p bedtime-api --all-features
-      - name: Independent feature plugins and automation API
-        shell: bash
-        run: |
-          for feature in editor debugger git file-explorer file-search terminal workspaces color-picker settings effects idle source-outline image-viewer model-viewer font-viewer audio-player csv-table markdown-preview json-tree sqlite-browser http-client mascots automation; do
-            cargo check --locked -p bed --no-default-features --features "$feature" --bins
-          done
-          cargo test --locked -p bedtime-plugin-automation --features documents
+      - name: Automation API
+        run: cargo test --locked -p bedtime-plugin-automation --features documents
       - name: Headless services and terminal transport
         run: |
           cargo check --locked -p bedtime-remote-agent -p bedtime-documents
@@ -114,7 +108,7 @@ jobs:
           xcrun lldb-dap --version
           cargo test -p bedtime-debugger --locked --test native_lldb -- --ignored --nocapture
       - name: Release binary
-        run: cargo build --locked --release -p bed -p bedtime-remote-agent --features bed/automation --bin bed --bin bedtime-remote-agent
+        run: cargo build --locked --release -p bed -p bedtime-remote-agent --bin bed --bin bedtime-remote-agent
       - name: Package standalone remote agent and licenses
         run: python3 scripts/lib/remote-helpers.py standalone
       - name: Download bundled remote helpers

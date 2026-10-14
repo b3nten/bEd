@@ -307,7 +307,6 @@ fn clicking_a_bare_file_location_uses_the_shells_live_directory() {
 }
 
 #[test]
-#[cfg(feature = "workspaces")]
 fn shell_socket_tracks_actual_open_and_save_promotion_while_preserving_its_calling_process() {
     let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
     let directory = TempDir::new();

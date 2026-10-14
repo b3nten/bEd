@@ -10,7 +10,6 @@ fn new_window_accepts_a_configuration_directory_before_the_first_preference_writ
     assert!(!config.exists());
 }
 
-#[cfg(feature = "workspaces")]
 #[test]
 fn workspace_window_launch_passes_only_the_shared_config_and_selected_root() {
     let config = std::env::temp_dir().canonicalize().unwrap();
@@ -55,7 +54,6 @@ fn bundled_workspace_window_launch_uses_launch_services_for_a_new_instance() {
     );
 }
 
-#[cfg(feature = "workspaces")]
 #[test]
 fn workspace_window_launch_preserves_local_and_ssh_identity_as_one_argument() {
     use bedtime_plugin_workspaces::{WorkspaceSpec, WorkspaceTarget};

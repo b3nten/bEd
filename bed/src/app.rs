@@ -32,10 +32,9 @@ impl Plugin for BedAppPlugin {
             bedtime_api::workbench::WorkbenchOverlay(draw_app_error),
             bedtime_api::workbench::OverlayPhase::AfterChrome,
         ));
-        #[cfg(feature = "automation")]
         app.init_resource::<NativeSmokeMode>()
             .init_resource::<NativeSpawnedInstances>();
-        #[cfg(all(feature = "automation", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         app.init_resource::<NativeMenuObservations>().add_systems(
             PreUpdate,
             observe_native_commands.in_set(DesktopSystems::AfterUi),
@@ -86,11 +85,16 @@ fn draw_app_error(world: &mut World, ui: &Ui) {
     }
 }
 
-#[cfg(all(feature = "automation", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn observe_native_commands(
     mut commands: MessageReader<bedtime_core::NativeCommandDispatched>,
     mut observations: ResMut<NativeMenuObservations>,
+    smoke: Res<NativeSmokeMode>,
 ) {
+    if !smoke.0 {
+        commands.clear();
+        return;
+    }
     for command in commands.read() {
         if let Some(action) = crate::native_commands::MenuAction::from_command(&command.0.command) {
             observations.0.push(crate::native_commands::MenuDispatch {
@@ -112,7 +116,6 @@ fn after_ui(world: &mut World) {
     }
 }
 
-#[cfg(feature = "terminal")]
 pub(crate) fn run_shell_entrypoint(
     args: Vec<std::ffi::OsString>,
     has_socket: bool,
@@ -130,7 +133,6 @@ pub(crate) fn run_shell_entrypoint(
 /// bEd owns its CLI policy; feature plugins contribute private process handlers.
 pub(crate) fn launcher() -> io::Result<bedtime::LaunchBuilder> {
     let application = bedtime::awaken("bed", "bEd")?;
-    #[cfg(feature = "terminal")]
     let application = application
         .with_launchers(bedtime_plugin_terminal::launchers())
         .with_launchers(bedtime::LaunchRegistration {
@@ -145,7 +147,6 @@ pub(crate) fn launcher() -> io::Result<bedtime::LaunchBuilder> {
                 })
                 .collect(),
         });
-    #[cfg(feature = "debugger")]
     let application = application.with_launchers(bedtime_plugin_debugger::launchers());
     Ok(application)
 }
@@ -193,11 +194,7 @@ fn build_app_with_launch(
     };
     launch.build(desktop_options, move |app| {
         let paths = app.world().resource::<bedtime::ApplicationPaths>();
-        let store = if cfg!(feature = "workspaces") {
-            crate::application::WorkspaceStore::load(paths)?
-        } else {
-            crate::application::WorkspaceStore::load_templates(paths)?
-        };
+        let store = crate::application::WorkspaceStore::load(paths)?;
         crate::application::WorkspacePersistence::install(app, store);
         app.insert_non_send(settings)
             .insert_resource(crate::application::RemoteHelperDirectory(
@@ -205,14 +202,11 @@ fn build_app_with_launch(
             ));
         let resources_root = app.world().non_send::<AppConfig>().resources_root.clone();
         app.add_plugins(crate::themes::ThemePlugin::new(resources_root));
-        #[cfg(feature = "effects")]
         app.add_plugins(bedtime_plugin_effects::EffectsPlugin);
-        #[cfg(feature = "idle")]
         app.add_plugins(bedtime_plugin_idle::IdlePlugin);
         app.add_plugins(crate::builtins::BedBuiltinPlugins);
         crate::config::register_app_settings(app.world_mut())?;
         app.add_plugins((AppRuntimePlugin { options }, BedAppPlugin));
-        #[cfg(feature = "automation")]
         {
             app.add_plugins(bedtime_plugin_automation::AutomationPlugin);
             crate::automation::configure(app);
@@ -230,12 +224,6 @@ pub fn run() -> HostResult<i32> {
     else {
         return Ok(0);
     };
-    if options.smoke.requested() && !cfg!(feature = "automation") {
-        return Err(io::Error::other(
-            "smoke and frame capture commands require building with --features automation",
-        )
-        .into());
-    }
     if options.smoke.requested() && options.config_dir.is_none() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -254,15 +242,12 @@ pub fn run() -> HostResult<i32> {
         .resolve(options.paths, std::env::current_dir().ok().as_deref())?;
     let app_options = startup.into_options(&paths)?;
     let mut app = build_app_with_launch(app_options, settings, *launch)?;
-    #[cfg(feature = "automation")]
     app.add_plugins(crate::smoke::SmokePlugin(options.smoke));
-    #[cfg(feature = "automation")]
     let smoke_failure = app
         .world()
         .get_resource::<crate::smoke::SmokeFailure>()
         .map(|failure| failure.0.clone());
     let exit = app.run();
-    #[cfg(feature = "automation")]
     if let Some(error) =
         smoke_failure.and_then(|failure| failure.lock().expect("smoke failure lock").clone())
     {
@@ -332,7 +317,7 @@ fn new_instance_command(
     Ok(command)
 }
 
-#[cfg(all(feature = "automation", feature = "editor", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn smoke_native_menu(
     world: &World,
     action: crate::native_commands::MenuAction,
@@ -345,7 +330,7 @@ pub(crate) fn smoke_native_menu(
         .perform_for_smoke(&action.command_id())
 }
 
-#[cfg(all(feature = "automation", feature = "editor", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn smoke_native_toolbar(world: &World, command: &str) -> bool {
     world
         .non_send::<bedtime_desktop::DesktopNativePlatform>()
@@ -354,7 +339,7 @@ pub(crate) fn smoke_native_toolbar(world: &World, command: &str) -> bool {
         .is_some_and(|window| window.click_command(command))
 }
 
-#[cfg(all(feature = "automation", feature = "editor", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn smoke_native_chrome(world: &World) -> io::Result<()> {
     let window = world
         .non_send::<bedtime_desktop::DesktopNativePlatform>()
@@ -376,12 +361,10 @@ fn spawn_instance(
 ) -> io::Result<()> {
     let config = world.non_send::<AppConfig>().config_dir.clone();
     let mut command = new_instance_command(&std::env::current_exe()?, &config, false, workspace)?;
-    #[cfg(feature = "automation")]
     if world.resource::<NativeSmokeMode>().0 {
         command.arg("--smoke-test");
     }
     let child = command.spawn()?;
-    #[cfg(feature = "automation")]
     if world.resource::<NativeSmokeMode>().0 {
         world.resource_mut::<NativeSpawnedInstances>().0.push(child);
         return Ok(());
@@ -390,19 +373,17 @@ fn spawn_instance(
     Ok(())
 }
 
-#[cfg(feature = "automation")]
 #[derive(Resource, Default)]
 pub(crate) struct NativeSmokeMode(pub bool);
 
-#[cfg(feature = "automation")]
 #[derive(Resource, Default)]
 pub(crate) struct NativeSpawnedInstances(pub Vec<std::process::Child>);
 
-#[cfg(all(feature = "automation", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 #[derive(Resource, Default)]
 pub(crate) struct NativeMenuObservations(pub Vec<crate::native_commands::MenuDispatch>);
 
-#[cfg(all(feature = "automation", feature = "editor", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn smoke_native_key_equivalent(
     world: &World,
     characters: &str,
@@ -417,7 +398,7 @@ pub(crate) fn smoke_native_key_equivalent(
         .key_equivalent_for_smoke(characters, key_code, shift)
 }
 
-#[cfg(all(feature = "automation", feature = "editor", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn smoke_native_dock_new_window(world: &World) -> io::Result<()> {
     world
         .non_send::<bedtime_desktop::DesktopNativePlatform>()
@@ -427,7 +408,6 @@ pub(crate) fn smoke_native_dock_new_window(world: &World) -> io::Result<()> {
         .perform_dock_for_smoke(&crate::native_commands::MenuAction::NewWindow.command_id())
 }
 
-#[cfg(feature = "automation")]
 pub(crate) fn smoke_focus_window(world: &mut World) {
     let entity = world
         .query_filtered::<Entity, With<bevy::window::PrimaryWindow>>()
@@ -445,7 +425,7 @@ pub(crate) fn smoke_focus_window(world: &mut World) {
 #[path = "../tests/unit/native/host_tests.rs"]
 mod tests;
 
-#[cfg(all(feature = "automation", feature = "editor", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn smoke_native_material(world: &World) -> (bool, Option<bool>, Option<f32>) {
     world
         .non_send::<bedtime_desktop::DesktopNativePlatform>()

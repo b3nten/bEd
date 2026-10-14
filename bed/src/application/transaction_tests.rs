@@ -436,7 +436,6 @@ fn deleting_a_file_with_a_rejected_csv_draft_preserves_the_deleted_buffer_and_re
 }
 
 #[test]
-#[cfg(feature = "workspaces")]
 fn a_pending_workspace_attachment_validates_csv_drafts_before_changing_the_workspace() {
     let directory = TempDir::new();
     fs::create_dir_all(directory.path("other")).unwrap();
@@ -474,7 +473,6 @@ fn a_pending_workspace_attachment_validates_csv_drafts_before_changing_the_works
 }
 
 #[test]
-#[cfg(feature = "workspaces")]
 fn temporary_directory_adoption_commits_csv_input_and_retains_the_live_presentation() {
     let directory = TempDir::new();
     fs::create_dir_all(directory.path("other")).unwrap();
@@ -522,7 +520,6 @@ fn temporary_directory_adoption_commits_csv_input_and_retains_the_live_presentat
 }
 
 #[test]
-#[cfg(feature = "workspaces")]
 fn terminal_promotion_rejects_a_stale_retained_csv_draft_before_closing_any_panel() {
     let directory = TempDir::new();
     fs::create_dir(directory.path("other")).unwrap();
@@ -575,7 +572,6 @@ fn terminal_promotion_rejects_a_stale_retained_csv_draft_before_closing_any_pane
 }
 
 #[test]
-#[cfg(feature = "workspaces")]
 fn registered_workspace_command_acknowledges_promotion_failure() {
     let directory = TempDir::new();
     fs::create_dir(directory.path("other")).unwrap();

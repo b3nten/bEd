@@ -1,12 +1,10 @@
 //! Regression tests compose real Bevy plugins and their canonical resources.
-#![cfg(feature = "editor")]
 #[path = "support/application_requests.rs"]
 mod application_requests;
 use application_requests::*;
 
 #[path = "support/editor_host.rs"]
 mod editor_host;
-#[cfg(feature = "settings")]
 use application_requests::dispatch_app_command;
 use bed::application::{AppOptions, AppRuntimePlugin, DocumentNavigation, WorkbenchLayout};
 use bedtime_documents::session::{DocumentId, DocumentSession, ViewId};
@@ -58,9 +56,7 @@ impl Fixture {
             },
         });
         app.add_plugins(bedtime_plugin_editor::EditorPlugin);
-        #[cfg(feature = "settings")]
         app.add_plugins(bed::settings_view::BedSettingsPagesPlugin);
-        #[cfg(feature = "file-explorer")]
         app.add_plugins(bedtime_plugin_file_explorer::FileExplorerPlugin);
         app.update();
         Self { root, app }
@@ -447,7 +443,6 @@ fn presentation_drawing_keeps_session_settings_and_registry_installed() {
     );
 }
 
-#[cfg(feature = "workspaces")]
 #[test]
 fn workspace_restore_focus_survives_first_presentation_frames() {
     let _lock = CONTEXT_LOCK.lock().unwrap();
@@ -517,7 +512,6 @@ fn workspace_restore_focus_survives_first_presentation_frames() {
     );
 }
 
-#[cfg(feature = "settings")]
 #[test]
 fn focusing_a_tool_preserves_document_carets() {
     let mut fixture = Fixture::new();
@@ -550,7 +544,6 @@ fn focusing_a_tool_preserves_document_carets() {
     );
 }
 
-#[cfg(feature = "settings")]
 #[test]
 fn application_tab_shortcut_restores_editor_focus_from_a_tool() {
     let _lock = CONTEXT_LOCK.lock().unwrap();

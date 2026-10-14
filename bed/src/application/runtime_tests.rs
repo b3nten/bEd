@@ -42,7 +42,6 @@ fn apply(world: &mut World, action: AppAction, source: Option<Entity>) -> AppReq
 }
 
 #[test]
-#[cfg(feature = "workspaces")]
 fn picker_open_saves_workspace_and_leaves_startup_without_losing_open_documents() {
     let dir = TempDir::new();
     let root = dir.path("project");
@@ -123,7 +122,6 @@ fn picker_open_saves_workspace_and_leaves_startup_without_losing_open_documents(
 }
 
 #[test]
-#[cfg(feature = "workspaces")]
 fn opening_another_new_project_saves_both_workspaces_and_uses_layout_one() {
     let dir = TempDir::new();
     let first = dir.path("first");
@@ -1115,7 +1113,6 @@ fn missing_feature_records_roundtrip_without_discarding_opaque_data() {
 }
 
 #[test]
-#[cfg(feature = "workspaces")]
 fn attachment_preserves_the_session_and_dirty_panel_entities_across_saved_id_collisions() {
     let dir = TempDir::new();
     let mut app = app(&dir);
@@ -2529,7 +2526,6 @@ fn restored_empty_areas_and_failed_splits_never_create_or_discard_content() {
 }
 
 #[test]
-#[cfg(feature = "terminal")]
 fn splitting_a_terminal_creates_an_independent_shell_in_the_inherited_directory() {
     use bedtime_plugin_terminal::TerminalPanelState;
     use bedtime_terminal::bedtime_terminal::{BedTerminal, TerminalSessionState};
@@ -2758,7 +2754,6 @@ fn temporary_sessions_never_write_or_replace_global_templates() {
 }
 
 #[test]
-#[cfg(feature = "workspaces")]
 fn save_workspace_retains_dirty_documents_history_and_suspended_panels() {
     let dir = TempDir::new();
     let mut app = app(&dir);
@@ -2850,7 +2845,6 @@ fn save_workspace_retains_dirty_documents_history_and_suspended_panels() {
 }
 
 #[test]
-#[cfg(feature = "workspaces")]
 fn saving_a_workspace_persists_live_undo_in_its_repository_snapshot() {
     let dir = TempDir::new();
     let mut app = app(&dir);
@@ -2933,49 +2927,6 @@ fn saving_a_workspace_persists_live_undo_in_its_repository_snapshot() {
             .unwrap()
             .bytes,
         b"before"
-    );
-}
-
-#[test]
-#[cfg(not(feature = "workspaces"))]
-fn omitting_workspace_integration_omits_workspace_commands_and_keeps_directory_services() {
-    let dir = TempDir::new();
-    let mut app = app(&dir);
-    for command in [
-        bedtime_plugin_workspaces::SAVE_COMMAND,
-        bedtime_plugin_workspaces::PROMOTE_COMMAND,
-        "bed.app.NewProjects",
-        "bed.app.Projects",
-    ] {
-        assert!(
-            app.world()
-                .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-                .command(command)
-                .is_none()
-        );
-    }
-    let path = dir.write("quick.txt", b"quick edit");
-    let panel = open_file(app.world_mut(), &path, None, false, None).unwrap();
-    assert!(app.world().entities().contains(panel));
-    assert!(
-        app.world()
-            .resource::<bedtime_plugin_workspaces::WorkspaceAttachment>()
-            .saved()
-            .is_none()
-    );
-    assert!(
-        app.world()
-            .non_send::<DocumentSession>()
-            .options()
-            .project_root
-            .is_some()
-    );
-    assert!(
-        !app.world()
-            .non_send::<DocumentSession>()
-            .options()
-            .history_path
-            .is_some()
     );
 }
 

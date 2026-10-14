@@ -1,0 +1,4 @@
+[alias]
+# Bed has one fixed application composition for all builds and test reruns.
+bed-test = "test --locked -p bed"
+test-full = "test --workspace --locked --all-targets"

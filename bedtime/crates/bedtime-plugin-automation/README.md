@@ -1,6 +1,6 @@
 # bedtime-plugin-automation
 
-An optional Rust API for inspecting and operating a Bed workbench. Install `AutomationPlugin` after the workbench. It adds no runner or network transport. The bEd executable enables it with `--features automation`.
+An optional Rust API for inspecting and operating a Bed workbench. Install `AutomationPlugin` after the workbench. It adds no runner or network transport. The bEd executable always includes it.
 
 Submit owned `Operation` values through `AutomationRequests::submit`, then consume receipts through `AutomationResults::take`. Completion follows the actual workbench receipt, input sequence, or GPU readback. Application exit completes outstanding operations with errors.
 

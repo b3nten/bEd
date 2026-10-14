@@ -7,34 +7,6 @@ description = "A desktop application platform and IDE"
 publish = false
 license.workspace = true
 
-[features]
-automation = ["dep:bedtime-plugin-automation"]
-default = ["tools", "effects", "idle", "viewers", "mascots"]
-tools = ["editor", "debugger", "git", "file-explorer", "file-search", "terminal", "workspaces", "color-picker", "settings"]
-editor = ["dep:bedtime-plugin-editor", "bedtime-plugin-editor/language-services"]
-debugger = ["dep:bedtime-plugin-debugger", "dep:bedtime-debugger"]
-git = ["dep:bedtime-plugin-git"]
-file-explorer = ["dep:bedtime-plugin-file-explorer"]
-file-search = ["dep:bedtime-plugin-file-search"]
-terminal = ["dep:bedtime-plugin-terminal", "bedtime-plugin-terminal/desktop", "bedtime-plugin-terminal/remote", "dep:bedtime-terminal"]
-workspaces = []
-color-picker = ["dep:bedtime-plugin-color-picker"]
-settings = ["dep:bedtime-plugin-settings"]
-effects = ["bedtime-plugin-effects/desktop"]
-idle = ["dep:bedtime-plugin-idle"]
-viewers = ["source-outline", "image-viewer", "model-viewer", "font-viewer", "audio-player", "csv-table", "markdown-preview", "json-tree", "sqlite-browser", "http-client"]
-source-outline = ["dep:bedtime-plugin-source-outline"]
-image-viewer = ["dep:bedtime-plugin-image-viewer"]
-model-viewer = ["dep:bedtime-plugin-model-viewer", "bedtime-desktop/scene", "bedtime-desktop/preview"]
-font-viewer = ["dep:bedtime-plugin-font-viewer"]
-audio-player = ["dep:bedtime-plugin-audio-player"]
-csv-table = ["dep:bedtime-plugin-csv-table"]
-markdown-preview = ["dep:bedtime-plugin-markdown-preview"]
-json-tree = ["dep:bedtime-plugin-json-tree"]
-sqlite-browser = ["dep:bedtime-plugin-sqlite-browser"]
-http-client = ["dep:bedtime-plugin-http-client"]
-mascots = ["dep:bedtime-plugin-mascots", "bedtime-desktop/scene", "bedtime-desktop/preview", "bedtime-plugin-workspaces/mascots", "bedtime-plugin-idle?/mascots"]
-
 [dependencies]
 bedtime-storage = { workspace = true }
 bedtime-files = { workspace = true, features = ["workspace-services"] }
@@ -45,40 +17,40 @@ rfd = { workspace = true }
 bedtime-keybindings = { workspace = true }
 bedtime-workbench = { workspace = true }
 bedtime-documents = { workspace = true, features = ["ide-services"] }
-bedtime-plugin-idle = { workspace = true, optional = true }
-bedtime-plugin-automation = { workspace = true, features = ["documents"], optional = true }
-bedtime-desktop = { workspace = true }
+bedtime-plugin-idle = { workspace = true, features = ["mascots"] }
+bedtime-plugin-automation = { workspace = true, features = ["documents"] }
+bedtime-desktop = { workspace = true, features = ["scene", "preview"] }
 bedtime-core = { workspace = true, features = ["language-services", "remote", "layouts"] }
 bedtime-plugin-layouts = { workspace = true }
 bevy = { workspace = true, features = ["std"] }
-bedtime-plugin-color-picker = { workspace = true, optional = true }
-bedtime-plugin-mascots = { workspace = true, optional = true }
-bedtime-plugin-git = { workspace = true, optional = true }
+bedtime-plugin-color-picker = { workspace = true }
+bedtime-plugin-mascots = { workspace = true }
+bedtime-plugin-git = { workspace = true }
 bedtime = { workspace = true, features = ["language-services", "remote", "layouts"] }
 bedtime-editor-widgets = { workspace = true, features = ["language-services"] }
-bedtime-terminal = { workspace = true, optional = true }
-bedtime-plugin-file-explorer = { workspace = true, optional = true }
-bedtime-plugin-file-search = { workspace = true, optional = true }
-bedtime-plugin-terminal = { workspace = true, optional = true }
-bedtime-plugin-workspaces = { workspace = true, features = ["remote"] }
-bedtime-plugin-settings = { workspace = true, optional = true }
+bedtime-terminal = { workspace = true }
+bedtime-plugin-file-explorer = { workspace = true }
+bedtime-plugin-file-search = { workspace = true }
+bedtime-plugin-terminal = { workspace = true, features = ["desktop", "remote"] }
+bedtime-plugin-workspaces = { workspace = true, features = ["remote", "mascots"] }
+bedtime-plugin-settings = { workspace = true }
 bedtime-api = { workspace = true, features = ["gpu", "language-services", "documents"] }
-bedtime-plugin-editor = { workspace = true, optional = true }
-bedtime-plugin-debugger = { workspace = true, optional = true }
-bedtime-plugin-source-outline = { workspace = true, optional = true }
-bedtime-plugin-image-viewer = { workspace = true, optional = true }
-bedtime-plugin-model-viewer = { workspace = true, optional = true }
-bedtime-plugin-font-viewer = { workspace = true, optional = true }
-bedtime-plugin-audio-player = { workspace = true, optional = true }
-bedtime-plugin-csv-table = { workspace = true, optional = true }
-bedtime-plugin-markdown-preview = { workspace = true, optional = true }
-bedtime-plugin-json-tree = { workspace = true, optional = true }
-bedtime-plugin-sqlite-browser = { workspace = true, optional = true }
-bedtime-plugin-http-client = { workspace = true, optional = true }
+bedtime-plugin-editor = { workspace = true, features = ["language-services"] }
+bedtime-plugin-debugger = { workspace = true }
+bedtime-plugin-source-outline = { workspace = true }
+bedtime-plugin-image-viewer = { workspace = true }
+bedtime-plugin-model-viewer = { workspace = true }
+bedtime-plugin-font-viewer = { workspace = true }
+bedtime-plugin-audio-player = { workspace = true }
+bedtime-plugin-csv-table = { workspace = true }
+bedtime-plugin-markdown-preview = { workspace = true }
+bedtime-plugin-json-tree = { workspace = true }
+bedtime-plugin-sqlite-browser = { workspace = true }
+bedtime-plugin-http-client = { workspace = true }
 bedtime-editing = { workspace = true }
 bedtime-ui = { workspace = true, features = ["imgui", "gpu"] }
-bedtime-debugger = { workspace = true, optional = true }
-bedtime-plugin-effects = { workspace = true }
+bedtime-debugger = { workspace = true }
+bedtime-plugin-effects = { workspace = true, features = ["desktop"] }
 dear-imgui-rs = { workspace = true }
 dear-imgui-sys = { workspace = true }
 dear-imgui-wgpu = { workspace = true }
@@ -90,29 +62,12 @@ serde_json = { workspace = true }
 name = "app_remote_editor"
 path = "tests/app_remote_editor.rs"
 harness = false
-required-features = ["editor", "workspaces"]
 
 [[test]]
 name = "lsp_transport"
 path = "tests/lsp_transport.rs"
 harness = false
-required-features = ["editor"]
-
 
 [dev-dependencies]
 bedtime-plugin-csv-table = { workspace = true, features = ["test-support"] }
-bedtime-remote = { workspace = true }
-bedtime-files = { workspace = true }
-bedtime-lsp = { workspace = true }
-bedtime-documents = { workspace = true }
 bedtime-plugin-debugger = { workspace = true, features = ["test-support"] }
-bedtime-plugin-source-outline = { workspace = true }
-bedtime-plugin-image-viewer = { workspace = true }
-bedtime-plugin-model-viewer = { workspace = true }
-bedtime-plugin-font-viewer = { workspace = true }
-bedtime-plugin-audio-player = { workspace = true }
-bedtime-plugin-markdown-preview = { workspace = true }
-bedtime-plugin-json-tree = { workspace = true }
-bedtime-plugin-sqlite-browser = { workspace = true }
-bedtime-plugin-http-client = { workspace = true }
-bedtime-plugin-mascots = { workspace = true }
