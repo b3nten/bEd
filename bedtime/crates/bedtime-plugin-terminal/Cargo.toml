@@ -1,0 +1,29 @@
+[package]
+name = "bedtime-plugin-terminal"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = ["desktop"]
+desktop = ["dep:bedtime-desktop", "dep:winit"]
+remote = ["bedtime-terminal/remote", "bedtime-documents/remote"]
+
+[dependencies]
+bedtime-keybindings = { workspace = true }
+bevy = { workspace = true, features = ["std"] }
+bedtime-api = { workspace = true, features = ["documents"] }
+bedtime-terminal = { workspace = true, features = ["ui"] }
+bedtime-ui = { workspace = true, features = ["imgui"] }
+bedtime-documents = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+
+bedtime-workbench = { workspace = true }
+bedtime-desktop = { workspace = true, optional = true }
+winit = { workspace = true, optional = true }
+
+[dev-dependencies]
+bedtime-remote = { workspace = true }
+bedtime-core = { workspace = true }

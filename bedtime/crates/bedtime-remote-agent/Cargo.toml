@@ -1,0 +1,13 @@
+[package]
+name = "bedtime-remote-agent"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bedtime-remote = { workspace = true }
+bedtime-files = { workspace = true, features = ["workspace-services"] }
+
+[dev-dependencies]
+bedtime-lsp = { workspace = true }

@@ -1,0 +1,47 @@
+[package]
+name = "bedtime"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Owned startup for Bevy desktop applications"
+
+[features]
+layouts = ["bedtime-core/layouts"]
+default = []
+remote = ["bedtime-core/remote"]
+language-services = ["bedtime-core/language-services", "bedtime-api/language-services"]
+
+[dependencies]
+bedtime-api = { workspace = true, features = ["documents"] }
+bedtime-core = { workspace = true }
+bedtime-desktop = { workspace = true }
+bedtime-ui = { workspace = true, features = ["imgui", "gpu"] }
+bevy = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+bedtime-workbench = { workspace = true }
+bedtime-plugin-automation = { workspace = true, features = ["documents"] }
+bedtime-plugin-editor = { workspace = true, features = ["language-services"] }
+bedtime-plugin-git = { workspace = true }
+bedtime-plugin-debugger = { workspace = true }
+bedtime-plugin-terminal = { workspace = true, features = ["desktop"] }
+bedtime-debugger = { workspace = true }
+bedtime-plugin-image-viewer = { workspace = true }
+bedtime-plugin-model-viewer = { workspace = true }
+bedtime-plugin-effects = { workspace = true, features = ["desktop"] }
+wgpu = { workspace = true }
+winit = { workspace = true }
+
+[[example]]
+name = "git_smoke"
+required-features = ["language-services"]
+
+[[example]]
+name = "debugger_smoke"
+required-features = ["language-services"]
+
+[[example]]
+name = "viewers_smoke"
+required-features = ["language-services"]

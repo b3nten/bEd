@@ -1,0 +1,17 @@
+[package]
+name = "bedtime-plugin-audio-player"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bedtime-keybindings = { workspace = true }
+bevy = { workspace = true, features = ["std"] }
+bedtime-api = { workspace = true, features = ["gpu", "documents"] }
+bedtime-ui = { workspace = true, features = ["imgui", "gpu"] }
+bedtime-editing = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+rodio = { workspace = true }
+rustfft = "=6.4.1"

@@ -1,0 +1,15 @@
+[package]
+name = "bedtime-plugin-layouts"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bevy = { workspace = true, features = ["std"] }
+bedtime-workbench = { workspace = true }
+bedtime-api = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+dear-imgui-rs = { workspace = true }

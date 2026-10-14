@@ -23,7 +23,7 @@ def digest(path):
 
 
 def protocol_version():
-    source = (REPOSITORY / "crates/bed-remote/src/protocol.rs").read_text(encoding="utf-8")
+    source = (REPOSITORY / "bedtime/crates/bedtime-remote/src/protocol.rs").read_text(encoding="utf-8")
     return int(re.search(r"pub const PROTOCOL_VERSION: u32 = (\d+);", source)[1])
 
 
@@ -82,7 +82,7 @@ def validate_elf(binary, target):
 
 
 def validate_bundle(directory, target):
-    binary = directory / "bed-remote-agent"
+    binary = directory / "bedtime-remote-agent"
     validate_elf(binary, target)
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     expected = {"format_version": 1, "target": target, "version": package_version(),
@@ -100,7 +100,7 @@ def validate_bundle(directory, target):
 def validate(source, targets):
     targets = tuple(targets)
     missing = [source / target / name for target in targets
-               for name in ("bed-remote-agent", "manifest.json")
+               for name in ("bedtime-remote-agent", "manifest.json")
                if not (source / target / name).is_file()]
     if missing:
         paths = "\n".join(f"  {path}" for path in missing)
@@ -135,8 +135,8 @@ def stage(target, binary, output):
     with tempfile.TemporaryDirectory(prefix=".remote-helper-", dir=output) as temporary:
         directory = Path(temporary) / target
         directory.mkdir()
-        shutil.copy2(binary, directory / "bed-remote-agent")
-        (directory / "bed-remote-agent").chmod(0o755)
+        shutil.copy2(binary, directory / "bedtime-remote-agent")
+        (directory / "bedtime-remote-agent").chmod(0o755)
         shutil.copy2(REPOSITORY / "LICENSE", directory / "LICENSE")
         subprocess.run([sys.executable, str(REPOSITORY / "scripts/lib/collect-licenses.py"),
                         str(directory)], cwd=REPOSITORY, check=True)
@@ -145,7 +145,7 @@ def stage(target, binary, output):
                     "source_revision": revision(), "cargo_lock_sha256": digest(REPOSITORY / "Cargo.lock")}
         (directory / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         with (directory / "NOTICE").open("a", encoding="utf-8") as notice:
-            notice.write("\nThis bed-remote-agent helper is statically linked for " + target + ".\n"
+            notice.write("\nThis bedtime-remote-agent helper is statically linked for " + target + ".\n"
                          "Dependency notices cover the resolved Bed workspace; this helper uses a subset.\n"
                          "manifest.json records its checksum, protocol, release and source provenance.\n")
         validate_bundle(directory, target)
@@ -163,19 +163,19 @@ def copy(source, destination):
     for target in TARGETS:
         shutil.copytree(source / target, output / target, dirs_exist_ok=True)
         # CI artifact downloads may not retain POSIX modes.
-        (output / target / "bed-remote-agent").chmod(0o755)
+        (output / target / "bedtime-remote-agent").chmod(0o755)
     validate(output, TARGETS)
     print(f"Packaged remote helpers: {output}")
 
 
 def standalone(binary, destination):
     repository = REPOSITORY
-    binary_name = "bed-remote-agent"
+    binary_name = "bedtime-remote-agent"
     if not binary.is_file():
-        raise ValueError(f"Missing release helper: {binary}. Build bed-remote-agent first.")
+        raise ValueError(f"Missing release helper: {binary}. Build bedtime-remote-agent first.")
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="remote-agent-package-", dir=destination.parent) as temporary:
-        stage = Path(temporary) / "bed-remote-agent"
+        stage = Path(temporary) / "bedtime-remote-agent"
         stage.mkdir()
         shutil.copy2(binary, stage / binary_name)
         shutil.copy2(repository / "LICENSE", stage / "LICENSE")
@@ -224,12 +224,12 @@ def main():
     copying.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
     copying.add_argument("--destination", type=Path, required=True)
     standalone_package = commands.add_parser("standalone", help="archive a native release helper with notices")
-    standalone_package.add_argument("--binary", type=Path, default=REPOSITORY / "target/release/bed-remote-agent")
+    standalone_package.add_argument("--binary", type=Path, default=REPOSITORY / "target/release/bedtime-remote-agent")
     standalone_package.add_argument("--output", type=Path, default=REPOSITORY / "target/remote-agent-package")
     args = parser.parse_args()
     try:
         if args.command == "stage":
-            binary = args.binary or REPOSITORY / "target" / args.target / "release/bed-remote-agent"
+            binary = args.binary or REPOSITORY / "target" / args.target / "release/bedtime-remote-agent"
             stage(args.target, binary, args.output)
         elif args.command == "validate":
             validate(args.source, args.target or TARGETS)

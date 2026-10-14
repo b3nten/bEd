@@ -5,7 +5,7 @@ set -euo pipefail
 export COPYFILE_DISABLE=1
 BED_PACKAGE_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 BED_PACKAGE_VERSION=$(awk '$1 == "version" {gsub(/"/, "", $3); print $3; exit}' "$BED_PACKAGE_ROOT/Cargo.toml")
-BED_PACKAGE_ICON_SOURCE="$BED_PACKAGE_ROOT/assets/bEd-iOS-Default-1024@1x.png"
+BED_PACKAGE_ICON_SOURCE="$BED_PACKAGE_ROOT/bed/assets/bEd-iOS-Default-1024@1x.png"
 
 prepare_bed_package() {
     test -f "$BED_PACKAGE_ICON_SOURCE" || {
@@ -28,7 +28,7 @@ prepare_bed_package() {
 copy_bed_resources() {
     local destination=$1
     mkdir -p "$destination"
-    cp -R "$BED_PACKAGE_ROOT/resources" "$destination/resources"
+    cp -R "$BED_PACKAGE_ROOT/bed/resources" "$destination/resources"
     cp "$BED_PACKAGE_ICON_SOURCE" "$destination/resources/icons/bed.png"
     cp "$BED_PACKAGE_ROOT/LICENSE" "$destination/"
     python3 "$BED_PACKAGE_ROOT/scripts/lib/collect-licenses.py" "$destination"

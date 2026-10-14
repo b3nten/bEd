@@ -1,10 +1,11 @@
 # bEd
 
-A desktop application platform and IDE with a tiled workspace.
+bEd is an IDE built on the Bedtime Bevy desktop framework. This repository also
+contains Bedside Table, a small independent SQLite client.
 
 **macOS and Linux only. Linux is currently untested. bEd is very experimental.**
 
-![bEd workspace](assets/screenshot.png)
+![bEd workspace](bed/assets/screenshot.png)
 
 ## Features
 
@@ -41,7 +42,7 @@ Run bEd, optionally passing a project directory or files:
 ```sh
 ./target/release/bed
 ./target/release/bed /path/to/project
-./target/release/bed src/main.rs
+./target/release/bed bed/src/main.rs
 ```
 
 For development:
@@ -52,53 +53,65 @@ cargo run -p bed
 
 ## Build another desktop application
 
-[`bed_launch::builder`](crates/bed-launch/README.md) owns startup and installs the
+[`bedtime::awaken`](bedtime/crates/bedtime/README.md) owns startup and installs the
 window, renderer, Dear ImGui, theme, fonts, icons, workbench and shared document
 editing before feature plugins. Register plugin entrypoints before dispatch;
 the desktop callback adds panels and application behavior. bEd keeps its CLI,
-configuration projection, workspace policy and smoke commands in `src`.
+configuration projection, numbered-layout policy, themes and smoke commands in `bed/src`.
+
+[Bedside Table](bedside-table/README.md) uses custom Query, Tables, Data and
+Schema panels, shared documents and SQLite-backed application metadata without
+the code editor or workspace plugins:
+
+```sh
+cargo run -p bedside-table -- /path/to/database.sqlite
+```
+
+The reusable packages live in [`bedtime/`](bedtime/README.md); bEd owns its
+application code and assets in `bed/`. The root is a virtual Cargo workspace.
 
 The examples show the supported composition boundaries:
 
-- [`bed-example-terminal`](examples/terminal/README.md): core and ordinary terminal panels.
-- [`bed-example-editor`](examples/editor/README.md): text/hex editors with shared
+- [`bedtime-example-terminal`](bedtime/examples/terminal/README.md): core and ordinary terminal panels.
+- [`bedtime-example-editor`](bedtime/examples/editor/README.md): text/hex editors with shared
   documents and undo/redo, without workspace or language-server services.
-- [`bed-example-model`](examples/model/README.md): a typed model shared by two panels,
+- [`bedtime-example-model`](bedtime/examples/model/README.md): a typed model shared by two panels,
   using the same document/history commands.
-- [`bed-example-layouts`](examples/layouts/README.md): optional numbered layouts from
-  [`bed-plugin-layouts`](crates/bed-plugin-layouts/README.md), with application-owned disk persistence.
-- [Gameplay editor and runtime](examples/gameplay/README.md): one Bevy game runs in
+- [`bedtime-example-layouts`](bedtime/examples/layouts/README.md): optional numbered layouts from
+  [`bedtime-plugin-layouts`](bedtime/crates/bedtime-plugin-layouts/README.md), with application-owned disk persistence.
+- [Gameplay editor and runtime](bedtime/examples/gameplay/README.md): one Bevy game runs in
   an editor viewport, or directly in a standalone runtime without bEd foundations.
 
 Plugins register their own namespaced artwork and filename contracts. Hosts can
 override directories per plugin; embedded defaults make the examples independent
-of bEd's resource directory. See the [icon contract](crates/bed-ui/README.md).
+of bEd's resource directory. See the [icon contract](bedtime/crates/bedtime-ui/README.md).
 
 Install language servers separately for the languages you use. Open **Settings → Keybindings** to see or change shortcuts.
 
 ## Crates and vocabulary
 
-Optional features use `bed-plugin-*`, such as `bed-plugin-editor`,
-`bed-plugin-terminal` and `bed-plugin-layouts`. Foundations and support libraries
-keep domain names: `bed-core`, `bed-desktop`, `bed-documents`, `bed-terminal` and
-`bed-git`. The latter two supply backends; their `bed-plugin-*` counterparts
-supply panels and commands. Example applications use `bed-example-*`.
+Optional features use `bedtime-plugin-*`, such as `bedtime-plugin-editor`,
+`bedtime-plugin-terminal` and `bedtime-plugin-layouts`. Foundations and support libraries
+keep domain names: `bedtime-core`, `bedtime-desktop`, `bedtime-documents`, `bedtime-terminal` and
+`bedtime-git`. The latter two supply backends; their `bedtime-plugin-*` counterparts
+supply panels and commands. Example applications use `bedtime-example-*`.
 
 | Term | Responsibility |
 | --- | --- |
-| Editor | Code editor plugin and its text/hex widgets in `bed-editor-widgets` |
+| Editor | Code editor plugin and its text/hex widgets in `bedtime-editor-widgets` |
 | Documents | Content, revisions, views, saving and undo/redo |
 | Workbench | Panels, commands, focus and layout |
-| Host | Application supplying services and resolving registered requests |
+| Host | Application supplying policy and services; core resolves shared requests |
 | File context | Selected directory, provider identity and connection availability |
 | Workspace | Optional saved arrangement and plugin state associated with a location |
-| Launcher | Helper process dispatch and desktop initialization in `bed-launch` |
+| Launcher | Helper process dispatch and desktop initialization in `bedtime` |
 | Application | Bevy `App` composed from core, feature plugins and application policy |
 
-[`bed-api`](crates/bed-api/README.md) holds shared contracts in `workbench`,
+[`bedtime-api`](bedtime/crates/bedtime-api/README.md) holds shared contracts in `workbench`,
 `documents`, `features`, `files`, `storage`, `settings`, `presentation`, `status`
 and `gpu` modules.
-Use `bed_launch::api` when building an application. The API's default build supports a
+Use `bedtime::api`, `bedtime::core`, `bedtime::desktop` and `bedtime::ui` when
+building an application. The API's default build supports a
 workbench without document services; its `documents` feature adds document
 contracts. `gpu` and `language-services` are separate opt-ins.
 
@@ -112,23 +125,26 @@ saved local workspace snapshots and document history in `<root>/.bed`,
 remote snapshots locally in `~/.config/bed/remote`, and recent locations and
 layout templates in its global configuration directory.
 The workspace directory name is application-configurable. Local `workspace.json`
-holds layouts and plugin state; `history.json` holds text undo history. The client
-index is `registry.json`, and shared layout templates are `layouts.json`. Remote,
-byte-document and typed-model undo histories remain in memory.
+holds opaque layout, plugin-state and document-history snapshots in one commit.
+The client index is `registry.json`, and bEd-owned numbered layout templates are
+`layouts.json`. Workspace repositories can persist the same snapshots in a database.
 
 Core owns registered, namespaced preferences in
 `~/.config/<app_id>/settings.json`, including keybindings. The optional
-[`SettingsPlugin`](crates/bed-plugin-settings/README.md) renders those definitions;
-bEd supplies its own richer Settings frontend in `src/settings_view`. Preferences
+[`SettingsPlugin`](bedtime/crates/bedtime-plugin-settings/README.md) renders those definitions;
+bEd contributes richer Settings pages from `bed/src/settings_view`. Preferences
 remain global and independent of saved workspace state. Old preferences,
 keybinding, workspace and history formats are not imported.
 
-[`bed-storage`](crates/bed-storage/README.md) holds app-neutral plugin snapshots.
+[`bedtime-storage`](bedtime/crates/bedtime-storage/README.md) holds app-neutral plugin snapshots.
 The application chooses their persistence scope and storage implementation.
 
-The [`bed-remote-agent`](crates/bed-remote-agent/README.md) executable serves
+The [`bedtime-remote-agent`](bedtime/crates/bedtime-remote-agent/README.md) executable serves
 remote filesystem, Git, language-server and process requests without a window.
 Desktop packages include native Linux agents for SSH deployment.
+
+Reusable packages remain unpublished during the refactor. See the
+[publication prerequisites](bedtime/README.md).
 
 ## License
 

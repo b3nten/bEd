@@ -1,0 +1,24 @@
+[package]
+name = "bedtime-plugin-file-explorer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bedtime-keybindings = { workspace = true }
+bevy = { workspace = true, features = ["std"] }
+bedtime-api = { workspace = true, features = ["documents"] }
+bedtime-editing = { workspace = true }
+bedtime-files = { workspace = true, features = ["workspace-services"] }
+bedtime-remote = { workspace = true }
+bedtime-documents = { workspace = true, features = ["remote"] }
+bedtime-ui = { workspace = true, features = ["imgui"] }
+trash = { workspace = true }
+chrono = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+bedtime-workbench = { workspace = true }
+bedtime-plugin-csv-table = { workspace = true }

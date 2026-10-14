@@ -1,0 +1,28 @@
+[package]
+name = "bedtime-plugin-editor"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = []
+language-services = ["dep:bedtime-highlight", "dep:bedtime-lsp", "bedtime-documents/ide-services", "bedtime-api/language-services", "bedtime-editor-widgets/language-services"]
+
+[dependencies]
+bedtime-keybindings = { workspace = true }
+bevy = { workspace = true, features = ["std"] }
+bedtime-api = { workspace = true, features = ["documents"] }
+bedtime-workbench = { workspace = true }
+bedtime-editing = { workspace = true }
+bedtime-highlight = { workspace = true, optional = true }
+bedtime-lsp = { workspace = true, optional = true }
+bedtime-documents = { workspace = true }
+bedtime-ui = { workspace = true, features = ["imgui"] }
+bedtime-editor-widgets = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+bedtime-core = { workspace = true, features = ["language-services"] }
+bedtime-files = { workspace = true }

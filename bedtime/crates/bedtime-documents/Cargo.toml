@@ -1,0 +1,41 @@
+[package]
+name = "bedtime-documents"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = []
+# Existing editor service integration. Local documents, views, edits, saves and
+# in-memory history are available without language servers, Git or SSH.
+file-services = ["bedtime-files/file-services"]
+remote = ["file-services", "dep:bedtime-remote"]
+ide-services = ["remote", "dep:bedtime-highlight", "dep:bedtime-lsp", "dep:git2", "bedtime-files/workspace-services"]
+
+[dependencies]
+bedtime-editing = { workspace = true }
+bedtime-files = { workspace = true }
+bedtime-highlight = { workspace = true, optional = true }
+bedtime-lsp = { workspace = true, optional = true }
+bedtime-remote = { path = "../bedtime-remote", optional = true }
+git2 = { workspace = true, optional = true }
+serde_json = { workspace = true }
+
+[[test]]
+name = "remote_io"
+path = "tests/remote_io.rs"
+harness = false
+required-features = ["ide-services"]
+
+[[test]]
+name = "remote_documents"
+path = "tests/remote_documents.rs"
+harness = false
+required-features = ["remote"]
+
+[[test]]
+name = "lsp_navigation"
+path = "tests/lsp_navigation.rs"
+harness = false
+required-features = ["ide-services"]

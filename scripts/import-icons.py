@@ -13,7 +13,7 @@ import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DESTINATION = ROOT / "resources/icons"
+DESTINATION = ROOT / "bed/resources/icons"
 SOURCES = {
     "simple-icons": ("simple-icons/simple-icons", "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d"),
     "lucide": ("lucide-icons/lucide", "a04f228cd01185e09c188b7227b9600c08c565ec"),

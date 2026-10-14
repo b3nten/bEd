@@ -1,0 +1,20 @@
+[package]
+name = "bedtime-plugin-sqlite-browser"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bedtime-ui = { workspace = true, features = ["imgui"] }
+bedtime-keybindings = { workspace = true }
+bedtime-api = { workspace = true  , features = ["documents"] }
+bevy = { workspace = true, features = ["std"] }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+bedtime-sqlite = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+rusqlite = { version = "=0.40.2", features = ["bundled", "hooks", "limits"] }

@@ -36,7 +36,7 @@ vendor/dear-imgui-sys. Bed's native binding changes are recorded in BED_PATCHES.
 The original Rust binding MIT/Apache-2.0 notices are retained at the roots of
 vendor/dear-imgui-sys, vendor/dear-imgui-winit and vendor/dear-imgui-wgpu,
 copied unchanged from revision 95f279150e95c728952db3e79226c687167ccf73.
-The pure key and mouse mapping in crates/bed-desktop/src/input_map.rs is adapted
+The pure key and mouse mapping in bedtime/crates/bedtime-desktop/src/input_map.rs is adapted
 from dear-imgui-winit 0.18.0 under those retained MIT/Apache-2.0 notices.
 
 Portions of this software are copyright © 2023 The FreeType Project
@@ -161,7 +161,7 @@ Source: https://sketchfab.com/3d-models/bed-low-poly-d58eea1a6ee746d29fd18f2d9e1
 License: Creative Commons Attribution 4.0 International (CC BY 4.0)
 https://creativecommons.org/licenses/by/4.0/
 
-The derived assets/bed.glb joins the model into one mesh with Tinted and Untinted
+The derived bed/assets/bed.glb joins the model into one mesh with Tinted and Untinted
 material assignments. It is embedded in bEd's Bed mascot panel and welcome
 screens. Original texture maps are retained; at runtime, a neutral copy of the
 Tinted color texture lets the patterned bedding follow the active theme while
@@ -491,7 +491,7 @@ Direct asset URLs:
 
 The API-provided MD5 checksums are respectively
 `de3ba64222895aca876b1d1c2e0cf81a` and `fcefd321c51b468ead9d5e1a369a3735`.
-Original files are at `crates/bed-plugin-gltf/resources/environments/`. At runtime,
+Original files are at `bedtime/crates/bedtime-plugin-model-viewer/resources/environments/`. At runtime,
 Bed bilinearly resamples them to 256-pixel cube faces in linear RGBA16Float;
 this retains HDR values for Bevy's image-based lighting filter.
 

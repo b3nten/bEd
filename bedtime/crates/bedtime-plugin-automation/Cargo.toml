@@ -1,0 +1,24 @@
+[package]
+name = "bedtime-plugin-automation"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = []
+documents = ["bedtime-api/documents", "dep:bedtime-documents", "dep:bedtime-editing"]
+
+[dependencies]
+bevy = { workspace = true, features = ["std"] }
+bedtime-desktop = { workspace = true }
+bedtime-workbench = { workspace = true }
+bedtime-api = { workspace = true }
+bedtime-documents = { workspace = true, optional = true }
+bedtime-editing = { workspace = true, optional = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+bedtime-ui = { workspace = true, features = ["imgui"] }
+dear-imgui-rs = { workspace = true }
+bedtime-plugin-editor = { workspace = true }

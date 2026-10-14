@@ -1,0 +1,22 @@
+[package]
+name = "bedtime-plugin-git"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bevy = { workspace = true, features = ["std"] }
+bedtime-api = { workspace = true, features = ["documents"] }
+bedtime-ui = { workspace = true, features = ["imgui"] }
+bedtime-git = { workspace = true }
+bedtime-editing = { workspace = true }
+bedtime-files = { workspace = true, features = ["workspace-services"] }
+bedtime-documents = { workspace = true, features = ["ide-services"] }
+bedtime-editor-widgets = { workspace = true, features = ["language-services"] }
+bedtime-remote = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+bedtime-workbench = { workspace = true }

@@ -1,0 +1,9 @@
+[package]
+name = "bedtime-example-game"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "keyboard", "mouse", "bevy_sprite", "bevy_sprite_render", "bevy_core_pipeline"] }

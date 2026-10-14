@@ -61,7 +61,7 @@ class DesktopPackageTests(unittest.TestCase):
         files = {
             "Cargo.toml": f'[package]\nname = "bed"\nversion = "{HELPERS.package_version()}"\n',
             "Cargo.lock": "fixture lockfile\n",
-            "crates/bed-remote/src/protocol.rs": f"pub const PROTOCOL_VERSION: u32 = {HELPERS.protocol_version()};\n",
+            "bedtime/crates/bedtime-remote/src/protocol.rs": f"pub const PROTOCOL_VERSION: u32 = {HELPERS.protocol_version()};\n",
             "LICENSE": "Project license\n",
             "NOTICE": ("Required attribution\n"
                        + LICENSES.notice_section("musl", b"Retained musl license\n").decode()
@@ -75,7 +75,7 @@ class DesktopPackageTests(unittest.TestCase):
             "resources/terminal/LICENSE": "Retained X.Org license\n",
             "resources/terminal/ATTRIBUTION.txt": "X.Org source/checksum record\n",
             "target/release/bed": "#!/bin/sh\nexit 0\n",
-            "target/release/bed-remote-agent": "#!/bin/sh\nexit 0\n",
+            "target/release/bedtime-remote-agent": "#!/bin/sh\nexit 0\n",
         }
         files["resources/fonts/PaperMono-OFL.txt"] = "Paper license\n"
         for theme in THEMES:
@@ -84,13 +84,13 @@ class DesktopPackageTests(unittest.TestCase):
             files[f"resources/themes/{theme}-LICENSE.txt"] = f"Retained {theme} license\n"
         files.update({name: f"Retained Rust binding notice: {name}\n" for name in RUST_BINDING_NOTICES})
         for name, contents in files.items():
-            path = self.root / name
+            path = self.root / ("bed/" + name if name.startswith(("resources/", "assets/")) else name)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(contents, encoding="utf-8")
-        shutil.copytree(SCRIPTS.parent / "resources/icons", self.root / "resources/icons")
-        for binary in ("bed", "bed-remote-agent"):
+        shutil.copytree(SCRIPTS.parent / "bed/resources/icons", self.root / "bed/resources/icons")
+        for binary in ("bed", "bedtime-remote-agent"):
             (self.root / "target/release" / binary).chmod(0o755)
-        (self.root / "assets/bEd-iOS-Default-1024@1x.png").write_bytes(png(1024))
+        (self.root / "bed/assets/bEd-iOS-Default-1024@1x.png").write_bytes(png(1024))
         helpers = self.root / "prebuilt helper bundles"
         helpers.mkdir()
         for target in HELPERS.TARGETS:
@@ -169,13 +169,13 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
             self.assertIn(prefix + "license-index.json", package.getnames())
             self.assertFalse(any("/LICENSES/" in name for name in package.getnames()))
             self.assertIn("usr/share/applications/bed.desktop", package.getnames())
-            for path in (self.root / "resources/icons").rglob("*"):
+            for path in (self.root / "bed/resources/icons").rglob("*"):
                 if path.is_file():
-                    name = path.relative_to(self.root).as_posix()
+                    name = path.relative_to(self.root / "bed").as_posix()
                     self.assertEqual(package.extractfile(prefix + name).read(), path.read_bytes())
             self.assertFalse(any(name.startswith(prefix + "queries/") for name in package.getnames()))
             self.assertEqual(package.extractfile(prefix + "resources/icons/bed.png").read(),
-                             (self.root / "assets/bEd-iOS-Default-1024@1x.png").read_bytes())
+                             (self.root / "bed/assets/bEd-iOS-Default-1024@1x.png").read_bytes())
             for size in (16, 24, 32, 48, 64, 128, 256, 512, 1024):
                 icon = package.extractfile(f"usr/share/icons/hicolor/{size}x{size}/apps/bed.png").read()
                 self.assertEqual(png_dimensions(icon), (size, size))
@@ -184,12 +184,12 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
             self.assertEqual(sum(name.endswith(".json") and "/themes/" in name for name in package.getnames()), len(THEMES))
             for theme in THEME_LICENSES:
                 self.assertEqual(package.extractfile(prefix + f"resources/themes/{theme}-LICENSE.txt").read(),
-                                 (self.root / f"resources/themes/{theme}-LICENSE.txt").read_bytes())
+                                 (self.root / f"bed/resources/themes/{theme}-LICENSE.txt").read_bytes())
             for notice in RUST_BINDING_NOTICES:
                 self.assertEqual(LICENSES.original_notice(notice_bundle, notice),
                                  (self.root / notice).read_bytes())
             for target in HELPERS.TARGETS:
-                binary = prefix + f"remote-helpers/{target}/bed-remote-agent"
+                binary = prefix + f"remote-helpers/{target}/bedtime-remote-agent"
                 self.assertTrue(package.getmember(binary).mode & 0o111)
                 manifest = json.load(package.extractfile(prefix + f"remote-helpers/{target}/manifest.json"))
                 self.assertEqual(manifest["target"], target)
@@ -206,16 +206,16 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
             self.assertEqual(info["CFBundleIdentifier"], "org.bed-editor.bed")
             resources = "bEd.app/Contents/Resources/"
             self.assertEqual(package.read(resources + "resources/icons/bed.png"),
-                             (self.root / "assets/bEd-iOS-Default-1024@1x.png").read_bytes())
-            for path in (self.root / "resources/icons").rglob("*"):
+                             (self.root / "bed/assets/bEd-iOS-Default-1024@1x.png").read_bytes())
+            for path in (self.root / "bed/resources/icons").rglob("*"):
                 if path.is_file():
-                    name = path.relative_to(self.root).as_posix()
+                    name = path.relative_to(self.root / "bed").as_posix()
                     self.assertEqual(package.read(resources + name), path.read_bytes())
             self.assertEqual({Path(name).name for name in package.namelist() if name.endswith(".ttf")}, {"PaperMono-Regular.ttf", "PaperMono-Bold.ttf"})
             self.assertEqual(sum(name.endswith(".json") and "/themes/" in name for name in package.namelist()), len(THEMES))
             for theme in THEME_LICENSES:
                 self.assertEqual(package.read(resources + f"resources/themes/{theme}-LICENSE.txt"),
-                                 (self.root / f"resources/themes/{theme}-LICENSE.txt").read_bytes())
+                                 (self.root / f"bed/resources/themes/{theme}-LICENSE.txt").read_bytes())
             self.assertFalse(any(name.startswith(resources + "queries/") for name in package.namelist()))
             icon = package.read(resources + "bed.icns")
             self.assertEqual(icon[:4], b"icns")
@@ -237,16 +237,16 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
                 self.assertEqual(LICENSES.original_notice(notice_bundle, notice),
                                  (self.root / notice).read_bytes())
             for target in HELPERS.TARGETS:
-                self.assertIn(resources + f"remote-helpers/{target}/bed-remote-agent", package.namelist())
+                self.assertIn(resources + f"remote-helpers/{target}/bedtime-remote-agent", package.namelist())
 
     def test_unexpected_runtime_font_prevents_packaging(self):
-        (self.root / "resources/fonts/extra.ttf").write_bytes(b"unexpected font")
+        (self.root / "bed/resources/fonts/extra.ttf").write_bytes(b"unexpected font")
         result = self.run_package("linux")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("extra.ttf", result.stderr)
 
     def test_damaged_helper_prevents_publishing_a_desktop_package(self):
-        helper = Path(self.environment["BED_HELPERS_DIR"]) / next(iter(HELPERS.TARGETS)) / "bed-remote-agent"
+        helper = Path(self.environment["BED_HELPERS_DIR"]) / next(iter(HELPERS.TARGETS)) / "bedtime-remote-agent"
         helper.write_bytes(helper.read_bytes() + b"damaged")
         result = self.run_package("linux")
         self.assertNotEqual(result.returncode, 0)
@@ -267,7 +267,7 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
 
     def test_missing_icon_source_keeps_existing_packages_intact(self):
         outputs = self.previous_outputs()
-        (self.root / "assets/bEd-iOS-Default-1024@1x.png").unlink()
+        (self.root / "bed/assets/bEd-iOS-Default-1024@1x.png").unlink()
         for platform in ("macos", "linux"):
             with self.subTest(platform=platform):
                 result = self.run_package(platform)
@@ -332,7 +332,7 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
             text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         with zipfile.ZipFile(output.with_suffix(".zip")) as package:
-            self.assertEqual(package.read("helper/bed-remote-agent"), b"#!/bin/sh\nexit 0\n")
+            self.assertEqual(package.read("helper/bedtime-remote-agent"), b"#!/bin/sh\nexit 0\n")
             self.assertEqual(package.read("helper/LICENSE"), b"Project license\n")
             self.assertIn("helper/NOTICE", package.namelist())
             self.assertIn("helper/license-index.json", package.namelist())

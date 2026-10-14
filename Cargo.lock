@@ -1920,47 +1920,47 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 name = "bed"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-core",
- "bed-debugger",
- "bed-desktop",
- "bed-documents",
- "bed-editing",
- "bed-editor-widgets",
- "bed-files",
- "bed-highlight",
- "bed-keybindings",
- "bed-launch",
- "bed-lsp",
- "bed-plugin-audio-player",
- "bed-plugin-automation",
- "bed-plugin-color-picker",
- "bed-plugin-csv-table",
- "bed-plugin-debugger",
- "bed-plugin-editor",
- "bed-plugin-effects",
- "bed-plugin-file-explorer",
- "bed-plugin-file-search",
- "bed-plugin-font-viewer",
- "bed-plugin-git",
- "bed-plugin-http-client",
- "bed-plugin-idle",
- "bed-plugin-image-viewer",
- "bed-plugin-json-tree",
- "bed-plugin-layouts",
- "bed-plugin-markdown-preview",
- "bed-plugin-mascots",
- "bed-plugin-model-viewer",
- "bed-plugin-settings",
- "bed-plugin-source-outline",
- "bed-plugin-sqlite-browser",
- "bed-plugin-terminal",
- "bed-plugin-workspaces",
- "bed-remote",
- "bed-storage",
- "bed-terminal",
- "bed-ui",
- "bed-workbench",
+ "bedtime",
+ "bedtime-api",
+ "bedtime-core",
+ "bedtime-debugger",
+ "bedtime-desktop",
+ "bedtime-documents",
+ "bedtime-editing",
+ "bedtime-editor-widgets",
+ "bedtime-files",
+ "bedtime-highlight",
+ "bedtime-keybindings",
+ "bedtime-lsp",
+ "bedtime-plugin-audio-player",
+ "bedtime-plugin-automation",
+ "bedtime-plugin-color-picker",
+ "bedtime-plugin-csv-table",
+ "bedtime-plugin-debugger",
+ "bedtime-plugin-editor",
+ "bedtime-plugin-effects",
+ "bedtime-plugin-file-explorer",
+ "bedtime-plugin-file-search",
+ "bedtime-plugin-font-viewer",
+ "bedtime-plugin-git",
+ "bedtime-plugin-http-client",
+ "bedtime-plugin-idle",
+ "bedtime-plugin-image-viewer",
+ "bedtime-plugin-json-tree",
+ "bedtime-plugin-layouts",
+ "bedtime-plugin-markdown-preview",
+ "bedtime-plugin-mascots",
+ "bedtime-plugin-model-viewer",
+ "bedtime-plugin-settings",
+ "bedtime-plugin-source-outline",
+ "bedtime-plugin-sqlite-browser",
+ "bedtime-plugin-terminal",
+ "bedtime-plugin-workspaces",
+ "bedtime-remote",
+ "bedtime-storage",
+ "bedtime-terminal",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -1972,16 +1972,57 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-api"
+name = "bedside-table"
 version = "0.1.0"
 dependencies = [
- "bed-documents",
- "bed-editing",
- "bed-files",
- "bed-keybindings",
- "bed-lsp",
- "bed-storage",
- "bed-ui",
+ "bedtime",
+ "bedtime-core",
+ "bedtime-sqlite",
+ "bedtime-storage",
+ "bedtime-workbench",
+ "bevy",
+ "dear-imgui-rs",
+ "rfd",
+ "rusqlite",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "bedtime"
+version = "0.1.0"
+dependencies = [
+ "bedtime-api",
+ "bedtime-core",
+ "bedtime-debugger",
+ "bedtime-desktop",
+ "bedtime-plugin-automation",
+ "bedtime-plugin-debugger",
+ "bedtime-plugin-editor",
+ "bedtime-plugin-effects",
+ "bedtime-plugin-git",
+ "bedtime-plugin-image-viewer",
+ "bedtime-plugin-model-viewer",
+ "bedtime-plugin-terminal",
+ "bedtime-ui",
+ "bedtime-workbench",
+ "bevy",
+ "serde_json",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "bedtime-api"
+version = "0.1.0"
+dependencies = [
+ "bedtime-documents",
+ "bedtime-editing",
+ "bedtime-files",
+ "bedtime-keybindings",
+ "bedtime-lsp",
+ "bedtime-storage",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -1990,21 +2031,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-core"
+name = "bedtime-core"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-desktop",
- "bed-documents",
- "bed-editing",
- "bed-files",
- "bed-highlight",
- "bed-keybindings",
- "bed-lsp",
- "bed-plugin-layouts",
- "bed-storage",
- "bed-ui",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-desktop",
+ "bedtime-documents",
+ "bedtime-editing",
+ "bedtime-files",
+ "bedtime-highlight",
+ "bedtime-keybindings",
+ "bedtime-lsp",
+ "bedtime-plugin-layouts",
+ "bedtime-remote",
+ "bedtime-storage",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "rfd",
@@ -2012,22 +2054,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-debugger"
+name = "bedtime-debugger"
 version = "0.1.0"
 dependencies = [
- "bed-terminal",
+ "bedtime-terminal",
  "libc",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-desktop"
+name = "bedtime-desktop"
 version = "0.1.0"
 dependencies = [
  "arboard",
- "bed-launch",
- "bed-ui",
+ "bedtime",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -2044,20 +2086,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-documents"
+name = "bedtime-documents"
 version = "0.1.0"
 dependencies = [
- "bed-editing",
- "bed-files",
- "bed-highlight",
- "bed-lsp",
- "bed-remote",
+ "bedtime-editing",
+ "bedtime-files",
+ "bedtime-highlight",
+ "bedtime-lsp",
+ "bedtime-remote",
  "git2",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-editing"
+name = "bedtime-editing"
 version = "0.1.0"
 dependencies = [
  "glob",
@@ -2067,14 +2109,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-editor-widgets"
+name = "bedtime-editor-widgets"
 version = "0.1.0"
 dependencies = [
- "bed-documents",
- "bed-editing",
- "bed-highlight",
- "bed-keybindings",
- "bed-ui",
+ "bedtime-documents",
+ "bedtime-editing",
+ "bedtime-highlight",
+ "bedtime-keybindings",
+ "bedtime-ui",
  "dear-imgui-rs",
  "dear-imgui-sys",
  "git2",
@@ -2083,92 +2125,92 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-example-editor"
+name = "bedtime-example-editor"
 version = "0.1.0"
 dependencies = [
- "bed-editing",
- "bed-launch",
- "bed-plugin-editor",
+ "bedtime",
+ "bedtime-editing",
+ "bedtime-plugin-editor",
  "bevy",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-example-game"
+name = "bedtime-example-game"
 version = "0.1.0"
 dependencies = [
  "bevy",
 ]
 
 [[package]]
-name = "bed-example-game-editor"
+name = "bedtime-example-game-editor"
 version = "0.1.0"
 dependencies = [
- "bed-example-game",
- "bed-launch",
+ "bedtime",
+ "bedtime-example-game",
  "bevy",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-example-game-runtime"
+name = "bedtime-example-game-runtime"
 version = "0.1.0"
 dependencies = [
- "bed-example-game",
+ "bedtime-example-game",
  "bevy",
 ]
 
 [[package]]
-name = "bed-example-layouts"
+name = "bedtime-example-layouts"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-desktop",
- "bed-launch",
- "bed-plugin-layouts",
- "bed-workbench",
+ "bedtime",
+ "bedtime-api",
+ "bedtime-desktop",
+ "bedtime-plugin-layouts",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-example-model"
+name = "bedtime-example-model"
 version = "0.1.0"
 dependencies = [
- "bed-launch",
+ "bedtime",
  "bevy",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-example-terminal"
+name = "bedtime-example-terminal"
 version = "0.1.0"
 dependencies = [
- "bed-launch",
- "bed-plugin-automation",
- "bed-plugin-csv-table",
- "bed-plugin-image-viewer",
- "bed-plugin-terminal",
- "bed-terminal",
+ "bedtime",
+ "bedtime-plugin-automation",
+ "bedtime-plugin-csv-table",
+ "bedtime-plugin-image-viewer",
+ "bedtime-plugin-terminal",
+ "bedtime-terminal",
  "bevy",
  "serde_json",
  "winit",
 ]
 
 [[package]]
-name = "bed-files"
+name = "bedtime-files"
 version = "0.1.0"
 dependencies = [
- "bed-editing",
- "bed-remote",
+ "bedtime-editing",
+ "bedtime-remote",
  "bevy",
  "git2",
  "libc",
 ]
 
 [[package]]
-name = "bed-git"
+name = "bedtime-git"
 version = "0.1.0"
 dependencies = [
  "libc",
@@ -2176,17 +2218,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-highlight"
+name = "bedtime-highlight"
 version = "0.1.0"
 dependencies = [
  "arborium",
- "bed-editing",
+ "bedtime-editing",
  "serde_json",
  "tree-sitter-md",
 ]
 
 [[package]]
-name = "bed-keybindings"
+name = "bedtime-keybindings"
 version = "0.1.0"
 dependencies = [
  "dear-imgui-rs",
@@ -2195,35 +2237,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-launch"
+name = "bedtime-lsp"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-core",
- "bed-debugger",
- "bed-desktop",
- "bed-plugin-automation",
- "bed-plugin-debugger",
- "bed-plugin-editor",
- "bed-plugin-effects",
- "bed-plugin-git",
- "bed-plugin-image-viewer",
- "bed-plugin-model-viewer",
- "bed-plugin-terminal",
- "bed-ui",
- "bed-workbench",
- "bevy",
- "serde_json",
- "wgpu",
- "winit",
-]
-
-[[package]]
-name = "bed-lsp"
-version = "0.1.0"
-dependencies = [
- "bed-editing",
- "bed-remote",
+ "bedtime-editing",
+ "bedtime-remote",
  "globset",
  "libc",
  "serde",
@@ -2231,13 +2249,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-audio-player"
+name = "bedtime-plugin-audio-player"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-editing",
- "bed-keybindings",
- "bed-ui",
+ "bedtime-api",
+ "bedtime-editing",
+ "bedtime-keybindings",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "rodio",
@@ -2246,42 +2264,42 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-automation"
+name = "bedtime-plugin-automation"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-desktop",
- "bed-documents",
- "bed-editing",
- "bed-plugin-editor",
- "bed-ui",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-desktop",
+ "bedtime-documents",
+ "bedtime-editing",
+ "bedtime-plugin-editor",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-plugin-color-picker"
+name = "bedtime-plugin-color-picker"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-ui",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-plugin-csv-table"
+name = "bedtime-plugin-csv-table"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-documents",
- "bed-editing",
- "bed-keybindings",
- "bed-ui",
+ "bedtime-api",
+ "bedtime-documents",
+ "bedtime-editing",
+ "bedtime-keybindings",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -2290,18 +2308,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-debugger"
+name = "bedtime-plugin-debugger"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-debugger",
- "bed-documents",
- "bed-editing",
- "bed-editor-widgets",
- "bed-keybindings",
- "bed-terminal",
- "bed-ui",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-debugger",
+ "bedtime-documents",
+ "bedtime-editing",
+ "bedtime-editor-widgets",
+ "bedtime-keybindings",
+ "bedtime-terminal",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "serde",
@@ -2309,31 +2327,32 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-editor"
+name = "bedtime-plugin-editor"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-core",
- "bed-documents",
- "bed-editing",
- "bed-editor-widgets",
- "bed-files",
- "bed-highlight",
- "bed-keybindings",
- "bed-lsp",
- "bed-ui",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-core",
+ "bedtime-documents",
+ "bedtime-editing",
+ "bedtime-editor-widgets",
+ "bedtime-files",
+ "bedtime-highlight",
+ "bedtime-keybindings",
+ "bedtime-lsp",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-plugin-effects"
+name = "bedtime-plugin-effects"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-desktop",
+ "bedtime-api",
+ "bedtime-desktop",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-wgpu",
@@ -2342,18 +2361,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-file-explorer"
+name = "bedtime-plugin-file-explorer"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-documents",
- "bed-editing",
- "bed-files",
- "bed-keybindings",
- "bed-plugin-csv-table",
- "bed-remote",
- "bed-ui",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-documents",
+ "bedtime-editing",
+ "bedtime-files",
+ "bedtime-keybindings",
+ "bedtime-plugin-csv-table",
+ "bedtime-remote",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "chrono",
  "dear-imgui-rs",
@@ -2362,28 +2381,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-file-search"
+name = "bedtime-plugin-file-search"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-documents",
- "bed-editing",
- "bed-files",
- "bed-keybindings",
- "bed-ui",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-documents",
+ "bedtime-editing",
+ "bedtime-files",
+ "bedtime-keybindings",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-plugin-font-viewer"
+name = "bedtime-plugin-font-viewer"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-editing",
- "bed-ui",
+ "bedtime-api",
+ "bedtime-editing",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -2394,32 +2413,32 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-git"
+name = "bedtime-plugin-git"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-documents",
- "bed-editing",
- "bed-editor-widgets",
- "bed-files",
- "bed-git",
- "bed-remote",
- "bed-ui",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-documents",
+ "bedtime-editing",
+ "bedtime-editor-widgets",
+ "bedtime-files",
+ "bedtime-git",
+ "bedtime-remote",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-plugin-http-client"
+name = "bedtime-plugin-http-client"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
- "bed-api",
- "bed-editing",
- "bed-ui",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-editing",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "reqwest",
@@ -2429,13 +2448,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-idle"
+name = "bedtime-plugin-idle"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-desktop",
- "bed-plugin-mascots",
- "bed-ui",
+ "bedtime-api",
+ "bedtime-desktop",
+ "bedtime-plugin-mascots",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "serde_json",
@@ -2443,13 +2462,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-image-viewer"
+name = "bedtime-plugin-image-viewer"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-editing",
- "bed-keybindings",
- "bed-ui",
+ "bedtime-api",
+ "bedtime-editing",
+ "bedtime-keybindings",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "image",
@@ -2458,12 +2477,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-json-tree"
+name = "bedtime-plugin-json-tree"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-editing",
- "bed-ui",
+ "bedtime-api",
+ "bedtime-editing",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "jsonc-parser",
@@ -2472,26 +2491,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-layouts"
+name = "bedtime-plugin-layouts"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-plugin-markdown-preview"
+name = "bedtime-plugin-markdown-preview"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-editing",
- "bed-files",
- "bed-plugin-image-viewer",
- "bed-remote",
- "bed-ui",
+ "bedtime-api",
+ "bedtime-editing",
+ "bedtime-files",
+ "bedtime-plugin-image-viewer",
+ "bedtime-remote",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "pulldown-cmark",
@@ -2500,13 +2519,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-mascots"
+name = "bedtime-plugin-mascots"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-desktop",
- "bed-documents",
- "bed-ui",
+ "bedtime-api",
+ "bedtime-desktop",
+ "bedtime-documents",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "gltf",
@@ -2516,15 +2535,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-model-viewer"
+name = "bedtime-plugin-model-viewer"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
- "bed-api",
- "bed-desktop",
- "bed-editing",
- "bed-keybindings",
- "bed-ui",
+ "bedtime-api",
+ "bedtime-desktop",
+ "bedtime-editing",
+ "bedtime-keybindings",
+ "bedtime-ui",
  "bevy",
  "bevy_stl",
  "bytemuck",
@@ -2539,40 +2558,40 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-settings"
+name = "bedtime-plugin-settings"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-keybindings",
- "bed-ui",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-keybindings",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-plugin-source-outline"
+name = "bedtime-plugin-source-outline"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-editing",
- "bed-highlight",
- "bed-ui",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-editing",
+ "bedtime-highlight",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-plugin-sqlite-browser"
+name = "bedtime-plugin-sqlite-browser"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-editing",
- "bed-keybindings",
- "bed-ui",
+ "bedtime-api",
+ "bedtime-keybindings",
+ "bedtime-sqlite",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -2582,18 +2601,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-terminal"
+name = "bedtime-plugin-terminal"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-core",
- "bed-desktop",
- "bed-documents",
- "bed-keybindings",
- "bed-remote",
- "bed-terminal",
- "bed-ui",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-core",
+ "bedtime-desktop",
+ "bedtime-documents",
+ "bedtime-keybindings",
+ "bedtime-remote",
+ "bedtime-terminal",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
  "serde_json",
@@ -2601,29 +2620,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-plugin-workspaces"
+name = "bedtime-plugin-workspaces"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-core",
- "bed-documents",
- "bed-files",
- "bed-plugin-layouts",
- "bed-plugin-mascots",
- "bed-storage",
- "bed-ui",
- "bed-workbench",
+ "bedtime-api",
+ "bedtime-core",
+ "bedtime-documents",
+ "bedtime-files",
+ "bedtime-plugin-mascots",
+ "bedtime-storage",
+ "bedtime-ui",
+ "bedtime-workbench",
  "bevy",
  "dear-imgui-rs",
+ "rfd",
+ "rusqlite",
  "serde_json",
 ]
 
 [[package]]
-name = "bed-remote"
+name = "bedtime-remote"
 version = "0.1.0"
 dependencies = [
- "bed-editing",
- "bed-git",
+ "bedtime-editing",
+ "bedtime-git",
  "git2",
  "infer",
  "libc",
@@ -2634,16 +2654,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-remote-agent"
+name = "bedtime-remote-agent"
 version = "0.1.0"
 dependencies = [
- "bed-files",
- "bed-lsp",
- "bed-remote",
+ "bedtime-files",
+ "bedtime-lsp",
+ "bedtime-remote",
 ]
 
 [[package]]
-name = "bed-storage"
+name = "bedtime-sqlite"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+]
+
+[[package]]
+name = "bedtime-storage"
 version = "0.1.0"
 dependencies = [
  "bevy",
@@ -2651,12 +2678,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-terminal"
+name = "bedtime-terminal"
 version = "0.1.0"
 dependencies = [
- "bed-editing",
- "bed-remote",
- "bed-ui",
+ "bedtime-editing",
+ "bedtime-remote",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -2672,10 +2699,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-ui"
+name = "bedtime-ui"
 version = "0.1.0"
 dependencies = [
- "bed-highlight",
+ "bedtime-highlight",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -2685,12 +2712,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "bed-workbench"
+name = "bedtime-workbench"
 version = "0.1.0"
 dependencies = [
- "bed-api",
- "bed-keybindings",
- "bed-ui",
+ "bedtime-api",
+ "bedtime-keybindings",
+ "bedtime-ui",
  "bevy",
  "dear-imgui-rs",
  "serde_json",

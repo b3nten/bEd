@@ -7,108 +7,111 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PANEL_PLUGINS = {
-    "bed-plugin-editor", "bed-plugin-debugger", "bed-plugin-file-explorer",
-    "bed-plugin-file-search", "bed-plugin-terminal", "bed-plugin-workspaces",
-    "bed-plugin-settings", "bed-plugin-git", "bed-plugin-color-picker",
+    "bedtime-plugin-editor", "bedtime-plugin-debugger", "bedtime-plugin-file-explorer",
+    "bedtime-plugin-file-search", "bedtime-plugin-terminal", "bedtime-plugin-workspaces",
+    "bedtime-plugin-settings", "bedtime-plugin-git", "bedtime-plugin-color-picker",
 }
 VIEWER_PLUGINS = {
-    "bed-plugin-source-outline", "bed-plugin-image-viewer", "bed-plugin-model-viewer",
-    "bed-plugin-font-viewer", "bed-plugin-audio-player", "bed-plugin-csv-table",
-    "bed-plugin-markdown-preview", "bed-plugin-json-tree", "bed-plugin-sqlite-browser",
-    "bed-plugin-http-client",
+    "bedtime-plugin-source-outline", "bedtime-plugin-image-viewer", "bedtime-plugin-model-viewer",
+    "bedtime-plugin-font-viewer", "bedtime-plugin-audio-player", "bedtime-plugin-csv-table",
+    "bedtime-plugin-markdown-preview", "bedtime-plugin-json-tree", "bedtime-plugin-sqlite-browser",
+    "bedtime-plugin-http-client",
 }
-CONTENT_PLUGINS = PANEL_PLUGINS | VIEWER_PLUGINS | {"bed-plugin-mascots"}
+CONTENT_PLUGINS = PANEL_PLUGINS | VIEWER_PLUGINS | {"bedtime-plugin-mascots"}
 # These are allowed direct edges, not required implementation dependencies.
 # Removing an unused dependency must not require weakening a boundary check.
 ALLOWED_INTERNAL = {
+    "bedside-table": {"bedtime", "bedtime-core", "bedtime-workbench", "bedtime-storage", "bedtime-sqlite"},
+    "bedtime-sqlite": set(),
     "bed": {
-        "bed-core", "bed-desktop", "bed-plugin-automation", "bed-plugin-idle",
-        "bed-plugin-layouts", "bed-workbench",
-        "bed-launch", "bed-api", "bed-editing", "bed-files", "bed-highlight",
-        "bed-lsp", "bed-documents", "bed-ui", "bed-editor-widgets",
-        "bed-terminal", "bed-debugger", "bed-plugin-effects",
-        "bed-remote", "bed-keybindings", "bed-storage",
+        "bedtime-core", "bedtime-desktop", "bedtime-plugin-automation", "bedtime-plugin-idle",
+        "bedtime-plugin-layouts", "bedtime-workbench",
+        "bedtime", "bedtime-api", "bedtime-editing", "bedtime-files", "bedtime-highlight",
+        "bedtime-lsp", "bedtime-documents", "bedtime-ui", "bedtime-editor-widgets",
+        "bedtime-terminal", "bedtime-debugger", "bedtime-plugin-effects",
+        "bedtime-remote", "bedtime-keybindings", "bedtime-storage",
     } | CONTENT_PLUGINS,
-    "bed-api": {"bed-editing", "bed-documents", "bed-lsp", "bed-ui", "bed-keybindings", "bed-files", "bed-storage"},
-    "bed-storage": set(),
-    "bed-core": {
-        "bed-desktop", "bed-workbench", "bed-api", "bed-documents",
-        "bed-editing", "bed-ui", "bed-files", "bed-storage", "bed-lsp", "bed-keybindings", "bed-highlight",
+    "bedtime-api": {"bedtime-editing", "bedtime-documents", "bedtime-lsp", "bedtime-ui", "bedtime-keybindings", "bedtime-files", "bedtime-storage"},
+    "bedtime-storage": set(),
+    "bedtime-core": {
+        "bedtime-plugin-layouts", "bedtime-desktop", "bedtime-workbench", "bedtime-api", "bedtime-documents",
+        "bedtime-editing", "bedtime-ui", "bedtime-files", "bedtime-storage", "bedtime-lsp", "bedtime-keybindings", "bedtime-highlight", "bedtime-remote",
     },
-    "bed-launch": {"bed-api", "bed-core", "bed-desktop", "bed-ui"},
-    "bed-desktop": {"bed-ui"},
-    "bed-workbench": {"bed-api", "bed-ui", "bed-keybindings"},
-    "bed-plugin-layouts": {"bed-workbench", "bed-api"},
-    "bed-example-layouts": {"bed-launch", "bed-plugin-layouts", "bed-desktop", "bed-workbench", "bed-api"},
-    "bed-example-terminal": {"bed-launch", "bed-workbench", "bed-plugin-terminal"},
-    "bed-example-editor": {"bed-launch", "bed-plugin-editor", "bed-editing"},
-    "bed-example-model": {"bed-launch"},
-    "bed-example-game": set(),
-    "bed-example-game-runtime": {"bed-example-game"},
-    "bed-example-game-editor": {"bed-example-game", "bed-launch"},
-    "bed-plugin-automation": {
-        "bed-desktop", "bed-workbench", "bed-api", "bed-documents", "bed-editing",
+    "bedtime": {"bedtime-api", "bedtime-core", "bedtime-desktop", "bedtime-ui"},
+    "bedtime-desktop": {"bedtime-ui"},
+    "bedtime-workbench": {"bedtime-api", "bedtime-ui", "bedtime-keybindings"},
+    "bedtime-plugin-layouts": {"bedtime-workbench", "bedtime-api"},
+    "bedtime-example-layouts": {"bedtime", "bedtime-plugin-layouts", "bedtime-desktop", "bedtime-workbench", "bedtime-api"},
+    "bedtime-example-terminal": {"bedtime", "bedtime-workbench", "bedtime-plugin-terminal"},
+    "bedtime-example-editor": {"bedtime", "bedtime-plugin-editor", "bedtime-editing"},
+    "bedtime-example-model": {"bedtime"},
+    "bedtime-example-game": set(),
+    "bedtime-example-game-runtime": {"bedtime-example-game"},
+    "bedtime-example-game-editor": {"bedtime-example-game", "bedtime"},
+    "bedtime-plugin-automation": {
+        "bedtime-desktop", "bedtime-workbench", "bedtime-api", "bedtime-documents", "bedtime-editing",
     },
-    "bed-plugin-idle": {"bed-desktop", "bed-plugin-mascots", "bed-api", "bed-ui"},
-    "bed-plugin-editor": {
-        "bed-workbench", "bed-editing", "bed-documents", "bed-ui", "bed-editor-widgets",
-        "bed-highlight", "bed-lsp", "bed-api", "bed-keybindings",
+    "bedtime-plugin-idle": {"bedtime-desktop", "bedtime-plugin-mascots", "bedtime-api", "bedtime-ui"},
+    "bedtime-plugin-editor": {
+        "bedtime-workbench", "bedtime-editing", "bedtime-documents", "bedtime-ui", "bedtime-editor-widgets",
+        "bedtime-highlight", "bedtime-lsp", "bedtime-api", "bedtime-keybindings",
     },
-    "bed-plugin-debugger": {
-        "bed-workbench", "bed-editing", "bed-documents", "bed-editor-widgets",
-        "bed-debugger", "bed-ui", "bed-api", "bed-terminal", "bed-keybindings",
+    "bedtime-plugin-debugger": {
+        "bedtime-workbench", "bedtime-editing", "bedtime-documents", "bedtime-editor-widgets",
+        "bedtime-debugger", "bedtime-ui", "bedtime-api", "bedtime-terminal", "bedtime-keybindings",
     },
-    "bed-plugin-git": {
-        "bed-git", "bed-editing", "bed-documents", "bed-editor-widgets", "bed-remote",
-        "bed-ui", "bed-api", "bed-files",
+    "bedtime-plugin-git": {
+        "bedtime-git", "bedtime-editing", "bedtime-documents", "bedtime-editor-widgets", "bedtime-remote",
+        "bedtime-ui", "bedtime-api", "bedtime-files",
     },
-    "bed-plugin-file-explorer": {
-        "bed-editing", "bed-files", "bed-remote", "bed-documents", "bed-ui",
-        "bed-api", "bed-keybindings",
+    "bedtime-plugin-file-explorer": {
+        "bedtime-editing", "bedtime-files", "bedtime-remote", "bedtime-documents", "bedtime-ui",
+        "bedtime-api", "bedtime-keybindings",
     },
-    "bed-plugin-file-search": {
-        "bed-editing", "bed-files", "bed-remote", "bed-documents", "bed-ui",
-        "bed-api", "bed-keybindings",
+    "bedtime-plugin-file-search": {
+        "bedtime-editing", "bedtime-files", "bedtime-remote", "bedtime-documents", "bedtime-ui",
+        "bedtime-api", "bedtime-keybindings",
     },
-    "bed-plugin-terminal": {
-        "bed-documents", "bed-api", "bed-terminal", "bed-ui", "bed-workbench",
-        "bed-desktop", "bed-keybindings",
+    "bedtime-plugin-terminal": {
+        "bedtime-documents", "bedtime-api", "bedtime-terminal", "bedtime-ui", "bedtime-workbench",
+        "bedtime-desktop", "bedtime-keybindings",
     },
-    "bed-plugin-workspaces": {"bed-plugin-layouts", "bed-documents", "bed-ui", "bed-api", "bed-plugin-mascots", "bed-core", "bed-files", "bed-storage", "bed-workbench"},
-    "bed-plugin-mascots": {"bed-api", "bed-documents", "bed-ui", "bed-desktop"},
-    "bed-plugin-color-picker": {"bed-api", "bed-editing", "bed-ui"},
-    "bed-plugin-settings": {"bed-ui", "bed-api", "bed-keybindings"},
-    "bed-debugger": set(),
-    "bed-editing": set(),
-    "bed-files": {"bed-editing", "bed-remote"},
-    "bed-highlight": {"bed-editing"},
-    "bed-lsp": {"bed-editing", "bed-remote"},
-    "bed-documents": {"bed-editing", "bed-files", "bed-highlight", "bed-lsp", "bed-remote"},
-    "bed-ui": {"bed-highlight"},
-    "bed-editor-widgets": {"bed-editing", "bed-documents", "bed-highlight", "bed-ui", "bed-keybindings"},
-    "bed-terminal": {"bed-editing", "bed-remote", "bed-ui"},
-    "bed-plugin-effects": {"bed-desktop", "bed-api"},
-    "bed-remote": {"bed-git", "bed-editing"},
-    "bed-remote-agent": {"bed-remote", "bed-files"},
-    "bed-git": set(),
-    "bed-keybindings": set(),
-    "bed-plugin-source-outline": {"bed-editing", "bed-highlight", "bed-api", "bed-ui"},
-    "bed-plugin-image-viewer": {"bed-editing", "bed-api", "bed-ui", "bed-keybindings"},
-    "bed-plugin-model-viewer": {"bed-desktop", "bed-editing", "bed-api", "bed-ui", "bed-keybindings"},
-    "bed-plugin-font-viewer": {"bed-editing", "bed-api", "bed-ui"},
-    "bed-plugin-audio-player": {"bed-editing", "bed-api", "bed-ui", "bed-keybindings"},
-    "bed-plugin-csv-table": {"bed-editing", "bed-api", "bed-documents", "bed-ui", "bed-keybindings"},
-    "bed-plugin-markdown-preview": {
-        "bed-editing", "bed-api", "bed-plugin-image-viewer", "bed-remote", "bed-ui", "bed-documents", "bed-files",
+    "bedtime-plugin-workspaces": { "bedtime-documents", "bedtime-ui", "bedtime-api", "bedtime-plugin-mascots", "bedtime-core", "bedtime-files", "bedtime-storage", "bedtime-workbench"},
+    "bedtime-plugin-mascots": {"bedtime-api", "bedtime-documents", "bedtime-ui", "bedtime-desktop"},
+    "bedtime-plugin-color-picker": {"bedtime-api", "bedtime-editing", "bedtime-ui"},
+    "bedtime-plugin-settings": {"bedtime-ui", "bedtime-api", "bedtime-keybindings"},
+    "bedtime-debugger": set(),
+    "bedtime-editing": set(),
+    "bedtime-files": {"bedtime-editing", "bedtime-remote"},
+    "bedtime-highlight": {"bedtime-editing"},
+    "bedtime-lsp": {"bedtime-editing", "bedtime-remote"},
+    "bedtime-documents": {"bedtime-editing", "bedtime-files", "bedtime-highlight", "bedtime-lsp", "bedtime-remote"},
+    "bedtime-ui": {"bedtime-highlight"},
+    "bedtime-editor-widgets": {"bedtime-editing", "bedtime-documents", "bedtime-highlight", "bedtime-ui", "bedtime-keybindings"},
+    "bedtime-terminal": {"bedtime-editing", "bedtime-remote", "bedtime-ui"},
+    "bedtime-plugin-effects": {"bedtime-desktop", "bedtime-api"},
+    "bedtime-remote": {"bedtime-git", "bedtime-editing"},
+    "bedtime-remote-agent": {"bedtime-remote", "bedtime-files"},
+    "bedtime-git": set(),
+    "bedtime-keybindings": set(),
+    "bedtime-plugin-source-outline": {"bedtime-editing", "bedtime-highlight", "bedtime-api", "bedtime-ui"},
+    "bedtime-plugin-image-viewer": {"bedtime-editing", "bedtime-api", "bedtime-ui", "bedtime-keybindings"},
+    "bedtime-plugin-model-viewer": {"bedtime-desktop", "bedtime-editing", "bedtime-api", "bedtime-ui", "bedtime-keybindings"},
+    "bedtime-plugin-font-viewer": {"bedtime-editing", "bedtime-api", "bedtime-ui"},
+    "bedtime-plugin-audio-player": {"bedtime-editing", "bedtime-api", "bedtime-ui", "bedtime-keybindings"},
+    "bedtime-plugin-csv-table": {"bedtime-editing", "bedtime-api", "bedtime-documents", "bedtime-ui", "bedtime-keybindings"},
+    "bedtime-plugin-markdown-preview": {
+        "bedtime-editing", "bedtime-api", "bedtime-plugin-image-viewer", "bedtime-remote", "bedtime-ui", "bedtime-documents", "bedtime-files",
     },
-    "bed-plugin-json-tree": {"bed-editing", "bed-api", "bed-ui"},
-    "bed-plugin-sqlite-browser": {"bed-editing", "bed-api", "bed-ui", "bed-keybindings"},
-    "bed-plugin-http-client": {"bed-editing", "bed-api", "bed-ui"},
+    "bedtime-plugin-json-tree": {"bedtime-editing", "bedtime-api", "bedtime-ui"},
+    "bedtime-plugin-sqlite-browser": {"bedtime-sqlite","bedtime-editing", "bedtime-api", "bedtime-ui", "bedtime-keybindings"},
+    "bedtime-plugin-http-client": {"bedtime-editing", "bedtime-api", "bedtime-ui"},
 }
 HEADLESS = {
-    "bed-editing", "bed-files", "bed-highlight", "bed-lsp", "bed-documents",
-    "bed-remote", "bed-remote-agent", "bed-debugger", "bed-git",
-    "bed-terminal", "bed-storage",
+    "bedtime-sqlite",
+    "bedtime-editing", "bedtime-files", "bedtime-highlight", "bedtime-lsp", "bedtime-documents",
+    "bedtime-remote", "bedtime-remote-agent", "bedtime-debugger", "bedtime-git",
+    "bedtime-terminal", "bedtime-storage",
 }
 GUI = {
     "dear-imgui-rs", "dear-imgui-sys", "dear-imgui-winit", "dear-imgui-wgpu",
@@ -118,15 +121,15 @@ NATIVE_BACKENDS = {
     "winit", "arboard", "rfd", "muda", "objc2-app-kit", "dear-imgui-winit", "dear-imgui-wgpu",
 }
 PORTABLE_UI = {
-    "bed-ui", "bed-editor-widgets", "bed-api",
-} | CONTENT_PLUGINS - {"bed-plugin-model-viewer", "bed-plugin-workspaces", "bed-plugin-mascots"}
-IDE_SERVICES = {"bed-highlight", "bed-lsp", "bed-remote", "bed-git", "git2"}
-FILE_BACKENDS = {"bed-remote", "bed-git", "git2"}
+    "bedtime-ui", "bedtime-editor-widgets", "bedtime-api",
+} | CONTENT_PLUGINS - {"bedtime-plugin-model-viewer", "bedtime-plugin-workspaces", "bedtime-plugin-mascots"}
+IDE_SERVICES = {"bedtime-highlight", "bedtime-lsp", "bedtime-remote", "bedtime-git", "git2"}
+FILE_BACKENDS = {"bedtime-remote", "bedtime-git", "git2"}
 EXAMPLE_PLUGINS = {
-    "bed-example-layouts": {"bed-plugin-layouts"},
-    "bed-example-terminal": {"bed-plugin-terminal"},
-    "bed-example-editor": {"bed-plugin-editor"},
-    "bed-example-model": set(),
+    "bedtime-example-layouts": {"bedtime-plugin-layouts"},
+    "bedtime-example-terminal": {"bedtime-plugin-terminal"},
+    "bedtime-example-editor": {"bedtime-plugin-editor"},
+    "bedtime-example-model": set(),
 }
 
 
@@ -163,93 +166,99 @@ def check(offline=False):
         direct = {dependency["name"] for dependency in package["dependencies"] if dependency["kind"] != "dev"}
         unexpected = (direct & members.keys()) - ALLOWED_INTERNAL[name]
         assert not unexpected, f"{name}: forbidden direct dependencies: {sorted(unexpected)}"
-        if name in EXAMPLE_PLUGINS or name == "bed-example-game-editor":
-            assert "bed-launch" in direct, f"{name} bypasses the owned launcher"
+        if name in EXAMPLE_PLUGINS or name == "bedtime-example-game-editor":
+            assert "bedtime" in direct, f"{name} bypasses the owned launcher"
         names = dependency_tree(name, offline)
         forbidden = set()
-        if name in {"bed-workbench", "bed-api", "bed-plugin-layouts", "bed-desktop"}:
+        if name == "bedside-table":
+            forbidden = {"bed", "bedtime-terminal", "bedtime-editor-widgets",
+                         "bedtime-plugin-layouts", "bevy_pbr", "bevy_gltf", "rodio"} | CONTENT_PLUGINS | IDE_SERVICES
+            # Core file operations currently share the local/remote backend
+            # implementation. Its presence does not install SSH or IDE panels.
+            forbidden -= FILE_BACKENDS
+        elif name in {"bedtime-workbench", "bedtime-api", "bedtime-plugin-layouts", "bedtime-desktop"}:
             forbidden = {
-                "bed", "bed-core", "bed-launch", "bed-files", "bed-remote",
-                "bed-editing", "bed-documents", "bed-lsp", "bed-git", "bed-terminal",
+                "bed", "bedtime-core", "bedtime", "bedtime-files", "bedtime-remote",
+                "bedtime-editing", "bedtime-documents", "bedtime-lsp", "bedtime-git", "bedtime-terminal",
                 "bevy_pbr", "bevy_gltf", "rodio",
             } | CONTENT_PLUGINS
-            if name in {"bed-workbench", "bed-api", "bed-plugin-layouts"}:
+            if name in {"bedtime-workbench", "bedtime-api", "bedtime-plugin-layouts"}:
                 # Provider identities, lightweight file algorithms and state contracts
                 # are foundations; authenticated transports remain feature gated.
-                forbidden -= {"bed-files", "bed-editing"}
-            if name != "bed-desktop":
-                forbidden |= NATIVE_BACKENDS | {"bed-desktop", "bed-plugin-effects", "wgpu"}
-        elif name == "bed-core" or name in EXAMPLE_PLUGINS:
+                forbidden -= {"bedtime-files", "bedtime-editing"}
+            if name != "bedtime-desktop":
+                forbidden |= NATIVE_BACKENDS | {"bedtime-desktop", "bedtime-plugin-effects", "wgpu"}
+        elif name == "bedtime-core" or name in EXAMPLE_PLUGINS:
             forbidden = {
-                "bed", "bed-launch", "bed-plugin-effects", "bed-plugin-idle",
-                "bed-plugin-automation", "bevy_pbr", "bevy_gltf", "rodio", "bed-debugger",
-            } | IDE_SERVICES | CONTENT_PLUGINS | {"bed-plugin-layouts", "bed-terminal"}
+                "bed", "bedtime", "bedtime-plugin-effects", "bedtime-plugin-idle",
+                "bedtime-plugin-automation", "bevy_pbr", "bevy_gltf", "rodio", "bedtime-debugger",
+            } | IDE_SERVICES | CONTENT_PLUGINS | {"bedtime-plugin-layouts", "bedtime-terminal"}
             forbidden -= FILE_BACKENDS
             allowed = EXAMPLE_PLUGINS.get(name, set())
             forbidden -= allowed
             if name in EXAMPLE_PLUGINS:
-                forbidden.discard("bed-launch")
-            if "bed-plugin-terminal" in allowed:
-                forbidden -= {"bed-terminal"}
+                forbidden.discard("bedtime")
+            if "bedtime-plugin-terminal" in allowed:
+                forbidden -= {"bedtime-terminal"}
         elif name in HEADLESS:
             forbidden = GUI
         elif name in PORTABLE_UI:
-            forbidden = NATIVE_BACKENDS | {"bed", "bed-launch", "bed-core", "bed-terminal", "bed-plugin-effects"}
-            if name in {"bed-plugin-terminal", "bed-plugin-debugger"}:
-                forbidden.remove("bed-terminal")
-            if name == "bed-ui":
+            forbidden = NATIVE_BACKENDS | {"bed", "bedtime", "bedtime-core", "bedtime-terminal", "bedtime-plugin-effects"}
+            if name in {"bedtime-plugin-terminal", "bedtime-plugin-debugger"}:
+                forbidden.remove("bedtime-terminal")
+            if name == "bedtime-ui":
                 forbidden |= {
-                    "bed-documents", "bed-editor-widgets", "bed-highlight", "bed-lsp", "bed-api", "wgpu",
+                    "bedtime-documents", "bedtime-editor-widgets", "bedtime-highlight", "bedtime-lsp", "bedtime-api", "wgpu",
                 } | CONTENT_PLUGINS
-            elif name == "bed-editor-widgets":
-                assert "bed-lsp" not in direct, "Editor widgets must not depend directly on LSP"
-                forbidden |= {"bed-api"} | CONTENT_PLUGINS
-            elif name == "bed-plugin-editor":
+            elif name == "bedtime-editor-widgets":
+                assert "bedtime-lsp" not in direct, "Editor widgets must not depend directly on LSP"
+                forbidden |= {"bedtime-api"} | CONTENT_PLUGINS
+            elif name == "bedtime-plugin-editor":
                 forbidden |= IDE_SERVICES
-        elif name in {"bed-plugin-model-viewer", "bed-plugin-workspaces", "bed-plugin-mascots"}:
+        elif name in {"bedtime-plugin-model-viewer", "bedtime-plugin-workspaces", "bedtime-plugin-mascots"}:
             # The renderer uses desktop-owned memory assets and the shared GPU.
-            forbidden = {"bed", "bed-launch", "bed-plugin-effects"} | (CONTENT_PLUGINS - {name})
-            if name == "bed-plugin-model-viewer": forbidden.add("bed-core")
-            else: forbidden -= {"bed-plugin-mascots"}
-        elif name == "bed-launch":
+            forbidden = {"bed", "bedtime", "bedtime-plugin-effects"} | (CONTENT_PLUGINS - {name})
+            if name == "bedtime-plugin-model-viewer": forbidden.add("bedtime-core")
+            else: forbidden -= {"bedtime-plugin-mascots"}
+        elif name == "bedtime":
             # The reusable launcher contains no bEd policy or optional feature plugin.
-            forbidden = {"bed", "bed-terminal", "bed-debugger", "bevy_pbr", "bevy_gltf", "rodio"} | CONTENT_PLUGINS
+            forbidden = {"bed", "bedtime-terminal", "bedtime-debugger", "bevy_pbr", "bevy_gltf", "rodio"} | CONTENT_PLUGINS
             assert not direct & NATIVE_BACKENDS, (
                 f"Owned launcher bypasses desktop APIs: {sorted(direct & NATIVE_BACKENDS)}"
             )
-        if name in {"bed-example-game", "bed-example-game-runtime"}:
-            forbidden |= set(ALLOWED_INTERNAL) - {name, "bed-example-game"}
+        if name in {"bedtime-example-game", "bedtime-example-game-runtime"}:
+            forbidden |= set(ALLOWED_INTERNAL) - {name, "bedtime-example-game"}
             forbidden |= {"dear-imgui-rs", "dear-imgui-sys"}
         assert not names & forbidden, f"{name} crosses its dependency boundary: {sorted(names & forbidden)}"
     # The merged API must stay lean with documents disabled, including when only
     # GPU contracts are requested. Document contracts add no IDE services by default.
     for features in ("gpu", "documents", "documents,gpu", "documents,language-services"):
-        names = dependency_tree("bed-api", offline, features)
-        forbidden = NATIVE_BACKENDS | {"bed", "bed-launch", "bed-core", "bed-desktop", "bed-terminal"} | CONTENT_PLUGINS
+        names = dependency_tree("bedtime-api", offline, features)
+        forbidden = NATIVE_BACKENDS | {"bed", "bedtime", "bedtime-core", "bedtime-desktop", "bedtime-terminal"} | CONTENT_PLUGINS
         if "documents" not in features:
-            forbidden |= {"bed-documents"} | IDE_SERVICES
+            forbidden |= {"bedtime-documents"} | IDE_SERVICES
         elif "language-services" not in features:
             forbidden |= IDE_SERVICES
         if "gpu" not in features:
             forbidden.add("wgpu")
-        assert not names & forbidden, f"bed-api/{features} crosses its boundary: {sorted(names & forbidden)}"
+        assert not names & forbidden, f"bedtime-api/{features} crosses its boundary: {sorted(names & forbidden)}"
     for features in ("", "file-services", "remote"):
-        names=dependency_tree("bed-documents", offline, features or None)
-        forbidden=GUI | {"bed-highlight", "bed-lsp"}
+        names=dependency_tree("bedtime-documents", offline, features or None)
+        forbidden=GUI | {"bedtime-highlight", "bedtime-lsp"}
         if not features: forbidden |= FILE_BACKENDS
-        assert not names & forbidden, f"bed-documents/{features or 'base'} crosses its boundary: {sorted(names & forbidden)}"
-    remote_core=dependency_tree("bed-core", offline, "remote")
-    assert not remote_core & {"bed-highlight", "bed-lsp"}, "Remote core requires language services"
-    assert not dependency_tree("bed-launch", offline, "remote") & (CONTENT_PLUGINS | {"bed", "bed-highlight", "bed-lsp"}), "Remote launcher requires optional panels or language services"
+        assert not names & forbidden, f"bedtime-documents/{features or 'base'} crosses its boundary: {sorted(names & forbidden)}"
+    remote_core=dependency_tree("bedtime-core", offline, "remote")
+    assert not remote_core & {"bedtime-highlight", "bedtime-lsp"}, "Remote core requires language services"
+    assert not dependency_tree("bedtime", offline, "remote") & (CONTENT_PLUGINS | {"bed", "bedtime-highlight", "bedtime-lsp"}), "Remote launcher requires optional panels or language services"
     for features in (None, "documents"):
-        names = dependency_tree("bed-plugin-automation", offline, features)
-        forbidden = {"bed", "bed-launch", "bed-core", "bed-plugin-workspaces"} | CONTENT_PLUGINS
+        names = dependency_tree("bedtime-plugin-automation", offline, features)
+        forbidden = {"bed", "bedtime", "bedtime-core", "bedtime-plugin-workspaces"} | CONTENT_PLUGINS
         if features is None:
-            # bed-api file identities include lightweight bed-editing algorithms.
-            forbidden |= {"bed-documents"} | IDE_SERVICES
+            # bedtime-api file identities include lightweight bedtime-editing algorithms.
+            forbidden |= {"bedtime-documents"} | IDE_SERVICES
         assert not names & forbidden, f"Automation/{features or 'base'} requires application policy: {sorted(names & forbidden)}"
-    assert not dependency_tree("bed-plugin-settings", offline) & {"bed", "bed-launch", "bed-core", "bed-documents", "bed-lsp", "bed-remote"}, "Settings frontend requires application or editing services"
-    assert not dependency_tree("bed-plugin-color-picker", offline) & {"bed-documents", "bed-lsp", "bed-core"}, "Settings metadata requires documents"
+    assert not dependency_tree("bedtime-plugin-settings", offline) & {"bed", "bedtime", "bedtime-core", "bedtime-documents", "bedtime-lsp", "bedtime-remote"}, "Settings frontend requires application or editing services"
+    assert not dependency_tree("bedtime-plugin-color-picker", offline) & {"bedtime-documents", "bedtime-lsp", "bedtime-core"}, "Settings metadata requires documents"
     print(f"All {len(members)} crates respect their production dependency boundaries.")
 
 

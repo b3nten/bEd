@@ -1,0 +1,21 @@
+[package]
+name = "bedtime-plugin-idle"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = []
+mascots = ["dep:bedtime-plugin-mascots", "bedtime-api/gpu", "bedtime-api/documents"]
+
+[dependencies]
+bedtime-ui = { workspace = true, features = ["imgui", "gpu"] }
+bevy = { workspace = true, features = ["std"] }
+bedtime-desktop = { workspace = true }
+winit = { workspace = true }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+
+bedtime-plugin-mascots = { workspace = true, optional = true }
+bedtime-api = { workspace = true }

@@ -1,0 +1,16 @@
+[package]
+name = "bedtime-lsp"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bedtime-editing = { workspace = true }
+bedtime-remote = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+globset = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

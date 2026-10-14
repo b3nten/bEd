@@ -1,0 +1,14 @@
+[package]
+name = "bedtime-workbench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bedtime-keybindings = { workspace = true }
+bedtime-api = { workspace = true }
+bedtime-ui = { workspace = true, features = ["imgui", "documentation"] }
+bevy = { workspace = true, features = ["std"] }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }

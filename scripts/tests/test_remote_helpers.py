@@ -32,7 +32,7 @@ def elf(machine, segment=1, dynamic_tag=0):
 def bundle(source, target):
     directory = source / target
     directory.mkdir()
-    binary = directory / "bed-remote-agent"
+    binary = directory / "bedtime-remote-agent"
     binary.write_bytes(elf(HELPERS.TARGETS[target]))
     manifest = {"format_version": 1, "target": target, "version": HELPERS.package_version(),
                 "protocol_version": HELPERS.protocol_version(), "sha256": HELPERS.digest(binary)}
@@ -94,7 +94,7 @@ class StaticHelperTests(unittest.TestCase):
         HELPERS.validate(self.root, [target])
         with self.assertRaisesRegex(ValueError, "Missing prebuilt remote helper bundle"):
             HELPERS.validate(self.root, HELPERS.TARGETS)
-        binary = directory / "bed-remote-agent"
+        binary = directory / "bedtime-remote-agent"
         original = binary.read_bytes()
         binary.write_bytes(original + b"changed")
         with self.assertRaisesRegex(ValueError, "sha256"):
@@ -134,7 +134,7 @@ class StaticHelperTests(unittest.TestCase):
         self.assertNotIn("[Errno", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
         for target in HELPERS.TARGETS:
-            self.assertIn(str(self.root / target / "bed-remote-agent"), result.stderr)
+            self.assertIn(str(self.root / target / "bedtime-remote-agent"), result.stderr)
             self.assertIn(f"bed-remote-helper-{target}", result.stderr)
 
     def test_partial_bundle_copy_fails_before_creating_desktop_resources(self):
@@ -142,7 +142,7 @@ class StaticHelperTests(unittest.TestCase):
         resources = self.root / "desktop-resources"
         with self.assertRaises(ValueError) as raised:
             HELPERS.copy(self.root, resources)
-        self.assertIn(str(self.root / "x86_64-unknown-linux-musl" / "bed-remote-agent"),
+        self.assertIn(str(self.root / "x86_64-unknown-linux-musl" / "bedtime-remote-agent"),
                       str(raised.exception))
         self.assertFalse(resources.exists())
 
@@ -157,12 +157,12 @@ class StaticHelperTests(unittest.TestCase):
     def test_resource_copy_keeps_both_targets_and_restores_executable_modes(self):
         for target in HELPERS.TARGETS:
             directory = bundle(self.root, target)
-            (directory / "bed-remote-agent").chmod(0o644)
+            (directory / "bedtime-remote-agent").chmod(0o644)
         resources = self.root / "desktop-resources"
         HELPERS.copy(self.root, resources)
         HELPERS.validate(resources / "remote-helpers", HELPERS.TARGETS)
         for target in HELPERS.TARGETS:
-            self.assertTrue((resources / "remote-helpers" / target / "bed-remote-agent").stat().st_mode & 0o111)
+            self.assertTrue((resources / "remote-helpers" / target / "bedtime-remote-agent").stat().st_mode & 0o111)
 
 
 if __name__ == "__main__":

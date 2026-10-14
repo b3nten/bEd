@@ -1,0 +1,35 @@
+[package]
+name = "bedtime-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+description = "A Bevy desktop workbench with shared documents and editing"
+
+[features]
+default = []
+layouts = ["dep:bedtime-plugin-layouts"]
+remote = ["bedtime-documents/remote", "dep:bedtime-remote"]
+language-services = ["bedtime-api/language-services", "bedtime-documents/ide-services", "dep:bedtime-lsp", "dep:bedtime-highlight"]
+
+[dependencies]
+bedtime-plugin-layouts = { workspace = true, optional = true }
+bedtime-desktop = { workspace = true }
+bedtime-workbench = { workspace = true }
+bedtime-keybindings = { workspace = true }
+bedtime-api = { workspace = true, features = ["documents"] }
+bedtime-documents = { workspace = true, features = ["file-services"] }
+bedtime-files = { workspace = true, features = ["file-services"] }
+bedtime-remote = { workspace = true, optional = true }
+bedtime-storage = { workspace = true }
+bedtime-editing = { workspace = true }
+bedtime-lsp = { workspace = true, optional = true }
+bedtime-highlight = { workspace = true, optional = true }
+bedtime-ui = { workspace = true, features = ["imgui", "gpu"] }
+bevy = { workspace = true, features = ["std"] }
+dear-imgui-rs = { workspace = true }
+serde_json = { workspace = true }
+rfd = { workspace = true }
+
+[dev-dependencies]
+

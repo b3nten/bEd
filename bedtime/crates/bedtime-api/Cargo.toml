@@ -1,0 +1,26 @@
+[package]
+name = "bedtime-api"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = []
+documents = ["dep:bedtime-editing", "dep:bedtime-documents"]
+language-services = ["documents", "dep:bedtime-lsp", "bedtime-documents/ide-services"]
+gpu = ["bedtime-ui/gpu", "dep:wgpu"]
+
+[dependencies]
+bedtime-ui = { workspace = true, features = ["documentation"] }
+bedtime-keybindings = { workspace = true }
+bedtime-files = { workspace = true }
+bedtime-storage = { workspace = true }
+bedtime-editing = { workspace = true, optional = true }
+bedtime-documents = { workspace = true, optional = true }
+bedtime-lsp = { workspace = true, optional = true }
+bevy = { workspace = true, features = ["std"] }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+serde_json = { workspace = true }
+wgpu = { workspace = true, optional = true }

@@ -1,0 +1,24 @@
+[package]
+name = "bedtime-plugin-effects"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+default = []
+gpu = ["dep:wgpu"]
+desktop = ["gpu", "dep:bevy", "dep:bedtime-api", "dep:bedtime-desktop", "dep:dear-imgui-rs", "dep:dear-imgui-wgpu"]
+
+[dependencies]
+bevy = { workspace = true, features = ["std"], optional = true }
+bedtime-desktop = { workspace = true, optional = true }
+bedtime-api = { workspace = true, optional = true }
+dear-imgui-rs = { workspace = true, optional = true }
+dear-imgui-wgpu = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+bedtime-ui = { workspace = true, features = ["gpu"] }
+bedtime-desktop = { workspace = true, features = ["preview"] }

@@ -1,0 +1,21 @@
+[package]
+name = "bedtime-plugin-http-client"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[dependencies]
+bedtime-editing = { workspace = true }
+bedtime-ui = { workspace = true, features = ["imgui"] }
+bedtime-api = { workspace = true  , features = ["documents"] }
+bevy = { workspace = true, features = ["std"] }
+dear-imgui-rs = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+base64 = { workspace = true }
+
+[dev-dependencies]
+bedtime-workbench = { workspace = true }
