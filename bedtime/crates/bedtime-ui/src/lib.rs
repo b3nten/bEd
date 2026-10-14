@@ -20,6 +20,8 @@ pub mod components;
 pub mod font;
 #[cfg(feature = "gpu")]
 pub mod gpu;
+#[cfg(feature = "imgui")]
+pub mod settings;
 pub mod texture;
 pub use texture::TextureHandle;
 #[cfg(feature = "imgui")]

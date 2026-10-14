@@ -166,7 +166,7 @@ pub fn register_preferences(world: &mut bevy::prelude::World) {
     let mut definitions = vec![
         SettingDefinition::new("effect_preset", "Effect preset", "off")
             .validated_by(validate_preset),
-        SettingDefinition::new("shader_toggle", "Enable custom effects", false),
+        SettingDefinition::new("shader_toggle", "Enable effects", false),
         SettingDefinition::new("pixel_width", "Pixel width", defaults.pixel_width)
             .validated_by(validate_positive),
         SettingDefinition::new(
@@ -207,6 +207,13 @@ pub fn register_preferences(world: &mut bevy::prelude::World) {
     );
     bedtime_api::settings::register(world, SETTINGS_OWNER, definitions)
         .expect("Effects preferences install once");
+    world.init_resource::<bedtime_api::features::FeatureRegistry>();
+    world
+        .resource_mut::<bedtime_api::features::FeatureRegistry>()
+        .register_with(SETTINGS_OWNER, |r| {
+            r.settings_ui("bedtime.effects.settings", "Effects", effects_preferences)
+        })
+        .expect("Effects settings install once");
 }
 
 #[cfg(feature = "desktop")]
@@ -256,5 +263,178 @@ fn validate_burnin(value: &serde_json::Value) -> Result<(), String> {
         Ok(())
     } else {
         Err("Burn-in must be between zero and one".into())
+    }
+}
+
+#[cfg(feature = "desktop")]
+fn effects_preferences(ui: &dear_imgui_rs::Ui, settings: &mut serde_json::Value) -> bool {
+    use bedtime_ui::settings as rows;
+    let mut changed = false;
+    let preset = EffectPreset::from_preferences(settings);
+    changed |= rows::row(ui, "Effect preset", || {
+        let mut changed = false;
+        let label = |preset| match preset {
+            EffectPreset::Off => "Off",
+            EffectPreset::Sharp => "Sharp",
+            EffectPreset::Legacy => "Legacy",
+            EffectPreset::Custom => "Custom",
+        };
+        if let Some(_combo) = ui.begin_combo("##value", label(preset)) {
+            for choice in [
+                EffectPreset::Off,
+                EffectPreset::Sharp,
+                EffectPreset::Legacy,
+                EffectPreset::Custom,
+            ] {
+                if ui
+                    .selectable_config(label(choice))
+                    .selected(preset == choice)
+                    .build()
+                {
+                    settings["effect_preset"] = choice.name().into();
+                    changed = true;
+                }
+            }
+        }
+        changed
+    });
+    let effective = ShaderSettings::from_preferences(settings);
+    let mut enabled = effective.enabled;
+    if rows::checkbox(ui, "Enable effects", &mut enabled) {
+        customize(settings, "shader_toggle", enabled.into());
+        changed = true;
+    }
+    for (key, label, mut value, min, max) in [
+        (
+            "scanline_intensity",
+            "Scanlines",
+            effective.scanline_intensity,
+            0.0,
+            1.0,
+        ),
+        (
+            "vignet_intensity",
+            "Vignette",
+            effective.vignet_intensity,
+            0.0,
+            1.0,
+        ),
+        (
+            "bloom_intensity",
+            "Bloom",
+            effective.bloom_intensity,
+            0.0,
+            1.0,
+        ),
+        (
+            "static_intensity",
+            "Static",
+            effective.static_intensity,
+            0.0,
+            1.0,
+        ),
+        (
+            "colorshift_intensity",
+            "RGB shift",
+            effective.colorshift_intensity,
+            0.0,
+            1.0,
+        ),
+        (
+            "jitter_intensity",
+            "Jitter",
+            effective.jitter_intensity,
+            0.0,
+            10.0,
+        ),
+        (
+            "curvature_intensity",
+            "Curvature",
+            effective.curvature_intensity,
+            0.0,
+            1.0,
+        ),
+        (
+            "pixelation_intensity",
+            "Pixelation",
+            effective.pixelation_intensity,
+            -1.0,
+            1.0,
+        ),
+        (
+            "pixel_width",
+            "Pixel width",
+            effective.pixel_width,
+            1.0,
+            10000.0,
+        ),
+        (
+            "burnin_intensity",
+            "Burn-in",
+            effective.burnin_intensity,
+            0.0,
+            1.0,
+        ),
+        (
+            "pulse_intensity",
+            "Pulse",
+            effective.pulse_intensity,
+            0.0,
+            1.0,
+        ),
+    ] {
+        if rows::slider(ui, label, &mut value, min, max) {
+            customize(settings, key, value.into());
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Editing a preset materializes its effective values before applying the edit.
+#[cfg(feature = "desktop")]
+fn customize(settings: &mut serde_json::Value, key: &str, value: serde_json::Value) {
+    if EffectPreset::from_preferences(settings) != EffectPreset::Custom {
+        let effective = ShaderSettings::from_preferences(settings);
+        for (key, value) in [
+            ("scanline_intensity", effective.scanline_intensity),
+            ("vignet_intensity", effective.vignet_intensity),
+            ("bloom_intensity", effective.bloom_intensity),
+            ("static_intensity", effective.static_intensity),
+            ("colorshift_intensity", effective.colorshift_intensity),
+            ("jitter_intensity", effective.jitter_intensity),
+            ("curvature_intensity", effective.curvature_intensity),
+            ("pixelation_intensity", effective.pixelation_intensity),
+            ("pixel_width", effective.pixel_width),
+            ("burnin_intensity", effective.burnin_intensity),
+            ("pulse_intensity", effective.pulse_intensity),
+        ] {
+            settings[key] = value.into();
+        }
+    }
+    settings["effect_preset"] = "custom".into();
+    settings["shader_toggle"] = true.into();
+    settings[key] = value;
+}
+
+#[cfg(all(test, feature = "desktop"))]
+mod preferences_tests {
+    use super::*;
+    #[test]
+    fn editing_a_preset_preserves_its_effective_values_and_enables_custom() {
+        for preset in ["off", "sharp", "legacy", "custom"] {
+            let mut settings = serde_json::json!({"effect_preset":preset,"jitter_intensity":3.0,"shader_toggle":false});
+            let before = ShaderSettings::from_preferences(&settings);
+            customize(&mut settings, "bloom_intensity", 0.5.into());
+            let after = ShaderSettings::from_preferences(&settings);
+            assert_eq!(
+                EffectPreset::from_preferences(&settings),
+                EffectPreset::Custom
+            );
+            let mut expected = before;
+            expected.enabled = true;
+            expected.bloom_intensity = 0.5;
+            assert_eq!(after, expected);
+        }
     }
 }

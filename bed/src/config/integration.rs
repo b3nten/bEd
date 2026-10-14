@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, io};
 #[derive(Resource)]
 struct AppSettingsRegistered;
 
-const APPLICATION_KEYS: &[&str] = &["mac_blur_enabled"];
+const APPLICATION_SETTINGS: &[(&str, &str)] = &[("mac_blur_enabled", "Window blur")];
 
 pub fn register_app_settings(world: &mut World) -> io::Result<()> {
     if world.contains_resource::<AppSettingsRegistered>() {
@@ -16,15 +16,17 @@ pub fn register_app_settings(world: &mut World) -> io::Result<()> {
     }
     bedtime_core::settings::install_settings(world);
     let defaults = world.non_send::<AppConfig>().application_defaults();
-    let missing = APPLICATION_KEYS
+    let missing = APPLICATION_SETTINGS
         .iter()
-        .filter(|key| {
+        .filter(|(key, _)| {
             world
                 .resource::<SettingsRegistry>()
                 .definition("bed.application", key)
                 .is_none()
         })
-        .map(|key| SettingDefinition::new(key, key, defaults["bed.application"][*key].clone()))
+        .map(|(key, label)| {
+            SettingDefinition::new(key, label, defaults["bed.application"][*key].clone())
+        })
         .collect::<Vec<_>>();
     if !missing.is_empty() {
         bedtime_api::settings::register(world, "bed.application", missing)

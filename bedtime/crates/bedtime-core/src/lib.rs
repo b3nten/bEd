@@ -18,6 +18,7 @@ mod format_saves;
 pub mod models;
 mod saves;
 pub mod settings;
+mod settings_view;
 mod transitions;
 #[cfg(feature = "language-services")]
 pub use format_saves::*;

@@ -89,6 +89,8 @@ pub const SHOW_LSP_COMMAND: &str = "bedtime.editor.show_language_servers";
 pub const REFERENCES_PANEL_TYPE: &str = "bedtime.editor.references-panel";
 pub const LSP_DASHBOARD_PANEL_TYPE: &str = "bedtime.editor.language-servers-panel";
 
+mod settings_view;
+
 fn register_settings(world: &mut bevy::prelude::World) {
     use bedtime_api::settings::SettingDefinition;
     let definitions = vec![

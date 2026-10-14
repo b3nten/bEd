@@ -171,6 +171,66 @@ mod tests {
     }
 
     #[test]
+    fn section_fades_restart_on_selection_and_disabled_motion_is_immediate() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        let mut runtime = crate::UiRuntime::new(&context);
+        let mut fonts = crate::font::UiFonts::default();
+        let mut theme = crate::appearance::UiTheme::default();
+        runtime.prepare(&mut context, &theme, &mut fonts).unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut transition = FadeIn::default();
+        let alpha = std::cell::Cell::new(0.0);
+        let draw = |ui: &Ui, transition: &mut FadeIn, id: &str| {
+            transition.draw(ui, id, || {
+                alpha.set(ui.clone_style().alpha());
+                ui.child_window("section controls")
+                    .size([100.0, 50.0])
+                    .build(ui, || {
+                        assert_eq!(ui.clone_style().alpha(), alpha.get());
+                        ui.text("Settings");
+                    });
+            });
+            assert_eq!(
+                ui.clone_style().alpha(),
+                1.0,
+                "navigation style is restored"
+            );
+        };
+        let prepared = runtime.frame_context();
+        frame(&mut context, 0.01, |ui| {
+            prepared.scope(|| draw(ui, &mut transition, "first"))
+        });
+        assert_eq!(alpha.get(), 0.0);
+        frame(&mut context, 0.04, |ui| {
+            prepared.scope(|| draw(ui, &mut transition, "first"))
+        });
+        assert!(alpha.get() > 0.0 && alpha.get() < 1.0);
+        frame(&mut context, 1.0, |ui| {
+            prepared.scope(|| draw(ui, &mut transition, "first"))
+        });
+        assert_eq!(alpha.get(), 1.0);
+        frame(&mut context, 0.01, |ui| {
+            prepared.scope(|| draw(ui, &mut transition, "second"))
+        });
+        assert_eq!(alpha.get(), 0.0);
+        theme.motion.enabled = false;
+        runtime.prepare(&mut context, &theme, &mut fonts).unwrap();
+        let prepared = runtime.frame_context();
+        frame(&mut context, 0.01, |ui| {
+            prepared.scope(|| draw(ui, &mut transition, "third"))
+        });
+        assert_eq!(alpha.get(), 1.0);
+    }
+
+    #[test]
     fn selection_retargets_from_its_visible_position_and_disabled_motion_snaps() {
         let mut motion = Motion::default();
         assert_eq!(motion.sample(0.0, 0.0, true, &UiMotion::default()), 0.0);
@@ -285,5 +345,34 @@ mod tests {
         );
         frame(&mut context, 0.01, |ui| draw(ui, true, false));
         assert!((end.get() - full).abs() < 1.0);
+    }
+}
+
+/// Fade newly selected content without drawing or interacting with an outgoing page.
+#[derive(Default)]
+pub struct FadeIn {
+    current: Option<String>,
+    began: f64,
+}
+
+impl FadeIn {
+    pub fn draw(&mut self, ui: &Ui, identity: &str, draw: impl FnOnce()) {
+        let now = ui.time();
+        if self.current.as_deref() != Some(identity) {
+            self.current = Some(identity.to_owned());
+            self.began = now;
+        }
+        let context = crate::UiFrameContext::for_ui(ui);
+        let motion = &context.theme().motion;
+        let t = if motion.enabled {
+            ((now - self.began) / motion.transition_seconds).clamp(0.0, 1.0) as f32
+        } else {
+            1.0
+        };
+        let alpha = 1.0 - (1.0 - t).powi(3);
+        let _alpha = ui.push_style_var(dear_imgui_rs::StyleVar::Alpha(
+            ui.clone_style().alpha() * alpha,
+        ));
+        draw();
     }
 }

@@ -269,7 +269,7 @@ pub struct SettingsSection {
     pub draw_page: Option<SettingsPageDraw>,
 }
 
-/// Custom pages share panel lifetime, shortcut recording and the settings request owner.
+/// Provider-owned pages share panel lifetime and submit changes to the settings owner.
 pub type SettingsPageDraw = fn(&mut World, &Ui, SettingsPageContext, &mut Vec<SettingsChange>);
 
 pub struct SettingsPageContext {
@@ -279,6 +279,10 @@ pub struct SettingsPageContext {
     pub snapshot: SettingsSnapshot,
 }
 
-/// An application may arrange custom pages instead of the default owner sections.
+/// An application may restrict the published sections. Display names determine ordering.
 #[derive(Resource, Clone, Debug, Default)]
 pub struct SettingsPanelLayout(pub Vec<String>);
+
+/// Application-owned actions displayed above the section navigation.
+#[derive(Resource, Clone, Copy)]
+pub struct SettingsPanelHeader(pub fn(&mut World, &Ui, Entity));

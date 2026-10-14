@@ -695,10 +695,10 @@ pub fn restore_workspace(world: &mut World, state: Option<&Value>) {
 }
 
 pub(crate) fn register_metadata(registrar: &mut FeatureRegistrar<'_>) {
-    registrar.settings_page(
-        "bedtime.editor.tools",
-        "Code Editor Tools",
-        draw_settings_tools,
+    registrar.settings_ui(
+        "bedtime.editor.settings",
+        "Code Editor",
+        crate::settings_view::draw,
     );
     registrar.command_ref(SHOW_DIAGNOSTICS_COMMAND);
     registrar.command_ref(SHOW_LSP_COMMAND);
@@ -790,21 +790,6 @@ pub(crate) fn draw_text_view(
     runtime.after_draw(ui, view, response.clone(), session, config, requests)?;
     runtime.record_overlay(view);
     Ok(response)
-}
-
-fn draw_settings_tools(
-    world: &mut World,
-    ui: &Ui,
-    context: bedtime_api::settings::SettingsPageContext,
-    _: &mut Vec<bedtime_api::settings::SettingsChange>,
-) {
-    if ui.button("LSP Dashboard") {
-        let mut command = bedtime_workbench::capture_command(world, SHOW_LSP_COMMAND, Value::Null);
-        command.source = Some(context.panel);
-        world
-            .resource_mut::<bedtime_workbench::WorkbenchRequests>()
-            .push(WorkbenchAction::Invoke(command));
-    }
 }
 
 #[cfg(test)]

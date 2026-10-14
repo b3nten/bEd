@@ -89,6 +89,11 @@ impl Plugin for EditorPlugin {
 }
 
 fn register_metadata(registrar: &mut FeatureRegistrar<'_>) {
+    registrar.settings_ui(
+        "bedtime.editor.settings",
+        "Code Editor",
+        crate::settings_view::draw,
+    );
     registrar.panel_options(TEXT_PANEL_TYPE, false, PanelPlacement::Center);
     registrar.panel_options(HEX_PANEL_TYPE, false, PanelPlacement::Center);
     registrar.fallback_viewer(

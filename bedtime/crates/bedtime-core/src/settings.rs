@@ -87,6 +87,7 @@ pub fn install_settings(world: &mut World) {
                 .expect("Core defaults are valid");
         }
     }
+    crate::settings_view::register(world);
 }
 
 fn font_size(value: &Value) -> Result<(), String> {

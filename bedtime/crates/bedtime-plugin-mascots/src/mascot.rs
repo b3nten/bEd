@@ -22,7 +22,6 @@ pub(crate) fn register_duck_metadata(registrar: &mut FeatureRegistrar<'_>) {
 
 pub(crate) struct MascotPanel {
     pub(crate) scene: MascotView,
-    muted: bool,
     audio: Option<(OutputStream, Sink)>,
     audio_failed: bool,
 }
@@ -31,14 +30,13 @@ impl MascotPanel {
     pub(crate) fn new(kind: MascotKind) -> Self {
         Self {
             scene: MascotView::new(kind),
-            muted: false,
             audio: None,
             audio_failed: false,
         }
     }
 
     fn squeak(&mut self) {
-        if self.muted || self.audio_failed {
+        if self.audio_failed {
             return;
         }
         if self.audio.is_none() {
@@ -86,20 +84,6 @@ impl MascotPanel {
     }
 
     pub(crate) fn draw_canvas(&mut self, ui: &Ui, host: &HostContext<'_>) {
-        let muted = match self.scene.kind {
-            MascotKind::Bed => false,
-            MascotKind::Duck => !host.settings_for("bedtime.duck")["squeaks_enabled"]
-                .as_bool()
-                .unwrap_or(true),
-            MascotKind::Bedtime | MascotKind::WelcomeBed => unreachable!("Not a mascot panel"),
-        };
-        if muted
-            && !self.muted
-            && let Some((_, sink)) = &self.audio
-        {
-            sink.clear();
-        }
-        self.muted = muted;
         let origin = ui.cursor_screen_pos();
         let canvas = Canvas::show(ui, host.texture(self.scene.handle()), "##mascot_canvas");
         let mouse = ui.io().mouse_pos();

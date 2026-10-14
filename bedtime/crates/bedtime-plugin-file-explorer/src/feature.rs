@@ -95,11 +95,7 @@ impl Plugin for FileExplorerPlugin {
             app.world_mut(),
             MODULE_ID,
             vec![
-                bedtime_api::settings::SettingDefinition::new(
-                    "rainbow",
-                    "Color directory names",
-                    true,
-                ),
+                bedtime_api::settings::SettingDefinition::new("rainbow", "Rainbow text", true),
                 bedtime_api::settings::SettingDefinition::new(
                     "hide_hidden",
                     "Hide hidden files",
@@ -202,12 +198,12 @@ fn configure_presentation(
 fn files_settings(ui: &Ui, settings: &mut Value) -> bool {
     let mut changed = false;
     for (key, label) in [
-        ("rainbow", "Color directory names"),
-        ("hide_hidden", "Hide hidden files by default"),
-        ("hide_gitignored", "Hide gitignored files by default"),
+        ("rainbow", "Rainbow text"),
+        ("hide_hidden", "Hide hidden files"),
+        ("hide_gitignored", "Hide gitignored files"),
     ] {
         let mut value = settings[key].as_bool().unwrap_or(true);
-        if ui.checkbox(label, &mut value) {
+        if bedtime_ui::settings::checkbox(ui, label, &mut value) {
             settings[key] = Value::Bool(value);
             changed = true;
         }
@@ -1105,10 +1101,15 @@ mod tests {
                     let origin = ui.cursor_screen_pos();
                     let height = ui.frame_height();
                     let spacing = ui.clone_style().item_spacing()[1];
+                    let cell = ui.clone_style().cell_padding();
+                    let control_x = origin[0] + ui.content_region_avail()[0] * 0.5 + cell[0] + 5.0;
                     points = std::array::from_fn(|row| {
                         [
-                            origin[0] + 5.0,
-                            origin[1] + row as f32 * (height + spacing) + height * 0.5,
+                            control_x,
+                            origin[1]
+                                + cell[1]
+                                + row as f32 * (height + cell[1] * 2.0 + spacing)
+                                + height * 0.5,
                         ]
                     });
                     changed = draw(ui, values);

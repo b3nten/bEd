@@ -1,6 +1,5 @@
 //! Bevy owns color data and commits requests after the frontend returns.
 use super::{ColorDrafts, ColorState, MODULE_ID, OPEN_COMMAND, PANEL_ID, color, read_color, ui};
-use bedtime_api::settings::{SettingsRequest, SettingsSnapshot};
 use bedtime_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction, register,
 };
@@ -10,8 +9,7 @@ use serde_json::{Value, json};
 
 pub const APPLY_COMMAND: &str = "bedtime.color.apply";
 
-/// Optional palette storage for applications without an editor settings resource.
-/// An editor's `SettingsSnapshot` and settings reducer remain the palette's owner.
+/// Shared session palette. Swatches are not persisted as preferences.
 #[derive(Resource, Default)]
 pub struct ColorPalette(pub Vec<Value>);
 
@@ -19,18 +17,8 @@ pub struct ColorPickerPlugin;
 
 impl Plugin for ColorPickerPlugin {
     fn build(&self, app: &mut App) {
-        bedtime_api::settings::register(
-            app.world_mut(),
-            MODULE_ID,
-            vec![bedtime_api::settings::SettingDefinition::new(
-                "swatches",
-                "Swatches",
-                json!([]),
-            )],
-        )
-        .expect("Color preferences install once");
         app.init_resource::<bedtime_api::features::FeatureRegistry>()
-            .add_message::<SettingsRequest>();
+            .init_resource::<ColorPalette>();
         app.world_mut()
             .resource_mut::<bedtime_api::features::FeatureRegistry>()
             .register_with(MODULE_ID, |registrar| {
@@ -133,17 +121,7 @@ impl Panel for ColorFrontend {
 }
 
 fn palette(world: &World) -> Vec<Value> {
-    if let Some(frame) = world.get_resource::<SettingsSnapshot>() {
-        frame.for_owner(MODULE_ID)["swatches"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-    } else {
-        world
-            .get_resource::<ColorPalette>()
-            .map(|palette| palette.0.clone())
-            .unwrap_or_default()
-    }
+    world.resource::<ColorPalette>().0.clone()
 }
 
 fn apply_color(In(invocation): In<CommandInvocation>, world: &mut World) -> CommandResult {
@@ -190,15 +168,7 @@ fn apply_color(In(invocation): In<CommandInvocation>, world: &mut World) -> Comm
         selected,
     });
     if let Some(swatches) = swatches {
-        if world.contains_resource::<SettingsSnapshot>() {
-            world.write_message(SettingsRequest::new(
-                MODULE_ID,
-                "swatches",
-                Value::Array(swatches),
-            ));
-        } else {
-            world.insert_resource(ColorPalette(swatches));
-        }
+        world.resource_mut::<ColorPalette>().0 = swatches;
     }
     Ok(Vec::new())
 }
@@ -206,6 +176,7 @@ fn apply_color(In(invocation): In<CommandInvocation>, world: &mut World) -> Comm
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bedtime_api::settings::SettingsSnapshot;
     use bedtime_api::workbench::WorkbenchRegistry;
     use bedtime_workbench::{
         WorkbenchLayout, WorkbenchPlugin, WorkbenchRequests, capture_command, panel_state,
@@ -317,7 +288,7 @@ mod tests {
             invalid["swatches"] = json!([{"name":"Must not persist","rgba":[1.0,0.0,0.0,1.0]}]);
             assert!(apply(&mut app, entity, invalid).is_err());
             assert_eq!(app.world().get::<ColorState>(entity).unwrap(), &original);
-            assert!(!app.world().contains_resource::<ColorPalette>());
+            assert!(app.world().resource::<ColorPalette>().0.is_empty());
             assert!(!app.world().contains_resource::<SettingsSnapshot>());
         }
         app.world_mut().despawn(entity);
@@ -325,34 +296,33 @@ mod tests {
     }
 
     #[test]
-    fn palettes_use_editor_settings_or_standalone_storage_without_duplication() {
+    fn palettes_remain_session_only_with_a_settings_snapshot() {
+        use bedtime_api::settings::SettingsRequest;
         let mut app = app();
+        app.add_message::<SettingsRequest>();
         let entity = open(&mut app);
-        let swatches = json!([{"name":"Favorite","rgba":[0.0,1.0,0.0,1.0]}]);
-        let change = json!({"rgba":[0.0,1.0,0.0,1.0],"recent":[],"name":"Favorite","selected":0,"swatches":swatches});
-        apply(&mut app, entity, change.clone()).unwrap();
-        assert_eq!(Value::Array(palette(app.world())), swatches);
-        assert!(app.world_mut().remove_resource::<ColorPalette>().is_some());
         let settings = json!({MODULE_ID:{"swatches":[]}});
         app.insert_resource(SettingsSnapshot {
             settings: settings.clone(),
             ..Default::default()
         });
+        let swatches = json!([{"name":"Favorite","rgba":[0.0,1.0,0.0,1.0]}]);
+        let change = json!({"rgba":[0.0,1.0,0.0,1.0],"recent":[],"name":"Favorite","selected":0,"swatches":swatches});
         apply(&mut app, entity, change).unwrap();
-        assert!(!app.world().contains_resource::<ColorPalette>());
+        assert_eq!(Value::Array(palette(app.world())), swatches);
         assert_eq!(
             app.world().resource::<SettingsSnapshot>().settings,
             settings
         );
-        let messages = app.world().resource::<Messages<SettingsRequest>>();
-        let mut cursor = messages.get_cursor();
-        let requests: Vec<_> = cursor.read(messages).collect();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(
-            requests[0].changes,
-            vec![bedtime_api::settings::SettingsChange::set(
-                MODULE_ID, "swatches", swatches
-            )]
+        assert!(
+            app.world()
+                .resource::<Messages<SettingsRequest>>()
+                .is_empty()
+        );
+        assert!(
+            app.world()
+                .get_resource::<bedtime_api::settings::SettingsRegistry>()
+                .is_none_or(|registry| registry.definition(MODULE_ID, "swatches").is_none())
         );
     }
 

@@ -1,37 +1,27 @@
 # bedtime-plugin-settings
 
-An optional generic frontend for the core-owned settings service. Install
-`SettingsPlugin` in the owned application callback. It contributes
-`bedtime.settings.panel`, commands and a toolbar entry and the default Primary+Comma
-shortcut. It requires settings contracts and a workbench, without document or
-bEd configuration dependencies.
+An optional settings frontend for the core-owned preference service. Install
+`SettingsPlugin` in the application composition. It contributes the Settings
+panel, commands, toolbar entry, and Primary+Comma shortcut.
 
-The panel renders registered scalar preferences with Reset controls, plus
-plugin-provided `SettingsSection` callbacks for structured values. Changes are
-tracked transactional batches sent to the settings owner; receipts report
-validation or persistence failures. The panel never writes settings files.
+Each provider registers its own named section through
+`FeatureRegistrar::settings_ui` or `settings_page` and renders its own controls.
+The panel sorts sections alphabetically by display name, shows sidebar navigation,
+and fades the selected section according to the interface animation preference.
+It does not generate controls from definitions or combine providers' sections.
+`bedtime_ui::settings` supplies consistent, responsive label/control rows.
 
-Its keybindings editor covers global commands, common focused actions and panel
-actions from the registry. Overrides use the ordinary
-`bedtime.workbench.keybindings` preference. An empty action list unbinds it;
-removing the override restores defaults. Missing plugins' overrides remain
-available when those plugins return. Conflicts are displayed, and recording
-suppresses normal dispatch until a combination is captured or cancelled.
+Draft callbacks return edited values; page callbacks receive the panel entity,
+shortcut input and settings snapshot and return explicit `SettingsChange` values.
+The panel submits tracked transactional batches and displays validation or
+persistence errors. It never writes preference files. There are no reset buttons.
 
-Applications can contribute custom pages with `FeatureRegistrar::settings_page`
-and arrange them through `SettingsPanelLayout`. Page callbacks receive the panel
-entity, shared shortcut input and settings snapshot; they return `SettingsChange`
-values or emit their application-owned requests. The generic panel keeps command,
-factory, selection and request ownership, including for a custom theme editor.
+Core publishes Appearance, Documents, and Panels and Keybindings sections under
+their respective preference owners. The reusable shortcut editor lives in
+`bedtime_workbench::keybindings`; its provider manages recording and shortcut
+suppression. Viewer associations preserve unavailable viewer IDs.
 
-Custom Settings frontends can reuse `keybindings::KeybindingEditor`. It accepts
-registered actions, panel labels and a caller-owned overrides draft, then returns
-changes, errors and shortcut-input suppression. It performs no ECS mutation or
-persistence; the frontend submits changes through its settings owner. Recording
-ignores the opening frame and uses Escape to cancel unless explicitly assigned.
-
-The default frontend also provides installed-font selection and structured file
-viewer associations. Resetting associations uses the registered application
-default, rather than a bundled editor-specific list. Unknown viewer IDs remain
-visible and preserved. Custom pages coexist with the registered owner sections;
-a custom theme page does not need a second preference draft or save queue.
+Applications can supply a global header through `SettingsPanelHeader` and their
+own section callbacks. bEd publishes its theme controls and window blur in its
+own section, plus Open Settings JSON in the header. `SettingsPanelLayout` remains
+available to restrict which registered sections are shown.

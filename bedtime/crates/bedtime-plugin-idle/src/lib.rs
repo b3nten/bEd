@@ -366,6 +366,13 @@ pub fn register_preferences(world: &mut bevy::prelude::World) {
         ],
     )
     .expect("Idle preferences install once");
+    world.init_resource::<bedtime_api::features::FeatureRegistry>();
+    world
+        .resource_mut::<bedtime_api::features::FeatureRegistry>()
+        .register_with(SETTINGS_OWNER, |r| {
+            r.settings_ui("bedtime.idle.settings", "Bedroom", idle_preferences)
+        })
+        .expect("Bedroom settings install once");
 }
 
 #[derive(bevy::prelude::SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -580,4 +587,23 @@ pub fn draw_ui(world: &mut bevy::prelude::World, ui: &dear_imgui_rs::Ui) {
             );
         }
     }
+}
+
+fn idle_preferences(ui: &dear_imgui_rs::Ui, settings: &mut serde_json::Value) -> bool {
+    let mut changed = false;
+    let mut enabled = settings["bedtime_enabled"]
+        .as_bool()
+        .expect("published idle preference");
+    if bedtime_ui::settings::checkbox(ui, "Show idle screen", &mut enabled) {
+        settings["bedtime_enabled"] = enabled.into();
+        changed = true;
+    }
+    let mut delay = settings["bedtime_delay_seconds"]
+        .as_f64()
+        .expect("published idle delay");
+    if bedtime_ui::settings::number(ui, "Idle delay (seconds)", &mut delay) {
+        settings["bedtime_delay_seconds"] = delay.into();
+        changed = true;
+    }
+    changed
 }

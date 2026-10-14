@@ -6,7 +6,6 @@ publish = false
 license.workspace = true
 
 [dependencies]
-bedtime-keybindings = { workspace = true }
 bedtime-ui = { workspace = true, features = ["imgui"] }
 bedtime-api = { workspace = true }
 bevy = { workspace = true, features = ["std"] }

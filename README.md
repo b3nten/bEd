@@ -172,8 +172,8 @@ The client index is `registry.json`, and bEd-owned numbered layout templates are
 
 Core owns registered, namespaced preferences in
 `~/.config/<app_id>/settings.json`, including keybindings. The optional
-[`SettingsPlugin`](bedtime/crates/bedtime-plugin-settings/README.md) renders those definitions;
-bEd contributes richer Settings pages from `bed/src/settings_view`. Preferences
+[`SettingsPlugin`](bedtime/crates/bedtime-plugin-settings/README.md) renders provider-owned sections;
+bEd publishes its own settings section from `bed/src/settings_view`. Preferences
 remain global and independent of saved workspace state. Old preferences,
 keybinding, workspace and history formats are not imported.
 

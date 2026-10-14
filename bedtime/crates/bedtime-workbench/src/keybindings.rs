@@ -153,112 +153,100 @@ impl KeybindingEditor {
                 continue;
             }
             ui.dummy([0.0, size * 0.35]);
-            if !filter.is_empty() {
-                ui.set_next_item_open(true);
-            }
-            if !ui.collapsing_header(&header, dear_imgui_rs::TreeNodeFlags::empty()) {
-                continue;
-            }
-            ui.indent_by(size * 0.8);
+            ui.separator_with_text(&header);
             for action in matching {
                 ui.dummy([0.0, size * 0.45]);
                 let _id = ui.push_id(&action.id);
-                ui.text(&action.label);
-                ui.same_line();
-                ui.text_disabled(if draft.actions.contains_key(&action.id) {
-                    "Custom"
-                } else {
-                    "Default"
-                });
-                let shortcuts = draft
-                    .actions
-                    .get(&action.id)
-                    .map(|v| v.iter().map(|a| a.shortcut).collect::<Vec<_>>())
-                    .unwrap_or_else(|| action.defaults.clone());
-                if shortcuts.is_empty() {
-                    ui.text_disabled("Unbound");
-                }
-                let mut remove = None;
-                for (index, stroke) in shortcuts.iter().enumerate() {
-                    let _index = ui.push_id(index as i32);
-                    if ui.button(stroke.label(Platform::current())) {
-                        self.recording = Some((action.id.clone(), Some(index)));
+                bedtime_ui::settings::row(ui, &action.label, || {
+                    ui.text_disabled(if draft.actions.contains_key(&action.id) {
+                        "Custom"
+                    } else {
+                        "Default"
+                    });
+                    let shortcuts = draft
+                        .actions
+                        .get(&action.id)
+                        .map(|v| v.iter().map(|a| a.shortcut).collect::<Vec<_>>())
+                        .unwrap_or_else(|| action.defaults.clone());
+                    if shortcuts.is_empty() {
+                        ui.text_disabled("Unbound");
+                    }
+                    let mut remove = None;
+                    for (index, stroke) in shortcuts.iter().enumerate() {
+                        let _index = ui.push_id(index as i32);
+                        if ui.button(stroke.label(Platform::current())) {
+                            self.recording = Some((action.id.clone(), Some(index)));
+                            self.recording_frame = ui.frame_count();
+                        }
+                        #[cfg(test)]
+                        self.target(ui, &format!("{}/binding/{index}", action.id));
+                        ui.same_line();
+                        if ui.small_button("Remove") {
+                            remove = Some(index);
+                        }
+                        #[cfg(test)]
+                        self.target(ui, &format!("{}/remove/{index}", action.id));
+                    }
+                    if let Some(index) = remove {
+                        let mut candidate = draft.clone();
+                        match candidate.remove(action, index) {
+                            Ok(()) => draft = candidate,
+                            Err(failure) => error = Some(failure),
+                        }
+                    }
+                    if ui.small_button("Add binding") {
+                        self.recording = Some((action.id.clone(), None));
                         self.recording_frame = ui.frame_count();
                     }
                     #[cfg(test)]
-                    self.target(ui, &format!("{}/binding/{index}", action.id));
+                    self.target(ui, &format!("{}/add", action.id));
                     ui.same_line();
-                    if ui.small_button("Remove") {
-                        remove = Some(index);
+                    if ui.small_button("Clear") {
+                        draft.actions.insert(action.id.clone(), Vec::new());
                     }
                     #[cfg(test)]
-                    self.target(ui, &format!("{}/remove/{index}", action.id));
-                }
-                if let Some(index) = remove {
-                    let mut candidate = draft.clone();
-                    match candidate.remove(action, index) {
-                        Ok(()) => draft = candidate,
-                        Err(failure) => error = Some(failure),
+                    self.target(ui, &format!("{}/clear", action.id));
+                    if draft.actions.contains_key(&action.id) {
+                        ui.text_disabled(format!(
+                            "Defaults: {}",
+                            if action.defaults.is_empty() {
+                                "Unbound".into()
+                            } else {
+                                action
+                                    .defaults
+                                    .iter()
+                                    .map(|s| s.label(Platform::current()))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            }
+                        ));
                     }
-                }
-                if ui.small_button("Add binding") {
-                    self.recording = Some((action.id.clone(), None));
-                    self.recording_frame = ui.frame_count();
-                }
-                #[cfg(test)]
-                self.target(ui, &format!("{}/add", action.id));
-                ui.same_line();
-                if ui.small_button("Clear") {
-                    draft.actions.insert(action.id.clone(), Vec::new());
-                }
-                #[cfg(test)]
-                self.target(ui, &format!("{}/clear", action.id));
-                ui.same_line();
-                if ui.small_button("Restore defaults") {
-                    draft.actions.remove(&action.id);
-                }
-                #[cfg(test)]
-                self.target(ui, &format!("{}/defaults", action.id));
-                if draft.actions.contains_key(&action.id) {
-                    ui.text_disabled(format!(
-                        "Defaults: {}",
-                        if action.defaults.is_empty() {
-                            "Unbound".into()
+                    for warning in collisions.iter().filter(|c| {
+                        c.kind != CollisionKind::Reuse
+                            && (c.first == action.id || c.second == action.id)
+                    }) {
+                        let other = if warning.first == action.id {
+                            &warning.second
                         } else {
-                            action
-                                .defaults
-                                .iter()
-                                .map(|s| s.label(Platform::current()))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        }
-                    ));
-                }
-                for warning in collisions.iter().filter(|c| {
-                    c.kind != CollisionKind::Reuse
-                        && (c.first == action.id || c.second == action.id)
-                }) {
-                    let other = if warning.first == action.id {
-                        &warning.second
-                    } else {
-                        &warning.first
-                    };
-                    let other = actions
-                        .iter()
-                        .find(|a| &a.id == other)
-                        .map_or(other.as_str(), |a| a.label.as_str());
-                    let _font =
-                        ui.push_font_with_size(None, ui.clone_style().font_size_base() * 0.85);
-                    let _color = ui.push_style_color(StyleColor::Text, [0.78, 0.57, 0.34, 1.0]);
-                    ui.text_wrapped(format!(
-                        "{} is also assigned to {}.",
-                        warning.shortcut, other
-                    ));
-                }
-                ui.dummy([0.0, size * 0.3]);
-                ui.separator();
+                            &warning.first
+                        };
+                        let other = actions
+                            .iter()
+                            .find(|a| &a.id == other)
+                            .map_or(other.as_str(), |a| a.label.as_str());
+                        let _font =
+                            ui.push_font_with_size(None, ui.clone_style().font_size_base() * 0.85);
+                        let _color = ui.push_style_color(StyleColor::Text, [0.78, 0.57, 0.34, 1.0]);
+                        ui.text_wrapped(format!(
+                            "{} is also assigned to {}.",
+                            warning.shortcut, other
+                        ));
+                    }
+                    ui.dummy([0.0, size * 0.3]);
+                    ui.separator();
+                    false
+                });
             }
-            ui.unindent_by(size * 0.8);
         }
         if actions.is_empty() {
             ui.text_disabled("No shortcut actions registered by this host.");
@@ -296,7 +284,7 @@ mod tests {
     use dear_imgui_rs::{Condition, Context, FramePrepareOptions, MouseButton};
     use std::path::PathBuf;
 
-    use crate::IMGUI_TEST_LOCK as IMGUI_LOCK;
+    use crate::tests::IMGUI_TEST_LOCK as IMGUI_LOCK;
 
     struct Fixture {
         context: Context,
@@ -425,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn editing_and_restoring_actions_preserves_absent_plugins() {
+    fn editing_actions_preserves_absent_plugins() {
         let _lock = IMGUI_LOCK.lock().unwrap();
         let mut fixture = Fixture::new();
         fixture
@@ -433,10 +421,6 @@ mod tests {
             .actions
             .insert("absent.plugin.action".into(), Vec::new());
         assert!(fixture.click("app.open/clear").changed);
-        assert!(fixture.overrides.actions["app.open"].is_empty());
-        assert!(fixture.click("app.open/defaults").changed);
-        assert!(!fixture.overrides.actions.contains_key("app.open"));
-        assert!(fixture.click("app.open/remove/0").changed);
         assert!(fixture.overrides.actions["app.open"].is_empty());
         let opening = fixture.click("app.open/add");
         assert!(opening.suppress_shortcuts);
@@ -454,6 +438,8 @@ mod tests {
                 .to_string(),
             "F11"
         );
+        assert!(fixture.click("app.open/remove/0").changed);
+        assert!(fixture.overrides.actions["app.open"].is_empty());
         assert_eq!(
             fixture.overrides.actions["absent.plugin.action"],
             Vec::new()

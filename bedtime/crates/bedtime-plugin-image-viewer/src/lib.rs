@@ -54,7 +54,7 @@ fn register_metadata(registrar: &mut FeatureRegistrar<'_>) {
 
 fn image_settings(ui: &Ui, settings: &mut Value) -> bool {
     let mut fit = settings["fit_by_default"].as_bool().unwrap_or(true);
-    if ui.checkbox("Fit images to panel by default", &mut fit) {
+    if bedtime_ui::settings::checkbox(ui, "Fit images to panel by default", &mut fit) {
         if !settings.is_object() {
             *settings = json!({});
         }

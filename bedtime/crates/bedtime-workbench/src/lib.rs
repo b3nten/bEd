@@ -2,6 +2,7 @@
 mod compositor;
 mod docs;
 pub use docs::{DOCS_PANEL_ID, DocsPlugin, SHOW_DOCS_COMMAND};
+pub mod keybindings;
 mod shortcuts;
 
 #[derive(Resource, Default)]

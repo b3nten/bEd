@@ -56,16 +56,6 @@ pub struct BedMascotPlugin;
 
 impl Plugin for BedMascotPlugin {
     fn build(&self, app: &mut App) {
-        bedtime_api::settings::register(
-            app.world_mut(),
-            "bedtime.mascot",
-            vec![bedtime_api::settings::SettingDefinition::new(
-                "squeaks_enabled",
-                "Mascot sounds",
-                true,
-            )],
-        )
-        .expect("Mascot preferences install once");
         initialize_scenes(app);
         app.world_mut()
             .resource_mut::<FeatureRegistry>()
@@ -85,16 +75,6 @@ pub struct DuckMascotPlugin;
 
 impl Plugin for DuckMascotPlugin {
     fn build(&self, app: &mut App) {
-        bedtime_api::settings::register(
-            app.world_mut(),
-            "bedtime.duck",
-            vec![bedtime_api::settings::SettingDefinition::new(
-                "squeaks_enabled",
-                "Ducky sounds",
-                true,
-            )],
-        )
-        .expect("Ducky preferences install once");
         initialize_scenes(app);
         app.world_mut()
             .resource_mut::<FeatureRegistry>()

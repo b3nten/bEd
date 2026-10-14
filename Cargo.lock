@@ -2577,7 +2577,6 @@ name = "bedtime-plugin-settings"
 version = "0.1.0"
 dependencies = [
  "bedtime-api",
- "bedtime-keybindings",
  "bedtime-ui",
  "bedtime-workbench",
  "bevy",
