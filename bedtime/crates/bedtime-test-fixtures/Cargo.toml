@@ -1,0 +1,21 @@
+[package]
+name = "bedtime-test-fixtures"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+bedtime-editing = { workspace = true }
+bedtime-lsp = { workspace = true }
+bedtime-remote = { workspace = true }
+bedtime-files = { workspace = true, features = ["workspace-services"] }
+bedtime-documents = { workspace = true, features = ["ide-services"] }
+bedtime-debugger = { workspace = true }
+bedtime-terminal = { path = "../bedtime-terminal", default-features = false }
+serde_json = { workspace = true }
+libc = { workspace = true }

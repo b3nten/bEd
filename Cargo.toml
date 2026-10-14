@@ -53,6 +53,7 @@ members = [
     "bedtime/crates/bedtime-plugin-sqlite-browser",
     "bedtime/crates/bedtime-plugin-http-client",
     "bedtime/crates/bedtime",
+    "bedtime/crates/bedtime-test-fixtures",
 ]
 default-members = ["bed"]
 exclude = ["vendor/arboard", "vendor/dear-imgui-sys", "vendor/dear-imgui-winit", "vendor/dear-imgui-wgpu", "vendor/freetype-sys", "vendor/bevy_stl", "vendor/rio-vt"]

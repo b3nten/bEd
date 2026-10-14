@@ -94,21 +94,34 @@ Use a focused check while iterating:
 
 ```sh
 cargo bed-test --lib application::runtime::layouts::tests
-cargo bed-test --test lsp_transport initialize_and_latest_queued_open -- --exact
-cargo bed-test --test app_remote_editor -- --list
+cargo bed-test --test integration app_remote_editor -- --list
+cargo bedtime-test lsp::lsp_transport::initialize_and_latest_queued_open -- --exact
 cargo test --locked -p bedtime-editing --lib
 ```
 
-Bed always includes its built-in plugins and automation; it has no Cargo feature
-switches. Reusable Bedtime crates retain their own features. Both subprocess
-fixture suites (`lsp_transport` and `app_remote_editor`) support name filters,
-`--exact`, `--skip`, and `--list`, and print per-test timings. They run sequentially
-because some cases own the process-global ImGui context.
+Bed always includes its built-in plugins and automation. Its `test-support`
+feature enables only subprocess fixtures; the application composition stays fixed.
+Reusable Bedtime crates retain their own features and crate-local unit tests.
+Integration tests live in two targets: `bedtime/tests/integration` for reusable
+behavior, and `bed/tests/integration` for application policy. Subject files are
+modules inside those targets, rather than separate executables. Both use the
+standard Rust harness with filters, `--exact`, `--skip`, `--list`, and ignored tests.
+Tests that own the process-global ImGui context share a lock within each target.
 
-Use `cargo test-full` for the full workspace check. It also compiles all targets;
-it is intended for broad validation, rather than each edit. CI separately runs the
-reusable-crate feature matrix and native smokes. Native smokes can focus windows and accept real
-keyboard input, so run them in a deliberate desktop test session.
+Use `cargo test-full` for all ordinary crate unit tests and both integration
+suites, including bedside-table's library tests. It enables the integration
+fixtures and excludes sample applications and example targets. Protocol servers
+and PTY children run in dedicated fixture binaries instead of relaunching a large
+integration executable. Crate-local unit tests remain runnable with `cargo test
+--locked -p CRATE --lib`; run `cargo bedtime-test MODULE` or `cargo bed-test --test
+integration MODULE` for integration coverage.
+
+Native smokes, ignored external-tool checks, independent bedside-table launches,
+and reusable-crate feature checks remain explicit CI or desktop validation.
+Compiling a smoke example as a Rust test harness does not execute its `main()`;
+use its documented `cargo run --example ...` command to run the scenario.
+Native smokes can focus windows and accept keyboard input, so run them in a
+deliberate desktop test session.
 
 Cargo caches feature combinations separately. Keep the same command, features,
 profile, and target directory for routine reruns. Switching between a package

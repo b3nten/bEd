@@ -29,25 +29,9 @@ serde_json = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
-[[test]]
-name = "terminal_pty"
-path = "tests/terminal_pty.rs"
-harness = false
 
-[[test]]
-name = "terminal_input"
-path = "tests/terminal_input.rs"
-harness = false
 
-[[test]]
-name = "terminal_view"
-path = "tests/terminal_view.rs"
-required-features = ["ui"]
 
-[[test]]
-name = "remote_pty"
-path = "tests/remote_pty.rs"
-required-features = ["remote"]
 
 [[example]]
 name = "terminal_render_baseline"

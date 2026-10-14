@@ -67,7 +67,7 @@ pub fn prepare_ui(world: &mut World, context: &mut Context) -> io::Result<()> {
 pub fn draw_ui(world: &mut World, ui: &dear_imgui_rs::Ui) -> io::Result<()> {
     let context = world.non_send::<bedtime_ui::UiRuntime>().frame_context();
     world.non_send_mut::<bedtime_ui::UiRuntime>().begin(ui);
-    let result = context.scope(|| crate::application_requests::draw_ui(world, ui));
+    let result = context.scope(|| super::application_requests::draw_ui(world, ui));
     world.non_send_mut::<bedtime_ui::UiRuntime>().end(ui);
     result
 }

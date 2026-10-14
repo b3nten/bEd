@@ -7,7 +7,11 @@ description = "A desktop application platform and IDE"
 publish = false
 license.workspace = true
 
+[features]
+test-support = ["dep:bedtime-test-fixtures"]
+
 [dependencies]
+bedtime-test-fixtures = { path = "../bedtime/crates/bedtime-test-fixtures", optional = true }
 bedtime-storage = { workspace = true }
 bedtime-files = { workspace = true, features = ["workspace-services"] }
 bedtime-lsp = { workspace = true }
@@ -58,11 +62,25 @@ winit = { workspace = true }
 wgpu = { workspace = true }
 serde_json = { workspace = true }
 
-[[test]]
-name = "app_remote_editor"
-path = "tests/app_remote_editor.rs"
-harness = false
 
 [dev-dependencies]
 bedtime-plugin-csv-table = { workspace = true, features = ["test-support"] }
 bedtime-plugin-debugger = { workspace = true, features = ["test-support"] }
+
+[[bin]]
+name = "bed"
+path = "src/main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "bed-test-fixture"
+path = "../bedtime/tests/support/fixture_main.rs"
+required-features = ["test-support"]
+test = false
+bench = false
+
+[[test]]
+name = "integration"
+path = "tests/integration/main.rs"
+required-features = ["test-support"]

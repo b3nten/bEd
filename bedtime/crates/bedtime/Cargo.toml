@@ -7,12 +7,14 @@ license.workspace = true
 description = "Owned startup for Bevy desktop applications"
 
 [features]
+test-support = ["dep:bedtime-test-fixtures", "language-services", "remote", "layouts"]
 layouts = ["bedtime-core/layouts"]
 default = []
 remote = ["bedtime-core/remote"]
 language-services = ["bedtime-core/language-services", "bedtime-api/language-services"]
 
 [dependencies]
+bedtime-test-fixtures = { path = "../bedtime-test-fixtures", optional = true }
 bedtime-api = { workspace = true, features = ["documents"] }
 bedtime-core = { workspace = true }
 bedtime-desktop = { workspace = true }
@@ -21,6 +23,7 @@ bevy = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+bedtime-plugin-json-tree = { workspace = true }
 bedtime-workbench = { workspace = true }
 bedtime-plugin-automation = { workspace = true, features = ["documents"] }
 bedtime-plugin-editor = { workspace = true, features = ["language-services"] }
@@ -33,6 +36,22 @@ bedtime-plugin-model-viewer = { workspace = true }
 bedtime-plugin-effects = { workspace = true, features = ["desktop"] }
 wgpu = { workspace = true }
 winit = { workspace = true }
+bedtime-documents = { workspace = true, features = ["ide-services"] }
+bedtime-editing = { workspace = true }
+bedtime-files = { workspace = true, features = ["workspace-services"] }
+bedtime-git = { workspace = true }
+bedtime-highlight = { workspace = true }
+bedtime-lsp = { workspace = true }
+bedtime-remote = { workspace = true }
+bedtime-keybindings = { workspace = true }
+bedtime-terminal = { workspace = true, features = ["remote"] }
+bedtime-editor-widgets = { workspace = true, features = ["language-services"] }
+bedtime-plugin-csv-table = { workspace = true, features = ["test-support"] }
+bedtime-plugin-markdown-preview = { workspace = true }
+dear-imgui-rs = { workspace = true }
+dear-imgui-sys = { workspace = true }
+libc = { workspace = true }
+git2 = { workspace = true }
 
 [[example]]
 name = "git_smoke"
@@ -45,3 +64,36 @@ required-features = ["language-services"]
 [[example]]
 name = "viewers_smoke"
 required-features = ["language-services"]
+
+[[test]]
+name = "integration"
+path = "../../tests/integration/main.rs"
+required-features = ["test-support"]
+
+[[bin]]
+name = "bedtime-test-fixture"
+path = "../../tests/support/fixture_main.rs"
+required-features = ["test-support"]
+test = false
+bench = false
+
+[[bin]]
+name = "bedtime-remote-agent-fixture"
+path = "../../tests/support/remote_agent_main.rs"
+required-features = ["test-support"]
+test = false
+bench = false
+
+[[bin]]
+name = "bed-debug-launcher-fixture"
+path = "../../tests/support/debug_launcher_main.rs"
+required-features = ["test-support"]
+test = false
+bench = false
+
+[[bin]]
+name = "bed-navigation-fixture"
+path = "../../tests/support/navigation_main.rs"
+required-features = ["test-support"]
+test = false
+bench = false

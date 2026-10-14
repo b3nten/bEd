@@ -29,7 +29,7 @@ ALLOWED_INTERNAL = {
         "bedtime", "bedtime-api", "bedtime-editing", "bedtime-files", "bedtime-highlight",
         "bedtime-lsp", "bedtime-documents", "bedtime-ui", "bedtime-editor-widgets",
         "bedtime-terminal", "bedtime-debugger", "bedtime-plugin-effects",
-        "bedtime-remote", "bedtime-keybindings", "bedtime-storage",
+        "bedtime-remote", "bedtime-keybindings", "bedtime-storage", "bedtime-test-fixtures",
     } | CONTENT_PLUGINS,
     "bedtime-api": {"bedtime-editing", "bedtime-documents", "bedtime-lsp", "bedtime-ui", "bedtime-keybindings", "bedtime-files", "bedtime-storage"},
     "bedtime-storage": set(),
@@ -37,7 +37,7 @@ ALLOWED_INTERNAL = {
         "bedtime-plugin-layouts", "bedtime-desktop", "bedtime-workbench", "bedtime-api", "bedtime-documents",
         "bedtime-editing", "bedtime-ui", "bedtime-files", "bedtime-storage", "bedtime-lsp", "bedtime-keybindings", "bedtime-highlight", "bedtime-remote",
     },
-    "bedtime": {"bedtime-api", "bedtime-core", "bedtime-desktop", "bedtime-ui"},
+    "bedtime": {"bedtime-api", "bedtime-core", "bedtime-desktop", "bedtime-ui", "bedtime-test-fixtures"},
     "bedtime-desktop": {"bedtime-ui"},
     "bedtime-workbench": {"bedtime-api", "bedtime-ui", "bedtime-keybindings"},
     "bedtime-plugin-layouts": {"bedtime-workbench", "bedtime-api"},
@@ -92,6 +92,10 @@ ALLOWED_INTERNAL = {
     "bedtime-plugin-effects": {"bedtime-desktop", "bedtime-api"},
     "bedtime-remote": {"bedtime-git", "bedtime-editing"},
     "bedtime-remote-agent": {"bedtime-remote", "bedtime-files"},
+    "bedtime-test-fixtures": {
+        "bedtime-editing", "bedtime-lsp", "bedtime-remote", "bedtime-files",
+        "bedtime-documents", "bedtime-debugger", "bedtime-terminal",
+    },
     "bedtime-git": set(),
     "bedtime-keybindings": set(),
     "bedtime-plugin-source-outline": {"bedtime-editing", "bedtime-highlight", "bedtime-api", "bedtime-ui"},
@@ -111,7 +115,7 @@ HEADLESS = {
     "bedtime-sqlite",
     "bedtime-editing", "bedtime-files", "bedtime-highlight", "bedtime-lsp", "bedtime-documents",
     "bedtime-remote", "bedtime-remote-agent", "bedtime-debugger", "bedtime-git",
-    "bedtime-terminal", "bedtime-storage",
+    "bedtime-terminal", "bedtime-storage", "bedtime-test-fixtures",
 }
 GUI = {
     "dear-imgui-rs", "dear-imgui-sys", "dear-imgui-winit", "dear-imgui-wgpu",

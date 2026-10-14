@@ -1,4 +1,5 @@
 [alias]
-# Bed has one fixed application composition for all builds and test reruns.
-bed-test = "test --locked -p bed"
-test-full = "test --workspace --locked --all-targets"
+# Application composition stays fixed; test-support only enables fixtures.
+bed-test = "test --locked -p bed --features test-support"
+bedtime-test = "test --locked -p bedtime --features test-support --test integration"
+test-full = "test --workspace --locked --lib --tests --features bed/test-support,bedtime/test-support --exclude bedtime-test-fixtures --exclude bedtime-example-layouts --exclude bedtime-example-terminal --exclude bedtime-example-editor --exclude bedtime-example-model --exclude bedtime-example-game --exclude bedtime-example-game-editor --exclude bedtime-example-game-runtime"

@@ -67,9 +67,9 @@ jobs:
       - name: Crate boundaries
         run: python3 scripts/check-crate-boundaries.py
       - name: Lint
-        run: cargo clippy --workspace --locked --all-targets -- -D warnings
+        run: cargo clippy --workspace --locked --all-targets --features bed/test-support,bedtime/test-support -- -D warnings
       - name: Native tests and binary build
-        run: cargo test --workspace --locked --all-targets
+        run: cargo test-full
       - name: Minimal desktop composition
         run: |
           cargo check --locked -p bedtime -p bedtime-core -p bedtime-plugin-layouts -p bedtime-plugin-settings -p bedtime-storage
@@ -99,14 +99,14 @@ jobs:
           BED_LLDB_DAP: /usr/bin/lldb-dap-18
         run: |
           "$BED_LLDB_DAP" --version
-          cargo test -p bedtime-debugger --locked --test native_lldb -- --ignored --nocapture
+          cargo bedtime-test debugger::native_lldb -- --ignored --nocapture
       - name: Native LLDB debugging fixtures (macOS toolchain discovery)
         if: runner.os == 'macOS'
         shell: bash
         run: |
           xcrun --find lldb-dap
           xcrun lldb-dap --version
-          cargo test -p bedtime-debugger --locked --test native_lldb -- --ignored --nocapture
+          cargo bedtime-test debugger::native_lldb -- --ignored --nocapture
       - name: Release binary
         run: cargo build --locked --release -p bed -p bedtime-remote-agent --bin bed --bin bedtime-remote-agent
       - name: Package standalone remote agent and licenses

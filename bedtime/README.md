@@ -45,10 +45,11 @@ The test-only helpers in `tests/support` provide a headless document host and a
 deterministic stdio LSP server; they install no bEd themes, layouts or workspace
 persistence. Feature plugins register before settings are finalized. bEd retains
 tests for its startup, menus, numbered layouts and workspace interaction policies.
-The LSP transport, session and editor targets each support ordinary name filters:
+The shared integration target groups tests by their owning crate. LSP transport,
+session and editor cases support ordinary name filters:
 
 ```sh
-cargo test --locked -p bedtime-lsp --test lsp_transport FILTER
-cargo test --locked -p bedtime-documents --features ide-services --test lsp_transport FILTER
-cargo test --locked -p bedtime-plugin-editor --features language-services --test lsp_transport FILTER
+cargo bedtime-test lsp::lsp_transport
+cargo bedtime-test documents::lsp_transport
+cargo bedtime-test plugin_editor::lsp_transport
 ```

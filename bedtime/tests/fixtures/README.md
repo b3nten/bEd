@@ -15,7 +15,7 @@ embedded languages, byte offsets, editing, cancellation and theme changes;
 all 112 bundled grammars must compile their highlight and injection queries.
 
 ```sh
-cargo test --locked -p bedtime-highlight --test highlight
+cargo bedtime-test highlight::behavior
 ```
 
 ## Editor painting and measurements
@@ -34,7 +34,7 @@ padding. These are paint/measurement checks, not GPU, FreeType rasterization,
 whole-frame layout or tooltip activation tests.
 
 ```sh
-cargo test --locked -p bedtime-editor-widgets --test views
+cargo bedtime-test editor_widgets::views
 ```
 
 ## Terminals
@@ -45,7 +45,7 @@ PTY and input regressions exercise live shells, process cleanup and negotiated
 keyboard/paste behavior. Imported terminal adapter fixtures are no longer used.
 
 ```sh
-cargo test --locked -p bedtime-terminal
+cargo bedtime-test terminal::
 ```
 
 ## Model viewers

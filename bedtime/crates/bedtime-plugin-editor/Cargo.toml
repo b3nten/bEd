@@ -22,13 +22,3 @@ bedtime-ui = { workspace = true, features = ["imgui"] }
 bedtime-editor-widgets = { workspace = true }
 dear-imgui-rs = { workspace = true }
 serde_json = { workspace = true }
-
-[dev-dependencies]
-bedtime-core = { workspace = true, features = ["language-services"] }
-bedtime-files = { workspace = true }
-
-[[test]]
-name = "lsp_transport"
-path = "tests/lsp_transport.rs"
-harness = false
-required-features = ["language-services"]

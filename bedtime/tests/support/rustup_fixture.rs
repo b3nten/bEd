@@ -1,7 +1,7 @@
 //! Fake rustup/proxy and a minimal LSP server. Never touches real toolchains.
 #![allow(dead_code)]
 #[path = "temp_dir.rs"]
-mod temp_dir;
+pub mod temp_dir;
 use bedtime_lsp::lsp_config::LspConfig;
 use serde_json::{Value, json};
 use std::{

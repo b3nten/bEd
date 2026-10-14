@@ -18,3 +18,9 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 rusqlite = { version = "=0.40.2", features = ["bundled", "hooks", "limits"] }
 rfd = { workspace = true }
+
+[[bin]]
+name = "bedside-table"
+path = "src/main.rs"
+test = false
+bench = false

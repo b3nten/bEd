@@ -19,14 +19,3 @@ dear-imgui-rs = { workspace = true }
 dear-imgui-sys = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-
-[dev-dependencies]
-bedtime-core = { workspace = true }
-bedtime-files = { workspace = true }
-bedtime-workbench = { workspace = true }
-bedtime-plugin-editor = { workspace = true }
-
-[[test]]
-name = "transactions"
-path = "tests/transactions.rs"
-required-features = ["test-support"]

@@ -21,27 +21,3 @@ bedtime-lsp = { workspace = true, optional = true }
 bedtime-remote = { path = "../bedtime-remote", optional = true }
 git2 = { workspace = true, optional = true }
 serde_json = { workspace = true }
-
-[[test]]
-name = "remote_io"
-path = "tests/remote_io.rs"
-harness = false
-required-features = ["ide-services"]
-
-[[test]]
-name = "remote_documents"
-path = "tests/remote_documents.rs"
-harness = false
-required-features = ["remote"]
-
-[[test]]
-name = "lsp_navigation"
-path = "tests/lsp_navigation.rs"
-harness = false
-required-features = ["ide-services"]
-
-[[test]]
-name = "lsp_transport"
-path = "tests/lsp_transport.rs"
-harness = false
-required-features = ["ide-services"]

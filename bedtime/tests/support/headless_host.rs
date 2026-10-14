@@ -19,7 +19,7 @@ pub fn install(app: &mut App, config: &Path) {
 pub fn finish(app: &mut App, directory: &Path) {
     bedtime_core::initialize_file_context(
         app.world_mut(),
-        bedtime_files::FileContext::local(directory.to_owned()).unwrap(),
+        bedtime_files::FileContext::local(directory).unwrap(),
         bedtime_files::FileServices::local(),
     )
     .unwrap();
