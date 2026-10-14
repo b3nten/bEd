@@ -390,6 +390,13 @@ fn native_registered_model_renderer_shares_game_world_and_retires_its_view() {
             .unwrap();
         gpu.queue.submit(commands);
         app.update();
+        if settled == 0 {
+            assert_eq!(
+                capture_target(&gpu, &target)[3],
+                0,
+                "opening frames must leave the panel background transparent while the model initializes"
+            );
+        }
         if app
             .world()
             .non_send::<super::GltfStates>()

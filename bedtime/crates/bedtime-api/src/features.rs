@@ -43,6 +43,7 @@ pub struct HostRequest {
     source: Option<bevy::prelude::Entity>,
     action: HostAction,
     area: u32,
+    explicit_area: bool,
     sequence: u64,
     layout_epoch: u64,
     tab_index: Option<usize>,
@@ -62,6 +63,7 @@ impl HostRequest {
             source,
             action,
             area,
+            explicit_area: false,
             sequence: crate::features::next_request_sequence(),
             layout_epoch,
             tab_index: None,
@@ -79,6 +81,14 @@ impl HostRequest {
     }
     pub fn area(&self) -> u32 {
         self.area
+    }
+    /// Explicit drop/command destinations take precedence over default placement.
+    pub fn with_explicit_area(mut self, explicit: bool) -> Self {
+        self.explicit_area = explicit;
+        self
+    }
+    pub fn has_explicit_area(&self) -> bool {
+        self.explicit_area
     }
     pub fn sequence(&self) -> u64 {
         self.sequence

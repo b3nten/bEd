@@ -27,7 +27,8 @@ selectors, so opaque helper arguments belong to their handler. Duplicate owners,
 empty selectors and overlapping selectors fail before any handler runs.
 
 For application-specific CLI parsing, call `dispatch()` and match
-`LaunchOutcome`. A `DesktopLaunch` exposes the remaining arguments. Supply
+`LaunchOutcome`. A `DesktopLaunch` exposes the remaining application arguments after shared
+automation flags are removed. Supply
 `DesktopOptions` after parsing configuration: its fields group native desktop
 options, theme, icon directories, config directory, workspace directory name
 and the default theme. `build(options, configure)` returns a real Bevy `App`;
@@ -49,7 +50,9 @@ plugin is an internal composition step. Applications supply `MenuLayout`,
 request resolver. bEd startup, themes, rich Settings pages, numbered layouts and
 native instance handoff remain in `bed/src`.
 
-Native smoke examples build independent applications with temporary settings:
+Native integration fixtures build independent applications with temporary settings.
+`cargo test-native` builds and runs them through the Rust harness; these individual
+commands remain useful for focused native work:
 
 ```sh
 cargo run --locked -p bedtime --example workbench_smoke
@@ -69,3 +72,10 @@ changes a font setting, and writes `target/workbench-smoke.png`.
 The [gameplay example](../../examples/gameplay/README.md) shares an ordinary Bevy
 game plugin between a desktop editor and a runtime whose dependencies exclude
 Bedtime. Game execution does not require editor services or their entrypoint.
+
+The launcher installs shared automation and host-operation adapters before the
+application callback, allowing applications to register their extensions there.
+External control defaults off. Shared launch flags are `--allow-automation`,
+repeatable `--approve-automation=CLIENT_NAME`, and `--automation-socket PATH`.
+Approval overrides require enablement and match exact names. Normal connections
+require an explicit UI decision. See the [Python and protocol guide](../../../tools/automation/README.md).

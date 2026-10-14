@@ -5,9 +5,9 @@ use bedtime_documents::session::{DocumentId, DocumentSession};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DocumentHandle {
-    app: u64,
-    session_id: u64,
-    document: DocumentId,
+    pub(super) app: u64,
+    pub(super) session_id: u64,
+    pub(super) document: DocumentId,
 }
 
 impl DocumentHandle {
@@ -32,7 +32,7 @@ pub struct DocumentRead {
     pub bytes: Vec<u8>,
 }
 
-fn document_handle(world: &World, document: DocumentId) -> DocumentHandle {
+pub fn document_handle(world: &World, document: DocumentId) -> DocumentHandle {
     DocumentHandle {
         app: world.resource::<AutomationScope>().0,
         session_id: session_id(world),
@@ -40,7 +40,7 @@ fn document_handle(world: &World, document: DocumentId) -> DocumentHandle {
     }
 }
 
-pub(super) fn resolve_document(
+pub fn resolve_document(
     world: &World,
     document: DocumentHandle,
 ) -> Result<DocumentId, AutomationError> {

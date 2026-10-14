@@ -17,7 +17,7 @@ impl Fixture {
         MetadataStore::open(&self.0.join("metadata.sqlite")).unwrap()
     }
     fn databases(&self) -> Vec<PathBuf> {
-        smoke::seed_databases(&self.0).unwrap()
+        test_fixtures::seed_databases(&self.0).unwrap()
     }
 }
 impl Drop for Fixture {

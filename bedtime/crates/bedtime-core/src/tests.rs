@@ -363,6 +363,34 @@ fn a_save_receipt_identifies_the_committed_revision_and_shared_views_follow_hist
 }
 
 #[test]
+fn retired_ui_intentions_are_cancelled_without_a_dialog_but_redraw_still_applies() {
+    let mut app = app();
+    let world = app.world_mut();
+    let stale = capture_host_request(
+        world,
+        None,
+        HostAction::OpenPanel {
+            panel_type: "test.panel".into(),
+            document: None,
+            state: Value::Null,
+        },
+    );
+    let redraw = capture_host_request(world, None, HostAction::Invalidate);
+    world.insert_non_send(DocumentSession::new());
+    world.write_message(stale);
+    world.write_message(redraw);
+    resolve_documents(world);
+    assert!(panel_entities(world).is_empty());
+    let mut notices = bevy::ecs::message::MessageCursor::<CoreNotice>::default();
+    assert_eq!(
+        notices
+            .read(world.resource::<Messages<CoreNotice>>())
+            .count(),
+        0
+    );
+}
+
+#[test]
 fn session_replacement_and_failed_frontends_reject_captured_effects() {
     let mut app = app();
     let world = app.world_mut();
@@ -718,6 +746,70 @@ fn viewers(world: &mut World) {
             );
         })
         .unwrap();
+}
+
+#[test]
+fn default_text_opening_prefers_the_largest_text_group_and_respects_explicit_destinations() {
+    let temp = TempDir::new();
+    let mut app = app();
+    let world = app.world_mut();
+    viewers(world);
+    let (small, medium) = {
+        let mut layout = world.resource_mut::<WorkbenchLayout>();
+        let small = layout.tiling.layout.split(1, 0, 7500, 100).unwrap();
+        layout.tiling.add_area(small);
+        let medium = layout.tiling.layout.split(1, 0, 4000, 100).unwrap();
+        layout.tiling.add_area(medium);
+        (small, medium)
+    };
+    // Area 1 is the largest, and contains only a tool.
+    panel(world);
+    let first = temp.write("first.txt", b"first");
+    open_file(world, &first, None, Some(small)).unwrap();
+    let second = temp.write("second.txt", b"second");
+    open_file(world, &second, None, Some(medium)).unwrap();
+    let next = temp.write("next.txt", b"next");
+    let id = submit_host_request(
+        world,
+        None,
+        HostAction::OpenFile {
+            path: next.to_string_lossy().into_owned(),
+            viewer: None,
+        },
+    );
+    resolve_documents(world);
+    let HostOutcome::Opened(opened) = take_host_result(world, id).unwrap().unwrap() else {
+        panic!("opened file")
+    };
+    let area = |world: &World, panel| {
+        world
+            .resource::<WorkbenchLayout>()
+            .tiling
+            .area_for(
+                world
+                    .get::<api::workbench::PanelPresentation>(panel)
+                    .unwrap()
+                    .id,
+            )
+            .unwrap()
+    };
+    assert_eq!(area(world, opened), medium);
+    let explicit = temp.write("explicit.txt", b"explicit");
+    bedtime_workbench::focus_area(world, small);
+    let id = submit_host_request(
+        world,
+        None,
+        HostAction::OpenFileIn {
+            path: explicit.to_string_lossy().into_owned(),
+            viewer: None,
+            target: api::workbench::PanelTarget::LastFocused,
+        },
+    );
+    resolve_documents(world);
+    let HostOutcome::Opened(opened) = take_host_result(world, id).unwrap().unwrap() else {
+        panic!("opened file")
+    };
+    assert_eq!(area(world, opened), small);
 }
 #[test]
 fn previews_replace_clean_tabs_retain_dirty_tabs_and_drops_move_existing_tabs() {

@@ -36,6 +36,14 @@ struct CanvasState {
     pan: [f32; 2],
 }
 
+/// Keep the image coordinate beneath a canvas-local anchor fixed while scaling.
+fn zoom_pan(pan: [f32; 2], anchor: [f32; 2], size: [f32; 2], old: f32, new: f32) -> [f32; 2] {
+    [0, 1].map(|axis| {
+        let offset = anchor[axis] - size[axis] * 0.5;
+        offset - (offset - pan[axis]) * (new / old)
+    })
+}
+
 fn register_metadata(registrar: &mut FeatureRegistrar<'_>) {
     registrar.panel_ref(PANEL_ID);
     registrar.panel_requires_input(PANEL_ID);
@@ -140,6 +148,8 @@ pub struct ImagePanel {
     fit: Option<bool>,
     zoom: f32,
     pan: [f32; 2],
+    pinch_anchor: Option<[f32; 2]>,
+    gesture_frame: Option<usize>,
 }
 
 impl ImagePanel {
@@ -171,6 +181,8 @@ impl ImagePanel {
                 finite(state["pan"][0].as_f64(), 0.0),
                 finite(state["pan"][1].as_f64(), 0.0),
             ],
+            pinch_anchor: None,
+            gesture_frame: None,
         }
     }
 
@@ -229,6 +241,17 @@ impl ImagePanel {
         host: &HostContext<'_>,
         requests: &mut Vec<HostAction>,
         icons: Option<&bedtime_ui::icons::Icons>,
+    ) {
+        self.draw_prepared_with_gestures(ui, host, requests, icons, &[]);
+    }
+
+    fn draw_prepared_with_gestures(
+        &mut self,
+        ui: &Ui,
+        host: &HostContext<'_>,
+        requests: &mut Vec<HostAction>,
+        icons: Option<&bedtime_ui::icons::Icons>,
+        pinches: &[bedtime_api::workbench::PinchEvent],
     ) {
         let _controls =
             bedtime_ui::components::controls_style(ui, &bedtime_ui::UiFrameContext::for_ui(ui));
@@ -329,6 +352,7 @@ impl ImagePanel {
             return;
         };
         let canvas = Canvas::show(ui, host.texture(self.texture), "image-canvas");
+        let origin = ui.item_rect_min();
         let fit_scale =
             (canvas.size[0] / decoded.size[0] as f32).min(canvas.size[1] / decoded.size[1] as f32);
         let mut scale = if *fit { fit_scale } else { self.zoom };
@@ -359,12 +383,70 @@ impl ImagePanel {
                 scale = self.zoom;
             }
         }
-        if canvas.hovered {
+        let blocked = self.shortcuts.suppressed(ui)
+            || ui.is_popup_open_with_flags(
+                "",
+                dear_imgui_rs::PopupQueryFlags::ANY_POPUP_ID
+                    | dear_imgui_rs::PopupQueryFlags::ANY_POPUP_LEVEL,
+            );
+        if blocked
+            || self
+                .gesture_frame
+                .is_none_or(|frame| frame + 1 != ui.frame_count())
+        {
+            self.pinch_anchor = None;
+        }
+        self.gesture_frame = Some(ui.frame_count());
+        if canvas.hovered && !blocked {
             let wheel = ui.io().mouse_wheel();
             if wheel != 0.0 {
                 self.zoom = (scale * 1.2f32.powf(wheel)).clamp(0.01, 32.0);
+                let anchor = [0, 1].map(|axis| ui.io().mouse_pos()[axis] - origin[axis]);
+                self.pan = zoom_pan(self.pan, anchor, canvas.size, scale, self.zoom);
                 *fit = false;
                 scale = self.zoom;
+            }
+        }
+        use bedtime_api::workbench::PinchPhase;
+        for event in pinches {
+            if event.phase == PinchPhase::Started {
+                let inside = event
+                    .position
+                    .iter()
+                    .all(|coordinate| coordinate.is_finite())
+                    && (0..2).all(|axis| {
+                        event.position[axis] >= origin[axis]
+                            && event.position[axis] < origin[axis] + canvas.size[axis]
+                    });
+                let owns_pointer = inside
+                    && ui.with_bound_context(|| unsafe {
+                        let mut hovered = std::ptr::null_mut();
+                        dear_imgui_rs::sys::igFindHoveredWindowEx(
+                            event.position.into(),
+                            true,
+                            &mut hovered,
+                            std::ptr::null_mut(),
+                        );
+                        !hovered.is_null()
+                            && (*hovered).RootWindow
+                                == (*dear_imgui_rs::sys::igGetCurrentWindowRead()).RootWindow
+                    });
+                self.pinch_anchor = (!blocked && owns_pointer)
+                    .then(|| [0, 1].map(|axis| event.position[axis] - origin[axis]));
+            }
+            let factor = (1.0 + event.delta) as f32;
+            if event.phase != PinchPhase::Cancelled
+                && factor.is_finite()
+                && factor > 0.0
+                && let Some(anchor) = self.pinch_anchor
+            {
+                self.zoom = (scale * factor).clamp(0.01, 32.0);
+                self.pan = zoom_pan(self.pan, anchor, canvas.size, scale, self.zoom);
+                *fit = false;
+                scale = self.zoom;
+            }
+            if matches!(event.phase, PinchPhase::Ended | PinchPhase::Cancelled) {
+                self.pinch_anchor = None;
             }
         }
         if canvas.active && ui.is_mouse_dragging(MouseButton::Left) {
@@ -494,6 +576,126 @@ mod tests {
         let mut bytes = Cursor::new(Vec::new());
         image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
         bytes.into_inner().into()
+    }
+
+    #[test]
+    fn wheel_and_captured_pinch_keep_the_image_point_under_the_anchor() {
+        use bedtime_api::workbench::{PinchEvent, PinchPhase};
+        use dear_imgui_rs::{Condition, Context, FramePrepareOptions};
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut host = bedtime_api::features::FrontendSnapshot::default();
+        host.documents.push(bedtime_api::documents::PluginDocument {
+            id: DocumentId(1),
+            path: "image.png".into(),
+            kind: DocumentKind::Bytes,
+            language_id: String::new(),
+            revision: (1, 1),
+            dirty: false,
+            bytes: png(100, 100),
+            text: None,
+        });
+        let mut panels = [
+            ImagePanel::new(DocumentId(1), &json!({"fit": true})),
+            ImagePanel::new(DocumentId(1), &json!({"fit": false})),
+        ];
+        for panel in &mut panels {
+            panel.decoded = Some(DecodedImage {
+                size: [100, 100],
+                rgba: vec![255; 40000].into(),
+            });
+        }
+        let draw = |context: &mut Context, panels: &mut [ImagePanel; 2], pinches: &[PinchEvent]| {
+            context.prepare_frame(FramePrepareOptions::new([800.0, 400.0], 1.0 / 60.0));
+            let ui = context.frame();
+            let mut origins = [[0.0; 2]; 2];
+            for index in 0..2 {
+                ui.window(format!("Image {index}"))
+                    .position([index as f32 * 400.0, 0.0], Condition::Always)
+                    .size([390.0, 390.0], Condition::Always)
+                    .build(|| {
+                        panels[index].draw_prepared_with_gestures(
+                            ui,
+                            &host.context(),
+                            &mut Vec::new(),
+                            None,
+                            pinches,
+                        );
+                        origins[index] = ui.item_rect_min();
+                    });
+            }
+            drop(context.render_legacy());
+            origins
+        };
+        let mut origins = [[0.0; 2]; 2];
+        for _ in 0..3 {
+            origins = draw(&mut context, &mut panels, &[]);
+        }
+        let anchor = [80.0, 90.0];
+        let point = [0, 1].map(|axis| origins[0][axis] + anchor[axis]);
+        let image_point = |panel: &ImagePanel| {
+            let canvas = panel.canvas.unwrap();
+            [0, 1].map(|axis| {
+                (anchor[axis] - canvas.size[axis] * 0.5 - panel.pan[axis]) / canvas.scale
+            })
+        };
+        let before = image_point(&panels[0]);
+        context.io_mut().add_mouse_pos_event(point);
+        draw(&mut context, &mut panels, &[]);
+        context.io_mut().add_mouse_wheel_event([0.0, 1.0]);
+        draw(&mut context, &mut panels, &[]);
+        assert_eq!(panels[0].fit, Some(false));
+        let after = image_point(&panels[0]);
+        for axis in 0..2 {
+            assert!((after[axis] - before[axis]).abs() < 0.0001);
+        }
+        let start = panels[0].zoom;
+        draw(
+            &mut context,
+            &mut panels,
+            &[PinchEvent {
+                position: point,
+                delta: 0.25,
+                phase: PinchPhase::Started,
+            }],
+        );
+        let other = [0, 1].map(|axis| origins[1][axis] + anchor[axis]);
+        context.io_mut().add_mouse_pos_event(other);
+        draw(
+            &mut context,
+            &mut panels,
+            &[
+                PinchEvent {
+                    position: other,
+                    delta: 0.2,
+                    phase: PinchPhase::Moved,
+                },
+                PinchEvent {
+                    position: other,
+                    delta: 0.0,
+                    phase: PinchPhase::Ended,
+                },
+                PinchEvent {
+                    position: other,
+                    delta: 1.0,
+                    phase: PinchPhase::Moved,
+                },
+            ],
+        );
+        assert!((panels[0].zoom - start * 1.5).abs() < 0.0001);
+        assert_eq!(panels[1].zoom, 1.0, "pinch retains its starting canvas");
+        let after = image_point(&panels[0]);
+        for axis in 0..2 {
+            assert!((after[axis] - before[axis]).abs() < 0.0001);
+        }
     }
 
     #[test]

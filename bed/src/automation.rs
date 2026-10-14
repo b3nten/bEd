@@ -1,5 +1,5 @@
 //! bEd automation submits its own captured application transactions.
-use crate::application::testing::{
+use crate::application::requests::{
     AppAction, AppRequestId, AppRequestOutcome, capture_app_request_from, poll_app_request_result,
     submit_app_request,
 };
@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use std::io;
 
 pub(crate) fn configure(app: &mut App) {
+    register_operations(app.world_mut());
     app.configure_sets(
         PreUpdate,
         bedtime_plugin_automation::AutomationSystems::Ingress
@@ -28,6 +29,197 @@ pub(crate) fn submit(world: &mut World, action: AppAction, source: Option<Entity
 pub(crate) fn poll(world: &mut World, id: AppRequestId) -> Option<io::Result<AppRequestOutcome>> {
     poll_app_request_result(world, id)
         .map(|result| result.map_err(|error| io::Error::new(error.kind, error.message)))
+}
+
+fn register_operations(world: &mut World) {
+    use bedtime_plugin_automation::{ExtensionDefinition, register_extension};
+    use serde_json::json;
+    for (name, description, submit, arguments) in [
+        (
+            "bed.open_file",
+            "Open a file using bEd placement and viewer policy",
+            open_file
+                as fn(
+                    &mut World,
+                    serde_json::Value,
+                ) -> Result<
+                    bedtime_plugin_automation::ExtensionStart,
+                    bedtime_plugin_automation::AutomationError,
+                >,
+            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"},"viewer":{"type":["string","null"]},"additional":{"type":"boolean"},"move_existing":{"type":"boolean"},"source":{"type":["string","null"]}}}),
+        ),
+        (
+            "bed.layout.select",
+            "Select a numbered or Startup layout",
+            select_layout,
+            json!({"type":"object","required":["layout"],"properties":{"layout":{"enum":[1,2,3,4,5,6,7,8,9,"startup"]}}}),
+        ),
+        (
+            "bed.layout.reset",
+            "Reset the current layout",
+            reset_layout,
+            json!({"type":"object"}),
+        ),
+        (
+            "bed.workspace.open",
+            "Open or restore a local workspace",
+            open_workspace,
+            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}),
+        ),
+        (
+            "bed.workspace.save",
+            "Save the current workspace",
+            save_workspace,
+            json!({"type":"object","properties":{"name":{"type":["string","null"]}}}),
+        ),
+        (
+            "bed.state",
+            "Observe bEd layout and workspace state",
+            state,
+            json!({"type":"object"}),
+        ),
+    ] {
+        register_extension(
+            world,
+            ExtensionDefinition {
+                name,
+                description,
+                arguments,
+                result: json!({"type":"object"}),
+                submit,
+            },
+        )
+        .expect("bEd automation extensions register once");
+    }
+}
+fn tracked(
+    world: &mut World,
+    action: AppAction,
+    source: Option<Entity>,
+) -> Result<bedtime_plugin_automation::ExtensionStart, bedtime_plugin_automation::AutomationError> {
+    let id = submit(world, action, source);
+    Ok(bedtime_plugin_automation::ExtensionStart::pending(
+        move |world| {
+            poll(world, id).map(|result| {
+            use bedtime_plugin_automation::{wire, panel_handle, document_handle, AutomationError, ErrorKind};
+            use serde_json::json;
+            let outcome = result.map_err(|error| AutomationError::new(ErrorKind::Failed, error.to_string()))?;
+            Ok(match outcome {
+                AppRequestOutcome::Opened { panel, document } => {
+                    let handle = panel_handle(world, panel)?;
+                    json!({"outcome":"opened","panel":wire::panel_value(handle),"document":document.map(|id| wire::document_value(document_handle(world,id)))})
+                }
+                AppRequestOutcome::Saved { documents } => {
+                    let saved = documents.into_iter().map(|saved| json!({"document":wire::document_value(document_handle(world,saved.document)),"revision":saved.revision})).collect::<Vec<_>>();
+                    json!({"outcome":"saved","documents":saved})
+                }
+                AppRequestOutcome::Closed { panels } => json!({"outcome":"closed","count":panels.len()}),
+                AppRequestOutcome::Applied => json!({"outcome":"applied"}),
+                AppRequestOutcome::Ignored => json!({"outcome":"ignored"}),
+            })
+        })
+        },
+    ))
+}
+
+fn open_file(
+    world: &mut World,
+    args: serde_json::Value,
+) -> Result<bedtime_plugin_automation::ExtensionStart, bedtime_plugin_automation::AutomationError> {
+    use bedtime_plugin_automation::{resolve_panel, wire};
+    let path = wire::string(&args, "path")?.into();
+    let viewer = args
+        .get("viewer")
+        .filter(|v| !v.is_null())
+        .map(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| wire::invalid("viewer must be a string"))
+        })
+        .transpose()?;
+    let flag = |key| {
+        args.get(key)
+            .map(|v| v.as_bool().ok_or_else(|| wire::invalid("expected boolean")))
+            .transpose()
+            .map(|v| v.unwrap_or(false))
+    };
+    let source = args
+        .get("source")
+        .filter(|v| !v.is_null())
+        .map(|v| wire::panel(v).and_then(|p| resolve_panel(world, p)))
+        .transpose()?;
+    tracked(
+        world,
+        AppAction::OpenFileWithViewer {
+            path,
+            viewer,
+            additional: flag("additional")?,
+            move_existing: flag("move_existing")?,
+        },
+        source,
+    )
+}
+fn select_layout(
+    world: &mut World,
+    args: serde_json::Value,
+) -> Result<bedtime_plugin_automation::ExtensionStart, bedtime_plugin_automation::AutomationError> {
+    let slot = crate::config::LayoutSlot::from_value(&args["layout"]).ok_or_else(|| {
+        bedtime_plugin_automation::wire::invalid("layout must be 1..9 or startup")
+    })?;
+    tracked(
+        world,
+        AppAction::Command(crate::application::requests::WindowCommand::UseLayout(slot)),
+        None,
+    )
+}
+fn reset_layout(
+    world: &mut World,
+    _: serde_json::Value,
+) -> Result<bedtime_plugin_automation::ExtensionStart, bedtime_plugin_automation::AutomationError> {
+    tracked(
+        world,
+        AppAction::Command(crate::application::requests::WindowCommand::ResetLayout),
+        None,
+    )
+}
+fn open_workspace(
+    world: &mut World,
+    args: serde_json::Value,
+) -> Result<bedtime_plugin_automation::ExtensionStart, bedtime_plugin_automation::AutomationError> {
+    let path = bedtime_plugin_automation::wire::string(&args, "path")?.into();
+    tracked(
+        world,
+        AppAction::Workspace(bedtime_plugin_workspaces::WorkspaceAction::OpenLocalWorkspace(path)),
+        None,
+    )
+}
+fn save_workspace(
+    world: &mut World,
+    args: serde_json::Value,
+) -> Result<bedtime_plugin_automation::ExtensionStart, bedtime_plugin_automation::AutomationError> {
+    let name = args
+        .get("name")
+        .filter(|v| !v.is_null())
+        .map(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| bedtime_plugin_automation::wire::invalid("name must be a string"))
+        })
+        .transpose()?;
+    tracked(
+        world,
+        AppAction::Workspace(bedtime_plugin_workspaces::WorkspaceAction::SaveCurrent { name }),
+        None,
+    )
+}
+fn state(
+    world: &mut World,
+    _: serde_json::Value,
+) -> Result<bedtime_plugin_automation::ExtensionStart, bedtime_plugin_automation::AutomationError> {
+    use serde_json::json;
+    Ok(bedtime_plugin_automation::ExtensionStart::Complete(
+        json!({"layout":world.resource::<crate::application::LayoutSlots>().active().key(),"workspace":world.resource::<bedtime_plugin_workspaces::WorkspaceAttachment>().saved().map(|workspace| workspace.to_value()),"error":world.resource::<crate::application::ApplicationState>().error}),
+    ))
 }
 
 #[cfg(test)]
@@ -282,7 +474,7 @@ mod tests {
                 bedtime_plugin_workspaces::WorkspaceSnapshot {
                     history: None,
                     layouts: Value::Null,
-                    plugins: serde_json::json!({}),
+                    plugins: serde_json::json!({"type":"object"}),
                 },
             )
             .unwrap();

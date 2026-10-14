@@ -50,6 +50,7 @@ pub fn install_settings(world: &mut World) {
                 )
                 .validated_by(bedtime_api::settings::validate_keybindings),
                 SettingDefinition::new("tab_bar_add_button", "Show add panel button", false),
+                SettingDefinition::new("tab_icons", "Show tab icons", true),
             ],
         ),
         (

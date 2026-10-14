@@ -31,6 +31,13 @@ pub fn classify_bytes(bytes: &[u8]) -> bedtime_editing::document_state::Document
     }
 }
 
+/// Routing needs only the same bounded header probe as `classify_bytes`.
+pub fn classify_file(path: &Path) -> io::Result<bedtime_editing::document_state::DocumentKind> {
+    let mut prefix = Vec::with_capacity(1024);
+    fs::File::open(path)?.take(1024).read_to_end(&mut prefix)?;
+    Ok(classify_bytes(&prefix))
+}
+
 /// Explicit text reads and byte-aware content search retain the existing
 /// permissive probe; automatic presentation selection uses `classify_bytes`.
 pub fn validate_text_bytes(bytes: &[u8]) -> io::Result<()> {

@@ -25,7 +25,6 @@ fn main() -> io::Result<()> {
         app.add_plugins((
             bedtime_plugin_git::GitPlugin,
             bedtime_plugin_editor::EditorPlugin,
-            bedtime_plugin_automation::AutomationPlugin,
         ))
         .insert_resource(Smoke {
             verified: Arc::clone(&verified),

@@ -290,7 +290,11 @@ impl SceneGpu {
             .spawn((
                 Camera3d::default(),
                 bevy::pbr::ScreenSpaceTransmission::default(),
-                Camera::default(),
+                Camera {
+                    is_active: false,
+                    clear_color: Color::NONE.into(),
+                    ..default()
+                },
                 AmbientLight {
                     brightness: 0.0,
                     ..default()

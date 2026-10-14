@@ -34,7 +34,6 @@ fn main() -> io::Result<()> {
             bedtime_plugin_terminal::TerminalPlugin,
             bedtime_plugin_csv_table::CsvTablePlugin,
             bedtime_plugin_image_viewer::ImageViewerPlugin,
-            bedtime_plugin_automation::AutomationPlugin,
         ))
         .insert_resource(Smoke {
             verified: Arc::clone(&verified),
@@ -201,34 +200,21 @@ fn terminal(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
             }
         }
         3 => {
-            if (smoke.operation.is_some() || terminal_fixture_ready(world)?)
-                && let Some(OperationValue::Opened(panel)) = smoke.operation(
-                    world,
-                    Operation::OpenPanel {
-                        panel_type: "bedtime.terminal.panel".into(),
-                        state: json!({"cwd":smoke.fixture.as_ref().unwrap().0}),
-                        area: None,
-                    },
-                )?
-            {
-                smoke.panel = Some(panel);
+            if terminal_fixture_ready(world)? {
                 smoke.next(world);
             }
         }
         4 => {
-            // Shared splitting moves a tab. Opening the shell explicitly keeps
-            // this reusable fixture independent of bEd's duplicate-panel policy.
-            if smoke
-                .operation(
-                    world,
-                    Operation::SplitPanel {
-                        panel: smoke.panel.unwrap(),
-                        axis: 0,
-                        high: true,
-                    },
-                )?
-                .is_some()
-            {
+            // The shared host split policy opens and focuses a new independent shell.
+            if let Some(OperationValue::Opened(panel)) = smoke.operation(
+                world,
+                Operation::SplitPanel {
+                    panel: smoke.panel.unwrap(),
+                    axis: 0,
+                    high: true,
+                },
+            )? {
+                smoke.panel = Some(panel);
                 smoke.next(world);
             }
         }
@@ -247,32 +233,20 @@ fn terminal(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
             }
         }
         6 => {
-            if (smoke.operation.is_some() || terminal_fixture_ready(world)?)
-                && let Some(OperationValue::Opened(panel)) = smoke.operation(
-                    world,
-                    Operation::OpenPanel {
-                        panel_type: "bedtime.terminal.panel".into(),
-                        state: json!({"cwd":smoke.fixture.as_ref().unwrap().0}),
-                        area: None,
-                    },
-                )?
-            {
-                smoke.panel = Some(panel);
+            if terminal_fixture_ready(world)? {
                 smoke.next(world);
             }
         }
         7 => {
-            if smoke
-                .operation(
-                    world,
-                    Operation::SplitPanel {
-                        panel: smoke.panel.unwrap(),
-                        axis: 1,
-                        high: true,
-                    },
-                )?
-                .is_some()
-            {
+            if let Some(OperationValue::Opened(panel)) = smoke.operation(
+                world,
+                Operation::SplitPanel {
+                    panel: smoke.panel.unwrap(),
+                    axis: 1,
+                    high: true,
+                },
+            )? {
+                smoke.panel = Some(panel);
                 smoke.next(world);
             }
         }

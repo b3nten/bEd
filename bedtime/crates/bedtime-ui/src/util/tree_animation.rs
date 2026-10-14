@@ -46,6 +46,7 @@ pub struct TreeAnimation<K> {
     rows: Vec<K>,
     desired: Vec<K>,
     transitions: HashMap<K, Transition>,
+    shifts: HashMap<K, Transition>,
     now: f64,
     last_frame: Option<usize>,
     animating: bool,
@@ -59,6 +60,7 @@ impl<K> Default for TreeAnimation<K> {
             rows: Vec::new(),
             desired: Vec::new(),
             transitions: HashMap::new(),
+            shifts: HashMap::new(),
             now: 0.0,
             last_frame: None,
             animating: false,
@@ -96,9 +98,53 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
             return;
         }
         if !unchanged {
+            *self.offsets.borrow_mut() = None;
+            // Expansion/collapse already moves siblings through row heights.
+            // A pure reorder needs a position transition for surviving rows.
+            if enabled
+                && !mounting
+                && self.rows.len() == desired.len()
+                && desired.iter().all(|key| self.transitions.contains_key(key))
+            {
+                let mut offset = 0.0;
+                let previous: HashMap<_, _> = self
+                    .rows
+                    .iter()
+                    .map(|key| {
+                        let shift = self
+                            .shifts
+                            .get(key)
+                            .map_or(0.0, |state| state.value(now, motion.tree_seconds));
+                        let position = offset + shift;
+                        offset += self.sample(key).height;
+                        (key.clone(), position)
+                    })
+                    .collect();
+                let mut offset = 0.0;
+                self.shifts = desired
+                    .iter()
+                    .filter_map(|key| {
+                        let from = previous[key] - offset;
+                        offset += self.sample(key).height;
+                        (from.abs() > 0.0001).then(|| {
+                            (
+                                key.clone(),
+                                Transition {
+                                    from,
+                                    to: 0.0,
+                                    began: now,
+                                },
+                            )
+                        })
+                    })
+                    .collect();
+            } else {
+                self.shifts.clear();
+            }
             self.desired = desired.to_vec();
         }
         if !enabled || (mounting && !animate_mount) {
+            self.shifts.clear();
             self.rows = desired.to_vec();
             self.transitions = desired
                 .iter()
@@ -118,6 +164,7 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
             return;
         }
         if mounting {
+            self.shifts.clear();
             self.rows.clear();
             self.transitions.clear();
         }
@@ -177,13 +224,16 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
     }
 
     fn advance(&mut self) {
+        self.shifts
+            .retain(|_, state| self.now < state.began + self.motion.tree_seconds);
         self.transitions.retain(|_, state| {
             state.to > 0.0 || state.value(self.now, self.motion.tree_seconds) > 0.0001
         });
         self.rows.retain(|key| self.transitions.contains_key(key));
-        self.animating = self.transitions.values().any(|state| {
-            state.from != state.to && self.now < state.began + self.motion.tree_seconds
-        });
+        self.animating = !self.shifts.is_empty()
+            || self.transitions.values().any(|state| {
+                state.from != state.to && self.now < state.began + self.motion.tree_seconds
+            });
     }
 
     pub fn rows(&self) -> &[K] {
@@ -213,6 +263,7 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
         let remaining: HashSet<_> = self.rows.iter().cloned().collect();
         self.desired.retain(|key| remaining.contains(key));
         self.transitions.retain(|key, _| remaining.contains(key));
+        self.shifts.retain(|key, _| remaining.contains(key));
     }
 
     pub fn layout(&self, ui: &Ui, row_height: f32) -> TreeLayout {
@@ -239,7 +290,17 @@ impl<K: Clone + Eq + Hash> TreeAnimation<K> {
         if !self.animating {
             *self.offsets.borrow_mut() = Some((row_height, Rc::clone(&offsets)));
         }
-        TreeLayout::new(ui, offsets)
+        let shifts = (!self.shifts.is_empty()).then(|| {
+            self.rows
+                .iter()
+                .map(|key| {
+                    self.shifts.get(key).map_or(0.0, |state| {
+                        state.value(self.now, self.motion.tree_seconds) * row_height
+                    })
+                })
+                .collect()
+        });
+        TreeLayout::new(ui, offsets, shifts)
     }
 }
 
@@ -249,12 +310,13 @@ pub struct TreeLayout {
     clip_min: [f32; 2],
     clip_max: [f32; 2],
     offsets: Rc<Vec<f32>>,
+    shifts: Option<Vec<f32>>,
     previous_max_y: f32,
     pub visible: Range<usize>,
 }
 
 impl TreeLayout {
-    fn new(ui: &Ui, offsets: Rc<Vec<f32>>) -> Self {
+    fn new(ui: &Ui, offsets: Rc<Vec<f32>>, shifts: Option<Vec<f32>>) -> Self {
         let origin = ui.cursor_pos();
         let screen = ui.cursor_screen_pos();
         let draw = ui.get_window_draw_list();
@@ -266,8 +328,13 @@ impl TreeLayout {
                 .CursorMaxPos
                 .y
         });
-        let top = clip_min[1] - screen[1];
-        let bottom = clip_max[1] - screen[1];
+        let displacement = shifts
+            .iter()
+            .flatten()
+            .map(|value| value.abs())
+            .fold(0.0, f32::max);
+        let top = clip_min[1] - screen[1] - displacement;
+        let bottom = clip_max[1] - screen[1] + displacement;
         let count = offsets.len() - 1;
         let first = offsets[1..].partition_point(|end| *end <= top).min(count);
         let last = offsets[..count]
@@ -279,13 +346,21 @@ impl TreeLayout {
             clip_min,
             clip_max,
             offsets,
+            shifts,
             previous_max_y,
             visible: first..last,
         }
     }
 
     pub fn position(&self, index: usize) -> [f32; 2] {
-        [self.origin[0], self.origin[1] + self.offsets[index]]
+        [
+            self.origin[0],
+            self.origin[1] + self.offsets[index] + self.shift(index),
+        ]
+    }
+
+    fn shift(&self, index: usize) -> f32 {
+        self.shifts.as_ref().map_or(0.0, |shifts| shifts[index])
     }
 
     pub fn height(&self, index: usize) -> f32 {
@@ -294,8 +369,14 @@ impl TreeLayout {
 
     pub fn row_clip<'ui>(&self, ui: &'ui Ui, index: usize) -> ClipRectToken<'ui> {
         ui.push_clip_rect(
-            [self.clip_min[0], self.screen[1] + self.offsets[index]],
-            [self.clip_max[0], self.screen[1] + self.offsets[index + 1]],
+            [
+                self.clip_min[0],
+                self.screen[1] + self.offsets[index] + self.shift(index),
+            ],
+            [
+                self.clip_max[0],
+                self.screen[1] + self.offsets[index + 1] + self.shift(index),
+            ],
             true,
         )
     }
@@ -319,6 +400,52 @@ impl TreeLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reordering_surviving_rows_interpolates_and_honors_disabled_motion() {
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = dear_imgui_rs::Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
+            [640.0, 480.0],
+            1.0 / 60.0,
+        ));
+        let ui = context.frame();
+        let origin = ui.cursor_pos()[1];
+        let mut animation = TreeAnimation::default();
+        let mut motion = UiMotion::default();
+        animation.update(&["a", "b"], 0.0, 1, &motion, false, false);
+        animation.update(&["b", "a"], 0.01, 2, &motion, false, false);
+        assert_eq!(animation.layout(ui, 20.0).position(0)[1] - origin, 20.0);
+        animation.update(
+            &["b", "a"],
+            0.01 + motion.tree_seconds * 0.5,
+            3,
+            &motion,
+            false,
+            false,
+        );
+        let y = animation.layout(ui, 20.0).position(0)[1] - origin;
+        assert!(y > 0.0 && y < 20.0);
+        motion.enabled = false;
+        animation.update(
+            &["b", "a"],
+            0.02 + motion.tree_seconds * 0.5,
+            4,
+            &motion,
+            false,
+            false,
+        );
+        assert_eq!(animation.layout(ui, 20.0).position(0)[1], origin);
+        drop(context.render_legacy());
+    }
 
     #[test]
     fn collapsing_height_moves_following_rows_continuously_and_reverses() {

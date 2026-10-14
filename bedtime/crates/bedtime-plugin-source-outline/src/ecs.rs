@@ -1,7 +1,6 @@
 //! Outline preparation belongs to the world; each surface owns its tree widgets.
 use crate::{OPEN_COMMAND, PANEL_ID, PLUGIN_ID, presentation, register_metadata, sync_outline};
 use bedtime_api::documents::DocumentFrame;
-use bedtime_api::features::FrontendSnapshot;
 use bedtime_api::features::{FeatureRegistry, FeatureSystems, HostAction, HostEffects};
 use bedtime_api::workbench::{
     CommandInvocation, CommandResult, Panel, PanelCreation, PanelResult, WorkbenchAction,
@@ -76,16 +75,11 @@ fn prepare(
     mut intents: ResMut<HostEffects>,
     mut commands: Commands,
 ) {
-    let frame = FrontendSnapshot {
-        documents: frame.documents.clone(),
-        active_document: frame.active_document,
-        active_view: frame.active_view,
-        session_id: frame.session_id,
-        diagnostics: frame.diagnostics.clone(),
-        ..Default::default()
-    };
-
-    sync_outline(&mut outline.0, &frame.context(), !live.is_empty());
+    let active = frame
+        .documents
+        .iter()
+        .find(|document| Some(document.id) == frame.active_document);
+    sync_outline(&mut outline.0, active, !live.is_empty());
     if outline.0.as_ref().is_some_and(OutlineService::updating) {
         intents.push(None, HostAction::Invalidate);
     }
@@ -121,16 +115,22 @@ impl Panel for StructureFrontend {
         _: &mut Vec<WorkbenchAction>,
         _shortcuts: &bedtime_api::workbench::ShortcutInput,
     ) {
-        let frame = FrontendSnapshot::capture(world);
-        let host = frame.context();
+        let animations = bedtime_ui::UiFrameContext::for_ui(ui)
+            .theme()
+            .motion
+            .enabled;
         let request = {
-            let mut outline = world.non_send_mut::<StructureOutline>();
-            sync_outline(&mut outline.0, &host, true);
+            let frame = world.resource::<DocumentFrame>();
+            let active = frame
+                .documents
+                .iter()
+                .find(|document| Some(document.id) == frame.active_document);
+            let outline = world.non_send::<StructureOutline>();
             outline
                 .0
                 .as_ref()
-                .and_then(|outline| self.tree.draw(ui, outline, host.animations))
-                .and_then(|jump| crate::navigation_request(jump, &host))
+                .and_then(|outline| self.tree.draw(ui, outline, animations))
+                .and_then(|jump| crate::navigation_for_document(jump, active))
         };
         if let Some(request) = request {
             world

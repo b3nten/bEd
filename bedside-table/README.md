@@ -34,7 +34,12 @@ cargo build --locked -p bedside-table
 python3 bedside-table/scripts/smoke.py
 ```
 
-The native smoke uses two seeded temporary databases, enters SQL in the actual
+The Python automation scenario uses two seeded temporary databases, enters SQL in the actual
 query widget, verifies shared undo/redo and Save, captures the GPU frame, then
 starts a fresh process to verify restoration. The headless tests additionally
 cover independent cancellation, write rejection, and dirty-query close choices.
+
+The scenario uses the shared local socket and `bedtime.py`, with a launch-only
+approval for the client named `smoke test`. `bedside.state` publishes structured
+connection, query and result observations. The normal application has no native
+smoke flags or scenario state machine.

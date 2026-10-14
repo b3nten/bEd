@@ -293,8 +293,21 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
         assert!(app.world().resource::<ApplicationState>().error.is_none());
     }
 
-    // File clicks target the largest area, including a second click after
-    // the first open has focused that new editor.
+    // File clicks prefer the largest text group over the larger Files area,
+    // including a second click after the first open has focused that editor.
+    let text_area = app
+        .world()
+        .resource::<WorkbenchLayout>()
+        .tiling
+        .layout
+        .areas
+        .iter()
+        .filter(|area| area.id == right || area.id == empty)
+        .max_by_key(|area| {
+            (area.rect.max[0] - area.rect.min[0]) * (area.rect.max[1] - area.rect.min[1])
+        })
+        .unwrap()
+        .id;
     for name in ["clicked.txt", "clicked-again.txt"] {
         let clicked = root.join(name);
         std::fs::write(&clicked, "clicked file\n").unwrap();
@@ -348,13 +361,7 @@ fn tree_files_drop_into_populated_and_empty_areas_and_move_existing_tabs() {
                 .resource::<WorkbenchLayout>()
                 .tiling
                 .area_for(app.world().get::<PanelPresentation>(panel).unwrap().id),
-            Some(
-                app.world()
-                    .resource::<WorkbenchLayout>()
-                    .tiling
-                    .layout
-                    .largest_area()
-            )
+            Some(text_area)
         );
     }
 

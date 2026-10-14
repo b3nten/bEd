@@ -116,12 +116,29 @@ integration executable. Crate-local unit tests remain runnable with `cargo test
 --locked -p CRATE --lib`; run `cargo bedtime-test MODULE` or `cargo bed-test --test
 integration MODULE` for integration coverage.
 
-Native smokes, ignored external-tool checks, independent bedside-table launches,
-and reusable-crate feature checks remain explicit CI or desktop validation.
-Compiling a smoke example as a Rust test harness does not execute its `main()`;
-use its documented `cargo run --example ...` command to run the scenario.
-Native smokes can focus windows and accept keyboard input, so run them in a
-deliberate desktop test session.
+External UI and action scenarios run through a user-approved local socket with
+standard-library Python clients:
+
+```sh
+cargo build --locked -p bed -p bedside-table
+cargo test-automation
+cargo test-native
+```
+
+[`bedtime.py` and `bed.py`](tools/automation/README.md) support attaching to a
+running application and launching isolated test instances. Automation is disabled
+by default; enable it in Settings → Automation or with `--allow-automation`.
+`--approve-automation="smoke test"` bypasses the dialog for that exact client
+name only, and requires `--allow-automation`. Test launches do not persist those
+overrides. Automatically approved test clients display no floating status window.
+
+`cargo test-native` builds fixtures and runs ignored Rust native integration
+checks sequentially. bEd's native scenarios live in a dedicated test-support
+binary rather than its normal CLI; reusable fixtures retain direct Rust access
+for native menus, window behavior, GPU recovery and lifecycle assertions.
+Ordinary `cargo test-full` compiles native harnesses but leaves their tests ignored.
+External-tool compatibility checks remain explicitly selected. Desktop tests can
+focus windows and inject input, so run them in a deliberate desktop session.
 
 Cargo caches feature combinations separately. Keep the same command, features,
 profile, and target directory for routine reruns. Switching between a package

@@ -84,3 +84,15 @@ bench = false
 name = "integration"
 path = "tests/integration/main.rs"
 required-features = ["test-support"]
+
+[[bin]]
+name = "bed-native-fixture"
+path = "tests/native/fixture.rs"
+required-features = ["test-support"]
+test = false
+bench = false
+
+[[test]]
+name = "native"
+path = "tests/native/main.rs"
+required-features = ["test-support"]

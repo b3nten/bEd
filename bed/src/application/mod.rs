@@ -3,6 +3,7 @@ mod command_registration;
 pub mod runtime;
 mod status_bar;
 pub(crate) use status_bar::publish_identity as publish_status_identity;
+pub(crate) mod requests;
 pub mod testing;
 pub mod workspace;
 pub use bedtime_api::workbench::{PanelGeometry, PanelPresentation};

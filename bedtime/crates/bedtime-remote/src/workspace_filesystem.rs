@@ -211,6 +211,11 @@ struct NativeState {
     degraded: Option<String>,
     generation: u64,
     stop: Arc<AtomicBool>,
+    // A rebuild yields between directories. The old identities stay intact
+    // until completion so rename inference never observes a partial walk.
+    scan: Option<VecDeque<PathBuf>>,
+    scan_files: BTreeMap<PathBuf, Stamp>,
+    scan_directories: BTreeMap<PathBuf, Stamp>,
 }
 
 impl NativeState {
@@ -307,11 +312,15 @@ impl NativeState {
 
     fn update(&mut self) -> WorkspaceUpdate {
         self.generation = self.generation.wrapping_add(1);
+        self.current_update()
+    }
+
+    fn current_update(&self) -> WorkspaceUpdate {
         WorkspaceUpdate {
             root: self.root.to_string_lossy().into_owned(),
             generation: self.generation,
             degraded: self.degraded.clone(),
-            ready: true,
+            ready: self.scan.is_none(),
             ..Default::default()
         }
     }
@@ -320,7 +329,12 @@ impl NativeState {
         WorkspaceUpdate {
             root: self.root.to_string_lossy().into_owned(),
             generation: self.generation,
-            directories: self.listings.values().cloned().collect(),
+            directories: self
+                .listings
+                .iter()
+                .filter(|(path, _)| self.requested.contains(*path))
+                .map(|(_, listing)| listing.clone())
+                .collect(),
             indexed_files: Some(
                 self.files
                     .keys()
@@ -328,7 +342,7 @@ impl NativeState {
                     .collect(),
             ),
             degraded: self.degraded.clone(),
-            ready: true,
+            ready: self.scan.is_none(),
             ..Default::default()
         }
     }
@@ -523,6 +537,15 @@ impl NativeState {
             };
             entries.push(DirectoryEntry {
                 path: entry.path().to_string_lossy().into_owned(),
+                canonical_path: self
+                    .requested
+                    .contains(path)
+                    .then(|| {
+                        fs::canonicalize(entry.path())
+                            .ok()
+                            .map(|path| path.to_string_lossy().into_owned())
+                    })
+                    .flatten(),
                 name,
                 is_directory: kind.is_dir() || (kind.is_symlink() && entry.path().is_dir()),
                 is_symlink: kind.is_symlink(),
@@ -593,9 +616,17 @@ impl NativeState {
             if metadata.is_dir() {
                 immediate_dirs.insert(child.clone());
                 let new = self.indexed_directories.insert(child.clone());
-                if (new || recursive)
-                    && let Err(error) = self.reconcile_directory(&child, recursive)
-                {
+                let result = if new || recursive {
+                    if let Some(scan) = &mut self.scan {
+                        scan.push_back(child.clone());
+                        Ok(())
+                    } else {
+                        self.reconcile_directory(&child, recursive)
+                    }
+                } else {
+                    Ok(())
+                };
+                if let Err(error) = result {
                     if error.kind() == io::ErrorKind::Interrupted {
                         return Err(error);
                     }
@@ -626,9 +657,7 @@ impl NativeState {
         for directory in removed {
             self.remove_subtree(&directory);
         }
-        if self.requested.contains(path) {
-            self.listings.insert(path.to_owned(), listing);
-        }
+        self.listings.insert(path.to_owned(), listing);
         Ok(())
     }
 
@@ -678,22 +707,84 @@ impl NativeState {
     }
 
     fn rebuild(&mut self) -> io::Result<WorkspaceUpdate> {
+        self.generation = self.generation.wrapping_add(1);
+        self.scan_files = self.files.clone();
+        self.scan_directories = self.directory_identities.clone();
+        self.scan = Some(VecDeque::from([self.root.clone()]));
+        self.refresh_repository();
+        self.scan_next()
+    }
+
+    fn scan_next(&mut self) -> io::Result<WorkspaceUpdate> {
         self.previous_files.clear();
         self.previous_directories.clear();
-        self.refresh_repository();
-        self.reconcile_directory(&self.root.clone(), true)?;
-        // Requested ignored directories remain visible independently of the index.
-        for directory in self.requested.clone() {
-            if let Ok(listing) = self.listing(&directory) {
-                self.listings.insert(directory, listing);
+        let directory = self
+            .scan
+            .as_mut()
+            .expect("rebuild in progress")
+            .pop_front()
+            .expect("pending directory");
+        // An earlier parent listing may have retired this queued subtree.
+        if directory == self.root || self.indexed_directories.contains(&directory) {
+            if let Err(error) = self.reconcile_directory(&directory, true) {
+                if error.kind() == io::ErrorKind::Interrupted {
+                    return Err(error);
+                }
+                self.degraded = Some(format!("Could not index {}: {error}", directory.display()));
+            }
+        } else if self.requested.contains(&directory)
+            && let Ok(listing) = self.listing(&directory)
+        {
+            self.listings.insert(directory.clone(), listing);
+        }
+        let (previous, current) = self.changed_files();
+        if !self.scan.as_ref().unwrap().is_empty() {
+            let mut update = self.current_update();
+            update.indexed_removed = previous
+                .keys()
+                .filter(|path| !current.contains_key(*path))
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            update.indexed_added = current
+                .keys()
+                .filter(|path| !previous.contains_key(*path))
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            update.directories = self
+                .requested
+                .contains(&directory)
+                .then(|| self.listings.get(&directory).cloned())
+                .flatten()
+                .into_iter()
+                .collect();
+            return Ok(update);
+        }
+        // Requested ignored directories are independent of the search index.
+        let ignored = self
+            .requested
+            .iter()
+            .filter(|path| !self.indexed_directories.contains(*path) && **path != directory)
+            .cloned()
+            .collect::<Vec<_>>();
+        for path in ignored {
+            if let Ok(listing) = self.listing(&path) {
+                self.listings.insert(path, listing);
             }
         }
-        let mut update = self.update();
-        let (previous, current) = self.changed_files();
+        self.scan = None;
+        self.previous_directories = self
+            .scan_directories
+            .keys()
+            .chain(self.directory_identities.keys())
+            .map(|path| (path.clone(), self.scan_directories.get(path).cloned()))
+            .collect();
+        let mut update = self.current_update();
+        let previous = std::mem::take(&mut self.scan_files);
+        let current = &self.files;
         update.changes = self.directory_renames();
         let roots = rename_sources(&update.changes);
         update.changes.extend(
-            diff_changes(&previous, &current)
+            diff_changes(&previous, current)
                 .into_iter()
                 .filter(|change| match change {
                     FilesystemChange::Removed { path } | FilesystemChange::Modified { path } => {
@@ -711,8 +802,14 @@ impl NativeState {
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect(),
         );
-        update.directories = self.listings.values().cloned().collect();
+        update.directories = self
+            .listings
+            .iter()
+            .filter(|(path, _)| self.requested.contains(*path))
+            .map(|(_, listing)| listing.clone())
+            .collect();
         update.dirty_directories = update.directories.iter().map(|d| d.path.clone()).collect();
+        self.scan_directories.clear();
         Ok(update)
     }
 
@@ -907,6 +1004,7 @@ impl NativeState {
             .collect();
         update.directories = dirty
             .iter()
+            .filter(|path| self.requested.contains(*path))
             .filter_map(|p| self.listings.get(p).cloned())
             .collect();
         // Rule changes can modify cached descendants even when only their parent fired.
@@ -914,9 +1012,10 @@ impl NativeState {
             self.listings
                 .values()
                 .filter(|listing| {
-                    ignore_roots
-                        .iter()
-                        .any(|root| Path::new(&listing.path).starts_with(root))
+                    self.requested.contains(Path::new(&listing.path))
+                        && ignore_roots
+                            .iter()
+                            .any(|root| Path::new(&listing.path).starts_with(root))
                         && !dirty.contains(Path::new(&listing.path))
                 })
                 .cloned(),
@@ -1155,6 +1254,9 @@ fn run_local_worker(
         degraded: None,
         generation: 0,
         stop: stop.clone(),
+        scan: None,
+        scan_files: BTreeMap::new(),
+        scan_directories: BTreeMap::new(),
     };
     #[cfg(not(target_os = "macos"))]
     if let Some(parent) = state.root.parent().map(Path::to_path_buf) {
@@ -1166,6 +1268,7 @@ fn run_local_worker(
     let initial = state.rebuild();
     let mut subscribers = Vec::new();
     let mut deferred = VecDeque::new();
+    let mut scan_events = VecDeque::new();
     let mut last_reconcile = Instant::now();
     if let Err(error) = initial {
         state.degraded = Some(error.to_string());
@@ -1196,17 +1299,22 @@ fn run_local_worker(
         })
     };
     while !stop.load(Ordering::Acquire) {
-        let command = match deferred
-            .pop_front()
-            .map(Ok)
-            .unwrap_or_else(|| requests.recv_timeout(Duration::from_millis(100)))
-        {
+        let mut command = match deferred.pop_front().map(Ok).unwrap_or_else(|| {
+            requests.recv_timeout(if state.scan.is_some() {
+                Duration::ZERO
+            } else {
+                Duration::from_millis(100)
+            })
+        }) {
             Ok(command) => Some(command),
             Err(mpsc::RecvTimeoutError::Timeout) => None,
             Err(_) => break,
         };
         if stop.load(Ordering::Acquire) {
             break;
+        }
+        if state.scan.is_some() && matches!(&command, Some(Command::Events(_))) {
+            scan_events.push_back(command.take().unwrap());
         }
         let update = match command {
             Some(Command::Stop) => break,
@@ -1243,7 +1351,22 @@ fn run_local_worker(
                     || !state.requested.insert(path.clone())
                 {
                     None
-                } else if let Ok(listing) = state.listing(&path) {
+                } else if let Ok(listing) = state
+                    .listings
+                    .get(&path)
+                    .cloned()
+                    .map(|mut listing| {
+                        // The index already classified this directory. Resolve only
+                        // its newly displayed identities, without repeating Git work.
+                        for entry in &mut listing.entries {
+                            entry.canonical_path = fs::canonicalize(&entry.path)
+                                .ok()
+                                .map(|path| path.to_string_lossy().into_owned());
+                        }
+                        Ok(listing)
+                    })
+                    .unwrap_or_else(|| state.listing(&path))
+                {
                     state.listings.insert(path, listing.clone());
                     let mut update = state.update();
                     update.directories.push(listing);
@@ -1306,6 +1429,24 @@ fn run_local_worker(
                 _ => {}
             }
         }
+        if state.scan.is_some() && !stop.load(Ordering::Acquire) {
+            match state.scan_next() {
+                Ok(update) => {
+                    if update.ready {
+                        last_reconcile = Instant::now();
+                    }
+                    publish(&mut subscribers, update);
+                }
+                Err(error) if error.kind() != io::ErrorKind::Interrupted => {
+                    state.degraded = Some(error.to_string());
+                    publish(&mut subscribers, state.update());
+                }
+                _ => {}
+            }
+        }
+        if state.scan.is_none() {
+            deferred.append(&mut scan_events);
+        }
     }
     // The actor owns its bootstrap task through teardown. The service handle
     // still waits at most 100 ms for this worker, so a blocked native startup
@@ -1333,7 +1474,7 @@ fn remote_worker(
     while !stop.load(Ordering::Acquire) {
         match requests.recv_timeout(Duration::from_millis(50)) {
             Ok(Command::Subscribe(subscriber)) => {
-                if latest.ready {
+                if latest.generation != 0 {
                     let mut snapshot = latest.clone();
                     snapshot.indexed_files = Some(indexed_files.iter().cloned().collect());
                     let _ = subscriber.send(snapshot);
@@ -1577,13 +1718,17 @@ mod tests {
                 WorkspaceFilesystem::local(self.0.to_string_lossy().into_owned(), false);
             self.own_worker(&filesystem);
             let updates = filesystem.subscribe();
-            let initial = wait(&updates, |update| update.indexed_files.is_some());
+            let initial = wait(&updates, |update| {
+                update.ready && update.indexed_files.is_some()
+            });
             // Native notification tests begin after the bootstrap rescan.
             // The earlier snapshot is intentionally available to consumers
             // before macOS finishes starting its stream.
             #[cfg(target_os = "macos")]
             let initial = if initial.generation < 2 {
-                wait(&updates, |update| update.generation >= 2)
+                wait(&updates, |update| {
+                    update.ready && update.generation >= 2 && update.indexed_files.is_some()
+                })
             } else {
                 initial
             };
@@ -1666,26 +1811,29 @@ mod tests {
             native_watcher(sender)
         });
         let updates = filesystem.subscribe();
-        let initial = updates
-            .recv_timeout(Duration::from_secs(2))
-            .expect("initial snapshot waited for native startup");
+        let initial = wait(&updates, |update| {
+            update.ready && update.indexed_files.is_some()
+        });
         assert!(initial.ready);
         assert_eq!(initial.indexed_files.as_ref().unwrap().len(), 2);
         assert!(initial.degraded.is_none());
         let nested = fixture.0.join("nested").to_string_lossy().into_owned();
         filesystem.request_directory(nested.clone());
-        let listing = updates
-            .recv_timeout(Duration::from_secs(2))
-            .expect("directory command waited for native startup");
+        let listing = wait(&updates, |update| {
+            update
+                .directories
+                .iter()
+                .any(|listing| listing.path == nested)
+        });
         assert!(listing.directories.iter().any(|listing| {
             listing.path == nested && listing.entries.iter().any(|entry| entry.name == "entry")
         }));
         fixture.write("during-startup", b"new");
         fixture.write("nested/during-startup", b"new");
         release.send(()).unwrap();
-        let reconciled = updates
-            .recv_timeout(Duration::from_secs(2))
-            .expect("native installation did not rescan");
+        let reconciled = wait(&updates, |update| {
+            update.ready && update.indexed_files.is_some()
+        });
         assert!(reconciled.degraded.is_none());
         assert!(
             reconciled
@@ -1737,14 +1885,66 @@ mod tests {
         let filesystem =
             fixture.with_watcher_startup(|_, _| Err("injected startup failure".into()));
         let updates = filesystem.subscribe();
-        let failed = wait(&updates, |update| update.degraded.is_some());
+        let failed = wait(&updates, |update| update.ready && update.degraded.is_some());
         assert_eq!(failed.degraded.as_deref(), Some("injected startup failure"));
         let nested = fixture.0.join("nested").to_string_lossy().into_owned();
         filesystem.request_directory(nested.clone());
-        let listing = updates.recv_timeout(Duration::from_secs(2)).unwrap();
+        let listing = wait(&updates, |update| {
+            update
+                .directories
+                .iter()
+                .any(|listing| listing.path == nested)
+        });
         assert!(listing.directories.iter().any(|listing| {
             listing.path == nested && listing.entries.iter().any(|entry| entry.name == "entry")
         }));
+    }
+
+    #[test]
+    fn root_and_expanded_directory_arrive_before_recursive_index_completion() {
+        let fixture = Fixture::new();
+        git2::Repository::init(&fixture.0).unwrap();
+        for index in 0..80 {
+            fixture.write(&format!("dir-{index:03}/entry.txt"), b"text");
+        }
+        let filesystem =
+            WorkspaceFilesystem::local(fixture.0.to_string_lossy().into_owned(), false);
+        fixture.own_worker(&filesystem);
+        let updates = filesystem.subscribe();
+        let root = wait(&updates, |update| !update.directories.is_empty());
+        assert!(
+            !root.ready,
+            "root listing must not wait for recursive indexing"
+        );
+        let directory = fixture.0.join("dir-079").to_string_lossy().into_owned();
+        filesystem.request_directory(directory.clone());
+        let expanded = wait(&updates, |update| {
+            update
+                .directories
+                .iter()
+                .any(|listing| listing.path == directory)
+        });
+        assert!(
+            !expanded.ready,
+            "expanded directories take priority over indexing"
+        );
+        let entry = expanded
+            .directories
+            .iter()
+            .find(|listing| listing.path == directory)
+            .unwrap()
+            .entries
+            .iter()
+            .find(|entry| entry.name == "entry.txt")
+            .unwrap();
+        assert_eq!(
+            entry.canonical_path.as_deref(),
+            Some(fixture.0.join("dir-079/entry.txt").to_str().unwrap())
+        );
+        let complete = wait(&updates, |update| {
+            update.ready && update.indexed_files.is_some()
+        });
+        assert_eq!(complete.indexed_files.unwrap().len(), 80);
     }
 
     #[test]

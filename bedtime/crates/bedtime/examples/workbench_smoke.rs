@@ -99,12 +99,11 @@ fn main() -> io::Result<()> {
             !app.get_added_plugins::<bevy::window::WindowPlugin>()[0].close_when_requested,
             "a custom desktop window must retain the shared document close owner"
         );
-        app.add_plugins(bedtime_plugin_automation::AutomationPlugin)
-            .insert_resource(Smoke {
-                verified: Arc::clone(&verified),
-                ..Default::default()
-            })
-            .init_resource::<Observations>();
+        app.insert_resource(Smoke {
+            verified: Arc::clone(&verified),
+            ..Default::default()
+        })
+        .init_resource::<Observations>();
         register(app.world_mut(), "example.status", |registration| {
             registration.panel("example.status.panel", "Content", create);
             registration.command("example.status.increment", "Increment", increment);

@@ -1,7 +1,9 @@
 //! Bedside Table's SQL application policy, composed on the standard workbench.
+mod automation;
 mod panels;
-pub mod smoke;
 pub mod storage;
+#[cfg(test)]
+mod test_fixtures;
 
 use bedtime::api::workbench::{
     CommandInvocation, CommandResult, PanelAction, PanelActionInvocation, PanelActionResult,
@@ -863,6 +865,7 @@ pub fn configure(app: &mut App, databases: Vec<PathBuf>) -> io::Result<()> {
         metadata.add_connection(database)?;
     }
     app.add_plugins(BedsidePlugin { metadata });
+    automation::register(app.world_mut());
     Ok(())
 }
 

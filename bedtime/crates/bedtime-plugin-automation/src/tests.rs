@@ -17,7 +17,7 @@ impl Panel for TestPanel {
     }
 }
 
-fn app() -> App {
+pub(super) fn app() -> App {
     let mut app = App::new();
     app.add_plugins(bedtime_workbench::WorkbenchPlugin)
         .add_plugins(AutomationPlugin);
@@ -382,4 +382,85 @@ fn readiness_uses_the_registered_frontend_without_application_policy() {
         panic!("Snapshot")
     };
     assert_eq!(snapshot.panels[0].readiness, Readiness::Pending);
+}
+
+#[test]
+fn extensions_follow_owner_receipts_and_preserve_capture_dependencies_after_take() {
+    let mut app = app();
+    register_extension(
+        app.world_mut(),
+        ExtensionDefinition {
+            name: "fixture.open",
+            description: "Open a fixture panel",
+            arguments: serde_json::json!({"type":"object"}),
+            result: serde_json::json!({"type":"object"}),
+            submit: |world, _| {
+                let id =
+                    world
+                        .resource_mut::<WorkbenchRequests>()
+                        .submit(WorkbenchAction::OpenPanel {
+                            panel_type: "fixture.panel".into(),
+                            state: Value::Null,
+                            area: None,
+                        });
+                Ok(ExtensionStart::pending(move |world| {
+                    world
+                        .resource_mut::<WorkbenchRequests>()
+                        .take_result(id)
+                        .map(|result| {
+                            result
+                                .map(|_| serde_json::json!({"opened":true}))
+                                .map_err(|error| AutomationError::new(ErrorKind::Failed, error))
+                        })
+                }))
+            },
+        },
+    )
+    .unwrap();
+    let id = submit(
+        &mut app,
+        Operation::Extension {
+            name: "fixture.open".into(),
+            arguments: Value::Null,
+        },
+    );
+    assert_eq!(
+        app.world().resource::<AutomationResults>().status(id),
+        Some(OperationStatus::Pending)
+    );
+    app.update();
+    assert!(
+        matches!(result(&mut app,id),Ok(OperationValue::Json(value)) if value["opened"] == true)
+    );
+    assert!(
+        app.world()
+            .resource::<AutomationResults>()
+            .completion_frame(id)
+            .is_some()
+    );
+    let capture = submit(
+        &mut app,
+        Operation::Capture {
+            targets: vec![CaptureTarget::Window],
+            after: Some(id),
+            timeout: Duration::from_secs(1),
+        },
+    );
+    app.update();
+    assert!(
+        matches!(
+            result(&mut app, capture),
+            Err(AutomationError {
+                kind: ErrorKind::Unavailable,
+                ..
+            })
+        ),
+        "the consumed extension receipt is known; only the absent desktop prevents capture"
+    );
+    assert!(
+        app.world_mut()
+            .resource_mut::<AutomationResults>()
+            .release(id)
+    );
+    assert_eq!(app.world().resource::<AutomationResults>().status(id), None);
 }

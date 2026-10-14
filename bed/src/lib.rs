@@ -8,9 +8,10 @@ pub(crate) mod automation;
 pub mod builtins;
 pub mod config;
 pub mod native_commands;
+#[cfg(feature = "test-support")]
+mod native_fixture;
 mod remote_helpers;
 pub mod settings_view;
-mod smoke;
 mod startup;
 #[cfg(all(test, unix))]
 mod terminal_tests;

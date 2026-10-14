@@ -520,9 +520,6 @@ impl ExplorerState {
                 state
                     .file_tree
                     .apply_directory(&directory.path, directory.entries);
-                if !target.services.is_remote() {
-                    state.file_tree.resolve_directory_git_paths(&directory.path);
-                }
                 if let Some(warning) = directory.warning {
                     state.file_tree.error = Some(warning);
                 }

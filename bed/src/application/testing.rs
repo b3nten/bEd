@@ -1,6 +1,6 @@
 //! bEd regression fixtures and app-specific automation adapters.
-#[path = "../../tests/support/application_requests.rs"]
-mod requests;
+
+pub use super::requests::*;
 #[cfg(test)]
 use super::runtime::layouts;
 #[cfg(test)]
@@ -28,7 +28,6 @@ use bedtime_plugin_workspaces::WorkspaceAction;
 use bedtime_workbench::{PanelPresentation, PanelRecord, WorkbenchLayout, WorkbenchRequests};
 #[cfg(test)]
 use bevy::prelude::*;
-pub use requests::*;
 #[cfg(test)]
 use serde_json::{Value, json};
 #[cfg(test)]

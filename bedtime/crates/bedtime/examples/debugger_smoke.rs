@@ -30,7 +30,6 @@ fn main() -> io::Result<()> {
             bedtime_plugin_terminal::TerminalPlugin,
             bedtime_plugin_debugger::DebuggerPlugin,
             bedtime_plugin_editor::EditorPlugin,
-            bedtime_plugin_automation::AutomationPlugin,
         ))
         .insert_resource(Smoke {
             verified: Arc::clone(&verified),

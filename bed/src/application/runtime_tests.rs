@@ -716,7 +716,7 @@ fn target_fixture(app: &mut App) -> (Entity, Entity, Entity, u32, u32) {
 }
 
 #[test]
-fn default_opening_uses_geometry_while_explicit_areas_override_it() {
+fn default_text_opening_prefers_text_groups_while_explicit_areas_override_it() {
     for explicit in [false, true] {
         let dir = TempDir::new();
         let mut app = app(&dir);
@@ -735,14 +735,14 @@ fn default_opening_uses_geometry_while_explicit_areas_override_it() {
                 viewer: None,
             },
         );
-        // Intent capture uses the default destination, even when its source is
-        // the focused sidebar. A drop's explicit area takes precedence.
+        // Equal-size text groups may choose the later group. An explicit area
+        // takes precedence even when that area has no text documents.
         if explicit {
             let intents = app.world_mut().resource_mut::<HostEffects>().take();
             for intent in intents {
                 app.world_mut().resource_mut::<HostEffects>().push_at(
                     intent.source,
-                    last_area,
+                    largest,
                     intent.action,
                 );
             }
@@ -758,7 +758,7 @@ fn default_opening_uses_geometry_while_explicit_areas_override_it() {
                 .resource::<WorkbenchLayout>()
                 .tiling
                 .area_for(id),
-            Some(if explicit { last_area } else { largest })
+            Some(if explicit { largest } else { last_area })
         );
     }
 }

@@ -1,6 +1,9 @@
 //! An owned entrypoint for Bedtime desktop applications.
 //! Early process handlers run before configuration and Bevy construction.
 pub use bedtime_api as api;
+pub use bedtime_plugin_automation as automation;
+#[path = "automation.rs"]
+mod host_automation;
 pub use bedtime_api::launch::{
     ApplicationIdentity, ApplicationPaths, LaunchRegistration, ProcessEntrypoint, ProcessSelector,
 };
@@ -39,6 +42,7 @@ pub enum LaunchOutcome {
 pub struct DesktopLaunch {
     identity: ApplicationIdentity,
     arguments: Vec<OsString>,
+    automation: automation::transport::LaunchOptions,
 }
 
 /// Configuration for the desktop path, supplied after early process dispatch.
@@ -140,7 +144,7 @@ impl LaunchBuilder {
                         return Ok(LaunchOutcome::Desktop(Box::new(DesktopLaunch::new(
                             self.identity,
                             arguments,
-                        ))));
+                        )?)));
                     }
                 }
             }
@@ -148,7 +152,7 @@ impl LaunchBuilder {
         Ok(LaunchOutcome::Desktop(Box::new(DesktopLaunch::new(
             self.identity,
             arguments,
-        ))))
+        )?)))
     }
 
     pub fn run(
@@ -166,11 +170,13 @@ impl LaunchBuilder {
 }
 
 impl DesktopLaunch {
-    fn new(identity: ApplicationIdentity, arguments: Vec<OsString>) -> Self {
-        Self {
+    fn new(identity: ApplicationIdentity, mut arguments: Vec<OsString>) -> io::Result<Self> {
+        let automation = automation::transport::LaunchOptions::extract(&mut arguments)?;
+        Ok(Self {
             identity,
             arguments,
-        }
+            automation,
+        })
     }
 
     pub fn arguments(&self) -> &[OsString] {
@@ -193,6 +199,7 @@ impl DesktopLaunch {
         )?;
         let settings_path = paths.config_dir.join("settings.json");
         let mut app = App::new();
+        let application_id = self.identity.id.clone();
         app.insert_resource(paths)
             .insert_resource(ApplicationInfo(self.identity));
         let mut icons = bedtime_ui::icons::Icons::default();
@@ -221,6 +228,13 @@ impl DesktopLaunch {
             )?;
             app.insert_resource(bedtime_desktop::DesktopTheme(theme));
         }
+        app.add_plugins(automation::AutomationPlugin).add_plugins(
+            automation::transport::TransportPlugin {
+                options: self.automation,
+                application: application_id,
+            },
+        );
+        host_automation::register(app.world_mut());
         configure(&mut app)?;
         bedtime_core::settings::finalize_settings(app.world_mut())?;
         Ok(app)

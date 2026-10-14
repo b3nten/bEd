@@ -148,6 +148,7 @@ pub struct GltfPanel {
     settings: render::Settings,
     settle_frames: u8,
     failed_generation: Option<u64>,
+    presentation_generation: Option<u64>,
 }
 
 /// The rendering transition owns only GPU work, while documents and workers stay in World.
@@ -243,6 +244,7 @@ impl GltfPanel {
             settings: render::Settings::restore(state),
             settle_frames: render::SETTLE_FRAMES,
             failed_generation: None,
+            presentation_generation: None,
         }
     }
 
@@ -260,6 +262,7 @@ impl GltfPanel {
             self.gpu = None;
             self.error = None;
             self.failed_generation = None;
+            self.presentation_generation = None;
         }
         while let Ok(result) = self.loader.receiver.try_recv() {
             if result.revision != document.revision {
@@ -272,6 +275,7 @@ impl GltfPanel {
                     self.error = None;
                     self.gpu = None;
                     self.failed_generation = None;
+                    self.presentation_generation = None;
                     self.output_revision += 1;
                     self.settle_frames = render::SETTLE_FRAMES;
                 }
@@ -550,10 +554,28 @@ impl GltfPanel {
             ui.text_disabled("Loading model…");
             return;
         }
-        if self.scene.is_none() {
+        if self.fitted
+            && self.scene.is_some()
+            && let Some(gpu) = self.gpu.as_ref().filter(|gpu| gpu.ready())
+        {
+            self.presentation_generation = Some(gpu.generation);
+        }
+        // Keep a valid frame visible while other pipelines compile. A
+        // replacement device must produce a ready frame again.
+        let display_ready = self
+            .gpu
+            .as_ref()
+            .is_some_and(|gpu| self.presentation_generation == Some(gpu.generation));
+        if !display_ready {
             ui.text_disabled("Loading model…");
         }
-        let canvas = Canvas::show(ui, host.texture(self.texture), "gltf-canvas");
+        // Keep sizing/rendering the canvas during initialization, but expose
+        // its texture only after a fitted scene and completed shader frame.
+        let canvas = Canvas::show(
+            ui,
+            display_ready.then(|| host.texture(self.texture)).flatten(),
+            "gltf-canvas",
+        );
         if let Some(scene) = &self.scene
             && (!self.fitted || frame_all)
         {

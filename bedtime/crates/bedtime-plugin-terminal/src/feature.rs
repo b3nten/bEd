@@ -107,7 +107,7 @@ impl Plugin for TerminalPlugin {
             registrar.command(NEW_COMMAND, "New Terminal", open_panel);
             registrar.command("bedtime.terminal.show", "Show Terminal", show_panel);
             registrar.global_shortcut("bedtime.terminal.show", &["Ctrl+Grave"]);
-            registrar.global_shortcut(NEW_COMMAND, &["Ctrl+Shift+Grave"]);
+            registrar.global_shortcut(NEW_COMMAND, &["Primary+T", "Ctrl+Shift+Grave"]);
             registrar.panel_icon(PANEL_ID, "terminal");
             registrar.command_icon(NEW_COMMAND, "terminal");
             registrar.toolbar(NEW_COMMAND);

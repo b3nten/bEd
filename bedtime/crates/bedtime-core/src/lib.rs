@@ -205,6 +205,12 @@ pub fn route_native_commands(world: &mut World) {
     );
     for command in commands {
         world.write_message(NativeCommandDispatched(command.clone()));
+        // Native menu key equivalents never pass through panel interception.
+        // Give editing to its panel owner before replaying ordinary UI chords.
+        if let Some(action) = NativeEditAction::from_command(&command.command) {
+            route_native_edit(world, action);
+            continue;
+        }
         if command.keyboard
             && let Some(stroke) = menu_shortcut(world, &command.command)
         {
@@ -214,10 +220,6 @@ pub fn route_native_commands(world: &mut World) {
                     .context,
                 stroke,
             );
-            continue;
-        }
-        if let Some(action) = NativeEditAction::from_command(&command.command) {
-            route_native_edit(world, action);
             continue;
         }
         let id = if command.quit {

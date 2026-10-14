@@ -37,7 +37,7 @@ ALLOWED_INTERNAL = {
         "bedtime-plugin-layouts", "bedtime-desktop", "bedtime-workbench", "bedtime-api", "bedtime-documents",
         "bedtime-editing", "bedtime-ui", "bedtime-files", "bedtime-storage", "bedtime-lsp", "bedtime-keybindings", "bedtime-highlight", "bedtime-remote",
     },
-    "bedtime": {"bedtime-api", "bedtime-core", "bedtime-desktop", "bedtime-ui", "bedtime-test-fixtures"},
+    "bedtime": {"bedtime-api", "bedtime-core", "bedtime-desktop", "bedtime-ui", "bedtime-test-fixtures", "bedtime-plugin-automation"},
     "bedtime-desktop": {"bedtime-ui"},
     "bedtime-workbench": {"bedtime-api", "bedtime-ui", "bedtime-keybindings"},
     "bedtime-plugin-layouts": {"bedtime-workbench", "bedtime-api"},
@@ -89,7 +89,7 @@ ALLOWED_INTERNAL = {
     "bedtime-ui": {"bedtime-highlight"},
     "bedtime-editor-widgets": {"bedtime-editing", "bedtime-documents", "bedtime-highlight", "bedtime-ui", "bedtime-keybindings"},
     "bedtime-terminal": {"bedtime-editing", "bedtime-remote", "bedtime-ui"},
-    "bedtime-plugin-effects": {"bedtime-desktop", "bedtime-api"},
+    "bedtime-plugin-effects": {"bedtime-desktop", "bedtime-api", "bedtime-ui"},
     "bedtime-remote": {"bedtime-git", "bedtime-editing"},
     "bedtime-remote-agent": {"bedtime-remote", "bedtime-files"},
     "bedtime-test-fixtures": {
@@ -202,6 +202,8 @@ def check(offline=False):
             forbidden -= allowed
             if name in EXAMPLE_PLUGINS:
                 forbidden.discard("bedtime")
+                # The owned launcher now installs shared, opt-in external control.
+                forbidden.discard("bedtime-plugin-automation")
             if "bedtime-plugin-terminal" in allowed:
                 forbidden -= {"bedtime-terminal"}
         elif name in HEADLESS:

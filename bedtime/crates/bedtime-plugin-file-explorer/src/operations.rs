@@ -684,6 +684,15 @@ impl FileOperations {
                     error: None,
                 });
             }
+            FileTreeAction::RenameTo { path, name } => {
+                self.submit_name(
+                    &FileTreeAction::Rename(path),
+                    &name,
+                    session,
+                    root,
+                    requests,
+                )?;
+            }
             FileTreeAction::Trash(path) => self.delete_paths(vec![path], session, requests)?,
             FileTreeAction::TrashMany(paths) => self.delete_paths(paths, session, requests)?,
             FileTreeAction::Move { paths, destination } => self.project_job(
@@ -939,7 +948,7 @@ impl FileOperations {
             self.dialog = None;
         }
         if submit && let Some(dialog) = self.dialog.take() {
-            match self.submit_name(&dialog, session, root, requests) {
+            match self.submit_name(&dialog.action, &dialog.name, session, root, requests) {
                 Ok(()) => {}
                 Err(error) => {
                     self.dialog = Some(NameDialog {
@@ -1033,7 +1042,8 @@ impl FileOperations {
 
     fn submit_name(
         &mut self,
-        dialog: &NameDialog,
+        action: &FileTreeAction,
+        name: &str,
         session: &DocumentSession,
         root: &str,
         requests: &mut Vec<HostAction>,
@@ -1044,15 +1054,15 @@ impl FileOperations {
                 "Wait for the current file operation",
             ));
         }
-        bedtime_files::actions::validate_name(&dialog.name)?;
-        let (request, result, documents) = match &dialog.action {
+        bedtime_files::actions::validate_name(name)?;
+        let (request, result, documents) = match action {
             FileTreeAction::NewFile(directory) | FileTreeAction::NewFolder(directory) => {
                 let directory = validate_directory(&self.target, directory)?;
                 let path = Path::new(&directory)
-                    .join(&dialog.name)
+                    .join(name)
                     .to_string_lossy()
                     .into_owned();
-                let file = matches!(dialog.action, FileTreeAction::NewFile(_));
+                let file = matches!(action, FileTreeAction::NewFile(_));
                 let request = if file {
                     bedtime_remote::Request::CreateFile {
                         root: root.to_owned(),
@@ -1069,7 +1079,7 @@ impl FileOperations {
             FileTreeAction::Rename(from) => {
                 let from = validate_entry(&self.target, from)?;
                 let to = Path::new(&from)
-                    .with_file_name(&dialog.name)
+                    .with_file_name(name)
                     .to_string_lossy()
                     .into_owned();
                 let documents = self.affected_documents(session, &from)?;
@@ -1351,6 +1361,64 @@ mod tests {
                 _ => None,
             })
             .expect("move must wait for document preparation")
+    }
+
+    #[test]
+    fn inline_rename_waits_for_drafts_and_rebinds_the_open_document() {
+        let (temp, mut session, mut explorer, root, document) = fixture();
+        let mut operations = local_operations(&mut session, &root);
+        let mut requests = Vec::new();
+        operations
+            .action(
+                ExplorerAction::Tree(FileTreeAction::RenameTo {
+                    path: temp.path("source.txt").to_string_lossy().into_owned(),
+                    name: "renamed.txt".into(),
+                }),
+                &mut session,
+                &mut explorer,
+                &root,
+                None,
+                &mut requests,
+            )
+            .unwrap();
+        assert!(operations.dialog.is_none());
+        assert!(temp.path("source.txt").exists());
+        let token = requests
+            .iter()
+            .find_map(|request| match request {
+                HostAction::CommitDocumentsWithResult { token, .. } => Some(*token),
+                _ => None,
+            })
+            .expect("renaming an open document prepares its drafts");
+        operations.reply(
+            &DocumentReply::Save {
+                recipient: MODULE_ID.into(),
+                token,
+                result: Ok(vec![SavedDocument {
+                    document,
+                    revision: session.document_revision(document).unwrap(),
+                }]),
+            },
+            &mut session,
+            &explorer,
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while operations.busy() && Instant::now() < deadline {
+            operations.poll(&mut session, &mut explorer, None, &mut Vec::new());
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!operations.busy());
+        assert!(!temp.path("source.txt").exists());
+        assert_eq!(fs::read(temp.path("renamed.txt")).unwrap(), b"on disk");
+        assert_eq!(
+            session
+                .with_document(document, |state| state.path.clone())
+                .unwrap(),
+            temp.path("renamed.txt")
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+        );
     }
 
     #[test]

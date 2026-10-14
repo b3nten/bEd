@@ -28,6 +28,14 @@ pub(crate) fn configure(world: &mut World) {
             .resource_mut::<bedtime_workbench::WorkbenchAppearance>()
             .add_button = add_button;
     }
+    let tab_icons = world
+        .resource::<bedtime_api::settings::SettingsSnapshot>()
+        .get("bedtime.workbench", "tab_icons")
+        .and_then(serde_json::Value::as_bool)
+        .expect("published tab icon setting");
+    world
+        .resource_mut::<bedtime_workbench::WorkbenchAppearance>()
+        .tab_icons = tab_icons;
     let hidden = world
         .get_resource::<bedtime_api::features::FeatureRegistry>()
         .map(|registry| {

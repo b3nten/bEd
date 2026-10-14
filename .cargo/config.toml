@@ -3,3 +3,7 @@
 bed-test = "test --locked -p bed --features test-support"
 bedtime-test = "test --locked -p bedtime --features test-support --test integration"
 test-full = "test --workspace --locked --lib --tests --features bed/test-support,bedtime/test-support --exclude bedtime-test-fixtures --exclude bedtime-example-layouts --exclude bedtime-example-terminal --exclude bedtime-example-editor --exclude bedtime-example-model --exclude bedtime-example-game --exclude bedtime-example-game-editor --exclude bedtime-example-game-runtime"
+
+# Explicit desktop suites; ordinary test-full leaves native scenarios ignored.
+test-automation = "!python3 tools/automation/run_smokes.py"
+test-native = "!python3 scripts/test-native.py"

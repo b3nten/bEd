@@ -15,17 +15,18 @@ language-services = ["bedtime-core/language-services", "bedtime-api/language-ser
 
 [dependencies]
 bedtime-test-fixtures = { path = "../bedtime-test-fixtures", optional = true }
+bedtime-plugin-automation = { workspace = true, features = ["documents"] }
 bedtime-api = { workspace = true, features = ["documents"] }
 bedtime-core = { workspace = true }
 bedtime-desktop = { workspace = true }
 bedtime-ui = { workspace = true, features = ["imgui", "gpu"] }
 bevy = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
+base64 = { workspace = true }
 
 [dev-dependencies]
 bedtime-plugin-json-tree = { workspace = true }
 bedtime-workbench = { workspace = true }
-bedtime-plugin-automation = { workspace = true, features = ["documents"] }
 bedtime-plugin-editor = { workspace = true, features = ["language-services"] }
 bedtime-plugin-git = { workspace = true }
 bedtime-plugin-debugger = { workspace = true }
@@ -97,3 +98,8 @@ path = "../../tests/support/navigation_main.rs"
 required-features = ["test-support"]
 test = false
 bench = false
+
+[[test]]
+name = "native"
+path = "../../tests/native/main.rs"
+required-features = ["test-support"]

@@ -20,6 +20,10 @@ pub struct FileBaseline {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DirectoryEntry {
     pub path: String,
+    /// Resolved by the filesystem provider, never by the UI. The lexical path
+    /// remains the entry's identity, including symlink names.
+    #[serde(default)]
+    pub canonical_path: Option<String>,
     pub name: String,
     pub is_directory: bool,
     pub is_symlink: bool,
@@ -52,8 +56,8 @@ pub struct DirectoryListing {
     pub warning: Option<String>,
 }
 
-/// A monotonic filesystem generation; full snapshots occur only at startup or
-/// explicit/overflow recovery. Ordinary notifications contain index deltas.
+/// A monotonic filesystem generation; rebuilds stream deltas within a generation
+/// before publishing their complete snapshot. Ordinary notifications contain deltas.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct WorkspaceUpdate {
     pub root: String,

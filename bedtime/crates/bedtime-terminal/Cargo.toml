@@ -36,3 +36,7 @@ libc = { workspace = true }
 [[example]]
 name = "terminal_render_baseline"
 required-features = ["ui"]
+
+[[example]]
+name = "terminal_ui_latency"
+required-features = ["ui"]

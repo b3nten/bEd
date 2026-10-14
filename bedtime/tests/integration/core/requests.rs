@@ -91,7 +91,7 @@ fn target_fixture(app: &mut App) -> (Entity, Entity, Entity, u32, u32) {
 }
 
 #[test]
-fn explicit_open_file_targets_are_captured_before_later_focus_changes() {
+fn last_focused_and_explicit_file_areas_are_captured_before_later_focus_changes() {
     let _context_lock = crate::IMGUI_TEST_LOCK
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -100,7 +100,7 @@ fn explicit_open_file_targets_are_captured_before_later_focus_changes() {
         let mut app = app(&dir);
         let (first, last, _, largest, last_area) = target_fixture(&mut app);
         let path = dir.write("target.txt", b"target");
-        let request = capture_host_request(
+        let request = capture_host_request_area(
             app.world(),
             Some(last),
             HostAction::OpenFileIn {
@@ -108,6 +108,7 @@ fn explicit_open_file_targets_are_captured_before_later_focus_changes() {
                 viewer: None,
                 target,
             },
+            (target == PanelTarget::LargestArea).then_some(largest),
         );
         let expected = match target {
             PanelTarget::LastFocused => last_area,

@@ -1,5 +1,6 @@
 //! Translated from ned files/file_tree.{h,cpp}; see LICENSE and NOTICE.
 use bedtime_files::tree_ignore::TreeIgnore;
+use bedtime_ui::util::transition::Motion;
 use bedtime_ui::util::tree_animation::TreeAnimation;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -184,8 +185,34 @@ struct TreeHost {
     popup_selection: Vec<String>,
     drop_targets: Vec<FileTreeDropTarget>,
     hover_expand: Option<(String, f64)>,
+    highlights: HashMap<String, Motion>,
+    rename: Option<InlineRename>,
+    scroll: Motion,
+    scroll_target: Option<f32>,
     #[cfg(test)]
     labels: HashMap<String, [f32; 2]>,
+}
+
+struct InlineRename {
+    path: String,
+    name: String,
+    focus: bool,
+    error: Option<String>,
+}
+
+impl InlineRename {
+    fn new(path: &str) -> Self {
+        Self {
+            path: path.into(),
+            name: Path::new(path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            focus: true,
+            error: None,
+        }
+    }
 }
 
 /// Selection belongs to a Files panel, independently of the active document.
@@ -306,21 +333,6 @@ struct TreeRow {
 }
 
 impl FileTree {
-    /// Resolve local identities once when a directory listing arrives.
-    pub(crate) fn resolve_directory_git_paths(&mut self, path: &str) {
-        fn resolve(node: &mut FileNode, path: &str) -> bool {
-            if node.full_path == path {
-                for child in &mut node.children {
-                    child.git_path =
-                        Some(bedtime_editing::util::doc_path::normalize(&child.full_path));
-                }
-                return true;
-            }
-            node.children.iter_mut().any(|child| resolve(child, path))
-        }
-        resolve(&mut self.root_node, path);
-    }
-
     /// Update a directory from its target without probing the local filesystem.
     pub fn apply_directory(&mut self, path: &str, entries: Vec<bedtime_remote::DirectoryEntry>) {
         fn find<'a>(node: &'a mut FileNode, path: &str) -> Option<&'a mut FileNode> {
@@ -332,18 +344,23 @@ impl FileTree {
         let Some(node) = find(&mut self.root_node, path) else {
             return;
         };
+        let mut previous: HashMap<_, _> = std::mem::take(&mut node.children)
+            .into_iter()
+            .map(|child| (child.full_path.clone(), child))
+            .collect();
         let mut children = Vec::new();
         for entry in entries {
             let mut child = FileNode {
                 name: entry.name,
                 full_path: entry.path,
+                git_path: entry.canonical_path,
                 is_directory: entry.is_directory,
                 is_gitignored: entry.is_gitignored,
                 ..FileNode::default()
             };
-            if let Some(old) = node.children.iter_mut().find(|old| {
-                old.full_path == child.full_path && old.is_directory == child.is_directory
-            }) {
+            if let Some(mut old) = previous.remove(&child.full_path)
+                && old.is_directory == child.is_directory
+            {
                 child.is_open = old.is_open;
                 child.children = std::mem::take(&mut old.children);
             }
@@ -549,6 +566,10 @@ pub enum FileTreeAction {
     NewFile(String),
     NewFolder(String),
     Rename(String),
+    RenameTo {
+        path: String,
+        name: String,
+    },
     Trash(String),
     OpenMany(Vec<String>),
     OpenManyFromMenu(Vec<String>),
@@ -995,6 +1016,10 @@ impl FileTree {
             || host.show_hidden != self.show_hidden;
         if reset {
             host.rows.clear();
+            host.highlights.clear();
+            host.rename = None;
+            host.scroll = Motion::default();
+            host.scroll_target = None;
             if host.root != root {
                 host.interaction = FileTreeSelection::default();
                 host.popup_selection.clear();
@@ -1007,6 +1032,14 @@ impl FileTree {
         // Include this panel's context menus when deciding whether it lost focus.
         if !ui.is_window_focused_with_flags(dear_imgui_rs::FocusedFlags::CHILD_WINDOWS) {
             host.interaction = FileTreeSelection::default();
+            host.rename = None;
+        }
+        if host
+            .rename
+            .as_ref()
+            .is_some_and(|rename| !desired.contains(&rename.path))
+        {
+            host.rename = None;
         }
         host.interaction
             .selected
@@ -1039,14 +1072,24 @@ impl FileTree {
         let layout = host.motion.layout(ui, row_height);
         let mut actions = Vec::new();
         let previous_focus = host.interaction.focused.clone();
-        Self::keyboard_actions(
-            ui,
-            &mut self.root_node,
-            &desired,
-            &mut host.interaction,
-            &mut actions,
-            &self.shortcuts,
-        );
+        if host.rename.is_none() {
+            Self::keyboard_actions(
+                ui,
+                &mut self.root_node,
+                &desired,
+                &mut host.interaction,
+                &mut actions,
+                &self.shortcuts,
+            );
+        }
+        actions.retain(|action| {
+            if let FileTreeAction::Rename(path) = action {
+                host.rename = Some(InlineRename::new(path));
+                false
+            } else {
+                true
+            }
+        });
         if previous_focus != host.interaction.focused
             && let Some(index) = host
                 .interaction
@@ -1055,7 +1098,22 @@ impl FileTree {
                 .and_then(|focused| host.motion.rows().iter().position(|path| path == focused))
             && !layout.visible.contains(&index)
         {
-            ui.set_scroll_from_pos_y(layout.position(index)[1], 0.5);
+            let y = layout.position(index)[1];
+            host.scroll.sample(ui.scroll_y(), ui.time(), false, &motion);
+            host.scroll_target =
+                Some((y - ui.window_size()[1] * 0.5).clamp(0.0, ui.scroll_max_y()));
+        }
+        if ui.io().mouse_wheel() != 0.0 || ui.is_mouse_down(dear_imgui_rs::MouseButton::Left) {
+            host.scroll_target = None;
+        }
+        if let Some(target) = host.scroll_target {
+            let scroll = host
+                .scroll
+                .sample(target, ui.time(), motion.enabled, &motion);
+            ui.set_scroll_y(scroll);
+            if (scroll - target).abs() < 0.1 {
+                host.scroll_target = None;
+            }
         }
         host.drop_targets.clear();
         if ui.drag_drop_payload().is_none()
@@ -1074,6 +1132,16 @@ impl FileTree {
             let key = &host.motion.rows()[index];
             let row = &host.rows[key];
             let motion = host.motion.sample(key);
+            let highlight = host.highlights.entry(key.clone()).or_default().sample(
+                if host.interaction.selected.contains(key) {
+                    1.0
+                } else {
+                    0.0
+                },
+                ui.time(),
+                style.animations,
+                &context.theme().motion,
+            );
             let Some(node) = node_at(&mut self.root_node, &row.path) else {
                 continue;
             };
@@ -1107,10 +1175,34 @@ impl FileTree {
                 &mut self.animations.drag,
                 &mut host.hover_expand,
                 self.external_drop_target.as_deref(),
+                highlight,
+                &mut host.rename,
             );
             #[cfg(test)]
             host.labels
                 .insert(node.full_path.clone(), ui.item_rect_min());
+        }
+        if let Some(index) = host
+            .interaction
+            .focused
+            .as_ref()
+            .and_then(|focused| host.motion.rows().iter().position(|path| path == focused))
+        {
+            ui.set_cursor_pos(layout.position(index));
+            let min = ui.cursor_screen_pos();
+            let mut color = style.text_color;
+            color[3] *= 0.5;
+            ui.get_window_draw_list()
+                .add_rect(
+                    min,
+                    [
+                        min[0] + ui.content_region_avail()[0],
+                        min[1] + row_height - ui.current_font_size() * 0.15,
+                    ],
+                    color,
+                )
+                .rounding(ui.current_font_size() * 0.2)
+                .build();
         }
         if let Some(dragging) = self.animations.drag.as_ref()
             && dragging.root == root
@@ -1147,6 +1239,25 @@ impl FileTree {
             });
         }
         layout.finish(ui);
+        if let Some(destination) = self.external_drop_target.as_deref() {
+            let name = relative_path(&root, destination, remote)
+                .unwrap_or_else(|| self.root_node.name.clone());
+            let label = format!("Copy into {name}/");
+            let min = ui.window_pos();
+            let size = ui.window_size();
+            let text_size = ui.calc_text_size(&label);
+            let position = [min[0] + 8.0, min[1] + size[1] - text_size[1] - 12.0];
+            let draw = ui.get_window_draw_list();
+            draw.add_rect(
+                [position[0] - 4.0, position[1] - 4.0],
+                [min[0] + size[0] - 4.0, position[1] + text_size[1] + 4.0],
+                ui.style_color(StyleColor::PopupBg),
+            )
+            .filled(true)
+            .rounding(3.0)
+            .build();
+            draw.add_text(position, ui.style_color(StyleColor::Text), label);
+        }
         if self.animations.drag.is_some() || self.external_drop_target.is_some() {
             let pos = self
                 .external_drag_position
@@ -1166,6 +1277,7 @@ impl FileTree {
             }
         }
         host.rows.retain(|key, _| host.motion.contains(key));
+        host.highlights.retain(|key, _| loaded_paths.contains(key));
         actions
     }
 
@@ -1194,6 +1306,8 @@ impl FileTree {
         drag: &mut Option<TreeDrag>,
         hover_expand: &mut Option<(String, f64)>,
         external_drop_target: Option<&str>,
+        highlight_amount: f32,
+        rename: &mut Option<InlineRename>,
     ) {
         let hidden = !root && (inherited_hidden || visibility.hidden(node));
         if hidden && !visibility.show_hidden {
@@ -1227,7 +1341,13 @@ impl FileTree {
         let required_width =
             indent + row_pad_x + font_size * 0.75 + icon_size + icon_text_gap + text_size[0];
         let width = required_width.max(ui.content_region_avail()[0]);
-        let clicked = {
+        let editing = rename
+            .as_ref()
+            .is_some_and(|rename| rename.path == node.full_path);
+        let clicked = if editing {
+            ui.dummy([width, item_height]);
+            false
+        } else {
             let selected = selection.selected.contains(&node.full_path);
             let target = external_drop_target == Some(node.full_path.as_str());
             let selection_color = ui.style_color(StyleColor::TextSelectedBg);
@@ -1240,14 +1360,11 @@ impl FileTree {
             } else {
                 selection_color
             };
-            let _bg = ui.push_style_color(
-                StyleColor::Button,
-                if selected || target {
-                    highlight
-                } else {
-                    [0.0; 4]
-                },
-            );
+            let _bg = ui.push_style_color(StyleColor::Button, {
+                let mut color = highlight;
+                color[3] *= if target { 1.0 } else { highlight_amount };
+                color
+            });
             let _hover = ui.push_style_color(
                 StyleColor::ButtonHovered,
                 if selected || target {
@@ -1270,12 +1387,11 @@ impl FileTree {
         };
         let rect_min = ui.item_rect_min();
         let rect_max = ui.item_rect_max();
-        if selection.focused.as_deref() == Some(node.full_path.as_str()) {
-            let mut color = style.text_color;
-            color[3] *= 0.5;
+        if node.is_directory && external_drop_target == Some(node.full_path.as_str()) {
             ui.get_window_draw_list()
-                .add_rect(rect_min, rect_max, color)
-                .rounding(font_size * 0.2)
+                .add_rect(rect_min, rect_max, ui.style_color(StyleColor::NavCursor))
+                .rounding(font_size * 0.3)
+                .thickness(2.0)
                 .build();
         }
         let directory = if node.is_directory {
@@ -1377,7 +1493,7 @@ impl FileTree {
                 _ => *hover_expand = Some((node.full_path.clone(), ui.time())),
             }
         }
-        if context_menu {
+        if context_menu && !editing {
             if ui.is_item_clicked_with_button(dear_imgui_rs::MouseButton::Right) {
                 *popup_selection = selection.context_selection(&node.full_path);
             }
@@ -1419,11 +1535,11 @@ impl FileTree {
                         actions.push(FileTreeAction::Duplicate(mutating.clone()));
                     }
                     if ui.menu_item_enabled_selected_no_shortcut(
-                        "Rename…",
+                        "Rename",
                         false,
                         captured.len() == 1,
                     ) {
-                        actions.push(FileTreeAction::Rename(captured[0].clone()));
+                        *rename = Some(InlineRename::new(&captured[0]));
                     }
                     if ui.menu_item(if remote { "Delete…" } else { "Move to Trash" }) {
                         if mutating.len() == 1 {
@@ -1510,7 +1626,56 @@ impl FileTree {
             bedtime_ui::color::ensure_contrast(color, ui.style_color(StyleColor::ChildBg), 4.5);
         {
             let _text = ui.push_style_color(StyleColor::Text, color);
-            ui.text(&node.name);
+            if rename
+                .as_ref()
+                .is_some_and(|rename| rename.path == node.full_path)
+            {
+                let draft = rename.as_mut().expect("this row owns the rename input");
+                let appearing = std::mem::take(&mut draft.focus);
+                if appearing {
+                    ui.set_keyboard_focus_here();
+                }
+                ui.set_cursor_pos([text_x, center_y - ui.frame_height() * 0.5]);
+                ui.set_next_item_width(
+                    (rect_max[0] - (rect_min[0] + text_x - row_origin[0]) - row_pad_x)
+                        .max(font_size * 3.0),
+                );
+                let submit = ui
+                    .input_text("##rename", &mut draft.name)
+                    .auto_select_all(true)
+                    .enter_returns_true(true)
+                    .build();
+                let cancel = ui.is_key_pressed(dear_imgui_rs::Key::Escape)
+                    || (!appearing && !submit && ui.is_item_deactivated());
+                if submit {
+                    match bedtime_files::actions::validate_name(&draft.name) {
+                        Ok(()) => {
+                            if draft.name != node.name {
+                                actions.push(FileTreeAction::RenameTo {
+                                    path: draft.path.clone(),
+                                    name: draft.name.clone(),
+                                });
+                            }
+                            *rename = None;
+                        }
+                        Err(error) => {
+                            draft.error = Some(error.to_string());
+                            draft.focus = true;
+                        }
+                    }
+                } else if cancel {
+                    *rename = None;
+                }
+                if let Some(error) = rename.as_ref().and_then(|rename| rename.error.as_ref()) {
+                    bedtime_ui::components::tooltip_text(
+                        ui,
+                        &bedtime_ui::UiFrameContext::for_ui(ui),
+                        error,
+                    );
+                }
+            } else {
+                ui.text(&node.name);
+            }
         }
         drop(_dim);
         if node.is_directory {
@@ -1554,6 +1719,226 @@ mod tests {
     use super::*;
     use crate::test_support::TempDir;
 
+    #[test]
+    fn native_drop_draws_a_folder_outline_and_clears_it_on_cancel() {
+        use dear_imgui_rs::{Condition, Context, FramePrepareOptions, WindowFlags};
+        fn frame(context: &mut Context, tree: &mut FileTree) -> usize {
+            context.prepare_frame(FramePrepareOptions::new([420.0, 300.0], 1.0 / 60.0));
+            let ui = context.frame();
+            ui.window("Files")
+                .position([0.0, 0.0], Condition::Always)
+                .size([420.0, 300.0], Condition::Always)
+                .flags(WindowFlags::NO_TITLE_BAR | WindowFlags::NO_MOVE | WindowFlags::NO_RESIZE)
+                .build(|| {
+                    let _target_color =
+                        ui.push_style_color(StyleColor::NavCursor, [1.0, 0.0, 1.0, 1.0]);
+                    tree.display_backend_actions(
+                        ui,
+                        "",
+                        &FileTreeStyle {
+                            animations: false,
+                            ..Default::default()
+                        },
+                        None,
+                        None,
+                        false,
+                    );
+                });
+            let rendered = context.render_legacy();
+            rendered
+                .draw_data()
+                .draw_lists()
+                .flat_map(|list| list.vtx_buffer())
+                .filter(|vertex| vertex.col == 0xffff00ff)
+                .count()
+        }
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        let mut tree = FileTree {
+            root_node: FileNode {
+                name: "fixture".into(),
+                full_path: "/fixture".into(),
+                is_directory: true,
+                is_open: true,
+                children: vec![FileNode {
+                    name: "folder".into(),
+                    full_path: "/fixture/folder".into(),
+                    is_directory: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        frame(&mut context, &mut tree);
+        assert_eq!(frame(&mut context, &mut tree), 0);
+        tree.external_drop_target = Some("/fixture/folder".into());
+        tree.external_drag_position = Some([50.0, 50.0]);
+        assert!(
+            frame(&mut context, &mut tree) > 0,
+            "accepted OS drag paints the actual destination"
+        );
+        tree.external_drop_target = None;
+        tree.external_drag_position = None;
+        assert_eq!(frame(&mut context, &mut tree), 0);
+    }
+
+    #[test]
+    fn file_and_folder_context_menus_rename_inline_and_escape_cancels() {
+        use dear_imgui_rs::{
+            Condition, Context, FramePrepareOptions, Key, MouseButton, WindowFlags,
+        };
+        fn frame(
+            context: &mut Context,
+            tree: &mut FileTree,
+        ) -> (Vec<FileTreeAction>, Option<[f32; 2]>) {
+            context.prepare_frame(FramePrepareOptions::new([420.0, 300.0], 1.0 / 60.0));
+            let ui = context.frame();
+            let mut actions = Vec::new();
+            let mut rename_position = None;
+            ui.window("Files")
+                .position([0.0, 0.0], Condition::Always)
+                .size([420.0, 300.0], Condition::Always)
+                .flags(WindowFlags::NO_TITLE_BAR | WindowFlags::NO_MOVE | WindowFlags::NO_RESIZE)
+                .build(|| {
+                    actions = tree.display_backend_actions(
+                        ui,
+                        "",
+                        &FileTreeStyle {
+                            animations: false,
+                            ..Default::default()
+                        },
+                        None,
+                        None,
+                        false,
+                    );
+                    ui.with_bound_context(|| unsafe {
+                        let stack = &(*dear_imgui_rs::sys::igGetCurrentContext()).OpenPopupStack;
+                        if stack.Size > 0 {
+                            let window = (*stack.Data.add(stack.Size as usize - 1)).Window;
+                            if !window.is_null() {
+                                // Open, New File, New Folder, Paste, separator, Cut, Copy, Duplicate, Rename.
+                                rename_position = Some([
+                                    (*window).Pos.x + 25.0,
+                                    (*window).DC.CursorStartPos.y
+                                        + 7.0 * (ui.current_font_size() + 4.0)
+                                        + 5.0
+                                        + ui.current_font_size() * 0.5,
+                                ]);
+                            }
+                        }
+                    });
+                });
+            drop(context.render_legacy());
+            (actions, rename_position)
+        }
+        let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
+        for directory in [false, true] {
+            let mut context = Context::create();
+            context
+                .set_ini_filename(None::<std::path::PathBuf>)
+                .unwrap();
+            context
+                .font_atlas()
+                .try_claim_legacy_renderer()
+                .unwrap()
+                .build();
+            let mut tree = FileTree {
+                root_node: FileNode {
+                    name: "fixture".into(),
+                    full_path: "/fixture".into(),
+                    is_directory: true,
+                    is_open: true,
+                    children: vec![FileNode {
+                        name: "item.txt".into(),
+                        full_path: "/fixture/item.txt".into(),
+                        is_directory: directory,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            frame(&mut context, &mut tree);
+            frame(&mut context, &mut tree);
+            let row = tree.animations.hosts.values().next().unwrap().labels["/fixture/item.txt"];
+            context
+                .io_mut()
+                .add_mouse_pos_event([row[0] + 4.0, row[1] + 4.0]);
+            context
+                .io_mut()
+                .add_mouse_button_event(MouseButton::Right, true);
+            frame(&mut context, &mut tree);
+            context
+                .io_mut()
+                .add_mouse_button_event(MouseButton::Right, false);
+            frame(&mut context, &mut tree);
+            let (_, menu) = frame(&mut context, &mut tree);
+            context
+                .io_mut()
+                .add_mouse_pos_event(menu.expect("row context menu"));
+            context
+                .io_mut()
+                .add_mouse_button_event(MouseButton::Left, true);
+            frame(&mut context, &mut tree);
+            context
+                .io_mut()
+                .add_mouse_button_event(MouseButton::Left, false);
+            let (actions, _) = frame(&mut context, &mut tree);
+            assert!(
+                actions.is_empty(),
+                "starting rename neither opens the file nor submits a dialog"
+            );
+            assert!(
+                tree.animations
+                    .hosts
+                    .values()
+                    .next()
+                    .unwrap()
+                    .rename
+                    .is_some(),
+                "Rename activates an inline input for files and folders"
+            );
+            frame(&mut context, &mut tree);
+            frame(&mut context, &mut tree);
+            context.io_mut().add_key_event(Key::Escape, true);
+            let (actions, _) = frame(&mut context, &mut tree);
+            assert!(actions.is_empty());
+            assert!(
+                tree.animations
+                    .hosts
+                    .values()
+                    .next()
+                    .unwrap()
+                    .rename
+                    .is_none()
+            );
+            context.io_mut().add_key_event(Key::Escape, false);
+            frame(&mut context, &mut tree);
+            context.io_mut().add_key_event(Key::F2, true);
+            frame(&mut context, &mut tree);
+            context.io_mut().add_key_event(Key::F2, false);
+            frame(&mut context, &mut tree);
+            for character in "renamed.txt".chars() {
+                context.io_mut().add_input_character(character);
+            }
+            frame(&mut context, &mut tree);
+            context.io_mut().add_key_event(Key::Enter, true);
+            let (actions, _) = frame(&mut context, &mut tree);
+            assert!(
+                matches!(actions.as_slice(), [FileTreeAction::RenameTo { path, name }] if path == "/fixture/item.txt" && name == "renamed.txt")
+            );
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn local_listing_caches_symlink_identity_before_drawing_and_refreshes_it() {
@@ -1568,6 +1953,9 @@ mod tests {
         let listing = || {
             vec![bedtime_remote::DirectoryEntry {
                 path: alias.to_str().unwrap().into(),
+                canonical_path: std::fs::canonicalize(&alias)
+                    .ok()
+                    .map(|path| path.to_string_lossy().into_owned()),
                 name: "alias".into(),
                 is_directory: false,
                 is_symlink: true,
@@ -1575,7 +1963,6 @@ mod tests {
             }]
         };
         tree.apply_directory(root, listing());
-        tree.resolve_directory_git_paths(root);
         assert_eq!(
             tree.root_node.children[0].git_path.as_deref(),
             std::fs::canonicalize(&first).unwrap().to_str()
@@ -1583,7 +1970,6 @@ mod tests {
         std::fs::remove_file(&alias).unwrap();
         std::os::unix::fs::symlink(&second, &alias).unwrap();
         tree.apply_directory(root, listing());
-        tree.resolve_directory_git_paths(root);
         assert_eq!(
             tree.root_node.children[0].git_path.as_deref(),
             std::fs::canonicalize(&second).unwrap().to_str()
@@ -2308,6 +2694,7 @@ mod tests {
         };
         let entry = |name: &str, is_directory| bedtime_remote::DirectoryEntry {
             path: format!("/unavailable/local/root/{name}"),
+            canonical_path: None,
             name: name.into(),
             is_directory,
             is_symlink: false,
@@ -2326,6 +2713,7 @@ mod tests {
             "/unavailable/local/root/dir",
             vec![bedtime_remote::DirectoryEntry {
                 path: "/unavailable/local/root/dir/child".into(),
+                canonical_path: None,
                 name: "child".into(),
                 is_directory: false,
                 is_symlink: false,

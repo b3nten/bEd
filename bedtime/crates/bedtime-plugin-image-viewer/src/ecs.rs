@@ -60,6 +60,7 @@ impl Plugin for ImageViewerPlugin {
         )
         .expect("Image preferences install once");
         app.init_resource::<DocumentFrame>()
+            .init_resource::<bedtime_api::workbench::PinchEvents>()
             .init_resource::<HostEffects>()
             .init_resource::<FeatureRegistry>()
             .init_non_send::<ImageStates>()
@@ -277,6 +278,10 @@ impl Panel for ImageFrontend {
     ) {
         let output = {
             let frame = FrontendSnapshot::capture(world);
+            let pinches = world
+                .resource::<bedtime_api::workbench::PinchEvents>()
+                .0
+                .clone();
             let mut state = SystemState::<(
                 NonSendMut<ImageStates>,
                 Option<NonSend<Icons>>,
@@ -288,7 +293,13 @@ impl Panel for ImageFrontend {
             let mut requests = Vec::new();
             let output = if let Some(panel) = states.0.get_mut(&self.entity) {
                 panel.shortcuts = shortcuts.clone();
-                panel.draw_prepared(ui, &frame.context(), &mut requests, icons.as_deref());
+                panel.draw_prepared_with_gestures(
+                    ui,
+                    &frame.context(),
+                    &mut requests,
+                    icons.as_deref(),
+                    &pinches,
+                );
                 panel.canvas_output()
             } else {
                 ui.text_wrapped("Open an image to view it.");

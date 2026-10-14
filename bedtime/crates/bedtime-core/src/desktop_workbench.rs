@@ -501,6 +501,14 @@ pub fn dispatch_panel_clipboard(
         .get::<api::PanelClipboard>(entity)
         .ok_or("Panel does not support clipboard actions")?
         .0;
+    let action = match action {
+        api::ClipboardAction::PasteFromClipboard(None) => api::ClipboardAction::PasteFromClipboard(
+            world
+                .get_non_send_mut::<DesktopContext>()
+                .and_then(|desktop| desktop.context.clipboard_text()),
+        ),
+        action => action,
+    };
     let previous = world.resource_mut::<HostEffects>().take();
     let result = world
         .run_system_with(handler, api::ClipboardInvocation { entity, action })
@@ -586,6 +594,7 @@ pub fn dispatch_external_files(
 fn file_events(world: &mut World, events: Vec<WindowEvent>) {
     use bedtime_api::workbench::{ExternalFileDrag, ExternalFileDragPhase};
     let mut dropped = Vec::new();
+    let mut updated = false;
     for event in events {
         let phase = match event {
             WindowEvent::DroppedFile(path) => {
@@ -605,51 +614,11 @@ fn file_events(world: &mut World, events: Vec<WindowEvent>) {
             }
             _ => continue,
         };
-        let (position, modifiers) = native_pointer(world);
-        let previous = world.resource::<FileDrag>().panel;
-        let panel = if phase == ExternalFileDragPhase::Cancel {
-            previous
-        } else {
-            panel_at(world, position)
-        };
-        let paths = world.resource::<FileDrag>().paths.clone();
-        if previous != panel
-            && let Some(previous) = previous
-        {
-            submit_drag(
-                world,
-                Some(previous),
-                ExternalFileDrag {
-                    paths: Vec::new(),
-                    position,
-                    modifiers,
-                    viewport: world
-                        .get::<bedtime_api::workbench::PanelPresentation>(previous)
-                        .map_or(0, |panel| panel.viewport),
-                    phase: ExternalFileDragPhase::Cancel,
-                },
-            );
-        }
-        let viewport = panel
-            .and_then(|panel| world.get::<bedtime_api::workbench::PanelPresentation>(panel))
-            .map_or(0, |panel| panel.viewport);
-        submit_drag(
-            world,
-            panel,
-            ExternalFileDrag {
-                paths,
-                position,
-                viewport,
-                phase,
-                modifiers,
-            },
-        );
-        let mut drag = world.resource_mut::<FileDrag>();
-        drag.panel = panel;
-        if phase == ExternalFileDragPhase::Cancel {
-            drag.paths.clear();
-            drag.panel = None;
-        }
+        update_file_drag(world, phase);
+        updated = true;
+    }
+    if !updated && dropped.is_empty() && !world.resource::<FileDrag>().paths.is_empty() {
+        update_file_drag(world, ExternalFileDragPhase::Hover);
     }
     if !dropped.is_empty() {
         let (position, modifiers) = native_pointer(world);
@@ -669,6 +638,57 @@ fn file_events(world: &mut World, events: Vec<WindowEvent>) {
             },
         );
         let mut drag = world.resource_mut::<FileDrag>();
+        drag.paths.clear();
+        drag.panel = None;
+    }
+}
+
+/// Native file drags can move without Winit cursor events (notably AppKit).
+/// Sample their live pointer each frame so the destination follows the drag.
+fn update_file_drag(world: &mut World, phase: api::ExternalFileDragPhase) {
+    use api::{ExternalFileDrag, ExternalFileDragPhase};
+    let (position, modifiers) = native_pointer(world);
+    let previous = world.resource::<FileDrag>().panel;
+    let panel = if phase == ExternalFileDragPhase::Cancel {
+        previous
+    } else {
+        panel_at(world, position)
+    };
+    let paths = world.resource::<FileDrag>().paths.clone();
+    if previous != panel
+        && let Some(previous) = previous
+    {
+        submit_drag(
+            world,
+            Some(previous),
+            ExternalFileDrag {
+                paths: Vec::new(),
+                position,
+                modifiers,
+                viewport: world
+                    .get::<bedtime_api::workbench::PanelPresentation>(previous)
+                    .map_or(0, |panel| panel.viewport),
+                phase: ExternalFileDragPhase::Cancel,
+            },
+        );
+    }
+    let viewport = panel
+        .and_then(|panel| world.get::<bedtime_api::workbench::PanelPresentation>(panel))
+        .map_or(0, |panel| panel.viewport);
+    submit_drag(
+        world,
+        panel,
+        ExternalFileDrag {
+            paths,
+            position,
+            viewport,
+            phase,
+            modifiers,
+        },
+    );
+    let mut drag = world.resource_mut::<FileDrag>();
+    drag.panel = panel;
+    if phase == ExternalFileDragPhase::Cancel {
         drag.paths.clear();
         drag.panel = None;
     }
@@ -1218,6 +1238,36 @@ mod tests {
     }
 
     #[test]
+    fn native_file_drag_tracks_pointer_without_cursor_events() {
+        let _lock = IMGUI_LOCK.lock().unwrap();
+        let mut world = world();
+        let first = panel(&mut world, 1, [0.0; 2], [100.0; 2]);
+        let second = panel(&mut world, 2, [100.0, 0.0], [200.0, 100.0]);
+        file_events(
+            &mut world,
+            vec![WindowEvent::HoveredFile("/tmp/hover".into())],
+        );
+        world
+            .non_send_mut::<DesktopContext>()
+            .context
+            .io_mut()
+            .set_mouse_pos([150.0, 50.0]);
+        file_events(&mut world, Vec::new());
+        let captured = requests(&world);
+        assert_eq!(captured.len(), 3);
+        assert!(
+            matches!(captured[1].action(), HostAction::ExternalFiles { panel: Some(panel), event } if *panel == first && event.phase == api::ExternalFileDragPhase::Cancel)
+        );
+        assert!(
+            matches!(captured[2].action(), HostAction::ExternalFiles { panel: Some(panel), event } if *panel == second && event.phase == api::ExternalFileDragPhase::Hover && event.position == [150.0, 50.0])
+        );
+        file_events(&mut world, vec![WindowEvent::HoveredFileCancelled]);
+        let count = requests(&world).len();
+        file_events(&mut world, Vec::new());
+        assert_eq!(requests(&world).len(), count, "canceled drags stop polling");
+    }
+
+    #[test]
     fn drag_leaving_a_clipped_panel_cancels_that_panels_hover() {
         let _lock = IMGUI_LOCK.lock().unwrap();
         let mut world = world();
@@ -1380,6 +1430,65 @@ mod tests {
         app.update();
         assert!(requests(app.world()).is_empty());
         assert!(app.world().resource::<DesktopInputEvents>().0[0].consumed);
+    }
+
+    #[test]
+    fn native_clipboard_key_equivalents_reach_panels_and_generic_paste_reads_text() {
+        let _lock = IMGUI_LOCK.lock().unwrap();
+        struct Clipboard;
+        impl dear_imgui_rs::ClipboardBackend for Clipboard {
+            fn get(&mut self) -> Option<String> {
+                Some("pasted text".into())
+            }
+            fn set(&mut self, _: &str) {}
+        }
+        let mut world = world();
+        world
+            .non_send_mut::<DesktopContext>()
+            .context
+            .set_clipboard_backend(Clipboard);
+        world.init_resource::<bedtime_desktop::DesktopNativeActions>();
+        world.init_resource::<Messages<crate::NativeCommandDispatched>>();
+        let handler = world.register_system(|In(invocation): In<api::ClipboardInvocation>| -> api::ClipboardResult {
+            assert!(matches!(invocation.action, api::ClipboardAction::PasteFromClipboard(Some(ref text)) if text == "pasted text"));
+            Ok(None)
+        });
+        let panel = panel(&mut world, 1, [0.0; 2], [100.0; 2]);
+        world.entity_mut(panel).insert(api::PanelClipboard(handler));
+        world
+            .resource_mut::<bedtime_workbench::WorkbenchLayout>()
+            .focused = Some(panel);
+        world
+            .resource_mut::<bedtime_desktop::DesktopNativeActions>()
+            .0
+            .push(bedtime_desktop::DesktopNativeAction {
+                command: "bedtime.edit.paste".into(),
+                keyboard: true,
+                modifiers: Default::default(),
+                quit: false,
+            });
+        crate::route_native_commands(&mut world);
+        let captured = requests(&world);
+        assert_eq!(
+            captured.len(),
+            1,
+            "A key equivalent must reach the panel once"
+        );
+        let HostAction::Clipboard {
+            panel: destination,
+            action,
+        } = captured[0].action()
+        else {
+            panic!("clipboard request")
+        };
+        assert_eq!(*destination, panel);
+        dispatch_panel_clipboard(&mut world, *destination, action.clone()).unwrap();
+        dispatch_panel_clipboard(
+            &mut world,
+            panel,
+            api::ClipboardAction::PasteFromClipboard(None),
+        )
+        .unwrap();
     }
 
     #[test]

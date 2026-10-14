@@ -259,6 +259,7 @@ pub fn capture_host_request_area(
     request: HostAction,
     area: Option<u32>,
 ) -> HostRequest {
+    let explicit_area = area.is_some();
     let layout = world.resource::<WorkbenchLayout>();
     let area = area.unwrap_or_else(|| {
         let source_area = matches!(
@@ -296,6 +297,7 @@ pub fn capture_host_request_area(
             .resource::<bedtime_workbench::WorkbenchLayoutEpoch>()
             .0,
     )
+    .with_explicit_area(explicit_area)
 }
 #[derive(Message, Clone, Debug)]
 pub struct CoreNotice {
@@ -1865,11 +1867,7 @@ fn open_file_instance_intent(
             .document_kind(document)
             .map_err(|error| error.to_string())?
     } else {
-        bedtime_files::files::classify_bytes(
-            &bedtime_files::files::read_file_bytes(path)
-                .map_err(|error| error.to_string())?
-                .raw,
-        )
+        bedtime_files::files::classify_file(path).map_err(|error| error.to_string())?
     };
     let registry = world.resource::<bedtime_api::features::FeatureRegistry>();
     let descriptor = explicit.or_else(|| {
@@ -1894,6 +1892,11 @@ fn open_file_instance_intent(
         .non_send_mut::<DocumentSession>()
         .open_file_auto(path)
         .map_err(|error| error.to_string())?;
+    let area = area.or_else(|| {
+        (kind == bedtime_documents::DocumentKind::Text)
+            .then(|| preferred_text_area(world))
+            .flatten()
+    });
     // File opening reuses an existing matching tab anywhere in the active layout.
     // Drop requests can then move that tab to their captured destination.
     // Opening another viewer explicitly remains scoped to its source tab group.
@@ -2457,6 +2460,7 @@ fn apply_host_step(world: &mut World, request: HostRequest) -> Result<HostStep, 
                 effect.area.unwrap_or(request.area()),
                 request.layout_epoch(),
             )
+            .with_explicit_area(effect.area.is_some() || request.has_explicit_area())
             .with_tab_index(effect.tab_index.or(request.tab_index()))
         })
         .collect();
@@ -2497,13 +2501,13 @@ pub fn apply_document_request(
 }
 
 fn validate_request_origin(world: &World, request: &HostRequest) -> Result<(), String> {
-    if request.session_id() != world.non_send::<DocumentSession>().session_id() {
-        return Err("Document session was replaced".into());
-    }
     // Redraw invalidates the application frame, without accessing its source.
-    // A layout gesture can close a drawn panel before its redraw is admitted.
+    // A transition can replace its session or close its source before admission.
     if matches!(request.action(), HostAction::Invalidate) {
         return Ok(());
+    }
+    if request.session_id() != world.non_send::<DocumentSession>().session_id() {
+        return Err("Document session was replaced".into());
     }
     if let Some(source) = request.source() {
         let owner = bedtime_api::workbench::panel_owner(world, source)
@@ -2539,6 +2543,14 @@ fn apply_document_request_inner(
     request: HostRequest,
     workbench: &mut Option<bedtime_workbench::WorkbenchRequestId>,
 ) -> Result<HostOutcome, String> {
+    // Layout intentions describe the old presentation, and expire normally
+    // when its document session is retired. Explicit edits/saves still fail
+    // validation so their callers receive an actionable rejection.
+    if request.is_layout_scoped()
+        && request.session_id() != world.non_send::<DocumentSession>().session_id()
+    {
+        return Ok(HostOutcome::Ignored);
+    }
     validate_request_origin(world, &request)?;
     #[cfg(feature = "language-services")]
     if let HostAction::NavigateLocation {
@@ -2834,16 +2846,34 @@ fn apply_document_request_inner(
             result?;
         }
         HostAction::OpenFile { path, viewer } | HostAction::OpenFileIn { path, viewer, .. } => {
-            return open_file(
-                world,
-                Path::new(&path),
-                viewer.as_deref(),
-                Some(request.area()),
-            )
-            .map(HostOutcome::Opened);
+            let area = if request.has_explicit_area()
+                || matches!(
+                    request.action(),
+                    HostAction::OpenFileIn {
+                        target: bedtime_api::workbench::PanelTarget::LastFocused,
+                        ..
+                    }
+                ) {
+                request.area()
+            } else {
+                default_file_area(world, Path::new(&path), viewer.as_deref(), request.area())?
+            };
+            return open_file(world, Path::new(&path), viewer.as_deref(), Some(area))
+                .map(HostOutcome::Opened);
         }
-        HostAction::PreviewFileIn { path, viewer, .. } => {
-            return preview_file(world, Path::new(&path), viewer.as_deref(), request.area())
+        HostAction::PreviewFileIn {
+            path,
+            viewer,
+            target,
+        } => {
+            let area = if request.has_explicit_area()
+                || target == bedtime_api::workbench::PanelTarget::LastFocused
+            {
+                request.area()
+            } else {
+                default_file_area(world, Path::new(&path), viewer.as_deref(), request.area())?
+            };
+            return preview_file(world, Path::new(&path), viewer.as_deref(), area)
                 .map(HostOutcome::Opened);
         }
         HostAction::OpenTerminalFiles { paths } => {
@@ -2943,7 +2973,12 @@ fn apply_document_request_inner(
                 return Err("Open SSH files through their filesystem browser".into());
             }
             if let Some(path) = rfd::FileDialog::new().pick_file() {
-                return open_file(world, &path, viewer.as_deref(), Some(request.area()))
+                let area = if request.has_explicit_area() {
+                    request.area()
+                } else {
+                    default_file_area(world, &path, viewer.as_deref(), request.area())?
+                };
+                return open_file(world, &path, viewer.as_deref(), Some(area))
                     .map(HostOutcome::Opened);
             }
         }
@@ -3223,6 +3258,74 @@ fn apply_document_request_inner(
         _ => return Err("This operation requires language services".into()),
     }
     Ok(HostOutcome::Applied)
+}
+
+fn preferred_text_area(world: &mut World) -> Option<u32> {
+    let panels = world
+        .query::<(&bedtime_workbench::PanelPresentation, &PanelBinding)>()
+        .iter(world)
+        .filter_map(|(panel, binding)| binding.document.map(|document| (panel.id, document)))
+        .filter(|(_, document)| {
+            world
+                .non_send::<DocumentSession>()
+                .document_kind(*document)
+                .ok()
+                == Some(bedtime_documents::DocumentKind::Text)
+        })
+        .map(|(id, _)| id)
+        .collect::<Vec<_>>();
+    let layout = world.resource::<WorkbenchLayout>();
+    layout
+        .tiling
+        .layout
+        .areas
+        .iter()
+        .filter(|area| {
+            panels
+                .iter()
+                .any(|id| layout.tiling.area_for(*id) == Some(area.id))
+        })
+        .max_by_key(|area| {
+            (area.rect.max[0] - area.rect.min[0]) * (area.rect.max[1] - area.rect.min[1])
+        })
+        .map(|area| area.id)
+}
+
+fn default_file_area(
+    world: &mut World,
+    path: &Path,
+    viewer: Option<&str>,
+    fallback: u32,
+) -> Result<u32, String> {
+    let kind = if world.non_send::<DocumentSession>().is_remote() {
+        let document = world
+            .non_send_mut::<DocumentSession>()
+            .open_file_auto(path)
+            .map_err(|error| error.to_string())?;
+        world
+            .non_send::<DocumentSession>()
+            .document_kind(document)
+            .map_err(|error| error.to_string())?
+    } else {
+        bedtime_files::files::classify_file(path).map_err(|error| error.to_string())?
+    };
+    let registry = world.resource::<bedtime_api::features::FeatureRegistry>();
+    let descriptor = viewer.and_then(|id| registry.viewer(id)).or_else(|| {
+        registry.preferred_viewer_for_file(
+            &path.to_string_lossy(),
+            kind,
+            &world
+                .resource::<bedtime_api::settings::SettingsSnapshot>()
+                .default_viewers,
+        )
+    });
+    if kind == bedtime_documents::DocumentKind::Text
+        && descriptor.is_some_and(|viewer| !viewer.is_local_file())
+    {
+        Ok(preferred_text_area(world).unwrap_or(fallback))
+    } else {
+        Ok(fallback)
+    }
 }
 
 fn terminal_open_area(world: &mut World, captured: u32) -> u32 {

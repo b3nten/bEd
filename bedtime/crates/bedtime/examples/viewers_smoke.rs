@@ -32,7 +32,6 @@ fn main() -> io::Result<()> {
             bedtime_plugin_editor::EditorPlugin,
             bedtime_plugin_image_viewer::ImageViewerPlugin,
             bedtime_plugin_model_viewer::ModelViewerPlugin,
-            bedtime_plugin_automation::AutomationPlugin,
         ))
         .insert_resource(Smoke {
             verified: Arc::clone(&verified),

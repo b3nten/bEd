@@ -11,6 +11,7 @@ use tiling_ui::{
 #[derive(Resource, Clone, Debug, Default)]
 pub struct WorkbenchAppearance {
     pub add_button: bool,
+    pub tab_icons: bool,
     pub hidden_picker: HashSet<String>,
 }
 
@@ -81,7 +82,23 @@ fn draw(world: &mut World, ui: &Ui) {
             ChromeTab {
                 entity,
                 id,
-                title: panel_title(world, surface).unwrap_or(kind),
+                title: panel_title(world, surface).unwrap_or_else(|_| kind.clone()),
+                icon: world
+                    .get_non_send::<bedtime_ui::icons::Icons>()
+                    .and_then(|icons| {
+                        world
+                            .get::<PanelRecord>(entity)
+                            .and_then(|record| record.serialized["path"].as_str())
+                            .filter(|path| !path.is_empty())
+                            .and_then(|name| icons.get_for_file(name))
+                            .or_else(|| {
+                                world
+                                    .resource::<WorkbenchRegistry>()
+                                    .panel(&kind)
+                                    .and_then(|definition| definition.icon)
+                                    .and_then(|key| icons.get(key))
+                            })
+                    }),
                 dirty: world.get::<PanelDirty>(entity).is_some_and(|dirty| dirty.0),
             }
         })
@@ -147,6 +164,7 @@ fn draw(world: &mut World, ui: &Ui) {
         chrome.settings = ChromeSettings {
             animations: theme.motion.enabled,
             add_button: appearance.add_button,
+            tab_icons: appearance.tab_icons,
             background,
             opacity: theme.opacity,
         };

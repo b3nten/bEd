@@ -192,6 +192,7 @@ pub(crate) struct ChromeTab {
     pub entity: Entity,
     pub id: u64,
     pub title: String,
+    pub icon: Option<dear_imgui_rs::TextureId>,
     pub dirty: bool,
 }
 
@@ -206,6 +207,7 @@ pub(crate) struct ChromePanel {
 pub(crate) struct ChromeSettings {
     pub animations: bool,
     pub add_button: bool,
+    pub tab_icons: bool,
     pub background: [f32; 4],
     pub opacity: f32,
 }
@@ -1111,19 +1113,25 @@ impl TilingFrontend {
                             let title = self.title(tab);
                             let title = title.split("###").next().unwrap().to_owned();
                             let dirty = tab.dirty;
+                            let icon = self.settings.tab_icons.then_some(tab.icon).flatten();
                             let _font = (group.preview == Some(*id))
                                 .then_some(self.preview_font)
                                 .flatten()
                                 .map(|font| ui.push_font(font));
                             let width = (ui.calc_text_size(&title)[0]
                                 + 37.0
+                                + if icon.is_some() {
+                                    ui.text_line_height() + 5.0
+                                } else {
+                                    0.0
+                                }
                                 + if dirty { 8.0 } else { 0.0 })
                             .clamp(70.0, 210.0);
-                            (*id, title, dirty, width)
+                            (*id, title, dirty, icon, width)
                         })
                     })
                     .collect::<Vec<_>>();
-                let total: f32 = labels.iter().map(|(_, _, _, width)| *width).sum();
+                let total: f32 = labels.iter().map(|(_, _, _, _, width)| *width).sum();
                 let scroll = self.tiling_ui.tab_scroll.entry(*id).or_default();
                 if contains((tabs_min, bar_max), mouse) {
                     scroll.offset -= (ui.io().mouse_wheel() + ui.io().mouse_wheel_h()) * 40.0;
@@ -1139,7 +1147,7 @@ impl TilingFrontend {
                 if scroll.selected != group.selected {
                     if let Some(selected) = group.selected {
                         let mut left = 0.0;
-                        for (panel, _, _, width) in &labels {
+                        for (panel, _, _, _, width) in &labels {
                             if *panel == selected {
                                 if left < scroll.offset {
                                     scroll.offset = left;
@@ -1157,7 +1165,7 @@ impl TilingFrontend {
                 scroll.offset = scroll.offset.clamp(0.0, (total - available).max(0.0));
                 let mut x = tabs_min[0] - scroll.offset;
                 let _clip = ui.push_clip_rect(tabs_min, bar_max, true);
-                for (panel, title, dirty, width) in labels {
+                for (panel, title, dirty, icon, width) in labels {
                     let left = [x, bar_min[1] + 2.0];
                     let right = [x + width - 1.0, bar_max[1] - 1.0];
                     x += width;
@@ -1216,7 +1224,21 @@ impl TilingFrontend {
                             .then_some(self.preview_font)
                             .flatten()
                             .map(|font| ui.push_font(font));
-                        draw.add_text([left[0] + 8.0, bar_min[1] + 5.0], text, &title);
+                        let mut text_x = left[0] + 8.0;
+                        if let Some(icon) = icon {
+                            let size = ui.text_line_height();
+                            let top = tab_center_y - size * 0.5;
+                            draw.add_image(
+                                icon,
+                                [text_x, top],
+                                [text_x + size, top + size],
+                                [0.0; 2],
+                                [1.0; 2],
+                                text,
+                            );
+                            text_x += size + 5.0;
+                        }
+                        draw.add_text([text_x, bar_min[1] + 5.0], text, &title);
                     }
                     drop(text_clip);
                     if dirty {

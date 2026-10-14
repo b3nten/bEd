@@ -22,15 +22,12 @@ fn main() -> io::Result<()> {
         ..Default::default()
     };
     let exit = launch.run(options, |app| {
-        app.add_plugins((
-            bedtime_plugin_effects::EffectsPlugin,
-            bedtime_plugin_automation::AutomationPlugin,
-        ))
-        .insert_resource(Smoke {
-            verified: Arc::clone(&verified),
-            ..Default::default()
-        })
-        .add_systems(Last, advance.before(bevy::app::OnAppExitSystems));
+        app.add_plugins((bedtime_plugin_effects::EffectsPlugin,))
+            .insert_resource(Smoke {
+                verified: Arc::clone(&verified),
+                ..Default::default()
+            })
+            .add_systems(Last, advance.before(bevy::app::OnAppExitSystems));
         Ok(())
     })?;
     ensure(

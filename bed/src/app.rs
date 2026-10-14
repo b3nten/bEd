@@ -207,20 +207,27 @@ fn build_app_with_launch(
         app.add_plugins(crate::builtins::BedBuiltinPlugins);
         crate::config::register_app_settings(app.world_mut())?;
         app.add_plugins((AppRuntimePlugin { options }, BedAppPlugin));
-        {
-            app.add_plugins(bedtime_plugin_automation::AutomationPlugin);
-            crate::automation::configure(app);
-        }
+        crate::automation::configure(app);
         Ok(())
     })
 }
 
 pub fn run() -> HostResult<i32> {
+    run_with_native(false)
+}
+
+#[cfg(feature = "test-support")]
+pub fn run_native_fixture() -> HostResult<i32> {
+    run_with_native(true)
+}
+
+fn run_with_native(native: bool) -> HostResult<i32> {
     let launch = match launcher()?.dispatch()? {
         bedtime::LaunchOutcome::Handled(exit) => return Ok(exit),
         bedtime::LaunchOutcome::Desktop(launch) => launch,
     };
-    let Some(mut options) = crate::startup::Launch::parse(launch.arguments().iter().cloned())?
+    let Some(mut options) =
+        crate::startup::Launch::parse(launch.arguments().iter().cloned(), native)?
     else {
         return Ok(0);
     };
@@ -242,12 +249,17 @@ pub fn run() -> HostResult<i32> {
         .resolve(options.paths, std::env::current_dir().ok().as_deref())?;
     let app_options = startup.into_options(&paths)?;
     let mut app = build_app_with_launch(app_options, settings, *launch)?;
-    app.add_plugins(crate::smoke::SmokePlugin(options.smoke));
+    #[cfg(feature = "test-support")]
+    if native {
+        app.add_plugins(crate::native_fixture::SmokePlugin(options.smoke));
+    }
+    #[cfg(feature = "test-support")]
     let smoke_failure = app
         .world()
-        .get_resource::<crate::smoke::SmokeFailure>()
+        .get_resource::<crate::native_fixture::SmokeFailure>()
         .map(|failure| failure.0.clone());
     let exit = app.run();
+    #[cfg(feature = "test-support")]
     if let Some(error) =
         smoke_failure.and_then(|failure| failure.lock().expect("smoke failure lock").clone())
     {
@@ -317,7 +329,7 @@ fn new_instance_command(
     Ok(command)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "test-support"))]
 pub(crate) fn smoke_native_menu(
     world: &World,
     action: crate::native_commands::MenuAction,
@@ -330,7 +342,7 @@ pub(crate) fn smoke_native_menu(
         .perform_for_smoke(&action.command_id())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "test-support"))]
 pub(crate) fn smoke_native_toolbar(world: &World, command: &str) -> bool {
     world
         .non_send::<bedtime_desktop::DesktopNativePlatform>()
@@ -339,7 +351,7 @@ pub(crate) fn smoke_native_toolbar(world: &World, command: &str) -> bool {
         .is_some_and(|window| window.click_command(command))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "test-support"))]
 pub(crate) fn smoke_native_chrome(world: &World) -> io::Result<()> {
     let window = world
         .non_send::<bedtime_desktop::DesktopNativePlatform>()
@@ -383,7 +395,7 @@ pub(crate) struct NativeSpawnedInstances(pub Vec<std::process::Child>);
 #[derive(Resource, Default)]
 pub(crate) struct NativeMenuObservations(pub Vec<crate::native_commands::MenuDispatch>);
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "test-support"))]
 pub(crate) fn smoke_native_key_equivalent(
     world: &World,
     characters: &str,
@@ -398,7 +410,7 @@ pub(crate) fn smoke_native_key_equivalent(
         .key_equivalent_for_smoke(characters, key_code, shift)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "test-support"))]
 pub(crate) fn smoke_native_dock_new_window(world: &World) -> io::Result<()> {
     world
         .non_send::<bedtime_desktop::DesktopNativePlatform>()
@@ -408,6 +420,7 @@ pub(crate) fn smoke_native_dock_new_window(world: &World) -> io::Result<()> {
         .perform_dock_for_smoke(&crate::native_commands::MenuAction::NewWindow.command_id())
 }
 
+#[cfg(feature = "test-support")]
 pub(crate) fn smoke_focus_window(world: &mut World) {
     let entity = world
         .query_filtered::<Entity, With<bevy::window::PrimaryWindow>>()
@@ -425,7 +438,7 @@ pub(crate) fn smoke_focus_window(world: &mut World) {
 #[path = "../tests/unit/native/host_tests.rs"]
 mod tests;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "test-support"))]
 pub(crate) fn smoke_native_material(world: &World) -> (bool, Option<bool>, Option<f32>) {
     world
         .non_send::<bedtime_desktop::DesktopNativePlatform>()

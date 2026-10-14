@@ -132,49 +132,18 @@ jobs:
           cargo test -p bedtime-plugin-effects --locked --features desktop --lib unified_composition_samples_current_scenes_and_recovers_in_the_same_world -- --ignored --test-threads=1 --nocapture
           cargo test -p bedtime-ui --locked --features imgui,gpu native_shared_target -- --ignored --nocapture
           cargo test -p bedtime-plugin-model-viewer --locked native_ -- --ignored --test-threads=1 --nocapture
-      - name: Reusable desktop and layout application (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          cargo run --locked -p bedtime-desktop --example native_smoke
-          cargo run --locked -p bedtime-desktop --example canvas_smoke
-          cargo run --locked -p bedtime-desktop --example automation_smoke
-          cargo run --locked -p bedtime-desktop --example window_config_smoke
-          cargo run --locked -p bedtime-desktop --example lifecycle_smoke
-          cargo run --locked -p bedtime --example workbench_smoke
-          cargo run --locked -p bedtime --example effects_smoke
-          cargo run --locked -p bedtime --features language-services --example git_smoke
-          cargo run --locked -p bedtime-example-game-editor -- --smoke-test
-          cargo run --locked -p bedtime-example-game-runtime -- --smoke-test
-          cargo run --locked -p bedtime-example-layouts -- --smoke-test --capture-frame target/native-layout.ppm
-          cargo run --locked -p bedtime-example-editor -- --smoke-test
-          cargo run --locked -p bedtime-example-model -- --smoke-test
-          bash scripts/ci/desktop-consumer.sh
-      - name: Independent SQLite application and restart (macOS)
+      - name: External automation client tests
+        run: python3 -m unittest discover -s tools/automation/tests
+      - name: External UI and action scenarios (macOS)
         if: runner.os == 'macOS'
         run: |
           cargo build --locked -p bedside-table
-          python3 bedside-table/scripts/smoke.py --capture-directory target/bedside-captures
-      - name: bEd native chrome and GPU capture (macOS)
-        if: runner.os == 'macOS'
-        run: target/release/bed --platform-smoke --capture-after-frames 30 --capture-frame target/native-window.ppm --config-dir target/native-config bed/src/main.rs
-      - name: Native macOS menu Undo and Redo after autosave
-        if: runner.os == 'macOS'
-        run: target/release/bed --menu-smoke --capture-after-frames 30 --capture-frame target/native-menu-undo.ppm
-      - name: Terminal glyphs, images and independent sessions (macOS)
-        if: runner.os == 'macOS'
-        run: cargo run --locked -p bedtime-example-terminal --example terminal_smoke
-      - name: Calling shell workspace promotion (macOS)
-        if: runner.os == 'macOS'
-        run: target/release/bed --term-promotion-smoke --capture-after-frames 30 --capture-frame target/native-promotion.png
-      - name: Shared viewer GPU recovery (macOS)
-        if: runner.os == 'macOS'
-        run: cargo run --locked -p bedtime --features language-services --example viewers_smoke
-      - name: Docked panels and main window composition (macOS)
+          python3 tools/automation/run_smokes.py --bed-binary target/release/bed
+      - name: Native integration fixtures (macOS)
         if: runner.os == 'macOS'
         run: |
-          mkdir -p target/native-project
-          cp bed/src/main.rs target/native-project/main.rs
-          target/release/bed --main-only-smoke --capture-after-frames 30 --capture-frame target/native-internal.ppm --config-dir target/native-internal-config
+          python3 scripts/test-native.py
+          bash scripts/ci/desktop-consumer.sh
       - name: Native lifecycle and GPU capture (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a scripts/ci/linux-native.sh
@@ -185,6 +154,7 @@ jobs:
         if: runner.os == 'Linux'
         run: scripts/package-linux.sh --skip-build
       - name: Upload packages and native capture
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bed-${{ runner.os }}-${{ runner.arch }}
@@ -193,12 +163,11 @@ jobs:
             target/dist/*.tar.gz
             target/dist/*.deb
             target/native-window.ppm
-            target/native-menu-undo.ppm
-            target/native-internal.ppm
             target/native-terminal.ppm
-            target/native-promotion.png
             target/native-viewers.png
             target/native-layout.ppm
             target/workbench-smoke.png
             target/git-smoke.png
+            target/automation-captures
+            target/native-captures
           if-no-files-found: error

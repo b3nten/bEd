@@ -16,7 +16,14 @@ pub fn navigation_request(
     jump: presentation::StructureJump,
     host: &HostContext<'_>,
 ) -> Option<HostAction> {
-    let active = host.active()?;
+    navigation_for_document(jump, host.active())
+}
+
+fn navigation_for_document(
+    jump: presentation::StructureJump,
+    active: Option<&bedtime_api::documents::PluginDocument>,
+) -> Option<HostAction> {
+    let active = active?;
     if active.id != jump.key.document
         || active.revision != (jump.key.generation, jump.key.revision)
         || active.path != jump.key.path
@@ -31,15 +38,17 @@ pub fn navigation_request(
     })
 }
 
-fn sync_outline(outline: &mut Option<OutlineService>, host: &HostContext<'_>, live: bool) {
+fn sync_outline(
+    outline: &mut Option<OutlineService>,
+    active: Option<&bedtime_api::documents::PluginDocument>,
+    live: bool,
+) {
     if !live {
         *outline = None;
         return;
     }
     let outline = outline.get_or_insert_with(OutlineService::default);
-    let target = host
-        .active()
-        .filter(|document| document.kind == DocumentKind::Text);
+    let target = active.filter(|document| document.kind == DocumentKind::Text);
     if let Some(document) = target {
         let key = OutlineKey {
             document: document.id,

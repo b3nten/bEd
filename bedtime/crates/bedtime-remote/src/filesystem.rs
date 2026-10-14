@@ -106,6 +106,9 @@ impl LocalBackend {
                     let kind = entry.file_type()?;
                     entries.push(DirectoryEntry {
                         path: path_string(&entry.path())?,
+                        canonical_path: fs::canonicalize(entry.path())
+                            .ok()
+                            .and_then(|path| path.to_str().map(str::to_owned)),
                         name: entry.file_name().into_string().map_err(|_| {
                             RemoteError::new(
                                 ErrorKind::InvalidInput,
@@ -1094,6 +1097,7 @@ mod tests {
                 let name = format!("{index}-{}.log", "long".repeat(30));
                 DirectoryEntry {
                     path: temp.0.join(&name).to_str().unwrap().into(),
+                    canonical_path: None,
                     name,
                     is_directory: false,
                     is_symlink: false,

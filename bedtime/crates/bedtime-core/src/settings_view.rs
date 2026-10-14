@@ -165,6 +165,14 @@ fn workbench(
         ));
     }
     ui.spacing();
+    let mut icons = context
+        .snapshot
+        .get("bedtime.workbench", "tab_icons")
+        .and_then(Value::as_bool)
+        .expect("published tab icon setting");
+    if rows::checkbox(ui, "Show tab icons", &mut icons) {
+        changes.push(SettingsChange::set("bedtime.workbench", "tab_icons", icons));
+    }
     ui.separator_with_text("Keybindings");
     if world.get::<SettingsEditors>(context.panel).is_none() {
         world

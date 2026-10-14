@@ -1,5 +1,5 @@
 //! Typed, asynchronous application control through the normal application transitions.
-//! Install after the workbench plugins. No transport or extra app runner is installed.
+//! Install after the workbench plugins. External control is explicitly enabled.
 use bedtime_api::workbench::{
     CommandInvocation, PanelPresentation, WorkbenchAction, WorkbenchRegistry,
 };
@@ -15,17 +15,20 @@ use bevy::prelude::*;
 use serde_json::Value;
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 #[cfg(feature = "documents")]
 mod documents;
+mod extensions;
+pub mod transport;
+pub mod wire;
 #[cfg(feature = "documents")]
-pub use documents::{DocumentHandle, DocumentInfo, DocumentRead, read_document};
+pub use documents::{
+    DocumentHandle, DocumentInfo, DocumentRead, document_handle, read_document, resolve_document,
+};
+pub use extensions::{ExtensionDefinition, ExtensionStart, register_extension};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OperationId(pub u64);
@@ -65,6 +68,11 @@ pub enum CaptureTarget {
 
 #[derive(Debug)]
 pub enum Operation {
+    Describe,
+    Extension {
+        name: String,
+        arguments: Value,
+    },
     Inspect,
     OpenPanel {
         panel_type: String,
@@ -95,6 +103,8 @@ pub enum Operation {
 
 #[derive(Clone, Debug)]
 pub struct PanelInfo {
+    #[cfg(feature = "documents")]
+    pub document: Option<DocumentHandle>,
     pub handle: PanelHandle,
     pub persisted_id: u64,
     pub panel_type: String,
@@ -133,6 +143,7 @@ pub struct Snapshot {
 
 #[derive(Debug)]
 pub enum OperationValue {
+    Json(Value),
     Applied,
     Ignored,
     Opened(PanelHandle),
@@ -176,7 +187,7 @@ impl std::fmt::Display for AutomationError {
 impl std::error::Error for AutomationError {}
 
 impl AutomationError {
-    fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+    pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
@@ -233,6 +244,21 @@ impl AutomationResults {
     pub fn take(&mut self, id: OperationId) -> Option<OperationResult> {
         self.complete.get_mut(&id)?.payload.take()
     }
+    /// Explicitly retire a receipt once no future capture needs it.
+    pub fn release(&mut self, id: OperationId) -> bool {
+        if self.status(id) != Some(OperationStatus::Complete) {
+            return false;
+        }
+        self.complete.remove(&id);
+        self.statuses
+            .lock()
+            .expect("automation status mutex poisoned")
+            .remove(&id);
+        true
+    }
+    pub fn completion_frame(&self, id: OperationId) -> Option<DesktopFrameId> {
+        self.complete.get(&id).map(|receipt| receipt.frame)
+    }
     fn finish(&mut self, id: OperationId, result: OperationResult, frame: DesktopFrameId) {
         self.statuses
             .lock()
@@ -256,6 +282,8 @@ struct AutomationScope(u64);
 struct ActiveOperations(Vec<(OperationId, Pending)>);
 
 enum Pending {
+    Immediate(Option<OperationResult>),
+    Extension(extensions::ExtensionPoll),
     Workbench(WorkbenchRequestId),
     Inspect,
     Input(DesktopInputId),
@@ -278,12 +306,23 @@ pub enum AutomationSystems {
 pub struct AutomationPlugin;
 
 impl Plugin for AutomationPlugin {
+    fn is_unique(&self) -> bool {
+        false
+    }
     fn build(&self, app: &mut App) {
+        if app.world().contains_resource::<AutomationScope>() {
+            return;
+        }
         assert!(
             app.world().contains_resource::<WorkbenchRequests>(),
             "install the workbench before AutomationPlugin"
         );
-        static NEXT_APP: AtomicU64 = AtomicU64::new(1);
+        let mut scope = [0u8; 8];
+        std::io::Read::read_exact(
+            &mut std::fs::File::open("/dev/urandom").expect("OS randomness"),
+            &mut scope,
+        )
+        .expect("OS randomness");
         let statuses = Arc::default();
         app.insert_resource(AutomationRequests {
             statuses: Arc::clone(&statuses),
@@ -293,10 +332,11 @@ impl Plugin for AutomationPlugin {
             statuses,
             ..default()
         })
-        .insert_resource(AutomationScope(NEXT_APP.fetch_add(1, Ordering::Relaxed)))
+        .insert_resource(AutomationScope(u64::from_ne_bytes(scope)))
         .init_resource::<AutomationRequests>()
         .init_resource::<AutomationResults>()
         .init_resource::<ActiveOperations>()
+        .init_resource::<extensions::Extensions>()
         .add_systems(
             PreUpdate,
             ingress
@@ -368,6 +408,14 @@ fn ingress(world: &mut World) {
 
 fn start(world: &mut World, operation: Operation) -> Result<Pending, AutomationError> {
     let action = match operation {
+        Operation::Describe => {
+            return Ok(Pending::Immediate(Some(Ok(OperationValue::Json(
+                extensions::describe(world),
+            )))));
+        }
+        Operation::Extension { name, arguments } => {
+            return extensions::start(world, &name, arguments);
+        }
         Operation::Inspect => return Ok(Pending::Inspect),
         Operation::OpenPanel {
             panel_type,
@@ -452,6 +500,15 @@ fn start(world: &mut World, operation: Operation) -> Result<Pending, AutomationE
             WorkbenchAction::Invoke(invocation)
         }
         Operation::Input(steps) => {
+            if world
+                .get_resource::<transport::InputBlocked>()
+                .is_some_and(|blocked| blocked.0)
+            {
+                return Err(AutomationError::new(
+                    ErrorKind::Unavailable,
+                    "input is blocked during connection approval",
+                ));
+            }
             let mut requests = world
                 .get_resource_mut::<DesktopInputRequests>()
                 .ok_or_else(|| {
@@ -519,6 +576,8 @@ fn complete(world: &mut World) {
 
 fn poll(world: &mut World, pending: &mut Pending) -> Option<OperationResult> {
     match pending {
+        Pending::Immediate(result) => result.take(),
+        Pending::Extension(poll) => poll(world).map(|result| result.map(OperationValue::Json)),
         Pending::Workbench(id) => world
             .resource_mut::<WorkbenchRequests>()
             .take_result(*id)
@@ -674,6 +733,16 @@ fn inspect(world: &mut World) -> Result<Snapshot, AutomationError> {
             }
         };
         panels.push(PanelInfo {
+            #[cfg(feature = "documents")]
+            document: {
+                let surface = world
+                    .get::<bedtime_api::workbench::PanelFrontend>(entity)
+                    .map_or(entity, |frontend| frontend.0);
+                world
+                    .get::<bedtime_api::documents::PanelBinding>(surface)
+                    .and_then(|binding| binding.document)
+                    .map(|id| document_handle(world, id))
+            },
             readiness,
             handle: handle(world, entity),
             persisted_id,

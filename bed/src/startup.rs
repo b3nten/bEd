@@ -362,6 +362,7 @@ pub(crate) struct Launch {
 impl Launch {
     pub fn parse(
         arguments: impl IntoIterator<Item = std::ffi::OsString>,
+        native: bool,
     ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         let mut launch = Self {
             startup: StartupOptions::default(),
@@ -377,7 +378,7 @@ impl Launch {
             match argument.to_str() {
                 Some("--help" | "-h") => {
                     println!(
-                        "Usage: bed [FILE_OR_FOLDER ...] [--cwd DIRECTORY] [--config-dir DIRECTORY]\n  --new-window     Open a standalone instance\n  --workspace JSON\n  --capture-frame OUTPUT.png|OUTPUT.ppm [--capture-after-frames N]\n  --smoke-test | --main-only-smoke | --appearance-smoke\n  --platform-smoke | --menu-smoke | --term-promotion-smoke\n\nWindows without launch paths open the configurable Startup layout.\nExplicit files and folders use layout 1; saved workspace roots restore their selected layout.\nOnly exact saved folder roots attach at launch; workspaces must be requested explicitly."
+                        "Usage: bed [FILE_OR_FOLDER ...] [--cwd DIRECTORY] [--config-dir DIRECTORY]\n  --new-window     Open a standalone instance\n  --workspace JSON\n  --allow-automation\n  --approve-automation=CLIENT_NAME (repeatable; requires --allow-automation)\n  --automation-socket PATH\n\nWindows without launch paths open the configurable Startup layout.\nExplicit files and folders use layout 1; saved workspace roots restore their selected layout.\nOnly exact saved folder roots attach at launch; workspaces must be requested explicitly."
                     );
                     return Ok(None);
                 }
@@ -404,13 +405,13 @@ impl Launch {
                             .ok_or_else(|| io::Error::other("Invalid workspace specification"))?,
                     );
                 }
-                Some("--capture-frame") => {
+                Some("--capture-frame") if native => {
                     launch.smoke.capture =
                         Some(PathBuf::from(arguments.next().ok_or_else(|| {
                             io::Error::other("--capture-frame requires an output path")
                         })?))
                 }
-                Some("--capture-after-frames") => {
+                Some("--capture-after-frames") if native => {
                     launch.smoke.after_frames = arguments
                         .next()
                         .ok_or_else(|| {
@@ -431,7 +432,7 @@ impl Launch {
                     | "--platform-smoke"
                     | "--menu-smoke"
                     | "--term-promotion-smoke",
-                ) => launch
+                ) if native => launch
                     .smoke
                     .scenarios
                     .push(argument.to_string_lossy().into_owned()),
