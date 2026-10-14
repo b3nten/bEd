@@ -149,7 +149,7 @@ mod tests {
             bedtime_plugin_editor::EditorPlugin,
             BedSettingsPagesPlugin,
         ));
-        crate::config::ensure_settings_view(app.world_mut()).unwrap();
+        crate::config::integration::bootstrap_test_settings(app.world_mut()).unwrap();
         let panel = bedtime_core::open_panel(
             app.world_mut(),
             bedtime_plugin_settings::PANEL_ID,

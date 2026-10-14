@@ -63,11 +63,6 @@ name = "app_remote_editor"
 path = "tests/app_remote_editor.rs"
 harness = false
 
-[[test]]
-name = "lsp_transport"
-path = "tests/lsp_transport.rs"
-harness = false
-
 [dev-dependencies]
 bedtime-plugin-csv-table = { workspace = true, features = ["test-support"] }
 bedtime-plugin-debugger = { workspace = true, features = ["test-support"] }

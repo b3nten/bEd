@@ -325,6 +325,9 @@ impl DocumentRuntime {
                 return;
             }
             self.git.borrow_mut().poll();
+            if let Some(error) = self.git.borrow_mut().take_status_error() {
+                self.service_errors.borrow_mut().push(error);
+            }
             if self.highlight_dirty.replace(false) {
                 self.highlight.highlight_content(&self.state, &mut self.ops);
             }

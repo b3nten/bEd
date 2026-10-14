@@ -91,15 +91,14 @@ pub fn render_close_prompt(world: &mut World, ui: &dear_imgui_rs::Ui) {
                 .or_else(|| {
                     world
                         .non_send::<DocumentSession>()
-                        .snapshot(document)
-                        .ok()
-                        .map(|snapshot| {
-                            if snapshot.path.is_empty() {
+                        .with_document(document, |state| {
+                            if state.path.is_empty() {
                                 "Untitled document".into()
                             } else {
-                                snapshot.path
+                                state.path.clone()
                             }
                         })
+                        .ok()
                 })
                 .unwrap_or_else(|| "Document".into());
             ui.bullet_text(label);
@@ -488,6 +487,8 @@ pub fn take_document_service_report(world: &mut World) -> bedtime_documents::ses
     std::mem::take(&mut world.non_send_mut::<DocumentServiceReport>().0)
 }
 pub fn poll_document_services(world: &mut World) {
+    let _timing =
+        bedtime_desktop::measure_frame_stage(world, bedtime_desktop::FrameStage::Documents);
     admit(world);
     supersede_file_intentions(world);
     crate::settings::refresh_settings(world);
@@ -602,16 +603,21 @@ pub fn publish_documents(world: &mut World) {
         .filter_map(|(entity, binding)| binding.document.map(|document| (entity, document)))
         .collect::<Vec<_>>();
     for (entity, document) in records {
-        if let Ok(snapshot) = world.non_send::<DocumentSession>().snapshot(document) {
+        if let Ok((path, kind, dirty)) = world
+            .non_send::<DocumentSession>()
+            .with_document(document, |state| {
+                (state.path.clone(), state.kind, state.dirty)
+            })
+        {
             let owner = bedtime_api::workbench::panel_owner(world, entity).unwrap_or(entity);
-            if !snapshot.path.is_empty()
+            if !path.is_empty()
                 && let Some(mut record) = world
                     .get_mut::<bedtime_workbench::PanelRecord>(owner)
                     .filter(|record| record.unavailable.is_none())
             {
-                record.serialized["path"] = json!(snapshot.path);
+                record.serialized["path"] = json!(path);
                 record.serialized["document_kind"] =
-                    json!(if snapshot.kind == bedtime_documents::DocumentKind::Text {
+                    json!(if kind == bedtime_documents::DocumentKind::Text {
                         "text"
                     } else {
                         "bytes"
@@ -623,7 +629,7 @@ pub fn publish_documents(world: &mut World) {
             {
                 world
                     .entity_mut(owner)
-                    .insert(bedtime_workbench::PanelDirty(snapshot.dirty));
+                    .insert(bedtime_workbench::PanelDirty(dirty));
             }
         }
     }
@@ -764,8 +770,8 @@ fn finish_quit(world: &mut World) -> Result<(), String> {
         .filter(|document| {
             world
                 .non_send::<DocumentSession>()
-                .snapshot(*document)
-                .is_ok_and(|snapshot| snapshot.dirty)
+                .with_document(*document, |state| state.dirty)
+                .unwrap_or(false)
         })
         .collect::<Vec<_>>();
     dirty.extend(
@@ -834,7 +840,7 @@ fn prepare_panel(world: &mut World, entity: Entity) -> Result<(), String> {
             let document = DocumentId(id);
             world
                 .non_send::<DocumentSession>()
-                .snapshot(document)
+                .with_document(document, |_| ())
                 .map_err(|error| error.to_string())?;
             world.entity_mut(entity).insert(PanelBinding {
                 input: PanelInput::Document(document),
@@ -1493,13 +1499,13 @@ fn open_document_panel_with_viewer(
     area: Option<u32>,
     viewer: Option<&str>,
 ) -> Result<Entity, String> {
-    let snapshot = world
+    let (path, kind) = world
         .non_send::<DocumentSession>()
-        .snapshot(document)
+        .with_document(document, |state| (state.path.clone(), state.kind))
         .map_err(|error| error.to_string())?;
-    let mut serialized = json!({"panel_type":panel_type,"state":state,"document":document.0,"backing":"document","document_kind":if snapshot.kind == bedtime_documents::DocumentKind::Text { "text" } else { "bytes" },"viewer":viewer});
-    if !snapshot.path.is_empty() {
-        serialized["path"] = json!(snapshot.path);
+    let mut serialized = json!({"panel_type":panel_type,"state":state,"document":document.0,"backing":"document","document_kind":if kind == bedtime_documents::DocumentKind::Text { "text" } else { "bytes" },"viewer":viewer});
+    if !path.is_empty() {
+        serialized["path"] = json!(path);
     }
     serialized["document_session"] = json!(world.non_send::<DocumentSession>().session_id().0);
     serialized["document_origin"] = json!(world.resource::<LiveDocumentOrigin>().0.to_string());
@@ -2216,8 +2222,7 @@ pub fn document_dirty(world: &World, document: DocumentId) -> Result<bool, Strin
     }
     world
         .non_send::<DocumentSession>()
-        .snapshot(document)
-        .map(|document| document.dirty)
+        .with_document(document, |state| state.dirty)
         .map_err(|error| error.to_string())
 }
 pub fn document_path(
@@ -2230,11 +2235,11 @@ pub fn document_path(
         }
         return Ok(model.path.clone());
     }
-    let snapshot = world
+    let path = world
         .non_send::<DocumentSession>()
-        .snapshot(document)
+        .with_document(document, |state| state.path.clone())
         .map_err(|error| error.to_string())?;
-    Ok((!snapshot.path.is_empty()).then(|| snapshot.path.into()))
+    Ok((!path.is_empty()).then(|| path.into()))
 }
 
 /// Retire contents only after the final panel binding has been released.
@@ -3447,9 +3452,16 @@ pub fn snapshot_document_layout(
                 value["path"] = json!(path);
                 value["backing"] = json!("local_file");
             } else if let Some(document) = binding.document {
-                let snapshot = world
+                let (path, kind, size, dirty) = world
                     .non_send::<DocumentSession>()
-                    .snapshot(document)
+                    .with_document(document, |state| {
+                        (
+                            state.path.clone(),
+                            state.kind,
+                            state.byte_size(),
+                            state.dirty,
+                        )
+                    })
                     .map_err(|error| error.to_string())?;
                 if world
                     .non_send::<DocumentSession>()
@@ -3457,15 +3469,15 @@ pub fn snapshot_document_layout(
                 {
                     continue;
                 }
-                if snapshot.path.is_empty() {
-                    if !snapshot.bytes.is_empty() || snapshot.dirty {
+                if path.is_empty() {
+                    if size != 0 || dirty {
                         continue;
                     }
                     value["default_input"] = json!(true);
                 } else {
-                    value["path"] = json!(snapshot.path);
+                    value["path"] = json!(path);
                     value["document_kind"] =
-                        json!(if snapshot.kind == bedtime_documents::DocumentKind::Bytes {
+                        json!(if kind == bedtime_documents::DocumentKind::Bytes {
                             "bytes"
                         } else {
                             "text"
@@ -3905,9 +3917,11 @@ fn pristine_document_panel(world: &World, panel: Entity) -> bool {
     };
     let session = world.non_send::<DocumentSession>();
     session.document_revision(stamp.document).ok() == Some(stamp.revision)
-        && session.snapshot(stamp.document).is_ok_and(|snapshot| {
-            snapshot.path.is_empty() && snapshot.bytes.is_empty() && !snapshot.dirty
-        })
+        && session
+            .with_document(stamp.document, |state| {
+                state.path.is_empty() && state.byte_size() == 0 && !state.dirty
+            })
+            .unwrap_or(false)
 }
 
 fn reusable_document_panel(world: &mut World, area: Option<u32>) -> Result<Option<Entity>, String> {

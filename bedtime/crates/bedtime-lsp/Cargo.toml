@@ -14,3 +14,8 @@ globset = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+
+[[test]]
+name = "lsp_transport"
+path = "tests/lsp_transport.rs"
+harness = false

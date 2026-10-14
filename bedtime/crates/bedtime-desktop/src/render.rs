@@ -105,6 +105,7 @@ fn reconcile_unrendered(world: &mut World) {
 }
 
 fn render_desktop(world: &mut World) {
+    let _timing = crate::measure_frame_stage(world, crate::FrameStage::Render);
     let Some(snapshot) = world.resource_mut::<RenderFrame>().snapshot.take() else {
         return;
     };

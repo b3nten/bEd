@@ -83,7 +83,8 @@ pub struct GitController {
     pub session_id: Option<u64>,
     pub root: String,
     pub transient: bool,
-    pub status: Option<Status>,
+    pub status: Option<Arc<Status>>,
+    pub context_menu_path: Option<String>,
     pub draft: String,
     pub branch_input: String,
     pub error: Option<String>,
@@ -114,6 +115,7 @@ impl Default for GitController {
             root: String::new(),
             transient: false,
             status: None,
+            context_menu_path: None,
             draft: String::new(),
             branch_input: String::new(),
             error: None,
@@ -700,7 +702,7 @@ impl GitController {
                         documents.invalidate_git_baselines();
                     }
                     self.known_head = Some(status.head.clone());
-                    self.status = Some(status);
+                    self.status = Some(Arc::new(status));
                     if !expanding {
                         for path in std::mem::take(&mut self.pending_absolute_diffs) {
                             self.open_absolute_diff_native(&path, requests);
@@ -910,7 +912,7 @@ mod tests {
             };
             GitController {
                 root: self.0.to_string_lossy().into(),
-                status: Some(status),
+                status: Some(Arc::new(status)),
                 refresh: false,
                 ..Default::default()
             }
@@ -1008,7 +1010,7 @@ mod tests {
             None,
             "local changes stay quiet"
         );
-        read.send(Ok(Output::Status(before.clone()))).unwrap();
+        read.send(Ok(Output::Status((*before).clone()))).unwrap();
         tick_once(&mut controller, &mut session);
         assert!(
             before
@@ -1288,7 +1290,7 @@ mod tests {
         );
         // Dismissing that rejected second action does not cancel the first one.
         controller.error = None;
-        read.send(Ok(Output::Status(status))).unwrap();
+        read.send(Ok(Output::Status((*status).clone()))).unwrap();
         tick_once(&mut controller, &mut session);
         assert!(matches!(
             controller.active.as_ref().unwrap().0.operation,
@@ -1386,7 +1388,7 @@ mod tests {
                 }],
             )
             .unwrap();
-        read.send(Ok(Output::Status(status))).unwrap();
+        read.send(Ok(Output::Status((*status).clone()))).unwrap();
         tick_once(&mut controller, &mut session);
         assert!(controller.active.is_none());
         assert!(
@@ -1528,7 +1530,7 @@ mod tests {
                 }],
             )
             .unwrap();
-        read.send(Ok(Output::Status(status))).unwrap();
+        read.send(Ok(Output::Status((*status).clone()))).unwrap();
         tick_once(&mut controller, &mut session);
         assert!(controller.active.is_none());
         assert!(controller.error.is_some());
@@ -1561,7 +1563,7 @@ mod tests {
                 }],
             )
             .unwrap();
-        read.send(Ok(Output::Status(status))).unwrap();
+        read.send(Ok(Output::Status((*status).clone()))).unwrap();
         tick_once(&mut controller, &mut session);
         assert!(controller.active.is_none());
         assert!(controller.error.as_ref().unwrap().contains("aborting"));

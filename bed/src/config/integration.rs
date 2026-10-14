@@ -58,8 +58,9 @@ pub fn register_app_settings(world: &mut World) -> io::Result<()> {
     Ok(())
 }
 
-/// Standalone test/application hosts have the same setup order as the launcher.
-pub fn ensure_settings_view(world: &mut World) -> io::Result<()> {
+/// Explicit unit-fixture bootstrap; production launch owns settings finalization.
+#[cfg(test)]
+pub(crate) fn bootstrap_test_settings(world: &mut World) -> io::Result<()> {
     if !world.contains_resource::<AppSettingsRegistered>() {
         let path = world.non_send::<AppConfig>().settings_path.clone();
         bedtime_core::settings::initialize_settings(world, Some(path))?;
@@ -106,7 +107,7 @@ mod tests {
                 .unwrap(),
         );
         app.insert_non_send(settings);
-        ensure_settings_view(app.world_mut()).unwrap();
+        bootstrap_test_settings(app.world_mut()).unwrap();
         let snapshot = app.world().resource::<SettingsSnapshot>();
         for (owner, key) in [
             ("bedtime.idle", "bedtime_delay_seconds"),

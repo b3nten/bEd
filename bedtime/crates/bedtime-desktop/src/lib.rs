@@ -16,11 +16,13 @@ mod capture;
 pub use capture::*;
 mod injected_input;
 pub use injected_input::*;
+mod frame_timings;
 mod input_map;
 mod input_router;
 mod memory_assets;
 mod platform;
 mod render;
+pub use frame_timings::{FrameStage, FrameStageTiming, measure_frame_stage};
 pub use memory_assets::{MEMORY_ASSET_SOURCE, MemoryAssets};
 #[cfg(feature = "preview")]
 pub mod preview;
@@ -177,6 +179,7 @@ impl Plugin for DesktopIntegrationPlugin {
         })
         .init_resource::<DesktopFrame>()
         .init_resource::<DesktopFrameInfo>()
+        .insert_resource(frame_timings::FrameTimings::from_environment())
         .init_resource::<DesktopScreenshotRequest>()
         .init_resource::<DesktopScreenshotResult>();
         let captures = capture::CaptureBridge::default();
@@ -664,6 +667,7 @@ fn route_input(world: &mut World) {
 }
 
 fn draw_frontend(world: &mut World) {
+    let _timing = measure_frame_stage(world, FrameStage::Ui);
     let Some(gpu) = world.get_resource::<DesktopGpu>() else {
         return;
     };
@@ -780,6 +784,9 @@ fn extract_frame(mut commands: Commands, mut main: ResMut<bevy::render::MainWorl
             canvases: std::mem::take(&mut frame.canvases),
             size: frame.size,
         });
+    }
+    if let Some(timings) = main.get_resource::<frame_timings::FrameTimings>() {
+        commands.insert_resource(timings.clone());
     }
     if let Some(gpu) = main.get_resource::<DesktopGpu>() {
         commands.insert_resource(gpu.clone());

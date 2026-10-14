@@ -4,10 +4,7 @@ use crate::application::testing::{
     AppAction, capture_app_request, open_panel, panel_presentation, process_app_requests,
     submit_app_request,
 };
-use crate::application::{
-    AppOptions, AppRuntimePlugin, PanelPresentation, RemoteHelperDirectory, WorkspacePersistence,
-    WorkspaceStore,
-};
+use crate::application::{AppOptions, AppRuntimePlugin, PanelPresentation};
 use bedtime_api::workbench::PanelTarget;
 use bedtime_documents::DocumentSession;
 use bedtime_plugin_terminal::{TerminalPanelState, shell_socket_path};
@@ -29,21 +26,7 @@ use std::{
 
 fn app(directory: &TempDir, startup_panel: Option<&str>) -> App {
     let mut app = App::new();
-    let settings = crate::config::AppConfig::with_paths(
-        directory.path("config"),
-        env!("CARGO_MANIFEST_DIR").into(),
-    )
-    .unwrap();
-    let paths =
-        bedtime_api::launch::ApplicationPaths::new("bed", Some(settings.config_dir.clone()), None)
-            .unwrap();
-    app.insert_resource(paths.clone())
-        .insert_non_send(bedtime_ui::icons::Icons::default())
-        .insert_non_send(WorkspacePersistence::new(
-            WorkspaceStore::load(&paths).unwrap(),
-        ))
-        .insert_non_send(settings)
-        .insert_resource(RemoteHelperDirectory(std::path::PathBuf::new()));
+    crate::application::runtime::install_test_infrastructure(&mut app, &directory.path("config"));
     app.add_plugins((
         AppRuntimePlugin {
             options: AppOptions {
@@ -66,6 +49,13 @@ fn app(directory: &TempDir, startup_panel: Option<&str>) -> App {
             ("PS1".into(), String::new()),
         ]));
     app.update();
+    assert!(
+        shell_socket_path(app.world()).is_some(),
+        "shell bridge startup failed: {:?}",
+        app.world()
+            .resource::<crate::application::ApplicationState>()
+            .error
+    );
     app
 }
 

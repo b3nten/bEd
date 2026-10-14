@@ -121,6 +121,8 @@ impl WorkspacePersistence {
 }
 
 #[derive(Default)]
+/// bEd startup policy. Finalize feature settings before the first update;
+/// Startup prepares themes, then PostStartup restores layouts and opens files.
 pub struct AppRuntimePlugin {
     pub options: AppOptions,
 }
@@ -158,10 +160,8 @@ impl Plugin for AppRuntimePlugin {
             LayoutSlot::Layout1,
         ));
         app.init_resource::<LayoutNotifications>()
-            .init_resource::<LayoutSlots>()
             .init_resource::<AppInitialized>()
             .init_resource::<AppObservation>()
-            .init_resource::<WorkspaceAttachment>()
             .insert_resource(bedtime_core::DocumentClosePolicy(
                 bedtime_documents::ClosePolicy::Save,
             ))
@@ -176,7 +176,7 @@ impl Plugin for AppRuntimePlugin {
                 PostUpdate,
                 update_application_policy.after(bedtime_plugin_layouts::LayoutSystems::Requests),
             )
-            .add_systems(Startup, initialize_app);
+            .add_systems(PostStartup, initialize_app);
         let world = app.world_mut();
         let directory = self
             .options
@@ -322,7 +322,7 @@ fn initialize_app(world: &mut World) {
         return;
     };
     let result = (|| -> io::Result<()> {
-        crate::config::ensure_settings_view(world)?;
+        // Launch (or the explicit headless fixture) finalized settings before PostStartup.
         bedtime_core::settings::configure_document_settings(world)?;
         if let Some(spec) = options.workspace {
             let injected_remote = matches!(&spec.target,WorkspaceTarget::Ssh {host}
@@ -521,4 +521,7 @@ pub(crate) fn install_test_infrastructure(app: &mut App, config: &Path) {
         .insert_non_send(settings)
         .insert_resource(RemoteHelperDirectory(PathBuf::new()));
     WorkspacePersistence::install(app, WorkspaceStore::load(&paths).unwrap());
+    app.add_systems(Startup, |world: &mut World| {
+        crate::config::integration::bootstrap_test_settings(world).unwrap();
+    });
 }

@@ -41,6 +41,10 @@ impl GitRepo {
         self.repo.as_ref().and_then(Repository::workdir)
     }
 
+    pub(crate) fn git_dir(&self) -> Option<&Path> {
+        self.repo.as_ref().map(|repo| repo.path())
+    }
+
     fn ensure_head_tree(&mut self) -> bool {
         let Some(repo) = &self.repo else {
             return false;
@@ -83,9 +87,13 @@ impl GitRepo {
     }
 
     pub fn modified_paths(&self) -> BTreeSet<Vec<u8>> {
+        self.try_modified_paths().unwrap_or_default()
+    }
+
+    pub(crate) fn try_modified_paths(&self) -> Result<BTreeSet<Vec<u8>>, git2::Error> {
         let mut result = BTreeSet::new();
         let Some(repo) = &self.repo else {
-            return result;
+            return Ok(result);
         };
         let mut options = StatusOptions::new();
         options
@@ -93,9 +101,7 @@ impl GitRepo {
             .include_untracked(true)
             .recurse_untracked_dirs(true)
             .exclude_submodules(true);
-        let Ok(statuses) = repo.statuses(Some(&mut options)) else {
-            return result;
-        };
+        let statuses = repo.statuses(Some(&mut options))?;
         for entry in &statuses {
             if entry.status() == Status::CURRENT || entry.status() == Status::IGNORED {
                 continue;
@@ -122,6 +128,6 @@ impl GitRepo {
                 result.insert(path.to_vec());
             }
         }
-        result
+        Ok(result)
     }
 }

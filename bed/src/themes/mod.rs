@@ -101,6 +101,8 @@ impl Plugin for ThemePlugin {
                     .after(bedtime_core::CoreConfigurationSystems::Settings)
                     .before(bedtime_core::CoreSystems::Services),
             )
+            // Startup projection precedes bEd's PostStartup restore/open policy.
+            .add_systems(Startup, configure_themes)
             .add_systems(
                 PreUpdate,
                 save_themes

@@ -164,21 +164,24 @@ mod tests {
         {
             let mut controller = app.world_mut().non_send_mut::<GitState>();
             controller.0.root = "/workspace/repo".into();
-            controller.0.status = Some(Status {
-                root: "/workspace/repo".into(),
-                branch: "main".into(),
-                upstream: Some("origin/main".into()),
-                ahead: 2,
-                behind: 1,
-                entries: vec![StatusEntry {
-                    path: "a.rs".into(),
-                    old_path: None,
-                    index_status: 'U',
-                    worktree_status: 'U',
-                    conflicted: true,
-                }],
-                ..Default::default()
-            });
+            controller.0.status = Some(
+                Status {
+                    root: "/workspace/repo".into(),
+                    branch: "main".into(),
+                    upstream: Some("origin/main".into()),
+                    ahead: 2,
+                    behind: 1,
+                    entries: vec![StatusEntry {
+                        path: "a.rs".into(),
+                        old_path: None,
+                        index_status: 'U',
+                        worktree_status: 'U',
+                        conflicted: true,
+                    }],
+                    ..Default::default()
+                }
+                .into(),
+            );
         }
         let text = presentation(app.world(), context(publisher, QUIET)).unwrap();
         assert_eq!(text.summary, "main  ↑2 ↓1  1 changed  1 conflicts");

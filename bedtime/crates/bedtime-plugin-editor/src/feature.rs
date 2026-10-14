@@ -304,12 +304,13 @@ impl Panel for EditorFrontend {
             .get::<EditorPanelState>(self.entity)
             .expect("editor presentation owns document state");
         if let Some(session) = world.get_non_send::<DocumentSession>()
-            && let Ok(snapshot) = session.snapshot(state.document)
+            && let Ok(path) =
+                session.with_document(state.document, |document| document.path.clone())
         {
-            let name = if snapshot.path.is_empty() {
+            let name = if path.is_empty() {
                 "Untitled".into()
             } else {
-                Path::new(&snapshot.path)
+                Path::new(&path)
                     .file_name()
                     .unwrap_or_default()
                     .to_string_lossy()

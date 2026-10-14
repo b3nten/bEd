@@ -111,8 +111,15 @@ impl LspDiagnostics {
         items: std::collections::BTreeMap<String, Vec<DiagnosticItem>>,
         remote_paths: bool,
     ) {
+        let mut store = self.inner.lock().unwrap();
+        let key_cache = if store.remote_paths == remote_paths {
+            std::mem::take(&mut store.key_cache)
+        } else {
+            HashMap::new()
+        };
         let mut next = Store {
             remote_paths,
+            key_cache,
             ..Default::default()
         };
         for (path, items) in items {
@@ -121,7 +128,7 @@ impl LspDiagnostics {
                 next.by_path.entry(key).or_default().extend(items);
             }
         }
-        *self.inner.lock().unwrap() = next;
+        *store = next;
     }
 
     /// One consistent snapshot, including files that have never been opened.
@@ -141,6 +148,16 @@ impl LspDiagnostics {
         let mut store = self.inner.lock().unwrap();
         let key = Self::key_for(&mut store, path);
         store.versions.remove(&key);
+    }
+
+    /// Filesystem identity changes are handled before presentation is published.
+    pub fn invalidate_document_keys(&self) {
+        self.inner.lock().unwrap().key_cache.clear();
+    }
+
+    /// Resolve a document identity before its presentation is drawn.
+    pub fn register_document(&self, path: &str) {
+        Self::key_for(&mut self.inner.lock().unwrap(), path);
     }
 
     pub fn for_document(&self, path: &str) -> Vec<DiagnosticItem> {
@@ -194,6 +211,33 @@ impl LspDiagnostics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_refresh_preserves_registered_identity_until_explicit_invalidation() {
+        let store = LspDiagnostics::new();
+        let alias = "/document-alias.rs";
+        let canonical = "/canonical/document.rs";
+        // Represents an alias registered at document-open time.
+        store
+            .inner
+            .lock()
+            .unwrap()
+            .key_cache
+            .insert(alias.into(), canonical.into());
+        let diagnostic = DiagnosticItem {
+            message: "still associated with the open document".into(),
+            ..Default::default()
+        };
+        for _ in 0..2 {
+            store.replace_snapshot([(canonical.into(), vec![diagnostic.clone()])].into(), false);
+            assert_eq!(store.for_document(alias), vec![diagnostic.clone()]);
+        }
+        store.invalidate_document_keys();
+        assert!(store.for_document(alias).is_empty());
+        store.replace_snapshot([(alias.into(), vec![diagnostic.clone()])].into(), true);
+        assert_eq!(store.for_document(alias), vec![diagnostic]);
+        assert!(store.for_document(canonical).is_empty());
+    }
 
     #[test]
     fn presentation_snapshots_replace_all_paths_and_keep_remote_identity() {

@@ -278,6 +278,20 @@ pub fn context_menu_style<'ui>(ui: &'ui Ui, context: &UiFrameContext) -> Context
     }
 }
 
+/// Style an item context menu only while open or on a possible opening release.
+/// Call immediately before `begin_popup_context_item`, retaining the guard through EndPopup.
+pub fn context_item_menu_style<'ui>(
+    ui: &'ui Ui,
+    context: &UiFrameContext,
+) -> Option<ContextMenuStyle<'ui>> {
+    let open = ui.with_bound_context(|| unsafe {
+        let id = (*dear_imgui_rs::sys::igGetCurrentContext()).LastItemData.ID;
+        id != 0 && dear_imgui_rs::sys::igIsPopupOpen_ID(id, 0)
+    });
+    (open || ui.is_mouse_released(dear_imgui_rs::MouseButton::Right))
+        .then(|| context_menu_style(ui, context))
+}
+
 /// Ordinary native button interaction with the active theme's control metrics.
 pub fn button(ui: &Ui, context: &UiFrameContext, label: impl AsRef<str>) -> bool {
     let _style = ControlsStyle {
@@ -321,6 +335,41 @@ pub fn icon_button(
 mod tests {
     use super::*;
     use crate::color::contrast_ratio;
+
+    #[test]
+    fn item_popup_style_is_lazy_and_retained_for_an_open_popup() {
+        use dear_imgui_rs::{Context, FramePrepareOptions};
+        let mut context = Context::create();
+        context
+            .set_ini_filename(None::<std::path::PathBuf>)
+            .unwrap();
+        context
+            .font_atlas()
+            .try_claim_legacy_renderer()
+            .unwrap()
+            .build();
+        context.prepare_frame(FramePrepareOptions::new([640.0, 480.0], 1.0 / 60.0));
+        let ui = context.frame();
+        ui.window("popup style fixture").build(|| {
+            ui.selectable("context item");
+            let prepared = UiFrameContext::for_ui(ui);
+            assert!(context_item_menu_style(ui, &prepared).is_none());
+            ui.with_bound_context(|| unsafe {
+                let id = (*dear_imgui_rs::sys::igGetCurrentContext()).LastItemData.ID;
+                dear_imgui_rs::sys::igOpenPopup_ID(id, 0);
+            });
+            let style = context_item_menu_style(ui, &prepared);
+            assert!(style.is_some());
+            {
+                let _popup = ui
+                    .begin_popup_context_item()
+                    .expect("existing popup remains open");
+                ui.text("Menu action");
+            }
+            drop(style);
+        });
+        drop(context.render_legacy());
+    }
 
     #[test]
     fn light_and_dark_controls_keep_readable_text_and_disabled_labels() {

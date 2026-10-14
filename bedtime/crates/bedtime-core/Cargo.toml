@@ -32,4 +32,7 @@ serde_json = { workspace = true }
 rfd = { workspace = true }
 
 [dev-dependencies]
+bedtime-plugin-editor = { workspace = true }
+bedtime-plugin-json-tree = { workspace = true }
+bedtime-plugin-image-viewer = { workspace = true }
 

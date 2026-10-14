@@ -166,3 +166,14 @@ Native proofs (run sequentially on a desktop):
 
 `cargo test -p bedtime-desktop --lib --all-features` covers input routing, focus,
 capture cropping, stale callbacks, deadlines and export validation without a GPU.
+
+## CPU frame timings
+
+Set `BED_FRAME_TIMINGS=/tmp/bed-frames.csv` when launching the application to
+record the most recent 8,192 frames. The CSV is written on orderly shutdown;
+recording performs no per-frame file writes. It includes frame intervals,
+document-service polling, frontend drawing, and render preparation/composition,
+correlated by desktop frame ID. These are CPU-side durations, not GPU completion
+or display presentation latency. A blank interval marks the first observed frame.
+For scroll comparisons, keep the workspace, document, window size, and build
+unchanged, and compare steady-state runs with 1, 10, and 30 buffers open.

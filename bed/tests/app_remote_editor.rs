@@ -13,6 +13,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "support/editor_host.rs"]
+mod editor_host;
+
 #[path = "support/application_requests.rs"]
 mod application_requests;
 use application_requests::*;
@@ -22,7 +25,7 @@ use application_requests::*;
 mod support;
 use support::TempDir;
 
-#[path = "support/runner.rs"]
+#[path = "../../bedtime/tests/support/runner.rs"]
 mod runner;
 
 fn remote_app(directory: &TempDir, restore: bool) -> App {
@@ -68,24 +71,7 @@ fn remote_app_with_target(directory: &TempDir, restore: bool, target: SshTarget)
     };
     let mut app = App::new();
     app.world_mut().insert_non_send(session);
-    app.insert_resource(
-        bedtime_api::launch::ApplicationPaths::new("bed", Some(settings.config_dir.clone()), None)
-            .unwrap(),
-    )
-    .insert_non_send(bedtime_ui::icons::Icons::default())
-    .insert_non_send(WorkspacePersistence::new(
-        WorkspaceStore::load(
-            &bedtime_api::launch::ApplicationPaths::new(
-                "bed",
-                Some(settings.config_dir.clone()),
-                None,
-            )
-            .unwrap(),
-        )
-        .unwrap(),
-    ))
-    .insert_resource(RemoteHelperDirectory(std::path::PathBuf::new()))
-    .insert_non_send(settings);
+    editor_host::install(&mut app, settings).unwrap();
     app.add_plugins((
         (bevy::MinimalPlugins, bevy::input::InputPlugin),
         AppRuntimePlugin {

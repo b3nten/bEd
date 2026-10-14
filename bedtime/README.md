@@ -39,3 +39,16 @@ Publication needs explicit versions for all internal dependencies, published
 replacements for local dependency patches, an audit of package resource/test
 paths, and a decision on the existing GPL-3.0-only licensing. No package has
 been published. Local patches remain documented under `vendor/*/BED_PATCHES.md`.
+
+Reusable behavior is tested in its owning crate with minimal host compositions.
+The test-only helpers in `tests/support` provide a headless document host and a
+deterministic stdio LSP server; they install no bEd themes, layouts or workspace
+persistence. Feature plugins register before settings are finalized. bEd retains
+tests for its startup, menus, numbered layouts and workspace interaction policies.
+The LSP transport, session and editor targets each support ordinary name filters:
+
+```sh
+cargo test --locked -p bedtime-lsp --test lsp_transport FILTER
+cargo test --locked -p bedtime-documents --features ide-services --test lsp_transport FILTER
+cargo test --locked -p bedtime-plugin-editor --features language-services --test lsp_transport FILTER
+```

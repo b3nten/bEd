@@ -142,6 +142,8 @@ impl Visibility<'_> {
 pub struct FileNode {
     pub name: String,
     pub full_path: String,
+    /// Resolved at directory ingestion, never while drawing.
+    pub git_path: Option<String>,
     pub is_directory: bool,
     pub is_open: bool,
     pub is_gitignored: bool,
@@ -304,6 +306,21 @@ struct TreeRow {
 }
 
 impl FileTree {
+    /// Resolve local identities once when a directory listing arrives.
+    pub(crate) fn resolve_directory_git_paths(&mut self, path: &str) {
+        fn resolve(node: &mut FileNode, path: &str) -> bool {
+            if node.full_path == path {
+                for child in &mut node.children {
+                    child.git_path =
+                        Some(bedtime_editing::util::doc_path::normalize(&child.full_path));
+                }
+                return true;
+            }
+            node.children.iter_mut().any(|child| resolve(child, path))
+        }
+        resolve(&mut self.root_node, path);
+    }
+
     /// Update a directory from its target without probing the local filesystem.
     pub fn apply_directory(&mut self, path: &str, entries: Vec<bedtime_remote::DirectoryEntry>) {
         fn find<'a>(node: &'a mut FileNode, path: &str) -> Option<&'a mut FileNode> {
@@ -441,6 +458,7 @@ impl FileTree {
                     .to_owned();
                 let mut child = FileNode {
                     name,
+                    git_path: Some(bedtime_editing::util::doc_path::normalize(&full_path)),
                     full_path,
                     is_directory: fs::metadata(&child_path)?.is_dir(),
                     ..FileNode::default()
@@ -1363,7 +1381,7 @@ impl FileTree {
             if ui.is_item_clicked_with_button(dear_imgui_rs::MouseButton::Right) {
                 *popup_selection = selection.context_selection(&node.full_path);
             }
-            let _menu_style = bedtime_ui::components::context_menu_style(
+            let _menu_style = bedtime_ui::components::context_item_menu_style(
                 ui,
                 &bedtime_ui::UiFrameContext::for_ui(ui),
             );
@@ -1482,7 +1500,7 @@ impl FileTree {
             ]
         } else if !node.is_directory
             && node.full_path != current_path
-            && modified.is_some_and(|f| f(&node.full_path))
+            && modified.is_some_and(|f| f(node.git_path.as_deref().unwrap_or(&node.full_path)))
         {
             ui.style_color(StyleColor::TextDisabled)
         } else {
@@ -1535,6 +1553,42 @@ impl FileTree {
 mod tests {
     use super::*;
     use crate::test_support::TempDir;
+
+    #[cfg(unix)]
+    #[test]
+    fn local_listing_caches_symlink_identity_before_drawing_and_refreshes_it() {
+        let temp = TempDir::new();
+        let first = temp.write("first", b"a");
+        let second = temp.write("second", b"b");
+        let alias = temp.path("alias");
+        std::os::unix::fs::symlink(&first, &alias).unwrap();
+        let root = temp.root().to_str().unwrap();
+        let mut tree = FileTree::default();
+        tree.root_node.full_path = root.into();
+        let listing = || {
+            vec![bedtime_remote::DirectoryEntry {
+                path: alias.to_str().unwrap().into(),
+                name: "alias".into(),
+                is_directory: false,
+                is_symlink: true,
+                is_gitignored: false,
+            }]
+        };
+        tree.apply_directory(root, listing());
+        tree.resolve_directory_git_paths(root);
+        assert_eq!(
+            tree.root_node.children[0].git_path.as_deref(),
+            std::fs::canonicalize(&first).unwrap().to_str()
+        );
+        std::fs::remove_file(&alias).unwrap();
+        std::os::unix::fs::symlink(&second, &alias).unwrap();
+        tree.apply_directory(root, listing());
+        tree.resolve_directory_git_paths(root);
+        assert_eq!(
+            tree.root_node.children[0].git_path.as_deref(),
+            std::fs::canonicalize(&second).unwrap().to_str()
+        );
+    }
 
     #[test]
     fn selection_toggle_ranges_and_popup_capture_are_independent() {

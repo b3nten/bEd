@@ -7,19 +7,25 @@ use std::{io, path::PathBuf};
 
 #[allow(dead_code)] // Shared by integration targets with different setup paths.
 pub fn install(app: &mut App, settings: AppConfig) -> io::Result<()> {
-    let store = WorkspaceStore::load(
-        &bedtime_api::launch::ApplicationPaths::new("bed", Some(settings.config_dir.clone()), None)
-            .unwrap(),
-    )?;
-    app.insert_resource(
-        bedtime_api::launch::ApplicationPaths::new("bed", Some(settings.config_dir.clone()), None)
-            .unwrap(),
-    )
-    .insert_non_send(settings)
-    .insert_non_send(bedtime_ui::icons::Icons::default())
-    .insert_non_send(WorkspacePersistence::new(store))
-    .init_non_send::<bedtime_ui::font::UiFonts>()
-    .insert_resource(RemoteHelperDirectory(PathBuf::new()));
+    let paths =
+        bedtime_api::launch::ApplicationPaths::new("bed", Some(settings.config_dir.clone()), None)?;
+    let store = WorkspaceStore::load(&paths)?;
+    app.insert_resource(paths)
+        .insert_non_send(settings)
+        .insert_non_send(bedtime_ui::icons::Icons::default())
+        .insert_non_send(WorkspacePersistence::new(store))
+        .init_non_send::<bedtime_ui::font::UiFonts>()
+        .insert_resource(RemoteHelperDirectory(PathBuf::new()));
+    app.add_systems(Startup, |world: &mut World| {
+        let config = world.non_send::<AppConfig>();
+        let path = config.settings_path.clone();
+        let resources = config.resources_root.clone();
+        bedtime_core::settings::initialize_settings(world, Some(path)).unwrap();
+        bed::themes::install_theme_services(world, resources);
+        bed::config::register_app_settings(world).unwrap();
+        bedtime_core::settings::finalize_settings(world).unwrap();
+        bed::themes::configure_themes(world);
+    });
     Ok(())
 }
 

@@ -520,6 +520,9 @@ impl ExplorerState {
                 state
                     .file_tree
                     .apply_directory(&directory.path, directory.entries);
+                if !target.services.is_remote() {
+                    state.file_tree.resolve_directory_git_paths(&directory.path);
+                }
                 if let Some(warning) = directory.warning {
                     state.file_tree.error = Some(warning);
                 }
@@ -621,34 +624,35 @@ impl ExplorerPanel {
             .unwrap_or_default();
         let remote = target.services.is_remote();
 
-        fn modified_paths(
+        fn remote_modified(
             node: &FileNode,
-            documents: &mut bedtime_documents::DocumentSession,
-            remote: bool,
+            documents: &bedtime_documents::DocumentSession,
             paths: &mut std::collections::HashSet<String>,
         ) {
-            let modified = if remote {
-                documents.remote_file_modified(&node.full_path)
-            } else {
-                documents.git_file_modified(&node.full_path)
-            };
-            if modified {
+            if documents.remote_file_modified(&node.full_path) {
                 paths.insert(node.full_path.clone());
             }
             for child in &node.children {
-                modified_paths(child, documents, remote, paths);
+                remote_modified(child, documents, paths);
             }
         }
-        let mut modified_files = std::collections::HashSet::new();
-        if document_provider {
-            modified_paths(
+        let mut remote_paths = std::collections::HashSet::new();
+        if remote && document_provider {
+            remote_modified(
                 &controller.file_explorer.file_tree.root_node,
                 documents,
-                remote,
-                &mut modified_files,
+                &mut remote_paths,
             );
         }
-        let modified = |path: &str| modified_files.contains(path);
+        let local_modified = documents.git_modified_paths();
+        let modified = |path: &str| {
+            document_provider
+                && if remote {
+                    remote_paths.contains(path)
+                } else {
+                    local_modified.contains(path)
+                }
+        };
         let content = RefCell::new(&mut controller.file_content);
         let menus = |ui: &Ui,
                      path: &str,

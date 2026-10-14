@@ -6,8 +6,7 @@ use application_requests::*;
 mod editor_host;
 
 use bed::application::{
-    AppOptions, AppRuntimePlugin, ApplicationState, RemoteHelperDirectory, WorkspacePersistence,
-    WorkspaceSpec, WorkspaceStore,
+    AppOptions, AppRuntimePlugin, ApplicationState, WorkspaceSpec, WorkspaceStore,
 };
 use bed::config::AppConfig;
 use bedtime_api::features::{HostAction, HostEffects};
@@ -41,20 +40,8 @@ impl Fixture {
             AppConfig::with_paths(config.clone(), PathBuf::from(env!("CARGO_MANIFEST_DIR")))
                 .unwrap();
         let mut app = App::new();
-        app.insert_resource(
-            bedtime_api::launch::ApplicationPaths::new("bed", Some(config.clone()), None).unwrap(),
-        )
-        .insert_non_send(settings)
-        .insert_non_send(bedtime_ui::icons::Icons::default())
-        .insert_non_send(WorkspacePersistence::new(
-            WorkspaceStore::load(
-                &bedtime_api::launch::ApplicationPaths::new("bed", Some(config.clone()), None)
-                    .unwrap(),
-            )
-            .unwrap(),
-        ))
-        .insert_resource(RemoteHelperDirectory(PathBuf::new()))
-        .add_plugins((
+        editor_host::install(&mut app, settings).unwrap();
+        app.add_plugins((
             (bevy::MinimalPlugins, bevy::input::InputPlugin),
             AppRuntimePlugin {
                 options: AppOptions {

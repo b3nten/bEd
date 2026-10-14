@@ -10,6 +10,40 @@ use std::io;
 #[derive(Default)]
 pub(crate) struct GitPanel {
     confirm: Option<Operation>,
+    groups: Option<StatusGroups>,
+}
+
+struct StatusGroups {
+    status: std::sync::Arc<bedtime_git::Status>,
+    conflicts: Vec<usize>,
+    tracked: Vec<usize>,
+    untracked: Vec<usize>,
+}
+
+impl StatusGroups {
+    fn new(status: std::sync::Arc<bedtime_git::Status>) -> Self {
+        let mut groups = Self {
+            status,
+            conflicts: Vec::new(),
+            tracked: Vec::new(),
+            untracked: Vec::new(),
+        };
+        for (index, entry) in groups.status.entries.iter().enumerate() {
+            if entry.conflicted {
+                groups.conflicts.push(index);
+            } else if new_file(entry) {
+                groups.untracked.push(index);
+            } else {
+                groups.tracked.push(index);
+            }
+        }
+        groups.untracked.sort_by(|&a, &b| {
+            groups.status.entries[a]
+                .path
+                .cmp(&groups.status.entries[b].path)
+        });
+        groups
+    }
 }
 
 impl GitPanel {
@@ -202,6 +236,7 @@ impl GitPanel {
         }
         show_error(ui, state, requests);
         let Some(status) = status else {
+            self.groups = None;
             return Ok(());
         };
         if status.root.is_empty() {
@@ -234,26 +269,14 @@ impl GitPanel {
                 }
             }
         }
-        let conflicts: Vec<_> = status
-            .entries
-            .iter()
-            .filter(|e| e.conflicted)
-            .cloned()
-            .collect();
-        let tracked: Vec<_> = status
-            .entries
-            .iter()
-            .filter(|entry| !entry.conflicted && !new_file(entry))
-            .cloned()
-            .collect();
-        let mut untracked: Vec<_> = status
-            .entries
-            .iter()
-            .filter(|entry| !entry.conflicted && new_file(entry))
-            .cloned()
-            .collect();
-        // Git lists indexed additions first; keep rows in path order when staging.
-        untracked.sort_by(|a, b| a.path.cmp(&b.path));
+        if self
+            .groups
+            .as_ref()
+            .is_none_or(|groups| !std::sync::Arc::ptr_eq(&groups.status, &status))
+        {
+            self.groups = Some(StatusGroups::new(std::sync::Arc::clone(&status)));
+        }
+        let groups = self.groups.as_ref().unwrap();
         if let Some(operation) = self.confirm.clone() {
             ui.separator();
             let (message, button) = confirmation_text(&operation);
@@ -290,11 +313,12 @@ impl GitPanel {
                     ui.text_disabled("No changes to commit.");
                     return;
                 }
-                if !conflicts.is_empty() {
+                if !groups.conflicts.is_empty() {
                     draw_group(
                         ui,
                         "Conflicts",
-                        &conflicts,
+                        &status.entries,
+                        &groups.conflicts,
                         state,
                         documents,
                         requests,
@@ -305,7 +329,8 @@ impl GitPanel {
                 draw_group(
                     ui,
                     "Tracked",
-                    &tracked,
+                    &status.entries,
+                    &groups.tracked,
                     state,
                     documents,
                     requests,
@@ -315,7 +340,8 @@ impl GitPanel {
                 draw_group(
                     ui,
                     "Untracked",
-                    &untracked,
+                    &status.entries,
+                    &groups.untracked,
                     state,
                     documents,
                     requests,
@@ -428,6 +454,7 @@ fn draw_group(
     ui: &Ui,
     label: &str,
     entries: &[StatusEntry],
+    indices: &[usize],
     state: &mut GitController,
     documents: &mut bedtime_documents::DocumentSession,
     requests: &mut Vec<HostAction>,
@@ -441,17 +468,17 @@ fn draw_group(
     ui.align_text_to_frame_padding();
     ui.text(label);
     ui.same_line();
-    ui.text_disabled(entries.len().to_string());
-    if label != "Conflicts" && !entries.is_empty() {
+    ui.text_disabled(indices.len().to_string());
+    if label != "Conflicts" && !indices.is_empty() {
         ui.same_line_with_pos(right - checkbox_size);
-        let staging = if entries
+        let staging = if indices
             .iter()
-            .all(|entry| state.staging_state(entry) == StagingState::Staged)
+            .all(|entry| state.staging_state(&entries[*entry]) == StagingState::Staged)
         {
             StagingState::Staged
-        } else if entries
+        } else if indices
             .iter()
-            .any(|entry| state.staging_state(entry) != StagingState::Unstaged)
+            .any(|entry| state.staging_state(&entries[*entry]) != StagingState::Unstaged)
         {
             StagingState::Partial
         } else {
@@ -459,7 +486,10 @@ fn draw_group(
         };
         let _disabled = ui.begin_disabled_with_cond(!state.writable() || state.mutation_pending());
         if let Some(stage) = staging_checkbox(ui, "##stage-group", staging) {
-            let paths = entries.iter().map(|entry| entry.path.clone()).collect();
+            let paths = indices
+                .iter()
+                .map(|&index| entries[index].path.clone())
+                .collect();
             state.mutate(
                 if stage {
                     Operation::Stage { paths }
@@ -483,222 +513,246 @@ fn draw_group(
         }
     }
     ui.dummy([0.0, fs * 0.15]);
-    if entries.is_empty() {
+    if indices.is_empty() {
         ui.text_disabled(format!("No {} changes.", label.to_lowercase()));
     }
-    for entry in entries {
-        let _id = ui.push_id(&entry.path);
-        let side = if staged(entry) && !unstaged(entry) {
-            DiffSide::Staged
-        } else {
-            DiffSide::Unstaged
-        };
-        let staging = state.staging_state(entry);
-        let code = if entry.conflicted {
-            '!'
-        } else if entry.index_status == '?' {
-            '?'
-        } else if unstaged(entry) {
-            entry.worktree_status
-        } else {
-            entry.index_status
-        };
-        let (description, color) = match code {
-            '!' | 'U' => ("Conflict", [0.95, 0.35, 0.30, 1.0]),
-            'A' => ("Added", [0.40, 0.75, 0.50, 1.0]),
-            '?' => ("Untracked", [0.40, 0.75, 0.50, 1.0]),
-            'D' => ("Deleted", [0.95, 0.35, 0.30, 1.0]),
-            'R' => ("Renamed", [0.90, 0.70, 0.35, 1.0]),
-            'C' => ("Copied", [0.90, 0.70, 0.35, 1.0]),
-            _ => ("Modified", [0.90, 0.70, 0.35, 1.0]),
-        };
-        let color = bedtime_ui::presentation::readable_color(ui, color);
-        let row_origin = ui.cursor_pos();
-        let gap = ui.clone_style().item_spacing()[0];
-        let row_width = (ui.content_region_avail()[0] - checkbox_size - gap).max(1.0);
-        let row_height = fs * 1.6;
-        let clicked = ui
-            .selectable_config("##file")
-            .size([row_width, row_height])
-            .build();
-        let min = ui.item_rect_min();
-        let max = ui.item_rect_max();
-        let hovered = ui.is_item_hovered();
-        if clicked {
-            if ui.is_mouse_double_clicked(MouseButton::Left) {
-                requests.push(HostAction::OpenFile {
-                    path: state.absolute(&entry.path).to_string_lossy().into(),
-                    viewer: None,
-                });
+    let row_height = fs * 1.6;
+    let row_stride = row_height + ui.clone_style().item_spacing()[1];
+    let mut clipper = dear_imgui_rs::ListClipper::new(indices.len())
+        .items_height(row_stride)
+        .begin(ui);
+    // Keep an open context menu alive even if its row scrolls out of view.
+    if let Some(index) = state.context_menu_path.as_ref().and_then(|path| {
+        indices
+            .iter()
+            .position(|&index| &entries[index].path == path)
+    }) {
+        clipper.include_item_by_index(index);
+    }
+    while clipper.step() {
+        for index in clipper.display_start()..clipper.display_end() {
+            let entry = &entries[indices[index]];
+
+            let _id = ui.push_id(&entry.path);
+            let side = if staged(entry) && !unstaged(entry) {
+                DiffSide::Staged
             } else {
-                state.open_diff(entry.path.clone(), side, requests);
-            }
-        }
-        {
-            let _menu_style = bedtime_ui::components::context_menu_style(
-                ui,
-                &bedtime_ui::UiFrameContext::for_ui(ui),
-            );
-            if let Some(_popup) = ui.begin_popup_context_item() {
-                if ui.menu_item("Open file") {
-                    requests.push(HostAction::OpenFileIn {
+                DiffSide::Unstaged
+            };
+            let staging = state.staging_state(entry);
+            let code = if entry.conflicted {
+                '!'
+            } else if entry.index_status == '?' {
+                '?'
+            } else if unstaged(entry) {
+                entry.worktree_status
+            } else {
+                entry.index_status
+            };
+            let (description, color) = match code {
+                '!' | 'U' => ("Conflict", [0.95, 0.35, 0.30, 1.0]),
+                'A' => ("Added", [0.40, 0.75, 0.50, 1.0]),
+                '?' => ("Untracked", [0.40, 0.75, 0.50, 1.0]),
+                'D' => ("Deleted", [0.95, 0.35, 0.30, 1.0]),
+                'R' => ("Renamed", [0.90, 0.70, 0.35, 1.0]),
+                'C' => ("Copied", [0.90, 0.70, 0.35, 1.0]),
+                _ => ("Modified", [0.90, 0.70, 0.35, 1.0]),
+            };
+            let color = bedtime_ui::presentation::readable_color(ui, color);
+            let row_origin = ui.cursor_pos();
+            let gap = ui.clone_style().item_spacing()[0];
+            let row_width = (ui.content_region_avail()[0] - checkbox_size - gap).max(1.0);
+            let clicked = ui
+                .selectable_config("##file")
+                .size([row_width, row_height])
+                .build();
+            let min = ui.item_rect_min();
+            let max = ui.item_rect_max();
+            let hovered = ui.is_item_hovered();
+            if clicked {
+                if ui.is_mouse_double_clicked(MouseButton::Left) {
+                    requests.push(HostAction::OpenFile {
                         path: state.absolute(&entry.path).to_string_lossy().into(),
                         viewer: None,
-                        target: PanelTarget::LastFocused,
                     });
+                } else {
+                    state.open_diff(entry.path.clone(), side, requests);
                 }
-                if staged(entry) && ui.menu_item("View staged changes") {
-                    state.open_diff(entry.path.clone(), DiffSide::Staged, requests);
-                }
-                if unstaged(entry) && ui.menu_item("View unstaged changes") {
-                    state.open_diff(entry.path.clone(), DiffSide::Unstaged, requests);
-                }
-                ui.separator();
-                let _disabled =
-                    ui.begin_disabled_with_cond(!state.writable() || state.mutation_pending());
-                if !entry.conflicted
-                    && staging != StagingState::Staged
-                    && ui.menu_item(if staging == StagingState::Partial {
-                        "Stage remaining changes"
-                    } else {
-                        "Stage file"
-                    })
+            }
+            if hovered && ui.is_mouse_released(MouseButton::Right) {
+                state.context_menu_path = Some(entry.path.clone());
+            }
+            {
+                let _menu_style = bedtime_ui::components::context_item_menu_style(
+                    ui,
+                    &bedtime_ui::UiFrameContext::for_ui(ui),
+                );
+                if _menu_style.is_none()
+                    && state.context_menu_path.as_deref() == Some(entry.path.as_str())
                 {
-                    state.mutate(
-                        Operation::Stage {
-                            paths: vec![entry.path.clone()],
-                        },
-                        documents,
-                        requests,
-                    );
+                    state.context_menu_path = None;
                 }
-                if !entry.conflicted
-                    && staging != StagingState::Unstaged
-                    && ui.menu_item("Unstage file")
-                {
-                    state.mutate(
-                        Operation::Unstage {
-                            paths: vec![entry.path.clone()],
-                        },
-                        documents,
-                        requests,
-                    );
-                }
-                if unstaged(entry)
-                    && !entry.conflicted
-                    && entry.index_status != '?'
-                    && ui.menu_item("Discard file changes…")
-                {
-                    let key = (entry.path.clone(), DiffSide::Unstaged);
-                    if let Some(diff) = state.diffs.get(&key) {
-                        *confirm = Some(Operation::Discard {
-                            path: entry.path.clone(),
-                            snapshot: diff.snapshot.clone(),
+                if let Some(_popup) = ui.begin_popup_context_item() {
+                    if ui.menu_item("Open file") {
+                        requests.push(HostAction::OpenFileIn {
+                            path: state.absolute(&entry.path).to_string_lossy().into(),
+                            viewer: None,
+                            target: PanelTarget::LastFocused,
                         });
-                    } else {
+                    }
+                    if staged(entry) && ui.menu_item("View staged changes") {
+                        state.open_diff(entry.path.clone(), DiffSide::Staged, requests);
+                    }
+                    if unstaged(entry) && ui.menu_item("View unstaged changes") {
                         state.open_diff(entry.path.clone(), DiffSide::Unstaged, requests);
-                        state.error =
-                            Some("Open the diff to review changes before discarding.".into());
+                    }
+                    ui.separator();
+                    let _disabled =
+                        ui.begin_disabled_with_cond(!state.writable() || state.mutation_pending());
+                    if !entry.conflicted
+                        && staging != StagingState::Staged
+                        && ui.menu_item(if staging == StagingState::Partial {
+                            "Stage remaining changes"
+                        } else {
+                            "Stage file"
+                        })
+                    {
+                        state.mutate(
+                            Operation::Stage {
+                                paths: vec![entry.path.clone()],
+                            },
+                            documents,
+                            requests,
+                        );
+                    }
+                    if !entry.conflicted
+                        && staging != StagingState::Unstaged
+                        && ui.menu_item("Unstage file")
+                    {
+                        state.mutate(
+                            Operation::Unstage {
+                                paths: vec![entry.path.clone()],
+                            },
+                            documents,
+                            requests,
+                        );
+                    }
+                    if unstaged(entry)
+                        && !entry.conflicted
+                        && entry.index_status != '?'
+                        && ui.menu_item("Discard file changes…")
+                    {
+                        let key = (entry.path.clone(), DiffSide::Unstaged);
+                        if let Some(diff) = state.diffs.get(&key) {
+                            *confirm = Some(Operation::Discard {
+                                path: entry.path.clone(),
+                                snapshot: diff.snapshot.clone(),
+                            });
+                        } else {
+                            state.open_diff(entry.path.clone(), DiffSide::Unstaged, requests);
+                            state.error =
+                                Some("Open the diff to review changes before discarding.".into());
+                        }
                     }
                 }
             }
-        }
-        if hovered {
-            let staging_label = match staging {
-                StagingState::Unstaged => "Not staged",
-                StagingState::Partial => "Partially staged",
-                StagingState::Staged => "Staged",
-            };
-            bedtime_ui::components::tooltip_text(
-                ui,
-                &bedtime_ui::UiFrameContext::for_ui(ui),
-                format!("{}\n{description} · {staging_label}", entry.path),
-            );
-        }
-
-        // File name and directory share one selectable and one line.
-        let filename = entry.path.rsplit('/').next().unwrap_or(&entry.path);
-        let directory = entry.path.rsplit_once('/').map(|(directory, _)| directory);
-        let text_x = min[0] + fs * 1.65;
-        let text_width = (max[0] - text_x - fs * 0.3).max(0.0);
-        let filename = fit_label(ui, filename, text_width);
-        let y = min[1] + (row_height - fs) * 0.5;
-        {
-            let _clip = ui.push_clip_rect(min, max, true);
-            let draw = ui.get_window_draw_list();
-            let origin = [min[0] + fs * 0.35, y];
-            if let Some(icon) = icons.and_then(|icons| icons.get_for_file(&entry.path)) {
-                draw.add_image(
-                    icon,
-                    origin,
-                    [origin[0] + fs, origin[1] + fs],
-                    [0.0; 2],
-                    [1.0; 2],
-                    color,
-                );
-            } else {
-                draw.add_text(origin, color, code.to_string());
-            }
-            draw.add_text([text_x, y], ui.style_color(StyleColor::Text), &filename);
-            if let Some(directory) = directory {
-                let directory_x = text_x + ui.calc_text_size(&filename)[0] + fs * 0.6;
-                let directory_width = max[0] - directory_x - fs * 0.3;
-                if directory_width >= fs * 2.0 {
-                    draw.add_text(
-                        [directory_x, y],
-                        ui.style_color(StyleColor::TextDisabled),
-                        fit_label(ui, directory, directory_width),
-                    );
-                }
-            }
-        }
-        ui.same_line_with_pos(row_origin[0] + row_width + gap);
-        ui.set_cursor_pos([
-            ui.cursor_pos()[0],
-            row_origin[1] + (row_height - checkbox_size) * 0.5,
-        ]);
-        {
-            let _disabled = ui.begin_disabled_with_cond(
-                entry.conflicted || !state.writable() || state.mutation_pending(),
-            );
-            if let Some(stage) = staging_checkbox(ui, "##stage-file", staging) {
-                let paths = vec![entry.path.clone()];
-                state.mutate(
-                    if stage {
-                        Operation::Stage { paths }
-                    } else {
-                        Operation::Unstage { paths }
-                    },
-                    documents,
-                    requests,
-                );
-            }
-            if ui.is_item_hovered() {
+            if hovered {
+                let staging_label = match staging {
+                    StagingState::Unstaged => "Not staged",
+                    StagingState::Partial => "Partially staged",
+                    StagingState::Staged => "Staged",
+                };
                 bedtime_ui::components::tooltip_text(
                     ui,
                     &bedtime_ui::UiFrameContext::for_ui(ui),
-                    match staging {
-                        StagingState::Partial => {
-                            "Partially staged. Click to stage the remaining changes."
-                        }
-                        StagingState::Staged => "Remove this file from staging",
-                        StagingState::Unstaged => {
-                            if entry.conflicted {
-                                "Resolve this conflict in the diff before staging"
-                            } else {
-                                "Include this file in the commit"
-                            }
-                        }
-                    },
+                    format!("{}\n{description} · {staging_label}", entry.path),
                 );
             }
+
+            // File name and directory share one selectable and one line.
+            let filename = entry.path.rsplit('/').next().unwrap_or(&entry.path);
+            let directory = entry.path.rsplit_once('/').map(|(directory, _)| directory);
+            let text_x = min[0] + fs * 1.65;
+            let text_width = (max[0] - text_x - fs * 0.3).max(0.0);
+            let filename = fit_label(ui, filename, text_width);
+            let y = min[1] + (row_height - fs) * 0.5;
+            {
+                let _clip = ui.push_clip_rect(min, max, true);
+                let draw = ui.get_window_draw_list();
+                let origin = [min[0] + fs * 0.35, y];
+                if let Some(icon) = icons.and_then(|icons| icons.get_for_file(&entry.path)) {
+                    draw.add_image(
+                        icon,
+                        origin,
+                        [origin[0] + fs, origin[1] + fs],
+                        [0.0; 2],
+                        [1.0; 2],
+                        color,
+                    );
+                } else {
+                    draw.add_text(origin, color, code.to_string());
+                }
+                draw.add_text([text_x, y], ui.style_color(StyleColor::Text), &filename);
+                if let Some(directory) = directory {
+                    let directory_x = text_x + ui.calc_text_size(&filename)[0] + fs * 0.6;
+                    let directory_width = max[0] - directory_x - fs * 0.3;
+                    if directory_width >= fs * 2.0 {
+                        draw.add_text(
+                            [directory_x, y],
+                            ui.style_color(StyleColor::TextDisabled),
+                            fit_label(ui, directory, directory_width),
+                        );
+                    }
+                }
+            }
+            ui.same_line_with_pos(row_origin[0] + row_width + gap);
+            ui.set_cursor_pos([
+                ui.cursor_pos()[0],
+                row_origin[1] + (row_height - checkbox_size) * 0.5,
+            ]);
+            {
+                let _disabled = ui.begin_disabled_with_cond(
+                    entry.conflicted || !state.writable() || state.mutation_pending(),
+                );
+                if let Some(stage) = staging_checkbox(ui, "##stage-file", staging) {
+                    let paths = vec![entry.path.clone()];
+                    state.mutate(
+                        if stage {
+                            Operation::Stage { paths }
+                        } else {
+                            Operation::Unstage { paths }
+                        },
+                        documents,
+                        requests,
+                    );
+                }
+                if ui.is_item_hovered() {
+                    bedtime_ui::components::tooltip_text(
+                        ui,
+                        &bedtime_ui::UiFrameContext::for_ui(ui),
+                        match staging {
+                            StagingState::Partial => {
+                                "Partially staged. Click to stage the remaining changes."
+                            }
+                            StagingState::Staged => "Remove this file from staging",
+                            StagingState::Unstaged => {
+                                if entry.conflicted {
+                                    "Resolve this conflict in the diff before staging"
+                                } else {
+                                    "Include this file in the commit"
+                                }
+                            }
+                        },
+                    );
+                }
+            }
+            ui.set_cursor_pos([
+                row_origin[0],
+                row_origin[1] + row_height + ui.clone_style().item_spacing()[1],
+            ]);
         }
-        ui.set_cursor_pos([
-            row_origin[0],
-            row_origin[1] + row_height + ui.clone_style().item_spacing()[1],
-        ]);
+        ui.dummy([0.0, fs * 0.5]);
     }
-    ui.dummy([0.0, fs * 0.5]);
 }
 
 /// No comparison has been selected yet. Unlike a loaded diff, this surface
@@ -834,21 +888,24 @@ mod tests {
             .build();
         let mut controller = GitController::default();
         controller.root = "/preview".into();
-        controller.status = Some(bedtime_git::Status {
-            root: "/preview".into(),
-            branch: "feature/long-branch-name".into(),
-            writable: true,
-            entries: (0..100)
-                .map(|index| StatusEntry {
-                    path: format!("nested/long/Unicode_é_文件_{index}.rs"),
-                    old_path: None,
-                    index_status: 'M',
-                    worktree_status: 'M',
-                    conflicted: index == 0,
-                })
-                .collect(),
-            ..Default::default()
-        });
+        controller.status = Some(
+            bedtime_git::Status {
+                root: "/preview".into(),
+                branch: "feature/long-branch-name".into(),
+                writable: true,
+                entries: (0..10_000)
+                    .map(|index| StatusEntry {
+                        path: format!("nested/long/Unicode_é_文件_{index}.rs"),
+                        old_path: None,
+                        index_status: 'M',
+                        worktree_status: 'M',
+                        conflicted: index == 0,
+                    })
+                    .collect(),
+                ..Default::default()
+            }
+            .into(),
+        );
         controller.draft = "Keep this draft".into();
         let mut state = controller;
         let mut panel = GitPanel::default();
@@ -875,7 +932,7 @@ mod tests {
                     state.mutate(Operation::Push, &session, &mut requests);
                 }
                 // Settle native content and scrollbar measurements after each resize.
-                for _ in 0..3 {
+                for frame in 0..4 {
                     context.prepare_frame(FramePrepareOptions::new([1200.0, 700.0], 1.0 / 60.0));
                     let ui = context.frame();
                     ui.window("Git panel layout fixture")
@@ -894,7 +951,32 @@ mod tests {
                                 )
                                 .unwrap();
                         });
-                    assert!(context.render_legacy().draw_data().total_vtx_count() > 0);
+                    if frame == 1 {
+                        context.binding().with_bound_context(|| unsafe {
+                            let windows = &(*dear_imgui_rs::sys::igGetCurrentContext()).Windows;
+                            let list =
+                                std::slice::from_raw_parts(windows.Data, windows.Size as usize)
+                                    .iter()
+                                    .copied()
+                                    .find(|window| {
+                                        std::ffi::CStr::from_ptr((**window).Name)
+                                            .to_string_lossy()
+                                            .contains("##git-change-list")
+                                    })
+                                    .unwrap();
+                            dear_imgui_rs::sys::igSetScrollY_WindowPtr(
+                                list,
+                                (*list).ScrollMax.y * 0.75,
+                            );
+                        });
+                    }
+                    let draw = context.render_legacy();
+                    let vertices = draw.draw_data().total_vtx_count();
+                    assert!(vertices > 0);
+                    assert!(
+                        vertices < 30_000,
+                        "offscreen rows must not generate geometry: {vertices}"
+                    );
                 }
                 context.binding().with_bound_context(|| unsafe {
                     let parent = dear_imgui_rs::sys::igFindWindowByName(
@@ -990,7 +1072,7 @@ mod tests {
         }
 
         // The branch button opens a picker without inserting controls into the panel.
-        state.status.as_mut().unwrap().branches =
+        std::sync::Arc::make_mut(state.status.as_mut().unwrap()).branches =
             vec!["feature/long-branch-name".into(), "topic".into()];
         let mut draw_picker = |context: &mut Context, open| {
             context.prepare_frame(FramePrepareOptions::new([1200.0, 700.0], 1.0 / 60.0));

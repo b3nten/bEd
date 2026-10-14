@@ -249,6 +249,8 @@ pub struct DocumentSession {
     project_diagnostics: crate::project_diagnostics::ProjectDiagnostics,
     #[cfg(feature = "ide-services")]
     document_diagnostics: bedtime_lsp::diagnostics::LspDiagnostics,
+    #[cfg(feature = "ide-services")]
+    git_statuses: crate::git::status::SharedStatuses,
     queued: Vec<SessionEvent>,
     errors: Vec<ServiceError>,
     last_monitor: Option<Instant>,
@@ -291,6 +293,8 @@ impl Default for DocumentSession {
             project_diagnostics: Default::default(),
             #[cfg(feature = "ide-services")]
             document_diagnostics: Default::default(),
+            #[cfg(feature = "ide-services")]
+            git_statuses: Default::default(),
             queued: Vec::new(),
             errors: Vec::new(),
             last_monitor: None,
@@ -512,13 +516,19 @@ impl DocumentSession {
         &self.options
     }
 
-    /// Cached Git presentation is optional; callers never start repository I/O here.
+    /// Immutable canonical absolute paths; presentation never starts repository I/O.
+    pub fn git_modified_paths(&self) -> Rc<std::collections::HashSet<String>> {
+        #[cfg(feature = "ide-services")]
+        return self.git_statuses.borrow_mut().snapshot();
+        #[cfg(not(feature = "ide-services"))]
+        Rc::default()
+    }
+
     pub fn git_file_modified(&self, path: &str) -> bool {
         #[cfg(feature = "ide-services")]
         return self
-            .documents
-            .values()
-            .any(|entry| entry.runtime.git.borrow().is_file_modified(path));
+            .git_modified_paths()
+            .contains(&bedtime_editing::util::doc_path::normalize(path));
         #[cfg(not(feature = "ide-services"))]
         {
             let _ = path;
@@ -903,6 +913,10 @@ impl DocumentSession {
         let text = runtime.state.kind == DocumentKind::Text;
         #[cfg(feature = "ide-services")]
         {
+            runtime
+                .git
+                .borrow_mut()
+                .bind_statuses(Rc::clone(&self.git_statuses));
             runtime.highlight.enabled = self.options.highlighting && text;
             runtime.set_git_changed_lines(self.options.git && text);
             runtime.highlight.set_theme_colors(self.theme.clone());
@@ -2233,6 +2247,10 @@ impl DocumentSession {
         #[cfg(feature = "ide-services")]
         let root_changed = options.project_root != self.options.project_root;
         #[cfg(feature = "ide-services")]
+        if root_changed {
+            self.document_diagnostics.invalidate_document_keys();
+        }
+        #[cfg(feature = "ide-services")]
         let highlight_changed = options.highlighting != self.options.highlighting;
         let monitoring_changed = options.monitoring != self.options.monitoring;
         let start_autosave = options.autosave.is_some() && self.options.autosave.is_none();
@@ -2367,7 +2385,11 @@ impl DocumentSession {
                 && entry.runtime.state.kind == DocumentKind::Text
                 && !entry.runtime.state.path.is_empty()
                 && (!entry.runtime.state.read_only || entry.workspace_edit_locked))
-                .then(|| self.document_diagnostics.clone());
+                .then(|| {
+                    self.document_diagnostics
+                        .register_document(&entry.runtime.state.path);
+                    self.document_diagnostics.clone()
+                });
         }
     }
 
@@ -2375,6 +2397,9 @@ impl DocumentSession {
     /// so a check cannot schedule itself by writing its target directory.
     #[cfg(feature = "ide-services")]
     pub fn observe_project_file_changes(&mut self, changes: &[bedtime_remote::FilesystemChange]) {
+        if !changes.is_empty() {
+            self.document_diagnostics.invalidate_document_keys();
+        }
         #[cfg(feature = "ide-services")]
         if let Some(pool) = &mut self.lsp
             && let Err(error) = pool.observe_file_changes(changes)

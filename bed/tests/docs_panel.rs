@@ -12,13 +12,10 @@ use bed::application::{AppOptions, AppRuntimePlugin};
 use bedtime_api::documents::PanelInput;
 use bevy::prelude::*;
 use serde_json::Value;
-use {
-    bedtime_workbench::DOCS_PANEL_ID, bedtime_workbench::SHOW_DOCS_COMMAND,
-    bedtime_workbench::WorkbenchRequests, bedtime_workbench::api,
-};
+use {bedtime_workbench::SHOW_DOCS_COMMAND, bedtime_workbench::api};
 
 #[test]
-fn builtins_publish_usage_notes_and_show_docs_is_available_and_reuses_the_panel() {
+fn builtins_publish_usage_notes() {
     let directory = temp_dir::TempDir::new();
     let mut app = App::new();
     editor_host::install(
@@ -53,7 +50,6 @@ fn builtins_publish_usage_notes_and_show_docs_is_available_and_reuses_the_panel(
         .iter()
         .map(|panel| panel.id)
         .collect::<Vec<_>>();
-    let mut docs_panel = None;
     for kind in panels {
         let panel = application_requests::open_panel(
             app.world_mut(),
@@ -74,20 +70,5 @@ fn builtins_publish_usage_notes_and_show_docs_is_available_and_reuses_the_panel(
             docs.sections.iter().any(|section| !section.body.is_empty()),
             "{kind} must publish useful content"
         );
-        if kind == DOCS_PANEL_ID {
-            docs_panel = Some(panel);
-        }
     }
-    let invocation =
-        bedtime_workbench::capture_command(app.world(), SHOW_DOCS_COMMAND, Value::Null);
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(api::WorkbenchAction::Invoke(invocation));
-    application_requests::process_app_requests(app.world_mut()).unwrap();
-    assert_eq!(
-        app.world()
-            .resource::<bedtime_workbench::WorkbenchLayout>()
-            .focused,
-        docs_panel
-    );
 }

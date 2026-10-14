@@ -360,6 +360,15 @@ fn status_path_queries_preserve_deleted_files_and_new_missing_parents() {
     fixture.write("new/nested.txt", b"untracked");
     let mut git = DocumentGitChanges::new();
     git.init(&DocumentState::new(), fixture.root(), true);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !git.is_file_modified(fixture.path("deleted").to_str().unwrap()) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "status worker did not publish"
+        );
+        git.poll();
+        std::thread::yield_now();
+    }
     assert!(git.is_file_modified(fixture.path("deleted").to_str().unwrap()));
     assert!(git.is_file_modified(fixture.path("new/nested.txt").to_str().unwrap()));
     assert!(!git.is_file_modified(fixture.path("absent/../other").to_str().unwrap()));

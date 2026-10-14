@@ -39,3 +39,9 @@ name = "lsp_navigation"
 path = "tests/lsp_navigation.rs"
 harness = false
 required-features = ["ide-services"]
+
+[[test]]
+name = "lsp_transport"
+path = "tests/lsp_transport.rs"
+harness = false
+required-features = ["ide-services"]

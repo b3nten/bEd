@@ -3,9 +3,9 @@
 use crate::git::{git_repo::GitRepo, line_diff::diff_lines};
 use bedtime_editing::document_state::DocumentState;
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::HashSet,
     path::{Component, Path, PathBuf},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 #[derive(Default)]
@@ -20,8 +20,8 @@ pub struct DocumentGitChanges {
     baseline_available: bool,
     current_lines: Vec<Vec<u8>>,
     dirty_lines: HashSet<i32>,
-    modified_files: BTreeSet<Vec<u8>>,
-    last_status: Option<Instant>,
+    statuses: super::status::SharedStatuses,
+    status: Option<super::status::StatusHandle>,
 }
 
 impl DocumentGitChanges {
@@ -32,6 +32,8 @@ impl DocumentGitChanges {
         bytes: Option<&[u8]>,
         enabled: bool,
     ) {
+        self.status = None;
+        self.repo.close();
         self.document_path.clone_from(&state.path);
         self.discover_from_document = false;
         self.baseline_available = true;
@@ -58,7 +60,7 @@ impl DocumentGitChanges {
         self.document_path.clone_from(&state.path);
         self.discover_from_document = project_root.is_empty();
         self.project_root = project_root.to_owned();
-        self.modified_files.clear();
+        self.status = None;
         self.repo.close();
         let directory = if project_root.is_empty() {
             Path::new(&state.path)
@@ -75,8 +77,16 @@ impl DocumentGitChanges {
         if let Some(workdir) = self.repo.workdir() {
             self.project_root = workdir.to_string_lossy().into_owned();
         }
-        self.refresh_status();
-        self.last_status = Some(Instant::now());
+        let root = weakly_canonical(Path::new(&self.project_root))
+            .unwrap_or_else(|_| PathBuf::from(&self.project_root));
+        self.project_root = root.to_string_lossy().into_owned();
+        self.status = Some(
+            self.statuses.borrow_mut().register(
+                weakly_canonical(self.repo.git_dir().unwrap())
+                    .unwrap_or_else(|_| self.repo.git_dir().unwrap().to_path_buf()),
+                root,
+            ),
+        );
         if !state.path.is_empty() {
             self.on_document_opened(state, enabled);
         }
@@ -225,8 +235,9 @@ impl DocumentGitChanges {
         self.recompute_gutter_from_cache(state, enabled);
     }
 
-    fn refresh_status(&mut self) {
-        self.modified_files = self.repo.modified_paths();
+    pub(crate) fn bind_statuses(&mut self, statuses: super::status::SharedStatuses) {
+        self.status = None;
+        self.statuses = statuses;
     }
 
     pub fn invalidate_baseline(&mut self, state: &DocumentState, enabled: bool) {
@@ -234,8 +245,9 @@ impl DocumentGitChanges {
         self.load_baseline(state);
         self.rebuild_line_cache(state);
         self.recompute_gutter_from_cache(state, enabled);
-        self.refresh_status();
-        self.last_status = Some(Instant::now());
+        if let Some(status) = &self.status {
+            status.borrow_mut().invalidate();
+        }
     }
 
     pub fn poll(&mut self) {
@@ -243,15 +255,15 @@ impl DocumentGitChanges {
     }
 
     fn poll_at(&mut self, now: Instant) {
-        if !self.repo.is_open()
-            || self
-                .last_status
-                .is_some_and(|last| now.duration_since(last) < Duration::from_millis(1000))
-        {
-            return;
+        if let Some(status) = &self.status {
+            status.borrow_mut().poll(now);
         }
-        self.refresh_status();
-        self.last_status = Some(now);
+    }
+
+    pub(crate) fn take_status_error(&mut self) -> Option<String> {
+        self.status
+            .as_ref()
+            .and_then(|status| status.borrow_mut().error.take())
     }
 
     pub fn is_line_edited(&self, path: &str, line_number: i32) -> bool {
@@ -259,10 +271,17 @@ impl DocumentGitChanges {
     }
 
     pub fn is_file_modified(&self, path: &str) -> bool {
-        self.repo.is_open()
-            && self
-                .modified_files
-                .contains(self.relative_path(path).as_bytes())
+        let relative = self.relative_path(path);
+        if relative.is_empty() {
+            return false;
+        }
+        let absolute = Path::new(&self.project_root)
+            .join(relative)
+            .to_string_lossy()
+            .into_owned();
+        self.status
+            .as_ref()
+            .is_some_and(|status| status.borrow().paths.contains(&absolute))
     }
 }
 
@@ -410,18 +429,23 @@ mod tests {
         let _repo = git2::Repository::init(temp.root()).unwrap();
         let mut service = DocumentGitChanges::new();
         service.init(&DocumentState::new(), temp.root().to_str().unwrap(), true);
-        let last = service.last_status.unwrap();
+        service.status.as_ref().unwrap().borrow_mut().finish_scan();
+        let last = service.status.as_ref().unwrap().borrow().last_scan();
+        // Drive time without sleeping; worker completion is an explicit rendezvous.
+        service.poll_at(last);
         let file = temp.write("untracked", b"new");
         let path = file.to_str().unwrap();
-        service.poll_at(last + Duration::from_millis(999));
+        service.poll_at(last + std::time::Duration::from_millis(999));
         assert!(!service.is_file_modified(path));
-        service.poll_at(last + Duration::from_millis(1000));
+        service.poll_at(last + std::time::Duration::from_millis(1000));
+        service.status.as_ref().unwrap().borrow_mut().finish_scan();
         assert!(service.is_file_modified(path));
         std::fs::remove_file(&file).unwrap();
-        service.poll_at(last + Duration::from_millis(2000));
+        service.poll_at(last + std::time::Duration::from_millis(2000));
+        service.status.as_ref().unwrap().borrow_mut().finish_scan();
         assert!(!service.is_file_modified(path));
         service.init(&DocumentState::new(), "", true);
-        assert!(service.modified_files.is_empty());
+        assert!(service.status.is_none());
         assert!(!service.repo.is_open());
     }
 
