@@ -188,7 +188,8 @@ This establishes live identity, extension registration and a serializable comman
 reference. It does not implement shortcut persistence, panel definition traits,
 documents or the rest of workbench. Workbench currently depends directly on
 desktop for this bridge. The UI layer now publishes the same action observations;
-the application orders drawing before workbench ingress in `PostUpdate`.
+workbench's optional UI integration orders drawing before command ingress in
+`PostUpdate`.
 
 ## UI foundation
 
@@ -295,7 +296,7 @@ next layer. Keep the original application usable throughout the migration.
 | Desktop scaffold | An ordinary Bevy host plus a native-only desktop plugin. | Implemented; see [step 1](step-1.md). Native GUI validation and further desktop work remain. |
 | Desktop stabilization | Validate native behavior and settle the platform/input boundary needed by UI. | Pending. |
 | UI foundation | ImGui lifecycle, input integration and rendering in the existing Bevy app, followed by appearance and reusable controls. | Implemented for one active surface, with a widget gallery; see [step 2](step-2.md). Additional UI capabilities remain scoped there. |
-| Workbench foundation | Panels/layout plus a coherent document, history, workspace and persistence model. | Typed commands are implemented; the remaining services and API design are pending. |
+| Workbench foundation | Panels/layout plus a coherent document, history, workspace and persistence model. | Typed commands and the in-memory workspace/layout/panel lifecycle are implemented; see [stage 3](../MIGRATIONS/step-3.md). Documents, settings and persistence follow. |
 | Services and application features | Add filesystem and justified shared services, then migrate bEd features onto them. | Planned. |
 | Remote integration | Exercise the same service contracts across a remote boundary and evaluate replication against concrete requirements. | Deferred. |
 

@@ -8,7 +8,7 @@ description = "ECS presentation, controls and ImGui rendering for Bevy"
 
 [dependencies]
 bedtime-desktop2.workspace = true
-bevy = { workspace = true, features = ["std", "bevy_render", "bevy_core_pipeline", "bevy_winit", "keyboard", "mouse"] }
+bevy = { workspace = true, features = ["std", "bevy_render", "bevy_core_pipeline", "bevy_winit", "bevy_log", "keyboard", "mouse"] }
 dear-imgui-rs.workspace = true
 dear-imgui-sys.workspace = true
 dear-imgui-wgpu.workspace = true

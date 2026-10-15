@@ -3,10 +3,15 @@
 //! Only the UI thread mutates displayed finder results.
 use bedtime_remote::{DirectoryListing, WorkspaceFilesystem, WorkspaceUpdate};
 use std::{
+    collections::BTreeMap,
     io,
     path::{Path, PathBuf},
     sync::mpsc::Receiver,
 };
+
+// Discovery continues while AppKit tracks a menu. Give input and rendering a
+// turn when the UI resumes, even if a large scan has queued many directories.
+const UPDATES_PER_POLL: usize = 64;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FileEntry {
@@ -84,10 +89,13 @@ fn scan_file_list_cancellable(
 }
 
 /// Substring filter and path-length ranking, preserving the upstream dotfile exception.
-pub fn filter_file_list(files: &[FileEntry], query: &str) -> Vec<FileEntry> {
+pub fn filter_file_list<'a>(
+    files: impl IntoIterator<Item = &'a FileEntry>,
+    query: &str,
+) -> Vec<FileEntry> {
     let query = query.to_ascii_lowercase();
     let mut out: Vec<_> = files
-        .iter()
+        .into_iter()
         .filter(|file| {
             file.relative_path_lower.contains(&query)
                 && (query.contains('.') || !file.filename_lower.starts_with('.'))
@@ -96,27 +104,6 @@ pub fn filter_file_list(files: &[FileEntry], query: &str) -> Vec<FileEntry> {
         .collect();
     out.sort_by_key(|file| file.relative_path.len());
     out
-}
-
-fn merge_entries(files: &mut Vec<FileEntry>, mut additions: Vec<FileEntry>) {
-    additions.sort_by(|a, b| a.full_path.cmp(&b.full_path));
-    additions.dedup_by(|a, b| a.full_path == b.full_path);
-    let mut merged = Vec::with_capacity(files.len() + additions.len());
-    let mut old = std::mem::take(files).into_iter().peekable();
-    let mut added = additions.into_iter().peekable();
-    while let (Some(previous), Some(next)) = (old.peek(), added.peek()) {
-        match previous.full_path.cmp(&next.full_path) {
-            std::cmp::Ordering::Less => merged.push(old.next().unwrap()),
-            std::cmp::Ordering::Greater => merged.push(added.next().unwrap()),
-            std::cmp::Ordering::Equal => {
-                old.next();
-                merged.push(added.next().unwrap());
-            }
-        }
-    }
-    merged.extend(old);
-    merged.extend(added);
-    *files = merged;
 }
 
 #[derive(Default)]
@@ -128,7 +115,9 @@ pub struct FileFinder {
     pub filtered_list: Vec<FileEntry>,
     previous_search: String,
     filter_dirty: bool,
-    file_list: Vec<FileEntry>,
+    // Updating one path no longer copies every indexed entry.
+    // Sorted iteration also keeps equal-length finder results deterministic.
+    file_list: BTreeMap<String, FileEntry>,
     current_project_dir: String,
     filesystem: Option<WorkspaceFilesystem>,
     updates: Option<Receiver<WorkspaceUpdate>>,
@@ -256,7 +245,7 @@ impl FileFinder {
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
         if let Some(receiver) = &self.updates {
-            for mut update in receiver.try_iter() {
+            for mut update in receiver.try_iter().take(UPDATES_PER_POLL) {
                 if update.generation != 0 && update.generation < self.last_generation {
                     continue;
                 }
@@ -267,24 +256,22 @@ impl FileFinder {
                     self.file_list = paths
                         .iter()
                         .filter_map(|path| FileEntry::from_remote_path(path, &update.root).ok())
+                        .map(|entry| (entry.full_path.clone(), entry))
                         .collect();
-                    self.file_list.sort_by(|a, b| a.full_path.cmp(&b.full_path));
                     changed = true;
                 }
                 if !update.indexed_removed.is_empty() {
-                    let removed: std::collections::HashSet<_> =
-                        update.indexed_removed.iter().collect();
-                    self.file_list
-                        .retain(|entry| !removed.contains(&entry.full_path));
+                    for path in &update.indexed_removed {
+                        self.file_list.remove(path);
+                    }
                     changed = true;
                 }
                 if !update.indexed_added.is_empty() {
-                    let additions = update
-                        .indexed_added
-                        .iter()
-                        .filter_map(|path| FileEntry::from_remote_path(path, &update.root).ok())
-                        .collect();
-                    merge_entries(&mut self.file_list, additions);
+                    for path in &update.indexed_added {
+                        if let Ok(entry) = FileEntry::from_remote_path(path, &update.root) {
+                            self.file_list.insert(path.clone(), entry);
+                        }
+                    }
                     changed = true;
                 }
                 self.directory_updates.append(&mut update.directories);
@@ -305,7 +292,7 @@ impl FileFinder {
             self.selected_index = 0;
             self.previous_search = query;
         }
-        self.filtered_list = filter_file_list(&self.file_list, &self.search_buffer);
+        self.filtered_list = filter_file_list(self.file_list.values(), &self.search_buffer);
     }
 
     pub fn toggle_window(&mut self) {
@@ -462,7 +449,10 @@ mod tests {
     #[test]
     fn query_changes_reset_selection_and_commit_is_only_open_signal() {
         let mut finder = FileFinder::new();
-        finder.file_list = vec![entry("b.rs"), entry("deep/a.rs")];
+        finder.file_list = [entry("b.rs"), entry("deep/a.rs")]
+            .into_iter()
+            .map(|entry| (entry.full_path.clone(), entry))
+            .collect();
         finder.toggle_window();
         finder.move_selection(1);
         assert_eq!(finder.selected_index, 1);
@@ -518,6 +508,60 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["a", "c", "z"]
         );
+    }
+
+    #[test]
+    fn discovery_backlog_yields_and_preserves_ordered_changes() {
+        let mut finder = FileFinder::new();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        finder.updates = Some(receiver);
+        // A menu tracking loop can pause UI polling while discovery continues.
+        // Resuming must leave time for input instead of draining the whole scan.
+        for generation in 1..=4096 {
+            sender
+                .send(WorkspaceUpdate {
+                    root: "/project".into(),
+                    generation,
+                    indexed_added: vec![format!("/project/{generation:04}.rs")],
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        sender
+            .send(WorkspaceUpdate {
+                root: "/project".into(),
+                generation: 4097,
+                indexed_files: Some(vec!["/project/final.rs".into()]),
+                ..Default::default()
+            })
+            .unwrap();
+        sender
+            .send(WorkspaceUpdate {
+                root: "/project".into(),
+                generation: 4098,
+                indexed_removed: vec!["/project/final.rs".into()],
+                indexed_added: vec!["/project/renamed.rs".into(); 2],
+                ready: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(finder.poll());
+        assert!(
+            finder.last_generation < 4098,
+            "UI polling must yield during a backlog"
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while finder.last_generation != 4098 {
+            assert!(
+                Instant::now() < deadline,
+                "discovery backlog did not finish"
+            );
+            finder.poll();
+            finder.take_workspace_updates();
+        }
+        finder.toggle_window();
+        assert_eq!(finder.filtered_list.len(), 1);
+        assert_eq!(finder.filtered_list[0].relative_path, "renamed.rs");
     }
 
     #[test]

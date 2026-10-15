@@ -2810,6 +2810,7 @@ name = "bedtime-workbench2"
 version = "0.1.0"
 dependencies = [
  "bedtime-desktop2",
+ "bedtime-ui2",
  "bevy",
  "serde",
  "serde_json",

@@ -1042,13 +1042,31 @@ fn menu(world: &mut World, smoke: &mut Smoke) -> io::Result<bool> {
                 smoke.next(world);
             }
         }
-        24 => {
+        24..=54 => {
             if smoke.elapsed_frames(world) >= 8 {
-                ensure(
-                    bedtime_core::active_panel_entities(world) == smoke.entities,
-                    "Startup switching recreated terminal sessions",
-                )?;
-                return basic(world, smoke);
+                // Repeated menu actions must keep working after the first few
+                // changes, preserving both terminal and document sessions.
+                let next = if smoke.phase % 2 == 0 {
+                    ensure(
+                        bedtime_core::active_panel_entities(world) == smoke.entities,
+                        "repeated menu switching recreated terminal sessions",
+                    )?;
+                    crate::config::LayoutSlot::Layout1
+                } else {
+                    ensure(
+                        bedtime_core::active_panel_entities(world)
+                            .contains(&smoke.panel.unwrap().entity())
+                            && document_bytes(world, smoke.panel.unwrap())?.0
+                                == b"NATIVE_EDIT_native menu baseline\n",
+                        "repeated menu switching lost the document session",
+                    )?;
+                    crate::config::LayoutSlot::Layout3
+                };
+                if smoke.phase == 54 {
+                    return basic(world, smoke);
+                }
+                crate::app::smoke_native_menu(world, MenuAction::UseLayout(next))?;
+                smoke.next(world);
             }
         }
         _ => unreachable!(),

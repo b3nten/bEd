@@ -262,6 +262,7 @@ pub(crate) fn draw(world: &mut World) {
                 }
                 let frame = UiFrame {
                     view,
+                    animation_owner: view,
                     surface,
                     ui: token.ui(),
                     theme: &theme,

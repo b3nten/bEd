@@ -371,6 +371,15 @@ impl<'a> Controls<'a> {
         }
     }
 
+    /// Paint icon artwork into custom chrome without submitting a layout item.
+    pub fn icon_at(&self, icon: impl Into<IconSource>, min: [f32; 2], side: f32) {
+        assert!(
+            side.is_finite() && side > 0.0 && min.into_iter().all(f32::is_finite),
+            "Icon geometry must be finite and positive"
+        );
+        self.paint_icon(&icon.into(), min, side);
+    }
+
     pub fn toggle(&self, label: &str, value: &mut bool) -> bool {
         let initial = if *value { 1.0 } else { 0.0 };
         let _id = self.ui.push_id(label);
@@ -431,6 +440,11 @@ impl<'a> Controls<'a> {
     /// never invoke their contents closure. The prepared base style covers popups.
     pub fn context_menu(&self, id: &str, draw: impl FnOnce()) {
         self.ui.open_popup_on_item_click(Some(id));
+        self.popup_menu(id, draw);
+    }
+
+    /// Draw a menu opened explicitly by a custom chrome control.
+    pub fn popup_menu(&self, id: &str, draw: impl FnOnce()) {
         if !self.ui.is_popup_open(id) {
             return;
         }

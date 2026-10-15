@@ -4,11 +4,16 @@ version.workspace = true
 edition = "2024"
 publish = false
 license.workspace = true
-description = "ECS command registration and controlled dispatch for the second Bedtime foundation"
+description = "Entity-backed workspaces, layouts, panels and commands for Bedtime"
+
+[features]
+default = []
+ui = ["dep:bedtime-ui2"]
 
 [dependencies]
 bevy = { workspace = true, features = ["std"] }
 bedtime-desktop2 = { workspace = true }
+bedtime-ui2 = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]

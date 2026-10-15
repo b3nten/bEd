@@ -100,6 +100,7 @@ pub struct UiFrame<'a> {
     pub ui: &'a Ui,
     pub theme: &'a Theme,
     pub motion: MotionPolicy,
+    animation_owner: Entity,
     animations: &'a RefCell<motion::Animations>,
     icons: &'a RefCell<icon_cache::IconCache>,
     viewports: &'a RefCell<viewport_textures::ViewportTextures>,
@@ -112,12 +113,27 @@ impl SystemInput for UiFrame<'_> {
     }
 }
 impl UiFrame<'_> {
+    /// Reborrow a frame for a nested drawing-system entity. The enclosing view
+    /// retains the frame/cache lifetime; native widget IDs distinguish controls.
+    pub fn for_view(&self, view: Entity) -> UiFrame<'_> {
+        UiFrame {
+            view,
+            surface: self.surface,
+            ui: self.ui,
+            theme: self.theme,
+            motion: self.motion,
+            animation_owner: self.animation_owner,
+            animations: self.animations,
+            icons: self.icons,
+            viewports: self.viewports,
+        }
+    }
     pub fn controls(&self) -> Controls<'_> {
         Controls::new(
             self.ui,
             self.theme,
             self.motion,
-            self.view,
+            self.animation_owner,
             self.animations,
             self.icons,
             self.viewports,

@@ -20,9 +20,10 @@ The intended layers are:
 The desktop crate supplies ECS-based macOS menus, text/file clipboard access and
 explicit close requests. The first service in
 [`bedtime-workbench2`](crates/bedtime-workbench2) registers consumer-defined command
-types as ECS entities and runs their queued invocations. Native toolbar/window
-styling and the remaining workbench services will be added as their behavior is
-established.
+types as ECS entities and runs their queued invocations. It now also owns always-present workspaces, retained layouts and panel instances.
+Its optional UI frontend supplies tabs, splitting/resizing and panel content
+windows. Documents, settings and storage follow in later slices of
+[stage 3](../MIGRATIONS/step-3.md).
 
 [`bedtime-ui2`](crates/bedtime-ui2) now provides the ImGui/Bevy integration,
 ECS surfaces, shared view state and theme selection, reusable controls, asset-backed

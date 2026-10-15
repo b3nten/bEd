@@ -281,26 +281,31 @@ fn append_items(
     Ok(())
 }
 
-fn commands(entries: &[DesktopMenuItem]) -> Vec<&DesktopMenuCommand> {
+fn commands(entries: &[DesktopMenuItem]) -> Vec<(&DesktopMenuCommand, bool)> {
     entries
         .iter()
         .flat_map(|entry| match entry {
-            DesktopMenuItem::Command(command)
-            | DesktopMenuItem::SelectedCommand(command)
-            | DesktopMenuItem::Quit(command) => vec![command],
+            DesktopMenuItem::Command(command) | DesktopMenuItem::Quit(command) => {
+                vec![(command, false)]
+            }
+            DesktopMenuItem::SelectedCommand(command) => vec![(command, true)],
             DesktopMenuItem::Submenu { items, .. } => commands(items),
             _ => Vec::new(),
         })
         .collect()
 }
 
-fn normalize_enabled(entries: &mut [DesktopMenuItem]) {
+fn normalize_state(entries: &mut [DesktopMenuItem]) {
     for entry in entries {
         match entry {
-            DesktopMenuItem::Command(command)
-            | DesktopMenuItem::SelectedCommand(command)
-            | DesktopMenuItem::Quit(command) => command.enabled = true,
-            DesktopMenuItem::Submenu { items, .. } => normalize_enabled(items),
+            DesktopMenuItem::SelectedCommand(command) => {
+                command.enabled = true;
+                *entry = DesktopMenuItem::Command(command.clone());
+            }
+            DesktopMenuItem::Command(command) | DesktopMenuItem::Quit(command) => {
+                command.enabled = true;
+            }
+            DesktopMenuItem::Submenu { items, .. } => normalize_state(items),
             _ => {}
         }
     }
@@ -378,17 +383,30 @@ impl MacOsMenu {
         definitions: &[DesktopMenu],
         dock: &[DesktopMenuCommand],
     ) -> io::Result<()> {
+        if self.definitions == definitions && self.dock_definitions == dock {
+            return Ok(());
+        }
         let mut old = self.definitions.clone();
         let mut new = definitions.to_vec();
         for list in [&mut old, &mut new] {
             for menu in list {
-                normalize_enabled(&mut menu.items);
+                normalize_state(&mut menu.items);
             }
         }
         if old == new && self.dock_definitions == dock {
             let commands = definitions.iter().flat_map(|menu| commands(&menu.items));
-            for (item, command) in self.items.iter_mut().zip(commands) {
-                item.set_enabled(command.enabled);
+            // Availability and checkmarks are presentation state. Changing a
+            // layout must not tear down the AppKit menu and its action targets.
+            for ((item, (native, _)), (command, selected)) in
+                self.items.iter().zip(&self.targets).zip(commands)
+            {
+                if item.is_enabled() != command.enabled {
+                    item.set_enabled(command.enabled);
+                }
+                let state = if selected { 1 } else { 0 };
+                if native.state() != state {
+                    native.setState(state);
+                }
             }
             self.definitions = definitions.to_vec();
             return Ok(());

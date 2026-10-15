@@ -1,7 +1,16 @@
-//! Typed command definitions, live ECS registrations and queued execution.
-//! Panels, documents and workspace services will join this crate separately.
+//! Entity-backed workspaces, retained layouts, panels and queued commands.
+mod geometry;
+mod layout;
+pub use layout::*;
+#[cfg(feature = "ui")]
+mod frontend;
 use bedtime_desktop2::{ActionEnabled, DesktopAction};
 use bevy::{ecs::system::SystemId, prelude::*};
+#[cfg(feature = "ui")]
+pub use frontend::{
+    PANEL_TYPE_PAYLOAD, WorkbenchHost, attach_surface, panel_drag_source, register_panel,
+    register_panel_in_area,
+};
 use serde::{Deserialize, Serialize};
 use std::{any::TypeId, borrow::Cow, collections::VecDeque};
 
@@ -76,11 +85,15 @@ pub enum CommandSystems {
     Dispatch,
 }
 
-/// The initial workbench installs commands only and needs no window or renderer.
+/// Headless lifecycle and command services. The optional UI frontend attaches
+/// to an existing surface; adding this plugin never installs a renderer.
 pub struct WorkbenchPlugin;
 
 impl Plugin for WorkbenchPlugin {
     fn build(&self, app: &mut App) {
+        layout::install(app);
+        #[cfg(feature = "ui")]
+        frontend::configure(app);
         app.init_resource::<CommandRequests>()
             .add_message::<CommandFinished>()
             .add_message::<DesktopAction>()
@@ -112,15 +125,7 @@ impl<'w> Workbench<'w> {
         &mut self,
         handler: impl IntoSystem<In<CommandInvocation>, CommandResult, M> + 'static,
     ) -> Result<Entity, String> {
-        let parts: Vec<_> = C::KEY.split('.').collect();
-        if parts.len() < 2
-            || parts.iter().any(|part| {
-                part.is_empty()
-                    || !part
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-            })
-        {
+        if !valid_key(C::KEY) {
             return Err(format!(
                 "Command key {:?} must have nonempty namespaced segments",
                 C::KEY
@@ -202,3 +207,16 @@ fn dispatch(world: &mut World) {
 
 #[cfg(test)]
 mod tests;
+
+// Persistent extension identifiers share one namespacing rule.
+fn valid_key(key: &str) -> bool {
+    let mut count = 0;
+    let valid = key.split('.').all(|part| {
+        count += 1;
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    });
+    valid && count >= 2
+}

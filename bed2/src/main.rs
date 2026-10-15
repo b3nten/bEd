@@ -1,24 +1,27 @@
 //! Application-owned Bevy setup, ECS menus and typed workbench commands.
+mod panel_smoke;
 mod viewport_demo;
 mod viewport_smoke;
+mod workbench_demo;
 use bedtime_desktop2::{
     Accelerator, ActionEnabled, Activates, Code, DesktopAction, DesktopClipboard, DesktopError,
     DesktopPlugin, InMenu, Menu, MenuBar, MenuItem, MenuSeparator, Modifiers,
 };
-use bedtime_ui2::{UiError, UiGraph, UiPlugin, UiSurface, UiSystems, UsesTheme, gallery, themes};
+use bedtime_ui2::{UiError, UiGraph, UiPlugin, UiSurface, UsesTheme, gallery, themes};
 use bedtime_workbench2::{
     CommandDefinition, CommandFinished, CommandInvocation, CommandRequests, CommandResult,
-    CommandSystems, Workbench, WorkbenchPlugin,
+    Workbench, WorkbenchPlugin,
 };
 use bevy::prelude::*;
 use bevy::{render::camera::CameraRenderGraph, window::PrimaryWindow};
 
-struct CopyGreeting;
 struct OpenViewport;
 impl CommandDefinition for OpenViewport {
     const KEY: &'static str = "bed2.open_viewport";
     const LABEL: &'static str = "Open 3D viewport";
 }
+
+struct CopyGreeting;
 impl CommandDefinition for CopyGreeting {
     const KEY: &'static str = "bed2.copy_greeting";
     const LABEL: &'static str = "Copy Greeting";
@@ -38,10 +41,11 @@ impl CommandDefinition for QuitApplication {
 
 fn main() -> AppExit {
     let mut app = App::new();
+    
     app.add_plugins(DefaultPlugins.set(bevy::window::WindowPlugin {
         primary_window: Some(Window {
-            title: "bEd 2 — Widget gallery".into(),
-            resolution: (1160, 900).into(),
+            title: "bEd 2 — Workbench".into(),
+            resolution: (1440, 960).into(),
             transparent: true,
             titlebar_transparent: true,
             ..default()
@@ -55,15 +59,17 @@ fn main() -> AppExit {
         WorkbenchPlugin,
         bed2_demo_game::CubeGamePlugin,
     ))
-    .configure_sets(PostUpdate, UiSystems::Draw.before(CommandSystems::Ingress))
     .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.12)))
     .add_systems(Startup, setup.after(bed2_demo_game::GameSetup))
     .add_systems(
         Update,
         (handle_close_requests, keyboard_quit, report_errors),
     );
+    
     viewport_demo::install(&mut app);
+    workbench_demo::install(&mut app);
     viewport_smoke::install(&mut app);
+    
     app.run()
 }
 
@@ -77,20 +83,25 @@ fn setup(world: &mut World) {
         CameraRenderGraph::new(UiGraph),
         viewport_demo::EditorUiCamera,
     ));
+    
     let light = world.spawn(themes::light()).id();
     let dark = world.spawn(themes::dark()).id();
+    
     let surface = world
         .query_filtered::<Entity, With<PrimaryWindow>>()
         .single(world)
         .unwrap();
+        
     world
         .entity_mut(surface)
         .insert((UiSurface, UsesTheme(dark)));
-    let gallery = gallery::spawn(world, surface, light, dark);
-    viewport_demo::spawn(world, surface);
+        
+    let gallery = workbench_demo::setup(world, surface, light, dark);
+    
     let open = Workbench::new(world)
         .register_command::<OpenViewport, _>(open_viewport)
         .unwrap();
+        
     world.spawn((
         gallery::GalleryAction {
             label: "Open 3D viewport".into(),
@@ -121,6 +132,7 @@ fn setup(world: &mut World) {
         bedtime_ui2::InView(gallery),
         Activates(copy),
     ));
+    
     world.spawn((
         gallery::GalleryAction {
             label: "Toggle copy availability".into(),
@@ -163,12 +175,15 @@ fn setup(world: &mut World) {
             InMenu(application),
         ))
         .id();
+        
     world.spawn((
         MenuItem::new(ToggleGreeting::LABEL),
         InMenu(tools),
         Activates(toggle),
     ));
+    
     world.spawn((MenuSeparator, InMenu(application)));
+    
     world.spawn((
         MenuItem {
             shortcut: Some(Accelerator::new(primary, Code::KeyQ)),
@@ -177,6 +192,7 @@ fn setup(world: &mut World) {
         InMenu(application),
         Activates(quit),
     ));
+    
     info!("bEd 2: native ECS menus on macOS; Escape requests quit on either platform.");
 }
 

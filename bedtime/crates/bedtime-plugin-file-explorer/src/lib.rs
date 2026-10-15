@@ -253,10 +253,9 @@ impl ExplorerState {
         std::mem::take(&mut self.actions)
     }
 
-    /// Lifecycle consumers drain the same stream used by tree/finder discovery.
+    /// Drain the updates already polled by tick for tree/finder discovery.
     pub fn take_filesystem_updates(&mut self) -> Vec<bedtime_remote::WorkspaceUpdate> {
         let state = &mut self.file_explorer;
-        state.file_finder.poll();
         let updates = state.file_finder.take_workspace_updates();
         let content = &mut self.file_content;
         for update in &updates {

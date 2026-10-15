@@ -171,6 +171,7 @@ fn borrowed_frame_runs_regular_bevy_systems_and_closed_menus_skip_contents() {
         .run_system_with(
             SystemId::<UiFrame<'static>>::from_entity(view),
             UiFrame {
+                animation_owner: view,
                 view,
                 surface,
                 ui: frame.ui(),

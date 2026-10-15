@@ -2,6 +2,7 @@
 use crate::viewport_demo::DemoState;
 use bed2_demo_game::GameCamera;
 use bedtime_ui2::{UiDiagnostics, UiViewport};
+use bedtime_workbench2::{PanelPresentation, Workbench};
 use bevy::{
     prelude::*,
     render::view::screenshot::{Screenshot, ScreenshotCaptured},
@@ -28,6 +29,8 @@ struct Smoke {
     initial_size: UVec2,
     camera: Option<Entity>,
     drag_origin: Vec2,
+    drag_target: Vec2,
+    tabs_verified: bool,
 }
 #[derive(Component)]
 struct Region {
@@ -37,7 +40,7 @@ struct Region {
 }
 pub(crate) fn install(app: &mut App) {
     let mut args = std::env::args();
-    if args.any(|arg| arg == "--viewport-smoke-dir") {
+    if args.any(|arg| arg == "--viewport-smoke-dir" || arg == "--workbench-smoke-dir") {
         let directory = PathBuf::from(args.next().expect("--viewport-smoke-dir needs a directory"));
         std::fs::create_dir_all(&directory).unwrap();
         let ready = PipelinesReady::default();
@@ -86,29 +89,88 @@ fn step(world: &mut World) {
         .query_filtered::<Entity, With<PrimaryWindow>>()
         .single(world)
         .unwrap();
+    // Scripted input is independent of OS focus (the user may be in another
+    // application). Supply focus observations only inside this smoke fixture.
+    if !world.get::<Window>(window).unwrap().focused {
+        world.get_mut::<Window>(window).unwrap().focused = true;
+        WINIT_WINDOWS.with(|windows| {
+            let windows = windows.borrow();
+            let native = windows.get_window(window).unwrap();
+            world.write_message(RawWinitWindowEvent {
+                window_id: native.id(),
+                event: winit::event::WindowEvent::Focused(true),
+            });
+        });
+    }
     let view = world
         .query_filtered::<Entity, With<DemoState>>()
-        .single(world)
-        .unwrap();
+        .iter(world)
+        .next();
     if frame == 380 {
         let camera = world
             .query_filtered::<Entity, With<GameCamera>>()
             .single(world)
             .unwrap();
         world.resource_mut::<Smoke>().camera = Some(camera);
-        world.resource_mut::<Smoke>().initial_size =
-            world.get::<UiViewport>(view).unwrap().physical_size;
+        world.resource_mut::<Smoke>().initial_size = world
+            .get::<UiViewport>(view.unwrap())
+            .unwrap()
+            .physical_size;
     }
     // Resize the actual ImGui window using native-shaped events through our adapter.
     // This exercises image resizing, camera projection refresh and GPU view replacement.
     if frame == 475 {
-        world.resource_mut::<Smoke>().drag_origin =
-            world.get::<DemoState>(view).unwrap().bounds.max - Vec2::splat(5.0);
+        let size = world.get::<Window>(window).unwrap().resolution.size();
+        world.resource_mut::<Smoke>().drag_origin = Vec2::new(size.x * 0.59, size.y * 0.5);
+    }
+    if frame == 850 {
+        let gallery = main_gallery(world);
+        Workbench::new(world)
+            .move_panel(
+                view.unwrap(),
+                gallery,
+                Some(bedtime_workbench2::SplitAxis::Horizontal),
+            )
+            .unwrap();
+    }
+    if frame == 865 {
+        let gallery = main_gallery(world);
+        let origin = world
+            .get::<PanelPresentation>(view.unwrap())
+            .unwrap()
+            .tab_rect
+            .center();
+        let target = world
+            .get::<PanelPresentation>(gallery)
+            .unwrap()
+            .tab_rect
+            .center();
+        let mut smoke = world.resource_mut::<Smoke>();
+        smoke.drag_origin = origin;
+        smoke.drag_target = target;
+    }
+    if frame == 885 {
+        let gallery = main_gallery(world);
+        world.resource_mut::<Smoke>().drag_origin = world
+            .get::<PanelPresentation>(gallery)
+            .unwrap()
+            .tab_rect
+            .center();
+    }
+    if frame == 910 {
+        world.resource_mut::<Smoke>().drag_origin = world
+            .get::<PanelPresentation>(view.unwrap())
+            .unwrap()
+            .tab_rect
+            .center();
     }
     let origin = world.resource::<Smoke>().drag_origin;
+    let target = world.resource::<Smoke>().drag_target;
     let pointer = match frame {
         480..=483 => Some(origin.to_array()),
         484..=487 => Some((origin + Vec2::new(-100.0, 100.0)).to_array()),
+        870..=873 | 890..=895 | 920..=925 => Some(origin.to_array()),
+        874..=877 => Some(target.to_array()),
         _ => None,
     };
     if let Some([x, y]) = pointer {
@@ -125,13 +187,13 @@ fn step(world: &mut World) {
                     ),
                 },
             });
-            if frame == 482 || frame == 486 {
+            if [482, 486, 872, 876, 892, 894, 922, 924].contains(&frame) {
                 world.write_message(RawWinitWindowEvent {
                     window_id: window.id(),
                     event: winit::event::WindowEvent::MouseInput {
                         device_id: winit::event::DeviceId::dummy(),
                         button: winit::event::MouseButton::Left,
-                        state: if frame == 482 {
+                        state: if [482, 872, 892, 922].contains(&frame) {
                             winit::event::ElementState::Pressed
                         } else {
                             winit::event::ElementState::Released
@@ -142,7 +204,7 @@ fn step(world: &mut World) {
         });
     }
     if frame == 510 {
-        let viewport = world.get::<UiViewport>(view).unwrap();
+        let viewport = world.get::<UiViewport>(view.unwrap()).unwrap();
         assert_ne!(
             viewport.physical_size,
             world.resource::<Smoke>().initial_size,
@@ -158,10 +220,10 @@ fn step(world: &mut World) {
         );
     }
     if frame == 560 {
-        world.get_mut::<DemoState>(view).unwrap().overlay = true;
+        world.get_mut::<DemoState>(view.unwrap()).unwrap().overlay = true;
     }
     if frame == 680 {
-        world.get_mut::<DemoState>(view).unwrap().open = false;
+        Workbench::new(world).close_panel(view.unwrap()).unwrap();
     }
     if frame == 700 {
         assert_eq!(
@@ -190,7 +252,7 @@ fn step(world: &mut World) {
         let rect = if name == "overlay" {
             Rect::from_corners(size * 0.25, size * 0.75)
         } else {
-            world.get::<UiViewport>(view).unwrap().rect
+            world.get::<UiViewport>(view.unwrap()).unwrap().rect
         };
         world
             .spawn((
@@ -203,7 +265,81 @@ fn step(world: &mut World) {
             ))
             .observe(inspect);
     }
-    if frame > 820 && world.resource::<Smoke>().captures.len() == 5 {
+    // Exercise retention through the public lifecycle API, after visual checks.
+    if frame == 800 {
+        let context = world.resource::<crate::workbench_demo::DemoWorkbench>();
+        let (reading, scratch) = (context.reading, context.scratch);
+        let mut w = Workbench::new(world);
+        w.activate_layout(reading).unwrap();
+        w.activate_workspace(scratch).unwrap();
+    }
+    if frame == 805 {
+        let cube = world
+            .query_filtered::<Entity, With<DemoState>>()
+            .single(world)
+            .unwrap();
+        assert!(!world.get::<PanelPresentation>(cube).unwrap().visible);
+        let camera = world.resource::<Smoke>().camera.unwrap();
+        assert!(!world.get::<Camera>(camera).unwrap().is_active);
+        let note = world
+            .query::<&crate::workbench_demo::Notes>()
+            .single(world)
+            .unwrap();
+        assert!(note.text.contains("panel-local state"));
+        let context = world.resource::<crate::workbench_demo::DemoWorkbench>();
+        let (home, split) = (context.home, context.split);
+        let mut w = Workbench::new(world);
+        w.activate_workspace(home).unwrap();
+        w.activate_layout(split).unwrap();
+    }
+    if frame == 880 {
+        let gallery = main_gallery(world);
+        let a = world.get::<PanelPresentation>(gallery).unwrap().tab_rect;
+        let b = world
+            .get::<PanelPresentation>(view.unwrap())
+            .unwrap()
+            .tab_rect;
+        assert!(
+            (a.center().x - b.center().x).abs() < 400.0,
+            "Native tab drag must merge the split groups"
+        );
+    }
+    if frame == 900 {
+        let gallery = main_gallery(world);
+        assert!(
+            world.get::<PanelPresentation>(gallery).unwrap().visible,
+            "Native click must select the gallery tab"
+        );
+        assert!(
+            !world
+                .get::<PanelPresentation>(view.unwrap())
+                .unwrap()
+                .visible
+        );
+        assert!(
+            !world
+                .get::<Camera>(world.resource::<Smoke>().camera.unwrap())
+                .unwrap()
+                .is_active
+        );
+        let rect = world.get::<PanelPresentation>(gallery).unwrap().rect;
+        let size = world.get::<Window>(window).unwrap().resolution.size();
+        world
+            .spawn((
+                Screenshot::primary_window(),
+                Region {
+                    name: "tabs",
+                    rect,
+                    window: size,
+                },
+            ))
+            .observe(inspect_tabs);
+    }
+    crate::panel_smoke::step(world, frame);
+    if frame > 2090
+        && world.resource::<Smoke>().captures.len() == 5
+        && world.resource::<Smoke>().tabs_verified
+    {
         let smoke = world.resource::<Smoke>();
         let camera = smoke.camera.unwrap();
         assert_ne!(
@@ -218,12 +354,17 @@ fn step(world: &mut World) {
             camera
         );
         assert!(world.get::<UiDiagnostics>(window).unwrap().error.is_none());
+        let cube = world
+            .query_filtered::<Entity, With<DemoState>>()
+            .single(world)
+            .unwrap();
+        assert!(world.get::<PanelPresentation>(cube).unwrap().visible);
         info!(
-            "Viewport smoke passed: custom game shader, spinning panel, resize, full-window overlay/alpha, close/reopen and five pixel-checked captures"
+            "Workbench smoke passed: spinning panel, splitter input, full-window overlay/alpha, actual close/recreate, retained workspace/layout switches, native tab drag/selection and five pixel-checked captures"
         );
         world.write_message(AppExit::Success);
     }
-    assert!(frame < 1600, "Viewport smoke timed out");
+    assert!(frame < 2500, "Viewport smoke timed out");
 }
 
 fn inspect(capture: On<ScreenshotCaptured>, regions: Query<&Region>, mut smoke: ResMut<Smoke>) {
@@ -304,4 +445,42 @@ fn inspect(capture: On<ScreenshotCaptured>, regions: Query<&Region>, mut smoke: 
         region.name
     );
     smoke.captures.insert(region.name, (hash, clear));
+}
+
+fn main_gallery(world: &mut World) -> Entity {
+    let split = world
+        .resource::<crate::workbench_demo::DemoWorkbench>()
+        .split;
+    world.query_filtered::<(Entity, &bedtime_workbench2::InArea), With<bedtime_ui2::gallery::GalleryState>>()
+        .iter(world).find_map(|(e,l)| (world.get::<bedtime_workbench2::InLayout>(l.0).unwrap().0 == split).then_some(e)).unwrap()
+}
+
+fn inspect_tabs(
+    capture: On<ScreenshotCaptured>,
+    regions: Query<&Region>,
+    mut smoke: ResMut<Smoke>,
+) {
+    let region = regions.get(capture.entity).unwrap();
+    let image = capture.image.clone().try_into_dynamic().unwrap().to_rgba8();
+    image.save(smoke.directory.join("tabs.png")).unwrap();
+    let scale = image.width() as f32 / region.window.x;
+    let mut ink = 0;
+    // The first column must remain visible after the content window is reparented.
+    // Its headings/buttons/text are all brighter than the uniform background.
+    for y in (160..450).step_by(2) {
+        for x in (5..240).step_by(2) {
+            let pixel = image
+                .get_pixel(
+                    ((region.rect.min.x + x as f32) * scale) as u32,
+                    ((region.rect.min.y + y as f32) * scale) as u32,
+                )
+                .0;
+            ink += usize::from(pixel[..3].iter().map(|&v| v as u32).sum::<u32>() > 300);
+        }
+    }
+    assert!(
+        ink > 100,
+        "Regrouped gallery must retain visible first-column widgets, got {ink} ink samples"
+    );
+    smoke.tabs_verified = true;
 }

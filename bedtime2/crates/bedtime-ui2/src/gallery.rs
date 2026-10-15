@@ -6,6 +6,8 @@ use imgui::{Condition, StyleVar, TableOptions, TableSizingPolicy, WindowFlags};
 #[derive(Component)]
 pub struct GalleryState {
     pub visible: bool,
+    /// Draw inside an application/workbench-owned content window.
+    pub embedded: bool,
     pub light: Entity,
     pub dark: Entity,
     pub text: String,
@@ -30,6 +32,13 @@ pub struct GalleryAction {
 }
 
 pub fn spawn(world: &mut World, surface: Entity, light: Entity, dark: Entity) -> Entity {
+    let state = create_state(world, light, dark);
+    let view = register_view(world, surface, draw_gallery);
+    world.entity_mut(view).insert(state);
+    view
+}
+
+pub fn create_state(world: &mut World, light: Entity, dark: Entity) -> GalleryState {
     let custom_icon = world.resource_mut::<Assets<Icon>>().add(
         Icon::from_svg(include_bytes!("../assets/gallery/custom.svg"))
             .expect("Gallery SVG is valid"),
@@ -40,9 +49,9 @@ pub fn spawn(world: &mut World, surface: Entity, light: Entity, dark: Entity) ->
             .map(|slot| (slot, custom_icon.clone()))
             .collect(),
     });
-    let view = register_view(world, surface, draw_gallery);
-    world.entity_mut(view).insert(GalleryState {
+    GalleryState {
         visible: true,
+        embedded: false,
         light,
         dark,
         text: "A little room for good ideas".into(),
@@ -58,11 +67,10 @@ pub fn spawn(world: &mut World, surface: Entity, light: Entity, dark: Entity) ->
         icon_size: 32.0,
         custom_icons,
         custom_icon,
-    });
-    view
+    }
 }
 
-fn draw_gallery(
+pub fn draw_gallery(
     frame: UiFrame,
     mut states: Query<&mut GalleryState>,
     mut surfaces: Query<(&mut MotionPolicy, &UiDiagnostics, &UiIconStatus)>,
@@ -81,21 +89,9 @@ fn draw_gallery(
     let ui = frame.ui;
     let c = frame.controls();
     let p = &frame.theme.palette;
-    let window_style = ui.clone_style();
-    let surface_rounding = ui.push_style_var(StyleVar::WindowRounding(0.0));
-    let surface_border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
-    ui.window("Bedtime widget gallery")
-        .position([0.0, 0.0], Condition::Always)
-        .size(ui.io().display_size(), Condition::Always)
-        .flags(WindowFlags::NO_DECORATION | WindowFlags::NO_MOVE | WindowFlags::NO_SAVED_SETTINGS)
-        .build(|| {
-            // The surface has captured its flat style. Nested windows inherit
-            // the theme again, with every style token kept in its Begin scope.
-            let _rounding =
-                ui.push_style_var(StyleVar::WindowRounding(window_style.window_rounding()));
-            let _border = ui.push_style_var(StyleVar::WindowBorderSize(
-                window_style.window_border_size(),
-            ));
+    let embedded = state.embedded;
+    {
+        let mut contents = || {
             c.muted("B E D T I M E   /   U I   2");
             ui.text_colored(p.text, "A place for every little interaction.");
             c.muted("Built-in controls, shared themes, and motion. All running through Bevy.");
@@ -267,9 +263,32 @@ fn draw_gallery(
                     });
                 });
             c.muted(format!("Selected row: {}", state.selected));
-        });
-    drop(surface_border);
-    drop(surface_rounding);
+        };
+        if embedded {
+            contents();
+        } else {
+            let style = ui.clone_style();
+            let rounding = ui.push_style_var(StyleVar::WindowRounding(0.0));
+            let border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
+            ui.window("Bedtime widget gallery")
+                .position([0.0, 0.0], Condition::Always)
+                .size(ui.io().display_size(), Condition::Always)
+                .flags(
+                    WindowFlags::NO_DECORATION
+                        | WindowFlags::NO_MOVE
+                        | WindowFlags::NO_SAVED_SETTINGS,
+                )
+                .build(|| {
+                    let _rounding =
+                        ui.push_style_var(StyleVar::WindowRounding(style.window_rounding()));
+                    let _border =
+                        ui.push_style_var(StyleVar::WindowBorderSize(style.window_border_size()));
+                    contents();
+                });
+            drop(border);
+            drop(rounding);
+        }
+    }
     let mut browser_open = state.icon_browser;
     if browser_open {
         ui.window("Icon browser")

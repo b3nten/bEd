@@ -25,7 +25,7 @@ ALLOWED_INTERNAL = {
     "bed2-demo-game": set(),
     "bedtime-desktop2": set(),
     "bedtime-ui2": {"bedtime-desktop2"},
-    "bedtime-workbench2": {"bedtime-desktop2"},
+    "bedtime-workbench2": {"bedtime-desktop2", "bedtime-ui2"},
     "bedside-table": {"bedtime", "bedtime-core", "bedtime-workbench", "bedtime-storage", "bedtime-sqlite"},
     "bedtime-sqlite": set(),
     "bed": {
@@ -247,6 +247,8 @@ def check(offline=False):
             forbidden |= set(ALLOWED_INTERNAL) - {name, "bedtime-example-game"}
             forbidden |= {"dear-imgui-rs", "dear-imgui-sys"}
         assert not names & forbidden, f"{name} crosses its dependency boundary: {sorted(names & forbidden)}"
+    workbench_ui = dependency_tree("bedtime-workbench2", offline, "ui")
+    assert not workbench_ui & (set(ALLOWED_INTERNAL) - {"bedtime-workbench2", "bedtime-ui2", "bedtime-desktop2"}), "Workbench UI requires v1 or application crates"
     # The merged API must stay lean with documents disabled, including when only
     # GPU contracts are requested. Document contracts add no IDE services by default.
     for features in ("gpu", "documents", "documents,gpu", "documents,language-services"):

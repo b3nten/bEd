@@ -207,12 +207,7 @@ of game-camera effects.
 UI has no workbench dependency. Applications can emit `DesktopAction::Activated`
 with a placement/source and target entity. `bed2` demonstrates placements using
 the existing `Activates` relationship and shared `ActionEnabled` availability.
-Order drawing before the workbench's ingress:
-
-```rust,ignore
-app.configure_sets(PostUpdate, UiSystems::Draw.before(CommandSystems::Ingress));
-```
-
+Workbench's `ui` feature orders drawing before command ingress automatically.
 Workbench collects native and UI actions and dispatches them after the frame
 borrow ends. UI systems should update presentation state and enqueue application
 intentions; consequential application work belongs to its controlled owner.
@@ -283,8 +278,9 @@ support desktop applications without a scene camera.
 
 `bed2` demonstrates both arrangements using the same game camera. **Full-window
 scene** switches from the panel target to the window and leaves controls/HUD over
-it; **Panel** switches back. Closing the demo returns to the gallery, and **Open
-3D viewport** reopens it. The game scene and its own fullscreen color-grade shader
+it; **Return to workbench** switches back. The viewport and gallery are real
+workbench panels; closing the viewport retires its panel entity, and **Open
+3D viewport** creates a new one. The game scene and its own fullscreen color-grade shader
 live in `bed2-demo-game`, which has no Bedtime dependency:
 
 ```sh
@@ -297,7 +293,7 @@ cargo run -p bed2-demo-game --example standalone
 ```sh
 cargo test --locked -p bedtime-ui2 --lib
 cargo run --locked -p bedtime-ui2 --example gallery -- --smoke-dir target/ui2-smoke
-cargo run --locked -p bed2 -- --viewport-smoke-dir target/ui2-viewport-smoke
+cargo run --locked -p bed2 -- --workbench-smoke-dir target/workbench2-smoke
 cargo run --locked -p bed2-demo-game --example standalone -- --smoke-dir target/ui2-standalone-smoke
 ```
 
