@@ -211,8 +211,8 @@ mod tests {
         assert!(failed.error);
         assert!(failed.details.contains("Adapter disconnected"));
         assert!(presentation(app.world(), context(publisher, CONTEXT, Some(panel))).is_none());
-        let WorkbenchAction::Invoke(command) =
-            context(publisher, ACTIVE, None).invoke(failed.commands[0].command, Value::Null)
+        let WorkbenchAction::Invoke(command) = context(publisher, ACTIVE, None)
+            .invoke(failed.commands[0].command.clone(), Value::Null)
         else {
             unreachable!()
         };
@@ -325,13 +325,14 @@ mod tests {
             .find(|command| command.command == STOP_COMMAND)
             .unwrap();
         assert!(stop.enabled);
-        let WorkbenchAction::Invoke(invocation) = context.invoke(stop.command, Value::Null) else {
+        let WorkbenchAction::Invoke(invocation) = context.invoke(stop.command.clone(), Value::Null)
+        else {
             unreachable!()
         };
         let handler = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command(STOP_COMMAND)
+            .command(&bedtime_api::CommandId::from(STOP_COMMAND))
             .unwrap()
             .handler;
         app.world_mut()

@@ -214,7 +214,11 @@ pub fn draw_embedded(
         ));
     }
     config.lsp.shortcuts = config.options.shortcuts.clone();
-    let menu = bedtime_api::documents::panel_viewer_menu(world, entity, TEXT_VIEWER);
+    let menu = bedtime_api::documents::panel_viewer_menu(
+        world,
+        entity,
+        &bedtime_api::ViewerId::new(TEXT_VIEWER),
+    );
     let mut requests = Vec::new();
     let result = with_editor(world, |views, runtime, session| {
         let view = views
@@ -340,7 +344,11 @@ impl Panel for EditorFrontend {
                     .map(|revision| (state.document, revision))
             });
         let window = crate::zoom::window(ui);
-        let menu = bedtime_api::documents::panel_viewer_menu(world, self.entity, TEXT_VIEWER);
+        let menu = bedtime_api::documents::panel_viewer_menu(
+            world,
+            self.entity,
+            &bedtime_api::ViewerId::new(TEXT_VIEWER),
+        );
         let expired_focus = unfocused_view(world, self.entity);
         let mut requests = Vec::new();
         let mut symbol_request = None;
@@ -598,14 +606,14 @@ fn prepare(world: &mut World) {
         .filter_map(|item| {
             let descriptor = world
                 .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-                .command(item.command)?;
+                .command(&item.command)?;
             let presentation = descriptor
                 .presentation(world.get_resource::<bedtime_api::workbench::CommandPresentations>());
             if !presentation.visible {
                 return None;
             }
             Some(crate::runtime::EditorMenuCommand {
-                id: descriptor.id.into(),
+                id: descriptor.id.clone(),
                 label: presentation.label.into(),
                 enabled: presentation.enabled,
             })
@@ -998,7 +1006,7 @@ mod tests {
         let factory = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .panel(panel_type)
+            .panel(&bedtime_api::PanelTypeId::from(panel_type))
             .unwrap()
             .factory;
         let frontend = app

@@ -68,7 +68,7 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
     app.update();
     dispatch_app_plugin_command(
         app.world_mut(),
-        bedtime_plugin_debugger::BREAKPOINT_COMMAND,
+        &bedtime_api::CommandId::from(bedtime_plugin_debugger::BREAKPOINT_COMMAND),
         PanelTarget::LastFocused,
     )
     .unwrap();
@@ -185,7 +185,7 @@ fn debugger_start_saves_and_runs_and_source_navigation_replaces_previews() {
     for _ in 0..3 {
         dispatch_app_plugin_command(
             app.world_mut(),
-            bedtime_plugin_debugger::SHOW_COMMAND,
+            &bedtime_api::CommandId::from(bedtime_plugin_debugger::SHOW_COMMAND),
             PanelTarget::LargestArea,
         )
         .unwrap();

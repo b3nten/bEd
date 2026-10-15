@@ -645,9 +645,10 @@ impl FileOperations {
                 viewer: None,
                 target: bedtime_api::workbench::PanelTarget::LargestArea,
             }),
-            FileTreeAction::Command { command, context } => {
-                requests.push(HostAction::Command { command, context })
-            }
+            FileTreeAction::Command { command, context } => requests.push(HostAction::Command {
+                command: command.into(),
+                context,
+            }),
             FileTreeAction::Open(path) => requests.push(HostAction::OpenFileIn {
                 path,
                 viewer: None,
@@ -655,7 +656,7 @@ impl FileOperations {
             }),
             FileTreeAction::OpenWith { path, viewer } => requests.push(HostAction::OpenFileIn {
                 path,
-                viewer: Some(viewer),
+                viewer: Some(viewer.into()),
                 target: bedtime_api::workbench::PanelTarget::LargestArea,
             }),
             FileTreeAction::OpenMany(paths) | FileTreeAction::OpenManyFromMenu(paths) => {

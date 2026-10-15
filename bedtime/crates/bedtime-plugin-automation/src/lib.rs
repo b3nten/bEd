@@ -75,7 +75,7 @@ pub enum Operation {
     },
     Inspect,
     OpenPanel {
-        panel_type: String,
+        panel_type: bedtime_api::PanelTypeId,
         state: Value,
         area: Option<u32>,
     },
@@ -87,7 +87,7 @@ pub enum Operation {
     },
     ClosePanel(PanelHandle),
     InvokeCommand {
-        command: String,
+        command: bedtime_api::CommandId,
         source: Option<PanelHandle>,
         arguments: Value,
     },
@@ -107,7 +107,7 @@ pub struct PanelInfo {
     pub document: Option<DocumentHandle>,
     pub handle: PanelHandle,
     pub persisted_id: u64,
-    pub panel_type: String,
+    pub panel_type: bedtime_api::PanelTypeId,
     pub title: String,
     pub area: Option<u32>,
     pub focused: bool,
@@ -125,7 +125,7 @@ pub enum Readiness {
 
 #[derive(Clone, Debug)]
 pub struct CommandInfo {
-    pub id: String,
+    pub id: bedtime_api::CommandId,
     pub label: String,
     pub enabled: bool,
     pub visible: bool,
@@ -768,17 +768,17 @@ fn inspect(world: &mut World) -> Result<Snapshot, AutomationError> {
         .map(|command| {
             if let Some(fact) = world
                 .get_resource::<bedtime_api::workbench::CommandPresentations>()
-                .and_then(|facts| facts.0.get(command.id))
+                .and_then(|facts| facts.0.get(&command.id))
             {
                 return CommandInfo {
-                    id: command.id.into(),
+                    id: command.id.clone(),
                     label: fact.label.clone().unwrap_or_else(|| command.label.into()),
                     enabled: fact.enabled,
                     visible: fact.visible,
                 };
             }
             CommandInfo {
-                id: command.id.into(),
+                id: command.id.clone(),
                 label: command.label.into(),
                 enabled: true,
                 visible: true,

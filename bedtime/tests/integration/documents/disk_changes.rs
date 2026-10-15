@@ -337,7 +337,12 @@ fn invalid_external(raw: &[u8]) {
     let generation = fx.snapshot().generation;
     fx.external(raw);
     let report = fx.poll();
-    assert!(report.errors.iter().any(|error| error.service == "monitor"));
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|error| error.service == bedtime_documents::ServiceKind::Monitor)
+    );
     assert_eq!(fx.snapshot().bytes, b"preserved");
     assert_eq!(fx.snapshot().generation, generation);
     assert!(!fx.snapshot().dirty);
@@ -378,7 +383,7 @@ fn unchanged_oversized_monitor_errors_are_reported_once_and_recovery_is_retried(
         first
             .errors
             .iter()
-            .filter(|error| error.service == "monitor")
+            .filter(|error| error.service == bedtime_documents::ServiceKind::Monitor)
             .count(),
         1
     );
@@ -399,7 +404,7 @@ fn unchanged_oversized_monitor_errors_are_reported_once_and_recovery_is_retried(
         changed
             .errors
             .iter()
-            .filter(|error| error.service == "monitor")
+            .filter(|error| error.service == bedtime_documents::ServiceKind::Monitor)
             .count(),
         1
     );
@@ -418,7 +423,7 @@ fn unchanged_oversized_monitor_errors_are_reported_once_and_recovery_is_retried(
         fx.poll()
             .errors
             .iter()
-            .filter(|error| error.service == "monitor")
+            .filter(|error| error.service == bedtime_documents::ServiceKind::Monitor)
             .count(),
         1
     );

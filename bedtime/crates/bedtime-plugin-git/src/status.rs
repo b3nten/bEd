@@ -198,7 +198,7 @@ mod tests {
         assert!(error.details.contains("Push rejected"));
         assert_eq!(error.commands[0].command, SHOW_COMMAND);
         let WorkbenchAction::Invoke(command) =
-            context(publisher, ACTIVITY).invoke(error.commands[0].command, Value::Null)
+            context(publisher, ACTIVITY).invoke(error.commands[0].command.clone(), Value::Null)
         else {
             unreachable!()
         };

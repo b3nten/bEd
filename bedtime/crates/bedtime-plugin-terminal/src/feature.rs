@@ -983,7 +983,7 @@ mod tests {
         let factory = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .panel(PANEL_ID)
+            .panel(&bedtime_api::PanelTypeId::from(PANEL_ID))
             .unwrap()
             .factory;
         let _frontend = app
@@ -1030,7 +1030,7 @@ mod tests {
         let factory = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .panel(PANEL_ID)
+            .panel(&bedtime_api::PanelTypeId::from(PANEL_ID))
             .unwrap()
             .factory;
         let frontend = app

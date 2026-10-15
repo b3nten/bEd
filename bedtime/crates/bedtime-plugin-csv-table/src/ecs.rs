@@ -297,7 +297,7 @@ impl Panel for CsvFrontend {
         _requests: &mut Vec<WorkbenchAction>,
         _shortcuts: &bedtime_api::workbench::ShortcutInput,
     ) {
-        let menu = panel_viewer_menu(world, self.entity, VIEWER_ID);
+        let menu = panel_viewer_menu(world, self.entity, &bedtime_api::ViewerId::new(VIEWER_ID));
         let frame = FrontendSnapshot::capture(world);
         let mut state = SystemState::<(NonSendMut<CsvStates>, ResMut<HostEffects>)>::new(world);
         let (mut states, mut intents) = state

@@ -245,8 +245,7 @@ pub trait LayoutIntegration {
             world
                 .get::<PanelRecord>(panel)
                 .expect("owned panel")
-                .panel_type
-                .clone(),
+                .panel_type.clone(),
         )
     }
     fn create(world: &mut World, definition: &PanelDefinition) -> io::Result<Entity> {

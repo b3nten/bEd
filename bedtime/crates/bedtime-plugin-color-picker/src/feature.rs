@@ -207,7 +207,7 @@ mod tests {
         let handler = app
             .world()
             .resource::<WorkbenchRegistry>()
-            .command(APPLY_COMMAND)
+            .command(&bedtime_api::CommandId::from(APPLY_COMMAND))
             .unwrap()
             .handler;
         app.world_mut()

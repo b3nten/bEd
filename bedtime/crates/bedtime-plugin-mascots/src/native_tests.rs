@@ -37,7 +37,7 @@ fn native_registered_duck_renderer_owns_entities_in_the_shared_world() {
     let factory = app
         .world()
         .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-        .panel("bedtime.duck.panel")
+        .panel(&bedtime_api::PanelTypeId::new("bedtime.duck.panel"))
         .unwrap()
         .factory;
     let _frontend = app

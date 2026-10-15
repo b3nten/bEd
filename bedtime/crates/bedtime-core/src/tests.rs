@@ -107,8 +107,14 @@ fn same_file_navigation_returns_to_its_requesting_view_after_another_view_is_foc
         .non_send_mut::<DocumentSession>()
         .open_file(&path)
         .unwrap();
-    let requesting =
-        open_document_panel(world, "navigation.panel", document, Value::Null, None).unwrap();
+    let requesting = open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("navigation.panel"),
+        document,
+        Value::Null,
+        None,
+    )
+    .unwrap();
     let sibling = duplicate_panel(world, requesting, None).unwrap();
     let request_view = world.get::<PanelBinding>(requesting).unwrap().view.unwrap();
     let sibling_view = world.get::<PanelBinding>(sibling).unwrap().view.unwrap();
@@ -642,8 +648,22 @@ fn rejected_restore_does_not_run_destructive_retirement_hooks() {
         .non_send_mut::<DocumentSession>()
         .create_document(b"dirty")
         .unwrap();
-    let first = open_document_panel(world, "test.panel", clean, Value::Null, None).unwrap();
-    let second = open_document_panel(world, "test.panel", dirty, Value::Null, None).unwrap();
+    let first = open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        clean,
+        Value::Null,
+        None,
+    )
+    .unwrap();
+    let second = open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        dirty,
+        Value::Null,
+        None,
+    )
+    .unwrap();
     let hook = world.register_system(
         |In(entity): In<Entity>, mut retired: ResMut<Retired>| -> Result<(), String> {
             retired.0.push(entity);
@@ -675,7 +695,14 @@ fn untitled_restore_reuses_only_an_identity_from_the_same_live_session() {
         .non_send_mut::<DocumentSession>()
         .create_document(b"retained scratch contents")
         .unwrap();
-    open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        document,
+        Value::Null,
+        None,
+    )
+    .unwrap();
     let snapshot = bedtime_workbench::save(world);
     bedtime_workbench::restore(world, &snapshot).unwrap();
     let restored = world
@@ -906,7 +933,14 @@ fn document_commands_keep_the_captured_panel_and_tools_retain_shared_selection()
         .non_send_mut::<DocumentSession>()
         .create_document(b"initial")
         .unwrap();
-    let editor = open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    let editor = open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        document,
+        Value::Null,
+        None,
+    )
+    .unwrap();
     let request = edit(world, document, b"changed ");
     submit_host_request(world, Some(editor), request);
     resolve_documents(world);
@@ -936,7 +970,7 @@ fn document_commands_keep_the_captured_panel_and_tools_retain_shared_selection()
     );
     let handler = world
         .resource::<api::workbench::WorkbenchRegistry>()
-        .command("bedtime.documents.undo")
+        .command(&bedtime_api::CommandId::new("bedtime.documents.undo"))
         .unwrap()
         .handler;
     let result = world
@@ -963,7 +997,14 @@ fn an_explicit_save_target_runs_while_the_current_tool_invocation_is_disabled() 
         .non_send_mut::<DocumentSession>()
         .open_file(&path)
         .unwrap();
-    let editor = open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    let editor = open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        document,
+        Value::Null,
+        None,
+    )
+    .unwrap();
     submit_host_request(world, Some(editor), edit(world, document, b"changed "));
     resolve_documents(world);
     let tool = panel(world);
@@ -1011,7 +1052,14 @@ fn application_selection_is_published_by_core_and_can_be_explicitly_cleared() {
         .non_send_mut::<DocumentSession>()
         .create_document(b"remembered")
         .unwrap();
-    open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        document,
+        Value::Null,
+        None,
+    )
+    .unwrap();
     let tool = panel(world);
     world.insert_resource(DocumentFrameSelection {
         document: Some(document),
@@ -1062,7 +1110,14 @@ fn shared_save_commands_use_the_explicit_document_selection() {
         .non_send_mut::<DocumentSession>()
         .open_file(&path)
         .unwrap();
-    open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        document,
+        Value::Null,
+        None,
+    )
+    .unwrap();
     let tool = panel(world);
     let revision = document_revision(world, document).unwrap();
     apply_edits(
@@ -1082,7 +1137,7 @@ fn shared_save_commands_use_the_explicit_document_selection() {
     publish_documents(world);
     let save = world
         .resource::<api::workbench::WorkbenchRegistry>()
-        .command("bedtime.documents.save")
+        .command(&bedtime_api::CommandId::new("bedtime.documents.save"))
         .unwrap()
         .handler;
     world
@@ -1116,7 +1171,11 @@ fn shared_save_commands_use_the_explicit_document_selection() {
         "bedtime.documents.save_as",
         "bedtime.documents.shell.open",
     ] {
-        assert!(registry.command(command).is_some());
+        assert!(
+            registry
+                .command(&bedtime_api::CommandId::from(command))
+                .is_some()
+        );
     }
 }
 
@@ -1128,7 +1187,14 @@ fn shared_save_arguments_keep_the_captured_target_and_reject_empty_or_invalid_id
         .non_send_mut::<DocumentSession>()
         .create_document(b"first")
         .unwrap();
-    let editor = open_document_panel(world, "test.panel", first, Value::Null, None).unwrap();
+    let editor = open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        first,
+        Value::Null,
+        None,
+    )
+    .unwrap();
     let second = world
         .non_send_mut::<DocumentSession>()
         .create_document(b"second")
@@ -1141,7 +1207,7 @@ fn shared_save_arguments_keep_the_captured_target_and_reject_empty_or_invalid_id
     for command in ["bedtime.documents.save", "bedtime.documents.save_as"] {
         let handler = world
             .resource::<api::workbench::WorkbenchRegistry>()
-            .command(command)
+            .command(&bedtime_api::CommandId::from(command))
             .unwrap()
             .handler;
         world
@@ -1278,7 +1344,14 @@ fn revision_checked_panel_edits_acknowledge_success_and_failure_once() {
         .non_send_mut::<DocumentSession>()
         .create_document(b"old")
         .unwrap();
-    let panel = open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    let panel = open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        document,
+        Value::Null,
+        None,
+    )
+    .unwrap();
     world.init_resource::<Acknowledgements>();
     let handler = world.register_system(
         |In(result): In<bedtime_api::documents::PanelEditResult>,
@@ -1337,10 +1410,17 @@ fn native_quit_waits_for_drawing_and_prior_document_operations() {
         .non_send_mut::<DocumentSession>()
         .open_file(&path)
         .unwrap();
-    let panel = open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    let panel = open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        document,
+        Value::Null,
+        None,
+    )
+    .unwrap();
     let inactive = open_panel(
         world,
-        "test.panel",
+        &bedtime_api::PanelTypeId::new("test.panel"),
         bedtime_api::documents::PanelInput::None,
         Value::Null,
         None,
@@ -1390,8 +1470,22 @@ fn aggregate_restore_cannot_treat_another_closing_view_as_a_survivor() {
         .non_send_mut::<DocumentSession>()
         .create_document(b"shared")
         .unwrap();
-    let first = open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
-    let second = open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    let first = open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        document,
+        Value::Null,
+        None,
+    )
+    .unwrap();
+    let second = open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        document,
+        Value::Null,
+        None,
+    )
+    .unwrap();
     let request = edit(world, document, b"changed ");
     submit_host_request(world, Some(first), request);
     resolve_documents(world);
@@ -1435,7 +1529,14 @@ fn opening_a_directory_without_workspaces_retains_live_documents_and_layout() {
         .create_document(b"draft")
         .unwrap();
     let session = world.non_send::<DocumentSession>().session_id();
-    let panel = open_document_panel(world, "test.panel", document, Value::Null, None).unwrap();
+    let panel = open_document_panel(
+        world,
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        document,
+        Value::Null,
+        None,
+    )
+    .unwrap();
     let request = edit(world, document, b"unsaved ");
     apply_document_request(world, capture_host_request(world, Some(panel), request)).unwrap();
     let generation = world.resource::<bedtime_files::FileContext>().generation;
@@ -1862,7 +1963,13 @@ fn another_viewer_opens_a_separate_tab_with_shared_content_and_history_without_b
         .non_send_mut::<DocumentSession>()
         .create_document(b"{} ")
         .unwrap();
-    let first = open_document_viewer(world, document, "views.text", None).unwrap();
+    let first = open_document_viewer(
+        world,
+        document,
+        &bedtime_api::ViewerId::new("views.text"),
+        None,
+    )
+    .unwrap();
     let tab = world
         .get::<api::workbench::PanelPresentation>(first)
         .unwrap()
@@ -1898,7 +2005,13 @@ fn another_viewer_opens_a_separate_tab_with_shared_content_and_history_without_b
         2
     );
     assert_eq!(
-        open_document_viewer(world, document, "views.tree", None).unwrap(),
+        open_document_viewer(
+            world,
+            document,
+            &bedtime_api::ViewerId::new("views.tree"),
+            None
+        )
+        .unwrap(),
         second
     );
     apply_document_request(

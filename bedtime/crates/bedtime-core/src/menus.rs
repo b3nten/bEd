@@ -16,7 +16,7 @@ pub fn menu_shortcut(world: &World, id: &str) -> Option<bedtime_keybindings::Str
         .resource::<bedtime_workbench::WorkbenchLayout>()
         .focused
         .and_then(|panel| world.get::<bedtime_workbench::PanelRecord>(panel))
-        .map(|record| bedtime_keybindings::Scope::panel(&record.panel_type));
+        .map(|record| bedtime_keybindings::Scope::panel(record.panel_type.as_str()));
     if world
         .get_non_send::<bedtime_desktop::DesktopContext>()
         .is_some_and(|context| context.context.io().want_text_input())
@@ -48,7 +48,7 @@ fn command(world: &World, entry: &MenuCommand) -> Option<DesktopMenuCommand> {
         return None;
     }
     Some(DesktopMenuCommand {
-        id: entry.id.clone(),
+        id: entry.id.to_string(),
         label: entry
             .label
             .clone()
@@ -97,7 +97,7 @@ fn resolve_entries(world: &World, entries: &[MenuEntry]) -> Vec<DesktopMenuItem>
                                 entry.slot == bedtime_api::features::MenuSlot::Application
                             })
                             .filter_map(|entry| {
-                                command(world, &MenuCommand::new(entry.command))
+                                command(world, &MenuCommand::new(entry.command.clone()))
                                     .map(DesktopMenuItem::Command)
                             }),
                     );
@@ -160,7 +160,7 @@ pub fn resolve_menus(world: &mut World) -> Result<Vec<DesktopMenu>, String> {
                 .filter(|entry| entry.slot == bedtime_api::features::MenuSlot::Application)
             {
                 if !ids.contains(&contribution.command) {
-                    ids.push(contribution.command);
+                    ids.push(contribution.command.clone());
                 }
             }
         }
@@ -201,15 +201,16 @@ pub(crate) fn draw_menus(world: &mut World, ui: &dear_imgui_rs::Ui) -> Result<()
                         matches!(item, DesktopMenuItem::SelectedCommand(_)),
                         command.enabled,
                     ) {
+                        let id = bedtime_api::CommandId::from(&command.id);
                         let arguments = world
                             .get_resource::<MenuLayout>()
                             .map_or_else(
                                 || Ok(serde_json::Value::Null),
-                                |layout| layout.arguments(&command.id),
+                                |layout| layout.arguments(&id),
                             )
                             .expect("resolved menu payloads are valid");
                         let mut invocation =
-                            bedtime_workbench::capture_command(world, &command.id, arguments);
+                            bedtime_workbench::capture_command(world, id, arguments);
                         if matches!(item, DesktopMenuItem::Quit(_)) {
                             invocation.source = None;
                             world

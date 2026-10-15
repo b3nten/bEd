@@ -69,7 +69,7 @@ pub(in crate::application) fn open_terminal(world: &mut World) -> Entity {
     }
     open_panel(
         world,
-        "bedtime.terminal.panel",
+        &bedtime_api::PanelTypeId::new("bedtime.terminal.panel"),
         PanelInput::None,
         Value::Null,
         None,

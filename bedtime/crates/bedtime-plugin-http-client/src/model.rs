@@ -138,14 +138,14 @@ pub(crate) fn load(state: Option<&Value>) -> Result<SavedWorkspace, String> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ResolvedRequest {
-    pub method: String,
-    pub url: String,
-    pub headers: Vec<(String, String)>,
+    pub method: reqwest::Method,
+    pub url: reqwest::Url,
+    pub headers: Vec<(reqwest::header::HeaderName, reqwest::header::HeaderValue)>,
     pub body: String,
 }
 
 pub(crate) fn resolve(request: &Request) -> Result<ResolvedRequest, String> {
-    reqwest::Method::from_bytes(request.method.as_bytes())
+    let method = reqwest::Method::from_bytes(request.method.as_bytes())
         .map_err(|_| format!("Invalid HTTP method '{}'.", request.method))?;
     let mut url = reqwest::Url::parse(&request.url)
         .map_err(|error| format!("Invalid request URL: {error}."))?;
@@ -178,9 +178,9 @@ pub(crate) fn resolve(request: &Request) -> Result<ResolvedRequest, String> {
         if row.name.is_empty() {
             return Err(format!("Header row {} has a value but no name.", index + 1));
         }
-        reqwest::header::HeaderName::from_bytes(row.name.as_bytes())
+        let name = reqwest::header::HeaderName::from_bytes(row.name.as_bytes())
             .map_err(|_| format!("Invalid HTTP header name '{}'.", row.name))?;
-        reqwest::header::HeaderValue::from_str(&row.value).map_err(|_| {
+        let value = reqwest::header::HeaderValue::from_str(&row.value).map_err(|_| {
             format!(
                 "Header '{}' contains a value that cannot be sent in HTTP.",
                 row.name
@@ -189,7 +189,7 @@ pub(crate) fn resolve(request: &Request) -> Result<ResolvedRequest, String> {
         if request.auth != Auth::None && row.name.eq_ignore_ascii_case("authorization") {
             return Err("The Authorization header conflicts with the auth controls. Disable the header or choose no auth.".into());
         }
-        headers.push((row.name.clone(), row.value.clone()));
+        headers.push((name, value));
     }
     let authorization = match &request.auth {
         Auth::None => None,
@@ -205,14 +205,14 @@ pub(crate) fn resolve(request: &Request) -> Result<ResolvedRequest, String> {
         }
     };
     if let Some(authorization) = authorization {
-        reqwest::header::HeaderValue::from_str(&authorization).map_err(|_| {
+        let value = reqwest::header::HeaderValue::from_str(&authorization).map_err(|_| {
             "Authentication contains a value that cannot be sent in HTTP.".to_owned()
         })?;
-        headers.push(("Authorization".into(), authorization));
+        headers.push((reqwest::header::AUTHORIZATION, value));
     }
     Ok(ResolvedRequest {
-        method: request.method.clone(),
-        url: url.into(),
+        method,
+        url,
         headers,
         body: request.body.clone(),
     })
@@ -222,6 +222,15 @@ pub(crate) fn resolve(request: &Request) -> Result<ResolvedRequest, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn header_text(
+        headers: &[(reqwest::header::HeaderName, reqwest::header::HeaderValue)],
+    ) -> Vec<(String, String)> {
+        headers
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_str().unwrap().to_owned()))
+            .collect()
+    }
 
     fn row(name: &str, value: &str) -> KeyValue {
         KeyValue {
@@ -318,10 +327,10 @@ mod tests {
         ];
         let resolved = resolve(&draft).unwrap();
         assert_eq!(
-            resolved.url,
+            resolved.url.as_str(),
             "https://example.com/items?tag=original&tag=%2F&tag=space+%26+plus%2B&empty=#details"
         );
-        let url = reqwest::Url::parse(&resolved.url).unwrap();
+        let url = resolved.url;
         assert_eq!(
             url.query_pairs().collect::<Vec<_>>(),
             [
@@ -349,10 +358,10 @@ mod tests {
         draft.body = "  {{literal}}\r\n\0\n".into();
         let resolved = resolve(&draft).unwrap();
         assert_eq!(
-            resolved.headers,
+            header_text(&resolved.headers),
             [
-                ("X-Tag".into(), "one".into()),
-                ("X-Tag".into(), "two".into())
+                ("x-tag".into(), "one".into()),
+                ("x-tag".into(), "two".into())
             ]
         );
         assert_eq!(resolved.body, draft.body);
@@ -365,17 +374,17 @@ mod tests {
             token: "literal-token".into(),
         };
         assert_eq!(
-            resolve(&draft).unwrap().headers,
-            [("Authorization".into(), "Bearer literal-token".into())]
+            header_text(&resolve(&draft).unwrap().headers),
+            [("authorization".into(), "Bearer literal-token".into())]
         );
         draft.auth = Auth::Basic {
             username: "Aladdin".into(),
             password: "open sesame".into(),
         };
         assert_eq!(
-            resolve(&draft).unwrap().headers,
+            header_text(&resolve(&draft).unwrap().headers),
             [(
-                "Authorization".into(),
+                "authorization".into(),
                 "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==".into()
             )]
         );
@@ -386,8 +395,8 @@ mod tests {
         draft.headers[0].enabled = true;
         draft.auth = Auth::None;
         assert_eq!(
-            resolve(&draft).unwrap().headers,
-            [("aUtHoRiZaTiOn".into(), "custom".into())]
+            header_text(&resolve(&draft).unwrap().headers),
+            [("authorization".into(), "custom".into())]
         );
     }
 

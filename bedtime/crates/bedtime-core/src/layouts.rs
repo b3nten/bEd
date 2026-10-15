@@ -241,7 +241,7 @@ mod tests {
         .unwrap();
         let panel = crate::open_panel(
             app.world_mut(),
-            "fixture.model.panel",
+            &bedtime_api::PanelTypeId::new("fixture.model.panel"),
             bedtime_api::documents::PanelInput::None,
             Value::Null,
             None,

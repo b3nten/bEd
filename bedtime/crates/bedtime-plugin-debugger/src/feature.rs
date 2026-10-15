@@ -783,7 +783,7 @@ pub fn shortcuts(world: &mut World, ui: &Ui) -> Vec<WorkbenchAction> {
         .filter(|action| action.owner == MODULE_ID && input.take(ui, &action.id))
         .map(|action| {
             WorkbenchAction::Invoke(CommandInvocation {
-                command: action.id.clone(),
+                command: action.id.clone().into(),
                 source,
                 area,
                 arguments: Value::Null,
@@ -962,7 +962,7 @@ mod tests {
         let command = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command(BREAKPOINT_COMMAND)
+            .command(&bedtime_api::CommandId::from(BREAKPOINT_COMMAND))
             .unwrap()
             .handler;
         app.world_mut()
@@ -999,7 +999,7 @@ mod tests {
             let handler = app
                 .world()
                 .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-                .command(START_COMMAND)
+                .command(&bedtime_api::CommandId::from(START_COMMAND))
                 .unwrap()
                 .handler;
             app.world_mut()
@@ -1117,7 +1117,7 @@ mod tests {
             let handler = app
                 .world()
                 .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-                .command(START_COMMAND)
+                .command(&bedtime_api::CommandId::from(START_COMMAND))
                 .unwrap()
                 .handler;
             let result = app
@@ -1184,7 +1184,7 @@ mod tests {
             let handler = app
                 .world()
                 .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-                .command(command)
+                .command(&bedtime_api::CommandId::from(command))
                 .unwrap()
                 .handler;
             app.world_mut()
@@ -1243,7 +1243,7 @@ mod tests {
         let command = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command(ACTION_COMMAND)
+            .command(&bedtime_api::CommandId::from(ACTION_COMMAND))
             .unwrap()
             .handler;
         app.world_mut()

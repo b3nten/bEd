@@ -707,9 +707,9 @@ fn finite_fraction(value: f32, default: f32) -> f32 {
 fn request_text(request: &ResolvedRequest) -> String {
     let mut text = format!("{} {}\n", request.method, request.url);
     for (name, value) in &request.headers {
-        text.push_str(name);
+        text.push_str(name.as_str());
         text.push_str(": ");
-        text.push_str(value);
+        text.push_str(&String::from_utf8_lossy(value.as_bytes()));
         text.push('\n');
     }
     text.push('\n');
@@ -743,6 +743,23 @@ mod tests {
     use serde_json::json;
     use std::{cell::RefCell, rc::Rc};
     use std::{collections::HashMap, sync::Mutex, time::Duration};
+
+    #[test]
+    fn copied_request_keeps_custom_methods_and_utf8_header_values() {
+        let mut draft = crate::model::Request::new(1);
+        draft.method = "CUSTOM".into();
+        draft.url = "https://example.com/".into();
+        draft.headers.push(crate::model::KeyValue {
+            enabled: true,
+            name: "X-Label".into(),
+            value: "café".into(),
+        });
+        let request = crate::model::resolve(&draft).unwrap();
+        assert_eq!(
+            request_text(&request),
+            "CUSTOM https://example.com/\nx-label: café\n\n"
+        );
+    }
 
     static IMGUI_LOCK: Mutex<()> = Mutex::new(());
 

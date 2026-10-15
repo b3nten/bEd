@@ -317,7 +317,9 @@ mod tests {
         let id = MenuAction::OpenFolder.command_id();
         assert_eq!(id, "bedtime.workspaces.lifecycle.action");
         assert_eq!(
-            layout.arguments(&id).unwrap(),
+            layout
+                .arguments(&bedtime_api::CommandId::from(&id))
+                .unwrap(),
             serde_json::json!({"action":"open_folder"})
         );
     }

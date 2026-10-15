@@ -387,7 +387,7 @@ mod ecs_tests {
         let factory = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .panel(PANEL_ID)
+            .panel(&bedtime_api::PanelTypeId::from(PANEL_ID))
             .unwrap()
             .factory;
         let panel = app
@@ -423,7 +423,7 @@ mod ecs_tests {
         let handler = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command(OPEN_FILE_COMMAND)
+            .command(&bedtime_api::CommandId::from(OPEN_FILE_COMMAND))
             .unwrap()
             .handler;
         app.world_mut()
@@ -502,7 +502,7 @@ mod ecs_tests {
         let handler = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command(play.command)
+            .command(&play.command)
             .unwrap()
             .handler;
         app.world_mut().resource_mut::<DocumentFrame>().documents[0].revision = (1, 2);
@@ -510,7 +510,7 @@ mod ecs_tests {
             .run_system_with(
                 handler,
                 CommandInvocation {
-                    command: play.command.into(),
+                    command: play.command.clone(),
                     source: Some(entity),
                     area: 19,
                     arguments: play.arguments.clone(),

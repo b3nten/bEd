@@ -393,7 +393,7 @@ mod tests {
         let factory = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .panel(PANEL_ID)
+            .panel(&bedtime_api::PanelTypeId::from(PANEL_ID))
             .unwrap()
             .factory;
         let mut frontend = app
@@ -528,7 +528,7 @@ mod tests {
         let command = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command(OPEN_FILE_COMMAND)
+            .command(&bedtime_api::CommandId::from(OPEN_FILE_COMMAND))
             .unwrap()
             .handler;
         app.world_mut()

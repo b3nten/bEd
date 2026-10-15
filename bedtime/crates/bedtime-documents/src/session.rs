@@ -120,10 +120,42 @@ pub enum ClosePolicy {
     Cancel,
 }
 
+/// The session operation that produced an error. Messages remain presentation text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServiceKind {
+    Save,
+    Autosave,
+    Monitor,
+    History,
+    Lsp,
+    Remote,
+    Undo,
+}
+
+impl ServiceKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Save => "save",
+            Self::Autosave => "autosave",
+            Self::Monitor => "monitor",
+            Self::History => "history",
+            Self::Lsp => "lsp",
+            Self::Remote => "remote",
+            Self::Undo => "undo",
+        }
+    }
+}
+
+impl std::fmt::Display for ServiceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServiceError {
     pub document: Option<DocumentId>,
-    pub service: &'static str,
+    pub service: ServiceKind,
     pub message: String,
 }
 
@@ -1552,7 +1584,7 @@ impl DocumentSession {
         if let Some(pool) = &mut self.lsp
             && let Err(error) = pool.unregister_document(document)
         {
-            self.record_error(Some(document), "lsp", &error);
+            self.record_error(Some(document), ServiceKind::Lsp, &error);
         }
         let entry = self.documents.remove(&document).unwrap();
         #[cfg(feature = "ide-services")]
@@ -1676,7 +1708,7 @@ impl DocumentSession {
                             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
                     });
                     if let Err(error) = result {
-                        self.record_error(Some(document), "lsp", &error);
+                        self.record_error(Some(document), ServiceKind::Lsp, &error);
                     }
                 }
                 self.collect_notifications(document, None);
@@ -1744,7 +1776,7 @@ impl DocumentSession {
         if let Some(pool) = &mut self.lsp
             && let Err(error) = pool.unregister_document(document)
         {
-            self.record_error(Some(document), "lsp", &error);
+            self.record_error(Some(document), ServiceKind::Lsp, &error);
         }
         #[cfg(feature = "ide-services")]
         let git_enabled = self.options.git && self.document_kind(document)? == DocumentKind::Text;
@@ -1781,7 +1813,7 @@ impl DocumentSession {
             entry.runtime.disk_conflict = Some(message.clone());
             self.errors.push(ServiceError {
                 document: Some(document),
-                service: "monitor",
+                service: ServiceKind::Monitor,
                 message: message.clone(),
             });
             self.queued
@@ -1856,7 +1888,7 @@ impl DocumentSession {
         if let Some(pool) = &mut self.lsp
             && let Err(error) = pool.unregister_document(document)
         {
-            self.record_error(Some(document), "lsp", &error);
+            self.record_error(Some(document), ServiceKind::Lsp, &error);
         }
         let entry = self.entry_mut(document)?;
         #[cfg(feature = "ide-services")]
@@ -2079,7 +2111,7 @@ impl DocumentSession {
                 && !self.is_remote()
                 && let Err(error) = self.poll_monitor(id)
             {
-                self.record_error(Some(id), "monitor", &error);
+                self.record_error(Some(id), ServiceKind::Monitor, &error);
             }
             let entry = self.documents.get_mut(&id).unwrap();
             entry
@@ -2116,14 +2148,14 @@ impl DocumentSession {
                         if self.options.monitoring
                             && let Err(error) = monitor_saved_bytes(entry)
                         {
-                            self.record_error(Some(id), "monitor", &error);
+                            self.record_error(Some(id), ServiceKind::Monitor, &error);
                         }
                     }
                     Ok(false) => {}
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {
                         let _ = self.invalidate_removed_path(id);
                     }
-                    Err(error) => self.record_error(Some(id), "autosave", &error),
+                    Err(error) => self.record_error(Some(id), ServiceKind::Autosave, &error),
                 }
             }
             self.collect_notifications(id, None);
@@ -2136,7 +2168,7 @@ impl DocumentSession {
             let result = self.history.borrow_mut().flush_to(path);
             match result {
                 Ok(()) => self.last_history = Some(Instant::now()),
-                Err(error) => self.record_error(None, "history", &error),
+                Err(error) => self.record_error(None, ServiceKind::History, &error),
             }
         }
         #[cfg(feature = "ide-services")]
@@ -2201,7 +2233,7 @@ impl DocumentSession {
                         })
                     };
                     if let Err(error) = result {
-                        self.record_error(Some(id), "save", &error);
+                        self.record_error(Some(id), ServiceKind::Save, &error);
                         first_error.get_or_insert(error);
                     }
                 }
@@ -2404,7 +2436,7 @@ impl DocumentSession {
         if let Some(pool) = &mut self.lsp
             && let Err(error) = pool.observe_file_changes(changes)
         {
-            self.record_error(None, "lsp", &error);
+            self.record_error(None, ServiceKind::Lsp, &error);
         }
         let mut paths = Vec::new();
         let mut removed = Vec::new();
@@ -2622,7 +2654,7 @@ impl DocumentSession {
             .runtime
             .bind_lsp_client(pool.client_for_document(document));
         if let Err(error) = result {
-            self.record_error(Some(document), "lsp", &error);
+            self.record_error(Some(document), ServiceKind::Lsp, &error);
         }
     }
 
@@ -2648,7 +2680,7 @@ impl DocumentSession {
             .runtime
             .bind_lsp_client(pool.client_for_document(document));
         if let Err(error) = result {
-            self.record_error(Some(document), "lsp", &error);
+            self.record_error(Some(document), ServiceKind::Lsp, &error);
         }
     }
 
@@ -2667,7 +2699,7 @@ impl DocumentSession {
                 &state.language_id,
             );
             if let Err(error) = result {
-                self.record_error(Some(document), "lsp", &error);
+                self.record_error(Some(document), ServiceKind::Lsp, &error);
             }
             self.refresh_lsp_bindings();
         }
@@ -2678,7 +2710,7 @@ impl DocumentSession {
         for message in entry.runtime.take_service_errors() {
             self.errors.push(ServiceError {
                 document: Some(id),
-                service: "lsp",
+                service: ServiceKind::Lsp,
                 message,
             });
         }
@@ -2790,7 +2822,7 @@ impl DocumentSession {
     fn record_error(
         &mut self,
         document: Option<DocumentId>,
-        service: &'static str,
+        service: ServiceKind,
         error: &io::Error,
     ) {
         self.errors.push(ServiceError {

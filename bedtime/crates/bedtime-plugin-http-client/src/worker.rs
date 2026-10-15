@@ -231,18 +231,12 @@ async fn send_request(
     timeout: Duration,
 ) -> Result<Response, String> {
     let started = Instant::now();
-    let method = reqwest::Method::from_bytes(request.method.as_bytes())
-        .map_err(|error| format!("Invalid HTTP method: {error}"))?;
     let mut headers = reqwest::header::HeaderMap::new();
-    for (name, value) in &request.headers {
-        let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
-            .map_err(|error| format!("Invalid header name {name:?}: {error}"))?;
-        let value = reqwest::header::HeaderValue::from_str(value)
-            .map_err(|error| format!("Invalid value for header {name}: {error}"))?;
+    for (name, value) in request.headers {
         headers.append(name, value);
     }
     let mut response = client
-        .request(method, &request.url)
+        .request(request.method, request.url)
         .headers(headers)
         .body(request.body)
         .send()
@@ -403,8 +397,8 @@ mod tests {
 
     fn request(url: String) -> ResolvedRequest {
         ResolvedRequest {
-            method: "GET".into(),
-            url,
+            method: reqwest::Method::GET,
+            url: reqwest::Url::parse(&url).unwrap(),
             headers: vec![],
             body: String::new(),
         }
@@ -484,11 +478,20 @@ mod tests {
         )]);
         let mut worker = Worker::new();
         let mut input = request(format!("{url}/submit?q=hello"));
-        input.method = "POST".into();
+        input.method = reqwest::Method::POST;
         input.headers = vec![
-            ("Authorization".into(), "Bearer token".into()),
-            ("X-Repeated".into(), "one".into()),
-            ("X-Repeated".into(), "two".into()),
+            (
+                reqwest::header::HeaderName::from_static("authorization"),
+                reqwest::header::HeaderValue::from_static("Bearer token"),
+            ),
+            (
+                reqwest::header::HeaderName::from_static("x-repeated"),
+                reqwest::header::HeaderValue::from_static("one"),
+            ),
+            (
+                reqwest::header::HeaderName::from_static("x-repeated"),
+                reqwest::header::HeaderValue::from_static("two"),
+            ),
         ];
         input.body = "first\r\nsecond\n".into();
         worker.start(1, input).unwrap();

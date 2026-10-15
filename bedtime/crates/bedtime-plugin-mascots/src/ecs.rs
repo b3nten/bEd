@@ -349,7 +349,7 @@ mod tests {
         let factory = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .panel("bedtime.mascot.panel")
+            .panel(&bedtime_api::PanelTypeId::new("bedtime.mascot.panel"))
             .unwrap()
             .factory;
         let first = app.world_mut().spawn_empty().id();
@@ -397,7 +397,7 @@ mod tests {
             let factory = app
                 .world()
                 .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-                .panel(id)
+                .panel(&bedtime_api::PanelTypeId::from(id))
                 .unwrap()
                 .factory;
             let frontend = app
@@ -452,7 +452,7 @@ mod tests {
         let handler = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command("bedtime.mascot.open")
+            .command(&bedtime_api::CommandId::new("bedtime.mascot.open"))
             .unwrap()
             .handler;
         app.world_mut()

@@ -1024,7 +1024,7 @@ fn workbench_cold_navigation_retains_one_action_and_position() {
                     let viewer_menu = bedtime_api::documents::panel_viewer_menu(
                         app.world(),
                         tab,
-                        bedtime_plugin_editor::TEXT_VIEWER,
+                        &bedtime_api::ViewerId::new(bedtime_plugin_editor::TEXT_VIEWER),
                     );
                     assert!(
                         viewer_menu.as_ref().is_none_or(|menu| menu

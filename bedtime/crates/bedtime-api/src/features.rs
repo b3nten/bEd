@@ -1,8 +1,11 @@
 //! Plugin host requests, preparation, contributions and persistence facts.
 #[cfg(feature = "documents")]
+use crate::ViewerId;
+#[cfg(feature = "documents")]
 use crate::documents::*;
 #[cfg(feature = "documents")]
 use crate::workbench::{PanelAction, PanelTarget};
+use crate::{CommandId, PanelTypeId};
 use crate::{
     settings::SettingsSection,
     workbench::{PanelPlacement, PanelType, valid_id},
@@ -363,11 +366,11 @@ pub enum HostAction {
         position: Option<(i32, i32)>,
     },
     Command {
-        command: String,
+        command: CommandId,
         context: CommandContext,
     },
     ClosePanels {
-        panel_type: String,
+        panel_type: PanelTypeId,
     },
     FocusView {
         view: bedtime_documents::session::ViewId,
@@ -392,43 +395,43 @@ pub enum HostAction {
     Invalidate,
 
     ShowPanel {
-        panel_type: String,
+        panel_type: PanelTypeId,
         document: Option<DocumentId>,
         state: Value,
         action: Option<PanelAction>,
     },
     /// Reveal a panel, choosing where newly created content is placed.
     ShowPanelIn {
-        panel_type: String,
+        panel_type: PanelTypeId,
         document: Option<DocumentId>,
         state: Value,
         action: Option<PanelAction>,
         target: PanelTarget,
     },
     OpenPanel {
-        panel_type: String,
+        panel_type: PanelTypeId,
         document: Option<DocumentId>,
         state: Value,
     },
     OpenFile {
         path: String,
-        viewer: Option<String>,
+        viewer: Option<ViewerId>,
     },
     OpenFileInstance {
         path: String,
-        viewer: Option<String>,
+        viewer: Option<ViewerId>,
         additional: bool,
     },
     /// Open a file, choosing where newly created content is placed.
     OpenFileIn {
         path: String,
-        viewer: Option<String>,
+        viewer: Option<ViewerId>,
         target: PanelTarget,
     },
     /// Preview a file in the target area, replacing its previous clean preview.
     PreviewFileIn {
         path: String,
-        viewer: Option<String>,
+        viewer: Option<ViewerId>,
         target: PanelTarget,
     },
     /// Open a dropped file in the captured area, moving its tab if already open.
@@ -453,10 +456,10 @@ pub enum HostAction {
         /// The originating tab identity; its tab group receives the new viewer.
         tab: u64,
         document: DocumentId,
-        viewer: String,
+        viewer: ViewerId,
     },
     OpenFileDialog {
-        viewer: Option<String>,
+        viewer: Option<ViewerId>,
     },
     Navigate {
         document: DocumentId,
@@ -539,19 +542,19 @@ pub enum MenuSlot {
 
 #[derive(Clone, Debug)]
 pub struct CommandDescriptor {
-    pub id: &'static str,
+    pub id: CommandId,
     pub plugin: &'static str,
 }
 
 #[derive(Clone, Debug)]
 pub struct MenuContribution {
     pub slot: MenuSlot,
-    pub command: &'static str,
+    pub command: CommandId,
 }
 
 #[derive(Clone, Debug)]
 pub struct ToolbarContribution {
-    pub command: &'static str,
+    pub command: CommandId,
 }
 
 #[derive(Clone, Default, bevy::prelude::Resource)]
@@ -596,15 +599,15 @@ impl FeatureRegistry {
         &self.viewers
     }
 
-    fn contribution_ids(&self) -> impl Iterator<Item = &'static str> + '_ {
+    fn contribution_ids(&self) -> impl Iterator<Item = &str> + '_ {
         let ids = self
             .commands
             .iter()
-            .map(|entry| entry.id)
-            .chain(self.panels.iter().map(|entry| entry.id))
+            .map(|entry| entry.id.as_str())
+            .chain(self.panels.iter().map(|entry| entry.id.as_str()))
             .chain(self.settings.iter().map(|entry| entry.id));
         #[cfg(feature = "documents")]
-        let ids = ids.chain(self.viewers.iter().map(|entry| entry.id));
+        let ids = ids.chain(self.viewers.iter().map(|entry| entry.id.as_str()));
         ids
     }
     /// Publish one complete contribution batch after validating every entry.
@@ -634,8 +637,8 @@ impl FeatureRegistry {
         for command in pending
             .menus
             .iter()
-            .map(|x| x.command)
-            .chain(pending.toolbar.iter().map(|x| x.command))
+            .map(|x| x.command.clone())
+            .chain(pending.toolbar.iter().map(|x| x.command.clone()))
         {
             if !pending.commands.iter().any(|x| x.id == command) {
                 return Err(format!("Missing contributed command: {command}"));
@@ -672,17 +675,17 @@ impl FeatureRegistry {
         Ok(())
     }
 
-    pub fn command(&self, id: &str) -> Option<&CommandDescriptor> {
-        self.commands.iter().find(|entry| entry.id == id)
+    pub fn command(&self, id: &CommandId) -> Option<&CommandDescriptor> {
+        self.commands.iter().find(|entry| &entry.id == id)
     }
 
-    pub fn panel(&self, id: &str) -> Option<&PanelType> {
-        self.panels.iter().find(|entry| entry.id == id)
+    pub fn panel(&self, id: &PanelTypeId) -> Option<&PanelType> {
+        self.panels.iter().find(|entry| &entry.id == id)
     }
 
     #[cfg(feature = "documents")]
-    pub fn viewer(&self, id: &str) -> Option<&FileViewer> {
-        self.viewers.iter().find(|entry| entry.id == id)
+    pub fn viewer(&self, id: &ViewerId) -> Option<&FileViewer> {
+        self.viewers.iter().find(|entry| &entry.id == id)
     }
 
     #[cfg(feature = "documents")]
@@ -740,7 +743,7 @@ impl FeatureRegistry {
                 .as_str()
         });
         configured
-            .and_then(|id| self.viewer(id))
+            .and_then(|id| self.viewer(&crate::ViewerId::from(id)))
             .filter(|viewer| {
                 (viewer.fallback || viewer.matches_path(path))
                     && (viewer.is_local_file() || viewer.supports_document_kind(kind))
@@ -789,18 +792,24 @@ pub struct FeatureRegistrar<'a> {
 impl FeatureRegistrar<'_> {
     /// Feature domains refer to commands whose handler and presentation are
     /// contributed once through the neutral workbench registry.
-    pub fn command_ref(&mut self, id: &'static str) {
+    pub fn command_ref(&mut self, id: impl Into<CommandId>) {
+        let id = id.into();
+
         self.registry.commands.push(CommandDescriptor {
             id,
             plugin: self.owner,
         });
     }
 
-    pub fn menu(&mut self, slot: MenuSlot, command: &'static str) {
+    pub fn menu(&mut self, slot: MenuSlot, command: impl Into<CommandId>) {
+        let command = command.into();
+
         self.registry.menus.push(MenuContribution { slot, command });
     }
 
-    pub fn toolbar(&mut self, command: &'static str) {
+    pub fn toolbar(&mut self, command: impl Into<CommandId>) {
+        let command = command.into();
+
         self.registry.toolbar.push(ToolbarContribution { command });
     }
 
@@ -844,7 +853,9 @@ impl FeatureRegistrar<'_> {
         });
     }
 
-    pub fn panel_ref(&mut self, id: &'static str) {
+    pub fn panel_ref(&mut self, id: impl Into<PanelTypeId>) {
+        let id = id.into();
+
         self.registry.panels.push(PanelType {
             empty_input: true,
             singleton: false,
@@ -855,7 +866,14 @@ impl FeatureRegistrar<'_> {
         });
     }
 
-    pub fn panel_options(&mut self, id: &'static str, singleton: bool, placement: PanelPlacement) {
+    pub fn panel_options(
+        &mut self,
+        id: impl Into<PanelTypeId>,
+        singleton: bool,
+        placement: PanelPlacement,
+    ) {
+        let id = id.into();
+
         self.panel_ref(id);
         let panel = self.registry.panels.last_mut().unwrap();
         panel.singleton = singleton;
@@ -864,7 +882,9 @@ impl FeatureRegistrar<'_> {
     }
 
     /// Require document or file input before creating this panel.
-    pub fn panel_requires_input(&mut self, id: &'static str) {
+    pub fn panel_requires_input(&mut self, id: impl Into<PanelTypeId>) {
+        let id = id.into();
+
         self.registry
             .panels
             .iter_mut()
@@ -873,7 +893,9 @@ impl FeatureRegistrar<'_> {
             .empty_input = false;
     }
 
-    pub fn panel_open_placement(&mut self, id: &'static str, placement: PanelPlacement) {
+    pub fn panel_open_placement(&mut self, id: impl Into<PanelTypeId>, placement: PanelPlacement) {
+        let id = id.into();
+
         let panel = self
             .registry
             .panels
@@ -886,11 +908,14 @@ impl FeatureRegistrar<'_> {
     #[cfg(feature = "documents")]
     pub fn fallback_viewer(
         &mut self,
-        id: &'static str,
+        id: impl Into<ViewerId>,
         label: &'static str,
-        panel_type: &'static str,
+        panel_type: impl Into<PanelTypeId>,
         kind: DocumentKind,
     ) {
+        let id = id.into();
+        let panel_type = panel_type.into();
+
         self.viewer(id, label, panel_type, &[], kind);
         let viewer = self.registry.viewers.last_mut().unwrap();
         viewer.fallback = true;
@@ -899,12 +924,15 @@ impl FeatureRegistrar<'_> {
     #[cfg(feature = "documents")]
     pub fn viewer(
         &mut self,
-        id: &'static str,
+        id: impl Into<ViewerId>,
         label: &'static str,
-        panel_type: &'static str,
+        panel_type: impl Into<PanelTypeId>,
         extensions: &'static [&'static str],
         kind: DocumentKind,
     ) {
+        let id = id.into();
+        let panel_type = panel_type.into();
+
         self.registry.viewers.push(FileViewer {
             fallback: false,
             id,
@@ -925,11 +953,14 @@ impl FeatureRegistrar<'_> {
     #[cfg(feature = "documents")]
     pub fn local_file_viewer(
         &mut self,
-        id: &'static str,
+        id: impl Into<ViewerId>,
         label: &'static str,
-        panel_type: &'static str,
+        panel_type: impl Into<PanelTypeId>,
         extensions: &'static [&'static str],
     ) {
+        let id = id.into();
+        let panel_type = panel_type.into();
+
         self.registry.viewers.push(FileViewer {
             fallback: false,
             id,
@@ -942,7 +973,13 @@ impl FeatureRegistrar<'_> {
     }
 
     #[cfg(feature = "documents")]
-    pub fn viewer_document_kinds(&mut self, id: &str, kinds: &'static [DocumentKind]) {
+    pub fn viewer_document_kinds(
+        &mut self,
+        id: impl Into<ViewerId>,
+        kinds: &'static [DocumentKind],
+    ) {
+        let id = id.into();
+
         let viewer = self
             .registry
             .viewers
@@ -1065,8 +1102,16 @@ mod tests {
             registry.default_viewer(DocumentKind::Bytes).unwrap().id,
             "editor.hex-viewer"
         );
-        assert!(registry.viewer("bedtime.text").is_none());
-        assert!(registry.viewer("bedtime.hex").is_none());
+        assert!(
+            registry
+                .viewer(&crate::ViewerId::new("bedtime.text"))
+                .is_none()
+        );
+        assert!(
+            registry
+                .viewer(&crate::ViewerId::new("bedtime.hex"))
+                .is_none()
+        );
         assert!(registry.viewer_for_path("unknown.ext").is_none());
         for kind in [DocumentKind::Text, DocumentKind::Bytes] {
             assert_rejected_atomically(
@@ -1207,7 +1252,7 @@ mod tests {
         id: &'static str,
         panel: &'static str,
         viewer: &'static str,
-        command: &'static str,
+        command: CommandId,
     }
 
     impl TestDeclaration for Example {
@@ -1216,7 +1261,7 @@ mod tests {
         }
 
         fn register(&self, registrar: &mut FeatureRegistrar<'_>) {
-            registrar.command_ref(self.command);
+            registrar.command_ref(self.command.clone());
             registrar.panel_ref(self.panel);
             registrar.viewer(
                 self.viewer,
@@ -1236,7 +1281,7 @@ mod tests {
                 id: "first",
                 panel: "first.panel",
                 viewer: "first.viewer",
-                command: "first.open",
+                command: "first.open".into(),
             })
             .unwrap();
         registry
@@ -1244,7 +1289,7 @@ mod tests {
                 id: "second",
                 panel: "second.panel",
                 viewer: "second.viewer",
-                command: "second.open",
+                command: "second.open".into(),
             })
             .unwrap();
         assert_eq!(
@@ -1354,13 +1399,13 @@ mod tests {
             let viewers: Vec<_> = registry
                 .compatible_viewers(path, content_kind)
                 .iter()
-                .map(|viewer| viewer.id)
+                .map(|viewer| viewer.id.as_str())
                 .collect();
             assert_eq!(viewers, expected, "{path}");
             assert_eq!(
                 registry
                     .default_viewer_for_file(path, content_kind)
-                    .map(|viewer| viewer.id),
+                    .map(|viewer| viewer.id.as_str()),
                 viewers.first().copied(),
                 "{path}"
             );
@@ -1416,7 +1461,7 @@ mod tests {
             assert_eq!(
                 registry
                     .default_viewer_for_file(path, kind)
-                    .map(|viewer| viewer.id),
+                    .map(|viewer| viewer.id.as_str()),
                 expected,
                 "{path}"
             );
@@ -1428,7 +1473,7 @@ mod tests {
                     DocumentKind::Text,
                     &serde_json::json!({"csv":"unavailable.editor"}),
                 )
-                .map(|viewer| viewer.id),
+                .map(|viewer| viewer.id.as_str()),
             Some("standalone.table")
         );
     }
@@ -1441,7 +1486,7 @@ mod tests {
                 registry
                     .compatible_viewers(path, None)
                     .iter()
-                    .map(|viewer| viewer.id)
+                    .map(|viewer| viewer.id.as_str())
                     .collect::<Vec<_>>(),
                 ["views.hex"],
                 "{path}"
@@ -1455,14 +1500,14 @@ mod tests {
             registry
                 .compatible_viewers("drawing.SVG", None)
                 .iter()
-                .map(|viewer| viewer.id)
+                .map(|viewer| viewer.id.as_str())
                 .collect::<Vec<_>>(),
             ["views.image", "views.hex"]
         );
         assert_eq!(
             registry
                 .default_viewer_for_file("drawing.SVG", None)
-                .map(|v| v.id),
+                .map(|v| v.id.clone()),
             None
         );
     }
@@ -1474,7 +1519,7 @@ mod tests {
             registry
                 .compatible_viewers("file.shared", Some(DocumentKind::Text))
                 .iter()
-                .map(|viewer| viewer.id)
+                .map(|viewer| viewer.id.as_str())
                 .collect::<Vec<_>>(),
             [
                 "views.text",
@@ -1489,7 +1534,7 @@ mod tests {
             registry
                 .compatible_viewers("file.shared", Some(DocumentKind::Bytes))
                 .iter()
-                .map(|viewer| viewer.id)
+                .map(|viewer| viewer.id.as_str())
                 .collect::<Vec<_>>(),
             ["views.image", "views.model", "views.hex"]
         );
@@ -1497,7 +1542,7 @@ mod tests {
             registry
                 .compatible_viewers("file.shared", None)
                 .iter()
-                .map(|viewer| viewer.id)
+                .map(|viewer| viewer.id.as_str())
                 .collect::<Vec<_>>(),
             ["views.image", "views.model", "views.hex"]
         );
@@ -1516,7 +1561,9 @@ mod tests {
     #[test]
     fn viewer_path_matching_excludes_parent_directories_on_both_platforms() {
         let registry = compatibility_registry();
-        let image = registry.viewer("views.image").unwrap();
+        let image = registry
+            .viewer(&crate::ViewerId::new("views.image"))
+            .unwrap();
         assert!(image.matches_path("/folder.with.dots/drawing.SvG"));
         assert!(image.matches_path(r"C:\folder.with.dots\drawing.SvG"));
         assert!(!image.matches_path("/folder.svg/README"));
@@ -1600,7 +1647,9 @@ mod tests {
                 );
             }))
             .unwrap();
-        let viewer = registry.viewer("database.viewer").unwrap();
+        let viewer = registry
+            .viewer(&crate::ViewerId::new("database.viewer"))
+            .unwrap();
         assert!(viewer.is_local_file());
         assert_eq!(viewer.document_kind(), None);
         assert_eq!(viewer.single_document_kind(), None);
@@ -1624,7 +1673,7 @@ mod tests {
             registry
                 .compatible_viewers("data.db", None)
                 .iter()
-                .map(|viewer| viewer.id)
+                .map(|viewer| viewer.id.as_str())
                 .collect::<Vec<_>>(),
             ["database.viewer", "views.hex"]
         );
@@ -1753,7 +1802,7 @@ mod tests {
             id: "example",
             panel: "example.panel",
             viewer: "example.viewer",
-            command: "example.open",
+            command: "example.open".into(),
         };
         registry.register(&valid).unwrap();
         assert!(registry.register(&valid).is_err());
@@ -1763,7 +1812,7 @@ mod tests {
                     id: "example",
                     panel: "example.other-panel",
                     viewer: "example.other-viewer",
-                    command: "example.other-open"
+                    command: "example.other-open".into()
                 })
                 .is_err()
         );
@@ -1774,7 +1823,7 @@ mod tests {
                     id: "broken",
                     panel: "example.stolen",
                     viewer: "broken.viewer",
-                    command: "broken.open"
+                    command: "broken.open".into()
                 })
                 .is_err()
         );

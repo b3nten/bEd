@@ -359,7 +359,7 @@ mod tests {
         assert!(
             app.world()
                 .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-                .command("bedtime.settings.show")
+                .command(&bedtime_api::CommandId::new("bedtime.settings.show"))
                 .is_some()
         );
     }

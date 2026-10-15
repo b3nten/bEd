@@ -209,7 +209,7 @@ impl Panel for JsonFrontend {
         _requests: &mut Vec<WorkbenchAction>,
         _shortcuts: &bedtime_api::workbench::ShortcutInput,
     ) {
-        let menu = panel_viewer_menu(world, self.entity, VIEWER_ID);
+        let menu = panel_viewer_menu(world, self.entity, &bedtime_api::ViewerId::new(VIEWER_ID));
         let frame = FrontendSnapshot::capture(world);
         let mut state = SystemState::<(NonSendMut<JsonStates>, ResMut<HostEffects>)>::new(world);
         let (mut states, mut intents) = state
@@ -291,7 +291,7 @@ mod tests {
             .id();
         let factory = world
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .panel(PANEL_ID)
+            .panel(&bedtime_api::PanelTypeId::from(PANEL_ID))
             .unwrap()
             .factory;
         let frontend = world
@@ -496,7 +496,7 @@ mod tests {
         let command = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command(OPEN_FILE_COMMAND)
+            .command(&bedtime_api::CommandId::from(OPEN_FILE_COMMAND))
             .unwrap()
             .handler;
         app.world_mut()

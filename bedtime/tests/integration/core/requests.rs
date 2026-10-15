@@ -46,7 +46,7 @@ fn app(dir: &TempDir) -> App {
 fn target_fixture(app: &mut App) -> (Entity, Entity, Entity, u32, u32) {
     let first = open_panel(
         app.world_mut(),
-        bedtime_plugin_editor::TEXT_PANEL_TYPE,
+        &bedtime_api::PanelTypeId::from(bedtime_plugin_editor::TEXT_PANEL_TYPE),
         PanelInput::None,
         Value::Null,
         None,
@@ -56,7 +56,7 @@ fn target_fixture(app: &mut App) -> (Entity, Entity, Entity, u32, u32) {
     .unwrap();
     let last = open_panel(
         app.world_mut(),
-        bedtime_plugin_editor::TEXT_PANEL_TYPE,
+        &bedtime_api::PanelTypeId::from(bedtime_plugin_editor::TEXT_PANEL_TYPE),
         PanelInput::None,
         Value::Null,
         None,
@@ -66,7 +66,7 @@ fn target_fixture(app: &mut App) -> (Entity, Entity, Entity, u32, u32) {
     .unwrap();
     let singleton = open_panel(
         app.world_mut(),
-        "fixture.tool",
+        &bedtime_api::PanelTypeId::new("fixture.tool"),
         PanelInput::None,
         Value::Null,
         None,

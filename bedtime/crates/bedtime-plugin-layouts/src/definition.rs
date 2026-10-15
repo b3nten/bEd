@@ -4,19 +4,19 @@ use bedtime_workbench::workspace::{tiling::Layout, tiling_state::TilingState};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PanelDefinition {
-    panel_type: String,
-    viewer: Option<String>,
+    panel_type: bedtime_api::PanelTypeId,
+    viewer: Option<bedtime_api::ViewerId>,
     initial_state: Value,
 }
 impl PanelDefinition {
-    pub fn new(panel_type: impl Into<String>) -> Self {
+    pub fn new(panel_type: impl Into<bedtime_api::PanelTypeId>) -> Self {
         Self {
             panel_type: panel_type.into(),
             viewer: None,
             initial_state: Value::Null,
         }
     }
-    pub fn viewer(mut self, viewer: impl Into<String>) -> Self {
+    pub fn viewer(mut self, viewer: impl Into<bedtime_api::ViewerId>) -> Self {
         self.viewer = Some(viewer.into());
         self
     }
@@ -24,11 +24,11 @@ impl PanelDefinition {
         self.initial_state = state;
         self
     }
-    pub fn panel_type(&self) -> &str {
+    pub fn panel_type(&self) -> &bedtime_api::PanelTypeId {
         &self.panel_type
     }
-    pub fn viewer_id(&self) -> Option<&str> {
-        self.viewer.as_deref()
+    pub fn viewer_id(&self) -> Option<&bedtime_api::ViewerId> {
+        self.viewer.as_ref()
     }
     pub(super) fn record(&self, id: u64) -> Value {
         json!({"id":id,"panel_type":self.panel_type,"viewer":self.viewer,"state":self.initial_state})

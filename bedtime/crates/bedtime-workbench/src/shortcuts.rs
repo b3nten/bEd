@@ -93,7 +93,7 @@ pub fn global_shortcuts(world: &mut World, ui: &Ui) {
     for action in &input.bindings.actions {
         if action.scope == Scope::Global && input.take(ui, &action.id) {
             requests.push(api::WorkbenchAction::Invoke(api::CommandInvocation {
-                command: action.id.clone(),
+                command: action.id.clone().into(),
                 source,
                 area,
                 arguments: Value::Null,

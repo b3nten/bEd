@@ -47,12 +47,12 @@ fn builtins_publish_usage_notes() {
         .resource::<api::WorkbenchRegistry>()
         .panels()
         .iter()
-        .map(|panel| panel.id)
+        .map(|panel| panel.id.clone())
         .collect::<Vec<_>>();
     for kind in panels {
         let panel = application_requests::open_panel(
             app.world_mut(),
-            kind,
+            &kind,
             PanelInput::None,
             Value::Null,
             None,

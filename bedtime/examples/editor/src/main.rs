@@ -54,7 +54,7 @@ fn start(world: &mut World) {
     world.insert_resource(SharedDocument(document));
     let first = core::open_document_panel(
         world,
-        bedtime_plugin_editor::TEXT_PANEL_TYPE,
+        &bedtime::api::PanelTypeId::from(bedtime_plugin_editor::TEXT_PANEL_TYPE),
         document,
         Value::Null,
         None,

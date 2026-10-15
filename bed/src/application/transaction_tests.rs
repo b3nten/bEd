@@ -37,7 +37,9 @@ impl CsvFixture {
         let tab = open_file(
             app.world_mut(),
             &path,
-            Some(bedtime_plugin_csv_table::VIEWER_ID),
+            Some(&bedtime_api::ViewerId::from(
+                bedtime_plugin_csv_table::VIEWER_ID,
+            )),
             false,
             None,
         )

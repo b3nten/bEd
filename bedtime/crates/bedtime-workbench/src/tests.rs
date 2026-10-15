@@ -397,7 +397,13 @@ fn suspended_panels_keep_state_without_editor_or_slot_integration() {
     app.world_mut().resource_mut::<WorkbenchLayout>().focused = None;
     let empty = TilingState::default().to_value([]);
     apply_layout(app.world_mut(), &empty).unwrap();
-    assert!(recent_panel(app.world_mut(), "test.counter").is_none());
+    assert!(
+        recent_panel(
+            app.world_mut(),
+            &bedtime_api::PanelTypeId::new("test.counter")
+        )
+        .is_none()
+    );
     focus_panel(app.world_mut(), hidden);
     observe_focus(app.world_mut(), hidden);
     assert!(app.world().resource::<WorkbenchLayout>().focused.is_none());
@@ -530,7 +536,7 @@ fn registration_failure_publishes_neither_definitions_nor_system_entities() {
     assert!(
         app.world()
             .resource::<WorkbenchRegistry>()
-            .command("other.valid")
+            .command(&bedtime_api::CommandId::new("other.valid"))
             .is_none()
     );
     assert_eq!(
@@ -546,7 +552,7 @@ fn registration_failure_publishes_neither_definitions_nor_system_entities() {
             .resource::<WorkbenchRegistry>()
             .commands()
             .iter()
-            .map(|entry| entry.id)
+            .map(|entry| entry.id.clone())
             .collect::<Vec<_>>(),
         ["test.open", "other.valid"]
     );
@@ -1549,7 +1555,13 @@ fn showing_a_panel_uses_its_recent_focus_and_creating_is_distinct() {
         2
     );
     commit_close(app.world_mut(), older);
-    assert_eq!(recent_panel(app.world_mut(), "test.counter"), Some(newest));
+    assert_eq!(
+        recent_panel(
+            app.world_mut(),
+            &bedtime_api::PanelTypeId::new("test.counter")
+        ),
+        Some(newest)
+    );
     commit_close(app.world_mut(), newest);
     app.world_mut()
         .resource_mut::<WorkbenchRequests>()

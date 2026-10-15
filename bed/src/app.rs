@@ -177,7 +177,7 @@ fn build_app_with_launch(
                 resolution: (1200, 800).into(),
                 transparent: true,
                 ime_enabled: true,
-                present_mode: bevy::window::PresentMode::AutoNoVsync,
+                present_mode: bevy::window::PresentMode::Fifo,
                 composite_alpha_mode: if cfg!(target_os = "macos") {
                     bevy::window::CompositeAlphaMode::PostMultiplied
                 } else {

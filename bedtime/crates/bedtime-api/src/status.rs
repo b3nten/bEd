@@ -1,4 +1,5 @@
 //! Plugin-owned status contributions. Producers decide when their items exist.
+use crate::CommandId;
 use crate::workbench::{CommandInvocation, WorkbenchAction};
 use bevy::prelude::*;
 use dear_imgui_rs::{StyleColor, Ui};
@@ -39,7 +40,7 @@ impl StatusContext {
         self.focused_frontend == Some(self.publisher) || self.focused_panel == Some(self.publisher)
     }
 
-    pub fn invoke(self, command: impl Into<String>, arguments: Value) -> WorkbenchAction {
+    pub fn invoke(self, command: impl Into<CommandId>, arguments: Value) -> WorkbenchAction {
         WorkbenchAction::Invoke(CommandInvocation {
             command: command.into(),
             source: self.source,
@@ -75,7 +76,7 @@ pub struct StatusText {
 #[derive(Clone, Debug)]
 pub struct StatusCommand {
     pub label: &'static str,
-    pub command: &'static str,
+    pub command: CommandId,
     pub arguments: Value,
     pub enabled: bool,
 }
@@ -89,10 +90,10 @@ impl StatusText {
         }
     }
 
-    pub fn command(mut self, label: &'static str, command: &'static str) -> Self {
+    pub fn command(mut self, label: &'static str, command: impl Into<CommandId>) -> Self {
         self.commands.push(StatusCommand {
             label,
-            command,
+            command: command.into(),
             arguments: Value::Null,
             enabled: true,
         });
@@ -133,7 +134,7 @@ impl StatusText {
             {
                 actions.push(
                     ctx.context
-                        .invoke(command.command, command.arguments.clone()),
+                        .invoke(&command.command, command.arguments.clone()),
                 );
             }
         } else {
@@ -144,7 +145,7 @@ impl StatusText {
                 if ui.button(command.label) {
                     actions.push(
                         ctx.context
-                            .invoke(command.command, command.arguments.clone()),
+                            .invoke(&command.command, command.arguments.clone()),
                     );
                 }
             }

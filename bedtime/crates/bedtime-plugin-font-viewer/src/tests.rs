@@ -660,7 +660,7 @@ fn native_registered_font_renderer_preserves_raster_and_recovers_generation() {
     let factory = app
         .world()
         .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-        .panel(crate::PANEL_ID)
+        .panel(&bedtime_api::PanelTypeId::from(crate::PANEL_ID))
         .unwrap()
         .factory;
     let _frontend = app

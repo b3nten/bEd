@@ -371,7 +371,8 @@ pub(crate) fn poll_document_saves(world: &mut World, report: &TickReport) {
                     return Ok(true);
                 }
                 if let Some(error) = report.errors.iter().find(|error| {
-                    error.document == Some(target.saved.document) && error.service == "save"
+                    error.document == Some(target.saved.document)
+                        && error.service == bedtime_documents::ServiceKind::Save
                 }) {
                     return Err(error.message.clone());
                 }

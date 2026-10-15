@@ -196,7 +196,7 @@ fn workbench(
         let groups = registry
             .panels()
             .iter()
-            .map(|panel| (panel.id.to_owned(), panel.label.to_owned()))
+            .map(|panel| (panel.id.to_string(), panel.label.to_owned()))
             .collect();
         let mut overrides = context.snapshot.keybindings();
         let edit = editor.draw(ui, registry.shortcuts(), &groups, &mut overrides);
@@ -246,7 +246,7 @@ fn default_viewers(ui: &Ui, world: &World, value: &mut Value, new_viewer_extensi
             .to_owned();
         let label = viewers
             .iter()
-            .find(|viewer| viewer.id == selected)
+            .find(|viewer| viewer.id.as_str() == selected)
             .map_or_else(
                 || format!("Unavailable: {selected}"),
                 |viewer| viewer.label.to_owned(),
@@ -263,7 +263,7 @@ fn default_viewers(ui: &Ui, world: &World, value: &mut Value, new_viewer_extensi
                     if (viewer.fallback || viewer.matches_path(&format!("file.{extension}")))
                         && ui
                             .selectable_config(viewer.label)
-                            .selected(viewer.id == selected)
+                            .selected(viewer.id.as_str() == selected)
                             .build()
                     {
                         associations.insert(extension.clone(), json!(viewer.id));

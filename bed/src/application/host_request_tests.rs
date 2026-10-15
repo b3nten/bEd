@@ -29,7 +29,7 @@ fn closing_a_drawn_mascot_does_not_report_a_stale_redraw_origin() {
     app.update();
     let panel = open_panel(
         app.world_mut(),
-        "bedtime.mascot.panel",
+        &bedtime_api::PanelTypeId::new("bedtime.mascot.panel"),
         PanelInput::None,
         Value::Null,
         None,
@@ -241,7 +241,7 @@ fn returned_layout_rejects_old_close_messages_and_scoped_panel_commands() {
     let mut app = app(&dir);
     let panel = open_panel(
         app.world_mut(),
-        "bedtime.color.panel",
+        &bedtime_api::PanelTypeId::new("bedtime.color.panel"),
         PanelInput::None,
         Value::Null,
         None,

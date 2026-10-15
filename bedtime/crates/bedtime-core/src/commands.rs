@@ -175,7 +175,7 @@ pub(crate) fn publish_document_commands(world: &mut World) {
         .resource::<bedtime_workbench::WorkbenchLayout>()
         .focused;
     let input = CommandInvocation {
-        command: String::new(),
+        command: bedtime_api::CommandId::new(""),
         source: focused,
         area: 0,
         arguments: serde_json::Value::Null,

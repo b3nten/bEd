@@ -77,7 +77,7 @@ mod tests {
             let command = app
                 .world()
                 .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-                .command(id)
+                .command(&bedtime_api::CommandId::from(id))
                 .unwrap()
                 .handler;
             assert!(

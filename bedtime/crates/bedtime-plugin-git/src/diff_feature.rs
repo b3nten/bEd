@@ -849,7 +849,7 @@ mod tests {
         let factory = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .panel(crate::DIFF_PANEL_ID)
+            .panel(&bedtime_api::PanelTypeId::from(crate::DIFF_PANEL_ID))
             .unwrap()
             .factory;
         let panel = app
@@ -896,7 +896,7 @@ mod tests {
         let factory = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .panel(crate::DIFF_PANEL_ID)
+            .panel(&bedtime_api::PanelTypeId::from(crate::DIFF_PANEL_ID))
             .unwrap()
             .factory;
         for path in ["../outside.rs", "/absolute.rs"] {

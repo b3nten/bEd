@@ -1,6 +1,7 @@
 //! Document snapshots, identities, edits and viewer capabilities.
 pub use crate::document_frame::DocumentFrame;
 use crate::features::{FeatureRegistry, HostAction};
+use crate::{PanelTypeId, ViewerId};
 use bedtime_editing::buffer::text_buffer::Snapshot;
 pub use bedtime_editing::{
     document_state::DocumentKind,
@@ -150,7 +151,7 @@ pub struct PanelBinding {
     pub document: Option<DocumentId>,
     pub view: Option<bedtime_documents::session::ViewId>,
     pub terminal: Option<u64>,
-    pub viewer: Option<String>,
+    pub viewer: Option<ViewerId>,
     pub session_id: u64,
 }
 
@@ -168,7 +169,7 @@ pub struct PanelEdits(pub PanelEditSystem);
 
 #[derive(Clone, Debug)]
 pub struct ViewerChoice {
-    pub id: String,
+    pub id: ViewerId,
     pub label: String,
     pub text_editor: bool,
 }
@@ -177,14 +178,14 @@ pub struct ViewerChoice {
 pub struct ViewerMenu {
     pub tab: u64,
     pub document: DocumentId,
-    pub current: String,
+    pub current: ViewerId,
     pub choices: Vec<ViewerChoice>,
 }
 
 pub fn panel_viewer_menu(
     world: &bevy::prelude::World,
     entity: bevy::prelude::Entity,
-    fallback: &str,
+    fallback: &ViewerId,
 ) -> Option<ViewerMenu> {
     let binding = world.get::<PanelBinding>(entity)?;
     let document = binding.input.document().or(binding.document)?;
@@ -196,20 +197,20 @@ pub fn panel_viewer_menu(
     let registry = world.get_resource::<FeatureRegistry>()?;
     let owner = crate::workbench::panel_owner(world, entity)?;
     let panel = world.get::<crate::workbench::PanelPresentation>(owner)?;
-    let current = binding.viewer.as_deref().unwrap_or(fallback);
+    let current = binding.viewer.as_ref().unwrap_or(fallback);
     let choices = registry
         .compatible_viewers(&snapshot.path, Some(snapshot.kind))
         .into_iter()
         .filter(|viewer| viewer.supports_document_kind(snapshot.kind))
         .map(|viewer| ViewerChoice {
-            id: viewer.id.into(),
+            id: viewer.id.clone(),
             label: viewer.label.into(),
             text_editor: viewer.fallback && viewer.document_kind() == Some(DocumentKind::Text),
         })
         .collect::<Vec<_>>();
     choices
         .iter()
-        .any(|choice| choice.id != current)
+        .any(|choice| choice.id != *current)
         .then(|| ViewerMenu {
             tab: panel.id,
             document,
@@ -309,10 +310,10 @@ pub struct FileViewer {
     /// The default for this document kind when no file extension matches. At
     /// most one module can provide a fallback for each kind.
     pub fallback: bool,
-    pub id: &'static str,
+    pub id: ViewerId,
     pub plugin: &'static str,
     pub label: &'static str,
-    pub panel_type: &'static str,
+    pub panel_type: PanelTypeId,
     /// Lowercase extensions without the dot. Matching ignores ASCII case.
     pub extensions: &'static [&'static str],
     pub backing: ViewerBacking,

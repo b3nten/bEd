@@ -1,4 +1,5 @@
 //! Panels, commands, registration and presentation for desktop workbenches.
+use crate::{CommandId, PanelTypeId};
 pub use bedtime_keybindings::{Scope as ShortcutScope, ShortcutAction, ShortcutInput};
 use bevy::{
     ecs::system::{BoxedSystem, SystemId},
@@ -61,7 +62,7 @@ impl CommandPresentation {
 }
 
 #[derive(Resource, Default)]
-pub struct CommandPresentations(pub HashMap<String, CommandPresentation>);
+pub struct CommandPresentations(pub HashMap<CommandId, CommandPresentation>);
 
 /// Native pinch facts for the current UI frame. Presentations capture the
 /// gesture beneath its starting position; the compositor clears these after
@@ -320,16 +321,16 @@ impl ShellInvocation {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShellAlias {
     pub alias: &'static str,
-    pub command: &'static str,
+    pub command: CommandId,
 }
 
 /// Captured at the originating surface. Dispatch never substitutes later focus.
 #[derive(Clone, Debug)]
 pub struct CommandInvocation {
-    pub command: String,
+    pub command: CommandId,
     pub source: Option<Entity>,
     pub area: u32,
     pub arguments: Value,
@@ -339,12 +340,12 @@ pub struct CommandInvocation {
 pub enum WorkbenchAction {
     /// Focus the most recently used matching panel, or create one.
     ShowPanel {
-        panel_type: String,
+        panel_type: PanelTypeId,
         state: Value,
         area: Option<u32>,
     },
     OpenPanel {
-        panel_type: String,
+        panel_type: PanelTypeId,
         state: Value,
         area: Option<u32>,
     },
@@ -377,7 +378,7 @@ pub type PanelSystem = SystemId<In<PanelCreation>, PanelResult>;
 
 #[derive(Clone)]
 pub struct CommandDefinition {
-    pub id: &'static str,
+    pub id: CommandId,
     pub owner: &'static str,
     pub label: &'static str,
     pub icon: Option<&'static str>,
@@ -386,7 +387,7 @@ pub struct CommandDefinition {
 
 /// Resolve static contribution metadata and the feature's current command facts.
 pub struct PresentedCommand<'a> {
-    pub id: &'static str,
+    pub id: &'a CommandId,
     pub label: &'a str,
     pub icon: Option<&'static str>,
     pub enabled: bool,
@@ -395,12 +396,12 @@ pub struct PresentedCommand<'a> {
 
 impl CommandDefinition {
     pub fn presentation<'a>(
-        &self,
+        &'a self,
         facts: Option<&'a CommandPresentations>,
     ) -> PresentedCommand<'a> {
-        let fact = facts.and_then(|facts| facts.0.get(self.id));
+        let fact = facts.and_then(|facts| facts.0.get(self.id.as_str()));
         PresentedCommand {
-            id: self.id,
+            id: &self.id,
             label: fact
                 .and_then(|fact| fact.label.as_deref())
                 .unwrap_or(self.label),
@@ -413,7 +414,7 @@ impl CommandDefinition {
 
 #[derive(Clone)]
 pub struct PanelDefinition {
-    pub id: &'static str,
+    pub id: PanelTypeId,
     pub owner: &'static str,
     pub label: &'static str,
     pub icon: Option<&'static str>,
@@ -426,8 +427,8 @@ pub struct WorkbenchRegistry {
     owners: HashSet<&'static str>,
     commands: Vec<CommandDefinition>,
     panels: Vec<PanelDefinition>,
-    menus: Vec<&'static str>,
-    toolbar: Vec<&'static str>,
+    menus: Vec<CommandId>,
+    toolbar: Vec<CommandId>,
     shortcuts: Vec<ShortcutAction>,
     shell_aliases: Vec<ShellAlias>,
 }
@@ -454,7 +455,7 @@ impl WorkbenchRegistry {
         self.shell_aliases
             .iter()
             .find(|entry| entry.alias == alias)
-            .and_then(|entry| self.command(entry.command))
+            .and_then(|entry| self.command(&entry.command))
     }
 
     pub fn shortcuts(&self) -> &[ShortcutAction] {
@@ -469,39 +470,39 @@ impl WorkbenchRegistry {
         &self.panels
     }
 
-    pub fn menus(&self) -> &[&'static str] {
+    pub fn menus(&self) -> &[CommandId] {
         &self.menus
     }
 
-    pub fn toolbar(&self) -> &[&'static str] {
+    pub fn toolbar(&self) -> &[CommandId] {
         &self.toolbar
     }
 
-    pub fn command(&self, id: &str) -> Option<&CommandDefinition> {
-        self.commands.iter().find(|entry| entry.id == id)
+    pub fn command(&self, id: &CommandId) -> Option<&CommandDefinition> {
+        self.commands.iter().find(|entry| &entry.id == id)
     }
 
-    pub fn panel(&self, id: &str) -> Option<&PanelDefinition> {
-        self.panels.iter().find(|entry| entry.id == id)
+    pub fn panel(&self, id: &PanelTypeId) -> Option<&PanelDefinition> {
+        self.panels.iter().find(|entry| &entry.id == id)
     }
 
     fn ids(&self) -> impl Iterator<Item = &str> {
         self.commands
             .iter()
-            .map(|entry| entry.id)
-            .chain(self.panels.iter().map(|entry| entry.id))
+            .map(|entry| entry.id.as_str())
+            .chain(self.panels.iter().map(|entry| entry.id.as_str()))
     }
 }
 
 struct PendingCommand {
-    id: &'static str,
+    id: CommandId,
     label: &'static str,
     icon: Option<&'static str>,
     system: BoxedSystem<In<CommandInvocation>, CommandResult>,
 }
 
 struct PendingPanel {
-    id: &'static str,
+    id: PanelTypeId,
     label: &'static str,
     icon: Option<&'static str>,
     system: BoxedSystem<In<PanelCreation>, PanelResult>,
@@ -511,26 +512,30 @@ struct PendingPanel {
 pub struct WorkbenchRegistrar {
     commands: Vec<PendingCommand>,
     panels: Vec<PendingPanel>,
-    menus: Vec<&'static str>,
-    toolbar: Vec<&'static str>,
-    command_icons: Vec<(&'static str, &'static str)>,
-    panel_icons: Vec<(&'static str, &'static str)>,
+    menus: Vec<CommandId>,
+    toolbar: Vec<CommandId>,
+    command_icons: Vec<(CommandId, &'static str)>,
+    panel_icons: Vec<(PanelTypeId, &'static str)>,
     shortcuts: Vec<ShortcutAction>,
     shell_aliases: Vec<ShellAlias>,
 }
 
 impl WorkbenchRegistrar {
     /// Expose an owned workbench command through the local shell bridge.
-    pub fn shell_alias(&mut self, alias: &'static str, command: &'static str) {
+    pub fn shell_alias(&mut self, alias: &'static str, command: impl Into<CommandId>) {
+        let command = command.into();
+
         self.shell_aliases.push(ShellAlias { alias, command });
     }
 
     pub fn command<M>(
         &mut self,
-        id: &'static str,
+        id: impl Into<CommandId>,
         label: &'static str,
         system: impl IntoSystem<In<CommandInvocation>, CommandResult, M> + 'static,
     ) {
+        let id = id.into();
+
         self.commands.push(PendingCommand {
             id,
             label,
@@ -541,10 +546,12 @@ impl WorkbenchRegistrar {
 
     pub fn panel<M>(
         &mut self,
-        id: &'static str,
+        id: impl Into<PanelTypeId>,
         label: &'static str,
         system: impl IntoSystem<In<PanelCreation>, PanelResult, M> + 'static,
     ) {
+        let id = id.into();
+
         self.panels.push(PendingPanel {
             id,
             label,
@@ -555,9 +562,11 @@ impl WorkbenchRegistrar {
 
     /// Attach defaults to an application-wide command. Every registered command
     /// is bindable even when this method is not called.
-    pub fn global_shortcut(&mut self, command: &'static str, defaults: &[&str]) {
+    pub fn global_shortcut(&mut self, command: impl Into<CommandId>, defaults: &[&str]) {
+        let command = command.into();
+
         self.shortcuts.push(ShortcutAction::new(
-            command,
+            &command,
             "",
             "",
             ShortcutScope::Global,
@@ -570,14 +579,16 @@ impl WorkbenchRegistrar {
         &mut self,
         id: &'static str,
         label: &'static str,
-        panel: &'static str,
+        panel: impl Into<PanelTypeId>,
         defaults: &[&str],
     ) {
+        let panel = panel.into();
+
         self.shortcuts.push(ShortcutAction::new(
             id,
             label,
             "",
-            ShortcutScope::panel(panel),
+            ShortcutScope::panel(panel.as_str()),
             defaults,
         ));
     }
@@ -586,19 +597,27 @@ impl WorkbenchRegistrar {
         self.shortcuts.push(action);
     }
 
-    pub fn menu(&mut self, command: &'static str) {
+    pub fn menu(&mut self, command: impl Into<CommandId>) {
+        let command = command.into();
+
         self.menus.push(command);
     }
 
-    pub fn toolbar(&mut self, command: &'static str) {
+    pub fn toolbar(&mut self, command: impl Into<CommandId>) {
+        let command = command.into();
+
         self.toolbar.push(command);
     }
 
-    pub fn command_icon(&mut self, command: &'static str, icon: &'static str) {
+    pub fn command_icon(&mut self, command: impl Into<CommandId>, icon: &'static str) {
+        let command = command.into();
+
         self.command_icons.push((command, icon));
     }
 
-    pub fn panel_icon(&mut self, panel: &'static str, icon: &'static str) {
+    pub fn panel_icon(&mut self, panel: impl Into<PanelTypeId>, icon: &'static str) {
+        let panel = panel.into();
+
         self.panel_icons.push((panel, icon));
     }
 }
@@ -620,8 +639,8 @@ pub fn register(
         pending
             .commands
             .iter()
-            .map(|entry| entry.id)
-            .chain(pending.panels.iter().map(|entry| entry.id)),
+            .map(|entry| entry.id.as_str())
+            .chain(pending.panels.iter().map(|entry| entry.id.as_str())),
         registry.into_iter().flat_map(WorkbenchRegistry::ids),
     )?;
     for command in pending.menus.iter().chain(&pending.toolbar) {
@@ -660,28 +679,28 @@ pub fn register(
         }
     }
     let mut icon_ids = HashSet::new();
-    for &(id, icon) in &pending.command_icons {
+    for (id, icon) in &pending.command_icons {
         if !valid_id(icon) || !icon_ids.insert(id) {
             return Err(format!("Invalid or duplicate command icon: {id} ({icon})"));
         }
         let command = pending
             .commands
             .iter_mut()
-            .find(|entry| entry.id == id)
+            .find(|entry| &entry.id == id)
             .ok_or_else(|| format!("Missing contributed command: {id}"))?;
-        command.icon = Some(icon);
+        command.icon = Some(*icon);
     }
-    icon_ids.clear();
-    for &(id, icon) in &pending.panel_icons {
+    let mut icon_ids = HashSet::new();
+    for (id, icon) in &pending.panel_icons {
         if !valid_id(icon) || !icon_ids.insert(id) {
             return Err(format!("Invalid or duplicate panel icon: {id} ({icon})"));
         }
         let panel = pending
             .panels
             .iter_mut()
-            .find(|entry| entry.id == id)
+            .find(|entry| &entry.id == id)
             .ok_or_else(|| format!("Missing contributed panel: {id}"))?;
-        panel.icon = Some(icon);
+        panel.icon = Some(*icon);
     }
     // The registry starts with shared focused actions even when this is its
     // first contribution. A command implements that action without replacing
@@ -715,8 +734,11 @@ pub fn register(
             return Err(format!("Invalid shortcut key in {}", shortcut.id));
         }
         if let ShortcutScope::Panel(panel) = &shortcut.scope {
-            if !pending.panels.iter().any(|p| p.id == panel)
-                && !registry.is_some_and(|r| r.panel(panel).is_some())
+            if !pending
+                .panels
+                .iter()
+                .any(|p| p.id.as_str() == panel.as_str())
+                && !registry.is_some_and(|r| r.panel(&crate::PanelTypeId::from(panel)).is_some())
             {
                 return Err(format!("Missing shortcut panel: {panel}"));
             }
@@ -724,20 +746,20 @@ pub fn register(
             let command = pending
                 .commands
                 .iter()
-                .find(|c| c.id == shortcut.id)
+                .find(|c| c.id.as_str() == shortcut.id)
                 .ok_or_else(|| format!("Missing shortcut command: {}", shortcut.id))?;
             shortcut.label = command.label.into();
         }
         shortcut.owner = owner.into();
     }
     for command in &pending.commands {
-        if !shortcut_ids.contains(command.id)
+        if !shortcut_ids.contains(command.id.as_str())
             && !registered_shortcuts
                 .iter()
-                .any(|action| action.id == command.id)
+                .any(|action| action.id == command.id.as_str())
         {
             pending.shortcuts.push(ShortcutAction::new(
-                command.id,
+                &command.id,
                 command.label,
                 owner,
                 ShortcutScope::Global,
@@ -915,7 +937,7 @@ mod shortcut_tests {
         assert!(
             world
                 .resource::<WorkbenchRegistry>()
-                .command("other.open")
+                .command(&crate::CommandId::new("other.open"))
                 .is_none()
         );
         let invocation = ShellInvocation {
@@ -943,10 +965,15 @@ mod shortcut_tests {
         .unwrap();
         let registry = world.resource::<WorkbenchRegistry>();
         assert_eq!(
-            registry.panel("example.panel").unwrap().icon,
+            registry
+                .panel(&crate::PanelTypeId::new("example.panel"))
+                .unwrap()
+                .icon,
             Some("example.symbol")
         );
-        let open = registry.command("example.open").unwrap();
+        let open = registry
+            .command(&crate::CommandId::new("example.open"))
+            .unwrap();
         assert_eq!(open.label, "Open Example");
         assert_eq!(open.icon, Some("example.symbol"));
         assert_eq!(registry.toolbar(), &["example.open"]);
@@ -963,7 +990,7 @@ mod shortcut_tests {
         );
         let presented = world
             .resource::<WorkbenchRegistry>()
-            .command("example.open")
+            .command(&crate::CommandId::new("example.open"))
             .unwrap()
             .presentation(world.get_resource::<CommandPresentations>());
         assert_eq!(presented.label, "Example is busy");
@@ -1061,7 +1088,7 @@ mod shortcut_tests {
             assert!(
                 world
                     .resource::<WorkbenchRegistry>()
-                    .command("invalid.show")
+                    .command(&crate::CommandId::new("invalid.show"))
                     .is_none()
             );
             assert_eq!(
@@ -1223,7 +1250,7 @@ pub struct PanelType {
     /// Runtime placement hint. The tiled workbench chooses destinations
     /// from the action's origin and any explicit area target.
     pub open_placement: PanelPlacement,
-    pub id: &'static str,
+    pub id: PanelTypeId,
     pub plugin: &'static str,
 }
 

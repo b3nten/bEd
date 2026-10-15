@@ -1002,7 +1002,7 @@ fn terminal_multi_file_completion_waits_for_both_remote_reads_in_one_editor_area
     .unwrap();
     let caller = bedtime_core::open_panel(
         app.world_mut(),
-        "shell.fixture.panel",
+        &bedtime_api::PanelTypeId::new("shell.fixture.panel"),
         bedtime_api::documents::PanelInput::None,
         serde_json::Value::Null,
         None,
@@ -1131,7 +1131,7 @@ fn remote_retained_panel_keeps_its_identity_and_rejects_changed_roots_before_ret
     .unwrap();
     let caller = bedtime_core::open_panel(
         app.world_mut(),
-        "retention.fixture.tool",
+        &bedtime_api::PanelTypeId::new("retention.fixture.tool"),
         bedtime_api::documents::PanelInput::None,
         serde_json::Value::Null,
         None,

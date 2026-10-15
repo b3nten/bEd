@@ -554,14 +554,14 @@ use dear_imgui_rs::{StyleColor, StyleVar, Ui};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FileTreeAction {
     Command {
-        command: String,
+        command: bedtime_api::CommandId,
         context: bedtime_api::documents::CommandContext,
     },
     Open(String),
     Preview(String),
     OpenWith {
         path: String,
-        viewer: String,
+        viewer: bedtime_api::ViewerId,
     },
     NewFile(String),
     NewFolder(String),

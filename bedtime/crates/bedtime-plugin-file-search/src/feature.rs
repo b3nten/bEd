@@ -762,7 +762,7 @@ mod tests {
         let cancel_handler = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command(CANCEL_COMMAND)
+            .command(&bedtime_api::CommandId::from(CANCEL_COMMAND))
             .unwrap()
             .handler;
         app.world_mut()

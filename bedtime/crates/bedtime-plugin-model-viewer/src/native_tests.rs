@@ -322,7 +322,7 @@ fn native_registered_model_renderer_shares_game_world_and_retires_its_view() {
     let factory = app
         .world()
         .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-        .panel(super::PANEL_ID)
+        .panel(&bedtime_api::PanelTypeId::from(super::PANEL_ID))
         .unwrap()
         .factory;
     let _frontend = app

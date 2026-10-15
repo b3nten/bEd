@@ -1487,7 +1487,7 @@ mod tests {
         let factory = app
             .world()
             .resource::<WorkbenchRegistry>()
-            .panel(crate::PANEL_ID)
+            .panel(&bedtime_api::PanelTypeId::from(crate::PANEL_ID))
             .unwrap()
             .factory;
         let mut entities = Vec::new();
@@ -1543,11 +1543,11 @@ mod tests {
         let show_handler = app
             .world()
             .resource::<WorkbenchRegistry>()
-            .command(show.command)
+            .command(&show.command)
             .unwrap()
             .handler;
         let WorkbenchAction::Invoke(show_invocation) =
-            context.invoke(show.command, show.arguments.clone())
+            context.invoke(show.command.clone(), show.arguments.clone())
         else {
             panic!("status command must queue an invocation");
         };
@@ -1573,11 +1573,11 @@ mod tests {
         let cancel_handler = app
             .world()
             .resource::<WorkbenchRegistry>()
-            .command(cancel.command)
+            .command(&cancel.command)
             .unwrap()
             .handler;
         let WorkbenchAction::Invoke(stale_invocation) =
-            context.invoke(cancel.command, cancel.arguments.clone())
+            context.invoke(cancel.command.clone(), cancel.arguments.clone())
         else {
             panic!("status command must queue an invocation");
         };
@@ -1607,7 +1607,7 @@ mod tests {
             .run_system_with(
                 cancel_handler,
                 CommandInvocation {
-                    command: cancel.command.into(),
+                    command: cancel.command.clone(),
                     source: Some(source),
                     area: 19,
                     arguments: cancel.arguments.clone(),
@@ -1643,7 +1643,7 @@ mod tests {
             .run_system_with(
                 cancel_handler,
                 CommandInvocation {
-                    command: cancel.command.into(),
+                    command: cancel.command.clone(),
                     source: Some(source),
                     area: 19,
                     arguments: cancel.arguments.clone(),

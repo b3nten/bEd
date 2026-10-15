@@ -8,6 +8,8 @@ pub mod features;
 pub mod files;
 #[cfg(feature = "gpu")]
 pub mod gpu;
+pub mod ids;
+pub use ids::{CommandId, PanelTypeId, ViewerId};
 pub mod launch;
 pub mod menus;
 pub mod presentation;

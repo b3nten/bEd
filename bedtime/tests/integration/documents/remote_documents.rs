@@ -156,16 +156,10 @@ fn remote_documents_through_real_transport() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(1));
     }
-    assert!(
-        errors
-            .iter()
-            .any(|error| error.document == Some(mixed) && error.service == "remote")
-    );
-    assert!(
-        !errors
-            .iter()
-            .any(|error| error.document == Some(mixed) && error.service == "save")
-    );
+    assert!(errors.iter().any(|error| error.document == Some(mixed)
+        && error.service == bedtime_documents::ServiceKind::Remote));
+    assert!(!errors.iter().any(|error| error.document == Some(mixed)
+        && error.service == bedtime_documents::ServiceKind::Save));
     assert!(saved);
     assert_eq!(std::fs::read(mixed_path).unwrap(), b"after before");
     assert!(!session.snapshot(mixed).unwrap().dirty);
@@ -196,16 +190,12 @@ fn remote_documents_through_real_transport() {
             std::thread::sleep(Duration::from_millis(1));
         }
         assert!(
-            errors
-                .iter()
-                .any(|error| error.document == Some(failed) && error.service == "save"),
+            errors.iter().any(|error| error.document == Some(failed)
+                && error.service == bedtime_documents::ServiceKind::Save),
             "{name}: {errors:?}"
         );
-        assert!(
-            !errors
-                .iter()
-                .any(|error| error.document == Some(failed) && error.service == "remote")
-        );
+        assert!(!errors.iter().any(|error| error.document == Some(failed)
+            && error.service == bedtime_documents::ServiceKind::Remote));
         assert!(session.snapshot(failed).unwrap().dirty);
         assert_eq!(std::fs::read(failed_path).unwrap(), b"original");
     }

@@ -78,7 +78,7 @@ mod tests {
         let handler = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .panel(crate::PANEL_ID)
+            .panel(&bedtime_api::PanelTypeId::from(crate::PANEL_ID))
             .unwrap()
             .factory;
         app.world_mut()

@@ -53,7 +53,7 @@ pub(super) fn presentation(world: &World, context: StatusContext) -> Option<Stat
         text = text.command("Show query", SHOW_COMMAND);
         text.commands.push(StatusCommand {
             label: "Cancel query",
-            command: CANCEL_QUERY_COMMAND,
+            command: CANCEL_QUERY_COMMAND.into(),
             arguments: serde_json::json!({"serial": serial}),
             enabled: true,
         });

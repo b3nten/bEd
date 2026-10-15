@@ -959,7 +959,7 @@ mod tests {
         assert!(
             app.world()
                 .resource::<bedtime_api::features::FeatureRegistry>()
-                .viewer(crate::VIEWER_ID)
+                .viewer(&bedtime_api::ViewerId::from(crate::VIEWER_ID))
                 .is_some()
         );
     }

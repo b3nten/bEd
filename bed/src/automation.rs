@@ -133,7 +133,7 @@ fn open_file(
         .filter(|v| !v.is_null())
         .map(|v| {
             v.as_str()
-                .map(str::to_owned)
+                .map(bedtime_api::ViewerId::from)
                 .ok_or_else(|| wire::invalid("viewer must be a string"))
         })
         .transpose()?;

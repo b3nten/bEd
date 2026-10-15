@@ -237,7 +237,7 @@ impl Smoke {
             world,
             crate::application::testing::AppAction::OpenFileWithViewer {
                 path,
-                viewer: viewer.map(String::from),
+                viewer: viewer.map(bedtime_api::ViewerId::from),
                 additional: false,
                 move_existing: false,
             },

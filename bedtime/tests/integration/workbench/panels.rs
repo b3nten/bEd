@@ -87,7 +87,7 @@ fn show_docs_is_available_and_reuses_the_panel() {
     assert!(
         app.world()
             .resource::<WorkbenchRegistry>()
-            .command(SHOW_DOCS_COMMAND)
+            .command(&bedtime_api::CommandId::from(SHOW_DOCS_COMMAND))
             .is_some()
     );
     let docs = open_panel(

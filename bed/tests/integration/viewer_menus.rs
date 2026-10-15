@@ -194,7 +194,9 @@ fn markdown_menus_open_separate_tabs_for_the_shared_document_without_sqlite_choi
     let panel = application_requests::open_file(
         app.world_mut(),
         &markdown,
-        Some(bedtime_plugin_editor::TEXT_VIEWER),
+        Some(&bedtime_api::ViewerId::from(
+            bedtime_plugin_editor::TEXT_VIEWER,
+        )),
         false,
         None,
     )

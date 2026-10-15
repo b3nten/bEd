@@ -959,7 +959,7 @@ mod tests {
         let factory = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .panel(crate::PANEL_ID)
+            .panel(&bedtime_api::PanelTypeId::from(crate::PANEL_ID))
             .unwrap()
             .factory;
         let _frontend = app

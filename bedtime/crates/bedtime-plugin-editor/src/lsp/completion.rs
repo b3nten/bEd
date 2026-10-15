@@ -1718,7 +1718,7 @@ mod tests {
             let factory = app
                 .world()
                 .resource::<WorkbenchRegistry>()
-                .panel(crate::TEXT_PANEL_TYPE)
+                .panel(&bedtime_api::PanelTypeId::from(crate::TEXT_PANEL_TYPE))
                 .unwrap()
                 .factory;
             let frontend = app

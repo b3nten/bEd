@@ -97,7 +97,7 @@ pub(super) fn presentation(world: &World, context: StatusContext) -> Option<Stat
     if let Some(revision) = panel.revision {
         text.commands.push(StatusCommand {
             label: if playing { "Pause" } else { "Play" },
-            command: if playing { PAUSE_COMMAND } else { PLAY_COMMAND },
+            command: if playing { PAUSE_COMMAND.into() } else { PLAY_COMMAND.into() },
             arguments: serde_json::json!({"revision": revision}),
             enabled: panel.audio.is_some(),
         });

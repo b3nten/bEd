@@ -83,7 +83,7 @@ impl TreeMenuContext {
 
 #[derive(Clone)]
 struct MenuCommand {
-    id: String,
+    id: bedtime_api::CommandId,
     label: String,
     slot: MenuSlot,
     enabled: HashMap<String, bool>,
@@ -139,7 +139,7 @@ impl RegistryMenus {
             ui.separator();
         }
         for item in items {
-            let _id = ui.push_id(&item.id);
+            let _id = ui.push_id(item.id.as_str());
             if ui.menu_item_enabled_selected_no_shortcut(
                 &item.label,
                 false,
@@ -161,10 +161,10 @@ impl RegistryMenus {
                         self.viewers
                             .preferred_viewer_for_file(path, kind, host.default_viewers)
                     })
-                    .map(|viewer| viewer.id);
+                    .map(|viewer| viewer.id.clone());
                 for viewer in self.viewers.compatible_viewers(path, status.kind()) {
-                    let _id = ui.push_id(viewer.id);
-                    let label = if Some(viewer.id) == default {
+                    let _id = ui.push_id(viewer.id.as_str());
+                    let label = if Some(viewer.id.clone()) == default {
                         format!("{} (default)", viewer.label)
                     } else {
                         viewer.label.into()
@@ -172,7 +172,7 @@ impl RegistryMenus {
                     if ui.menu_item(label) {
                         actions.push(FileTreeAction::OpenWith {
                             path: path.into(),
-                            viewer: viewer.id.into(),
+                            viewer: viewer.id.clone(),
                         });
                     }
                 }
@@ -389,12 +389,12 @@ impl ExplorerState {
                 )
             })
             .filter_map(|item| {
-                let descriptor = definitions.command(item.command)?.presentation(facts);
+                let descriptor = definitions.command(&item.command)?.presentation(facts);
                 if !descriptor.visible {
                     return None;
                 }
                 Some(MenuCommand {
-                    id: descriptor.id.into(),
+                    id: descriptor.id.clone(),
                     label: descriptor.label.into(),
                     slot: item.slot,
                     enabled: contexts
@@ -402,7 +402,7 @@ impl ExplorerState {
                         .filter_map(|context| {
                             Some((
                                 context.path.clone()?,
-                                descriptor.enabled && enabled(descriptor.id, context),
+                                descriptor.enabled && enabled(&descriptor.id, context),
                             ))
                         })
                         .collect(),
@@ -1065,7 +1065,7 @@ mod tests {
             config
                 .registry_menus
                 .viewers
-                .viewer("example.csv-viewer")
+                .viewer(&bedtime_api::ViewerId::new("example.csv-viewer"))
                 .is_some()
         );
     }

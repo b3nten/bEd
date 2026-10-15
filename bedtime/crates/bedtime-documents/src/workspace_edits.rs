@@ -762,7 +762,7 @@ impl DocumentSession {
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     self.pending_workspace_history = Some(request);
                 }
-                Err(error) => self.record_error(None, "undo", &error),
+                Err(error) => self.record_error(None, ServiceKind::Undo, &error),
                 Ok(()) => {}
             }
         }
@@ -933,7 +933,7 @@ impl DocumentSession {
             let result = match result {
                 Ok(_) => json!({"applied":true}),
                 Err(error) => {
-                    self.record_error(None, "lsp", &error);
+                    self.record_error(None, ServiceKind::Lsp, &error);
                     json!({"applied":false,"failureReason":error.to_string()})
                 }
             };

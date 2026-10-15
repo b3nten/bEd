@@ -294,7 +294,11 @@ impl Panel for GltfFrontend {
         _requests: &mut Vec<WorkbenchAction>,
         shortcuts: &bedtime_api::workbench::ShortcutInput,
     ) {
-        let viewer_menu = bedtime_api::documents::panel_viewer_menu(world, self.entity, VIEWER_ID);
+        let viewer_menu = bedtime_api::documents::panel_viewer_menu(
+            world,
+            self.entity,
+            &bedtime_api::ViewerId::new(VIEWER_ID),
+        );
         let output = {
             let frame = FrontendSnapshot::capture(world);
             let mut state =
@@ -377,7 +381,7 @@ mod ecs_tests {
         let factory = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .panel(PANEL_ID)
+            .panel(&bedtime_api::PanelTypeId::from(PANEL_ID))
             .unwrap()
             .factory;
         let panel = app
@@ -410,7 +414,7 @@ mod ecs_tests {
         let handler = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command(OPEN_FILE_COMMAND)
+            .command(&bedtime_api::CommandId::from(OPEN_FILE_COMMAND))
             .unwrap()
             .handler;
         app.world_mut()

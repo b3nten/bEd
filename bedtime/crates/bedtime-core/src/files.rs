@@ -61,7 +61,7 @@ pub(crate) fn queue_document_restore(
         .entity_mut(panel)
         .insert(bedtime_api::documents::PanelBinding {
             session_id: session.0,
-            viewer: record["viewer"].as_str().map(str::to_owned),
+            viewer: record["viewer"].as_str().map(bedtime_api::ViewerId::from),
             ..Default::default()
         });
     world
@@ -104,7 +104,9 @@ fn poll_document_restores(world: &mut World) {
                 let binding = bedtime_api::documents::PanelBinding {
                     input: bedtime_api::documents::PanelInput::Document(document),
                     document: Some(document),
-                    viewer: restore.record["viewer"].as_str().map(str::to_owned),
+                    viewer: restore.record["viewer"]
+                        .as_str()
+                        .map(bedtime_api::ViewerId::from),
                     session_id: restore.session.0,
                     ..Default::default()
                 };
@@ -119,7 +121,7 @@ fn poll_document_restores(world: &mut World) {
                 if let Err(error) = crate::documents::mount_panel_frontend(
                     world,
                     restore.panel,
-                    kind,
+                    &bedtime_api::PanelTypeId::from(kind),
                     binding,
                     restore.record["state"].clone(),
                 ) {

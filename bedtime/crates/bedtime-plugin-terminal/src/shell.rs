@@ -292,7 +292,7 @@ fn poll(
             // The ordered workbench executor checks availability for this
             // captured source and arguments when the command runs.
             let operation = requests.submit(WorkbenchAction::Invoke(CommandInvocation {
-                command: command.id.into(),
+                command: command.id.clone(),
                 source,
                 area,
                 arguments,

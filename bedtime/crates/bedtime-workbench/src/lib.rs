@@ -90,7 +90,7 @@ impl Default for WorkbenchLayout {
 /// Keeps the complete saved record, including fields from unavailable features.
 #[derive(Component, Clone, Debug)]
 pub struct PanelRecord {
-    pub panel_type: String,
+    pub panel_type: bedtime_api::PanelTypeId,
     pub serialized: Value,
     pub unavailable: Option<String>,
 }
@@ -365,7 +365,7 @@ impl Plugin for WorkbenchPlugin {
 
 pub fn capture_command(
     world: &World,
-    command: impl Into<String>,
+    command: impl Into<bedtime_api::CommandId>,
     arguments: Value,
 ) -> CommandInvocation {
     let layout = world.resource::<WorkbenchLayout>();
@@ -882,11 +882,11 @@ fn notify_panel_focus(world: &mut World, owner: Entity) {
 }
 
 /// The same MRU rule is used by generic and editor-integrated show commands.
-pub fn recent_panel(world: &mut World, panel_type: &str) -> Option<Entity> {
+pub fn recent_panel(world: &mut World, panel_type: &bedtime_api::PanelTypeId) -> Option<Entity> {
     recent_panel_matching(world, |world, entity| {
         world
             .get::<PanelRecord>(entity)
-            .is_some_and(|record| record.panel_type == panel_type)
+            .is_some_and(|record| record.panel_type == *panel_type)
     })
 }
 
@@ -1137,8 +1137,8 @@ pub fn spawn_panel(
 ) -> Result<Entity, String> {
     let panel_type = serialized["panel_type"]
         .as_str()
-        .ok_or("Saved panel has no type")?
-        .to_owned();
+        .ok_or("Saved panel has no type")
+        .map(bedtime_api::PanelTypeId::from)?;
     if let Some(id) = saved_id
         && (id == 0
             || world
@@ -1177,7 +1177,7 @@ pub fn spawn_panel(
             WorkbenchPanel,
             PanelPresentation::new(id),
             PanelRecord {
-                panel_type: panel_type.clone(),
+                panel_type,
                 serialized: serialized.clone(),
                 unavailable: None,
             },
@@ -1199,8 +1199,8 @@ pub fn open_panel(
 ) -> Result<Entity, String> {
     let panel_type = serialized["panel_type"]
         .as_str()
-        .ok_or("Saved panel has no type")?
-        .to_owned();
+        .ok_or("Saved panel has no type")
+        .map(bedtime_api::PanelTypeId::from)?;
     let factory = world
         .resource::<WorkbenchRegistry>()
         .panel(&panel_type)
@@ -1317,7 +1317,7 @@ fn with_panel_frontend<R>(
             );
             panel = Box::new(FailedPanel {
                 _damaged: panel,
-                title: record.panel_type,
+                title: record.panel_type.to_string(),
                 state: record.serialized["state"].clone(),
                 error: error.clone(),
             });
@@ -1344,7 +1344,7 @@ pub fn panel_title(world: &mut World, entity: Entity) -> Result<String, String> 
             .get::<PanelRecord>(entity)
             .filter(|record| record.unavailable.is_some())
     {
-        return Ok(record.panel_type.clone());
+        return Ok(record.panel_type.to_string());
     }
     with_panel_frontend(world, entity, "title", |panel, world| panel.title(world))
 }
@@ -1382,7 +1382,7 @@ pub fn render_panel(
     prepare_shortcuts(world, ui);
     let scope = world
         .get::<PanelRecord>(entity)
-        .map(|record| record.panel_type.clone())
+        .map(|record| record.panel_type.to_string())
         .unwrap_or_default();
     let input = world
         .non_send::<WorkbenchShortcuts>()

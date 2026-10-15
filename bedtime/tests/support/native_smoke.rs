@@ -121,7 +121,7 @@ impl Smoke {
             world,
             bedtime_api::features::HostAction::OpenFile {
                 path: path.to_string_lossy().into_owned(),
-                viewer: viewer.map(String::from),
+                viewer: viewer.map(bedtime_api::ViewerId::from),
             },
             None,
         )? {

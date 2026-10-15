@@ -210,13 +210,21 @@ fn definition(world: &World, slot: LayoutSlot) -> LayoutDefinition {
             .expect("validated application layout definition");
     }
     let registry = world.resource::<bedtime_api::workbench::WorkbenchRegistry>();
-    if slot != LayoutSlot::Startup || registry.panel("bedtime.workspaces.panel").is_some() {
+    if slot != LayoutSlot::Startup
+        || registry
+            .panel(&bedtime_api::PanelTypeId::new("bedtime.workspaces.panel"))
+            .is_some()
+    {
         return builtin(slot);
     }
     let mut definition = LayoutDefinition::new(Layout::default());
     if let Some(kind) = ["bedtime.editor.text-panel", "bedtime.terminal.panel"]
         .into_iter()
-        .find(|kind| registry.panel(kind).is_some())
+        .find(|kind| {
+            registry
+                .panel(&bedtime_api::PanelTypeId::from(*kind))
+                .is_some()
+        })
     {
         let id = definition
             .add_panel(PanelDefinition::new(kind), 1)
@@ -471,7 +479,7 @@ mod tests {
     fn fixture(world: &mut World) -> Entity {
         open_panel(
             world,
-            "fixture.panel",
+            &bedtime_api::PanelTypeId::new("fixture.panel"),
             PanelInput::None,
             json!({"draft":"retained"}),
             None,
@@ -526,7 +534,13 @@ mod tests {
                 .dirty
         );
         assert_eq!(app.world().resource::<Closed>().0, 0);
-        assert!(bedtime_workbench::recent_panel(app.world_mut(), "fixture.panel").is_none());
+        assert!(
+            bedtime_workbench::recent_panel(
+                app.world_mut(),
+                &bedtime_api::PanelTypeId::new("fixture.panel")
+            )
+            .is_none()
+        );
         let active = app.world().resource::<WorkbenchLayout>().focused;
         focus_panel(app.world_mut(), original, true).unwrap();
         assert_eq!(app.world().resource::<WorkbenchLayout>().focused, active);
@@ -574,7 +588,10 @@ mod tests {
             Some(editor)
         );
         assert_eq!(
-            bedtime_workbench::recent_panel(app.world_mut(), "fixture.panel"),
+            bedtime_workbench::recent_panel(
+                app.world_mut(),
+                &bedtime_api::PanelTypeId::new("fixture.panel")
+            ),
             Some(original)
         );
         let surface = panel_presentation(app.world(), original).unwrap();
@@ -970,7 +987,7 @@ mod tests {
         let spec = save_current_workspace(app.world_mut(), Some("Example Project".into())).unwrap();
         let second = open_panel(
             app.world_mut(),
-            "fixture.panel",
+            &bedtime_api::PanelTypeId::new("fixture.panel"),
             PanelInput::None,
             json!({"draft":"added after saving"}),
             None,

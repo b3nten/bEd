@@ -51,7 +51,7 @@ pub(super) enum TilingAction {
     CloseArea(u32),
     AddPanel {
         area: u32,
-        kind: String,
+        kind: bedtime_api::PanelTypeId,
     },
     Drop {
         placement: TabPlacement,
@@ -198,7 +198,7 @@ pub(crate) struct ChromeTab {
 
 #[derive(Clone)]
 pub(crate) struct ChromePanel {
-    pub id: String,
+    pub id: bedtime_api::PanelTypeId,
     pub label: String,
     pub allow_empty: bool,
 }
@@ -1435,7 +1435,7 @@ impl TilingFrontend {
                 if ui.menu_item(&panel.label) {
                     self.tiling_ui.actions.push(TilingAction::AddPanel {
                         area,
-                        kind: panel.id.to_owned(),
+                        kind: panel.id.clone(),
                     });
                 }
             }

@@ -223,9 +223,9 @@ pub fn route_native_commands(world: &mut World) {
             continue;
         }
         let id = if command.quit {
-            "bedtime.core.quit".to_owned()
+            api::CommandId::new("bedtime.core.quit")
         } else {
-            command.command
+            command.command.into()
         };
         if world
             .resource::<api::workbench::WorkbenchRegistry>()

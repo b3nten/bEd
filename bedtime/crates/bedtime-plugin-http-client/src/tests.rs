@@ -51,7 +51,9 @@ fn workspace_panel_crud_persists_drafts_without_sending_requests() {
     registry
         .register_with(MODULE_ID, register_metadata)
         .unwrap();
-    let panel_type = registry.panel(PANEL_ID).unwrap();
+    let panel_type = registry
+        .panel(&bedtime_api::PanelTypeId::from(PANEL_ID))
+        .unwrap();
     assert!(panel_type.singleton);
     assert_eq!(panel_type.placement, PanelPlacement::Center);
     assert!(registry.viewer_for_path("api.http").is_none());
@@ -262,7 +264,7 @@ fn hidden_panel_finishes_captured_request_after_editing_and_switching_selection(
         assert_eq!(shared.selected, Some(2));
         assert!(!shared.results.contains_key(&2));
         let result = &shared.results[&1];
-        assert!(result.request.url.contains("/first?"));
+        assert!(result.request.url.as_str().contains("/first?"));
         assert_ne!(model::resolve(&shared.requests[0]).unwrap(), result.request);
         assert_eq!(result.outcome.as_ref().unwrap().status, 503);
         assert_eq!(result.outcome.as_ref().unwrap().bytes, b"{\"value\":1}");

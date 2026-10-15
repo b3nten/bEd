@@ -313,7 +313,7 @@ impl DocumentSession {
             .unwrap()
             .open_errors
             .insert(path.into(), io::Error::new(error.kind(), error.to_string()));
-        self.record_error(None, "remote", error);
+        self.record_error(None, ServiceKind::Remote, error);
     }
 
     pub(super) fn remote_alias(&self, path: &Path) -> Option<DocumentId> {
@@ -391,7 +391,7 @@ impl DocumentSession {
             if let Err(error) = self.queue_read(id, ReadMode::Monitor)
                 && error.kind() != io::ErrorKind::WouldBlock
             {
-                self.record_error(Some(id), "remote", &error);
+                self.record_error(Some(id), ServiceKind::Remote, &error);
             }
         }
         Ok(())
@@ -617,7 +617,7 @@ impl DocumentSession {
             if since.elapsed() >= Duration::from_millis(250)
                 && let Err(error) = self.queue_read(id, ReadMode::Monitor)
             {
-                self.record_error(Some(id), "remote", &error);
+                self.record_error(Some(id), ServiceKind::Remote, &error);
             }
             return;
         }
@@ -634,7 +634,15 @@ impl DocumentSession {
             Ok(())
         };
         if let Err(error) = result {
-            self.record_error(Some(id), if autosave { "save" } else { "remote" }, &error);
+            self.record_error(
+                Some(id),
+                if autosave {
+                    ServiceKind::Save
+                } else {
+                    ServiceKind::Remote
+                },
+                &error,
+            );
         }
     }
 
@@ -704,9 +712,9 @@ impl DocumentSession {
             .unwrap_or_default();
         for Completion { operation, result } in completions {
             let operation_service = if matches!(&operation, Operation::Save { .. }) {
-                "save"
+                ServiceKind::Save
             } else {
-                "remote"
+                ServiceKind::Remote
             };
             let open_path = match &operation {
                 Operation::Open { requested, .. } => Some(requested.clone()),
@@ -863,7 +871,7 @@ impl DocumentSession {
                         } else {
                             let _ = self.invalidate_removed_path(id);
                         }
-                        if operation_service == "save" {
+                        if operation_service == ServiceKind::Save {
                             self.record_error(Some(id), operation_service, &error);
                         }
                         continue;
@@ -976,7 +984,7 @@ impl DocumentSession {
                         {
                             self.errors.push(ServiceError {
                                 document: Some(id),
-                                service: "history",
+                                service: ServiceKind::History,
                                 message: error.to_string(),
                             });
                         }
@@ -1080,7 +1088,7 @@ impl DocumentSession {
                             {
                                 entry.runtime.disk_conflict = Some(error.to_string());
                                 entry.runtime.save_service.cancel_pending();
-                                self.record_error(Some(id), "remote", &error);
+                                self.record_error(Some(id), ServiceKind::Remote, &error);
                                 continue;
                             }
                             if entry.runtime.state.kind == DocumentKind::Bytes

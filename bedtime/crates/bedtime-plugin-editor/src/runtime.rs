@@ -40,14 +40,14 @@ pub enum EditorAction {
     },
     Command {
         view: ViewId,
-        id: String,
+        id: bedtime_api::CommandId,
         context: CommandContext,
     },
 }
 
 #[derive(Clone, Debug)]
 pub struct EditorMenuCommand {
-    pub id: String,
+    pub id: bedtime_api::CommandId,
     pub label: String,
     pub enabled: bool,
 }
@@ -317,7 +317,7 @@ impl EditorRuntime {
                     EditorAction::Command { view, id, context } => (
                         Some(view),
                         HostAction::Command {
-                            command: id,
+                            command: id.into(),
                             context,
                         },
                     ),
@@ -1341,7 +1341,7 @@ impl EditorRuntime {
             None => self.capture_context(session, view)?,
         };
         for command in self.menu_commands.get(&view).cloned().unwrap_or_default() {
-            let _id = ui.push_id(&command.id);
+            let _id = ui.push_id(command.id.as_str());
             if ui.menu_item_enabled_selected_no_shortcut(command.label, false, command.enabled) {
                 self.actions.push(EditorAction::Command {
                     view,

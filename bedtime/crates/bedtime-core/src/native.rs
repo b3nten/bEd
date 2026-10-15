@@ -38,7 +38,7 @@ fn publish(world: &mut World) {
         .map(|command| command.presentation(facts))
         .filter(|command| command.visible)
         .map(|command| DesktopToolbarItem {
-            id: command.id.into(),
+            id: command.id.to_string(),
             label: command.label.into(),
             icon: command.icon.map(str::to_owned),
             enabled: command.enabled,

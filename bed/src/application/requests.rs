@@ -82,7 +82,7 @@ pub enum AppAction {
     },
     Settings(bedtime_api::settings::SettingsRequest),
     Command(WindowCommand),
-    PluginCommand(String),
+    PluginCommand(bedtime_api::CommandId),
     WorkbenchAction(WorkbenchAction),
     HostAction(HostAction),
     HostActions {
@@ -104,13 +104,13 @@ pub enum AppAction {
     OpenFile(PathBuf),
     OpenFileWithViewer {
         path: PathBuf,
-        viewer: Option<String>,
+        viewer: Option<bedtime_api::ViewerId>,
         additional: bool,
         move_existing: bool,
     },
     OpenViewer {
         panel: Entity,
-        viewer: String,
+        viewer: bedtime_api::ViewerId,
     },
     AttachWorkspace(PathBuf),
     SetWorkspace(WorkspaceSpec),
@@ -559,7 +559,7 @@ pub fn submit_app_request(world: &mut World, mut request: AppRequest) -> AppRequ
                 return Ok(Some(invoke(
                     world,
                     &request,
-                    command,
+                    command.into(),
                     request.arguments.clone(),
                 )));
             }
@@ -703,7 +703,7 @@ fn submit_workbench(
 fn invoke(
     world: &mut World,
     request: &AppRequest,
-    command: String,
+    command: bedtime_api::CommandId,
     mut arguments: Value,
 ) -> Receipt {
     if arguments.is_null() {
@@ -818,7 +818,7 @@ fn window_request(
             };
             if world
                 .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-                .command(canonical)
+                .command(&bedtime_api::CommandId::from(canonical))
                 .is_none()
             {
                 complete(world, id, Ok(AppRequestOutcome::Ignored));
@@ -950,7 +950,7 @@ pub fn dispatch_app_command(
 }
 pub fn dispatch_app_plugin_command(
     world: &mut World,
-    command: &str,
+    command: &bedtime_api::CommandId,
     target: PanelTarget,
 ) -> io::Result<bool> {
     dispatch_request(
@@ -976,10 +976,10 @@ pub fn active_panel_entities(world: &mut World) -> Vec<Entity> {
 }
 pub fn open_panel(
     world: &mut World,
-    kind: &str,
+    kind: &bedtime_api::PanelTypeId,
     input: PanelInput,
     state: Value,
-    viewer: Option<String>,
+    viewer: Option<bedtime_api::ViewerId>,
     area: Option<u32>,
     show_existing: bool,
 ) -> io::Result<Entity> {
@@ -992,14 +992,18 @@ pub fn focus_panel(world: &mut World, panel: Entity, request_native: bool) -> io
 pub fn open_file(
     world: &mut World,
     path: &Path,
-    viewer: Option<&str>,
+    viewer: Option<&bedtime_api::ViewerId>,
     additional: bool,
     area: Option<u32>,
 ) -> io::Result<Entity> {
     bedtime_core::open_file_instance(world, path, viewer, additional, area)
         .map_err(io::Error::other)
 }
-pub fn open_viewer(world: &mut World, panel: Entity, viewer: &str) -> io::Result<Entity> {
+pub fn open_viewer(
+    world: &mut World,
+    panel: Entity,
+    viewer: &bedtime_api::ViewerId,
+) -> io::Result<Entity> {
     let document = world
         .get::<PanelBinding>(panel)
         .and_then(|binding| binding.document)
@@ -1085,9 +1089,9 @@ pub fn application_commands(world: &World) -> Vec<CommandItem> {
         .menus()
         .iter()
         .filter(|menu| menu.slot == bedtime_api::features::MenuSlot::Application)
-        .map(|menu| menu.command)
-        .chain(registry.menus().iter().copied())
-        .filter(|id| seen.insert(*id))
+        .map(|menu| &menu.command)
+        .chain(registry.menus().iter())
+        .filter(|id| seen.insert((*id).clone()))
         .filter_map(|id| registry.command(id))
         .map(|command| command.presentation(facts))
         .filter(|command| command.visible)
@@ -1108,9 +1112,9 @@ pub fn toolbar_commands(world: &World) -> Vec<CommandItem> {
     editor
         .toolbar()
         .iter()
-        .map(|item| item.command)
-        .chain(registry.toolbar().iter().copied())
-        .filter(|id| seen.insert(*id))
+        .map(|item| &item.command)
+        .chain(registry.toolbar().iter())
+        .filter(|id| seen.insert((*id).clone()))
         .filter_map(|id| registry.command(id))
         .map(|command| command.presentation(facts))
         .filter(|command| command.visible)
@@ -1125,7 +1129,7 @@ pub fn toolbar_commands(world: &World) -> Vec<CommandItem> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandItem {
-    pub id: String,
+    pub id: bedtime_api::CommandId,
     pub label: String,
     pub icon: Option<String>,
     pub enabled: bool,

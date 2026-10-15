@@ -40,7 +40,7 @@ pub(super) fn presentation(world: &World, context: StatusContext) -> Option<Stat
     let catalog = &world.get_non_send::<HttpRuntime>()?.catalog;
     let show = StatusCommand {
         label: "Show HTTP Client",
-        command: SHOW_COMMAND,
+        command: SHOW_COMMAND.into(),
         arguments: context
             .focused_frontend
             .filter(|entity| world.get::<HttpSurface>(*entity).is_some())
@@ -65,7 +65,7 @@ pub(super) fn presentation(world: &World, context: StatusContext) -> Option<Stat
         text.commands.push(show);
         text.commands.push(StatusCommand {
             label: "Cancel",
-            command: CANCEL_COMMAND,
+            command: CANCEL_COMMAND.into(),
             arguments: serde_json::json!({"run": active.run}),
             enabled: true,
         });
@@ -223,7 +223,7 @@ mod tests {
         let handler = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command(SHOW_COMMAND)
+            .command(&bedtime_api::CommandId::from(SHOW_COMMAND))
             .unwrap()
             .handler;
         let actions = app
@@ -296,7 +296,7 @@ mod tests {
         let handler = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command(CANCEL_COMMAND)
+            .command(&bedtime_api::CommandId::from(CANCEL_COMMAND))
             .unwrap()
             .handler;
         app.world_mut()
@@ -360,7 +360,7 @@ mod tests {
         let show = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command(SHOW_COMMAND)
+            .command(&bedtime_api::CommandId::from(SHOW_COMMAND))
             .unwrap()
             .handler;
         let actions = app

@@ -671,7 +671,7 @@ fn attachment_preserves_the_session_and_dirty_panel_entities_across_saved_id_col
 fn target_fixture(app: &mut App) -> (Entity, Entity, Entity, u32, u32) {
     let first = open_panel(
         app.world_mut(),
-        bedtime_plugin_editor::TEXT_PANEL_TYPE,
+        &bedtime_api::PanelTypeId::from(bedtime_plugin_editor::TEXT_PANEL_TYPE),
         PanelInput::None,
         Value::Null,
         None,
@@ -681,7 +681,7 @@ fn target_fixture(app: &mut App) -> (Entity, Entity, Entity, u32, u32) {
     .unwrap();
     let last = open_panel(
         app.world_mut(),
-        bedtime_plugin_editor::TEXT_PANEL_TYPE,
+        &bedtime_api::PanelTypeId::from(bedtime_plugin_editor::TEXT_PANEL_TYPE),
         PanelInput::None,
         Value::Null,
         None,
@@ -691,7 +691,7 @@ fn target_fixture(app: &mut App) -> (Entity, Entity, Entity, u32, u32) {
     .unwrap();
     let singleton = open_panel(
         app.world_mut(),
-        "bedtime.color.panel",
+        &bedtime_api::PanelTypeId::new("bedtime.color.panel"),
         PanelInput::None,
         Value::Null,
         None,
@@ -1567,7 +1567,7 @@ fn saving_without_a_ui_frame_restores_geometry_order_shared_views_and_last_docum
     };
     let color = open_panel(
         original.world_mut(),
-        "bedtime.color.panel",
+        &bedtime_api::PanelTypeId::new("bedtime.color.panel"),
         PanelInput::None,
         Value::Null,
         None,
@@ -1660,7 +1660,7 @@ fn splitting_a_terminal_creates_an_independent_shell_in_the_inherited_directory(
     app.update();
     let source = open_panel(
         app.world_mut(),
-        bedtime_plugin_terminal::PANEL_ID,
+        &bedtime_api::PanelTypeId::from(bedtime_plugin_terminal::PANEL_ID),
         PanelInput::None,
         json!({ "cwd": cwd }),
         None,

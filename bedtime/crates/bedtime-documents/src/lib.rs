@@ -20,6 +20,6 @@ pub(crate) mod test_support;
 pub use session::LspConfigMode;
 pub use session::{
     ByteEdit, ClosePolicy, DocumentId, DocumentKind, DocumentSession, DocumentSnapshot,
-    ServiceError, SessionEvent, SessionId, SessionOptions, TickReport, ViewId,
+    ServiceError, ServiceKind, SessionEvent, SessionId, SessionOptions, TickReport, ViewId,
 };
 pub use text_view_context::TextViewContext;

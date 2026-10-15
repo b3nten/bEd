@@ -360,7 +360,7 @@ fn different_viewers_have_independent_tabs_for_one_shared_document() {
     let text_tab = open_file_instance(
         app.world_mut(),
         &path,
-        Some("bedtime.editor.text"),
+        Some(&bedtime_api::ViewerId::new("bedtime.editor.text")),
         false,
         None,
     )
@@ -388,7 +388,7 @@ fn different_viewers_have_independent_tabs_for_one_shared_document() {
         open_file_instance(
             app.world_mut(),
             &path,
-            Some("bedtime.json.viewer"),
+            Some(&bedtime_api::ViewerId::new("bedtime.json.viewer")),
             false,
             None
         )
@@ -766,7 +766,9 @@ fn opening_a_multi_kind_viewer_reuses_the_live_document_kind_and_unsaved_content
     let text = open_file_instance(
         app.world_mut(),
         &path,
-        Some(bedtime_plugin_editor::TEXT_VIEWER),
+        Some(&bedtime_api::ViewerId::from(
+            bedtime_plugin_editor::TEXT_VIEWER,
+        )),
         false,
         None,
     )
@@ -778,8 +780,14 @@ fn opening_a_multi_kind_viewer_reuses_the_live_document_kind_and_unsaved_content
             commands.type_text(b"unsaved ")
         })
         .unwrap();
-    let other =
-        open_file_instance(app.world_mut(), &path, Some("dual.viewer"), false, None).unwrap();
+    let other = open_file_instance(
+        app.world_mut(),
+        &path,
+        Some(&bedtime_api::ViewerId::new("dual.viewer")),
+        false,
+        None,
+    )
+    .unwrap();
     assert_ne!(text, other);
     assert_eq!(
         app.world().get::<PanelBinding>(other).unwrap().document,
@@ -810,7 +818,7 @@ fn opening_a_file_keeps_a_pristine_core_viewer_tab_and_its_widget_intact() {
     let core_tab = bedtime_core::open_document_viewer(
         app.world_mut(),
         document,
-        bedtime_plugin_editor::TEXT_VIEWER,
+        &bedtime_api::ViewerId::from(bedtime_plugin_editor::TEXT_VIEWER),
         None,
     )
     .unwrap();
@@ -848,7 +856,9 @@ fn different_viewer_tabs_restore_separately_with_shared_document_and_per_tab_sta
     let text = open_file_instance(
         original.world_mut(),
         &path,
-        Some(bedtime_plugin_editor::TEXT_VIEWER),
+        Some(&bedtime_api::ViewerId::from(
+            bedtime_plugin_editor::TEXT_VIEWER,
+        )),
         false,
         None,
     )

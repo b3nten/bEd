@@ -109,8 +109,14 @@ fn formatter_fixture() -> FormatterFixture {
         .non_send_mut::<DocumentSession>()
         .open_file(&path)
         .unwrap();
-    let panel =
-        open_document_panel(app.world_mut(), "test.panel", document, Value::Null, None).unwrap();
+    let panel = open_document_panel(
+        app.world_mut(),
+        &bedtime_api::PanelTypeId::new("test.panel"),
+        document,
+        Value::Null,
+        None,
+    )
+    .unwrap();
     let view = app
         .world_mut()
         .non_send_mut::<DocumentSession>()

@@ -12,7 +12,7 @@ use tiling_ui::{
 pub struct WorkbenchAppearance {
     pub add_button: bool,
     pub tab_icons: bool,
-    pub hidden_picker: HashSet<String>,
+    pub hidden_picker: HashSet<bedtime_api::PanelTypeId>,
 }
 
 #[derive(Component, Clone, Copy, Default)]
@@ -82,7 +82,7 @@ fn draw(world: &mut World, ui: &Ui) {
             ChromeTab {
                 entity,
                 id,
-                title: panel_title(world, surface).unwrap_or_else(|_| kind.clone()),
+                title: panel_title(world, surface).unwrap_or_else(|_| kind.to_string()),
                 icon: world
                     .get_non_send::<bedtime_ui::icons::Icons>()
                     .and_then(|icons| {
@@ -113,9 +113,9 @@ fn draw(world: &mut World, ui: &Ui) {
         .panels()
         .iter()
         .map(|definition| ChromePanel {
-            id: definition.id.into(),
+            id: definition.id.clone(),
             label: definition.label.into(),
-            allow_empty: !appearance.hidden_picker.contains(definition.id),
+            allow_empty: !appearance.hidden_picker.contains(&definition.id),
         })
         .collect();
     let requested = layout.focused.filter(|entity| {
@@ -452,7 +452,7 @@ fn resolve_gestures(
                 draft.close_empty_area(area);
             }
             TilingAction::AddPanel { area, kind } => requests.push(WorkbenchAction::OpenPanel {
-                panel_type: kind,
+                panel_type: kind.into(),
                 state: Value::Null,
                 area: Some(area),
             }),

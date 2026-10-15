@@ -874,7 +874,7 @@ fn prepare_panel(world: &mut World, entity: Entity) -> Result<(), String> {
     world.entity_mut(entity).insert(PanelBinding {
         input: document.map_or_else(|| PanelInput::LocalFile(path.into()), PanelInput::Document),
         document,
-        viewer: record["viewer"].as_str().map(str::to_owned),
+        viewer: record["viewer"].as_str().map(bedtime_api::ViewerId::from),
         session_id: session,
         ..Default::default()
     });
@@ -1485,7 +1485,7 @@ pub fn resolve_documents(world: &mut World) {
 
 pub fn open_document_panel(
     world: &mut World,
-    panel_type: &str,
+    panel_type: &bedtime_api::PanelTypeId,
     document: DocumentId,
     state: Value,
     area: Option<u32>,
@@ -1495,11 +1495,11 @@ pub fn open_document_panel(
 
 fn open_document_panel_with_viewer(
     world: &mut World,
-    panel_type: &str,
+    panel_type: &bedtime_api::PanelTypeId,
     document: DocumentId,
     state: Value,
     area: Option<u32>,
-    viewer: Option<&str>,
+    viewer: Option<&bedtime_api::ViewerId>,
 ) -> Result<Entity, String> {
     let (path, kind) = world
         .non_send::<DocumentSession>()
@@ -1515,7 +1515,7 @@ fn open_document_panel_with_viewer(
     let binding = PanelBinding {
         input: PanelInput::Document(document),
         document: Some(document),
-        viewer: viewer.map(str::to_owned),
+        viewer: viewer.cloned(),
         session_id: world.non_send::<DocumentSession>().session_id().0,
         ..Default::default()
     };
@@ -1532,10 +1532,10 @@ fn open_document_panel_with_viewer(
 /// Tool and document panels share one stable tab shell and one owned frontend.
 pub fn open_panel(
     world: &mut World,
-    kind: &str,
+    kind: &bedtime_api::PanelTypeId,
     input: PanelInput,
     state: Value,
-    viewer: Option<String>,
+    viewer: Option<bedtime_api::ViewerId>,
     area: Option<u32>,
     show_existing: bool,
 ) -> Result<Entity, String> {
@@ -1544,7 +1544,7 @@ pub fn open_panel(
             .query::<(Entity, &bedtime_workbench::PanelRecord, &PanelBinding)>()
             .iter(world)
             .find_map(|(panel, record, binding)| {
-                (record.panel_type == kind
+                (record.panel_type == *kind
                     && binding.input == input
                     && bedtime_api::workbench::panel_active(world, panel)
                     && world
@@ -1587,7 +1587,7 @@ pub fn open_panel(
 pub(crate) fn mount_panel_frontend(
     world: &mut World,
     panel: Entity,
-    kind: &str,
+    kind: &bedtime_api::PanelTypeId,
     binding: PanelBinding,
     state: Value,
 ) -> Result<Entity, String> {
@@ -1736,7 +1736,7 @@ pub fn split_panel(
 pub fn open_document_viewer(
     world: &mut World,
     document: DocumentId,
-    viewer: &str,
+    viewer: &bedtime_api::ViewerId,
     area: Option<u32>,
 ) -> Result<Entity, String> {
     let descriptor = world
@@ -1763,7 +1763,7 @@ pub fn open_document_viewer(
     let previous_area = layout.focused_area;
     match open_document_panel_with_viewer(
         world,
-        descriptor.panel_type,
+        &descriptor.panel_type,
         document,
         Value::Null,
         area,
@@ -1784,13 +1784,13 @@ pub fn open_document_viewer(
 fn document_viewer_tab(
     world: &mut World,
     document: DocumentId,
-    viewer: &str,
+    viewer: &bedtime_api::ViewerId,
     area: Option<u32>,
 ) -> Option<Entity> {
     bedtime_workbench::recent_panel_matching(world, |world, panel| {
         world.get::<PanelBinding>(panel).is_some_and(|binding| {
             binding.document == Some(document)
-                && binding.viewer.as_deref() == Some(viewer)
+                && binding.viewer.as_ref() == Some(viewer)
                 && area.is_none_or(|area| {
                     world.resource::<WorkbenchLayout>().tiling.area_for(
                         world
@@ -1806,7 +1806,7 @@ fn document_viewer_tab(
 pub fn open_file(
     world: &mut World,
     path: &Path,
-    viewer: Option<&str>,
+    viewer: Option<&bedtime_api::ViewerId>,
     area: Option<u32>,
 ) -> Result<Entity, String> {
     open_file_instance(world, path, viewer, false, area)
@@ -1815,7 +1815,7 @@ pub fn open_file(
 pub fn open_file_instance(
     world: &mut World,
     path: &Path,
-    viewer: Option<&str>,
+    viewer: Option<&bedtime_api::ViewerId>,
     additional: bool,
     area: Option<u32>,
 ) -> Result<Entity, String> {
@@ -1832,7 +1832,7 @@ enum FileOpenIntent {
 fn open_file_instance_intent(
     world: &mut World,
     path: &Path,
-    viewer: Option<&str>,
+    viewer: Option<&bedtime_api::ViewerId>,
     additional: bool,
     area: Option<u32>,
     intent: FileOpenIntent,
@@ -1845,7 +1845,7 @@ fn open_file_instance_intent(
         .map(|id| {
             world
                 .resource::<bedtime_api::features::FeatureRegistry>()
-                .viewer(id)
+                .viewer(&bedtime_api::ViewerId::from(id))
                 .cloned()
                 .ok_or_else(|| format!("File viewer unavailable: {id}"))
         })
@@ -1903,19 +1903,19 @@ fn open_file_instance_intent(
     if additional {
         return open_document_panel_with_viewer(
             world,
-            descriptor.panel_type,
+            &descriptor.panel_type,
             document,
             Value::Null,
             area,
-            Some(descriptor.id),
+            Some(&descriptor.id),
         );
     }
     let existing = if matches!(intent, FileOpenIntent::Drop) {
-        document_viewer_tab(world, document, descriptor.id, area)
+        document_viewer_tab(world, document, &descriptor.id, area)
     } else {
         None
     }
-    .or_else(|| document_viewer_tab(world, document, descriptor.id, None));
+    .or_else(|| document_viewer_tab(world, document, &descriptor.id, None));
     if let Some(panel) = existing {
         commit_document_drafts(world, &[document])?;
         if matches!(intent, FileOpenIntent::Keep | FileOpenIntent::Drop) {
@@ -1929,9 +1929,9 @@ fn open_file_instance_intent(
         return replace_pristine_document_panel(
             world,
             panel,
-            descriptor.panel_type,
+            &descriptor.panel_type,
             document,
-            descriptor.id,
+            &descriptor.id,
         );
     }
     let active = active_panel_entities(world);
@@ -1952,7 +1952,7 @@ fn open_file_instance_intent(
         tiling.add_area(destination);
         split = Some((tiling, destination));
     }
-    let panel = open_document_viewer(world, document, descriptor.id, placement)?;
+    let panel = open_document_viewer(world, document, &descriptor.id, placement)?;
     if let Some((mut tiling, destination)) = split {
         tiling.assign(
             world
@@ -1986,7 +1986,7 @@ fn open_local_file_panel(
             let matches = |world: &World, panel: Entity| {
                 world.get::<PanelBinding>(panel).is_some_and(|binding| {
                     binding.input.local_file() == Some(path.as_path())
-                        && binding.viewer.as_deref() == Some(viewer.id)
+                        && binding.viewer.as_ref() == Some(&viewer.id)
                 })
             };
             let target = if matches!(intent, FileOpenIntent::Drop) {
@@ -2028,12 +2028,12 @@ fn open_local_file_panel(
         return Err(error);
     }
     if let Some(mut binding) = world.get_mut::<PanelBinding>(entity) {
-        binding.viewer = Some(viewer.id.into());
+        binding.viewer = Some(viewer.id.clone());
     }
     if let Some(frontend) = panel_presentation(world, entity)
         && let Some(mut binding) = world.get_mut::<PanelBinding>(frontend)
     {
-        binding.viewer = Some(viewer.id.into());
+        binding.viewer = Some(viewer.id.clone());
     }
     Ok(entity)
 }
@@ -2041,7 +2041,7 @@ fn open_local_file_panel(
 fn preview_file(
     world: &mut World,
     path: &Path,
-    viewer: Option<&str>,
+    viewer: Option<&bedtime_api::ViewerId>,
     area: u32,
 ) -> Result<Entity, String> {
     let previous = world
@@ -2585,11 +2585,11 @@ fn apply_document_request_inner(
                 .map_err(|error| error.to_string())?;
             let panel = open_document_panel_with_viewer(
                 world,
-                viewer.panel_type,
+                &viewer.panel_type,
                 document,
                 Value::Null,
                 Some(request.area()),
-                Some(viewer.id),
+                Some(&viewer.id),
             )?;
             let revision = world
                 .non_send::<DocumentSession>()
@@ -2610,7 +2610,7 @@ fn apply_document_request_inner(
             return open_file_instance(
                 world,
                 Path::new(&path),
-                viewer.as_deref(),
+                viewer.as_ref(),
                 additional,
                 Some(request.area()),
             )
@@ -2666,7 +2666,7 @@ fn apply_document_request_inner(
             } else {
                 open_panel(
                     world,
-                    "bedtime.terminal.panel",
+                    &bedtime_api::PanelTypeId::new("bedtime.terminal.panel"),
                     PanelInput::None,
                     json!({"session":id}),
                     None,
@@ -2856,9 +2856,9 @@ fn apply_document_request_inner(
                 ) {
                 request.area()
             } else {
-                default_file_area(world, Path::new(&path), viewer.as_deref(), request.area())?
+                default_file_area(world, Path::new(&path), viewer.as_ref(), request.area())?
             };
-            return open_file(world, Path::new(&path), viewer.as_deref(), Some(area))
+            return open_file(world, Path::new(&path), viewer.as_ref(), Some(area))
                 .map(HostOutcome::Opened);
         }
         HostAction::PreviewFileIn {
@@ -2871,9 +2871,9 @@ fn apply_document_request_inner(
             {
                 request.area()
             } else {
-                default_file_area(world, Path::new(&path), viewer.as_deref(), request.area())?
+                default_file_area(world, Path::new(&path), viewer.as_ref(), request.area())?
             };
-            return preview_file(world, Path::new(&path), viewer.as_deref(), area)
+            return preview_file(world, Path::new(&path), viewer.as_ref(), area)
                 .map(HostOutcome::Opened);
         }
         HostAction::OpenTerminalFiles { paths } => {
@@ -2976,9 +2976,9 @@ fn apply_document_request_inner(
                 let area = if request.has_explicit_area() {
                     request.area()
                 } else {
-                    default_file_area(world, &path, viewer.as_deref(), request.area())?
+                    default_file_area(world, &path, viewer.as_ref(), request.area())?
                 };
-                return open_file(world, &path, viewer.as_deref(), Some(area))
+                return open_file(world, &path, viewer.as_ref(), Some(area))
                     .map(HostOutcome::Opened);
             }
         }
@@ -3294,7 +3294,7 @@ fn preferred_text_area(world: &mut World) -> Option<u32> {
 fn default_file_area(
     world: &mut World,
     path: &Path,
-    viewer: Option<&str>,
+    viewer: Option<&bedtime_api::ViewerId>,
     fallback: u32,
 ) -> Result<u32, String> {
     let kind = if world.non_send::<DocumentSession>().is_remote() {
@@ -3310,15 +3310,17 @@ fn default_file_area(
         bedtime_files::files::classify_file(path).map_err(|error| error.to_string())?
     };
     let registry = world.resource::<bedtime_api::features::FeatureRegistry>();
-    let descriptor = viewer.and_then(|id| registry.viewer(id)).or_else(|| {
-        registry.preferred_viewer_for_file(
-            &path.to_string_lossy(),
-            kind,
-            &world
-                .resource::<bedtime_api::settings::SettingsSnapshot>()
-                .default_viewers,
-        )
-    });
+    let descriptor = viewer
+        .and_then(|id| registry.viewer(&bedtime_api::ViewerId::from(id)))
+        .or_else(|| {
+            registry.preferred_viewer_for_file(
+                &path.to_string_lossy(),
+                kind,
+                &world
+                    .resource::<bedtime_api::settings::SettingsSnapshot>()
+                    .default_viewers,
+            )
+        });
     if kind == bedtime_documents::DocumentKind::Text
         && descriptor.is_some_and(|viewer| !viewer.is_local_file())
     {
@@ -3387,7 +3389,8 @@ fn reveal_source(world: &mut World, path: &Path, jump: SourceJump) -> Result<Ent
         .resource::<bedtime_api::features::FeatureRegistry>()
         .default_viewer(bedtime_documents::DocumentKind::Text)
         .ok_or("No text viewer is installed")?
-        .id;
+        .id
+        .clone();
     let source = source
         .and_then(|source| bedtime_api::workbench::panel_owner(world, source))
         .filter(|source| {
@@ -3402,9 +3405,9 @@ fn reveal_source(world: &mut World, path: &Path, jump: SourceJump) -> Result<Ent
     let panel = if let Some(source) = source {
         source
     } else if preview {
-        preview_file(world, path, Some(viewer), area)?
+        preview_file(world, path, Some(&viewer), area)?
     } else {
-        open_file(world, path, Some(viewer), Some(area))?
+        open_file(world, path, Some(&viewer), Some(area))?
     };
     let binding = world
         .get::<PanelBinding>(panel)
@@ -3781,14 +3784,15 @@ pub fn restore_document_layout(
             restored.insert(id, terminal.unwrap());
             continue;
         }
-        let kind = record["panel_type"]
-            .as_str()
-            .ok_or_else(|| "Saved panel must name its panel_type".to_owned())?
-            .to_owned();
+        let kind = bedtime_api::PanelTypeId::from(
+            record["panel_type"]
+                .as_str()
+                .ok_or_else(|| "Saved panel must name its panel_type".to_owned())?,
+        );
         record["panel_type"] = json!(kind);
-        let viewer = record["viewer"].as_str().map(str::to_owned);
+        let viewer = record["viewer"].as_str().map(bedtime_api::ViewerId::from);
         let descriptor = viewer
-            .as_deref()
+            .as_ref()
             .and_then(|viewer| {
                 world
                     .resource::<bedtime_api::features::FeatureRegistry>()
@@ -4094,9 +4098,9 @@ fn reusable_document_panel(world: &mut World, area: Option<u32>) -> Result<Optio
 fn replace_pristine_document_panel(
     world: &mut World,
     panel: Entity,
-    kind: &str,
+    kind: &bedtime_api::PanelTypeId,
     document: DocumentId,
-    viewer: &str,
+    viewer: &bedtime_api::ViewerId,
 ) -> Result<Entity, String> {
     let old = world
         .get::<PanelBinding>(panel)

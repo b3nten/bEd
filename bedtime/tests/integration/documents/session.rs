@@ -832,7 +832,12 @@ fn failed_history_flush_is_reported_and_retried_without_starving_save() {
     fs::write(&root, b"history directory is occupied").unwrap();
     let report = session.tick();
     assert_eq!(fs::read(&path).unwrap(), b"Xbase");
-    assert!(report.errors.iter().any(|error| error.service == "history"));
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|error| error.service == bedtime_documents::ServiceKind::History)
+    );
     fs::remove_file(&root).unwrap();
     fs::create_dir(&root).unwrap();
     assert!(session.tick().errors.is_empty());

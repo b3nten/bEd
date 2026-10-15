@@ -1,4 +1,5 @@
 //! Application menu arrangement refers to commands owned by the installed plugins.
+use crate::CommandId;
 use bevy::prelude::*;
 use serde_json::Value;
 
@@ -23,13 +24,13 @@ impl Menu {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MenuCommand {
-    pub id: String,
+    pub id: CommandId,
     pub label: Option<String>,
     pub arguments: Value,
     pub selected: bool,
 }
 impl MenuCommand {
-    pub fn new(id: impl Into<String>) -> Self {
+    pub fn new(id: impl Into<CommandId>) -> Self {
         Self {
             id: id.into(),
             label: None,
@@ -77,7 +78,7 @@ impl MenuLayout {
     pub fn validate(&self) -> Result<(), String> {
         fn visit<'a>(
             entries: &'a [MenuEntry],
-            arguments: &mut std::collections::HashMap<&'a str, &'a Value>,
+            arguments: &mut std::collections::HashMap<&'a CommandId, &'a Value>,
         ) -> Result<(), String> {
             for entry in entries {
                 match entry {
@@ -105,11 +106,11 @@ impl MenuLayout {
     }
 
     /// Native activation identifies the command; preserve the application's payload.
-    pub fn arguments(&self, id: &str) -> Result<Value, String> {
+    pub fn arguments(&self, id: &CommandId) -> Result<Value, String> {
         self.validate()?;
-        fn find(entries: &[MenuEntry], id: &str) -> Option<Value> {
+        fn find(entries: &[MenuEntry], id: &CommandId) -> Option<Value> {
             entries.iter().find_map(|entry| match entry {
-                MenuEntry::Command(command) | MenuEntry::Quit(command) if command.id == id => {
+                MenuEntry::Command(command) | MenuEntry::Quit(command) if &command.id == id => {
                     Some(command.arguments.clone())
                 }
                 MenuEntry::Submenu(menu) => find(&menu.entries, id),
@@ -144,7 +145,7 @@ mod tests {
         ]);
         assert!(layout.validate().is_ok());
         assert_eq!(
-            layout.arguments("example.open").unwrap(),
+            layout.arguments(&CommandId::new("example.open")).unwrap(),
             json!({"target":"database"})
         );
         layout.0[1].entries.push(MenuEntry::Command(
@@ -154,6 +155,6 @@ mod tests {
             layout.validate().unwrap_err(),
             "Menu command 'example.open' has conflicting argument payloads"
         );
-        assert!(layout.arguments("example.open").is_err());
+        assert!(layout.arguments(&CommandId::new("example.open")).is_err());
     }
 }

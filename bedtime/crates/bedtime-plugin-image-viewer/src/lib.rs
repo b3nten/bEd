@@ -939,7 +939,7 @@ mod tests {
         let command = app
             .world()
             .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-            .command(OPEN_FILE_COMMAND)
+            .command(&bedtime_api::CommandId::from(OPEN_FILE_COMMAND))
             .unwrap()
             .handler;
         app.world_mut()

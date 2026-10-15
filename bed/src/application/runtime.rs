@@ -83,7 +83,7 @@ pub fn apply_layout_command(world: &mut World, command: LayoutCommand) -> io::Re
 #[derive(Clone, Debug)]
 pub struct OpenFileOptions {
     pub path: PathBuf,
-    pub viewer: Option<String>,
+    pub viewer: Option<bedtime_api::ViewerId>,
     pub additional: bool,
 }
 
@@ -95,7 +95,7 @@ pub struct AppOptions {
     /// Initial numbered arrangement for a fresh bEd window.
     pub initial_layout: Option<LayoutSlot>,
     /// Initial tool, opened before file arguments so those files retain focus.
-    pub startup_panel: Option<String>,
+    pub startup_panel: Option<bedtime_api::PanelTypeId>,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -341,12 +341,12 @@ fn initialize_app(world: &mut World) {
             && panel_entities(world).is_empty()
             && world
                 .resource::<bedtime_api::workbench::WorkbenchRegistry>()
-                .panel(kind)
+                .panel(&bedtime_api::PanelTypeId::from(kind))
                 .is_some()
         {
             bedtime_core::open_panel(
                 world,
-                kind,
+                &bedtime_api::PanelTypeId::from(kind),
                 PanelInput::None,
                 Value::Null,
                 None,

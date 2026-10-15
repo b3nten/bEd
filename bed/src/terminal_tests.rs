@@ -31,7 +31,7 @@ fn app(directory: &TempDir, startup_panel: Option<&str>) -> App {
         AppRuntimePlugin {
             options: AppOptions {
                 working_directory: Some(directory.root().to_owned()),
-                startup_panel: startup_panel.map(ToOwned::to_owned),
+                startup_panel: startup_panel.map(bedtime_api::PanelTypeId::from),
                 ..Default::default()
             },
         },
@@ -62,7 +62,7 @@ fn app(directory: &TempDir, startup_panel: Option<&str>) -> App {
 fn terminal(app: &mut App) -> (Entity, Entity, u64) {
     let panel = open_panel(
         app.world_mut(),
-        bedtime_plugin_terminal::PANEL_ID,
+        &bedtime_api::PanelTypeId::from(bedtime_plugin_terminal::PANEL_ID),
         bedtime_api::documents::PanelInput::None,
         Value::Null,
         None,
