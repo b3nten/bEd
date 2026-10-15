@@ -1,0 +1,15 @@
+[package]
+name = "bedtime-workbench2"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "ECS command registration and controlled dispatch for the second Bedtime foundation"
+
+[dependencies]
+bevy = { workspace = true, features = ["std"] }
+bedtime-desktop2 = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

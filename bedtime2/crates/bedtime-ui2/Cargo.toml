@@ -1,0 +1,22 @@
+[package]
+name = "bedtime-ui2"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "ECS presentation, controls and ImGui rendering for Bevy"
+
+[dependencies]
+bedtime-desktop2.workspace = true
+bevy = { workspace = true, features = ["std", "bevy_render", "bevy_core_pipeline", "bevy_winit", "keyboard", "mouse"] }
+dear-imgui-rs.workspace = true
+dear-imgui-sys.workspace = true
+dear-imgui-wgpu.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+resvg.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_log", "x11", "wayland", "png"] }

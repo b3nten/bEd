@@ -21,6 +21,11 @@ CONTENT_PLUGINS = PANEL_PLUGINS | VIEWER_PLUGINS | {"bedtime-plugin-mascots"}
 # These are allowed direct edges, not required implementation dependencies.
 # Removing an unused dependency must not require weakening a boundary check.
 ALLOWED_INTERNAL = {
+    "bed2": {"bedtime-desktop2", "bedtime-ui2", "bedtime-workbench2", "bed2-demo-game"},
+    "bed2-demo-game": set(),
+    "bedtime-desktop2": set(),
+    "bedtime-ui2": {"bedtime-desktop2"},
+    "bedtime-workbench2": {"bedtime-desktop2"},
     "bedside-table": {"bedtime", "bedtime-core", "bedtime-workbench", "bedtime-storage", "bedtime-sqlite"},
     "bedtime-sqlite": set(),
     "bed": {
@@ -174,7 +179,13 @@ def check(offline=False):
             assert "bedtime" in direct, f"{name} bypasses the owned launcher"
         names = dependency_tree(name, offline)
         forbidden = set()
-        if name == "bedside-table":
+        if name in {"bed2", "bedtime-desktop2", "bedtime-ui2", "bedtime-workbench2"}:
+            allowed = {name} | ALLOWED_INTERNAL[name]
+            forbidden = set(ALLOWED_INTERNAL) - allowed
+            if name in {"bedtime-desktop2", "bedtime-workbench2"}:
+                forbidden |= {"dear-imgui-rs", "dear-imgui-sys", "dear-imgui-wgpu"}
+                forbidden |= {"wgpu", "bevy_render", "bevy_core_pipeline"}
+        elif name == "bedside-table":
             forbidden = {"bed", "bedtime-terminal", "bedtime-editor-widgets",
                          "bedtime-plugin-layouts", "bevy_pbr", "bevy_gltf", "rodio"} | CONTENT_PLUGINS | IDE_SERVICES
             # Core file operations currently share the local/remote backend

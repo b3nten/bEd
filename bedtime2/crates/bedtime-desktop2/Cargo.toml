@@ -1,0 +1,17 @@
+[package]
+name = "bedtime-desktop2"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Native platform integration for Bevy desktop applications"
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "bevy_window"] }
+arboard = { workspace = true }
+muda = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+raw-window-handle = "0.6"
+objc2-app-kit = { workspace = true, features = ["NSAppearance"] }
+objc2-foundation = { workspace = true }

@@ -1,0 +1,11 @@
+[package]
+name = "bed2-demo-game"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "A plain Bevy cube scene shared by the UI 2 viewport and a standalone game"
+
+[dependencies]
+wgpu.workspace = true
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_winit", "bevy_log", "x11", "wayland", "png"] }

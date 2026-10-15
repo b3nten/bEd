@@ -1,0 +1,15 @@
+[package]
+name = "bed2"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Application scaffold for the second Bedtime foundation"
+
+[dependencies]
+bedtime-desktop2 = { workspace = true }
+bedtime-ui2.workspace = true
+bedtime-workbench2 = { workspace = true }
+bed2-demo-game = { path = "demo-game" }
+winit.workspace = true
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_winit", "bevy_log", "keyboard", "mouse", "x11", "wayland"] }
