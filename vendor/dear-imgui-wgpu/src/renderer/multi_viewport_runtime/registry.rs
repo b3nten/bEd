@@ -96,8 +96,6 @@ pub(super) enum ViewportDataDestroy {
 
 #[derive(Clone)]
 pub(super) struct GlobalHandles {
-    pub(super) postprocessor:
-        Option<Rc<dyn crate::viewport_postprocess::ViewportPostprocessorFactory>>,
     pub(super) instance: wgpu::Instance,
     pub(super) adapter: wgpu::Adapter,
     pub(super) device: wgpu::Device,
@@ -191,27 +189,7 @@ pub(super) fn renderer_globals(
                 multisample_state.count,
             )?;
         }
-        let postprocessor = backend.init_info.viewport_postprocessor.clone();
-        if postprocessor.is_some()
-            && (multisample_state.count != 1 || backend.depth_stencil_format.is_some())
-        {
-            return Err(WgpuViewportError::Postprocess(
-                "viewport postprocessing requires MSAA 1 and no depth attachment".into(),
-            ));
-        }
-        if postprocessor.is_none()
-            && backend
-                .init_info
-                .viewport_surface_config
-                .output_format
-                .is_some_and(|format| format != backend.render_target_format)
-        {
-            return Err(WgpuViewportError::Postprocess(
-                "separate surface format requires a viewport postprocessor".into(),
-            ));
-        }
         Ok(GlobalHandles {
-            postprocessor,
             instance,
             adapter,
             device: backend.device.clone(),

@@ -568,8 +568,6 @@ fn auto_no_vsync_is_preserved_for_secondary_viewports() {
 fn secondary_surface_configuration_does_not_force_fifo() {
     let format = wgpu::TextureFormat::Bgra8UnormSrgb;
     let requested = WgpuViewportSurfaceConfig {
-        output_format: None,
-        additional_usage: wgpu::TextureUsages::empty(),
         present_mode: wgpu::PresentMode::AutoNoVsync,
         alpha_mode: wgpu::CompositeAlphaMode::Opaque,
         desired_maximum_frame_latency: 1,
@@ -640,8 +638,6 @@ fn capabilities_for_policy(
 fn surface_config_is_renegotiated_from_current_capabilities() {
     let format = wgpu::TextureFormat::Bgra8UnormSrgb;
     let requested = WgpuViewportSurfaceConfig {
-        output_format: None,
-        additional_usage: wgpu::TextureUsages::empty(),
         present_mode: wgpu::PresentMode::Immediate,
         alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied,
         desired_maximum_frame_latency: 3,
@@ -2211,49 +2207,4 @@ fn surface_bundle_release_drops_frame_before_targets_and_surface() {
     assert!(pending_frame.is_none());
     assert!(targets.is_none());
     assert!(surface.is_none());
-}
-
-#[test]
-fn offscreen_input_and_surface_output_formats_are_independent() {
-    let input = wgpu::TextureFormat::Rgba8Unorm;
-    let output = wgpu::TextureFormat::Bgra8UnormSrgb;
-    let requested = WgpuViewportSurfaceConfig {
-        output_format: Some(output),
-        ..Default::default()
-    };
-    let caps = capabilities_for_policy(
-        output,
-        vec![wgpu::PresentMode::Fifo],
-        vec![wgpu::CompositeAlphaMode::Opaque],
-    );
-    let config = surface_config_from_capabilities(input, requested, &caps, [200, 100])
-        .unwrap()
-        .unwrap();
-    assert_eq!(config.format, output);
-    assert!(
-        surface_config_from_capabilities(input, Default::default(), &caps, [200, 100]).is_err()
-    );
-}
-
-#[test]
-fn native_capture_usage_is_requested_only_when_supported() {
-    let format = wgpu::TextureFormat::Bgra8UnormSrgb;
-    let requested = WgpuViewportSurfaceConfig {
-        additional_usage: wgpu::TextureUsages::COPY_SRC,
-        ..Default::default()
-    };
-    let mut caps = capabilities_for_policy(
-        format,
-        vec![wgpu::PresentMode::Fifo],
-        vec![wgpu::CompositeAlphaMode::Opaque],
-    );
-    let config = surface_config_from_capabilities(format, requested, &caps, [200, 100])
-        .unwrap()
-        .unwrap();
-    assert!(!config.usage.contains(wgpu::TextureUsages::COPY_SRC));
-    caps.usages |= wgpu::TextureUsages::COPY_SRC;
-    let config = surface_config_from_capabilities(format, requested, &caps, [200, 100])
-        .unwrap()
-        .unwrap();
-    assert!(config.usage.contains(wgpu::TextureUsages::COPY_SRC));
 }

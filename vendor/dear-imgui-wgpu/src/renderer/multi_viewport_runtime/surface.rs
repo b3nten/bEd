@@ -8,7 +8,6 @@ use dear_imgui_rs::ViewportFlags;
 use dear_imgui_rs::platform_io::Viewport;
 
 pub(super) struct ViewportWgpuData {
-    pub(super) postprocessor: Option<Box<dyn crate::viewport_postprocess::ViewportPostprocessor>>,
     #[cfg(feature = "wgpu-30")]
     pub(super) queue: wgpu::Queue,
     pub(super) surface: Option<wgpu::Surface<'static>>,
@@ -41,7 +40,6 @@ pub(super) fn release_surface_bundle_parts<Frame, Targets, Surface>(
 
 impl ViewportWgpuData {
     pub(super) fn release_surface_bundle(&mut self) {
-        drop(self.postprocessor.take());
         release_surface_bundle_parts(
             &mut self.pending_frame,
             &mut self.targets,
@@ -106,9 +104,6 @@ pub(super) fn surface_config_from_capabilities(
     capabilities: &wgpu::SurfaceCapabilities,
     size: [u32; 2],
 ) -> Result<Option<wgpu::SurfaceConfiguration>, WgpuViewportError> {
-    let render_target_format = viewport_surface_config
-        .output_format
-        .unwrap_or(render_target_format);
     let format_supported = supports_surface_format(capabilities, render_target_format);
     if !format_supported {
         return Err(WgpuViewportError::UnsupportedSurfaceFormat {
@@ -131,8 +126,7 @@ pub(super) fn surface_config_from_capabilities(
         return Ok(None);
     }
     Ok(Some(wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-            | (viewport_surface_config.additional_usage & capabilities.usages),
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: render_target_format,
         #[cfg(feature = "wgpu-30")]
         color_space: wgpu::SurfaceColorSpace::Srgb,
@@ -237,7 +231,6 @@ pub(super) unsafe fn create_viewport_data(
     let (surface, size) = unsafe { platform_adapter::create_surface(&globals.instance, viewport) }?;
     let targets = configure_surface(globals, &surface, size)?;
     Ok(ViewportWgpuData {
-        postprocessor: None,
         #[cfg(feature = "wgpu-30")]
         queue: globals.queue.clone(),
         surface: Some(surface),
@@ -255,7 +248,6 @@ pub(super) fn reconfigure_surface(
 ) -> Result<(), WgpuViewportError> {
     drop(data.pending_frame.take());
     if size[0] == 0 || size[1] == 0 {
-        drop(data.postprocessor.take());
         drop(data.targets.take());
         data.size = size;
         data.pending_reconfigure = false;

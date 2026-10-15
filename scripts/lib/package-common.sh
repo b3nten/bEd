@@ -73,8 +73,10 @@ if licenses.original_notice(bundle, "ned") != licenses.original_notice((reposito
     raise SystemExit("Changed upstream ned notice in packaged NOTICE")
 required = ["vendor/freetype-sys/freetype2/docs/FTL.TXT"]
 required += [f"vendor/{binding}/{license}"
-             for binding in ("dear-imgui-sys", "dear-imgui-winit", "dear-imgui-wgpu")
+             for binding in ("dear-imgui-sys", "dear-imgui-wgpu")
              for license in ("LICENSE-MIT", "LICENSE-APACHE")]
+required += ["licenses/dear-imgui-winit/LICENSE-MIT",
+             "licenses/dear-imgui-winit/LICENSE-APACHE", "licenses/bevy_stl/LICENSE"]
 for section in required:
     source = repository / section
     if not source.is_file():

@@ -29,9 +29,6 @@ struct WgpuRendererAttachmentMarker;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum WgpuViewportError {
-    /// An owned viewport processing target or encoding operation failed.
-    #[error("viewport postprocessing failed: {0}")]
-    Postprocess(String),
     /// The Dear ImGui Context rejected the renderer attachment.
     #[error(transparent)]
     Attachment(#[from] ContextAttachmentError),

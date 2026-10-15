@@ -138,11 +138,6 @@ impl WgpuRenderState<'_> {
 /// and compositor choices together so creation and surface-loss recovery cannot silently diverge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WgpuViewportSurfaceConfig {
-    /// Optional output format when an offscreen viewport postprocessor is installed.
-    pub output_format: Option<TextureFormat>,
-    /// Additional supported surface usages, for example native frame readback.
-    /// Unsupported bits are omitted from each surface's configuration.
-    pub additional_usage: TextureUsages,
     /// Requested presentation mode.
     pub present_mode: PresentMode,
     /// Requested compositor alpha mode.
@@ -154,8 +149,6 @@ pub struct WgpuViewportSurfaceConfig {
 impl Default for WgpuViewportSurfaceConfig {
     fn default() -> Self {
         Self {
-            output_format: None,
-            additional_usage: TextureUsages::empty(),
             present_mode: PresentMode::Fifo,
             alpha_mode: CompositeAlphaMode::Opaque,
             desired_maximum_frame_latency: 2,
@@ -166,8 +159,6 @@ impl Default for WgpuViewportSurfaceConfig {
 impl From<&SurfaceConfiguration> for WgpuViewportSurfaceConfig {
     fn from(config: &SurfaceConfiguration) -> Self {
         Self {
-            output_format: None,
-            additional_usage: TextureUsages::empty(),
             present_mode: config.present_mode,
             alpha_mode: config.alpha_mode,
             desired_maximum_frame_latency: config.desired_maximum_frame_latency,
@@ -180,10 +171,6 @@ impl From<&SurfaceConfiguration> for WgpuViewportSurfaceConfig {
 /// This corresponds to `ImGui_ImplWGPU_InitInfo` plus Rust-owned multi-viewport policy.
 #[derive(Debug, Clone)]
 pub struct WgpuInitInfo {
-    /// Optional owned per-viewport offscreen processing.
-    #[cfg(any(feature = "multi-viewport-winit", feature = "multi-viewport-sdl3"))]
-    pub viewport_postprocessor:
-        Option<std::rc::Rc<dyn crate::viewport_postprocess::ViewportPostprocessorFactory>>,
     /// WGPU instance (required for multi-viewport to create per-window surfaces)
     pub instance: Option<Instance>,
     /// WGPU adapter (required by multi-viewport; optional for single-window rendering)
@@ -206,8 +193,6 @@ impl WgpuInitInfo {
     /// Create new initialization info with required parameters
     pub fn new(device: Device, queue: Queue, render_target_format: TextureFormat) -> Self {
         Self {
-            #[cfg(any(feature = "multi-viewport-winit", feature = "multi-viewport-sdl3"))]
-            viewport_postprocessor: None,
             instance: None,
             adapter: None,
             device,
@@ -244,16 +229,6 @@ impl WgpuInitInfo {
     /// Provide the adapter required to negotiate multi-viewport surface capabilities
     pub fn with_adapter(mut self, adapter: Adapter) -> Self {
         self.adapter = Some(adapter);
-        self
-    }
-
-    /// Install a processor factory. MSAA and depth attachments are unsupported on this route.
-    #[cfg(any(feature = "multi-viewport-winit", feature = "multi-viewport-sdl3"))]
-    pub fn with_viewport_postprocessor(
-        mut self,
-        factory: std::rc::Rc<dyn crate::viewport_postprocess::ViewportPostprocessorFactory>,
-    ) -> Self {
-        self.viewport_postprocessor = Some(factory);
         self
     }
 

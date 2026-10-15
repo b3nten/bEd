@@ -31,47 +31,23 @@ its crate records commit `9040df60c41b76aeaa19c231d488e79d91e666fe`. Matching
 FreeType license texts are included under `third-party/freetype2`. Bed uses
 the FreeType License option, rather than the alternative GPL license.
 
-`dock_builder_shim.cpp` includes a null-safe accessor for a native dock node's
-ID. Bed uses it with the existing leaf/rectangle bindings to choose a panel's
-destination in Rust, without duplicating the opaque ImGuiDockNode layout. The
-accessor contains no application layout policy.
+`dock_builder_shim.cpp` adds two operations used by Bed's tiling UI:
+`bed_imgui_dock_node_select_window` makes the selected document the visible
+member of a native `NoTabBar` dock area, and
+`bed_imgui_dock_node_clear_background` clears the cached native dock background
+after submission so Bed owns background composition. No opaque native struct
+layout is copied into Rust.
 
-A second null-safe accessor exposes the node's existing tab bar. Bed queues
-selection of a split's source document in Rust while the duplicate receives
-keyboard focus. This avoids copying the opaque node layout or changing ImGui's
-focus/docking algorithms.
-
-Unused experimental node-info and central-node mutation accessors were removed
-during repository cleanup. Only the ID and tab-bar Bed accessors remain.
-
-The native docking tab-list popup uses `SetNextWindowViewport` in
-`DockNodeWindowMenuUpdate` instead of setting an explicit popup position.
-This keeps the popup in its originating native viewport after a group is
-detached. ImGui still chooses its placement and handles the menu contents.
+Unused node-ID/split accessors, native dock-menu/grip/close-button changes, and
+native viewport alpha/clearing patches were removed. Bed owns its tabs and
+menus, disables native docking/tab bars for its areas, and renders into a
+Bevy-owned window with application-owned composition and clearing.
 
 The original Rust binding `LICENSE-MIT` and `LICENSE-APACHE` files are copied
 unchanged from repository commit `95f279150e95c728952db3e79226c687167ccf73`.
 The published crate archive omitted these workspace-root notices; they are
 retained here alongside the native sources' separate notices.
 
-Native viewport window and title backgrounds preserve style alpha instead of
-forcing it to 255. Bed requests transparent native windows and applies opacity
-to backgrounds only; foreground colors are unchanged. Translucent viewport
-backgrounds retain renderer clearing, preventing opacity from accumulating
-across frames in persistent postprocess targets.
-
 Checkboxes paint their square and check mark at 70% of the native frame size,
 centered within the original bounds. Row layout, label baseline, keyboard
 navigation, and the full click target are preserved globally.
-
-Dock menu buttons draw a centered six-dot grip in place of the block-and-arrow
-icon. The grip scales with the font size and uses muted text alpha at rest,
-returning to full text alpha while hovered or held. Button bounds, tab layout,
-navigation, the window menu, and dragging/undocking behavior remain native.
-
-Dock nodes offer "Close Panel" below a separator in the grip's window menu,
-alongside the existing tab list or "Hide tab bar" action. The panel close icon
-and its reserved tab-bar space are removed. The menu respects the existing
-node/style close restrictions and selected window's close availability, and
-queues native close-all handling after tab submission. Individual tab/window
-close buttons and unsaved-document handling are preserved.

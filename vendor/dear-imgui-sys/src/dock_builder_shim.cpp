@@ -25,24 +25,6 @@ bool HasActiveContentWindow(const ImGuiContext* context, const ImGuiDockNode* ro
 
 extern "C"
 {
-unsigned int bed_imgui_dock_node_id(const ImGuiDockNode* node)
-{
-    return node == nullptr ? 0 : node->ID;
-}
-
-int bed_imgui_dock_node_split(
-    const ImGuiDockNode* node,
-    ImGuiDockNode** children,
-    ImVec2* reference_sizes)
-{
-    for (int index = 0; index < 2; ++index)
-    {
-        children[index] = node == nullptr ? nullptr : node->ChildNodes[index];
-        reference_sizes[index] = children[index] == nullptr ? ImVec2(0, 0) : children[index]->SizeRef;
-    }
-    return node == nullptr ? ImGuiAxis_None : node->SplitAxis;
-}
-
 void bed_imgui_dock_node_clear_background(ImGuiDockNode* node)
 {
     IM_ASSERT(node != nullptr);

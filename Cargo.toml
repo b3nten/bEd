@@ -56,7 +56,7 @@ members = [
     "bedtime/crates/bedtime-test-fixtures",
 ]
 default-members = ["bed"]
-exclude = ["vendor/arboard", "vendor/dear-imgui-sys", "vendor/dear-imgui-winit", "vendor/dear-imgui-wgpu", "vendor/freetype-sys", "vendor/bevy_stl", "vendor/rio-vt"]
+exclude = ["vendor/arboard", "vendor/dear-imgui-sys", "vendor/dear-imgui-wgpu", "vendor/freetype-sys", "vendor/rio-vt"]
 resolver = "3"
 
 [workspace.package]
@@ -96,7 +96,7 @@ dear-imgui-wgpu = { version = "=0.18.0", default-features = false, features = ["
 winit = "=0.30.13"
 wgpu = "=30.0.1"
 bevy = { version = "=0.20.0", default-features = false }
-bevy_stl = { version = "=0.18.0", default-features = false }
+stl_io = "=0.10.0"
 arboard = { version = "=3.6.1", default-features = false, features = ["wayland-data-control"] }
 rfd = "=0.17.2"
 serde_json = "1"
@@ -164,4 +164,3 @@ rio-vt = { path = "vendor/rio-vt" }
 arboard = { path = "vendor/arboard" }
 dear-imgui-sys = { path = "vendor/dear-imgui-sys" }
 dear-imgui-wgpu = { path = "vendor/dear-imgui-wgpu" }
-bevy_stl = { path = "vendor/bevy_stl" }

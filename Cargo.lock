@@ -2566,7 +2566,6 @@ dependencies = [
  "bedtime-keybindings",
  "bedtime-ui",
  "bevy",
- "bevy_stl",
  "bytemuck",
  "dear-imgui-rs",
  "draco-core",
@@ -2576,6 +2575,7 @@ dependencies = [
  "image",
  "meshopt",
  "serde_json",
+ "stl_io",
 ]
 
 [[package]]
@@ -3777,15 +3777,6 @@ dependencies = [
  "bevy_macro_utils",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "bevy_stl"
-version = "0.18.0"
-dependencies = [
- "bevy",
- "stl_io",
- "thiserror 2.0.21",
 ]
 
 [[package]]

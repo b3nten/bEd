@@ -27,10 +27,15 @@ THEMES = (
     "everforest-light-soft", "oxocarbon-dark", "oxocarbon-light",
 )
 THEME_LICENSES = ("tokyo", "solarized", "carbon", "catppuccin", "rose-pine", "synthwave", "everforest", "oxocarbon")
-RUST_BINDING_NOTICES = [
+RETAINED_SOURCE_NOTICES = [
     f"vendor/{binding}/{license}"
-    for binding in ("dear-imgui-sys", "dear-imgui-winit", "dear-imgui-wgpu")
+    for binding in ("dear-imgui-sys", "dear-imgui-wgpu")
     for license in ("LICENSE-MIT", "LICENSE-APACHE")
+]
+RETAINED_SOURCE_NOTICES += [
+    "licenses/dear-imgui-winit/LICENSE-MIT",
+    "licenses/dear-imgui-winit/LICENSE-APACHE",
+    "licenses/bevy_stl/LICENSE",
 ]
 
 
@@ -82,7 +87,7 @@ class DesktopPackageTests(unittest.TestCase):
             files[f"resources/themes/{theme}.json"] = "{}\n"
         for theme in THEME_LICENSES:
             files[f"resources/themes/{theme}-LICENSE.txt"] = f"Retained {theme} license\n"
-        files.update({name: f"Retained Rust binding notice: {name}\n" for name in RUST_BINDING_NOTICES})
+        files.update({name: f"Retained source notice: {name}\n" for name in RETAINED_SOURCE_NOTICES})
         for name, contents in files.items():
             path = self.root / ("bed/" + name if name.startswith(("resources/", "assets/")) else name)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -185,7 +190,7 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
             for theme in THEME_LICENSES:
                 self.assertEqual(package.extractfile(prefix + f"resources/themes/{theme}-LICENSE.txt").read(),
                                  (self.root / f"bed/resources/themes/{theme}-LICENSE.txt").read_bytes())
-            for notice in RUST_BINDING_NOTICES:
+            for notice in RETAINED_SOURCE_NOTICES:
                 self.assertEqual(LICENSES.original_notice(notice_bundle, notice),
                                  (self.root / notice).read_bytes())
             for target in HELPERS.TARGETS:
@@ -233,7 +238,7 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
             self.assertIn(resources + "license-index.json", package.namelist())
             self.assertFalse(any("/LICENSES/" in name for name in package.namelist()))
             notice_bundle = package.read(resources + "NOTICE")
-            for notice in RUST_BINDING_NOTICES:
+            for notice in RETAINED_SOURCE_NOTICES:
                 self.assertEqual(LICENSES.original_notice(notice_bundle, notice),
                                  (self.root / notice).read_bytes())
             for target in HELPERS.TARGETS:
@@ -318,7 +323,7 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
         self.assertFalse(list((self.root / "target/dist").glob("bed-package.*")))
 
     def test_missing_rust_binding_notice_prevents_publishing_a_desktop_package(self):
-        (self.root / RUST_BINDING_NOTICES[0]).unlink()
+        (self.root / RETAINED_SOURCE_NOTICES[0]).unlink()
         result = self.run_package("linux")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Missing dependency notice", result.stderr)
@@ -339,7 +344,7 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
             self.assertFalse(any("/LICENSES/" in name for name in package.namelist()))
             notice_bundle = package.read("helper/NOTICE")
             self.assertEqual(LICENSES.original_notice(notice_bundle, "ned"), b"Retained upstream MIT license\n")
-            for notice in RUST_BINDING_NOTICES:
+            for notice in RETAINED_SOURCE_NOTICES:
                 self.assertEqual(LICENSES.original_notice(notice_bundle, notice), (self.root / notice).read_bytes())
 
     def test_remote_helper_staging_retains_product_build_provenance(self):

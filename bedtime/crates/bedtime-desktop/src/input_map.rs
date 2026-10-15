@@ -1,7 +1,7 @@
 //! Input handling for Dear ImGui winit backend
 //!
 //! Adapted from dear-imgui-winit 0.18.0 (MIT OR Apache-2.0); the original
-//! source and licenses remain in vendor/dear-imgui-winit. This is Bed's active
+//! licenses remain in licenses/dear-imgui-winit. This is Bed's active
 //! mapping owner; the former native backend is no longer a desktop dependency.
 //!
 //! This module provides keyboard and mouse input mapping between winit events

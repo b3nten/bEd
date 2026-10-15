@@ -687,32 +687,11 @@ pub(super) unsafe fn renderer_render_window(control: &RuntimeControl, viewport: 
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        if data.postprocessor.is_none()
-            && let Some(factory) = &globals.postprocessor
-        {
-            data.postprocessor = Some(
-                factory
-                    .create(
-                        &device,
-                        globals.render_target_format,
-                        targets.config.format,
-                        framebuffer_size,
-                    )
-                    .map_err(WgpuViewportError::Postprocess)?,
-            );
-        }
-        let postprocess_view = data
-            .postprocessor
-            .as_mut()
-            .map(|processor| processor.input_view(&device, framebuffer_size))
-            .transpose()
-            .map_err(WgpuViewportError::Postprocess)?;
-        let input_view = postprocess_view.as_ref().unwrap_or(&view);
         let (color_view, resolve_target) = targets
             .multisampled_color
             .as_ref()
-            .map_or((input_view, None), |multisampled| {
-                (&multisampled.view, Some(input_view))
+            .map_or((&view, None), |multisampled| {
+                (&multisampled.view, Some(&view))
             });
         let depth_stencil_attachment = targets
             .depth_stencil
@@ -765,11 +744,6 @@ pub(super) unsafe fn renderer_render_window(control: &RuntimeControl, viewport: 
                 false,
                 unsafe { dear_imgui_rs::sys::igGetPlatformIO_Nil() },
             )?;
-        }
-        if let Some(processor) = data.postprocessor.as_mut() {
-            processor
-                .encode(&queue, &mut encoder, &view)
-                .map_err(WgpuViewportError::Postprocess)?;
         }
         queue.submit(std::iter::once(encoder.finish()));
         data.pending_frame = Some(frame);

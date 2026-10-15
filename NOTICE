@@ -34,10 +34,16 @@ Original attribution for Bed's removed highlight queries remains in the source h
 Dear ImGui, cimgui, and dear-imgui-sys 0.18.0 retain the original notices under
 vendor/dear-imgui-sys. Bed's native binding changes are recorded in BED_PATCHES.md.
 The original Rust binding MIT/Apache-2.0 notices are retained at the roots of
-vendor/dear-imgui-sys, vendor/dear-imgui-winit and vendor/dear-imgui-wgpu,
+vendor/dear-imgui-sys, vendor/dear-imgui-wgpu and licenses/dear-imgui-winit,
 copied unchanged from revision 95f279150e95c728952db3e79226c687167ccf73.
 The pure key and mouse mapping in bedtime/crates/bedtime-desktop/src/input_map.rs is adapted
 from dear-imgui-winit 0.18.0 under those retained MIT/Apache-2.0 notices.
+
+Bed's STL importer uses the published stl_io parser directly. Triangle expansion
+in bedtime/crates/bedtime-plugin-model-viewer/src/stl.rs is adapted from
+bevy_stl 0.18.0 by Niklas Cathor, revision
+70adf44a1594676b4d7b045bfafbed753752fcfd. Its original MIT notice is retained
+in licenses/bevy_stl/LICENSE. The former vendored loader has been removed.
 
 Portions of this software are copyright © 2023 The FreeType Project
 (www.freetype.org). All rights reserved. FreeType 2.13.2 is used under the

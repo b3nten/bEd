@@ -1,9 +1,17 @@
-//! STL import from document snapshots, using bevy_stl's mesh loader.
+//! Bounded STL import from document snapshots, using stl_io's parser.
+//!
+//! Triangle expansion is adapted from bevy_stl 0.18.0 (MIT); see
+//! licenses/bevy_stl/LICENSE for its original notice.
 #[cfg(test)]
 use crate::model::Material;
 use crate::model::{MAX_INDICES, MAX_RESOURCE_BYTES, MAX_VERTICES, Primitive, Scene, Vertex};
-use bevy::mesh::{Indices, Mesh, VertexAttributeValues};
+use bevy::{
+    asset::RenderAssetUsages,
+    mesh::{Indices, Mesh},
+    render::render_resource::PrimitiveTopology,
+};
 use glam::Vec3;
+use std::{borrow::Cow, io::Cursor};
 
 const MAX_FACETS: usize = MAX_VERTICES / 3;
 
@@ -18,62 +26,54 @@ pub(super) fn load(bytes: &[u8]) -> Result<Scene, String> {
 }
 
 pub(super) fn prepare(bytes: &[u8]) -> Result<PreparedStl, String> {
-    // bevy_stl expands each facet to three vertices. Bound that allocation
+    // Expand each facet to three vertices. Bound that allocation
     // before parsing, including binary files whose header starts with "solid".
     let facets = validate_envelope(bytes)?;
-    let mut mesh = bevy_stl::StlLoader::load_bytes(bytes)
+    // The binary envelope takes precedence over its arbitrary header. stl_io
+    // probes the first line for "solid ", which can also occur in binary files.
+    let binary = bytes.get(80..84).is_some_and(|count| {
+        let count = u32::from_le_bytes(count.try_into().unwrap()) as usize;
+        count.checked_mul(50).and_then(|size| size.checked_add(84)) == Some(bytes.len())
+    });
+    let bytes = if binary && bytes.starts_with(b"solid ") {
+        let mut masked = bytes.to_vec();
+        masked[0] = b'_';
+        Cow::Owned(masked)
+    } else {
+        Cow::Borrowed(bytes)
+    };
+    let stl = stl_io::read_stl(&mut Cursor::new(bytes))
         .map_err(|error| format!("Could not load STL: {error}"))?;
-    let Some(VertexAttributeValues::Float32x3(positions)) =
-        mesh.remove_attribute(Mesh::ATTRIBUTE_POSITION)
-    else {
-        return Err("STL loader returned no vertex positions".into());
-    };
-    let Some(VertexAttributeValues::Float32x3(normals)) =
-        mesh.remove_attribute(Mesh::ATTRIBUTE_NORMAL)
-    else {
-        return Err("STL loader returned no facet normals".into());
-    };
-    let indices = match mesh.remove_indices() {
-        Some(Indices::U32(indices)) => indices,
-        Some(Indices::U16(indices)) => indices.into_iter().map(u32::from).collect(),
-        None => return Err("STL loader returned no triangle indices".into()),
-    };
-    if positions.len() != facets * 3
-        || normals.len() != positions.len()
-        || indices.len() != positions.len()
-        || indices
-            .iter()
-            .any(|&index| index as usize >= positions.len())
-    {
+    if stl.faces.len() != facets {
         return Err("STL contains incomplete or inconsistent triangle geometry".into());
     }
-    if positions.len() > MAX_VERTICES || indices.len() > MAX_INDICES {
-        return Err(geometry_limit());
-    }
+    let indices: Vec<u32> = (0..facets as u32 * 3).collect();
 
     let mut minimum = Vec3::splat(f32::INFINITY);
     let mut maximum = Vec3::splat(f32::NEG_INFINITY);
-    let mut vertices = Vec::with_capacity(positions.len());
-    for (position, normal) in positions.into_iter().zip(normals) {
-        let position = Vec3::from_array(position);
-        let normal = Vec3::from_array(normal);
-        if !position.is_finite() || !normal.is_finite() {
-            return Err("STL contains non-finite vertex or normal data".into());
+    let mut vertices = Vec::with_capacity(facets * 3);
+    for face in &stl.faces {
+        let normal = Vec3::from_array(face.normal.0);
+        for &index in &face.vertices {
+            let position = Vec3::from_array(stl.vertices[index].0);
+            if !position.is_finite() || !normal.is_finite() {
+                return Err("STL contains non-finite vertex or normal data".into());
+            }
+            minimum = minimum.min(position);
+            maximum = maximum.max(position);
+            vertices.push(Vertex {
+                position: position.to_array(),
+                normal: normal.as_dvec3().normalize_or_zero().as_vec3().to_array(),
+                #[cfg(test)]
+                uv0: [0.0; 2],
+                #[cfg(test)]
+                uv1: [0.0; 2],
+                #[cfg(test)]
+                tangent: [0.0; 4],
+                #[cfg(test)]
+                color: [1.0; 4],
+            });
         }
-        minimum = minimum.min(position);
-        maximum = maximum.max(position);
-        vertices.push(Vertex {
-            position: position.to_array(),
-            normal: normal.as_dvec3().normalize_or_zero().as_vec3().to_array(),
-            #[cfg(test)]
-            uv0: [0.0; 2],
-            #[cfg(test)]
-            uv1: [0.0; 2],
-            #[cfg(test)]
-            tangent: [0.0; 4],
-            #[cfg(test)]
-            color: [1.0; 4],
-        });
     }
     for triangle in indices.as_chunks::<3>().0 {
         // CAD exporters commonly write zero facet normals. Recompute those
@@ -97,6 +97,10 @@ pub(super) fn prepare(bytes: &[u8]) -> Result<PreparedStl, String> {
     if !extent.is_finite() || extent.length() > 1e15 || !(minimum + maximum).is_finite() {
         return Err("STL bounds are too large for a stable preview".into());
     }
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
     mesh.insert_attribute(
         Mesh::ATTRIBUTE_POSITION,
         vertices.iter().map(|v| v.position).collect::<Vec<_>>(),
@@ -106,8 +110,7 @@ pub(super) fn prepare(bytes: &[u8]) -> Result<PreparedStl, String> {
         vertices.iter().map(|v| v.normal).collect::<Vec<_>>(),
     );
     mesh.insert_indices(Indices::U32(indices.clone()));
-    mesh.asset_usage =
-        bevy::asset::RenderAssetUsages::MAIN_WORLD | bevy::asset::RenderAssetUsages::RENDER_WORLD;
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0_f32; 2]; vertices.len()]);
     Ok(PreparedStl {
         mesh,
         inspection: Scene {
@@ -179,7 +182,7 @@ fn validate_envelope(bytes: &[u8]) -> Result<usize, String> {
         }
     }
     // This only validates the allocation envelope and document boundaries;
-    // bevy_stl / stl_io parses all facet syntax and numeric data below.
+    // stl_io parses all facet syntax and numeric data below.
     let ascii = std::str::from_utf8(bytes)
         .ok()
         .filter(|text| !text.bytes().any(|byte| byte == 0) && text.starts_with("solid "));
@@ -262,7 +265,21 @@ endsolid triangle\n";
             binary.as_slice(),
             binary_newline.as_slice(),
         ] {
-            let scene = load(bytes).unwrap();
+            let prepared = prepare(bytes).unwrap();
+            assert_eq!(
+                prepared.mesh.primitive_topology(),
+                PrimitiveTopology::TriangleList
+            );
+            assert_eq!(
+                prepared.mesh.indices().unwrap().iter().collect::<Vec<_>>(),
+                [0, 1, 2]
+            );
+            assert!(matches!(
+                prepared.mesh.attribute(Mesh::ATTRIBUTE_POSITION),
+                Some(bevy::mesh::VertexAttributeValues::Float32x3(positions))
+                    if positions == &[[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+            ));
+            let scene = prepared.inspection;
             assert_eq!(scene.triangles(), 1);
             assert_eq!(scene.minimum, Vec3::ZERO);
             assert_eq!(scene.maximum, Vec3::new(1.0, 1.0, 0.0));
@@ -300,7 +317,13 @@ endsolid triangle\n";
                 normal,
                 [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             );
-            let scene = load(&bytes).unwrap();
+            let prepared = prepare(&bytes).unwrap();
+            assert!(matches!(
+                prepared.mesh.attribute(Mesh::ATTRIBUTE_NORMAL),
+                Some(bevy::mesh::VertexAttributeValues::Float32x3(normals))
+                    if normals == &[[0.0, 0.0, 1.0]; 3]
+            ));
+            let scene = prepared.inspection;
             assert!(
                 scene.primitives[0]
                     .vertices

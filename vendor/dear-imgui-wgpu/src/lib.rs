@@ -213,8 +213,6 @@ mod renderer;
 mod shaders;
 mod texture;
 mod uniforms;
-#[cfg(any(feature = "multi-viewport-winit", feature = "multi-viewport-sdl3"))]
-pub mod viewport_postprocess;
 
 #[cfg(doctest)]
 mod removed_public_contracts {

@@ -116,10 +116,11 @@ def collect(destination):
                 if field in record:
                     entry[field] = record[field]
         index.append(entry)
-    # Retain original paths in section headings to distinguish native notices.
-    for path in sorted(source_files(repository / "vendor")):
-        if notice(path):
-            bundle += notice_section(path.relative_to(repository).as_posix(), path.read_bytes())
+    # Retain original paths for native dependencies and source adapted into Bed.
+    for directory in ("vendor", "licenses"):
+        for path in sorted(source_files(repository / directory)):
+            if notice(path):
+                bundle += notice_section(path.relative_to(repository).as_posix(), path.read_bytes())
     bundle += (b"\nPackaged dependency notices are retained verbatim in the sections above.\n"
                b"license-index.json lists Cargo license metadata, NOTICE section names,\n"
                b"supplemental source provenance and crates.io source archive URLs.\n")
