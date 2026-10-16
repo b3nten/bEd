@@ -1,320 +1,219 @@
 # bedtime-ui2
 
-ImGui lifecycle, Bevy rendering, reusable controls, themes and motion. Shared
-application state, surfaces and theme selection live in ECS. The private runtime
-owns ImGui, frame lifetime and control animations. There is no dependency on the v1 framework or
-on workbench.
-
-Run the standalone gallery:
+Bed themes, icons, motion and borrowed Bevy drawing systems on upstream
+`bevy_egui` and [vendored egui](../../../vendor/egui/BED_PATCHES.md). Applications install their own Bevy window, renderer, camera and event
+loop. UI2 has no workbench dependency.
 
 ```sh
 cargo run -p bedtime-ui2 --example gallery
 ```
 
-`cargo run -p bed2` presents the same gallery with native and in-application menus, plus a spinning-cube viewport. The standalone gallery needs no workbench
-plugin or 3D renderer.
-
 ## Host integration
 
-Install Bevy's window, renderer, input, assets and Winit plugins before `UiPlugin`.
-The application owns those plugins, its window, camera and close policy. UI uses
-the existing GPU device and does not create another surface or event loop.
+Install Bevy's window, Winit, input, asset and renderer plugins before `UiPlugin`.
+Attach the UI surface to the window and `UiCamera(surface)` to an application
+camera targeting that window:
 
 ```rust,ignore
 app.add_plugins(UiPlugin);
-
 let dark = world.spawn(themes::dark()).id();
 world.entity_mut(window).insert((UiSurface, UsesTheme(dark)));
-world.spawn((Camera2d, CameraRenderGraph::new(UiGraph)));
-
+world.spawn((Camera2d, UiCamera(window)));
 let view = register_view(world, window, draw_form);
 world.entity_mut(view).insert(FormState::default());
-```
 
-Drawing handlers are ordinary Bevy systems with borrowed `UiFrame` input:
-
-```rust,ignore
-fn draw_form(frame: UiFrame, mut forms: Query<&mut FormState>) {
-    let mut state = forms.get_mut(frame.view).unwrap();
-    frame.ui.window("My form").build(|| {
-        let controls = frame.controls();
-        controls.row("Name", || { controls.input("##name", &mut state.name); });
-        controls.checkbox("Enabled", &mut state.enabled);
-    });
+fn draw_form(mut frame: UiFrame, mut forms: Query<&mut FormState>) {
+    let mut form = forms.get_mut(frame.view).unwrap();
+    frame.ui.heading("My form");
+    frame.text_edit(egui::TextEdit::singleline(&mut form.name));
+    frame.ui.checkbox(&mut form.enabled, "Enabled");
 }
 ```
 
-The frame supplies its view/surface entities, borrowed ImGui access and immutable
-prepared theme. It cannot outlive the active frame. Queries, resources and
-deferred commands work normally. Systems execute sequentially in `SurfaceViews`
-order; Bevy's relationship APIs support reordering and reparenting.
+Drawing systems run sequentially in `SurfaceViews` order. Panel/view identity
+scopes egui IDs. `UiFrame` supplies a borrowed mutable egui Ui, prepared theme and
+motion policy. `scope`, `scroll` and `padded` reborrow the same services into
+nested UIs. Panel hosts supply no content padding or automatic scrolling.
+Panels can opt into `frame.padded(frame.panel_settings.padding, draw)`;
+the default panel settings use 14 horizontal and 12 vertical points, matching bed1.
+`scroll` insets the scrollbar's ends by `frame.panel_settings.rounding` so its track clears
+rounded container corners, while content keeps the complete viewport.
+Surface ownership retires views and their parts; independently referenced themes
+remain alive. One active UI surface is currently supported.
 
-State used only by a drawing system can use ordinary Bevy `Local<T>` or a local
-struct. Controls accept borrowed values; using a checkbox or animation never
-requires spawning a control entity. Use components when other systems need to
-read or modify that state, as the gallery does for its externally controlled form.
+UI2 uses the integration's manual-pass support and runs one pass per Bevy frame.
+Stateful drawing systems are not replayed for egui layout retries. In PreUpdate,
+`UiSystems::Draw` follows upstream input processing; `UiSystems::PublishInput`
+commits remaining input before application Update. Viewport target resizing stays
+in PostUpdate before camera updates. Upstream owns GPU extraction/rendering,
+managed texture lifetime, cursor, IME and repaint integration.
 
-`OnSurface` owns views and `InView` owns application-defined parts or action placements.
-Removing a surface recursively removes these entities. `UsesTheme` references a
-theme without owning it; several surfaces can reference the same theme data,
-although stage 2 renders only one active surface/context at a time.
+## Appearance and motion
 
-`UiCapture` and `UiDiagnostics` live on the surface. Capture reports keyboard,
-pointer and text input needs; consumers must honor it when admitting application
-input. It does not clear Bevy's global input state. Capture produced during drawing
-is available after `UiSystems::Draw`; earlier systems see the preceding frame.
+`Theme`, `UsesTheme` and Everforest light/dark values retain semantic colors and
+metrics. PaperMono supplies the UI typography. Optional surface `PanelSettings`
+separately owns `rounding`, `padding`, `panel_gap`, `hit_size` and `debug`; `UiFrame.panel_settings`
+contains the resolved settings for each draw. Theme changes and resets leave them
+alone. The defaults are 8.5-point rounding, 14×12-point padding, 7.2-point gaps, 15-point corner
+targets, and debug off. Use ordinary egui widgets and layout directly.
+`UiFrame` adds text ownership, icons, viewports, tooltips, an
+animated toggle and `primary_button`. The primary button scopes accent colors
+over egui's inactive, hovered and active visuals, preserving native click/focus
+and disabled behavior without restyling adjacent widgets.
+Popup, menu and tooltip backgrounds scale outward from their source using bed1's
+96% → 100% cubic ease-out and a matching fade, with the surface's motion
+duration. The chosen placement supplies the pivot, including when a popup
+flips near a window edge. Their contents fade at their final size and pixel
+positions, avoiding the changing glyph sampling of scaled bitmap text. Layout
+and hit bounds keep their final coordinates. Interaction settles background
+growth while fading continues.
+`tooltip_ui` accepts custom tooltip content with the same theme, timing and view
+identity as `tooltip`.
 
-## Themes and controls
+`MotionPolicy` is independent of theme. Default duration is 160 ms. Toggle motion
+uses cubic ease-out with continuous retargeting; disabling motion settles
+immediately and disables popup growth/fading. Stable egui IDs retain identity.
+`UiFrame::animate_bool(id, target)` supplies the same transition for custom
+shell geometry. The vendored egui crate fades widget interaction/selection colors
+internally, including primary buttons, menu items, checkboxes, radio buttons,
+sliders, dropdowns, text-field focus borders and scrollbars. Existing calls and
+scoped styles keep working; input and target layout update immediately.
+The surface motion policy supplies egui's animation duration, including zero for
+reduced motion. Custom painters can use `Style::interact_animated` or
+`Context::animate_color_with_time`. UI2 icon buttons use native image buttons;
+the custom toggle retains switch geometry and delegates its color fade to egui.
 
-`themes::light()` and `themes::dark()` return ordinary `Theme` values based on
-Everforest Medium. Applications can use, modify or replace them. UI assigns no
-stable keys and manages no theme-selection storage. Motion policy is independent
-of the selected theme. Attribution is in `assets/everforest-LICENSE.txt`.
+`bedtime_ui2::ComboBox` now re-exports egui's ComboBox. Its popup keeps the existing
+half-item-spacing gap (4 points by default) and hidden scrollbar. Wheel scrolling
+and height limits still work. [Vendor provenance and patch notes](../../../vendor/egui/BED_PATCHES.md)
+document the shared animation implementation and upgrade checks.
 
-The runtime validates requested theme values before preparing presentation.
-Resolved colors and dimensions are applied only when the selected values change.
-Ordinary controls inherit this base style; variants push only their differences.
-Changing colors or spacing does not rebuild fonts. The bundled Paper Mono regular
-face supplies the initial typography and uses ImGui's dynamic DPI rasterization;
-font-size changes rebuild the atlas. Its OFL license is included with the font.
+UI cameras use linear compositing and premultiplied output. A small shader asset
+override corrects upstream premultiplied sRGB colors for linear-light blending;
+all render infrastructure remains upstream. For a scene underneath UI, clear the
+UI camera's intermediate target to transparent each frame with
+`ClearColorConfig::Custom(Color::NONE)`. Its output preserves the earlier window
+camera. `UiBackground::Theme` paints the theme background. Select
+`UiBackground::Transparent` when the application/workbench paints its own surfaces.
+UI cameras clear their intermediate and window targets to transparent by default;
+an overlay over an earlier scene camera must set its output clear to `None`.
 
-Built-in helpers cover buttons with automatic hover motion, primary/disabled variants, SVG icon
-buttons, checkboxes, animated toggles, text fields, sliders, selectors, form rows,
-headings, feedback, tooltips, context menus, dialogs, disclosures and clipped lists.
-ImGui remains available for specialized drawing and layout.
+## Status bars
 
-Context menus inherit the prepared base palette and use v1's file-tree popup
-metrics: 8×6 padding, 6×4 item spacing, seven-point rounding and a one-point border.
-Tooltips use 12×10 padding. Selectors leave a four-point gap and open above their
-control when necessary. These dimensions are theme metrics. When workbench's
-native and UI adapters are installed, native window backing color follows the
-theme, filling transparent macOS title bars.
-Closed menus do not construct a style scope or invoke their contents closure. `Controls::list` clips fixed-height
-rows before invoking the caller's row painter. Rows must have a consistent height.
-Custom icon/toggle painters honor the current style alpha, including disabled and
-fading scopes.
+A host creates a status bar with `create_status_bar(world, owner)` and draws it
+inside an allocated child Ui using `draw_status_bar`. The bar has no independent
+surface view or window-relative position. Workbench creates and lays out its bar
+automatically; obtain it from `WorkbenchHost::status_bar()`. Plugins register
+ordinary Bevy drawing systems on the supplied bar, attach their own data to each
+returned item entity, and optionally register an expanded tooltip system:
 
-Motion is private UI-local state keyed by drawing view, ImGui control identity and
-animation kind. Use stable ImGui labels/ID scopes when reordering repeated controls.
-The cache follows submitted controls, drops retired views and absent entries, and
-never allocates popup state for closed row menus. Helpers own interpolation:
+```rust
+use bedtime_ui2::{
+    BuiltinIcon, StatusItem, StatusSide, UiFrame,
+    register_status_item, register_status_tooltip,
+};
 
-```rust,ignore
-controls.icon_button("add", BuiltinIcon::Plus);
-controls.tooltip("Add an item");
-controls.toggle("Enabled", &mut state.enabled);
-controls.disclosure("Advanced", &mut state.advanced_open, || {
-    controls.text("The body is measured automatically.");
-});
-```
+// `bar` is supplied by the host.
+let item = register_status_item(
+    world, bar,
+    StatusItem::new(StatusSide::Left, BuiltinIcon::CloudDownload, "Connection", 120.0),
+    draw_connection,
+);
+register_status_tooltip(world, item, draw_connection_details);
 
-The surface's `MotionPolicy` controls duration and reduced motion. Motion uses
-Bevy's real time independently of paused/scaled simulation time and requests
-redraws while visible animations are active. Retargeting starts at the displayed
-value; disabled motion settles immediately. Hidden controls stop requesting redraws.
-Disclosures measure their body and stop accepting input while closing.
-
-Tooltips grow from the source control's anchor and context menus from their
-opening anchor, using the same 0.96 starting scale as v1. Both fade in; dialogs
-fade without scaling. One explicit frame-owner pass transforms final vertices
-and clip rectangles, including child windows and custom painting. Layout and hit
-testing remain at their final coordinates. Interaction settles popup scale so
-visual motion does not interfere with choosing a menu item. No native pointers
-are stored in the cache and no native animation hook maintains a parallel window map.
-
-## Icons and runtime packs
-
-`Icon` is a validated monochrome SVG asset. `IconSet` is an asset containing partial
-overrides of the fixed `BuiltinIcon` vocabulary. The bundled set contains 129
-icons, including v1's Lucide and Simple Icons artwork, with retained attribution
-and licenses in `assets/icons`. The default set is embedded and works offline.
-
-Applications select a pack by attaching `UiIcons(Handle<IconSet>)` to a UI surface.
-Removing that component restores the bundled set. Pack selection is independent
-of the color theme. Unspecified slots inherit bundled artwork; overrides never
-accumulate from previously selected packs.
-
-For example, load `assets/my-pack.icons.json` through Bevy's configured asset source:
-
-```json
-{
-  "folder": "folder.svg",
-  "plus": "plus.svg"
+fn draw_connection(frame: UiFrame) {
+    frame.ui.label("Connected");
+}
+fn draw_connection_details(frame: UiFrame) {
+    frame.ui.heading("Connection");
+    frame.ui.label("Ready to synchronize changes.");
 }
 ```
 
-Paths resolve relative to the manifest, including for custom Bevy asset sources.
-Unknown keys and malformed SVGs fail loading. The application can switch packs
-at runtime through ordinary ECS operations:
+Standalone UI hosts allocate `status_bar_height(ui)` with an egui bottom Panel,
+paint its background and call `draw_status_bar(&mut frame, world, bar)` inside it.
+The bar respects that allocation, including an inset host rectangle. Its
+`InView(owner)` relationship retires the bar and its contributions with the host.
+Pass the bar entity to each plugin's registration function. UI2 has no workbench
+dependency. `StatusSide::{Left, Right}` anchor contributions at the
+respective edge; registration orders each side from the outside toward the
+center. Each item must provide an `IconSource`, label and inline content width
+in logical points. The bar places the icon before the content. Producers can
+update `StatusItem.width` with their data or set `visible = false` to withdraw it.
 
-```rust,ignore
-let pack: Handle<IconSet> = asset_server.load("my-pack.icons.json");
-commands.entity(surface).insert(UiIcons(pack));
+When space runs out, lower-priority items collapse to their icons first. Higher
+`priority` values retain text longer; ties collapse newer items first. Widening
+the bar restores inline content. If even the icons cannot fit, the row scrolls
+horizontally without a scrollbar. Optional tooltip systems remain available
+while collapsed; otherwise the accessible label is shown as a tooltip.
 
-// Restore the embedded artwork later:
-commands.entity(surface).remove::<UiIcons>();
-```
+Inline and tooltip systems both receive `UiFrame.view == item`. Inline systems
+run once while their content is shown, and tooltip systems run only while the
+tooltip is open. Keep ongoing plugin updates in ordinary Bevy systems. Declared
+widths let UI2 allocate space before drawing, without replaying stateful renderers
+for measurement. Content is clipped to its allocation. `StatusItemPresentation`
+reports slot/icon/content geometry, collapse and tooltip visibility. Items belong
+to their bar; tooltip systems belong to their item, so despawning an item, bar or
+surface retires the corresponding renderers.
 
-The frame owner waits for the entire requested pack and its dependencies and
-prepares the replacement before committing it. Pending or failed loads preserve
-the current artwork. `UiIconStatus` on the surface reports the active pack,
-pending state and errors; new failures also emit `UiError`. `active: None` denotes
-the bundled set. Packs can also be constructed directly with `Assets<IconSet>`;
-its `overrides` map contains `BuiltinIcon` keys and strong `Handle<Icon>` values.
+## Input and clipboard
 
-```rust,ignore
-controls.icon(BuiltinIcon::Folder);
-controls.icon_button("save", BuiltinIcon::Save);
-controls.icon_sized(BuiltinIcon::Rust, 32.0);
+Interactive egui widgets claim pointer input before panel systems; viewport image
+regions explicitly delegate it. `UiFrame::text_edit` reserves typing, navigation, editing, clipboard and IME
+input, including no-op edits and Enter that ends focus. Unrelated command chords
+remain available. Unannotated focused text widgets conservatively reserve
+keyboard input. `claim_key` and `claim_pointer` let custom UI gestures claim their
+input explicitly. Source events and claims are retained by `input::InputRouter`;
+egui's event list alone is not a complete consumption report.
 
-let custom: Handle<Icon> = asset_server.load("custom.svg");
-controls.icon(&custom); // Explicit artwork bypasses pack overrides.
-```
+`input::RoutedInput` contains remaining events, admitted held keys/buttons,
+pointer position and wheel input. Consumers run in Update or after
+`UiSystems::PublishInput`; raw Bevy input remains available to platform systems.
+Workbench adds panel ownership and command resolution between Draw and Publish.
 
-`Icon::from_svg(bytes)` supports embedded or programmatically supplied artwork.
-`IconSource` can be stored as a component on an existing application entity and
-passed to a control by reference. Immediate-mode icon instances need no entities.
-Explicit custom handles reserve layout while loading and draw when available.
+The existing `bedtime-clipboard2::Clipboard` is shared by UI and application
+systems. An application-provided memory clipboard is preserved. UI2 bridges
+Copy/Cut/Paste input and egui CopyText output; upstream OS clipboard management
+is disabled. Clipboard initialization and operation errors retain the service's
+normal semantics.
 
-The private context cache prepares normal-size rasters once per loaded asset and
-reuses them across controls and rows. Larger sizes initially use that raster and
-request an exact physical-pixel raster for the next frame. Cached requests are
-resolved against a replacement pack before it becomes active. Artwork revisions,
-size and DPI distinguish cache entries; theme tinting and disabled/popup alpha
-are applied when drawing. Theme changes do not rasterize or upload icons again.
-Old revisions, abandoned sizes and surface retirement release managed textures
-through ImGui's snapshot-aware retirement path. No GPU texture IDs are stored in
-application components. `UiDiagnostics` exposes texture and rasterization counts.
+## Icons and viewports
 
-Use **Browse icons** in either gallery host to filter the catalog, vary preview
-size and switch between bundled artwork and a sample partial pack. The explicit
-custom-asset preview demonstrates that it bypasses pack selection.
+Icons remain Bevy `Icon` and partial `IconSet` assets. A surface's `UiIcons` handle
+selects a pack; missing slots inherit bundled artwork. Pending/failed replacement
+packs preserve current artwork and report status through `UiIconStatus`.
+Rasterization is cached by artwork revision and physical size; egui texture
+handles own retirement. `BuiltinIcon`, explicit handles and `IconSource` remain
+available. Theme changes affect tint, not SVG rasterization.
 
-## Scheduling and command integration
-
-`PostUpdate` runs `UiSystems::Draw`. One frame
-owner prepares the context, invokes drawing systems, finishes the frame and hands
-an owned draw snapshot to Bevy's render world. Native pointers remain on the UI
-thread. `UiSystems::PrepareTargets` follows drawing and resizes visible viewport
-images before Bevy's camera update. Render snapshots work with Bevy's normal
-pipelined renderer. `UiGraph` runs `UiRenderSystems::Draw` into a transparent UI
-layer, then `UiRenderSystems::Composite` into the window. The compositor honors
-the UI camera's clear policy, preserves earlier scene cameras when clearing is
-disabled, and blends premultiplied UI with proper sRGB decoding. Game render
-schedules are unchanged. The separate UI stages leave editor effects independent
-of game-camera effects.
-
-UI has no workbench dependency. Controls report interactions to their callers.
-Workbench integration translates those interactions into typed action requests
-and orders drawing before shortcuts and dispatch automatically. Commands execute
-after the borrowed frame ends; applications do not configure this ordering.
-
-UI2 initializes the independent `bedtime_clipboard2::Clipboard` resource while
-preserving an application-provided instance. ImGui and application systems share
-one backend through cloned handles. The clipboard remains available in the world
-during drawing. Without system clipboard support the same API uses local memory.
-No workbench or native window plugin is needed for UI clipboard functionality.
-
-## Scene viewports and full-window overlays
-
-Game cameras and model viewers render into ordinary Bevy `Image` assets. UI
-displays that completed output; it owns no scene pipeline, materials or gameplay.
-Create a compatible target and use the same handle for the camera and viewport:
-
-```rust,ignore
-let scene = images.add(viewport_image(UVec2::new(640, 400)));
-// On an application-owned scene camera, retaining its normal render schedule:
-commands.entity(scene_camera).insert((
-    RenderTarget::Image(scene.clone().into()),
-    Camera { order: -10, ..default() },
-));
-world.entity_mut(view).insert(UiViewport::new(scene));
-```
-
-The drawing system queries its `UiViewport` component:
-
-```rust,ignore
-fn draw_scene(frame: UiFrame, mut views: Query<&mut UiViewport>) {
-    let mut viewport = views.get_mut(frame.view).unwrap();
-    frame.ui.window("Scene").build(|| {
-        let available = frame.ui.content_region_avail();
-        frame.controls().viewport("scene", &mut viewport, available);
-    });
-}
-```
-
-Use positive logical dimensions. The control records its logical `rect`, physical
-pixel size, `hovered` and `visible` observations. The frame resets visibility for
-ECS viewport components before drawing. `PrepareTargets` updates visible targets
-and requests projection refresh only for cameras using a resized image. Each
-independently sized viewport needs its own output. Applications decide when a
-hidden camera or simulation should pause and how viewport input is admitted.
-
-`viewport_image` creates a resolved RGBA8 output with an sRGB camera view and an
-encoded-color UI sampling view. Cameras can use HDR, MSAA and custom shaders in
-their own pipelines, resolving and tone-mapping before this final image. Other
-outputs must provide the equivalent single-layer, sampleable RGBA/BGRA8 contract;
-raw HDR and depth textures are not directly displayed by this control.
-
-The render world resolves each image's current GPU view before drawing UI. Resize
-and asset replacement therefore use the current target, rather than a stale view
-captured on the main thread. Private registration leases retain assets and texture
-bindings until referencing snapshots have retired. Repeated rows/frames reuse
-registrations; hidden outputs retire after a short grace period. GPU texture IDs
-never appear in application components.
-
-For UI over a scene rendering directly to the window, give the UI camera a later
-order and disable its clear:
-
-```rust,ignore
-commands.spawn((
-    Camera2d,
-    Camera { order: 100, clear_color: ClearColorConfig::None, ..default() },
-    CameraRenderGraph::new(UiGraph),
-));
-```
-
-Draw floating controls, a window with `NO_BACKGROUND`, or use ImGui's foreground
-draw list for a HUD anywhere in the window. An opaque full-window UI background
-still covers the scene by design. An ordinary cleared UI camera continues to
-support desktop applications without a scene camera.
-
-`bed2` demonstrates both arrangements using the same game camera. **Full-window
-scene** switches from the panel target to the window and leaves controls/HUD over
-it; **Return to workbench** switches back. The viewport and gallery are real
-workbench panels; closing the viewport retires its panel entity, and **Open
-3D viewport** creates a new one. The game scene and its own fullscreen color-grade shader
-live in `bed2-demo-game`, which has no Bedtime dependency:
+`UiViewport` embeds a standard Bevy image target. The scene retains its normal
+cameras and post-processing. UI reports its content rectangle, visibility,
+hover state and requested physical size; the application decides camera routing
+and simulation policy. Viewport image regions can delegate input to a panel
+input system. The independent scene still runs without Bedtime:
 
 ```sh
-cargo run -p bed2
 cargo run -p bed2-demo-game --example standalone
 ```
 
-## Verification and current scope
+## Verification
 
 ```sh
-cargo test --locked -p bedtime-ui2 --lib
-cargo run --locked -p bedtime-ui2 --example gallery -- --smoke-dir target/ui2-smoke
-cargo run --locked -p bed2 -- --workbench-smoke-dir target/workbench2-smoke
-cargo run --locked -p bed2-demo-game --example standalone -- --smoke-dir target/ui2-standalone-smoke
+cargo test -p bedtime-ui2
+cargo run -p bedtime-ui2 --example gallery -- --smoke-dir target/ui2-egui-smoke
+cargo run -p bed2 -- --workbench-smoke-dir target/workbench2-egui-smoke
 ```
 
-The example-only smoke path feeds native-shaped pointer events through the real
-adapter, checks that clicks select light and a dropdown option, changes motion
-state, opens a context menu, resizes the window, swaps icon packs, replaces artwork
-at the same asset handle, restores the bundled set and captures eleven frames using
-Bevy's screenshot path and exits normally.
-It moves no OS pointer and does not interact with other applications.
+The gallery fixture uses observed widget rectangles to exercise native-shaped
+Bevy input, theme selection, dropdowns, overlays, resizing, icon replacement and
+stable raster reuse. Native workbench smoke checks shell gestures, viewport
+colors and linear alpha composition. Smoke uses a memory clipboard.
 
-The viewport smoke path checks actual cube pixels and visible rotation, drags an
-ImGui panel resize through the native input adapter, compares panel/window scene
-colors, verifies translucent UI blending, closes/reopens the viewport and captures
-five frames. The standalone target checks the same scene independently of Bedtime.
-
-Stage 2 provides one active surface, one bundled font family, asset-backed SVG icons
-with replaceable packs, automatic control motion and anchored popup opening motion. Detached OS viewports, custom window chrome,
-font-family discovery/fallbacks, general image/canvas APIs, editor GPU effects,
-panels/docking policy and document widgets remain later work. Native behavior has
-been exercised on macOS; Linux interaction and changes between physical DPI
-environments still need validation.
+For desktop translucency, set Bevy's `Window.transparent = true` and
+`composite_alpha_mode = CompositeAlphaMode::PostMultiplied` on macOS. The theme's
+background alpha controls painted background opacity; text and ordinary widgets
+retain their own alpha. With workbench, use `UiBackground::Transparent` so the
+shell supplies that tint once across panels and gaps. The optional workbench
+native window adapter supplies macOS blur via `WindowBlur`. For app-painted native
+titlebars, use Bevy's `fullsize_content_view` with `titlebar_transparent` and
+reserve the reported `WindowTitlebarInset` above application controls.

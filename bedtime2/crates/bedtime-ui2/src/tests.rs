@@ -1,615 +1,683 @@
-use super::*;
-use crate::motion::{Animations, PopupMotion, ScalarKind, Transition};
-use imgui::{Condition, Context, FramePrepareOptions};
-
+use crate::*;
+use bevy::input::{
+    ButtonState,
+    keyboard::{Key, KeyCode, KeyboardInput},
+};
+use bevy::window::WindowEvent;
 #[test]
 fn retargeting_is_continuous_and_reduced_motion_settles() {
-    let policy = MotionPolicy::default();
-    let mut transition = Transition::default();
-    transition.retarget(1.0);
-    transition.advance(0.05, policy);
-    let before = transition.value();
-    assert!(before > 0.0 && before < 1.0);
-    transition.retarget(0.0);
-    assert_eq!(transition.value(), before);
-    transition.advance(0.02, policy);
-    assert!(transition.value() < before);
-    transition.retarget(1.0);
-    transition.advance(
+    let mut value = motion::Transition::settled(0.0);
+    value.retarget(1.0);
+    value.advance(0.08, MotionPolicy::default());
+    let halfway = value.value();
+    assert!(halfway > 0.0 && halfway < 1.0);
+    value.retarget(0.0);
+    assert_eq!(value.value(), halfway);
+    value.advance(0.01, MotionPolicy::default());
+    assert!(value.value() < halfway);
+    value.advance(
         0.0,
         MotionPolicy {
             enabled: false,
-            ..policy
+            ..default()
         },
     );
-    assert_eq!(transition.value(), 1.0);
+    assert_eq!(value.value(), 0.0);
+    assert!(!value.is_active());
+}
+#[test]
+fn themes_validate_boundary_values_and_map_to_egui() {
+    let ctx = egui::Context::default();
+    let dark = themes::dark();
+    dark.validate().unwrap();
+    dark.apply(&ctx);
+    assert_eq!(
+        ctx.global_style().visuals.panel_fill,
+        theme::color(dark.palette.background)
+    );
+    let light = themes::light();
+    light.validate().unwrap();
+    light.apply(&ctx);
+    assert_eq!(
+        ctx.global_style().visuals.panel_fill,
+        theme::color(light.palette.background)
+    );
+    let mut bad = light;
+    bad.metrics.font_size = f32::NAN;
+    assert!(bad.validate().is_err());
+    bad = dark;
+    bad.palette.text[0] = 2.0;
+    assert!(bad.validate().is_err());
 }
 
 #[test]
-fn local_motion_uses_real_time_and_reduced_motion_settles_immediately() {
-    let mut world = World::new();
-    let view = world.spawn_empty().id();
-    let mut clock = Time::<Real>::default();
-    let mut simulation = Time::<Virtual>::default();
-    simulation.pause();
-    let mut cache = Animations::default();
-    let policy = MotionPolicy::default();
-    cache.begin_frame(1, clock.elapsed_secs_f64());
-    assert_eq!(
-        cache.scalar(view, 7, ScalarKind::Toggle, 0.0, 1.0, policy),
-        0.0
-    );
-    clock.advance_by(std::time::Duration::from_millis(40));
-    cache.begin_frame(2, clock.elapsed_secs_f64());
-    let partial = cache.scalar(view, 7, ScalarKind::Toggle, 1.0, 1.0, policy);
-    assert!(partial > 0.0 && partial < 1.0);
-    assert_eq!(
-        cache.scalar(
-            view,
-            7,
-            ScalarKind::Toggle,
-            1.0,
-            0.0,
-            MotionPolicy {
-                enabled: false,
-                ..policy
+fn primary_buttons_resolve_hover_and_press_colors_without_restyling_other_widgets() {
+    for theme in [themes::dark(), themes::light()] {
+        let ctx = egui::Context::default();
+        ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(1).unwrap());
+        theme.apply(&ctx);
+        ctx.global_style_mut(|s| s.animation_time = 0.0);
+        let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
+        let textures = HashMap::new();
+        let input = std::sync::Mutex::new(input::UiInputFrame::default());
+        let mut target = egui::pos2(-100.0, -100.0);
+        let mut fills = Vec::new();
+        for step in 0..5 {
+            let mut raw = egui::RawInput::default();
+            raw.events.push(egui::Event::PointerMoved(target));
+            if step == 2 || step == 3 {
+                raw.events.push(egui::Event::PointerButton {
+                    pos: target,
+                    button: egui::PointerButton::Primary,
+                    pressed: step == 2,
+                    modifiers: egui::Modifiers::NONE,
+                });
             }
-        ),
-        0.0
+            let mut output = ctx.run_ui(raw, |ui| {
+                let mut frame = UiFrame {
+                    view: Entity::PLACEHOLDER,
+                    surface: Entity::PLACEHOLDER,
+                    ui,
+                    theme: &theme,
+                    motion: default(),
+                    panel_settings: default(),
+                    icons: &icons,
+                    textures: &textures,
+                    input: &input,
+                };
+                let response = frame.primary_button("Primary action");
+                target = response.rect.center();
+                assert_eq!(response.clicked(), step == 3);
+                if step == 3 {
+                    frame
+                        .ui
+                        .ctx()
+                        .memory_mut(|m| m.surrender_focus(response.id));
+                }
+                assert_eq!(
+                    frame.ui.visuals().widgets.inactive.weak_bg_fill,
+                    theme::color(theme.palette.surface)
+                );
+                let _ = frame.ui.button("Secondary action");
+            });
+            let fill = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect) if rect.rect.contains(target) => Some(rect.fill),
+                    _ => None,
+                })
+                .expect("Painted primary button");
+            fills.push(fill);
+            output.textures_delta.clear();
+        }
+        assert_eq!(fills[0], theme::color(theme.palette.accent));
+        assert_ne!(fills[0], fills[1], "Hover must be visible");
+        assert_ne!(fills[1], fills[2], "Press must be visible");
+        assert_eq!(
+            fills[4], fills[1],
+            "Hover returns after the click loses focus"
+        );
+    }
+}
+#[test]
+fn custom_control_colors_fade_through_hover_press_and_release() {
+    let ctx = egui::Context::default();
+    let theme = themes::dark();
+    theme.apply(&ctx);
+    let icons = Mutex::new(icon_cache::IconCache::default());
+    let textures = HashMap::new();
+    let input = Mutex::new(input::UiInputFrame::default());
+    let render = |time, pointer, button: Option<bool>, enabled| {
+        ctx.global_style_mut(|s| {
+            s.animation_time = if enabled {
+                MotionPolicy::default().seconds
+            } else {
+                0.0
+            }
+        });
+        let mut events = vec![egui::Event::PointerMoved(pointer)];
+        if let Some(pressed) = button {
+            events.push(egui::Event::PointerButton {
+                pos: pointer,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: default(),
+            });
+        }
+        let mut rect = egui::Rect::NOTHING;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                time: Some(time),
+                events,
+                ..default()
+            },
+            |ui| {
+                let mut frame = UiFrame {
+                    view: Entity::PLACEHOLDER,
+                    surface: Entity::PLACEHOLDER,
+                    ui,
+                    theme: &theme,
+                    motion: MotionPolicy {
+                        enabled,
+                        ..default()
+                    },
+                    panel_settings: default(),
+                    icons: &icons,
+                    textures: &textures,
+                    input: &input,
+                };
+                let response = frame.icon_button(BuiltinIcon::Sun);
+                rect = response.rect;
+                ctx.memory_mut(|m| m.surrender_focus(response.id));
+            },
+        );
+        let fill = output
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Rect(r) if r.rect.contains(rect.center()) => Some(r.fill),
+                _ => None,
+            })
+            .unwrap();
+        output.textures_delta.clear();
+        (rect.center(), fill)
+    };
+    let outside = egui::pos2(-100.0, -100.0);
+    let (inside, idle) = render(0.0, outside, None, true);
+    render(0.02, inside, None, true);
+    let (_, hover_mid) = render(0.10, inside, None, true);
+    let (_, hover) = render(0.30, inside, None, true);
+    assert_ne!(hover_mid, idle);
+    assert_ne!(
+        hover_mid, hover,
+        "Hover color must pass through an intermediate shade"
     );
-    assert!(simulation.is_paused());
+    render(0.32, inside, Some(true), true);
+    let (_, press_mid) = render(0.40, inside, None, true);
+    let (_, press) = render(0.60, inside, None, true);
+    assert_ne!(press_mid, hover);
+    assert_ne!(press_mid, press);
+    render(0.62, inside, Some(false), true);
+    render(0.64, inside, None, true);
+    let (_, release_mid) = render(0.72, inside, None, true);
+    assert_ne!(release_mid, press);
+    assert_ne!(release_mid, hover);
+    assert_eq!(render(0.90, inside, None, true).1, hover);
+    render(0.92, outside, None, true);
+    let (_, exit_mid) = render(1.00, outside, None, true);
+    assert_ne!(exit_mid, hover);
+    assert_ne!(exit_mid, idle);
+    assert_eq!(render(1.20, outside, None, true).1, idle);
+    assert_eq!(
+        render(1.22, inside, None, false).1,
+        hover,
+        "Reduced motion settles immediately"
+    );
 }
 
 #[test]
-fn animation_identity_follows_items_across_reordering_and_is_scoped_to_the_view() {
+fn scroll_track_clears_rounded_corners_without_insetting_content() {
+    let ctx = egui::Context::default();
+    let theme = themes::dark();
+    let panel_settings = PanelSettings {
+        rounding: 18.0,
+        ..default()
+    };
+    theme.apply(&ctx);
+    ctx.global_style_mut(|s| {
+        s.spacing.scroll = egui::style::ScrollStyle::solid();
+        s.animation_time = 0.0;
+    });
+    let icons = Mutex::new(icon_cache::IconCache::default());
+    let textures = HashMap::new();
+    let input = Mutex::new(input::UiInputFrame::default());
+    let mut bounds = egui::Rect::NOTHING;
+    let mut clip = egui::Rect::NOTHING;
+    let mut body = egui::Rect::NOTHING;
+    let mut track = None;
+    for _ in 0..3 {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(300.0, 200.0),
+                )),
+                ..default()
+            },
+            |ui| {
+                bounds = ui.available_rect_before_wrap();
+                let mut frame = UiFrame {
+                    view: Entity::PLACEHOLDER,
+                    surface: Entity::PLACEHOLDER,
+                    ui,
+                    theme: &theme,
+                    motion: default(),
+                    panel_settings,
+                    icons: &icons,
+                    textures: &textures,
+                    input: &input,
+                };
+                frame.scroll("overflow", |frame| {
+                    clip = frame.ui.clip_rect();
+                    body = frame
+                        .ui
+                        .allocate_exact_size(
+                            egui::vec2(frame.ui.available_width(), 1000.0),
+                            egui::Sense::hover(),
+                        )
+                        .0;
+                });
+            },
+        );
+        track = output.shapes.iter().find_map(|s| match &s.shape {
+            egui::Shape::Rect(r) if r.fill == theme::color(theme.palette.background) => {
+                Some(r.rect)
+            }
+            _ => None,
+        });
+        output.textures_delta.clear();
+    }
+    let track = track.expect("Visible scrollbar track");
+    assert!(track.min.y >= bounds.min.y + panel_settings.rounding);
+    assert!(track.max.y <= bounds.max.y - panel_settings.rounding);
+    assert_eq!(
+        body.min, bounds.min,
+        "The scrolling content keeps its original origin"
+    );
+    assert_eq!(clip.y_range(), bounds.y_range(), "Only the track is inset");
+}
+
+#[derive(Component, Default)]
+struct Counter(u32);
+fn draw_counter(frame: UiFrame, mut counters: Query<&mut Counter>) {
+    counters.get_mut(frame.view).unwrap().0 += 1;
+    frame.ui.label("A normal registered Bevy system");
+}
+#[test]
+fn borrowed_frames_execute_once_and_surface_ownership_keeps_shared_themes() {
     let mut world = World::new();
-    let view = world.spawn_empty().id();
-    let other = world.spawn_empty().id();
-    let mut cache = Animations::default();
-    let policy = MotionPolicy::default();
-    cache.begin_frame(1, 0.0);
-    cache.scalar(view, 10, ScalarKind::Toggle, 0.0, 1.0, policy);
-    cache.scalar(view, 20, ScalarKind::Toggle, 0.0, 0.0, policy);
-    cache.finish_frame(|_| true);
-    cache.begin_frame(2, 0.04);
-    // The same items are painted in reverse order, without transferring motion.
-    assert_eq!(
-        cache.scalar(view, 20, ScalarKind::Toggle, 0.0, 0.0, policy),
-        0.0
-    );
-    let partial = cache.scalar(view, 10, ScalarKind::Toggle, 1.0, 1.0, policy);
-    assert!(partial > 0.0 && partial < 1.0);
-    assert_eq!(
-        cache.scalar(other, 10, ScalarKind::Toggle, 0.0, 0.0, policy),
-        0.0
-    );
-}
-
-#[test]
-fn hidden_or_retired_controls_stop_redraws_and_reappear_without_stale_motion() {
-    let view = World::new().spawn_empty().id();
-    let policy = MotionPolicy::default();
-    let mut cache = Animations::default();
-    cache.begin_frame(1, 0.0);
-    cache.scalar(view, 7, ScalarKind::Toggle, 0.0, 1.0, policy);
-    assert_eq!(cache.finish_frame(|_| true).1, 1);
-    cache.begin_frame(2, 0.04);
-    assert_eq!(cache.finish_frame(|_| true).1, 0);
-    cache.begin_frame(3, 0.08);
-    cache.finish_frame(|_| true);
-    cache.begin_frame(4, 0.12);
-    assert_eq!(
-        cache.scalar(view, 7, ScalarKind::Toggle, 1.0, 1.0, policy),
-        1.0
-    );
-    cache.scalar(view, 8, ScalarKind::Toggle, 0.0, 1.0, policy);
-    assert_eq!(
-        cache.finish_frame(|_| false).1,
-        0,
-        "Retired views must release active motion"
-    );
-    cache.begin_frame(5, 0.16);
-    assert_eq!(
-        cache.scalar(view, 8, ScalarKind::Toggle, 0.0, 0.0, policy),
-        0.0
-    );
-}
-
-#[test]
-fn surface_ownership_retires_views_and_parts_but_keeps_shared_themes() {
-    let mut world = World::new();
-    let theme = world.spawn(themes::light()).id();
+    let theme = world.spawn(themes::dark()).id();
     let surface = world.spawn((UiSurface, UsesTheme(theme))).id();
-    let other = world.spawn((UiSurface, UsesTheme(theme))).id();
-    let view = register_view(&mut world, surface, |_: UiFrame| {});
-    let part = world.spawn((Counter::default(), InView(view))).id();
+    let view = register_view(&mut world, surface, draw_counter);
+    world.entity_mut(view).insert(Counter::default());
+    let part = world.spawn(InView(view)).id();
+    let ctx = egui::Context::default();
+    ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(1).unwrap());
+    let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
+    let textures = HashMap::new();
+    let input = std::sync::Mutex::new(input::UiInputFrame::default());
+    let theme_data = themes::dark();
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        world
+            .run_system_with(
+                SystemId::<UiFrame<'static>>::from_entity(view),
+                UiFrame {
+                    view,
+                    surface,
+                    ui,
+                    theme: &theme_data,
+                    motion: default(),
+                    panel_settings: default(),
+                    icons: &icons,
+                    textures: &textures,
+                    input: &input,
+                },
+            )
+            .unwrap();
+        ui.ctx()
+            .request_discard("Do not replay stateful drawing systems");
+    });
+    output.textures_delta.clear();
+    assert!(!output.shapes.is_empty());
+    assert_eq!(world.get::<Counter>(view).unwrap().0, 1);
     world.despawn(surface);
     assert!(world.get_entity(view).is_err());
     assert!(world.get_entity(part).is_err());
     assert!(world.get::<Theme>(theme).is_some());
-    assert!(world.get::<UsesTheme>(other).is_some());
-    world.despawn(theme);
-    assert!(world.get::<UsesTheme>(other).is_none());
 }
-
-#[derive(Component, Default)]
-struct Counter(usize);
-fn draw_counter(frame: UiFrame, mut state: Query<&mut Counter>) {
-    state.get_mut(frame.view).unwrap().0 += 1;
-    frame.ui.window("counter").build(|| {
-        frame.controls().button("A themed button");
-    });
+fn key_event(
+    id: u64,
+    key_code: KeyCode,
+    text: Option<&str>,
+    modifiers: input::InputModifiers,
+) -> input::InputEvent {
+    input::InputEvent {
+        id,
+        modifiers,
+        event: WindowEvent::KeyboardInput(KeyboardInput {
+            key_code,
+            logical_key: Key::Character("a".into()),
+            state: ButtonState::Pressed,
+            text: text.map(Into::into),
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        }),
+    }
 }
-
 #[test]
-fn borrowed_frame_runs_regular_bevy_systems_and_closed_menus_skip_contents() {
-    let _lock = IMGUI_TEST_LOCK.lock().unwrap();
-    let mut world = World::new();
-    let surface = world.spawn(UiSurface).id();
-    let view = register_view(&mut world, surface, draw_counter);
-    world.entity_mut(view).insert(Counter::default());
-    let mut context = Context::create();
-    context
-        .set_ini_filename(None::<std::path::PathBuf>)
-        .unwrap();
-    context
-        .font_atlas()
-        .try_claim_legacy_renderer()
-        .unwrap()
-        .build();
-    let theme = themes::dark();
-    theme.apply(&mut context);
-    context.prepare_frame(FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0));
-    let frame = context.begin_frame();
-    let animations = RefCell::new(Animations::default());
-    let icons = RefCell::new(crate::icon_cache::IconCache::default());
-    let viewports = RefCell::new(crate::viewport_textures::ViewportTextures::default());
-    animations
-        .borrow_mut()
-        .begin_frame(frame.ui().frame_count(), 0.0);
-    world
-        .run_system_with(
-            SystemId::<UiFrame<'static>>::from_entity(view),
-            UiFrame {
-                animation_owner: view,
-                view,
-                surface,
-                ui: frame.ui(),
-                theme: &theme,
-                motion: MotionPolicy::default(),
-                animations: &animations,
-                icons: &icons,
-                viewports: &viewports,
+fn text_ownership_reserves_typing_noop_edits_and_leaves_save_available() {
+    let primary = input::InputModifiers {
+        control: !cfg!(target_os = "macos"),
+        meta: cfg!(target_os = "macos"),
+        ..default()
+    };
+    let mut frame = input::UiInputFrame {
+        events: vec![
+            key_event(
+                1,
+                KeyCode::KeyA,
+                Some("A"),
+                input::InputModifiers {
+                    shift: true,
+                    ..default()
+                },
+            ),
+            key_event(2, KeyCode::Backspace, None, default()),
+            key_event(3, KeyCode::KeyS, None, primary),
+            key_event(4, KeyCode::Enter, None, default()),
+            input::InputEvent {
+                id: 5,
+                modifiers: default(),
+                event: WindowEvent::Ime(bevy::window::Ime::Commit {
+                    window: Entity::PLACEHOLDER,
+                    value: "漢字".into(),
+                }),
             },
-        )
-        .unwrap();
-    let mut called = false;
-    frame
-        .ui()
-        .window("menus")
-        .position([10.0, 10.0], Condition::Always)
-        .build(|| {
-            let controls = Controls::new(
-                frame.ui(),
-                &theme,
-                MotionPolicy::default(),
-                view,
-                &animations,
-                &icons,
-                &viewports,
-            );
-            for _ in 0..1000 {
-                controls.button("row");
-                controls.context_menu("closed", || {
-                    called = true;
-                });
-            }
-        });
-    assert!(!called);
-    assert_eq!(world.get::<Counter>(view).unwrap().0, 1);
-    drop(frame);
+            key_event(6, KeyCode::KeyC, None, primary),
+        ],
+        ..default()
+    };
+    frame.claim_text(Entity::PLACEHOLDER, egui::Id::new("text"));
+    assert!(frame.claims.contains_key(&1));
+    assert!(frame.claims.contains_key(&2));
+    assert!(frame.claims.contains_key(&4));
+    assert!(frame.claims.contains_key(&5));
+    assert!(frame.claims.contains_key(&6));
+    assert!(!frame.claims.contains_key(&3));
+}
+#[test]
+fn routed_state_releases_on_focus_loss() {
+    let mut routed = input::RoutedInput::default();
+    routed.admit(key_event(1, KeyCode::KeyA, Some("a"), default()));
+    assert!(routed.keys.pressed(KeyCode::KeyA));
+    routed.admit(input::InputEvent {
+        id: 2,
+        modifiers: default(),
+        event: WindowEvent::WindowFocused(bevy::window::WindowFocused {
+            window: Entity::PLACEHOLDER,
+            focused: false,
+        }),
+    });
+    assert!(!routed.keys.pressed(KeyCode::KeyA));
+    assert!(routed.keys.just_released(KeyCode::KeyA));
 }
 
 #[test]
-fn built_in_themes_are_valid_and_bad_external_values_are_rejected() {
-    themes::light().validate().unwrap();
-    themes::dark().validate().unwrap();
-    let mut theme = themes::light();
-    theme.palette.text[0] = f32::NAN;
-    assert!(theme.validate().is_err());
-    theme = themes::dark();
-    theme.metrics.font_size = 0.0;
-    assert!(theme.validate().is_err());
-}
-
-#[test]
-fn selector_keeps_a_gap_at_either_edge_and_selects_duplicate_labels() {
-    let _lock = IMGUI_TEST_LOCK.lock().unwrap();
-    for opens_below in [true, false] {
-        let mut context = Context::create();
-        context
-            .set_ini_filename(None::<std::path::PathBuf>)
-            .unwrap();
-        context
-            .font_atlas()
-            .try_claim_legacy_renderer()
-            .unwrap()
-            .build();
-        let theme = themes::dark();
-        theme.apply(&mut context);
-        let view = World::new().spawn_empty().id();
-        let animations = RefCell::new(Animations::default());
-        let icons = RefCell::new(crate::icon_cache::IconCache::default());
-        let viewports = RefCell::new(crate::viewport_textures::ViewportTextures::default());
-        let mut selected = 0;
-        let mut changes = 0;
-        let mut target = [0.0; 2];
-        for frame in 0..6 {
-            if frame >= 2 {
-                context.io_mut().add_mouse_pos_event(target);
-            }
-            if frame == 3 || frame == 4 {
-                context
-                    .io_mut()
-                    .add_mouse_button_event(imgui::MouseButton::Left, frame == 3);
-            }
-            context.prepare_frame(FramePrepareOptions::new([400.0, 300.0], 1.0 / 60.0));
-            let token = context.begin_frame();
-            let ui = token.ui();
-            animations
-                .borrow_mut()
-                .begin_frame(ui.frame_count(), frame as f64 / 60.0);
-            ui.window("selector")
-                .position([0.0, 0.0], Condition::Always)
-                .size([400.0, 300.0], Condition::Always)
-                .flags(imgui::WindowFlags::NO_DECORATION)
-                .build(|| {
-                    ui.set_cursor_pos([20.0, if opens_below { 30.0 } else { 250.0 }]);
-                    let origin = ui.cursor_screen_pos();
-                    if frame == 1 {
-                        let _id = ui.push_id("Density");
-                        ui.open_popup("##options");
-                    }
-                    ui.set_next_item_width(180.0);
-                    let c = Controls::new(
-                        ui,
-                        &theme,
-                        MotionPolicy {
-                            enabled: false,
-                            ..default()
-                        },
-                        view,
-                        &animations,
-                        &icons,
-                        &viewports,
-                    );
-                    changes +=
-                        usize::from(c.select("Density", &mut selected, &["Same", "Same", "Quiet"]));
-                    if frame == 1 || frame == 2 {
-                        ui.with_bound_context(|| unsafe {
-                            let native = &*imgui::sys::igGetCurrentContext();
-                            assert!(native.OpenPopupStack.Size > 0);
-                            let popup = &*(*native.OpenPopupStack.Data).Window;
-                            let height = ui.current_font_size() + theme.metrics.padding[1] * 2.0;
-                            if opens_below {
-                                assert_eq!(
-                                    popup.Pos.y,
-                                    origin[1] + height + theme.metrics.popup_gap
-                                );
-                            } else {
-                                assert_eq!(
-                                    popup.Pos.y + popup.Size.y,
-                                    origin[1] - theme.metrics.popup_gap
-                                );
-                            }
-                            target = [
-                                popup.Pos.x + 30.0,
-                                popup.Pos.y
-                                    + theme.metrics.menu_padding[1]
-                                    + (ui.current_font_size() + theme.metrics.menu_spacing[1])
-                                        * 1.5,
-                            ];
-                        });
-                    }
-                });
-            drop(token.render_legacy());
-        }
-        assert_eq!(
-            selected, 1,
-            "The second identically labelled option must remain independently selectable"
-        );
-        assert_eq!(changes, 1);
-    }
-}
-
-#[test]
-fn dense_lists_only_submit_visible_rows_and_open_menus_run_contents() {
-    let _lock = IMGUI_TEST_LOCK.lock().unwrap();
-    let mut context = Context::create();
-    context
-        .set_ini_filename(None::<std::path::PathBuf>)
-        .unwrap();
-    context
-        .font_atlas()
-        .try_claim_legacy_renderer()
-        .unwrap()
-        .build();
-    let theme = themes::light();
-    theme.apply(&mut context);
-    context.prepare_frame(FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0));
-    let token = context.begin_frame();
-    let ui = token.ui();
-    let animations = RefCell::new(Animations::default());
-    let icons = RefCell::new(crate::icon_cache::IconCache::default());
-    let viewports = RefCell::new(crate::viewport_textures::ViewportTextures::default());
-    animations.borrow_mut().begin_frame(ui.frame_count(), 0.0);
-    let view = World::new().spawn_empty().id();
-    let c = Controls::new(
-        ui,
-        &theme,
-        MotionPolicy::default(),
-        view,
-        &animations,
-        &icons,
-        &viewports,
-    );
-    let mut submitted = 0;
-    let mut opened = false;
-    ui.window("list")
-        .position([0.0, 0.0], Condition::Always)
-        .size([400.0, 300.0], Condition::Always)
-        .build(|| {
-            ui.child_window("rows").size([300.0, 150.0]).build(ui, || {
-                c.list(10_000, |i| {
-                    submitted += 1;
-                    ui.text(format!("Row {i}"));
-                });
-            });
-            c.button("source");
-            ui.open_popup("open");
-            c.context_menu("open", || {
-                opened = true;
-                c.text("Menu contents");
-            });
-        });
-    assert!(
-        submitted > 0 && submitted < 30,
-        "Submitted {submitted} rows for a small viewport"
-    );
-    assert!(opened);
-    drop(token);
-}
-
-#[test]
-fn theme_switch_changes_base_style_without_replacing_fonts() {
-    let _lock = IMGUI_TEST_LOCK.lock().unwrap();
-    let context = Context::create();
-    let font = context
-        .font_atlas()
-        .add_font(&[imgui::FontSource::default_font_with_size(16.0)]);
-    context
-        .font_atlas()
-        .try_claim_legacy_renderer()
-        .unwrap()
-        .build();
-    let mut context = context;
-    let dark = themes::dark();
-    dark.apply(&mut context);
-    assert_eq!(
-        context.style().color(imgui::StyleColor::WindowBg),
-        dark.palette.background
-    );
-    let light = themes::light();
-    light.apply(&mut context);
-    assert_eq!(
-        context.style().color(imgui::StyleColor::WindowBg),
-        light.palette.background
-    );
-    // A prepared font handle remains usable across theme changes.
-    context.prepare_frame(FramePrepareOptions::new([320.0, 240.0], 1.0 / 60.0));
-    let token = context.begin_frame();
-    let _font = token.ui().push_font(font);
-    token.ui().text("Still the same prepared font");
-}
-
-#[test]
-fn popups_restart_for_new_sources_and_reopening_and_honor_reduced_motion() {
-    let policy = MotionPolicy::default();
-    let mut popup = PopupMotion::default();
-    assert_eq!(popup.reveal(10, 7, policy), 0.0);
-    popup.advance(0.04, policy);
-    let partial = popup.reveal(11, 7, policy);
-    assert!(partial > 0.0 && partial < 1.0);
-    assert_eq!(
-        popup.reveal(12, 8, policy),
-        0.0,
-        "A different tooltip/control restarts motion"
-    );
-    popup.advance(0.04, policy);
-    assert_eq!(
-        popup.reveal(16, 8, policy),
-        0.0,
-        "Reopening restarts motion"
-    );
-    assert_eq!(
-        popup.reveal(
-            17,
-            8,
-            MotionPolicy {
-                enabled: false,
-                ..policy
-            }
-        ),
-        1.0
-    );
-}
-
-#[test]
-fn popup_scale_and_fade_transform_children_about_the_control_without_moving_layout() {
-    use imgui::sys;
-    let _lock = IMGUI_TEST_LOCK.lock().unwrap();
-    let mut context = Context::create();
-    context
-        .set_ini_filename(None::<std::path::PathBuf>)
-        .unwrap();
-    context
-        .font_atlas()
-        .try_claim_legacy_renderer()
-        .unwrap()
-        .build();
-    let mut popup = PopupMotion::default();
-    let policy = MotionPolicy::default();
-    let anchor = [40.0, 60.0];
-    for frame in 0..3 {
-        popup.advance(1.0 / 60.0, policy);
-        context.prepare_frame(FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0));
-        let token = context.begin_frame();
-        let ui = token.ui();
-        let mut ids = Vec::new();
-        ui.window("host")
-            .position([0.0, 0.0], Condition::Always)
-            .size([700.0, 500.0], Condition::Always)
-            .build(|| {
-                ui.tooltip(|| {
-                    ids.push(
-                        ui.with_bound_context(|| unsafe { (*sys::igGetCurrentWindowRead()).ID }),
-                    );
-                    ui.text("A tooltip with custom-painted content");
-                    ui.get_window_draw_list()
-                        .add_rect([160.0, 180.0], [220.0, 210.0], [1.0, 0.0, 0.0, 1.0])
-                        .filled(true)
-                        .build();
-                    ui.child_window("tooltip-child")
-                        .size([180.0, 80.0])
-                        .build(ui, || {
-                            ids.push(ui.with_bound_context(|| unsafe {
-                                (*sys::igGetCurrentWindowRead()).ID
-                            }));
-                            ui.text("A clipped child");
-                        });
-                    popup.reveal(ui.frame_count(), 7, policy);
-                    popup.present(ui, anchor, policy.popup_initial_scale);
-                });
-            });
-        let geometry = || {
-            ui.with_bound_context(|| unsafe {
-                let ctx = &*sys::igGetCurrentContext();
-                (0..ctx.Windows.Size)
-                    .filter_map(|i| {
-                        let w = &**ctx.Windows.Data.add(i as usize);
-                        if !ids.contains(&w.ID) {
-                            return None;
-                        }
-                        let list = &*w.DrawList;
-                        let vertices = (0..list.VtxBuffer.Size)
-                            .map(|v| *list.VtxBuffer.Data.add(v as usize))
-                            .collect::<Vec<_>>();
-                        let clips = (0..list.CmdBuffer.Size)
-                            .map(|c| (*list.CmdBuffer.Data.add(c as usize)).ClipRect)
-                            .collect::<Vec<_>>();
-                        Some((w.ID, w.Pos, w.Size, vertices, clips))
-                    })
-                    .collect::<Vec<_>>()
-            })
-        };
-        let before = geometry();
-        let effect = popup.presentation.unwrap();
-        crate::motion::apply_popups(ui, &[effect]);
-        let after = geometry();
-        if frame == 2 {
-            assert!(effect.alpha > 0.0 && effect.alpha < 1.0);
-            assert!(effect.scale > policy.popup_initial_scale && effect.scale < 1.0);
-            assert_eq!(before.len(), 2);
-            for (old, new) in before.iter().zip(&after) {
-                assert_eq!(old.1, new.1, "Hit-test position stays final");
-                assert_eq!(old.2, new.2, "Layout size stays final");
-                assert!(!old.3.is_empty());
-                for (a, b) in old.3.iter().zip(&new.3) {
-                    assert!(
-                        (b.pos.x - (anchor[0] + (a.pos.x - anchor[0]) * effect.scale)).abs()
-                            < 0.001
-                    );
-                    assert!(
-                        (b.pos.y - (anchor[1] + (a.pos.y - anchor[1]) * effect.scale)).abs()
-                            < 0.001
-                    );
-                    assert_eq!(
-                        b.col >> 24,
-                        ((a.col >> 24) as f32 * effect.alpha).round() as u32
-                    );
-                }
-                for (a, b) in old.4.iter().zip(&new.4) {
-                    assert!((b.x - (anchor[0] + (a.x - anchor[0]) * effect.scale)).abs() < 0.001);
-                    assert!((b.w - (anchor[1] + (a.w - anchor[1]) * effect.scale)).abs() < 0.001);
-                }
-            }
-        }
-        drop(token);
-    }
-}
-
-#[test]
-fn hovered_button_uses_the_interpolated_color_in_its_draw_output() {
-    let _lock = IMGUI_TEST_LOCK.lock().unwrap();
-    let mut context = Context::create();
-    context
-        .set_ini_filename(None::<std::path::PathBuf>)
-        .unwrap();
-    context
-        .font_atlas()
-        .try_claim_legacy_renderer()
-        .unwrap()
-        .build();
+fn tooltip_contents_fade_at_their_final_size_and_pixel_grid() {
+    let ctx = egui::Context::default();
     let theme = themes::dark();
-    theme.apply(&mut context);
-    let mut reference = Transition::default();
-    let animations = RefCell::new(Animations::default());
-    let icons = RefCell::new(crate::icon_cache::IconCache::default());
-    let viewports = RefCell::new(crate::viewport_textures::ViewportTextures::default());
-    let view = World::new().spawn_empty().id();
-    for frame in 0..3 {
-        context.io_mut().add_mouse_pos_event([40.0, 30.0]);
-        context.prepare_frame(FramePrepareOptions::new([400.0, 300.0], 1.0 / 60.0));
-        let token = context.begin_frame();
-        let ui = token.ui();
-        animations
-            .borrow_mut()
-            .begin_frame(ui.frame_count(), frame as f64 / 60.0);
-        reference.advance(1.0 / 60.0, MotionPolicy::default());
-        let mut hovered = false;
-        ui.window("hover")
-            .position([0.0, 0.0], Condition::Always)
-            .size([300.0, 200.0], Condition::Always)
-            .flags(imgui::WindowFlags::NO_DECORATION)
-            .build(|| {
-                Controls::new(
+    theme.apply(&ctx);
+    ctx.global_style_mut(|style| {
+        style.animation_time = MotionPolicy::default().seconds;
+        style.interaction.tooltip_delay = 0.0;
+        style.interaction.show_tooltips_only_when_still = false;
+    });
+    let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
+    let textures = HashMap::new();
+    let input = std::sync::Mutex::new(input::UiInputFrame::default());
+    let render = |time| {
+        let mut shown = false;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                time: Some(time),
+                events: vec![egui::Event::PointerMoved(egui::pos2(10.0, 10.0))],
+                ..default()
+            },
+            |ui| {
+                let response = ui.button("Hover for a tooltip");
+                let frame = UiFrame {
+                    view: Entity::PLACEHOLDER,
+                    surface: Entity::PLACEHOLDER,
                     ui,
-                    &theme,
-                    MotionPolicy::default(),
-                    view,
-                    &animations,
-                    &icons,
-                    &viewports,
-                )
-                .button("Animated");
-                hovered = ui.is_item_hovered();
+                    theme: &theme,
+                    motion: default(),
+                    panel_settings: default(),
+                    icons: &icons,
+                    textures: &textures,
+                    input: &input,
+                };
+                shown = frame.tooltip(&response, "Popup text");
+            },
+        );
+        output.textures_delta.clear();
+        let text = output
+            .shapes
+            .into_iter()
+            .find_map(|shape| match shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == "Popup text" => Some(text),
+                _ => None,
             });
-        let expected = ui.get_color_u32_from_rgba(crate::theme::mix(
-            theme.palette.surface,
-            theme.palette.accent,
-            reference.value() * 0.25,
-        ));
-        reference.retarget(if hovered { 1.0 } else { 0.0 });
-        let rendered = token.render_legacy();
-        if frame == 2 {
-            assert!(hovered);
-            assert!(
-                rendered
-                    .draw_data()
-                    .draw_lists()
-                    .any(|list| list.vtx_buffer().iter().any(|v| v.col == expected)),
-                "Hovered background must retain its interpolated color"
+        (shown, text)
+    };
+    render(0.0);
+    render(0.01); // Popup sizing pass.
+    let (shown, moving) = render(0.08);
+    assert!(shown);
+    let (_, settled) = render(0.25);
+    let moving = moving.unwrap();
+    let settled = settled.unwrap();
+    assert_eq!(moving.pos, settled.pos);
+    assert_eq!(moving.galley.rect, settled.galley.rect);
+    assert_eq!(moving.galley.mesh_bounds, settled.galley.mesh_bounds);
+    assert!(moving.fallback_color.a() < settled.fallback_color.a());
+    assert_eq!(
+        moving.galley.job, settled.galley.job,
+        "Keep the original text layout job"
+    );
+    for (moving, settled) in moving.galley.rows.iter().zip(&settled.galley.rows) {
+        for (moving, settled) in moving
+            .row
+            .visuals
+            .mesh
+            .vertices
+            .iter()
+            .zip(&settled.row.visuals.mesh.vertices)
+        {
+            assert_eq!(moving.pos, settled.pos);
+            assert_eq!(
+                moving.uv, settled.uv,
+                "Opacity changes keep glyph sampling fixed"
             );
+        }
+    }
+}
+
+#[test]
+fn dropdown_clears_its_anchor_and_long_lists_still_scroll() {
+    let ctx = egui::Context::default();
+    themes::dark().apply(&ctx);
+    let render = |time, events| {
+        let mut button = None;
+        let mut first = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                time: Some(time),
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(640.0, 480.0),
+                )),
+                events,
+                ..default()
+            },
+            |ui| {
+                let combo = ComboBox::from_label("Options")
+                    .selected_text("First")
+                    .height(80.0)
+                    .show_ui(ui, |ui| {
+                        first = Some(ui.label("First item").rect.min.y);
+                        for i in 1..30 {
+                            ui.label(format!("Item {i}"));
+                        }
+                    });
+                button = Some(combo.response);
+            },
+        );
+        output.textures_delta.clear();
+        (button.unwrap(), first)
+    };
+    let (button, _) = render(0.0, vec![]);
+    let popup = button.id.with("popup");
+    egui::Popup::open_id(&ctx, popup);
+    render(0.01, vec![]);
+    let (button, first) = render(0.03, vec![]);
+    let popup_rect = ctx.read_response(popup).unwrap().rect;
+    assert!(
+        popup_rect.top() >= button.rect.bottom() + 4.0,
+        "Dropdown must have a visible gap below its anchor"
+    );
+    render(0.04, vec![egui::Event::PointerMoved(popup_rect.center())]);
+    render(
+        0.05,
+        vec![egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            phase: egui::TouchPhase::Move,
+            delta: egui::vec2(0.0, -60.0),
+            modifiers: default(),
+        }],
+    );
+    let (_, scrolled) = render(0.1, vec![]);
+    assert!(
+        scrolled.unwrap() < first.unwrap(),
+        "Hiding the scrollbar must preserve wheel scrolling"
+    );
+    assert!(egui::Popup::is_id_open(&ctx, popup));
+}
+
+#[test]
+fn enter_ending_text_focus_is_claimed_in_the_same_pass() {
+    let ctx = egui::Context::default();
+    let id = egui::Id::new("editing");
+    let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
+    let textures = HashMap::new();
+    let input = std::sync::Mutex::new(input::UiInputFrame::default());
+    let theme = themes::dark();
+    let mut text = "Some text".to_owned();
+    ctx.memory_mut(|m| m.request_focus(id));
+    for step in 0..2 {
+        let mut raw = egui::RawInput::default();
+        if step == 1 {
+            raw.events.push(egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: Some(egui::Key::Enter),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            input
+                .lock()
+                .unwrap()
+                .events
+                .push(key_event(1, KeyCode::Enter, None, default()));
+        }
+        let mut output = ctx.run_ui(raw, |ui| {
+            let mut frame = UiFrame {
+                view: Entity::PLACEHOLDER,
+                surface: Entity::PLACEHOLDER,
+                ui,
+                theme: &theme,
+                motion: default(),
+                panel_settings: default(),
+                icons: &icons,
+                textures: &textures,
+                input: &input,
+            };
+            let response = frame
+                .text_edit(egui::TextEdit::singleline(&mut text).id(id))
+                .response;
+            if step == 1 {
+                assert!(response.lost_focus());
+            }
+        });
+        output.textures_delta.clear();
+    }
+    assert!(input.lock().unwrap().claims.contains_key(&1));
+}
+#[test]
+fn ui_owned_held_key_cannot_become_an_application_press_after_focus_changes() {
+    let mut router = input::InputRouter::default();
+    let mut application = input::RoutedInput::default();
+    router.frame.get_mut().unwrap().events =
+        vec![key_event(1, KeyCode::KeyA, Some("a"), default())];
+    router
+        .frame
+        .get_mut()
+        .unwrap()
+        .claims
+        .insert(1, input::InputOwner::Ui);
+    router.publish(&mut application);
+    let mut repeat = key_event(2, KeyCode::KeyA, Some("a"), default());
+    if let WindowEvent::KeyboardInput(k) = &mut repeat.event {
+        k.repeat = true;
+    }
+    *router.frame.get_mut().unwrap() = input::UiInputFrame {
+        events: vec![repeat],
+        ..default()
+    };
+    router.publish(&mut application);
+    assert!(!application.keys.pressed(KeyCode::KeyA));
+    assert!(application.events.is_empty());
+    let mut released = key_event(3, KeyCode::KeyA, None, default());
+    if let WindowEvent::KeyboardInput(k) = &mut released.event {
+        k.state = ButtonState::Released;
+    }
+    router.frame.get_mut().unwrap().events =
+        vec![released, key_event(4, KeyCode::KeyA, Some("a"), default())];
+    router.publish(&mut application);
+    assert!(application.keys.just_pressed(KeyCode::KeyA));
+    assert_eq!(application.events.len(), 1);
+}
+
+#[test]
+fn widgets_claim_pointer_presses_before_panel_input_but_viewport_regions_delegate_them() {
+    for delegate in [false, true] {
+        let ctx = egui::Context::default();
+        let mut target = egui::pos2(10.0, 10.0);
+        for pressed in [false, true] {
+            let mut raw = egui::RawInput::default();
+            raw.events.push(egui::Event::PointerMoved(target));
+            if pressed {
+                raw.events.push(egui::Event::PointerButton {
+                    pos: target,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            let mut frame = input::UiInputFrame::default();
+            if pressed {
+                frame.events.push(input::InputEvent {
+                    id: 1,
+                    modifiers: default(),
+                    event: WindowEvent::MouseButtonInput(bevy::input::mouse::MouseButtonInput {
+                        window: Entity::PLACEHOLDER,
+                        button: MouseButton::Left,
+                        state: ButtonState::Pressed,
+                    }),
+                });
+            }
+            let mut output = ctx.run_ui(raw, |ui| {
+                let response = ui.button("Interactive content");
+                target = response.rect.center();
+                if delegate {
+                    frame.region(Entity::PLACEHOLDER, response.id, response.rect, false);
+                }
+            });
+            output.textures_delta.clear();
+            frame.claim_widgets(&ctx);
+            if pressed {
+                assert_eq!(frame.claims.contains_key(&1), !delegate);
+            }
         }
     }
 }

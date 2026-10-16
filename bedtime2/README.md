@@ -11,11 +11,11 @@ The foundation has three crates:
 
 - [`bedtime-clipboard2`](crates/bedtime-clipboard2): independently usable text/file
   clipboard, optional OS integration, in-process fallback.
-- [`bedtime-ui2`](crates/bedtime-ui2): ImGui/Bevy integration, themes, controls,
+- [`bedtime-ui2`](crates/bedtime-ui2): egui/Bevy integration, themes, controls,
   asset-backed icons, effects and UI-local motion. It has no workbench dependency.
-- [`bedtime-workbench2`](crates/bedtime-workbench2): headless actions, scoped handlers,
+- [`bedtime-workbench2`](crates/bedtime-workbench2): headless ContextCommands, scoped handlers,
   keybindings, menus and workspace/layout/panel ownership, plus optional native
-  services and ImGui workbench presentation. Documents/settings/storage follow.
+  services and egui workbench presentation. Documents/settings/storage follow.
 
 The former desktop crate has been retired. Native menu/window integration now
 belongs to optional workbench plugins. After the application's Bevy setup,
@@ -42,3 +42,5 @@ cargo run -p bedtime-ui2 --example gallery
 
 See [stage 3](../MIGRATION/step-3.md) and the
 [workbench split](../MIGRATION/step-3-split.md).
+
+[Stage 4](../MIGRATION/step-4-egui.md) records the egui migration and input ownership model.

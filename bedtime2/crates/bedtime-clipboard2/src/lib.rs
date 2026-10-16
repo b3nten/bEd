@@ -46,7 +46,7 @@ struct State {
     initialization_error: Option<String>,
 }
 
-/// Cloneable handles share one backend and lock, including the ImGui adapter.
+/// Cloneable handles share one backend and lock, including the egui adapter.
 /// Cloning does not open another OS clipboard or duplicate its contents.
 #[derive(Resource, Clone)]
 pub struct Clipboard(Arc<Mutex<State>>);

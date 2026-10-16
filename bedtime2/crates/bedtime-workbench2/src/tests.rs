@@ -1,25 +1,25 @@
 use super::*;
 
 struct First;
-impl CommandDefinition for First {
+impl ContextCommand for First {
     const KEY: &'static str = "tests.first";
     const LABEL: &'static str = "First";
 }
 
 struct Second;
-impl CommandDefinition for Second {
+impl ContextCommand for Second {
     const KEY: &'static str = "tests.second";
     const LABEL: &'static str = "Second";
 }
 
 struct Collision;
-impl CommandDefinition for Collision {
+impl ContextCommand for Collision {
     const KEY: &'static str = First::KEY;
     const LABEL: &'static str = "Collision";
 }
 
 #[derive(Resource, Default)]
-struct Calls(Vec<CommandInvocation>);
+struct Calls(Vec<ContextCommandInvocation>);
 
 fn app() -> App {
     let mut app = App::new();
@@ -183,13 +183,16 @@ fn a_splitter_request_cannot_mutate_a_replaced_layout_tree() {
     assert!(results[0].result.is_err());
     assert_eq!(Workbench::new(app.world_mut()).panels(layout).len(), 2);
 }
-fn record(In(invocation): In<CommandInvocation>, mut calls: ResMut<Calls>) -> CommandResult {
+fn record(
+    In(invocation): In<ContextCommandInvocation>,
+    mut calls: ResMut<Calls>,
+) -> ContextCommandResult {
     calls.0.push(invocation);
     Ok(())
 }
-fn results(app: &mut App) -> Vec<CommandFinished> {
+fn results(app: &mut App) -> Vec<ContextCommandFinished> {
     app.world_mut()
-        .resource_mut::<Messages<CommandFinished>>()
+        .resource_mut::<Messages<ContextCommandFinished>>()
         .drain()
         .collect()
 }
@@ -198,33 +201,35 @@ fn results(app: &mut App) -> Vec<CommandFinished> {
 fn typed_commands_run_in_submission_order_and_report_handler_errors() {
     let mut app = app();
     let first = Workbench::new(app.world_mut())
-        .register_command::<First, _>(record)
+        .register_handler::<First, _>(record)
         .unwrap();
     let second = Workbench::new(app.world_mut())
-        .register_command::<Second, _>(|In(_): In<CommandInvocation>| -> CommandResult {
-            Err("expected failure".into())
-        })
+        .register_handler::<Second, _>(
+            |In(_): In<ContextCommandInvocation>| -> ContextCommandResult {
+                Err("expected failure".into())
+            },
+        )
         .unwrap();
     let source = app.world_mut().spawn_empty().id();
-    let mut requests = app.world_mut().resource_mut::<CommandRequests>();
-    requests.submit(CommandRequest {
-        command: first,
+    let mut requests = app.world_mut().resource_mut::<ContextCommandRequests>();
+    requests.submit(ContextCommandRequest {
+        command: first.clone(),
         source: Some(source),
-        context: CommandContext::Global,
+        context: InvocationContext::Global,
     });
-    requests.invoke_type(second);
+    requests.invoke_id(second.clone());
     requests.invoke::<First>();
     app.update();
     assert_eq!(
         app.world().resource::<Calls>().0,
         [
-            CommandInvocation {
-                command: first,
+            ContextCommandInvocation {
+                command: first.clone(),
                 source: Some(source),
                 panel: None
             },
-            CommandInvocation {
-                command: first,
+            ContextCommandInvocation {
+                command: first.clone(),
                 source: None,
                 panel: None
             }
@@ -234,9 +239,9 @@ fn typed_commands_run_in_submission_order_and_report_handler_errors() {
     assert_eq!(
         completed
             .iter()
-            .map(|r| r.invocation.command)
+            .map(|r| r.invocation.command.clone())
             .collect::<Vec<_>>(),
-        [first, second, first]
+        [first.clone(), second, first]
     );
     assert!(completed[0].result.is_ok());
     assert_eq!(completed[1].result, Err("expected failure".into()));
@@ -246,19 +251,19 @@ fn typed_commands_run_in_submission_order_and_report_handler_errors() {
 fn stable_keys_round_trip_without_persisting_types_or_handler_entities() {
     let mut old = app();
     let command = Workbench::new(old.world_mut())
-        .register_command::<First, _>(record)
+        .register_handler::<First, _>(record)
         .unwrap();
-    let saved = serde_json::to_string(&command.key()).unwrap();
+    let saved = serde_json::to_string(&command).unwrap();
     assert_eq!(saved, "\"tests.first\"");
-    let loaded: CommandKey = serde_json::from_str(&saved).unwrap();
+    let loaded: ContextCommandId = serde_json::from_str(&saved).unwrap();
     let mut new = app();
     new.world_mut().spawn_empty();
     Workbench::new(new.world_mut())
-        .register_command::<First, _>(record)
+        .register_handler::<First, _>(record)
         .unwrap();
     assert_eq!(
         Workbench::new(new.world_mut()).command_by_key(loaded.as_str()),
-        Some(CommandType::of::<First>())
+        Some(ContextCommandId::of::<First>())
     );
     assert_eq!(
         Workbench::new(new.world_mut()).command_by_key("missing.command"),
@@ -269,27 +274,27 @@ fn stable_keys_round_trip_without_persisting_types_or_handler_entities() {
 fn key_and_scope_collisions_do_not_replace_handlers() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
-    let first = w.register_command::<First, _>(record).unwrap();
-    assert!(w.register_command::<First, _>(record).is_err());
-    assert!(w.register_command::<Collision, _>(record).is_err());
+    let first = w.register_handler::<First, _>(record).unwrap();
+    assert!(w.register_handler::<First, _>(record).is_err());
+    assert!(w.register_handler::<Collision, _>(record).is_err());
     assert_eq!(w.command_by_key(First::KEY), Some(first));
     let panel = w.create_panel(w.active_layout(), "Panel").unwrap();
-    w.register_panel_command::<First, _>(panel, record).unwrap();
-    assert!(w.register_panel_command::<First, _>(panel, record).is_err());
+    w.register_panel_handler::<First, _>(panel, record).unwrap();
+    assert!(w.register_panel_handler::<First, _>(panel, record).is_err());
 }
 #[test]
 fn disabled_and_removed_handlers_never_run_queued_requests() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
-    let first = w.register_command::<First, _>(record).unwrap();
-    let second = w.register_command::<Second, _>(record).unwrap();
-    let h1 = w.handler(first, None).unwrap();
-    let h2 = w.handler(second, None).unwrap();
+    let first = w.register_handler::<First, _>(record).unwrap();
+    let second = w.register_handler::<Second, _>(record).unwrap();
+    let h1 = w.handler(first.clone(), None).unwrap();
+    let h2 = w.handler(second.clone(), None).unwrap();
     w.world.get_mut::<ActionEnabled>(h1).unwrap().0 = false;
     w.world.despawn(h2);
-    let mut requests = w.world.resource_mut::<CommandRequests>();
-    requests.invoke_type(first);
-    requests.invoke_type(second);
+    let mut requests = w.world.resource_mut::<ContextCommandRequests>();
+    requests.invoke_id(first.clone());
+    requests.invoke_id(second.clone());
     app.update();
     assert!(app.world().resource::<Calls>().0.is_empty());
     assert!(results(&mut app).iter().all(|r| r.result.is_err()));
@@ -298,17 +303,19 @@ fn disabled_and_removed_handlers_never_run_queued_requests() {
 fn panel_handlers_override_globals_and_disabled_panel_handlers_block_fallback() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
-    let command = w.register_command::<First, _>(record).unwrap();
+    let command = w.register_handler::<First, _>(record).unwrap();
     let first = w.create_panel(w.active_layout(), "First").unwrap();
     let second = w.create_panel(w.active_layout(), "Second").unwrap();
-    let local = w.register_panel_command::<First, _>(first, record).unwrap();
+    let local = w.register_panel_handler::<First, _>(first, record).unwrap();
     w.focus_panel(first).unwrap();
-    w.world.resource_mut::<CommandRequests>().invoke::<First>();
+    w.world
+        .resource_mut::<ContextCommandRequests>()
+        .invoke::<First>();
     app.update();
     assert_eq!(app.world().resource::<Calls>().0[0].panel, Some(first));
     app.world_mut().get_mut::<ActionEnabled>(local).unwrap().0 = false;
     app.world_mut()
-        .resource_mut::<CommandRequests>()
+        .resource_mut::<ContextCommandRequests>()
         .invoke::<First>();
     app.update();
     assert_eq!(app.world().resource::<Calls>().0.len(), 1);
@@ -317,10 +324,10 @@ fn panel_handlers_override_globals_and_disabled_panel_handlers_block_fallback() 
     assert!(command_available(
         app.world_mut(),
         command,
-        CommandContext::Focused
+        InvocationContext::Focused
     ));
     app.world_mut()
-        .resource_mut::<CommandRequests>()
+        .resource_mut::<ContextCommandRequests>()
         .invoke::<First>();
     app.update();
     assert_eq!(
@@ -334,7 +341,7 @@ fn panel_handlers_override_globals_and_disabled_panel_handlers_block_fallback() 
 fn handler_replacement_does_not_rewire_menu_action_types() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
-    let command = w.register_command::<First, _>(record).unwrap();
+    let command = w.register_handler::<First, _>(record).unwrap();
     let root = w
         .world
         .spawn(Menu {
@@ -345,20 +352,22 @@ fn handler_replacement_does_not_rewire_menu_action_types() {
         .world
         .spawn((MenuItem::new("First"), InMenu(root), Invokes::of::<First>()))
         .id();
-    let old = w.handler(command, None).unwrap();
+    let old = w.handler(command.clone(), None).unwrap();
     w.world.despawn(old);
     assert!(
-        menu_snapshot(w.world, root, CommandContext::Global)
+        menu_snapshot(w.world, root, InvocationContext::Global)
             .unwrap()
-            .request(item, command)
+            .request(item, command.clone())
             .is_none()
     );
-    w.register_command::<First, _>(record).unwrap();
-    let request = menu_snapshot(w.world, root, CommandContext::Global)
+    w.register_handler::<First, _>(record).unwrap();
+    let request = menu_snapshot(w.world, root, InvocationContext::Global)
         .unwrap()
-        .request(item, command)
+        .request(item, command.clone())
         .unwrap();
-    w.world.resource_mut::<CommandRequests>().submit(request);
+    w.world
+        .resource_mut::<ContextCommandRequests>()
+        .submit(request);
     app.update();
     assert_eq!(app.world().resource::<Calls>().0[0].source, Some(item));
 }
@@ -366,20 +375,20 @@ fn handler_replacement_does_not_rewire_menu_action_types() {
 fn handlers_enqueue_followups_without_reentrant_execution() {
     let mut app = app();
     Workbench::new(app.world_mut())
-        .register_command::<Second, _>(record)
+        .register_handler::<Second, _>(record)
         .unwrap();
     Workbench::new(app.world_mut())
-        .register_command::<First, _>(
-            |In(_): In<CommandInvocation>,
-             mut requests: ResMut<CommandRequests>|
-             -> CommandResult {
+        .register_handler::<First, _>(
+            |In(_): In<ContextCommandInvocation>,
+             mut requests: ResMut<ContextCommandRequests>|
+             -> ContextCommandResult {
                 requests.invoke::<Second>();
                 Ok(())
             },
         )
         .unwrap();
     app.world_mut()
-        .resource_mut::<CommandRequests>()
+        .resource_mut::<ContextCommandRequests>()
         .invoke::<First>();
     app.update();
     assert!(app.world().resource::<Calls>().0.is_empty());
@@ -393,50 +402,59 @@ fn a_batch_captures_all_panels_before_handlers_change_focus_or_destroy_targets()
     let mut w = Workbench::new(app.world_mut());
     let a = w.create_panel(w.active_layout(), "A").unwrap();
     let b = w.create_panel(w.active_layout(), "B").unwrap();
-    w.register_panel_command::<Second, _>(a, record).unwrap();
-    w.register_command::<First, _>(
-        move |In(_): In<CommandInvocation>, world: &mut World| -> CommandResult {
+    w.register_panel_handler::<Second, _>(a, record).unwrap();
+    w.register_handler::<First, _>(
+        move |In(_): In<ContextCommandInvocation>, world: &mut World| -> ContextCommandResult {
             Workbench::new(world).focus_panel(b)
         },
     )
     .unwrap();
     w.focus_panel(a).unwrap();
-    let mut requests = w.world.resource_mut::<CommandRequests>();
+    let mut requests = w.world.resource_mut::<ContextCommandRequests>();
     requests.invoke::<First>();
     requests.invoke::<Second>();
     app.update();
     assert_eq!(app.world().resource::<Calls>().0[0].panel, Some(a));
 }
 #[test]
-fn keybindings_route_panel_first_and_respect_text_capture_and_conflicts() {
+fn keybindings_resolve_independently_from_handlers_and_conflicts_reserve_input() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
-    w.register_command::<First, _>(record).unwrap();
-    w.register_command::<Second, _>(record).unwrap();
+    w.register_handler::<First, _>(record).unwrap();
+    w.register_handler::<Second, _>(record).unwrap();
     let panel = w.create_panel(w.active_layout(), "Panel").unwrap();
-    w.register_panel_command::<Second, _>(panel, record)
+    w.register_panel_handler::<Second, _>(panel, record)
         .unwrap();
     let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyK);
-    w.world.spawn(KeyBinding::new::<First>(chord));
+    w.world.spawn(Binding::new::<First>(chord));
     w.world
-        .spawn((KeyBinding::new::<Second>(chord), InPanel(panel)));
-    let mut keys = ButtonInput::<KeyCode>::default();
-    keys.press(KeyCode::ControlLeft);
-    keys.press(KeyCode::KeyK);
-    w.world.insert_resource(keys);
+        .spawn((Binding::new::<Second>(chord), InPanel(panel)));
+    w.world.resource_mut::<BindingInput>().0.push(BindingPress {
+        event: 1,
+        chord,
+        repeat: false,
+        context: InvocationContext::Focused,
+    });
     app.update();
     assert_eq!(
         app.world().resource::<Calls>().0[0].command,
-        CommandType::of::<Second>()
+        ContextCommandId::of::<Second>()
     );
-    app.world_mut().resource_mut::<ShortcutCapture>().text = true;
-    app.update();
-    assert_eq!(app.world().resource::<Calls>().0.len(), 1);
-    app.world_mut().resource_mut::<ShortcutCapture>().text = false;
+    assert_eq!(app.world().resource::<BindingClaims>().0, vec![1]);
     app.world_mut()
-        .spawn((KeyBinding::new::<First>(chord), InPanel(panel)));
+        .spawn((Binding::new::<First>(chord), InPanel(panel)));
+    app.world_mut()
+        .resource_mut::<BindingInput>()
+        .0
+        .push(BindingPress {
+            event: 2,
+            chord,
+            repeat: false,
+            context: InvocationContext::Focused,
+        });
     app.update();
     assert_eq!(app.world().resource::<Calls>().0.len(), 1);
+    assert_eq!(app.world().resource::<BindingClaims>().0, vec![2]);
 }
 
 #[test]
@@ -444,17 +462,21 @@ fn retiring_an_admitted_panel_handler_does_not_redirect_to_a_global_handler() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
     let panel = w.create_panel(w.active_layout(), "Closing").unwrap();
-    w.register_command::<Second, _>(record).unwrap();
-    w.register_panel_command::<Second, _>(panel, record)
+    w.register_handler::<Second, _>(record).unwrap();
+    w.register_panel_handler::<Second, _>(panel, record)
         .unwrap();
-    w.register_command::<First, _>(
-        move |_: In<CommandInvocation>, world: &mut World| -> CommandResult {
+    w.register_handler::<First, _>(
+        move |_: In<ContextCommandInvocation>, world: &mut World| -> ContextCommandResult {
             Workbench::new(world).close_panel(panel)
         },
     )
     .unwrap();
-    w.world.resource_mut::<CommandRequests>().invoke::<First>();
-    w.world.resource_mut::<CommandRequests>().invoke::<Second>();
+    w.world
+        .resource_mut::<ContextCommandRequests>()
+        .invoke::<First>();
+    w.world
+        .resource_mut::<ContextCommandRequests>()
+        .invoke::<Second>();
     app.update();
     assert!(app.world().resource::<Calls>().0.is_empty());
     let results = results(&mut app);
@@ -463,26 +485,39 @@ fn retiring_an_admitted_panel_handler_does_not_redirect_to_a_global_handler() {
 }
 
 #[test]
-fn a_native_owned_shortcut_has_only_one_invocation_path() {
+fn normalized_shortcuts_reserve_repeats_without_reexecuting_by_default() {
     let mut app = app();
     Workbench::new(app.world_mut())
-        .register_command::<First, _>(record)
+        .register_handler::<First, _>(record)
         .unwrap();
     let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyK);
-    app.world_mut().spawn(KeyBinding::new::<First>(chord));
-    app.world_mut()
-        .resource_mut::<crate::commands::NativeShortcuts>()
-        .0
-        .insert(chord);
-    let mut keys = ButtonInput::<KeyCode>::default();
-    keys.press(KeyCode::ControlLeft);
-    keys.press(KeyCode::KeyK);
-    app.world_mut().insert_resource(keys);
-    app.world_mut()
-        .resource_mut::<CommandRequests>()
-        .invoke::<First>();
+    let binding = app.world_mut().spawn(Binding::new::<First>(chord)).id();
+    for (event, repeat) in [(1, false), (2, true)] {
+        app.world_mut()
+            .resource_mut::<BindingInput>()
+            .0
+            .push(BindingPress {
+                event,
+                chord,
+                repeat,
+                context: InvocationContext::Focused,
+            });
+    }
     app.update();
     assert_eq!(app.world().resource::<Calls>().0.len(), 1);
+    assert_eq!(app.world().resource::<BindingClaims>().0, vec![1, 2]);
+    app.world_mut().get_mut::<Binding>(binding).unwrap().repeat = true;
+    app.world_mut()
+        .resource_mut::<BindingInput>()
+        .0
+        .push(BindingPress {
+            event: 3,
+            chord,
+            repeat: true,
+            context: InvocationContext::Focused,
+        });
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0.len(), 2);
 }
 #[cfg(feature = "ui")]
 #[test]
@@ -490,11 +525,11 @@ fn ui_requests_execute_in_the_same_frame_without_application_ordering() {
     let mut app = app();
     app.add_plugins(WorkbenchUiPlugin);
     Workbench::new(app.world_mut())
-        .register_command::<First, _>(record)
+        .register_handler::<First, _>(record)
         .unwrap();
     app.add_systems(
-        PostUpdate,
-        (|mut requests: ResMut<CommandRequests>| requests.invoke::<First>())
+        PreUpdate,
+        (|mut requests: ResMut<ContextCommandRequests>| requests.invoke::<First>())
             .in_set(bedtime_ui2::UiSystems::Draw),
     );
     app.update();
@@ -674,4 +709,111 @@ fn factories_are_entities_and_failed_drops_do_not_modify_layout_geometry() {
     assert!(w.panels(layout).is_empty());
     assert_eq!(w.stamp(), stamp);
     assert!(w.world.get::<PanelType>(kind).is_some());
+}
+
+#[test]
+fn global_bindings_use_panel_handlers_and_panel_bindings_use_workbench_handlers() {
+    #[derive(Resource, Default)]
+    struct Scopes(Vec<&'static str>);
+    let mut app = app();
+    app.init_resource::<Scopes>();
+    let mut w = Workbench::new(app.world_mut());
+    let panel = w.create_panel(w.active_layout(), "Panel").unwrap();
+    w.register_context_command::<Second>().unwrap();
+    assert!(!command_available(
+        w.world,
+        ContextCommandId::of::<Second>(),
+        InvocationContext::Focused
+    ));
+    w.register_handler::<First, _>(
+        |_: In<ContextCommandInvocation>, mut scopes: ResMut<Scopes>| -> ContextCommandResult {
+            scopes.0.push("workbench");
+            Ok(())
+        },
+    )
+    .unwrap();
+    w.register_panel_handler::<Second, _>(
+        panel,
+        |_: In<ContextCommandInvocation>, mut scopes: ResMut<Scopes>| -> ContextCommandResult {
+            scopes.0.push("panel");
+            Ok(())
+        },
+    )
+    .unwrap();
+    let global = KeyChord::new(Modifiers::CONTROL, KeyCode::Equal);
+    let local = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyD);
+    w.world.spawn(Binding::new::<Second>(global));
+    w.world
+        .spawn((Binding::new::<First>(local), InPanel(panel)));
+    for (event, chord) in [(1, global), (2, local)] {
+        w.world.resource_mut::<BindingInput>().0.push(BindingPress {
+            event,
+            chord,
+            repeat: false,
+            context: InvocationContext::Focused,
+        });
+    }
+    app.update();
+    assert_eq!(
+        app.world().resource::<Scopes>().0,
+        vec!["panel", "workbench"]
+    );
+}
+#[test]
+fn unavailable_panel_binding_does_not_retry_the_shadowed_workbench_binding() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    w.register_handler::<First, _>(record).unwrap();
+    w.register_context_command::<Second>().unwrap();
+    let panel = w.create_panel(w.active_layout(), "Panel").unwrap();
+    let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyS);
+    w.world.spawn(Binding::new::<First>(chord));
+    w.world
+        .spawn((Binding::new::<Second>(chord), InPanel(panel)));
+    w.world.resource_mut::<BindingInput>().0.push(BindingPress {
+        event: 1,
+        chord,
+        repeat: false,
+        context: InvocationContext::Focused,
+    });
+    app.update();
+    assert!(app.world().resource::<Calls>().0.is_empty());
+    assert_eq!(app.world().resource::<BindingClaims>().0, vec![1]);
+    assert!(results(&mut app)[0].result.is_err());
+}
+
+#[test]
+fn extra_modifiers_do_not_match_a_shortcut() {
+    let mut app = app();
+    Workbench::new(app.world_mut())
+        .register_handler::<First, _>(record)
+        .unwrap();
+    let chord = KeyChord::new(Modifiers::PRIMARY.resolved(), KeyCode::KeyS);
+    app.world_mut().spawn(Binding::new::<First>(chord));
+    app.world_mut()
+        .resource_mut::<BindingInput>()
+        .0
+        .push(BindingPress {
+            event: 1,
+            chord: KeyChord::new(
+                Modifiers::PRIMARY.resolved() | Modifiers::SHIFT,
+                KeyCode::KeyS,
+            ),
+            repeat: false,
+            context: InvocationContext::Focused,
+        });
+    app.update();
+    assert!(app.world().resource::<Calls>().0.is_empty());
+    assert!(app.world().resource::<BindingClaims>().0.is_empty());
+    app.world_mut()
+        .resource_mut::<BindingInput>()
+        .0
+        .push(BindingPress {
+            event: 2,
+            chord,
+            repeat: false,
+            context: InvocationContext::Focused,
+        });
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0.len(), 1);
 }

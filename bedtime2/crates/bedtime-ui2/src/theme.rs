@@ -1,6 +1,5 @@
-//! Semantic presentation data. Identity, selection and persistence belong to the host.
 use bevy::prelude::*;
-use dear_imgui_rs::{Context, StyleColor as C};
+use egui::{Color32, Context};
 
 pub type Rgba = [f32; 4];
 
@@ -24,6 +23,7 @@ pub struct Metrics {
     pub font_size: f32,
     pub padding: [f32; 2],
     pub spacing: [f32; 2],
+    /// Corner radius for ordinary widgets, independent of panels and popups.
     pub rounding: f32,
     pub tooltip_padding: [f32; 2],
     pub menu_padding: [f32; 2],
@@ -35,10 +35,10 @@ pub struct Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self {
-            font_size: 17.0,
+            font_size: 15.5,
             padding: [10.0, 6.0],
             spacing: [10.0, 8.0],
-            rounding: 5.0,
+            rounding: 4.0,
             tooltip_padding: [12.0, 10.0],
             menu_padding: [8.0, 6.0],
             menu_spacing: [6.0, 4.0],
@@ -95,76 +95,56 @@ impl Theme {
         Ok(())
     }
 
-    pub(crate) fn apply(&self, context: &mut Context) {
+    pub(crate) fn apply(&self, context: &Context) {
         let p = &self.palette;
-        let style = context.style_mut();
-        // Install the complete shared style once, before NewFrame. Controls inherit it.
-        for (slot, color) in [
-            (C::Text, p.text),
-            (C::InputTextCursor, p.text),
-            (C::TextDisabled, p.muted),
-            (C::WindowBg, p.background),
-            (C::ChildBg, [0.0; 4]),
-            (C::PopupBg, p.elevated),
-            (C::Border, p.border),
-            (C::BorderShadow, [0.0; 4]),
-            (C::FrameBg, p.surface),
-            (C::FrameBgHovered, mix(p.surface, p.accent, 0.15)),
-            (C::FrameBgActive, mix(p.surface, p.accent, 0.25)),
-            (C::Button, p.surface),
-            (C::ButtonHovered, mix(p.surface, p.accent, 0.2)),
-            (C::ButtonActive, mix(p.surface, p.accent, 0.35)),
-            (C::Header, p.selection),
-            (C::HeaderHovered, mix(p.surface, p.accent, 0.2)),
-            (C::HeaderActive, mix(p.surface, p.accent, 0.35)),
-            (C::CheckMark, p.accent),
-            (C::CheckboxSelectedBg, p.selection),
-            (C::SliderGrab, p.accent),
-            (C::SliderGrabActive, p.text),
-            (C::TitleBg, p.surface),
-            (C::TitleBgActive, p.elevated),
-            (C::TitleBgCollapsed, p.surface),
-            (C::MenuBarBg, p.surface),
-            (C::Separator, p.border),
-            (C::SeparatorHovered, p.accent),
-            (C::SeparatorActive, p.accent),
-            (C::ScrollbarBg, p.background),
-            (C::ScrollbarGrab, p.border),
-            (C::ScrollbarGrabHovered, p.muted),
-            (C::ScrollbarGrabActive, p.accent),
-            (C::ResizeGrip, p.border),
-            (C::ResizeGripHovered, p.accent),
-            (C::ResizeGripActive, p.accent),
-            (C::Tab, p.surface),
-            (C::TabHovered, p.selection),
-            (C::TabSelected, p.elevated),
-            (C::TabDimmed, p.surface),
-            (C::TabDimmedSelected, p.elevated),
-            (C::TableHeaderBg, p.elevated),
-            (C::TableBorderStrong, p.border),
-            (C::TableBorderLight, p.border),
-            (C::TableRowBg, [0.0; 4]),
-            (C::TableRowBgAlt, mix(p.background, p.surface, 0.5)),
-            (C::TextSelectedBg, p.selection),
-            (C::TextLink, p.accent),
-            (C::NavCursor, p.accent),
-            (C::DragDropTarget, p.accent),
-            (C::ModalWindowDimBg, [0.0, 0.0, 0.0, 0.4]),
-        ] {
-            style.set_color(slot, color);
-        }
         let m = &self.metrics;
-        style.set_window_padding([18.0, 18.0]);
-        style.set_frame_padding(m.padding);
-        style.set_item_spacing(m.spacing);
-        style.set_frame_rounding(m.rounding);
-        style.set_window_rounding(m.rounding);
-        style.set_popup_rounding(m.popup_rounding);
-        style.set_grab_rounding(m.rounding);
-        style.set_scrollbar_rounding(m.rounding);
-        style.set_frame_border_size(1.0);
-        style.set_popup_border_size(1.0);
-        style.set_disabled_alpha(0.5);
+        let mut style = (*context.global_style()).clone();
+        style.animation_time = 0.16;
+        style.interaction.selectable_labels = false;
+        style.spacing.item_spacing = egui::vec2(m.spacing[0], m.spacing[1]);
+        style.spacing.button_padding = egui::vec2(m.padding[0], m.padding[1]);
+        style.spacing.window_margin =
+            egui::Margin::symmetric(m.padding[0] as i8, m.padding[1] as i8);
+        style.spacing.menu_margin =
+            egui::Margin::symmetric(m.menu_padding[0] as i8, m.menu_padding[1] as i8);
+        style.spacing.menu_spacing = m.menu_spacing[0];
+        for (kind, font) in &mut style.text_styles {
+            font.size = m.font_size
+                * match kind {
+                    egui::TextStyle::Heading => 1.25,
+                    egui::TextStyle::Small => 0.85,
+                    _ => 1.0,
+                };
+        }
+        style.visuals.override_text_color = Some(color(p.text));
+        style.visuals.panel_fill = color(p.background);
+        style.visuals.window_fill = color(p.elevated);
+        style.visuals.extreme_bg_color = color(p.background);
+        style.visuals.faint_bg_color = color(p.surface);
+        style.visuals.selection.bg_fill = color(p.selection);
+        style.visuals.selection.stroke = egui::Stroke::new(1.0, color(p.accent));
+        style.visuals.window_stroke = egui::Stroke::new(1.0, color(p.border));
+        style.visuals.window_corner_radius = egui::CornerRadius::same(m.popup_rounding as u8);
+        for (widget, fill) in [
+            (&mut style.visuals.widgets.noninteractive, p.surface),
+            (&mut style.visuals.widgets.inactive, p.surface),
+            (
+                &mut style.visuals.widgets.hovered,
+                mix(p.surface, p.accent, 0.2),
+            ),
+            (
+                &mut style.visuals.widgets.active,
+                mix(p.surface, p.accent, 0.35),
+            ),
+            (&mut style.visuals.widgets.open, p.elevated),
+        ] {
+            widget.bg_fill = color(fill);
+            widget.weak_bg_fill = color(fill);
+            widget.bg_stroke = egui::Stroke::new(1.0, color(p.border));
+            widget.fg_stroke = egui::Stroke::new(1.0, color(p.text));
+            widget.corner_radius = egui::CornerRadius::same(m.rounding as u8);
+        }
+        context.set_global_style(style);
     }
 }
 
@@ -192,7 +172,7 @@ pub mod themes {
                 surface: rgb(0x343f44),
                 elevated: rgb(0x3d484d),
                 border: rgb(0x56635f),
-                text: rgb(0xd3c6aa),
+                text: rgb(0xd6ccb9),
                 muted: rgb(0x9da9a0),
                 accent: rgb(0xa7c080),
                 selection: rgb(0x425047),
@@ -222,4 +202,13 @@ pub mod themes {
             metrics: Metrics::default(),
         }
     }
+}
+
+pub fn color(rgba: Rgba) -> Color32 {
+    Color32::from_rgba_unmultiplied(
+        (rgba[0] * 255.0).round() as u8,
+        (rgba[1] * 255.0).round() as u8,
+        (rgba[2] * 255.0).round() as u8,
+        (rgba[3] * 255.0).round() as u8,
+    )
 }

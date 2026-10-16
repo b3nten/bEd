@@ -4,7 +4,7 @@ use bevy::{
     asset::{AssetId, LoadState, RecursiveDependencyLoadState, UntypedAssetId},
     prelude::*,
 };
-use dear_imgui_rs::{Context, ManagedTextureId, OwnedTextureData, TextureFormat};
+use egui::{Context, TextureHandle, TextureId};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
@@ -48,7 +48,7 @@ impl RasterKey {
 
 struct Raster {
     _artwork: Icon,
-    texture: ManagedTextureId,
+    texture: TextureHandle,
     last_used: u64,
 }
 
@@ -66,11 +66,9 @@ pub(crate) struct IconCache {
 }
 
 impl IconCache {
-    pub fn clear(&mut self, context: &mut Context) {
+    pub fn clear(&mut self) {
         for (_, raster) in self.rasters.drain() {
-            context
-                .remove_texture(raster.texture)
-                .expect("Icon cache owns an active managed texture");
+            drop(raster);
         }
         *self = Self::default();
     }
@@ -202,9 +200,7 @@ impl IconCache {
             .collect();
         for key in expired {
             let raster = self.rasters.remove(&key).unwrap();
-            context
-                .remove_texture(raster.texture)
-                .expect("Icon cache owns an active managed texture");
+            drop(raster);
         }
         self.needs_redraw |= self.status.pending;
         Ok(())
@@ -223,9 +219,11 @@ impl IconCache {
             return Ok(());
         }
         let bytes = icon.rasterize(pixels)?;
-        let texture = OwnedTextureData::from_pixels(TextureFormat::RGBA32, pixels, pixels, &bytes)
-            .map_err(std::io::Error::other)?;
-        let texture = context.register_texture(texture);
+        let texture = context.load_texture(
+            "Bedtime icon",
+            egui::ColorImage::from_rgba_unmultiplied([pixels as usize, pixels as usize], &bytes),
+            egui::TextureOptions::LINEAR,
+        );
         self.rasters.insert(
             key,
             Raster {
@@ -238,7 +236,7 @@ impl IconCache {
         Ok(())
     }
 
-    pub fn texture(&mut self, source: &IconSource, pixels: u32) -> Option<ManagedTextureId> {
+    pub fn texture(&mut self, source: &IconSource, pixels: u32) -> Option<TextureId> {
         let identity = Identity::from(source);
         self.requests.insert((identity, pixels));
         let (id, icon) = match identity {
@@ -248,11 +246,13 @@ impl IconCache {
         let key = RasterKey::new(id, icon, pixels);
         if let Some(raster) = self.rasters.get_mut(&key) {
             raster.last_used = self.frame;
-            return Some(raster.texture);
+            return Some(raster.texture.id());
         }
         self.needs_redraw = true;
         let fallback = RasterKey::new(id, icon, self.common_pixels);
-        self.rasters.get(&fallback).map(|raster| raster.texture)
+        self.rasters
+            .get(&fallback)
+            .map(|raster| raster.texture.id())
     }
 
     pub fn textures(&self) -> usize {

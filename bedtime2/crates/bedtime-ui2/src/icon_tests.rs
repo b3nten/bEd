@@ -17,7 +17,7 @@ fn app(plugin: AssetPlugin) -> App {
 
 fn prepare(
     cache: &mut IconCache,
-    context: &mut imgui::Context,
+    context: &mut egui::Context,
     app: &App,
     requested: Option<&UiIcons>,
     pixels: u32,
@@ -72,9 +72,8 @@ fn bundled_catalog_is_valid_monochrome_artwork_and_external_svg_is_validated() {
 
 #[test]
 fn partial_packs_swap_atomically_preserve_explicit_icons_and_reuse_rasters() {
-    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
     let mut app = app(AssetPlugin::default());
-    let mut context = imgui::Context::create();
+    let mut context = egui::Context::default();
     let mut cache = IconCache::default();
     prepare(&mut cache, &mut context, &app, None, 32);
     let folder = IconSource::from(BuiltinIcon::Folder);
@@ -151,12 +150,8 @@ fn partial_packs_swap_atomically_preserve_explicit_icons_and_reuse_rasters() {
     prepare(&mut cache, &mut context, &app, None, 32);
     assert!(cache.status.active.is_none());
     assert_eq!(cache.texture(&folder, 32), Some(default_folder));
-    cache.clear(&mut context);
-    assert!(
-        context
-            .with_texture(default_folder, |texture| texture.width())
-            .is_err()
-    );
+    cache.clear();
+    assert!(context.tex_manager().read().meta(default_folder).is_none());
     prepare(&mut cache, &mut context, &app, None, 32);
     assert_ne!(
         cache.texture(&folder, 32),
@@ -167,26 +162,21 @@ fn partial_packs_swap_atomically_preserve_explicit_icons_and_reuse_rasters() {
 
 #[test]
 fn requested_sizes_and_dpi_get_exact_rasters_without_repeated_uploads() {
-    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
     let app = app(AssetPlugin::default());
-    let mut context = imgui::Context::create();
+    let mut context = egui::Context::default();
     let mut cache = IconCache::default();
     let source = BuiltinIcon::Folder.into();
     prepare(&mut cache, &mut context, &app, None, 17);
     let initial = cache.texture(&source, 48).unwrap();
     assert_eq!(
-        context
-            .with_texture(initial, |texture| texture.width())
-            .unwrap(),
+        context.tex_manager().read().meta(initial).unwrap().size[0],
         17
     );
     assert!(cache.needs_redraw);
     prepare(&mut cache, &mut context, &app, None, 17);
     let exact = cache.texture(&source, 48).unwrap();
     assert_eq!(
-        context
-            .with_texture(exact, |texture| texture.width())
-            .unwrap(),
+        context.tex_manager().read().meta(exact).unwrap().size[0],
         48
     );
     let count = cache.rasterizations;
@@ -197,9 +187,7 @@ fn requested_sizes_and_dpi_get_exact_rasters_without_repeated_uploads() {
     prepare(&mut cache, &mut context, &app, None, 34);
     let high_dpi = cache.texture(&source, 34).unwrap();
     assert_eq!(
-        context
-            .with_texture(high_dpi, |texture| texture.width())
-            .unwrap(),
+        context.tex_manager().read().meta(high_dpi).unwrap().size[0],
         34
     );
 }
@@ -225,7 +213,6 @@ impl Drop for Fixture {
 
 #[test]
 fn asset_server_loads_relative_pack_dependencies_and_failed_loads_preserve_presentation() {
-    let _lock = crate::IMGUI_TEST_LOCK.lock().unwrap();
     let fixture = Fixture::new();
     std::fs::create_dir(fixture.0.join("pack")).unwrap();
     std::fs::write(fixture.0.join("pack/custom.svg"), DOT).unwrap();
@@ -245,7 +232,7 @@ fn asset_server_loads_relative_pack_dependencies_and_failed_loads_preserve_prese
         watch_for_changes_override: Some(false),
         ..default()
     });
-    let mut context = imgui::Context::create();
+    let mut context = egui::Context::default();
     let mut cache = IconCache::default();
     let good = UiIcons(
         app.world()

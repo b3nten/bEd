@@ -1,6 +1,6 @@
 //! Native-shaped interaction regression checks, active only in workbench smoke.
 //! These exercise chrome hit testing, not just direct layout mutations.
-use bedtime_ui2::{UiFrame, imgui};
+use bedtime_ui2::{UiFrame, egui};
 use bedtime_workbench2::*;
 use bevy::{prelude::*, window::PrimaryWindow};
 
@@ -31,6 +31,20 @@ fn areas(world: &World, layout: Entity) -> Vec<(Entity, AreaRect)> {
 fn panel_area(world: &World, panel: Entity) -> Entity {
     world.get::<InArea>(panel).unwrap().0
 }
+fn area_target(world: &mut World, entity: Entity) -> Rect {
+    let bounds = world
+        .query::<(&WorkbenchHost, &WorkbenchPresentation)>()
+        .iter(world)
+        .find_map(|(host, presentation)| host.panels_visible.then_some(presentation.panels))
+        .unwrap();
+    let r = world.get::<Area>(entity).unwrap().rect();
+    Rect::from_corners(
+        bounds.min
+            + Vec2::new(r.min[0] as f32, r.min[1] as f32) * bounds.size() / LAYOUT_EXTENT as f32,
+        bounds.min
+            + Vec2::new(r.max[0] as f32, r.max[1] as f32) * bounds.size() / LAYOUT_EXTENT as f32,
+    )
+}
 fn save_drag(world: &mut World, start: Vec2, target: Vec2) {
     let mut s = world.resource_mut::<Interaction>();
     s.start = start;
@@ -47,52 +61,102 @@ fn drag(world: &mut World, frame: u32, base: u32) {
         world,
         p,
         if age == 2 {
-            Some((imgui::MouseButton::Left, true))
+            Some((MouseButton::Left, true))
         } else if age == 6 {
-            Some((imgui::MouseButton::Left, false))
+            Some((MouseButton::Left, false))
         } else {
             None
         },
     );
 }
-fn pointer(world: &mut World, position: Vec2, button: Option<(imgui::MouseButton, bool)>) {
-    use bevy::winit::{RawWinitWindowEvent, WINIT_WINDOWS};
-    let surface = world
+#[derive(Resource, Default)]
+pub(crate) struct ScriptedPointer {
+    pending: Vec<(Vec2, Option<(MouseButton, bool)>)>,
+    last: Option<Vec2>,
+    cursor_emitted: bool,
+}
+
+pub(crate) fn pointer(world: &mut World, position: Vec2, button: Option<(MouseButton, bool)>) {
+    world
+        .resource_mut::<ScriptedPointer>()
+        .pending
+        .push((position, button));
+}
+
+// Inject after real OS events and before egui reads them. Observations and test
+// assertions stay in Update, after presentation has been populated for the frame.
+pub(crate) fn flush_pointer(world: &mut World) {
+    world.resource_mut::<ScriptedPointer>().cursor_emitted = false;
+    let events = std::mem::take(&mut world.resource_mut::<ScriptedPointer>().pending);
+    for (position, button) in events {
+        emit_pointer(world, position, button);
+    }
+}
+
+// Upstream input also receives real OS cursor events while this native fixture
+// runs. Admit only the last scripted move, and no moves on stationary frames,
+// so live mouse movement cannot redirect a drag or reset a tooltip's delay.
+pub(crate) fn isolate_pointer(
+    scripted: Res<ScriptedPointer>,
+    mut contexts: Query<&mut bevy_egui::EguiInput>,
+) {
+    if scripted.last.is_none() {
+        return;
+    }
+    for mut input in &mut contexts {
+        let keep = scripted
+            .cursor_emitted
+            .then(|| {
+                input
+                    .events
+                    .iter()
+                    .rposition(|event| matches!(event, egui::Event::PointerMoved(_)))
+            })
+            .flatten();
+        let mut index = 0;
+        input.events.retain(|event| {
+            let current = index;
+            index += 1;
+            match event {
+                egui::Event::PointerMoved(_) => keep == Some(current),
+                egui::Event::PointerGone | egui::Event::MouseMoved(_) => false,
+                _ => true,
+            }
+        });
+    }
+}
+fn emit_pointer(world: &mut World, position: Vec2, button: Option<(MouseButton, bool)>) {
+    let window = world
         .query_filtered::<Entity, With<PrimaryWindow>>()
         .single(world)
         .unwrap();
-    WINIT_WINDOWS.with(|windows| {
-        let windows = windows.borrow();
-        let window = windows.get_window(surface).unwrap();
-        world.write_message(RawWinitWindowEvent {
-            window_id: window.id(),
-            event: winit::event::WindowEvent::CursorMoved {
-                device_id: winit::event::DeviceId::dummy(),
-                position: winit::dpi::PhysicalPosition::new(
-                    position.x as f64 * window.scale_factor(),
-                    position.y as f64 * window.scale_factor(),
-                ),
+    let moved = world.resource::<ScriptedPointer>().last != Some(position);
+    world.resource_mut::<ScriptedPointer>().last = Some(position);
+    // Real OS movement may arrive between scripted frames. Reassert the target
+    // on button events while retaining stationary time for tooltip checks.
+    if moved || button.is_some() {
+        world.resource_mut::<ScriptedPointer>().cursor_emitted = true;
+        let moved = bevy::window::CursorMoved {
+            window,
+            position,
+            delta: None,
+        };
+        world.write_message(moved.clone());
+        world.write_message(bevy::window::WindowEvent::CursorMoved(moved));
+    }
+    if let Some((button, pressed)) = button {
+        let event = bevy::input::mouse::MouseButtonInput {
+            window,
+            button,
+            state: if pressed {
+                bevy::input::ButtonState::Pressed
+            } else {
+                bevy::input::ButtonState::Released
             },
-        });
-        if let Some((button, pressed)) = button {
-            world.write_message(RawWinitWindowEvent {
-                window_id: window.id(),
-                event: winit::event::WindowEvent::MouseInput {
-                    device_id: winit::event::DeviceId::dummy(),
-                    button: match button {
-                        imgui::MouseButton::Left => winit::event::MouseButton::Left,
-                        imgui::MouseButton::Right => winit::event::MouseButton::Right,
-                        _ => winit::event::MouseButton::Middle,
-                    },
-                    state: if pressed {
-                        winit::event::ElementState::Pressed
-                    } else {
-                        winit::event::ElementState::Released
-                    },
-                },
-            });
-        }
-    });
+        };
+        world.write_message(event);
+        world.write_message(bevy::window::WindowEvent::MouseButtonInput(event));
+    }
 }
 
 pub(crate) fn step(world: &mut World, frame: u32) {
@@ -183,6 +247,34 @@ pub(crate) fn step(world: &mut World, frame: u32) {
             save_drag(world, start, target);
         }
         drag(world, frame, base);
+        if frame == base + 8 {
+            let destination = panel_area(world, tabs[2]);
+            assert_ne!(destination, area);
+            let added_target = area_target(world, destination);
+            let retained_target = area_target(world, area);
+            let added = world.get::<AreaPresentation>(destination).unwrap();
+            let retained = world.get::<AreaPresentation>(area).unwrap();
+            assert_eq!(
+                added.rect, added_target,
+                "New split must appear at its final bounds"
+            );
+            assert_ne!(
+                retained.rect, retained_target,
+                "Existing panel must animate its resize"
+            );
+            for panel in [tabs[0], tabs[2]] {
+                let tab = world.get::<PanelPresentation>(panel).unwrap().tab_rect;
+                let bar = world
+                    .get::<AreaPresentation>(panel_area(world, panel))
+                    .unwrap()
+                    .tab_bar;
+                assert_eq!(
+                    tab.min.y,
+                    bar.min.y + 1.0,
+                    "Tabs must follow their area without separate interpolation"
+                );
+            }
+        }
         if frame == base + 20 {
             let destination = panel_area(world, tabs[2]);
             assert_ne!(destination, area, "Native edge drop must split");
@@ -215,19 +307,80 @@ pub(crate) fn step(world: &mut World, frame: u32) {
     if frame == 1400 {
         info!("Panel smoke: all four native edge drops and regrouping passed");
     }
+    // Deliberately cover the corner with a viewport-like interaction and a
+    // scrollbar. The shell must own the drag without either content handler acting.
+    if frame == 1405 {
+        let panel = register_panel_in_area(world, area, "Corner overlap", corner_overlap).unwrap();
+        world.entity_mut(panel).insert(CornerOverlap::default());
+        Workbench::new(world).focus_panel(panel).unwrap();
+    }
     // A corner split previews without changing ECS until release.
     if frame == 1420 {
         let r = world.get::<AreaPresentation>(area).unwrap().surface;
         save_drag(
             world,
-            r.max - Vec2::splat(3.0),
+            r.max - Vec2::splat(6.0),
             Vec2::new(r.min.x + r.width() * 0.55, r.max.y - 3.0),
         );
     }
     if (1420..=1428).contains(&frame) {
         drag(world, frame, 1420);
     }
+    if frame == 1426 {
+        assert_eq!(areas(world, layout).len(), 1, "Split waits for release");
+    }
+    if frame == 1425 {
+        let surface = world.get::<AreaPresentation>(area).unwrap().surface;
+        let output = world
+            .query::<&bevy_egui::EguiFullOutput>()
+            .single(world)
+            .unwrap();
+        let (points, clip) = output
+            .0
+            .as_ref()
+            .unwrap()
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::LineSegment { points, stroke }
+                    if stroke.width == 2.0
+                        && (points[1].y - points[0].y).abs() > surface.height() * 0.9 =>
+                {
+                    Some((*points, shape.clip_rect))
+                }
+                _ => None,
+            })
+            .expect("Corner split must draw a preview line");
+        assert_eq!(points[0].y, surface.min.y + 1.0);
+        assert_eq!(points[1].y, surface.max.y - 1.0);
+        assert!(clip.min.y >= surface.min.y && clip.max.y <= surface.max.y);
+    }
+    if frame == 1428 {
+        let halves = areas(world, layout);
+        assert_eq!(halves.len(), 2);
+        for (entity, _) in halves {
+            let target = area_target(world, entity);
+            assert_eq!(
+                world.get::<AreaPresentation>(entity).unwrap().rect,
+                target,
+                "Both halves of a corner split must appear at their final bounds"
+            );
+        }
+    }
     if frame == 1440 {
+        let (panel, overlap) = world
+            .query::<(Entity, &CornerOverlap)>()
+            .single(world)
+            .unwrap();
+        assert!(
+            !overlap.content_pressed,
+            "Corner press must not reach panel content"
+        );
+        assert_eq!(
+            overlap.scroll_offset, 0.0,
+            "Corner drag must not move the scrollbar"
+        );
+        Workbench::new(world).close_panel(panel).unwrap();
         let other = areas(world, layout)
             .into_iter()
             .find(|(e, _)| *e != area)
@@ -235,7 +388,7 @@ pub(crate) fn step(world: &mut World, frame: u32) {
             .0;
         assert!(panels_in_area(world, other).is_empty());
         world.resource_mut::<Interaction>().empty = Some(other);
-        info!("Panel smoke: native corner split passed");
+        info!("Panel smoke: native corner split and content overlap priority passed");
     }
     let empty = world.resource::<Interaction>().empty;
     if frame == 1460 {
@@ -256,10 +409,10 @@ pub(crate) fn step(world: &mut World, frame: u32) {
             world,
             p,
             match frame {
-                1462 => Some((imgui::MouseButton::Left, true)),
-                1465 => Some((imgui::MouseButton::Right, true)),
-                1466 => Some((imgui::MouseButton::Right, false)),
-                1468 => Some((imgui::MouseButton::Left, false)),
+                1462 => Some((MouseButton::Left, true)),
+                1465 => Some((MouseButton::Right, true)),
+                1466 => Some((MouseButton::Right, false)),
+                1468 => Some((MouseButton::Left, false)),
                 _ => None,
             },
         );
@@ -386,6 +539,15 @@ pub(crate) fn step(world: &mut World, frame: u32) {
     if frame == 1740 {
         assert_eq!(areas(world, layout), world.resource::<Interaction>().before);
     }
+    // The drag source now lives in an ordinary panel, not persistent chrome.
+    if frame == 1750 {
+        let kind = world
+            .query::<(Entity, &PanelType)>()
+            .iter(world)
+            .find_map(|(entity, kind)| (kind.key == "bed2.controls").then_some(entity))
+            .unwrap();
+        Workbench::new(world).open_panel(kind, area).unwrap();
+    }
     // Application panel-type payloads open a panel in an empty area.
     if frame == 1760 {
         let empty = areas(world, layout)
@@ -479,8 +641,17 @@ pub(crate) fn step(world: &mut World, frame: u32) {
         Workbench::new(world).activate_layout(original).unwrap();
         info!("Panel interaction smoke passed");
     }
-    // Present the same action model through actual ImGui menus. Smoke's shared
+    // Present the same action model through actual egui menus. Smoke's shared
     // memory clipboard makes the command result observable without OS side effects.
+    if frame == 1930 {
+        let roots = world
+            .query_filtered::<Entity, With<NativeMenuBar>>()
+            .iter(world)
+            .collect::<Vec<_>>();
+        for root in roots {
+            world.entity_mut(root).remove::<NativeMenuBar>();
+        }
+    }
     for base in [1940, 1980, 2080, 2120] {
         if frame == base {
             let menu = world
@@ -531,8 +702,8 @@ pub(crate) fn step(world: &mut World, frame: u32) {
     if frame == 2040 {
         assert!(!command_available(
             world,
-            CommandType::of::<crate::CopyGreeting>(),
-            CommandContext::Focused
+            ContextCommandId::of::<crate::CopyGreeting>(),
+            InvocationContext::Focused
         ));
         world
             .resource_mut::<bedtime_clipboard2::Clipboard>()
@@ -556,25 +727,113 @@ pub(crate) fn step(world: &mut World, frame: u32) {
         pointer(
             world,
             Vec2::new(800.0, 300.0),
-            Some((imgui::MouseButton::Left, true)),
+            Some((MouseButton::Left, true)),
         );
     }
     if frame == 2116 {
         pointer(
             world,
             Vec2::new(800.0, 300.0),
-            Some((imgui::MouseButton::Left, false)),
+            Some((MouseButton::Left, false)),
         );
     }
     if frame == 2180 {
         assert!(command_available(
             world,
-            CommandType::of::<crate::CopyGreeting>(),
-            CommandContext::Focused
+            ContextCommandId::of::<crate::CopyGreeting>(),
+            InvocationContext::Focused
         ));
         info!(
-            "Menu smoke: ImGui action invocation, shared clipboard and handler availability passed"
+            "Menu smoke: egui action invocation, shared clipboard and handler availability passed"
         );
+    }
+    // Open Notes through the View menu, then invoke its panel-only menu.
+    for (base, label) in [(2190, "View"), (2230, "Notes")] {
+        if frame == base {
+            let rect = world
+                .query::<(&Menu, &MenuPresentation)>()
+                .iter(world)
+                .find_map(|(menu, presentation)| {
+                    (menu.label == label && presentation.visible).then_some(presentation.rect)
+                })
+                .expect("Visible top-level menu");
+            save_drag(world, rect.center(), rect.center());
+        }
+        drag(world, frame, base);
+    }
+    for (base, label) in [(2210, "Open Notes"), (2250, "Copy Note Text")] {
+        if frame == base {
+            let point = menu_item(world, label);
+            save_drag(world, point, point);
+        }
+        drag(world, frame, base);
+    }
+    if frame == 2225 {
+        let active = Workbench::new(world).active_layout();
+        let panel = Workbench::new(world).focused_panel(active).unwrap();
+        world
+            .get_mut::<crate::workbench_demo::Notes>(panel)
+            .unwrap()
+            .text = "Text from the focused Notes panel".into();
+    }
+    if frame == 2265 {
+        assert_eq!(
+            world.resource_mut::<Clipboard>().read_text().unwrap(),
+            "Text from the focused Notes panel"
+        );
+        let active = Workbench::new(world).active_layout();
+        let panel = world
+            .query_filtered::<(Entity, &InArea), With<crate::workbench_demo::Controls>>()
+            .iter(world)
+            .find_map(|(entity, owner)| {
+                (world.get::<InLayout>(owner.0).unwrap().0 == active).then_some(entity)
+            })
+            .unwrap();
+        Workbench::new(world).focus_panel(panel).unwrap();
+    }
+    if frame == 2280 {
+        assert!(
+            world
+                .query::<(&Menu, &MenuPresentation)>()
+                .iter(world)
+                .filter(|(menu, _)| menu.label == "Notes")
+                .all(|(_, presentation)| !presentation.visible)
+        );
+        info!(
+            "Menu smoke: View action, focused Notes menu, panel handler and focus-driven hiding passed"
+        );
+    }
+    if frame == 2290 {
+        let scene = world
+            .query_filtered::<Entity, With<crate::viewport_demo::DemoState>>()
+            .single(world)
+            .unwrap();
+        Workbench::new(world).focus_panel(scene).unwrap();
+    }
+    if frame == 2330
+        && world
+            .get_resource::<NativeCapabilities>()
+            .is_some_and(|c| c.native_menus)
+    {
+        let root = world
+            .query_filtered::<Entity, With<MenuBar>>()
+            .iter(world)
+            .next()
+            .unwrap();
+        world.entity_mut(root).insert(NativeMenuBar);
+    }
+    if frame == 2340
+        && world
+            .get_resource::<NativeCapabilities>()
+            .is_some_and(|c| c.native_menus)
+    {
+        assert!(
+            world
+                .query::<&MenuPresentation>()
+                .iter(world)
+                .all(|m| !m.visible)
+        );
+        info!("Menu presentation toggle passed: native, egui, native");
     }
 }
 
@@ -582,7 +841,10 @@ fn menu_item(world: &mut World, label: &str) -> Vec2 {
     let entity = world
         .query::<(Entity, &MenuItem)>()
         .iter(world)
-        .find_map(|(e, item)| (item.label == label).then_some(e))
+        .find_map(|(e, item)| {
+            (item.label == label && world.get::<MenuPresentation>(e).is_some_and(|p| p.visible))
+                .then_some(e)
+        })
         .unwrap();
     let p = world
         .get::<MenuPresentation>(entity)
@@ -592,21 +854,39 @@ fn menu_item(world: &mut World, label: &str) -> Vec2 {
 }
 
 fn receiver(frame: UiFrame, mut state: ResMut<Interaction>) {
-    frame
+    let response = frame
         .ui
-        .button_with_size("Drop a Notes panel here", [220.0, 100.0]);
+        .add_sized([220.0, 100.0], egui::Button::new("Drop a Notes panel here"));
     state.widget = Rect::from_corners(
-        Vec2::from_array(frame.ui.item_rect_min()),
-        Vec2::from_array(frame.ui.item_rect_max()),
+        Vec2::new(response.rect.min.x, response.rect.min.y),
+        Vec2::new(response.rect.max.x, response.rect.max.y),
     );
-    if let Some(target) = frame.ui.drag_drop_target() {
-        // SAFETY: inspect only delivery metadata; no pointer or payload bytes escape.
-        if let Some(payload) = unsafe {
-            target.accept_payload_unchecked(PANEL_TYPE_PAYLOAD, imgui::DragDropTargetFlags::NONE)
-        } {
-            if payload.delivery {
-                state.received += 1;
-            }
-        }
+    if response.dnd_release_payload::<PanelTypePayload>().is_some() {
+        state.received += 1;
     }
+}
+
+#[derive(Component, Default)]
+struct CornerOverlap {
+    content_pressed: bool,
+    scroll_offset: f32,
+}
+
+fn corner_overlap(frame: UiFrame, mut panels: Query<&mut CornerOverlap>) {
+    let mut state = panels.get_mut(frame.view).unwrap();
+    let response = frame.ui.interact(
+        frame.ui.max_rect(),
+        frame.ui.id().with("viewport-like-content"),
+        egui::Sense::click_and_drag(),
+    );
+    state.content_pressed |= response.is_pointer_button_down_on() || response.clicked();
+    frame.ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+    let output = egui::ScrollArea::vertical()
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+        .show(frame.ui, |ui| {
+            for row in 0..200 {
+                ui.label(format!("Scrollable row {row}"));
+            }
+        });
+    state.scroll_offset = output.state.offset.y;
 }

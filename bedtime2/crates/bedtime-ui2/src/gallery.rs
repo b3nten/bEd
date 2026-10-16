@@ -1,7 +1,6 @@
 //! A reusable gallery view. Its state is ordinary ECS data, not a global singleton.
 use crate::*;
 use bedtime_clipboard2::Clipboard;
-use imgui::{Condition, StyleVar, TableOptions, TableSizingPolicy, WindowFlags};
 
 #[derive(Component)]
 pub struct GalleryState {
@@ -19,6 +18,9 @@ pub struct GalleryState {
     pub clicks: u32,
     pub selected: usize,
     pub icon_browser: bool,
+    pub dialog: bool,
+    pub tooltip_visible: bool,
+    pub observations: std::collections::BTreeMap<&'static str, egui::Rect>,
     pub icon_filter: String,
     pub icon_size: f32,
     pub custom_icons: Handle<IconSet>,
@@ -57,6 +59,9 @@ pub fn create_state(world: &mut World, light: Entity, dark: Entity) -> GallerySt
         clicks: 0,
         selected: 0,
         icon_browser: false,
+        dialog: false,
+        tooltip_visible: false,
+        observations: default(),
         icon_filter: String::new(),
         icon_size: 32.0,
         custom_icons,
@@ -71,271 +76,207 @@ pub fn draw_gallery(
     mut commands: Commands,
     mut clipboard: ResMut<Clipboard>,
 ) {
-    let mut state = states
-        .get_mut(frame.view)
-        .expect("Gallery view has GalleryState");
+    let mut state = states.get_mut(frame.view).expect("Gallery state");
     if !state.visible {
         return;
     }
-    let (mut policy, diag, icon_status) = surfaces.get_mut(frame.surface).unwrap();
-    let ui = frame.ui;
-    let c = frame.controls();
-    let p = &frame.theme.palette;
+    let (mut policy, diag, status) = surfaces.get_mut(frame.surface).unwrap();
     let embedded = state.embedded;
-    {
-        let mut contents = || {
-            c.muted("B E D T I M E   /   U I   2");
-            ui.text_colored(p.text, "A place for every little interaction.");
-            c.muted("Built-in controls, shared themes, and motion. All running through Bevy.");
-            ui.spacing();
-            if c.icon_button("light", BuiltinIcon::Sun) {
-                commands
-                    .entity(frame.surface)
-                    .insert(UsesTheme(state.light));
-            }
-            c.tooltip("Light / Everforest Medium");
-            c.same_line();
-            if c.icon_button("dark", BuiltinIcon::Moon) {
-                commands.entity(frame.surface).insert(UsesTheme(state.dark));
-            }
-            c.tooltip("Dark / Everforest Medium");
-            c.same_line();
-            c.checkbox("Motion", &mut policy.enabled);
-            c.same_line();
-            ui.set_next_item_width(110.0);
-            ui.slider("seconds", 0.08, 0.8, &mut policy.seconds);
-            c.same_line();
-            c.muted(format!(
-                "{:.2} ms UI  /  {} vertices",
-                diag.draw_ms, diag.vertices
-            ));
-            ui.separator();
-
-            let Some(_columns) = ui.begin_table_with_flags(
-                "gallery-columns",
-                2,
-                TableOptions::new().sizing_policy(TableSizingPolicy::StretchSame),
-            ) else {
-                return;
-            };
-            ui.table_next_column();
-            c.heading("01   Controls");
-            if c.primary_button("Make something") {
-                state.clicks += 1;
-            }
-            c.same_line();
-            if c.button("Secondary") {
-                state.clicks += 1;
-            }
-            c.same_line();
-            c.disabled(true, || {
-                c.button("Disabled");
-            });
-            c.muted(format!("{} button activations", state.clicks));
-            if c.button("Stay a little — animated hover") {
-                state.clicks += 1;
-            }
-            c.tooltip("Motion is handled automatically by the control.");
-            c.checkbox("A familiar checkbox", &mut state.checked);
-            c.toggle("An animated toggle", &mut state.toggled);
-            c.row("Project", || {
-                c.input("##project", &mut state.text);
-            });
-            c.row("Intensity", || {
-                c.slider("##intensity", &mut state.value, 0.0, 1.0);
-            });
-            c.row("Behavior", || {
-                c.select(
-                    "##behavior",
-                    &mut state.choice,
-                    &["Comfortable", "Compact", "Quiet"],
-                );
-            });
-
-            c.heading("02   Icons & feedback");
-            c.icon_button("add", BuiltinIcon::Plus);
-            c.tooltip("Add an item");
-            c.same_line();
-            c.icon_button("folder", BuiltinIcon::Folder);
-            c.tooltip("Open folder");
-            c.same_line();
-            if c.button("Browse icons") {
-                state.icon_browser = true;
-            }
-            ui.text_colored(p.success, "Ready to go");
-            ui.same_line();
-            ui.text_colored(p.warning, "Needs attention");
-            ui.text_colored(p.error, "Something needs fixing");
-            c.muted("Muted text and keyboard focus use the same theme.");
-
-            c.heading("03   Popups & dialogs");
-            c.button("Right-click me");
-            c.context_menu("gallery-context", || {
-                if ui.menu_item("Add one more") {
+    let mut draw = |mut frame: UiFrame| {
+        state.observations.clear();
+        frame.ui.label(
+            egui::RichText::new("B E D T I M E   /   U I   2")
+                .color(theme::color(frame.theme.palette.muted)),
+        );
+        frame.ui.heading("A place for every little interaction.");
+        frame
+            .ui
+            .label("Built-in egui controls, shared themes, and Bedtime motion.");
+        let row = egui::Rect::from_min_size(
+            frame.ui.cursor().min,
+            egui::vec2(frame.ui.available_width(), 36.0),
+        );
+        frame.scope(
+            egui::UiBuilder::new()
+                .max_rect(row)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |mut f| {
+                let light = f.icon_button(BuiltinIcon::Sun);
+                state.observations.insert("light", light.rect);
+                f.tooltip(&light, "Light / Everforest Medium");
+                if light.clicked() {
+                    commands.entity(f.surface).insert(UsesTheme(state.light));
+                }
+                let dark = f.icon_button(BuiltinIcon::Moon);
+                state.observations.insert("dark", dark.rect);
+                f.tooltip(&dark, "Dark / Everforest Medium");
+                if dark.clicked() {
+                    commands.entity(f.surface).insert(UsesTheme(state.dark));
+                }
+                f.ui.checkbox(&mut policy.enabled, "Motion");
+                f.ui.add(egui::Slider::new(&mut policy.seconds, 0.08..=0.8).text("seconds"));
+            },
+        );
+        frame.ui.label(format!(
+            "{:.2} ms UI / {} vertices / {} icon rasters",
+            diag.draw_ms, diag.vertices, diag.icon_textures
+        ));
+        frame.ui.separator();
+        frame.ui.heading("01  Controls");
+        frame.scope(
+            egui::UiBuilder::new().layout(egui::Layout::left_to_right(egui::Align::Min)),
+            |mut frame| {
+                let primary = frame.primary_button("Make something");
+                state.observations.insert("primary", primary.rect);
+                if primary.clicked() {
                     state.clicks += 1;
                 }
-                if ui.menu_item("Reset counter") {
-                    state.clicks = 0;
+                if frame.ui.button("Secondary").clicked() {
+                    state.clicks += 1;
+                }
+                frame.ui.add_enabled(false, egui::Button::new("Disabled"));
+            },
+        );
+        frame
+            .ui
+            .label(format!("{} button activations", state.clicks));
+        let hover = frame.ui.button("Stay a little — animated tooltip");
+        state.observations.insert("tooltip", hover.rect);
+        state.tooltip_visible = frame.tooltip(
+            &hover,
+            "A tooltip expanding from its source, using Bedtime's motion policy.",
+        );
+        frame.ui.checkbox(&mut state.checked, "A familiar checkbox");
+        frame.toggle(&mut state.toggled, "An animated toggle");
+        frame.ui.label("Project");
+        frame.text_edit(egui::TextEdit::singleline(&mut state.text).id_salt("project"));
+        frame
+            .ui
+            .add(egui::Slider::new(&mut state.value, 0.0..=1.0).text("Intensity"));
+        let combo = ComboBox::from_label("Behavior")
+            .selected_text(["Comfortable", "Compact", "Spacious"][state.choice])
+            .show_ui(frame.ui, |ui| {
+                for (index, label) in ["Comfortable", "Compact", "Spacious"].iter().enumerate() {
+                    let response = ui.selectable_value(&mut state.choice, index, *label);
+                    if index == 1 {
+                        state.observations.insert("compact", response.rect);
+                    }
                 }
             });
-            c.same_line();
-            if c.button("Open dialog") {
-                c.open_dialog("A small decision");
-            }
-            c.dialog("A small decision", || {
-                c.text("Dialogs inherit the active theme, too.");
-                c.muted("Escape closes this modal.");
-                if c.primary_button("Looks good") {
-                    c.close_popup();
-                }
+        state.observations.insert("selector", combo.response.rect);
+        let disclosure = egui::CollapsingHeader::new("Details and disclosure")
+            .open(Some(state.open))
+            .show(frame.ui, |ui| {
+                ui.label("Ordinary egui layout and widgets inherit the shared Bedtime theme.");
             });
-            c.heading("04   Clipboard");
-            if c.button("Copy text") {
-                if let Err(error) = clipboard.write_text(&state.text) {
-                    bevy::log::warn!("Clipboard: {error}");
-                }
+        if disclosure.header_response.clicked() {
+            state.open = !state.open;
+        }
+        frame.ui.horizontal(|ui| {
+            if ui.button("Copy").clicked() {
+                let _ = clipboard.write_text(&state.text);
             }
-            c.same_line();
-            if c.button("Paste text") {
+            if ui.button("Paste").clicked() {
                 if let Ok(text) = clipboard.read_text() {
                     state.text = text;
                 }
             }
-            c.muted("Text fields and application controls share one clipboard.");
-
-            ui.table_next_column();
-            c.heading("05   Palette");
-            for (name, color) in [
-                ("Background", p.background),
-                ("Surface", p.surface),
-                ("Elevated", p.elevated),
-                ("Text", p.text),
-                ("Accent", p.accent),
-                ("Selection", p.selection),
-            ] {
-                let _id = ui.push_id(name);
-                ui.color_button(name, color);
-                c.same_line();
-                c.text(name);
+            if ui.button("Browse icons").clicked() {
+                state.icon_browser = !state.icon_browser;
             }
-            c.heading("06   Disclosure & fade");
-            c.disclosure("There is more here", &mut state.open, || {
-                c.text("Smooth expansion and fading.");
-                c.muted("Try reversing direction while it is moving.");
-                c.text("Turn motion off to settle immediately.");
-            });
-            c.heading("07   A list with 10,000 rows");
-            c.muted("Only visible rows are submitted. Right-click any row.");
-            // Fixed row spacing makes clipping predictable, regardless of popup contents.
-            ui.child_window("dense-list")
-                .size([0.0, 240.0])
-                .build(ui, || {
-                    let _spacing = ui.push_style_var(StyleVar::ItemSpacing([8.0, 4.0]));
-                    c.list(10_000, |index| {
-                        let _id = ui.push_id(index as i32);
-                        if ui
-                            .selectable_config(format!("Item {index:05}  /  a quiet little row"))
-                            .selected(state.selected == index)
-                            .build()
-                        {
-                            state.selected = index;
-                        }
-                        c.context_menu("row-menu", || {
-                            if ui.menu_item("Select this row") {
-                                state.selected = index;
-                            }
-                        });
-                    });
-                });
-            c.muted(format!("Selected row: {}", state.selected));
-        };
-        if embedded {
-            contents();
-        } else {
-            let style = ui.clone_style();
-            let rounding = ui.push_style_var(StyleVar::WindowRounding(0.0));
-            let border = ui.push_style_var(StyleVar::WindowBorderSize(0.0));
-            ui.window("Bedtime widget gallery")
-                .position([0.0, 0.0], Condition::Always)
-                .size(ui.io().display_size(), Condition::Always)
-                .flags(
-                    WindowFlags::NO_DECORATION
-                        | WindowFlags::NO_MOVE
-                        | WindowFlags::NO_SAVED_SETTINGS,
-                )
-                .build(|| {
-                    let _rounding =
-                        ui.push_style_var(StyleVar::WindowRounding(style.window_rounding()));
-                    let _border =
-                        ui.push_style_var(StyleVar::WindowBorderSize(style.window_border_size()));
-                    contents();
-                });
-            drop(border);
-            drop(rounding);
+        });
+        if frame.ui.button("Open dialog").clicked() {
+            state.dialog = true;
         }
-    }
-    let mut browser_open = state.icon_browser;
-    if browser_open {
-        ui.window("Icon browser")
-            .opened(&mut browser_open)
-            .position([130.0, 120.0], Condition::FirstUseEver)
-            .size([720.0, 640.0], Condition::FirstUseEver)
-            .build(|| {
-                c.text(format!("{} bundled SVG icons", BuiltinIcon::ALL.len()));
-                c.muted("Replace a pack at runtime; omitted slots inherit bundled artwork.");
-                if c.button("Bundled icons") {
+        let menu = frame.ui.button("Right-click for a menu");
+        state.observations.insert("context", menu.rect);
+        menu.context_menu(|ui| {
+            if ui.button("Select this action").clicked() {
+                state.clicks += 1;
+                ui.close();
+            }
+            ui.separator();
+            ui.add_enabled(false, egui::Button::new("Unavailable action"));
+        });
+        frame.ui.separator();
+        frame.ui.heading("02  A clipped list");
+        egui::ScrollArea::vertical()
+            .id_salt("dense-list")
+            .max_height(180.0)
+            .show_rows(frame.ui, 24.0, 10_000, |ui, range| {
+                for index in range {
+                    if ui
+                        .selectable_label(state.selected == index, format!("Row {:05}", index + 1))
+                        .clicked()
+                    {
+                        state.selected = index;
+                    }
+                }
+            });
+        if state.dialog {
+            let ctx = frame.ui.ctx().clone();
+            egui::Modal::new(egui::Id::new((frame.view, "dialog"))).show(&ctx, |ui| {
+                ui.heading("A little room to think");
+                ui.label("A themed egui modal with Bedtime timing.");
+                if ui.button("Done").clicked() {
+                    state.dialog = false;
+                }
+            });
+        }
+
+        if state.icon_browser {
+            frame.ui.separator();
+            frame.ui.heading("03  Icons");
+            frame.text_edit(
+                egui::TextEdit::singleline(&mut state.icon_filter).hint_text("Filter icons"),
+            );
+            frame
+                .ui
+                .add(egui::Slider::new(&mut state.icon_size, 16.0..=64.0).text("Icon size"));
+            frame.ui.horizontal(|ui| {
+                if ui.button("Bundled pack").clicked() {
                     commands.entity(frame.surface).remove::<UiIcons>();
                 }
-                c.same_line();
-                if c.button("Custom pack") {
+                if ui.button("Custom pack").clicked() {
                     commands
                         .entity(frame.surface)
                         .insert(UiIcons(state.custom_icons.clone()));
                 }
-                c.same_line();
-                c.muted(if icon_status.pending {
-                    "Loading replacement…"
-                } else if icon_status.active.is_some() {
-                    "Custom pack active"
-                } else {
-                    "Bundled set active"
-                });
-                if let Some(error) = &icon_status.error {
-                    ui.text_colored(p.error, error);
-                }
-                c.muted("Folder and Plus follow the pack; the explicit asset stays the same:");
-                c.icon_sized(BuiltinIcon::Folder, 32.0);
-                c.same_line();
-                c.icon_sized(BuiltinIcon::Plus, 32.0);
-                c.same_line();
-                c.icon_sized(&state.custom_icon, 32.0);
-                c.same_line();
-                c.muted(format!(
-                    "{} textures / {} rasterizations",
-                    diag.icon_textures, diag.icon_rasterizations
-                ));
-                c.input("Filter", &mut state.icon_filter);
-                c.slider("Preview size", &mut state.icon_size, 16.0, 64.0);
-                let filter = state.icon_filter.to_lowercase();
-                let icons: Vec<_> = BuiltinIcon::ALL
-                    .iter()
-                    .copied()
-                    .filter(|icon| icon.key().contains(&filter))
-                    .collect();
-                ui.separator();
-                ui.child_window("icon-catalog")
-                    .size([0.0, 0.0])
-                    .build(ui, || {
-                        c.list(icons.len(), |index| {
-                            let icon = icons[index];
-                            ui.group(|| {
-                                c.icon_sized(icon, state.icon_size);
-                                c.same_line();
-                                c.text(icon.key());
-                            });
-                        });
-                    });
             });
-        state.icon_browser = browser_open;
+            if let Some(error) = &status.error {
+                frame
+                    .ui
+                    .colored_label(theme::color(frame.theme.palette.error), error);
+            }
+            for icon in BuiltinIcon::ALL
+                .iter()
+                .filter(|icon| icon.key().contains(&state.icon_filter))
+                .take(80)
+            {
+                let (rect, _) = frame.ui.allocate_exact_size(
+                    egui::vec2(state.icon_size + 180.0, state.icon_size + 8.0),
+                    egui::Sense::hover(),
+                );
+                frame.icon_at(*icon, [rect.min.x, rect.min.y], state.icon_size);
+                frame.ui.painter().text(
+                    rect.min + egui::vec2(state.icon_size + 10.0, 4.0),
+                    egui::Align2::LEFT_TOP,
+                    icon.key(),
+                    egui::FontId::proportional(frame.theme.metrics.font_size),
+                    theme::color(frame.theme.palette.text),
+                );
+            }
+        }
+    };
+    if embedded {
+        let mut frame = frame;
+        let padding = frame.panel_settings.padding;
+        frame.scroll("gallery-panel", |mut frame| frame.padded(padding, draw));
+    } else {
+        let ctx = frame.ui.ctx().clone();
+        egui::Window::new("Bedtime UI 2")
+            .default_pos(egui::pos2(18.0, 18.0))
+            .default_size(egui::vec2(1080.0, 820.0))
+            .show(&ctx, |ui| draw(frame.for_view(frame.view, ui)));
     }
 }

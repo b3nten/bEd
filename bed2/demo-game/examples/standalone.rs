@@ -46,6 +46,7 @@ fn main() {
         app.insert_resource(Smoke {
             directory,
             frame: 0,
+            attempts: 0,
             hashes: Vec::new(),
         })
         .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
@@ -63,6 +64,7 @@ struct PipelinesReady(Arc<AtomicBool>);
 struct Smoke {
     directory: PathBuf,
     frame: u32,
+    attempts: u32,
     hashes: Vec<u64>,
 }
 fn smoke(
@@ -71,12 +73,16 @@ fn smoke(
     mut exit: MessageWriter<AppExit>,
     ready: Res<PipelinesReady>,
 ) {
+    state.attempts += 1;
+    assert!(
+        state.attempts < 4000,
+        "Standalone pipelines/captures timed out"
+    );
+    if !ready.0.load(Ordering::Acquire) {
+        return;
+    }
     state.frame += 1;
-    if state.frame >= 120
-        && state.frame.is_multiple_of(60)
-        && ready.0.load(Ordering::Acquire)
-        && state.hashes.len() < 2
-    {
+    if state.frame >= 120 && state.frame.is_multiple_of(60) && state.hashes.len() < 2 {
         let name = format!("standalone-{}.png", state.frame);
         commands
             .spawn(Screenshot::primary_window())

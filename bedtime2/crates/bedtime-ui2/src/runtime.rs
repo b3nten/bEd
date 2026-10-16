@@ -1,404 +1,396 @@
-use crate::{
-    platform::UiPlatform,
-    render::{DeviceBridge, FrameSlot, Packet, Renderer},
-    *,
-};
+use crate::*;
 use bevy::{
-    ecs::message::MessageCursor,
-    winit::{RawWinitWindowEvent, WINIT_WINDOWS},
+    asset::AssetId,
+    ecs::{message::MessageCursor, relationship::RelationshipTarget},
+    input::ButtonState,
+    window::WindowEvent,
 };
-use dear_imgui_rs::{ClipboardBackend, ConfigFlags, Context, FontSource};
-use dear_imgui_wgpu::{WgpuInitInfo, WgpuSnapshotContext, WgpuSnapshotRenderer};
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    sync::{Arc, Mutex},
-    time::Instant,
-};
+use bevy_egui::{EguiContext, EguiContextSettings, EguiFullOutput, EguiInput, EguiUserTextures};
+use std::{collections::HashMap, time::Instant};
 
-#[derive(Default)]
-struct ClipboardSlot {
-    service: Option<bedtime_clipboard2::Clipboard>,
-    errors: Vec<String>,
-}
-
-struct ClipboardAdapter(Rc<RefCell<ClipboardSlot>>);
-
-#[cfg(test)]
-mod clipboard_tests {
-    use super::*;
-    #[test]
-    fn imgui_and_application_share_a_clipboard_without_removing_the_resource() {
-        let mut app = App::new();
-        app.insert_resource(bedtime_clipboard2::Clipboard::memory());
-        let service = app
-            .world()
-            .resource::<bedtime_clipboard2::Clipboard>()
-            .clone();
-        let mut adapter = ClipboardAdapter(Rc::new(RefCell::new(ClipboardSlot {
-            service: Some(service),
-            errors: Vec::new(),
-        })));
-        adapter.set("from ImGui");
-        assert_eq!(
-            app.world_mut()
-                .resource_mut::<bedtime_clipboard2::Clipboard>()
-                .read_text()
-                .unwrap(),
-            "from ImGui"
-        );
-        app.world_mut()
-            .resource_mut::<bedtime_clipboard2::Clipboard>()
-            .write_text("from application")
-            .unwrap();
-        assert_eq!(adapter.get().as_deref(), Some("from application"));
-    }
-}
-
-impl ClipboardBackend for ClipboardAdapter {
-    fn get(&mut self) -> Option<String> {
-        let mut slot = self.0.borrow_mut();
-        match slot.service.as_mut()?.read_text() {
-            Ok(value) => Some(value),
-            Err(error) => {
-                slot.errors.push(error.to_string());
-                None
-            }
-        }
-    }
-    fn set(&mut self, value: &str) {
-        let mut slot = self.0.borrow_mut();
-        if let Some(service) = slot.service.as_mut() {
-            if let Err(error) = service.write_text(value) {
-                slot.errors.push(error.to_string());
-            }
-        }
-    }
-}
-
-/// Main-thread native ownership only. Application presentation state lives in ECS.
+#[derive(Resource, Default)]
 pub(crate) struct Runtime {
-    context: Context,
-    platform: UiPlatform,
-    owner: Option<WgpuSnapshotContext>,
-    renderer: Option<Renderer>,
-    generation: u64,
-    theme: Option<Theme>,
-    events: MessageCursor<RawWinitWindowEvent>,
-    clipboard: Rc<RefCell<ClipboardSlot>>,
-    animations: RefCell<crate::motion::Animations>,
-    icons: RefCell<crate::icon_cache::IconCache>,
-    icon_surface: Option<Entity>,
-    viewports: RefCell<crate::viewport_textures::ViewportTextures>,
+    icons: Mutex<icon_cache::IconCache>,
+    images: HashMap<AssetId<Image>, egui::TextureId>,
+    themes: HashMap<Entity, Theme>,
+    events: MessageCursor<WindowEvent>,
+    next_event: u64,
+    modifier_keys: bevy::input::ButtonInput<bevy::input::keyboard::KeyCode>,
 }
 
-impl Runtime {
-    pub fn new() -> Self {
-        let mut context = Context::create();
-        context
-            .set_ini_filename(None::<std::path::PathBuf>)
-            .expect("UI ini disabled; persistence belongs to host");
-        context
-            .io_mut()
-            .set_config_flags(ConfigFlags::NAV_ENABLE_KEYBOARD);
-        let clipboard = Rc::new(RefCell::new(ClipboardSlot::default()));
-        context.set_clipboard_backend(ClipboardAdapter(clipboard.clone()));
-        let platform = UiPlatform::new(&mut context);
-        Self {
-            context,
-            platform,
-            owner: None,
-            renderer: None,
-            generation: 0,
-            theme: None,
-            events: MessageCursor::default(),
-            clipboard,
-            animations: RefCell::default(),
-            icons: RefCell::default(),
-            icon_surface: None,
-            viewports: RefCell::default(),
+pub(crate) fn configure(world: &mut World) {
+    let cameras: Vec<_> = world
+        .query_filtered::<Entity, Added<UiCamera>>()
+        .iter(world)
+        .collect();
+    for camera in cameras {
+        world.entity_mut(camera).insert((
+            EguiContextSettings {
+                run_manually: true,
+                ..default()
+            },
+            bevy::camera::CompositingSpace::Linear,
+        ));
+        world
+            .get_mut::<Camera>(camera)
+            .expect("UiCamera requires a Bevy camera")
+            .output_mode = bevy::camera::CameraOutputMode::Write {
+            blend_state: Some(
+                bevy::render::render_resource::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            ),
+            clear_color: ClearColorConfig::Custom(Color::NONE),
+        };
+        world.get_mut::<Camera>(camera).unwrap().clear_color =
+            ClearColorConfig::Custom(Color::NONE);
+        let ctx = world
+            .get_mut::<EguiContext>(camera)
+            .unwrap()
+            .get_mut()
+            .clone();
+        ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(1).unwrap());
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "PaperMono".into(),
+            std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+                "../assets/fonts/PaperMono-Regular.ttf"
+            ))),
+        );
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            fonts
+                .families
+                .entry(family)
+                .or_default()
+                .insert(0, "PaperMono".into());
         }
-    }
-}
-
-impl Drop for Runtime {
-    fn drop(&mut self) {
-        if let (Some(renderer), Some(owner)) = (&self.renderer, &mut self.owner) {
-            // Outstanding render snapshots may still be retiring on a pipelined
-            // render thread. Owner Drop safely ends their consumer generation.
-            let _ = renderer.lock().unwrap().shutdown(owner, &mut self.context);
-        }
-        self.owner.take();
-        self.platform.shutdown(&mut self.context);
+        ctx.set_fonts(fonts);
     }
 }
 
 pub(crate) fn draw(world: &mut World) {
-    let surfaces: Vec<_> = world
-        .query_filtered::<Entity, With<UiSurface>>()
+    let cameras: Vec<_> = world
+        .query::<(Entity, &UiCamera)>()
         .iter(world)
+        .map(|(e, c)| (e, c.0))
         .collect();
-    if surfaces.is_empty() {
-        let devices = world.resource::<DeviceBridge>().0.lock().unwrap().clone();
-        let mut runtime = world.non_send_mut::<Runtime>();
-        let runtime = &mut *runtime;
-        *runtime.animations.get_mut() = Default::default();
-        if runtime.icon_surface.take().is_some() {
-            runtime.icons.get_mut().clear(&mut runtime.context);
-        }
-        if let (Some(devices), Some(renderer)) = (devices, runtime.renderer.as_ref()) {
-            runtime
-                .viewports
-                .borrow_mut()
-                .begin_frame(&devices, renderer);
-        }
+    if cameras.is_empty() {
+        world
+            .resource_mut::<Runtime>()
+            .icons
+            .get_mut()
+            .unwrap()
+            .clear();
+        *world
+            .resource_mut::<input::InputRouter>()
+            .frame
+            .get_mut()
+            .unwrap() = default();
+        world.resource_mut::<input::RoutedInput>().release_all();
         return;
     }
-    if surfaces.len() != 1 {
-        report(
-            world,
-            Some(surfaces[0]),
-            "Stage 2 supports exactly one UI surface".into(),
-        );
+    assert_eq!(
+        cameras.len(),
+        1,
+        "UI2 currently supports one active surface"
+    );
+    let (camera, surface) = cameras[0];
+    let Some(uses) = world.get::<UsesTheme>(surface) else {
         return;
-    }
-    let surface = surfaces[0];
-    let result = (|| {
-        let theme_id = world
-            .get::<UsesTheme>(surface)
-            .ok_or("UI surface needs a UsesTheme relationship")?
-            .0;
-        let theme = world
-            .get::<Theme>(theme_id)
-            .ok_or("Selected theme entity has no Theme component")?
-            .clone();
-        if world.non_send::<Runtime>().theme.as_ref() != Some(&theme) {
-            theme.validate()?;
-        }
-        let devices = world.resource::<DeviceBridge>().0.lock().unwrap().clone();
-        let Some(devices) = devices else {
-            return Ok(());
-        };
-        // Temporarily own thread-bound machinery so drawing systems can query the
-        // world normally. Nothing exposes Context or a raw frame pointer in ECS.
-        let mut runtime = world
-            .remove_non_send::<Runtime>()
-            .expect("UI runtime installed");
-        runtime.clipboard.borrow_mut().service =
-            Some(world.resource::<bedtime_clipboard2::Clipboard>().clone());
-        let result = WINIT_WINDOWS.with(|windows| {
-            let windows = windows.borrow();
-            let Some(window) = windows.get_window(surface) else {
-                return Ok(());
+    };
+    let theme = world.get::<Theme>(uses.0).expect("Surface theme").clone();
+    let policy = *world.get::<MotionPolicy>(surface).unwrap();
+    let panel_settings = world
+        .get::<PanelSettings>(surface)
+        .copied()
+        .unwrap_or_default();
+    assert!(
+        [
+            panel_settings.rounding,
+            panel_settings.hit_size,
+            panel_settings.panel_gap,
+        ]
+        .into_iter()
+        .chain(panel_settings.padding)
+        .all(|value| value.is_finite() && value >= 0.0),
+        "Panel settings must be finite and nonnegative"
+    );
+    let ctx = world
+        .get_mut::<EguiContext>(camera)
+        .unwrap()
+        .get_mut()
+        .clone();
+    let mut runtime = world.remove_resource::<Runtime>().unwrap();
+    let mut router = world.remove_resource::<input::InputRouter>().unwrap();
+    let previous_content = router.frame.get_mut().unwrap().focused_content;
+    *router.frame.get_mut().unwrap() = input::UiInputFrame {
+        focused_content: previous_content,
+        ..default()
+    };
+    if let Some(events) = world.get_resource::<Messages<WindowEvent>>() {
+        for event in runtime.events.read(events) {
+            if let WindowEvent::KeyboardInput(k) = event {
+                if k.state == ButtonState::Pressed {
+                    runtime.modifier_keys.press(k.key_code);
+                } else {
+                    runtime.modifier_keys.release(k.key_code);
+                }
+            }
+            if matches!(event,WindowEvent::WindowFocused(f) if !f.focused) {
+                runtime.modifier_keys.reset_all();
+            }
+            use bevy::input::keyboard::KeyCode::*;
+            let modifiers = input::InputModifiers {
+                control: runtime
+                    .modifier_keys
+                    .any_pressed([ControlLeft, ControlRight]),
+                shift: runtime.modifier_keys.any_pressed([ShiftLeft, ShiftRight]),
+                alt: runtime.modifier_keys.any_pressed([AltLeft, AltRight]),
+                meta: runtime.modifier_keys.any_pressed([SuperLeft, SuperRight]),
             };
-            let physical = window.inner_size();
-            if physical.width == 0 || physical.height == 0 {
-                return Ok(());
-            }
-            if runtime.generation != devices.generation {
-                runtime.renderer.take();
-                runtime.owner.take();
-                let (renderer, owner) = WgpuSnapshotRenderer::new(
-                    WgpuInitInfo::new(
-                        devices.device.clone(),
-                        devices.queue.clone(),
-                        wgpu::TextureFormat::Rgba8Unorm,
-                    ),
-                    &mut runtime.context,
-                )
-                .map_err(|e| e.to_string())?;
-                runtime.renderer = Some(Arc::new(Mutex::new(renderer)));
-                runtime.owner = Some(owner);
-                runtime.generation = devices.generation;
-            }
-            runtime
-                .owner
-                .as_mut()
+            runtime.next_event += 1;
+            router
+                .frame
+                .get_mut()
                 .unwrap()
-                .poll_completions(&mut runtime.context)
-                .map_err(|e| e.to_string())?;
-            // Color/spacing changes never rebuild the atlas. One bundled regular
-            // face is shared by all contexts; ImGui handles dynamic DPI rasterization.
-            if runtime.theme.as_ref().map(|t| t.metrics.font_size) != Some(theme.metrics.font_size)
-            {
-                let atlas = runtime.context.font_atlas();
-                atlas.clear();
-                let data = include_bytes!("../assets/fonts/PaperMono-Regular.ttf");
-                // SAFETY: embedded font bytes live for the lifetime of the process.
-                let source =
-                    unsafe { FontSource::ttf_data_with_size(data, theme.metrics.font_size) };
-                atlas.add_font(&[source]);
-            }
-            if runtime.theme.as_ref() != Some(&theme) {
-                theme.apply(&mut runtime.context);
-                runtime.theme = Some(theme.clone());
-            }
-            for event in runtime
                 .events
-                .read(world.resource::<Messages<RawWinitWindowEvent>>())
-            {
-                if event.window_id == window.id() {
-                    runtime
-                        .platform
-                        .handle_event(&mut runtime.context, window, &event.event);
-                }
-            }
-            runtime.platform.prepare_frame(&mut runtime.context, window);
-            runtime
-                .viewports
-                .borrow_mut()
-                .begin_frame(&devices, runtime.renderer.as_ref().unwrap());
-            if runtime.icon_surface != Some(surface) {
-                runtime.icons.get_mut().clear(&mut runtime.context);
-                runtime.icon_surface = Some(surface);
-            }
-            let previous_error = runtime.icons.borrow().status.error.clone();
-            let common_pixels =
-                (theme.metrics.font_size * window.scale_factor() as f32).ceil() as u32;
-            if let Err(error) = runtime.icons.get_mut().prepare(
-                &mut runtime.context,
-                world.resource::<Assets<Icon>>(),
-                world.resource::<Assets<IconSet>>(),
-                world.resource::<crate::icons::BundledIcons>(),
-                world.get::<UiIcons>(surface),
-                world.resource::<AssetServer>(),
-                common_pixels,
-            ) {
-                runtime.icons.get_mut().status.error = Some(error.to_string());
-            }
-            let status = runtime.icons.borrow().status.clone();
-            if status.error != previous_error {
-                if let Some(error) = &status.error {
-                    world.write_message(UiError(format!("Icons: {error}")));
-                }
-            }
-            *world.get_mut::<UiIconStatus>(surface).unwrap() = status;
-            let views = world
-                .get::<SurfaceViews>(surface)
-                .map(|v| v.collection().to_vec())
-                .unwrap_or_default();
-            let began = Instant::now();
-            let token = runtime.context.begin_frame();
-            runtime.animations.borrow_mut().begin_frame(
-                token.ui().frame_count(),
-                world.resource::<Time<Real>>().elapsed_secs_f64(),
-            );
-            for view in views {
-                if world.get::<UiView>(view).is_none() {
-                    continue;
-                }
-                let frame = UiFrame {
-                    view,
-                    animation_owner: view,
-                    surface,
-                    ui: token.ui(),
-                    theme: &theme,
-                    motion: *world.get::<MotionPolicy>(surface).unwrap(),
-                    animations: &runtime.animations,
-                    icons: &runtime.icons,
-                    viewports: &runtime.viewports,
-                };
-                let id = SystemId::<UiFrame<'static>>::from_entity(view);
-                world
-                    .run_system_with(id, frame)
-                    .map_err(|e| e.to_string())?;
-            }
-            let ui = token.ui();
-            let (effects, active_animations) =
-                runtime.animations.borrow_mut().finish_frame(|view| {
-                    world.get::<UiView>(view).is_some()
-                        && world
-                            .get::<OnSurface>(view)
-                            .is_some_and(|owner| owner.0 == surface)
+                .push(input::InputEvent {
+                    id: runtime.next_event,
+                    event: event.clone(),
+                    modifiers,
                 });
-            crate::motion::apply_popups(ui, &effects);
-            *world.get_mut::<UiCapture>(surface).unwrap() = UiCapture {
-                keyboard: ui.io().want_capture_keyboard(),
-                pointer: ui.io().want_capture_mouse(),
-                text: ui.io().want_text_input(),
-            };
-            runtime.platform.prepare_render(ui, window);
-            let snapshot = token
-                .render_snapshot(
-                    runtime
-                        .owner
-                        .as_ref()
-                        .unwrap()
-                        .renderer_consumer()
-                        .map_err(|e| e.to_string())?,
-                )
-                .map_err(|e| e.to_string())?;
-            runtime.platform.update_ime(window);
-            let mut diag = world.get_mut::<UiDiagnostics>(surface).unwrap();
-            diag.frames += 1;
-            diag.vertices = snapshot
-                .draw_data()
-                .draw_lists
-                .iter()
-                .map(|list| list.vtx.len())
-                .sum();
-            diag.indices = snapshot
-                .draw_data()
-                .draw_lists
-                .iter()
-                .map(|list| list.idx.len())
-                .sum();
-            diag.draw_ms = began.elapsed().as_secs_f64() * 1000.0;
-            diag.error = None;
-            diag.active_animations = active_animations;
-            diag.icon_textures = runtime.icons.borrow().textures();
-            diag.icon_rasterizations = runtime.icons.borrow().rasterizations;
-            let viewport_textures = runtime.viewports.borrow().frame_textures();
-            diag.viewport_textures = viewport_textures.len();
-            world.resource_mut::<FrameSlot>().0 = Some(Packet {
-                snapshot,
-                renderer: runtime.renderer.as_ref().unwrap().clone(),
-                window: surface,
-                size: [physical.width, physical.height],
-                generation: runtime.generation,
-                images: viewport_textures,
-            });
-            // A reactive desktop event loop must keep producing frames after
-            // the pointer stops moving, until our transitions have settled.
-            if active_animations > 0 || runtime.icons.borrow().needs_redraw {
-                world.write_message(bevy::window::RequestRedraw);
-            }
-            Ok(())
-        });
-        let (clipboard, errors) = {
-            let mut slot = runtime.clipboard.borrow_mut();
-            (slot.service.take(), std::mem::take(&mut slot.errors))
-        };
-        drop(clipboard); // All handles share the resource's single backend.
-        world.insert_non_send(runtime);
-        for error in errors {
-            world.write_message(UiError(format!("Clipboard: {error}")));
         }
-        result
-    })();
-    if let Err(error) = result {
-        report(world, Some(surface), error);
     }
-}
-
-fn report(world: &mut World, surface: Option<Entity>, error: String) {
-    if let Some(surface) = surface {
-        let mut diag = world.get_mut::<UiDiagnostics>(surface).unwrap();
-        if diag.error.as_ref() == Some(&error) {
+    if runtime.themes.get(&camera) != Some(&theme) {
+        if let Err(error) = theme.validate() {
+            world.write_message(UiError(error));
+            world.insert_resource(runtime);
+            world.insert_resource(router);
             return;
         }
-        diag.error = Some(error.clone());
+        theme.apply(&ctx);
+        runtime.themes.insert(camera, theme.clone());
     }
-    world.write_message(UiError(error));
-}
-
-pub(crate) fn shutdown(world: &mut World) {
-    if !world.resource::<Messages<AppExit>>().is_empty() {
-        // Publish retirement before taking the renderer lock in Runtime::drop.
-        // A pipelined frame either finishes while holding that lock or observes
-        // retirement after acquiring it and drops its owned snapshot.
-        world.resource::<DeviceBridge>().0.lock().unwrap().take();
-        world.resource_mut::<FrameSlot>().0.take();
-        world.remove_non_send::<Runtime>();
+    ctx.global_style_mut(|s| s.animation_time = if policy.enabled { policy.seconds } else { 0.0 });
+    let pixels = (theme.metrics.font_size * ctx.pixels_per_point())
+        .ceil()
+        .max(1.0) as u32;
+    let icons_result = runtime.icons.get_mut().unwrap().prepare(
+        &mut ctx.clone(),
+        world.resource::<Assets<Icon>>(),
+        world.resource::<Assets<IconSet>>(),
+        world.resource::<icons::BundledIcons>(),
+        world.get::<UiIcons>(surface),
+        world.resource::<AssetServer>(),
+        pixels,
+    );
+    if let Err(error) = icons_result {
+        world.write_message(UiError(error.to_string()));
     }
+    let images: Vec<_> = world
+        .query::<&UiViewport>()
+        .iter(world)
+        .map(|v| v.image.clone())
+        .collect();
+    world.resource_scope(|_, mut textures: Mut<EguiUserTextures>| {
+        runtime.images.retain(|id, _| {
+            let alive = images.iter().any(|h| h.id() == *id);
+            if !alive {
+                textures.remove_image(*id);
+            }
+            alive
+        });
+        for image in images {
+            runtime
+                .images
+                .entry(image.id())
+                .or_insert_with(|| textures.add_image(bevy_egui::EguiTextureHandle::Strong(image)));
+        }
+    });
+    let mut raw = world.get_mut::<EguiInput>(camera).unwrap().take();
+    // Upstream clipboard management is disabled; the same service is used by
+    // application systems and egui text controls, including memory-only smoke.
+    for event in &router.frame.get_mut().unwrap().events {
+        if let Some(key) = event.key() {
+            let primary = if cfg!(target_os = "macos") {
+                event.modifiers.meta
+            } else {
+                event.modifiers.control
+            };
+            if primary && key.state.is_pressed() {
+                use bevy::input::keyboard::KeyCode::*;
+                match key.key_code {
+                    KeyC => raw.events.push(egui::Event::Copy),
+                    KeyX => raw.events.push(egui::Event::Cut),
+                    KeyV => {
+                        match world
+                            .resource_mut::<bedtime_clipboard2::Clipboard>()
+                            .read_text()
+                        {
+                            Ok(text) => raw.events.push(egui::Event::Paste(text)),
+                            Err(error) => {
+                                world.write_message(UiError(error.to_string()));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    let views: Vec<_> = world
+        .get::<SurfaceViews>(surface)
+        .map(|v| v.iter().collect())
+        .unwrap_or_default();
+    let start = Instant::now();
+    let mut active_animations = 0;
+    let output = ctx.run_ui(raw, |ui| {
+        if world.get::<UiBackground>(surface) == Some(&UiBackground::Theme) {
+            ui.painter()
+                .rect_filled(ui.max_rect(), 0.0, theme::color(theme.palette.background));
+        }
+        for view in &views {
+            if world.get::<UiView>(*view).is_none() {
+                continue;
+            }
+            ui.push_id(view.to_bits(), |ui| {
+                let frame = UiFrame {
+                    view: *view,
+                    surface,
+                    ui,
+                    theme: &theme,
+                    motion: policy,
+                    panel_settings,
+                    icons: &runtime.icons,
+                    textures: &runtime.images,
+                    input: &router.frame,
+                };
+                if let Err(error) =
+                    world.run_system_with(SystemId::<UiFrame<'static>>::from_entity(*view), frame)
+                {
+                    world.write_message(UiError(error.to_string()));
+                }
+            });
+        }
+        active_animations = motion::active(&ctx);
+    });
+    for command in &output.platform_output.commands {
+        if let egui::OutputCommand::CopyText(text) = command {
+            if let Err(error) = world
+                .resource_mut::<bedtime_clipboard2::Clipboard>()
+                .write_text(text)
+            {
+                world.write_message(UiError(error.to_string()));
+            }
+        }
+    }
+    router.frame.get_mut().unwrap().claim_widgets(&ctx);
+    let modal = ctx.any_popup_open() || ctx.memory(|m| m.top_modal_layer().is_some());
+    router.frame.get_mut().unwrap().modal = modal;
+    if modal {
+        let ids: Vec<_> = router
+            .frame
+            .get_mut()
+            .unwrap()
+            .events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.event,
+                    WindowEvent::KeyboardInput(_)
+                        | WindowEvent::Ime(_)
+                        | WindowEvent::CursorMoved(_)
+                        | WindowEvent::MouseButtonInput(_)
+                        | WindowEvent::MouseWheel(_)
+                )
+            })
+            .map(|e| e.id)
+            .collect();
+        for id in ids {
+            router.frame.get_mut().unwrap().consume(id, surface);
+        }
+    }
+    if ctx.input(|i| i.pointer.any_pressed()) {
+        let pos = ctx.input(|i| i.pointer.latest_pos());
+        if !pos.is_some_and(|pos| {
+            router
+                .frame
+                .get_mut()
+                .unwrap()
+                .regions
+                .iter()
+                .any(|r| r.rect.contains(pos))
+        }) {
+            router.frame.get_mut().unwrap().focused_content = None;
+        }
+    }
+    if ctx.memory(|m| m.focused().is_some()) {
+        router.frame.get_mut().unwrap().focused_content = None;
+    }
+    let remaining = ctx.input(|i| i.events.clone());
+    for event in router.frame.get_mut().unwrap().events.clone() {
+        if let Some(k) = event.key() {
+            if let Some(key) = bevy_egui::helpers::bevy_to_egui_key(&k.logical_key) {
+                let unconsumed = remaining.iter().any(|event| matches!(event,
+                    egui::Event::Key { key:other,pressed,.. } if *other==key && *pressed==k.state.is_pressed()));
+                if !unconsumed {
+                    router.frame.get_mut().unwrap().consume(event.id, surface);
+                }
+            }
+        }
+    }
+    router.frame.get_mut().unwrap().text_active = ctx.text_edit_focused();
+    let capture = UiCapture {
+        keyboard: ctx.egui_wants_keyboard_input(),
+        pointer: ctx.egui_wants_pointer_input(),
+        text: ctx.text_edit_focused(),
+    };
+    if capture.text
+        && !ctx
+            .memory(|m| m.focused())
+            .is_some_and(|id| router.frame.lock().unwrap().text_widgets.contains(&id))
+    {
+        let ids: Vec<_> = router
+            .frame
+            .lock()
+            .unwrap()
+            .events
+            .iter()
+            .filter(|e| e.key().is_some() || matches!(e.event, WindowEvent::Ime(_)))
+            .map(|e| e.id)
+            .collect();
+        for id in ids {
+            router.frame.lock().unwrap().consume(id, surface);
+        }
+    }
+    let meshes = ctx.tessellate(output.shapes.clone(), output.pixels_per_point);
+    let (vertices, indices) = meshes.iter().fold((0, 0), |(v, i), p| {
+        if let egui::epaint::Primitive::Mesh(m) = &p.primitive {
+            (v + m.vertices.len(), i + m.indices.len())
+        } else {
+            (v, i)
+        }
+    });
+    let frames = world.get::<UiDiagnostics>(surface).unwrap().frames + 1;
+    let icons = runtime.icons.lock().unwrap();
+    world.entity_mut(surface).insert((
+        capture,
+        icons.status.clone(),
+        UiDiagnostics {
+            frames,
+            vertices,
+            indices,
+            active_animations,
+            draw_ms: start.elapsed().as_secs_f64() * 1000.0,
+            icon_textures: icons.textures(),
+            icon_rasterizations: icons.rasterizations,
+            viewport_textures: runtime.images.len(),
+            ..default()
+        },
+    ));
+    if icons.needs_redraw {
+        ctx.request_repaint();
+    }
+    drop(icons);
+    **world.get_mut::<EguiFullOutput>(camera).unwrap() = Some(output);
+    world.insert_resource(runtime);
+    world.insert_resource(router);
 }

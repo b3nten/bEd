@@ -61,7 +61,7 @@ members = [
     "bedtime/crates/bedtime-test-fixtures",
 ]
 default-members = ["bed"]
-exclude = ["vendor/arboard", "vendor/dear-imgui-sys", "vendor/dear-imgui-wgpu", "vendor/freetype-sys", "vendor/rio-vt"]
+exclude = ["vendor/arboard", "vendor/dear-imgui-sys", "vendor/dear-imgui-wgpu", "vendor/egui", "vendor/freetype-sys", "vendor/rio-vt"]
 resolver = "3"
 
 [workspace.package]
@@ -104,6 +104,8 @@ dear-imgui-wgpu = { version = "=0.18.0", default-features = false, features = ["
 winit = "=0.30.13"
 wgpu = "=30.0.1"
 bevy = { version = "=0.20.0", default-features = false }
+egui = "=0.36.2"
+bevy_egui = { version = "=0.43.1", default-features = false, features = ["render", "default_fonts"] }
 stl_io = "=0.10.0"
 arboard = { version = "=3.6.1", default-features = false, features = ["wayland-data-control"] }
 rfd = "=0.17.2"
@@ -168,6 +170,7 @@ bedtime-plugin-sqlite-browser = { path = "bedtime/crates/bedtime-plugin-sqlite-b
 bedtime-plugin-http-client = { path = "bedtime/crates/bedtime-plugin-http-client" }
 
 [patch.crates-io]
+egui = { path = "vendor/egui" }
 rio-vt = { path = "vendor/rio-vt" }
 arboard = { path = "vendor/arboard" }
 dear-imgui-sys = { path = "vendor/dear-imgui-sys" }

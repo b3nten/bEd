@@ -293,10 +293,10 @@ pub(crate) fn install(app: &mut App) {
     app.init_resource::<WorkbenchRequests>()
         .add_message::<WorkbenchFinished>()
         .configure_sets(
-            PostUpdate,
-            WorkbenchSystems::Apply.after(crate::CommandSystems::Dispatch),
+            PreUpdate,
+            WorkbenchSystems::Apply.after(crate::ContextCommandSystems::Dispatch),
         )
-        .add_systems(PostUpdate, apply.in_set(WorkbenchSystems::Apply));
+        .add_systems(PreUpdate, apply.in_set(WorkbenchSystems::Apply));
     let workspace = new_workspace(app.world_mut(), "Temporary".into(), false);
     app.insert_resource(ActiveWorkspace {
         entity: workspace,
@@ -1068,5 +1068,30 @@ fn apply(world: &mut World) {
             WorkbenchRequest::Edit { stamp, edit } => w.edit(*stamp, edit),
         };
         world.write_message(WorkbenchFinished { request, result });
+    }
+}
+
+/// Focus observations from the completed UI pass precede keyboard routing.
+/// Structural edits retain their single commit stage after command dispatch.
+#[cfg(feature = "ui")]
+pub(crate) fn apply_focus(world: &mut World) {
+    let requests = std::mem::take(&mut world.resource_mut::<WorkbenchRequests>().0);
+    for request in requests {
+        let result = match &request {
+            WorkbenchRequest::FocusPanel(panel) => Some(Workbench::new(world).focus_panel(*panel)),
+            WorkbenchRequest::Edit {
+                stamp,
+                edit: edit @ (LayoutEdit::FocusArea(_) | LayoutEdit::FocusPanel(_)),
+            } => Some(Workbench::new(world).edit(*stamp, edit)),
+            _ => None,
+        };
+        if let Some(result) = result {
+            world.write_message(WorkbenchFinished { request, result });
+        } else {
+            world
+                .resource_mut::<WorkbenchRequests>()
+                .0
+                .push_back(request);
+        }
     }
 }

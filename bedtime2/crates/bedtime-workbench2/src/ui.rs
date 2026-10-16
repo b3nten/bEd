@@ -1,9 +1,9 @@
 //! Optional UI presentation and input observations. UI2 has no workbench dependency.
 use crate::*;
-use bedtime_ui2::{UiCapture, UiFrame, UiPlugin, UiSystems};
+use bedtime_ui2::{UiFrame, UiPlugin, UiSystems};
 use bevy::prelude::*;
 
-/// Screen observations of the ImGui presentation. Native menus remain independent.
+/// Screen observations of the egui presentation. Native menus remain independent.
 #[derive(Component, Default, Clone, Copy)]
 pub struct MenuPresentation {
     pub visible: bool,
@@ -14,12 +14,12 @@ pub struct WorkbenchUiPlugin;
 impl Plugin for WorkbenchUiPlugin {
     fn build(&self, app: &mut App) {
         frontend::configure(app);
-        app.add_systems(PostUpdate, reset_menus.before(UiSystems::Draw));
-        app.add_systems(
-            PostUpdate,
-            observe
-                .after(UiSystems::Draw)
-                .before(CommandSystems::Shortcuts),
+        input::install(app);
+        app.add_systems(PreUpdate, reset_menus.before(UiSystems::Draw));
+        #[cfg(feature = "native")]
+        app.configure_sets(
+            PreUpdate,
+            NativeSystems::WindowGeometry.before(UiSystems::Draw),
         );
     }
     fn finish(&self, app: &mut App) {
@@ -40,77 +40,61 @@ fn reset_menus(mut menus: Query<&mut MenuPresentation>) {
     }
 }
 
-fn observe_item(frame: &UiFrame, world: &mut World, entity: Entity) {
+fn observe_item(world: &mut World, entity: Entity, response: &bedtime_ui2::egui::Response) {
     world.entity_mut(entity).insert(MenuPresentation {
-        visible: frame.ui.is_item_visible(),
+        visible: true,
         rect: Rect::from_corners(
-            Vec2::from_array(frame.ui.item_rect_min()),
-            Vec2::from_array(frame.ui.item_rect_max()),
+            Vec2::new(response.rect.min.x, response.rect.min.y),
+            Vec2::new(response.rect.max.x, response.rect.max.y),
         ),
     });
 }
 
-fn observe(world: &mut World) {
-    let (keyboard, text) = world
-        .query::<&UiCapture>()
-        .iter(world)
-        .fold((false, false), |(k, t), c| (k || c.keyboard, t || c.text));
-    let mut capture = world.resource_mut::<ShortcutCapture>();
-    capture.keyboard = keyboard;
-    capture.text = text;
+pub fn draw_menu_bar(frame: &mut UiFrame, world: &mut World, root: Entity) -> Result<(), String> {
     #[cfg(feature = "native")]
+    if world.get::<NativeMenuBar>(root).is_some()
+        && world
+            .get_resource::<NativeCapabilities>()
+            .is_some_and(|c| c.native_menus)
     {
-        use bedtime_ui2::{Theme, UiSurface, UsesTheme};
-        let backgrounds: Vec<_> = world
-            .query_filtered::<(Entity, &UsesTheme), With<UiSurface>>()
-            .iter(world)
-            .map(|(e, t)| {
-                (
-                    e,
-                    WindowBackground::new(
-                        world
-                            .get::<Theme>(t.0)
-                            .expect("Surface theme")
-                            .palette
-                            .background,
-                    ),
-                )
-            })
-            .collect();
-        for (entity, background) in backgrounds {
-            if world.get::<WindowBackground>(entity) != Some(&background) {
-                world.entity_mut(entity).insert(background);
-            }
-        }
+        return Ok(());
     }
-}
-
-/// Render an abstract MenuBar inside an ImGui window with MENU_BAR enabled.
-pub fn draw_menu_bar(frame: &UiFrame, world: &mut World, root: Entity) -> Result<(), String> {
-    let menu = menu_snapshot(world, root, CommandContext::Focused)?;
-    if let Some(_bar) = frame.ui.begin_menu_bar() {
-        draw_entries(frame, world, &menu.entries);
-    }
+    let menu = menu_snapshot(world, root, InvocationContext::Focused)?;
+    use bedtime_ui2::egui;
+    let available = frame.ui.available_rect_before_wrap();
+    let padding = frame.panel_settings.panel_gap.min(available.width() * 0.5);
+    let inner = available.shrink2(egui::vec2(padding, 0.0));
+    let mut row = frame.ui.new_child(egui::UiBuilder::new().max_rect(inner));
+    row.set_clip_rect(frame.ui.clip_rect().intersect(inner));
+    let response = egui::MenuBar::new()
+        .ui(&mut row, |ui| draw_entries(ui, world, &menu.entries))
+        .response;
+    let bounds = egui::Rect::from_min_max(
+        available.min,
+        egui::pos2(available.max.x, response.rect.max.y),
+    );
+    frame.ui.advance_cursor_after_rect(bounds);
+    frame.ui.painter().with_clip_rect(bounds).line_segment(
+        [bounds.left_bottom(), bounds.right_bottom()],
+        egui::Stroke::new(1.0, bedtime_ui2::theme::color(frame.theme.palette.border)),
+    );
     Ok(())
 }
-
-/// Call after the source control. Popup styling and animation are supplied by UI2.
 pub fn draw_popup_menu(
-    frame: &UiFrame,
+    _frame: &mut UiFrame,
     world: &mut World,
-    id: &str,
+    response: &bedtime_ui2::egui::Response,
     root: Entity,
-    context: CommandContext,
+    context: InvocationContext,
 ) -> Result<(), String> {
-    let mut result = Ok(());
-    frame.controls().context_menu(id, || {
-        result = menu_snapshot(world, root, context)
-            .map(|menu| draw_entries(frame, world, &menu.entries));
+    let menu = menu_snapshot(world, root, context)?;
+    response.context_menu(|ui| {
+        draw_entries(ui, world, &menu.entries);
     });
-    result
+    Ok(())
 }
-
-fn draw_entries(frame: &UiFrame, world: &mut World, entries: &[MenuNode]) {
+fn draw_entries(ui: &mut bedtime_ui2::egui::Ui, world: &mut World, entries: &[MenuNode]) {
+    use bedtime_ui2::egui;
     for entry in entries {
         match entry {
             MenuNode::Menu {
@@ -118,12 +102,13 @@ fn draw_entries(frame: &UiFrame, world: &mut World, entries: &[MenuNode]) {
                 label,
                 entries,
             } => {
-                let _id = frame.ui.push_id(entity.to_bits() as usize);
-                let menu = frame.ui.begin_menu(label);
-                observe_item(frame, world, *entity);
-                if let Some(_menu) = menu {
-                    draw_entries(frame, world, entries);
-                }
+                let response = ui
+                    .push_id(entity.to_bits(), |ui| {
+                        ui.menu_button(label, |ui| draw_entries(ui, world, entries))
+                    })
+                    .inner
+                    .response;
+                observe_item(world, *entity, &response);
             }
             MenuNode::Item {
                 entity,
@@ -133,23 +118,28 @@ fn draw_entries(frame: &UiFrame, world: &mut World, entries: &[MenuNode]) {
                 target,
                 context,
             } => {
-                let _id = frame.ui.push_id(entity.to_bits() as usize);
-                let shortcut = shortcut.map(|s| s.label()).unwrap_or_default();
-                let clicked = frame
-                    .ui
-                    .menu_item_enabled_selected_with_shortcut(label, &shortcut, false, *enabled);
-                observe_item(frame, world, *entity);
-                if clicked {
+                let text = shortcut
+                    .map_or_else(|| label.clone(), |s| format!("{}     {}", label, s.label()));
+                let response = ui
+                    .push_id(entity.to_bits(), |ui| {
+                        ui.add_enabled(*enabled, egui::Button::new(text))
+                    })
+                    .inner;
+                observe_item(world, *entity, &response);
+                if response.clicked() {
                     world
-                        .resource_mut::<CommandRequests>()
-                        .submit(CommandRequest {
-                            command: target.expect("Enabled menu action"),
+                        .resource_mut::<ContextCommandRequests>()
+                        .submit(ContextCommandRequest {
+                            command: target.clone().expect("Enabled menu action"),
                             source: Some(*entity),
                             context: *context,
                         });
+                    ui.close();
                 }
             }
-            MenuNode::Separator(_) => frame.ui.separator(),
+            MenuNode::Separator(_) => {
+                ui.separator();
+            }
         }
     }
 }

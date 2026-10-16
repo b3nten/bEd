@@ -1,4 +1,3 @@
-//! Bevy cameras own scene rendering. UI owns only the image placement and size request.
 use bevy::{
     camera::{Projection, RenderTarget},
     prelude::*,
@@ -13,7 +12,10 @@ pub struct UiViewport {
     pub rect: Rect,
     pub visible: bool,
     pub hovered: bool,
+    /// Optional rounding for an image that meets the surrounding surface edges.
+    pub corner_radius: egui::CornerRadius,
 }
+
 impl UiViewport {
     pub fn new(image: Handle<Image>) -> Self {
         Self {
@@ -22,6 +24,7 @@ impl UiViewport {
             rect: Rect::default(),
             visible: false,
             hovered: false,
+            corner_radius: egui::CornerRadius::ZERO,
         }
     }
 }
@@ -36,8 +39,8 @@ pub fn viewport_image(size: UVec2) -> Image {
     let mut image = Image::new_target_texture(
         size.x,
         size.y,
-        wgpu::TextureFormat::Rgba8Unorm,
-        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        bevy::render::render_resource::TextureFormat::Rgba8Unorm,
+        Some(bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb),
     );
     image.data = None;
     image.copy_on_resize = false;
@@ -73,7 +76,7 @@ pub(crate) fn resize_targets(
         images
             .get_mut(&viewport.image)
             .unwrap()
-            .resize(wgpu::Extent3d {
+            .resize(bevy::render::render_resource::Extent3d {
                 width: size.x,
                 height: size.y,
                 depth_or_array_layers: 1,
@@ -142,11 +145,11 @@ mod tests {
         let source = world.resource::<Assets<Image>>().get(&image).unwrap();
         assert_eq!(
             source.texture_descriptor.format,
-            wgpu::TextureFormat::Rgba8Unorm
+            bevy::render::render_resource::TextureFormat::Rgba8Unorm
         );
         assert_eq!(
             source.texture_view_descriptor.as_ref().unwrap().format,
-            Some(wgpu::TextureFormat::Rgba8UnormSrgb)
+            Some(bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb)
         );
         assert!(source.data.is_none());
         assert!(!source.copy_on_resize);

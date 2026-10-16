@@ -4,16 +4,13 @@ version.workspace = true
 edition = "2024"
 publish = false
 license.workspace = true
-description = "ECS presentation, controls and ImGui rendering for Bevy"
+description = "ECS presentation, themes and egui rendering for Bevy"
 
 [dependencies]
 bedtime-clipboard2.workspace = true
 bevy = { workspace = true, features = ["std", "bevy_render", "bevy_core_pipeline", "bevy_winit", "bevy_log", "keyboard", "mouse"] }
-dear-imgui-rs.workspace = true
-dear-imgui-sys.workspace = true
-dear-imgui-wgpu.workspace = true
-wgpu.workspace = true
-winit.workspace = true
+egui.workspace = true
+bevy_egui.workspace = true
 resvg.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

@@ -5,6 +5,11 @@ second Bedtime foundation. Implementation proceeds alongside the existing
 application in `bedtime2/` and `bed2/`. The first implementation is recorded in
 [step-1.md](step-1.md).
 
+The current UI/input implementation is [egui and contextual input](step-4-egui.md).
+V2 uses upstream `bevy_egui`, explicit panel input ownership and independently
+resolved ContextCommand bindings and handlers. UI2 remains usable without the
+workbench command model. Stages 1–3 record the earlier implementation history.
+
 ## Purpose
 
 Bedtime is a composable desktop application platform built on Bevy. Its central
@@ -32,8 +37,8 @@ The current split, revised in [the stage 3 follow-up](step-3-split.md), is:
 | Crate | Responsibility |
 | --- | --- |
 | `bedtime-clipboard2` | Independent text/file clipboard, optional OS access and in-process fallback |
-| `bedtime-ui2` | ImGui lifecycle, Bevy rendering, input adaptation, themes, controls, icons and effects |
-| `bedtime-workbench2` | Headless application/action/menu model, panel layout, workspaces and planned documents/settings; optional native and UI adapters |
+| `bedtime-ui2` | Upstream egui/Bevy integration, input ownership, themes, icons, viewports and motion |
+| `bedtime-workbench2` | Headless ContextCommands, bindings/handlers/menus, panel layout, workspaces and planned documents/settings; optional native and UI adapters |
 
 UI2 depends on clipboard, with no workbench dependency. Workbench uses clipboard
 and optionally UI2. The separate desktop crate has been retired; native window
@@ -58,17 +63,17 @@ part of the intended foundation.
 
 ### Desktop and UI ownership
 
-The existing `bedtime-desktop` combines native integration with the complete
-ImGui/Bevy rendering runtime. In the new design, the ImGui integration belongs
-in `bedtime-ui2`, including input translation, frame snapshots, rendering,
-composition and recovery of UI-owned GPU resources.
+Applications own their Bevy windows, cameras, renderer and event loop.
+`UiCamera(surface)` associates an application camera with its UI surface;
+automatic primary egui-context creation is disabled. UI2 schedules one drawing
+pass after upstream input processing. Upstream owns GPU extraction/rendering,
+texture integration, platform input, cursor and IME. Bed adds theme preparation,
+shared clipboard, presentation motion and explicit input claims.
 
-Workbench core owns abstract menus and action types. Native and ImGui adapters
-present the same model and submit requests directly to the command dispatcher.
-The workbench UI adapter projects theme background colors to native window
-appearance; UI2 itself has no native workbench dependency. Native platform input
-still enters through Bevy/Winit, while ImGui-specific cursor and IME adaptation
-belongs to UI2.
+Workbench core owns abstract menus and contextual command identities. Native
+and egui presenters submit the same requests. Native shortcut hints are label
+text, keeping keyboard execution in the UI → panel → command route. The optional
+workbench UI adapter projects theme backgrounds to native window appearance.
 
 ## Workbench's semantic model
 
@@ -138,43 +143,68 @@ The existing typed `DocumentModel`/`DocumentWriter` support and Bedside Table ar
 useful evidence for this direction. They do not settle the new API or require
 all content models to use the same internal representation.
 
-## ECS menus and typed commands
+## ContextCommands, bindings, handlers and menus
 
-The initial desktop scaffold introduced owning ECS menu relationships and
-entity-bound handlers. [The stage 3 split](step-3-split.md) supersedes that model:
-menus are portable workbench data and reference action types through `Invokes`.
-Action definitions retain readable namespaced keys for persistence. Scoped
-handlers remain registered Bevy system entities, owned by their panel when local.
+A `ContextCommandId` is a serializable namespaced string. Metadata, bindings,
+registered Bevy system handlers and menu items reference it independently.
+Bindings belong to a panel or the workbench. Lookup chooses the focused panel's
+binding for a chord before falling back to the workbench. Handler lookup then
+independently chooses the panel's handler for that command before workbench
+fallback. Disabled local handlers block fallback; failures never reroute.
 
-There is one request queue. Menus, keybindings and application systems submit
-requests naming an action type and context. Workbench resolves panel/global
-handlers, captures a batch before execution, checks availability and publishes
-results. Handler follow-ups wait for the next dispatch pass. Native callbacks
-never execute application handlers directly. Native and in-application menus
-use the same resolved availability and shortcut bindings.
+UI/shell input claims run first, then panel input systems, binding lookup,
+command dispatch, queued layout edits and remaining application input. Text
+helpers reserve editing gestures and IME, including no-op edits and focus-ending
+Enter. Panels can consume eligible events or capture keyboard/pointer input.
+A game viewport can own Cmd+S before the workbench sees it. Routed held state
+follows admitted presses and releases/cancellation, preventing stuck keys and
+fresh presses leaking into another owner.
+
+Menus use the same effective binding hints and handler availability as keyboard
+commands. Requests capture panel context. Dispatch admits one batch, resolves
+handlers, rechecks availability and publishes results; follow-up requests wait
+for the next pass. Consequential layout edits retain their existing single owner.
 
 ## UI foundation
 
-[Step 2](step-2.md) introduces `bedtime-ui2`: ImGui lifecycle, native input
-adaptation, rendering through Bevy's existing device, reusable controls, themes
-and control animations. Drawing is immediate; shared application state and surface
-configuration are ECS data. Private form state can use structs or Bevy `Local<T>`;
-control interpolation belongs to the UI runtime. Registered drawing-system entities receive borrowed frame input and ordinary
-Bevy queries/resources. Relationships express ordered surface/view ownership,
-view-owned parts and independent theme references.
+[Stage 4](step-4-egui.md) replaces stage 2's ImGui implementation with egui
+widgets on upstream `bevy_egui`. The old bindings, input adapter and renderer are
+removed from v2. Drawing systems receive borrowed `UiFrame` values with an egui
+Ui, theme and small helpers for text ownership, icons, viewports and motion.
+One pass per Bevy frame prevents layout retries from replaying application
+mutations. Surface/view ownership and independent theme references remain ECS
+relationships.
 
-UI provides Everforest Medium light and dark as ordinary theme values. Consumers
-own theme selection, identity and persistence; themes need no stable keys or
-global registry. Motion policy is independent of the color theme. The shared
-style is prepared before drawing, ordinary controls inherit it, and closed context
-menus perform no style setup or contents construction. A 10,000-row clipped list
-in the gallery exercises this boundary.
+Everforest Medium light/dark palettes, PaperMono and semantic metrics remain
+ordinary theme data. Applications own theme selection and persistence. The
+custom panel shell retains its layout geometry, gaps, borders, tabs and gestures;
+ordinary widgets inherit the theme without copying v1 controls individually.
 
-V1's tooltip/popover motion supplies the reference: source-anchored scale and
-fade, with native layout and hit testing preserved. Built-in controls automatically
-own motion in a private cache keyed by view and ImGui identity, without animation
-entities or queries. An explicit final frame pass transforms vertices and clip rectangles,
-including child windows/custom painting, before snapshot capture.
+Motion remains independent of theme. The default duration is 160 ms, with
+continuous scalar retargeting and reduced motion. Native popups now grow from
+their source with bed1's 96% → 100% cubic ease-out and matching fade at that
+duration. Only popup backgrounds grow; contents fade at their final size and
+pixel positions, keeping glyph sampling fixed. Layout and hit bounds keep
+their final coordinates. New panels snap into
+place; existing panels animate their resize during tab drops
+and area moves. Corner splits show both halves immediately. Tabs follow their
+geometry directly. The egui crate is now vendored with shared widget color
+transitions; upstream `bevy_egui` remains the renderer/integration. UI2's ComboBox
+is a re-export, retaining the dropdown gap and hidden scrollbar in the fork.
+See [vendor patch notes](../vendor/egui/BED_PATCHES.md) for provenance and scope.
+
+The demo's application controls live in a dockable Controls panel. View, Layout
+and Workspace menus exercise contextual commands, and each Notes panel contributes
+a menu only while focused. Shared menu snapshots enforce panel ownership for
+native and egui presentation. Primary buttons retain egui interaction states;
+tabs use bed1's transparent fills and subtle hover tint, without an add button.
+
+Panel hosts supply the full content area with no padding or automatic scrolling;
+each implementation opts in. The demos use bed1-style padding, while the 3D scene
+reaches its panel edges beneath padded text. Shell gaps/margins are 7.2 points.
+Tab hover backgrounds slide upward without moving text. UI2 also owns a reusable
+status bar: plugins register icon/inline/tooltip systems on either side, with
+priority-based collapse to icons. Bed2 reserves the bar below the panel layout.
 
 Icons use Bevy's asset lifecycle: SVG `Icon` assets, partial `IconSet` packs and a
 `UiIcons` handle component selecting a surface's requested pack. `UiIconStatus`
@@ -255,10 +285,12 @@ next layer. Keep the original application usable throughout the migration.
 
 | Phase | Intended result | Status |
 | --- | --- | --- |
-| Desktop scaffold | An ordinary Bevy host plus a native-only desktop plugin. | Implemented; see [step 1](step-1.md). Native GUI validation and further desktop work remain. |
-| Desktop stabilization | Validate native behavior and settle the platform/input boundary needed by UI. | Pending. |
-| UI foundation | ImGui lifecycle, input integration and rendering in the existing Bevy app, followed by appearance and reusable controls. | Implemented for one active surface, with a widget gallery; see [step 2](step-2.md). Additional UI capabilities remain scoped there. |
+| Desktop scaffold | An ordinary Bevy host plus a native-only desktop plugin. | Initial implementation recorded in [step 1](step-1.md); services now live in workbench and GUI validation is covered by stage 4. |
+| Desktop stabilization | Validate native behavior and settle the platform/input boundary needed by UI. | Native window/menu integration and input ordering exercised through stage 4. |
+| UI foundation | UI input/rendering, appearance and reusable controls in the existing Bevy app. | Initial ImGui implementation recorded in [step 2](step-2.md); superseded by stage 4. |
 | Workbench foundation | Panels/layout plus a coherent document, history, workspace and persistence model. | Typed commands and the in-memory workspace/layout/panel lifecycle are implemented; see [stage 3](step-3.md). Documents, settings and persistence follow. |
+| egui migration | Preserve the Bed shell, themes and motion using egui widgets and upstream Bevy integration. | Implemented and native-smoke tested; see [stage 4](step-4-egui.md). |
+| Contextual input and commands | UI/panel input ownership and independently resolved bindings and handlers. | Implemented, including game capture and effective menu hints; see [stage 4](step-4-egui.md). |
 | Services and application features | Add filesystem and justified shared services, then migrate bEd features onto them. | Planned. |
 | Remote integration | Exercise the same service contracts across a remote boundary and evaluate replication against concrete requirements. | Deferred. |
 

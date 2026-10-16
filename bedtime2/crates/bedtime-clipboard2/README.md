@@ -23,7 +23,7 @@ silently return old local contents. Memory mode holds one current payload, eithe
 text or files; writing another format replaces it. File lists contain references,
 not file contents, and this crate performs no filesystem operations.
 
-Cloned handles share one backend and mutex. UI2's ImGui adapter and application
+Cloned handles share one backend and mutex. UI2's egui adapter and application
 systems therefore access the same clipboard without removing its resource from
 the world or opening multiple native handles. `ClipboardPlugin` and UI2 preserve
 an application-provided resource.

@@ -12,19 +12,26 @@ mod native;
 pub use bedtime_clipboard2::{Clipboard, ClipboardPlugin};
 #[cfg(feature = "native")]
 pub use native::{
-    NativeCapabilities, NativeError, NativeMenuBar, NativeSystems, WindowBackground,
-    WorkbenchNativeMenuPlugin, WorkbenchNativePlugin, WorkbenchNativeWindowPlugin,
+    NativeCapabilities, NativeError, NativeMenuBar, NativeSystems, WindowBackground, WindowBlur,
+    WindowTitlebarInset, WorkbenchNativeMenuPlugin, WorkbenchNativePlugin,
+    WorkbenchNativeWindowPlugin,
 };
 #[cfg(feature = "ui")]
 mod frontend;
 #[cfg(feature = "ui")]
+mod input;
+#[cfg(feature = "ui")]
 mod ui;
+#[cfg(feature = "ui")]
+pub use bedtime_ui2::PanelSettings;
 use bevy::{app::PluginGroupBuilder, prelude::*};
 #[cfg(feature = "ui")]
 pub use frontend::{
-    PANEL_TYPE_PAYLOAD, WorkbenchHost, attach_surface, panel_drag_source, register_panel,
-    register_panel_in_area,
+    PanelTypePayload, WorkbenchHost, WorkbenchPresentation, attach_surface, panel_drag_source,
+    register_panel, register_panel_in_area,
 };
+#[cfg(feature = "ui")]
+pub use input::{PanelInput, register_panel_input};
 #[cfg(feature = "ui")]
 pub use ui::{MenuPresentation, WorkbenchUiPlugin, draw_menu_bar, draw_popup_menu};
 
@@ -34,7 +41,7 @@ pub struct CloseRequested {
     pub window: Option<Entity>,
 }
 
-/// Headless actions, menus, workspace/layout and panel ownership. No renderer,
+/// Headless contextual commands, menus, workspace/layout and panel ownership. No renderer,
 /// native services or clipboard is installed by this plugin.
 pub struct WorkbenchCorePlugin;
 impl Plugin for WorkbenchCorePlugin {
@@ -69,7 +76,7 @@ pub struct Workbench<'w> {
 impl<'w> Workbench<'w> {
     pub fn new(world: &'w mut World) -> Self {
         assert!(
-            world.contains_resource::<CommandRequests>(),
+            world.contains_resource::<ContextCommandRequests>(),
             "Install WorkbenchCorePlugin before using workbench"
         );
         Self { world }
