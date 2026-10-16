@@ -1,14 +1,47 @@
 # bedtime-workbench2
 
-Entity-backed workspaces, retained layouts, panels and typed commands.
-`WorkbenchPlugin` always establishes an active temporary workspace and one layout.
-The default build runs headlessly without a renderer. Enable `ui` to attach its
-ImGui frontend to an existing `UiSurface`; applications install the UI/desktop
-plugins and Bevy's renderer themselves.
+Composable workbench services with optional native and ImGui presentation.
+The former desktop crate has been folded into this crate; clipboard is an
+[independent crate](../bedtime-clipboard2).
 
-Documents/history, persistence, settings and shortcut routing are later slices of
-[stage 3](../../../MIGRATIONS/step-3.md). There is no file, process or remote service
-in this crate.
+After the application's normal Bevy setup, add `WorkbenchPlugin` and UI2's
+`UiPlugin` in either order. Workbench creates an active temporary workspace and
+layout, but never installs DefaultPlugins, creates a window, camera or GPU device.
+
+| Plugin | Responsibility |
+| --- | --- |
+| `WorkbenchCorePlugin` | Headless actions, keybindings, abstract menus and workspace/layout/panel ownership |
+| `ClipboardPlugin` | Shared text/file clipboard, usable without workbench |
+| `WorkbenchNativeWindowPlugin` | Native window appearance and application-owned close requests |
+| `WorkbenchNativeMenuPlugin` | Native presentation of the selected abstract menu root |
+| `WorkbenchNativePlugin` | Group of the two native plugins |
+| `WorkbenchUiPlugin` | ImGui workbench presentation and input integration |
+| `WorkbenchPlugin` | Group of core, clipboard, native and UI capabilities enabled at compile time |
+
+Default features are `ui`, `native`, `clipboard`. `native` also enables OS access
+in the clipboard crate. With defaults disabled, core compiles without a renderer,
+window backend, native menu library or OS clipboard dependency. Plugins control
+installed systems; Cargo features control compiled dependencies.
+
+```rust,ignore
+// Usual desktop setup, after DefaultPlugins:
+app.add_plugins(WorkbenchPlugin).add_plugins(UiPlugin);
+
+// Or compose exactly the capabilities needed:
+app.add_plugins((WorkbenchCorePlugin, ClipboardPlugin, WorkbenchUiPlugin, UiPlugin));
+
+// Or disable one member of the group:
+app.add_plugins(WorkbenchPlugin.build().disable::<WorkbenchNativeMenuPlugin>());
+```
+
+When using native window integration, configure Bevy's WindowPlugin with
+`close_when_requested: false`. Read workbench `CloseRequested` and decide whether
+to exit. Without this integration the application retains its usual Bevy close policy.
+
+Documents/history, persistence, settings and document-aware close decisions are
+later slices of [stage 3](../../../MIGRATION/step-3.md). There is no file, process
+or remote service in this crate. The architectural follow-up is documented in
+[the split plan](../../../MIGRATION/step-3-split.md).
 
 ## Workspaces, layouts and panels
 
@@ -100,7 +133,7 @@ APIs. Do not directly despawn owned instances or rewrite their relationships.
 settings resolution and storage are not implemented yet. The temporary workspace
 sets this to false.
 
-## Register a command
+## Actions and scoped handlers
 
 ```rust,ignore
 struct SaveDocument;
@@ -108,67 +141,77 @@ impl CommandDefinition for SaveDocument {
     const KEY: &'static str = "example.save_document";
     const LABEL: &'static str = "Save Document";
 }
-
 let mut workbench = Workbench::new(app.world_mut());
-let save = workbench.register_command::<SaveDocument, _>(save_document)?;
+let action = workbench.register_command::<SaveDocument, _>(save_document)?;
+let handler = workbench.register_panel_command::<SaveDocument, _>(panel, save_panel_document)?;
 ```
 
-The trailing `_` infers Bevy's system-parameter marker. Handlers are ordinary
-Bevy systems, including exclusive systems, with `In<CommandInvocation>` input and
-`CommandResult` (`Result<(), String>`) output. Their resources and queries are
-injected normally by Bevy.
+Actions are identified by a Rust type. `CommandType` erases that type for mixed
+menus and requests; it is not a handler entity. `CommandKey` serializes the stable
+namespaced KEY for settings. Entity IDs and TypeId values are never persisted.
+Definitions have metadata entities; handlers are registered Bevy system entities
+with `CommandHandler`, `ActionEnabled`, and optional owning `InPanel` relationships.
+Duplicate keys or duplicate handlers for the same action/scope are rejected.
 
-Registration decorates Bevy's registered-system entity with `CommandInfo` and a
-required `ActionEnabled(true)` component. That entity is the returned runtime
-handle. Metadata and lookup live in ECS; there is no parallel command registry.
-
-`CommandDefinition::KEY` is a stable, namespaced string. Keys require at least
-two dot-separated segments containing ASCII letters, digits, `_` or `-`.
-Registration rejects duplicate keys or duplicate definition types before installing
-a handler. `LABEL` provides initial human-readable command metadata.
-
-Use `workbench.command::<SaveDocument>()` for typed lookup. `CommandInfo::key()`
-returns a `CommandKey`, which serializes as a plain string. Deserialize that key
-and use `command_by_key(key.as_str())` to resolve a current entity after restart.
-Unknown keys return `None`; saved shortcut storage and missing-plugin retention
-policy remain future work. Runtime `Entity` and `TypeId` values are never persisted.
-
-## Present and invoke a command
-
-A desktop `MenuItem` references the returned entity through `Activates(save)`.
-Menu labels and shortcuts belong to their placements. `ActionEnabled` belongs to
-the shared action and affects all its menu presentations and dispatcher admission.
-Removing a menu does not remove the command; despawning the command detaches its
-presentation references.
-
-Native and UI activations targeting registered commands are collected in
-`PostUpdate`, in `CommandSystems::Ingress`, before dispatch. With the `ui` feature,
-workbench orders UI drawing before ingress automatically, so UI actions execute
-in the same frame after drawing ends. Other action entities remain available to
-application consumers. Activations retain their source and target. Application systems can also
-submit through the durable `CommandRequests` resource:
+Handlers take `In<CommandInvocation>` and return `CommandResult`. Queries,
+resources and exclusive systems work normally. The invocation captures action,
+source and panel. A focused panel's handler takes precedence over a global
+handler; a disabled local handler blocks global fallback. Contexts can also name
+an explicit panel or request only a global handler. Closing a panel retires its
+handlers and scoped bindings, while menu items keep their action type.
 
 ```rust,ignore
-requests.invoke(save);
-requests.submit(CommandInvocation { command: save, source: Some(panel) });
+requests.invoke::<SaveDocument>();
+requests.submit(CommandRequest {
+    command: CommandType::of::<SaveDocument>(),
+    source: Some(button),
+    context: CommandContext::Panel(panel),
+});
 ```
 
-The sole dispatcher runs in `PostUpdate`, in `CommandSystems::Dispatch`. It
-processes the current FIFO batch, checks that each command still exists and is
-enabled, executes the handler, and emits `CommandFinished` with its result.
-Handler errors do not prevent later requests from executing. Command execution
-is never a relationship hook or an immediate native callback.
+There is one durable queue and one dispatcher. UI integration orders drawing,
+shortcut resolution, dispatch and layout changes. The dispatcher captures all
+batch targets before running any handler. Removing an admitted handler fails
+that request without rerouting; disabled handlers fail execution. Errors do not
+stop later requests. Follow-up requests enqueued by handlers wait for the next
+pass. `CommandFinished` reports results as ordinary Bevy messages.
 
-Requests enqueued by a handler remain queued until the next dispatch pass. This
-prevents recursive execution and leaves the state transition boundary explicit.
-Invocations carry source observations; handlers must capture any additional
-operation context they need rather than resolving it from later UI focus.
+## Menus and shortcuts
 
-Results are ordinary Bevy messages, intended for consumers to read promptly.
-The initial system has no asynchronous command barriers, durable result receipts,
-argument serialization or shortcut editor.
+```rust,ignore
+let bar = world.spawn(MenuBar).id();
+let file = world.spawn((Menu { label: "File".into() }, InMenu(bar))).id();
+world.spawn((MenuItem::new("Save"), InMenu(file), Invokes::of::<SaveDocument>()));
+world.spawn(KeyBinding::new::<SaveDocument>(
+    KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS),
+));
+```
+
+Menus are headless ECS data. `InMenu`/`MenuEntries` own ordered descendants.
+`menu_snapshot` validates a selected root and resolves action availability,
+context and shortcut labels. Panels can supply explicit menu context with a
+`CommandContext` component or the popup drawing call.
+
+With `native`, add `NativeMenuBar` to one `MenuBar` root to present it natively.
+macOS realizes the menu; other platforms can use the ImGui renderer. With `ui`,
+call `draw_menu_bar` inside an ImGui window with `MENU_BAR`, or `draw_popup_menu`
+after a control. Both presenters use the same snapshot and queue action requests
+directly. Native bindings are revalidated against current ownership, action type
+and availability. Removing a menu never owns/removes the action's handlers.
+
+Keybindings map portable Bevy chords to action types, optionally scoped by
+`InPanel`. Panel bindings override global bindings; same-scope conflicts invoke
+nothing. Native accelerators and keyboard routing share the resolved keymap,
+with native-owned chords excluded from the keyboard path. UI capture suppresses
+ordinary keyboard bindings; `allow_in_text` opts an individual binding in.
+Persistent shortcut editing and multi-stroke bindings remain later work. ImGui
+text controls currently handle their own Copy/Cut/Paste using the shared clipboard;
+full widget-level command routing is not implemented yet.
+`allow_in_text` applies to the Bevy keyboard path; native menu accelerators still
+follow OS routing until focused-widget interception is integrated there.
 
 ```sh
-cargo test --locked -p bedtime-workbench2 --lib
-cargo run --locked -p bed2
+cargo test --offline -p bedtime-workbench2 --no-default-features --lib
+cargo test --offline -p bedtime-workbench2 --lib
+cargo run --offline -p bed2
 ```

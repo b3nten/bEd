@@ -7,7 +7,7 @@ cargo run -p bed2
 ```
 
 The application configures Bevy's window and renderer and installs
-`DesktopPlugin`, `UiPlugin` and `WorkbenchPlugin`. Its workbench starts with the gallery and cube in a split layout. The gallery demonstrates
+`WorkbenchPlugin` and `UiPlugin`. Its workbench starts with the gallery and cube in a split layout. The gallery demonstrates
 Everforest Medium light/dark themes, reusable controls, motion and clipped lists.
 Use **Browse icons** to explore the SVG catalog and switch replacement packs at runtime.
 Theme entities and shared view state live in ECS; controls own UI-local animations.
@@ -39,16 +39,25 @@ For native renderer verification:
 cargo run -p bed2 -- --workbench-smoke-dir target/workbench2-smoke
 ```
 
-Copy Greeting and Toggle Copy Availability buttons reference the same typed
-command entities as the macOS native menu. Availability changes affect both
-presentations. Quit requests and window-close requests reach application-owned
-close handling. Escape requests quit when UI capture allows it; dialogs and text
-fields retain their input.
-The demonstration Copy Greeting shortcut uses Cmd/Ctrl+Shift+C so ordinary
-Cmd/Ctrl+C remains available to text fields.
+The toolbar menu and macOS native menu present the same abstract menu tree.
+Copy Greeting and Toggle Copy Availability name action types; the dispatcher
+resolves their current handlers. Availability affects both presentations. The
+gallery's Copy/Paste controls use the shared clipboard independently of workbench.
+The Copy Greeting shortcut is Cmd/Ctrl+Shift+C; ordinary Cmd/Ctrl+C remains
+available to text fields. Workbench owns drawing/shortcut/dispatch ordering.
 
-Workbench's UI integration orders drawing before command ingress and dispatch in
-`PostUpdate`. Commands therefore execute after the borrowed ImGui frame ends.
+`WorkbenchPlugin` is a convenience group. These demo flags verify composition:
+
+```sh
+cargo run -p bed2 -- --ui-first
+cargo run -p bed2 -- --compose-workbench
+```
+
+The second composes core, clipboard, native window and workbench UI plugins
+explicitly, omitting native menus. Add either flag to the smoke command above.
+Smoke uses a memory clipboard and leaves the user's system clipboard unchanged.
+Quit/window-close intentions still reach application-owned close policy. The
+existing camera/compositor setup remains application-owned.
 
 For a gallery without workbench:
 
@@ -56,5 +65,5 @@ For a gallery without workbench:
 cargo run -p bedtime-ui2 --example gallery
 ```
 
-See [migration step 3](../MIGRATIONS/step-3.md), [migration step 2](../MIGRATION/step-2.md) and the
+See [migration step 3](../MIGRATION/step-3.md), [migration step 2](../MIGRATION/step-2.md) and the
 [UI crate documentation](../bedtime2/crates/bedtime-ui2/README.md).

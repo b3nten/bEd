@@ -27,6 +27,7 @@ pub struct WorkbenchHost {
     pub minimum_area_size: Vec2,
     pub show_add_button: bool,
 }
+
 #[derive(Component)]
 struct PanelRenderer;
 
@@ -43,6 +44,7 @@ pub fn attach_surface(world: &mut World, surface: Entity) -> Entity {
     });
     host
 }
+
 pub fn register_panel<M>(
     world: &mut World,
     layout: Entity,
@@ -68,7 +70,7 @@ pub fn register_panel_in_area<M>(
 }
 
 pub(crate) fn configure(app: &mut App) {
-    app.configure_sets(PostUpdate, CommandSystems::Ingress.after(UiSystems::Draw))
+    app.configure_sets(PostUpdate, CommandSystems::Shortcuts.after(UiSystems::Draw))
         .add_systems(PostUpdate, reset.before(UiSystems::Draw));
 }
 
@@ -105,6 +107,7 @@ struct TabScroll {
     offset: f32,
     selected: Option<Entity>,
 }
+
 enum Gesture {
     Corner {
         area: Entity,
@@ -570,9 +573,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                     (
                         e,
                         p.label.clone(),
-                        world
-                            .get::<bedtime_desktop2::ActionEnabled>(e)
-                            .is_none_or(|a| a.0),
+                        world.get::<crate::ActionEnabled>(e).is_none_or(|a| a.0),
                     )
                 })
                 .collect();
@@ -1506,7 +1507,7 @@ mod tests {
     #[test]
     fn last_tab_preview_includes_source_gap_and_single_area_border_policy() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchPlugin);
+        app.add_plugins(WorkbenchCorePlugin);
         let mut w = Workbench::new(app.world_mut());
         let layout = w.active_layout();
         let source = w.destination_area(layout).unwrap();
@@ -1569,7 +1570,7 @@ mod tests {
                     Vec2::splat(0.5),
                 ] {
                     let mut app = App::new();
-                    app.add_plugins(WorkbenchPlugin);
+                    app.add_plugins(WorkbenchCorePlugin);
                     let mut w = Workbench::new(app.world_mut());
                     let layout = w.active_layout();
                     let left = w.destination_area(layout).unwrap();

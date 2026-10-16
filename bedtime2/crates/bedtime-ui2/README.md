@@ -11,8 +11,7 @@ Run the standalone gallery:
 cargo run -p bedtime-ui2 --example gallery
 ```
 
-`cargo run -p bed2` presents the same gallery with native menus and typed command
-buttons, plus a spinning-cube viewport. The standalone gallery needs no workbench
+`cargo run -p bed2` presents the same gallery with native and in-application menus, plus a spinning-cube viewport. The standalone gallery needs no workbench
 plugin or 3D renderer.
 
 ## Host integration
@@ -22,7 +21,7 @@ The application owns those plugins, its window, camera and close policy. UI uses
 the existing GPU device and does not create another surface or event loop.
 
 ```rust,ignore
-app.add_plugins((DesktopPlugin, UiPlugin));
+app.add_plugins(UiPlugin);
 
 let dark = world.spawn(themes::dark()).id();
 world.entity_mut(window).insert((UiSurface, UsesTheme(dark)));
@@ -87,8 +86,9 @@ ImGui remains available for specialized drawing and layout.
 Context menus inherit the prepared base palette and use v1's file-tree popup
 metrics: 8×6 padding, 6×4 item spacing, seven-point rounding and a one-point border.
 Tooltips use 12×10 padding. Selectors leave a four-point gap and open above their
-control when necessary. These dimensions are theme metrics. Native window backing
-color follows the theme, filling transparent macOS title bars.
+control when necessary. These dimensions are theme metrics. When workbench's
+native and UI adapters are installed, native window backing color follows the
+theme, filling transparent macOS title bars.
 Closed menus do not construct a style scope or invoke their contents closure. `Controls::list` clips fixed-height
 rows before invoking the caller's row painter. Rows must have a consistent height.
 Custom icon/toggle painters honor the current style alpha, including disabled and
@@ -204,13 +204,16 @@ disabled, and blends premultiplied UI with proper sRGB decoding. Game render
 schedules are unchanged. The separate UI stages leave editor effects independent
 of game-camera effects.
 
-UI has no workbench dependency. Applications can emit `DesktopAction::Activated`
-with a placement/source and target entity. `bed2` demonstrates placements using
-the existing `Activates` relationship and shared `ActionEnabled` availability.
-Workbench's `ui` feature orders drawing before command ingress automatically.
-Workbench collects native and UI actions and dispatches them after the frame
-borrow ends. UI systems should update presentation state and enqueue application
-intentions; consequential application work belongs to its controlled owner.
+UI has no workbench dependency. Controls report interactions to their callers.
+Workbench integration translates those interactions into typed action requests
+and orders drawing before shortcuts and dispatch automatically. Commands execute
+after the borrowed frame ends; applications do not configure this ordering.
+
+UI2 initializes the independent `bedtime_clipboard2::Clipboard` resource while
+preserving an application-provided instance. ImGui and application systems share
+one backend through cloned handles. The clipboard remains available in the world
+during drawing. Without system clipboard support the same API uses local memory.
+No workbench or native window plugin is needed for UI clipboard functionality.
 
 ## Scene viewports and full-window overlays
 

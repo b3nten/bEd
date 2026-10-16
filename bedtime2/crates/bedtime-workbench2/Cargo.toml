@@ -7,14 +7,22 @@ license.workspace = true
 description = "Entity-backed workspaces, layouts, panels and commands for Bedtime"
 
 [features]
-default = []
+default = ["ui", "native", "clipboard"]
 ui = ["dep:bedtime-ui2"]
+clipboard = ["dep:bedtime-clipboard2"]
+native = ["clipboard", "bedtime-clipboard2/system_clipboard", "bevy/bevy_window", "dep:muda", "dep:raw-window-handle", "dep:objc2-app-kit", "dep:objc2-foundation"]
 
 [dependencies]
-bevy = { workspace = true, features = ["std"] }
-bedtime-desktop2 = { workspace = true }
+bevy = { workspace = true, features = ["std", "keyboard"] }
+bedtime-clipboard2 = { workspace = true, optional = true }
 bedtime-ui2 = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { workspace = true, optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+objc2-app-kit = { workspace = true, optional = true, features = ["NSAppearance"] }
+objc2-foundation = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

@@ -68,7 +68,7 @@ pub(crate) fn setup(world: &mut World, surface: Entity, light: Entity, dark: Ent
     // Chrome draws before the host, and remains available in full-window mode.
     register_view(world, surface, chrome);
     let host = attach_surface(world, surface);
-    world.get_mut::<WorkbenchHost>(host).unwrap().top_inset = 100.0;
+    world.get_mut::<WorkbenchHost>(host).unwrap().top_inset = 140.0;
     let gallery = add_gallery(world, split);
     let cube = crate::viewport_demo::spawn(world, split);
     Workbench::new(world)
@@ -147,7 +147,7 @@ fn chrome(frame: UiFrame, world: &mut World) {
         ui.get_background_draw_list()
             .add_rect(
                 [0.0, 0.0],
-                [ui.io().display_size()[0], 100.0],
+                [ui.io().display_size()[0], 140.0],
                 ui.get_color_u32_from_rgba(frame.theme.palette.background),
             )
             .filled(true)
@@ -155,15 +155,23 @@ fn chrome(frame: UiFrame, world: &mut World) {
     }
     ui.window("##bed2-workbench-toolbar")
         .position([0.0, 0.0], Condition::Always)
-        .size([ui.io().display_size()[0], 100.0], Condition::Always)
+        .size([ui.io().display_size()[0], 140.0], Condition::Always)
         .flags(
-            WindowFlags::NO_DECORATION
+            WindowFlags::MENU_BAR
+                | WindowFlags::NO_DECORATION
                 | WindowFlags::NO_MOVE
                 | WindowFlags::NO_BACKGROUND
                 | WindowFlags::NO_SAVED_SETTINGS
                 | WindowFlags::NO_SCROLLBAR,
         )
         .build(|| {
+            let root = world
+                .query_filtered::<Entity, With<MenuBar>>()
+                .iter(world)
+                .next();
+            if let Some(root) = root {
+                draw_menu_bar(&frame, world, root).expect("Demo menu");
+            }
             if overlay {
                 c.text("Bevy scene + Bedtime overlay");
                 if c.primary_button("Return to workbench") {

@@ -1977,7 +1977,7 @@ name = "bed2"
 version = "0.1.0"
 dependencies = [
  "bed2-demo-game",
- "bedtime-desktop2",
+ "bedtime-clipboard2",
  "bedtime-ui2",
  "bedtime-workbench2",
  "bevy",
@@ -2072,6 +2072,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bedtime-clipboard2"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "bevy_app",
+ "bevy_ecs",
+]
+
+[[package]]
 name = "bedtime-core"
 version = "0.1.0"
 dependencies = [
@@ -2123,18 +2132,6 @@ dependencies = [
  "wgpu",
  "winit",
  "x11-dl",
-]
-
-[[package]]
-name = "bedtime-desktop2"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "bevy",
- "muda",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
- "raw-window-handle",
 ]
 
 [[package]]
@@ -2781,7 +2778,7 @@ dependencies = [
 name = "bedtime-ui2"
 version = "0.1.0"
 dependencies = [
- "bedtime-desktop2",
+ "bedtime-clipboard2",
  "bevy",
  "dear-imgui-rs",
  "dear-imgui-sys",
@@ -2809,9 +2806,13 @@ dependencies = [
 name = "bedtime-workbench2"
 version = "0.1.0"
 dependencies = [
- "bedtime-desktop2",
+ "bedtime-clipboard2",
  "bedtime-ui2",
  "bevy",
+ "muda",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "raw-window-handle",
  "serde",
  "serde_json",
 ]

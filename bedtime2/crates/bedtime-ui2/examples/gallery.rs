@@ -1,4 +1,3 @@
-use bedtime_desktop2::{DesktopAction, DesktopPlugin};
 use bedtime_ui2::{gallery, *};
 use bevy::{prelude::*, render::camera::CameraRenderGraph, window::PrimaryWindow};
 
@@ -15,7 +14,7 @@ fn main() -> AppExit {
             close_when_requested: false,
             ..default()
         }))
-        .add_plugins((DesktopPlugin, UiPlugin))
+        .add_plugins((bedtime_clipboard2::ClipboardPlugin, UiPlugin))
         .add_systems(Startup, setup)
         .add_systems(Update, (close, smoke))
         .insert_resource(Smoke::from_args())
@@ -68,6 +67,17 @@ fn smoke(world: &mut World) {
         .query_filtered::<Entity, With<UiSurface>>()
         .single(world)
         .unwrap();
+    // Scripted input should not depend on which OS application has focus.
+    // The ordinary gallery still uses real native focus observations.
+    world.get_mut::<Window>(surface).unwrap().focused = true;
+    WINIT_WINDOWS.with(|windows| {
+        let windows = windows.borrow();
+        let native = windows.get_window(surface).unwrap();
+        world.write_message(RawWinitWindowEvent {
+            window_id: native.id(),
+            event: WindowEvent::Focused(true),
+        });
+    });
     let pointer = match frame {
         70..=74 => Some([33.0, 115.0]),
         145..=148 => Some([400.0, 462.0]),
@@ -295,14 +305,13 @@ fn setup(world: &mut World) {
 }
 
 fn close(
-    mut actions: MessageReader<DesktopAction>,
+    mut actions: MessageReader<bevy::window::WindowCloseRequested>,
     mut errors: MessageReader<UiError>,
     mut exit: MessageWriter<AppExit>,
 ) {
     for action in actions.read() {
-        if matches!(action, DesktopAction::CloseRequested { .. }) {
-            exit.write(AppExit::Success);
-        }
+        let _ = action;
+        exit.write(AppExit::Success);
     }
     for error in errors.read() {
         error!("{}", error.0);

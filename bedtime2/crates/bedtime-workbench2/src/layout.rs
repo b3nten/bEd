@@ -12,6 +12,7 @@ pub struct Workspace {
     pub settings_enabled: bool,
     active_layout: Entity,
 }
+
 impl Workspace {
     pub fn active_layout(&self) -> Entity {
         self.active_layout
@@ -25,6 +26,7 @@ pub struct Layout {
     focused_area: Entity,
     revision: u64,
 }
+
 impl Layout {
     pub fn revision(&self) -> u64 {
         self.revision
@@ -40,6 +42,7 @@ pub struct Area {
     rect: AreaRect,
     selected: Option<Entity>,
 }
+
 impl Area {
     pub fn rect(&self) -> AreaRect {
         self.rect
@@ -62,26 +65,33 @@ pub struct Panel {
 #[derive(Component, Debug)]
 #[relationship(relationship_target = WorkspaceLayouts)]
 pub struct InWorkspace(pub Entity);
+
 #[derive(Component, Default)]
 #[relationship_target(relationship = InWorkspace, linked_spawn)]
 pub struct WorkspaceLayouts(Vec<Entity>);
+
 #[derive(Component, Debug)]
 #[relationship(relationship_target = LayoutAreas)]
 pub struct InLayout(pub Entity);
+
 #[derive(Component, Default)]
 #[relationship_target(relationship = InLayout, linked_spawn)]
 pub struct LayoutAreas(Vec<Entity>);
+
 impl LayoutAreas {
     pub fn entities(&self) -> &[Entity] {
         &self.0
     }
 }
+
 #[derive(Component, Debug)]
 #[relationship(relationship_target = AreaPanels)]
 pub struct InArea(pub Entity);
+
 #[derive(Component, Default)]
 #[relationship_target(relationship = InArea, linked_spawn)]
 pub struct AreaPanels(Vec<Entity>);
+
 impl AreaPanels {
     pub fn entities(&self) -> &[Entity] {
         &self.0
@@ -102,6 +112,7 @@ pub struct PanelPresentation {
     pub tab_rect: Rect,
     pub close_rect: Rect,
 }
+
 #[derive(Component, Debug, Default, Clone, Copy)]
 pub struct AreaPresentation {
     pub visible: bool,
@@ -116,6 +127,7 @@ pub struct ActiveWorkspace {
     entity: Entity,
     activation: u64,
 }
+
 impl ActiveWorkspace {
     pub fn entity(&self) -> Entity {
         self.entity
@@ -127,6 +139,7 @@ pub enum SplitAxis {
     Horizontal,
     Vertical,
 }
+
 impl SplitAxis {
     pub(crate) fn index(self) -> usize {
         usize::from(self == Self::Vertical)
@@ -142,6 +155,7 @@ pub enum AreaPlacement {
         fraction: f32,
     },
 }
+
 impl AreaPlacement {
     fn geometry(self) -> Result<geometry::DockPlacement, String> {
         Ok(match self {
@@ -228,6 +242,7 @@ pub enum LayoutEdit {
         minimum: [i32; 2],
     },
 }
+
 #[derive(Debug, Clone)]
 pub enum WorkbenchRequest {
     ActivateWorkspace(Entity),
@@ -239,6 +254,7 @@ pub enum WorkbenchRequest {
         edit: LayoutEdit,
     },
 }
+
 #[derive(Resource, Default)]
 pub struct WorkbenchRequests(VecDeque<WorkbenchRequest>);
 impl WorkbenchRequests {
@@ -246,11 +262,13 @@ impl WorkbenchRequests {
         self.0.push_back(request);
     }
 }
+
 #[derive(Message, Debug)]
 pub struct WorkbenchFinished {
     pub request: WorkbenchRequest,
     pub result: Result<(), String>,
 }
+
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkbenchSystems {
     Apply,
@@ -262,11 +280,13 @@ pub trait PanelDefinition: Send + Sync + 'static {
     const KEY: &'static str;
     const LABEL: &'static str;
 }
+
 #[derive(Component)]
 pub struct PanelType {
     pub key: &'static str,
     pub label: String,
 }
+
 type PanelFactory = SystemId<In<Entity>, Result<Entity, String>>;
 
 pub(crate) fn install(app: &mut App) {
@@ -283,6 +303,7 @@ pub(crate) fn install(app: &mut App) {
         activation: 0,
     });
 }
+
 fn new_layout(world: &mut World, workspace: Entity, name: String) -> Entity {
     let layout = world.spawn_empty().id();
     let area = world
@@ -307,6 +328,7 @@ fn new_layout(world: &mut World, workspace: Entity, name: String) -> Entity {
     ));
     layout
 }
+
 fn new_workspace(world: &mut World, name: String, settings_enabled: bool) -> Entity {
     let workspace = world.spawn_empty().id();
     let layout = new_layout(world, workspace, "Default".into());
@@ -324,6 +346,7 @@ pub(crate) struct LayoutSnapshot {
     pub geometry: geometry::Layout,
     pub entities: Vec<Entity>,
 }
+
 impl LayoutSnapshot {
     pub fn id(&self, entity: Entity) -> Result<u32, String> {
         self.entities
@@ -379,12 +402,14 @@ impl Workbench<'_> {
     pub fn active_workspace(&self) -> Entity {
         self.world.resource::<ActiveWorkspace>().entity
     }
+
     pub fn active_layout(&self) -> Entity {
         self.world
             .get::<Workspace>(self.active_workspace())
             .expect("Active workspace")
             .active_layout
     }
+
     pub fn stamp(&self) -> LayoutStamp {
         let layout = self.active_layout();
         LayoutStamp {
@@ -393,9 +418,11 @@ impl Workbench<'_> {
             activation: self.world.resource::<ActiveWorkspace>().activation,
         }
     }
+
     pub fn create_workspace(&mut self, name: impl Into<String>, settings_enabled: bool) -> Entity {
         new_workspace(self.world, name.into(), settings_enabled)
     }
+
     pub fn create_layout(
         &mut self,
         workspace: Entity,
@@ -406,6 +433,7 @@ impl Workbench<'_> {
             .ok_or("Workspace is unavailable")?;
         Ok(new_layout(self.world, workspace, name.into()))
     }
+
     pub fn activate_workspace(&mut self, workspace: Entity) -> Result<(), String> {
         self.world
             .get::<Workspace>(workspace)
@@ -417,6 +445,7 @@ impl Workbench<'_> {
         }
         Ok(())
     }
+
     pub fn activate_layout(&mut self, layout: Entity) -> Result<(), String> {
         let owner = self
             .world
@@ -435,6 +464,7 @@ impl Workbench<'_> {
         }
         Ok(())
     }
+
     pub fn panel_layout(&self, panel: Entity) -> Result<Entity, String> {
         self.world
             .get::<Panel>(panel)
@@ -445,6 +475,7 @@ impl Workbench<'_> {
             .expect("Area layout")
             .0)
     }
+
     pub fn panels(&self, layout: Entity) -> Vec<Entity> {
         self.world
             .get::<LayoutAreas>(layout)
@@ -454,11 +485,13 @@ impl Workbench<'_> {
             .flat_map(|&area| panels_in_area(self.world, area).iter().copied())
             .collect()
     }
+
     pub fn focused_panel(&self, layout: Entity) -> Option<Entity> {
         self.world
             .get::<Area>(self.world.get::<Layout>(layout)?.focused_area)?
             .selected
     }
+
     pub fn destination_area(&self, layout: Entity) -> Result<Entity, String> {
         self.world
             .get::<Layout>(layout)
@@ -475,6 +508,7 @@ impl Workbench<'_> {
             })
             .expect("Layout has an area"))
     }
+
     pub fn create_panel(
         &mut self,
         layout: Entity,
@@ -483,6 +517,7 @@ impl Workbench<'_> {
         let area = self.destination_area(layout)?;
         self.create_panel_in_area(area, title)
     }
+
     pub fn create_panel_in_area(
         &mut self,
         area: Entity,
@@ -493,6 +528,7 @@ impl Workbench<'_> {
         self.attach_panel(panel, area, title.into());
         Ok(panel)
     }
+
     pub(crate) fn attach_panel(&mut self, panel: Entity, area: Entity, title: String) {
         self.world.entity_mut(panel).insert((
             Panel {
@@ -511,18 +547,21 @@ impl Workbench<'_> {
         self.world.get_mut::<Layout>(layout).unwrap().revision += 1;
         self.focus_area(area).unwrap();
     }
+
     pub fn focus_area(&mut self, area: Entity) -> Result<(), String> {
         self.world.get::<Area>(area).ok_or("Area is unavailable")?;
         let layout = self.world.get::<InLayout>(area).unwrap().0;
         self.world.get_mut::<Layout>(layout).unwrap().focused_area = area;
         Ok(())
     }
+
     pub fn focus_panel(&mut self, panel: Entity) -> Result<(), String> {
         self.panel_layout(panel)?;
         let area = self.world.get::<InArea>(panel).unwrap().0;
         self.world.get_mut::<Area>(area).unwrap().selected = Some(panel);
         self.focus_area(area)
     }
+
     pub fn close_panel(&mut self, panel: Entity) -> Result<(), String> {
         let layout = self.panel_layout(panel)?;
         let area = self.world.get::<InArea>(panel).unwrap().0;
@@ -539,6 +578,7 @@ impl Workbench<'_> {
         self.world.get_mut::<Layout>(layout).unwrap().revision += 1;
         Ok(())
     }
+
     pub(crate) fn snapshot(&self, layout: Entity) -> Result<LayoutSnapshot, String> {
         self.world
             .get::<Layout>(layout)
@@ -561,6 +601,7 @@ impl Workbench<'_> {
         );
         Ok(LayoutSnapshot { geometry, entities })
     }
+
     fn commit_geometry(
         &mut self,
         layout: Entity,
@@ -598,6 +639,7 @@ impl Workbench<'_> {
         self.world.get_mut::<Layout>(layout).unwrap().revision += 1;
         mapping
     }
+
     pub fn split_area(
         &mut self,
         area: Entity,
@@ -618,6 +660,7 @@ impl Workbench<'_> {
             .ok_or("Area is too small to split")?;
         Ok(self.commit_geometry(layout, &snapshot, next)[&id])
     }
+
     pub fn close_area(&mut self, area: Entity) -> Result<(), String> {
         let layout = self
             .world
@@ -632,9 +675,11 @@ impl Workbench<'_> {
         self.commit_geometry(layout, &snapshot, next);
         Ok(())
     }
+
     pub fn move_tab(&mut self, panel: Entity, area: Entity, index: usize) -> Result<(), String> {
         self.place_tab(panel, area, index, None, [1, 1]).map(|_| ())
     }
+
     pub fn split_tab(
         &mut self,
         panel: Entity,
@@ -645,6 +690,7 @@ impl Workbench<'_> {
     ) -> Result<Entity, String> {
         self.place_tab(panel, area, 0, Some((axis, high)), minimum)
     }
+
     fn place_tab(
         &mut self,
         panel: Entity,
@@ -695,6 +741,7 @@ impl Workbench<'_> {
         self.world.get_mut::<Layout>(layout).unwrap().focused_area = destination;
         Ok(destination)
     }
+
     pub fn move_panel(
         &mut self,
         panel: Entity,
@@ -714,6 +761,7 @@ impl Workbench<'_> {
         }
         Ok(())
     }
+
     pub fn join_areas(
         &mut self,
         source: Entity,
@@ -722,6 +770,7 @@ impl Workbench<'_> {
     ) -> Result<(), String> {
         self.relocate_area(source, target, None, minimum)
     }
+
     pub fn dock_area(
         &mut self,
         source: Entity,
@@ -731,6 +780,7 @@ impl Workbench<'_> {
     ) -> Result<(), String> {
         self.relocate_area(source, target, Some(placement), minimum)
     }
+
     fn relocate_area(
         &mut self,
         source: Entity,
@@ -767,6 +817,7 @@ impl Workbench<'_> {
         self.commit_geometry(layout, &snapshot, plan.layout);
         self.focus_area(source)
     }
+
     pub fn resize_border(
         &mut self,
         layout: Entity,
@@ -791,6 +842,7 @@ impl Workbench<'_> {
         self.commit_geometry(layout, &snapshot, next);
         Ok(())
     }
+
     pub fn register_panel_type<P: PanelDefinition, M>(
         &mut self,
         factory: impl IntoSystem<In<Entity>, Result<Entity, String>, M> + 'static,
@@ -813,6 +865,7 @@ impl Workbench<'_> {
         });
         Ok(system.entity())
     }
+
     pub fn open_panel(&mut self, kind: Entity, area: Entity) -> Result<Entity, String> {
         self.world.get::<Area>(area).ok_or("Area is unavailable")?;
         self.world
@@ -820,7 +873,7 @@ impl Workbench<'_> {
             .ok_or("Panel type is unavailable")?;
         if self
             .world
-            .get::<bedtime_desktop2::ActionEnabled>(kind)
+            .get::<crate::ActionEnabled>(kind)
             .is_some_and(|a| !a.0)
         {
             return Err("Panel type is unavailable".into());
@@ -839,6 +892,7 @@ impl Workbench<'_> {
         self.focus_panel(panel)?;
         Ok(panel)
     }
+
     pub fn delete_layout(&mut self, layout: Entity) -> Result<(), String> {
         let owner = self
             .world
@@ -861,6 +915,7 @@ impl Workbench<'_> {
         self.world.despawn(layout);
         Ok(())
     }
+
     pub fn delete_workspace(&mut self, workspace: Entity) -> Result<(), String> {
         self.world
             .get::<Workspace>(workspace)
@@ -871,6 +926,7 @@ impl Workbench<'_> {
         self.world.despawn(workspace);
         Ok(())
     }
+
     pub(crate) fn edit(&mut self, stamp: LayoutStamp, edit: &LayoutEdit) -> Result<(), String> {
         if self.stamp() != stamp {
             return Err("Layout changed during interaction".into());
@@ -991,6 +1047,7 @@ impl Workbench<'_> {
         }
     }
 }
+
 fn valid_minimum(minimum: [i32; 2]) -> Result<(), String> {
     if minimum.iter().any(|&v| v <= 0 || v > LAYOUT_EXTENT) {
         Err("Invalid area minimum".into())
@@ -998,6 +1055,7 @@ fn valid_minimum(minimum: [i32; 2]) -> Result<(), String> {
         Ok(())
     }
 }
+
 fn apply(world: &mut World) {
     let requests = std::mem::take(&mut world.resource_mut::<WorkbenchRequests>().0);
     for request in requests {

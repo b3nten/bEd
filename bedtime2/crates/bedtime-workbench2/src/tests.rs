@@ -1,5 +1,4 @@
 use super::*;
-use bedtime_desktop2::{Activates, InMenu, Menu, MenuBar, MenuItem};
 
 struct First;
 impl CommandDefinition for First {
@@ -24,7 +23,8 @@ struct Calls(Vec<CommandInvocation>);
 
 fn app() -> App {
     let mut app = App::new();
-    app.add_plugins(WorkbenchPlugin).init_resource::<Calls>();
+    app.add_plugins(WorkbenchCorePlugin)
+        .init_resource::<Calls>();
     app
 }
 
@@ -197,41 +197,36 @@ fn results(app: &mut App) -> Vec<CommandFinished> {
 #[test]
 fn typed_commands_run_in_submission_order_and_report_handler_errors() {
     let mut app = app();
-    let (first, second) = {
-        let mut workbench = Workbench::new(app.world_mut());
-        let first = workbench.register_command::<First, _>(record).unwrap();
-        let second = workbench
-            .register_command::<Second, _>(|In(_): In<CommandInvocation>| -> CommandResult {
-                Err("expected failure".into())
-            })
-            .unwrap();
-        assert_eq!(workbench.command::<First>(), Some(first));
-        (first, second)
-    };
+    let first = Workbench::new(app.world_mut())
+        .register_command::<First, _>(record)
+        .unwrap();
+    let second = Workbench::new(app.world_mut())
+        .register_command::<Second, _>(|In(_): In<CommandInvocation>| -> CommandResult {
+            Err("expected failure".into())
+        })
+        .unwrap();
     let source = app.world_mut().spawn_empty().id();
-    app.world_mut()
-        .resource_mut::<CommandRequests>()
-        .submit(CommandInvocation {
-            command: first,
-            source: Some(source),
-        });
-    app.world_mut()
-        .resource_mut::<CommandRequests>()
-        .invoke(second);
-    app.world_mut()
-        .resource_mut::<CommandRequests>()
-        .invoke(first);
+    let mut requests = app.world_mut().resource_mut::<CommandRequests>();
+    requests.submit(CommandRequest {
+        command: first,
+        source: Some(source),
+        context: CommandContext::Global,
+    });
+    requests.invoke_type(second);
+    requests.invoke::<First>();
     app.update();
     assert_eq!(
         app.world().resource::<Calls>().0,
         [
             CommandInvocation {
                 command: first,
-                source: Some(source)
+                source: Some(source),
+                panel: None
             },
             CommandInvocation {
                 command: first,
-                source: None
+                source: None,
+                panel: None
             }
         ]
     );
@@ -239,7 +234,7 @@ fn typed_commands_run_in_submission_order_and_report_handler_errors() {
     assert_eq!(
         completed
             .iter()
-            .map(|result| result.invocation.command)
+            .map(|r| r.invocation.command)
             .collect::<Vec<_>>(),
         [first, second, first]
     );
@@ -247,212 +242,263 @@ fn typed_commands_run_in_submission_order_and_report_handler_errors() {
     assert_eq!(completed[1].result, Err("expected failure".into()));
     assert!(completed[2].result.is_ok());
 }
-
 #[test]
-fn stable_keys_round_trip_and_resolve_a_new_registration() {
+fn stable_keys_round_trip_without_persisting_types_or_handler_entities() {
     let mut old = app();
     let command = Workbench::new(old.world_mut())
         .register_command::<First, _>(record)
         .unwrap();
-    let key = old.world().get::<CommandInfo>(command).unwrap().key();
-    let saved = serde_json::to_string(key).unwrap();
+    let saved = serde_json::to_string(&command.key()).unwrap();
     assert_eq!(saved, "\"tests.first\"");
     let loaded: CommandKey = serde_json::from_str(&saved).unwrap();
     let mut new = app();
     new.world_mut().spawn_empty();
-    let registered = Workbench::new(new.world_mut())
+    Workbench::new(new.world_mut())
         .register_command::<First, _>(record)
         .unwrap();
     assert_eq!(
         Workbench::new(new.world_mut()).command_by_key(loaded.as_str()),
-        Some(registered)
+        Some(CommandType::of::<First>())
     );
     assert_eq!(
         Workbench::new(new.world_mut()).command_by_key("missing.command"),
         None
     );
 }
-
 #[test]
-fn key_collisions_do_not_replace_the_registered_handler() {
+fn key_and_scope_collisions_do_not_replace_handlers() {
     let mut app = app();
-    let mut workbench = Workbench::new(app.world_mut());
-    let first = workbench.register_command::<First, _>(record).unwrap();
-    assert!(workbench.register_command::<First, _>(record).is_err());
-    assert!(workbench.register_command::<Collision, _>(record).is_err());
-    assert_eq!(workbench.command_by_key(First::KEY), Some(first));
-    app.world_mut()
-        .resource_mut::<CommandRequests>()
-        .invoke(first);
-    app.update();
-    assert_eq!(app.world().resource::<Calls>().0.len(), 1);
+    let mut w = Workbench::new(app.world_mut());
+    let first = w.register_command::<First, _>(record).unwrap();
+    assert!(w.register_command::<First, _>(record).is_err());
+    assert!(w.register_command::<Collision, _>(record).is_err());
+    assert_eq!(w.command_by_key(First::KEY), Some(first));
+    let panel = w.create_panel(w.active_layout(), "Panel").unwrap();
+    w.register_panel_command::<First, _>(panel, record).unwrap();
+    assert!(w.register_panel_command::<First, _>(panel, record).is_err());
 }
-
 #[test]
-fn disabled_and_removed_commands_never_run_queued_handlers() {
+fn disabled_and_removed_handlers_never_run_queued_requests() {
     let mut app = app();
-    let (first, second) = {
-        let mut workbench = Workbench::new(app.world_mut());
-        (
-            workbench.register_command::<First, _>(record).unwrap(),
-            workbench.register_command::<Second, _>(record).unwrap(),
-        )
-    };
-    app.world_mut()
-        .resource_mut::<CommandRequests>()
-        .invoke(first);
-    app.world_mut()
-        .resource_mut::<CommandRequests>()
-        .invoke(second);
-    app.world_mut().get_mut::<ActionEnabled>(first).unwrap().0 = false;
-    app.world_mut().entity_mut(second).despawn();
+    let mut w = Workbench::new(app.world_mut());
+    let first = w.register_command::<First, _>(record).unwrap();
+    let second = w.register_command::<Second, _>(record).unwrap();
+    let h1 = w.handler(first, None).unwrap();
+    let h2 = w.handler(second, None).unwrap();
+    w.world.get_mut::<ActionEnabled>(h1).unwrap().0 = false;
+    w.world.despawn(h2);
+    let mut requests = w.world.resource_mut::<CommandRequests>();
+    requests.invoke_type(first);
+    requests.invoke_type(second);
     app.update();
     assert!(app.world().resource::<Calls>().0.is_empty());
-    assert!(
-        results(&mut app)
-            .iter()
-            .all(|result| result.result.is_err())
-    );
-    app.world_mut().get_mut::<ActionEnabled>(first).unwrap().0 = true;
+    assert!(results(&mut app).iter().all(|r| r.result.is_err()));
+}
+#[test]
+fn panel_handlers_override_globals_and_disabled_panel_handlers_block_fallback() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let command = w.register_command::<First, _>(record).unwrap();
+    let first = w.create_panel(w.active_layout(), "First").unwrap();
+    let second = w.create_panel(w.active_layout(), "Second").unwrap();
+    let local = w.register_panel_command::<First, _>(first, record).unwrap();
+    w.focus_panel(first).unwrap();
+    w.world.resource_mut::<CommandRequests>().invoke::<First>();
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0[0].panel, Some(first));
+    app.world_mut().get_mut::<ActionEnabled>(local).unwrap().0 = false;
     app.world_mut()
         .resource_mut::<CommandRequests>()
-        .invoke(first);
+        .invoke::<First>();
     app.update();
     assert_eq!(app.world().resource::<Calls>().0.len(), 1);
-}
-
-#[test]
-fn menu_activations_use_the_same_dispatcher_and_capture_their_source() {
-    let mut app = app();
-    let command = Workbench::new(app.world_mut())
-        .register_command::<First, _>(record)
-        .unwrap();
-    let bar = app.world_mut().spawn(MenuBar).id();
-    let menu = app
-        .world_mut()
-        .spawn((
-            Menu {
-                label: "File".into(),
-            },
-            InMenu(bar),
-        ))
-        .id();
-    let item = app
-        .world_mut()
-        .spawn((MenuItem::new("First"), InMenu(menu), Activates(command)))
-        .id();
-    app.world_mut().write_message(DesktopAction::Activated {
-        source: item,
-        target: command,
-    });
-    app.update();
-    assert_eq!(
-        app.world().resource::<Calls>().0,
-        [CommandInvocation {
-            command,
-            source: Some(item)
-        }]
-    );
-    app.world_mut().entity_mut(menu).despawn();
-    assert!(app.world().get::<CommandInfo>(command).is_some());
+    assert!(results(&mut app).last().unwrap().result.is_err());
+    Workbench::new(app.world_mut()).focus_panel(second).unwrap();
+    assert!(command_available(
+        app.world_mut(),
+        command,
+        CommandContext::Focused
+    ));
     app.world_mut()
         .resource_mut::<CommandRequests>()
-        .invoke(command);
+        .invoke::<First>();
     app.update();
-    assert_eq!(app.world().resource::<Calls>().0.len(), 2);
+    assert_eq!(
+        app.world().resource::<Calls>().0.last().unwrap().panel,
+        Some(second)
+    );
+    Workbench::new(app.world_mut()).close_panel(first).unwrap();
+    assert!(app.world().get_entity(local).is_err());
 }
-
 #[test]
-fn handlers_enqueue_followup_commands_without_reentrant_execution() {
+fn handler_replacement_does_not_rewire_menu_action_types() {
     let mut app = app();
-    let followup = Workbench::new(app.world_mut())
+    let mut w = Workbench::new(app.world_mut());
+    let command = w.register_command::<First, _>(record).unwrap();
+    let root = w
+        .world
+        .spawn(Menu {
+            label: "Context".into(),
+        })
+        .id();
+    let item = w
+        .world
+        .spawn((MenuItem::new("First"), InMenu(root), Invokes::of::<First>()))
+        .id();
+    let old = w.handler(command, None).unwrap();
+    w.world.despawn(old);
+    assert!(
+        menu_snapshot(w.world, root, CommandContext::Global)
+            .unwrap()
+            .request(item, command)
+            .is_none()
+    );
+    w.register_command::<First, _>(record).unwrap();
+    let request = menu_snapshot(w.world, root, CommandContext::Global)
+        .unwrap()
+        .request(item, command)
+        .unwrap();
+    w.world.resource_mut::<CommandRequests>().submit(request);
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0[0].source, Some(item));
+}
+#[test]
+fn handlers_enqueue_followups_without_reentrant_execution() {
+    let mut app = app();
+    Workbench::new(app.world_mut())
         .register_command::<Second, _>(record)
         .unwrap();
-    let first = Workbench::new(app.world_mut())
+    Workbench::new(app.world_mut())
         .register_command::<First, _>(
-            move |In(_): In<CommandInvocation>,
-                  mut requests: ResMut<CommandRequests>|
-                  -> CommandResult {
-                requests.invoke(followup);
+            |In(_): In<CommandInvocation>,
+             mut requests: ResMut<CommandRequests>|
+             -> CommandResult {
+                requests.invoke::<Second>();
                 Ok(())
             },
         )
         .unwrap();
     app.world_mut()
         .resource_mut::<CommandRequests>()
-        .invoke(first);
+        .invoke::<First>();
     app.update();
     assert!(app.world().resource::<Calls>().0.is_empty());
     assert_eq!(results(&mut app).len(), 1);
     app.update();
     assert_eq!(app.world().resource::<Calls>().0.len(), 1);
-    assert_eq!(results(&mut app)[0].invocation.command, followup);
 }
-
 #[test]
-fn application_owned_native_actions_are_not_treated_as_commands() {
+fn a_batch_captures_all_panels_before_handlers_change_focus_or_destroy_targets() {
     let mut app = app();
-    let source = app.world_mut().spawn_empty().id();
-    let target = app.world_mut().spawn_empty().id();
-    app.world_mut()
-        .write_message(DesktopAction::Activated { source, target });
+    let mut w = Workbench::new(app.world_mut());
+    let a = w.create_panel(w.active_layout(), "A").unwrap();
+    let b = w.create_panel(w.active_layout(), "B").unwrap();
+    w.register_panel_command::<Second, _>(a, record).unwrap();
+    w.register_command::<First, _>(
+        move |In(_): In<CommandInvocation>, world: &mut World| -> CommandResult {
+            Workbench::new(world).focus_panel(b)
+        },
+    )
+    .unwrap();
+    w.focus_panel(a).unwrap();
+    let mut requests = w.world.resource_mut::<CommandRequests>();
+    requests.invoke::<First>();
+    requests.invoke::<Second>();
     app.update();
-    assert!(results(&mut app).is_empty());
+    assert_eq!(app.world().resource::<Calls>().0[0].panel, Some(a));
 }
-
 #[test]
-fn actions_produced_before_post_update_ingress_execute_in_the_same_frame() {
+fn keybindings_route_panel_first_and_respect_text_capture_and_conflicts() {
     let mut app = app();
-    let command = Workbench::new(app.world_mut())
-        .register_command::<First, _>(record)
+    let mut w = Workbench::new(app.world_mut());
+    w.register_command::<First, _>(record).unwrap();
+    w.register_command::<Second, _>(record).unwrap();
+    let panel = w.create_panel(w.active_layout(), "Panel").unwrap();
+    w.register_panel_command::<Second, _>(panel, record)
         .unwrap();
-    let source = app.world_mut().spawn_empty().id();
-    app.add_systems(
-        PostUpdate,
-        (move |mut actions: MessageWriter<DesktopAction>| {
-            actions.write(DesktopAction::Activated {
-                source,
-                target: command,
-            });
-        })
-        .before(CommandSystems::Ingress),
-    );
+    let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyK);
+    w.world.spawn(KeyBinding::new::<First>(chord));
+    w.world
+        .spawn((KeyBinding::new::<Second>(chord), InPanel(panel)));
+    let mut keys = ButtonInput::<KeyCode>::default();
+    keys.press(KeyCode::ControlLeft);
+    keys.press(KeyCode::KeyK);
+    w.world.insert_resource(keys);
     app.update();
     assert_eq!(
-        app.world().resource::<Calls>().0,
-        [CommandInvocation {
-            command,
-            source: Some(source)
-        }]
+        app.world().resource::<Calls>().0[0].command,
+        CommandType::of::<Second>()
     );
+    app.world_mut().resource_mut::<ShortcutCapture>().text = true;
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0.len(), 1);
+    app.world_mut().resource_mut::<ShortcutCapture>().text = false;
+    app.world_mut()
+        .spawn((KeyBinding::new::<First>(chord), InPanel(panel)));
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0.len(), 1);
 }
 
+#[test]
+fn retiring_an_admitted_panel_handler_does_not_redirect_to_a_global_handler() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let panel = w.create_panel(w.active_layout(), "Closing").unwrap();
+    w.register_command::<Second, _>(record).unwrap();
+    w.register_panel_command::<Second, _>(panel, record)
+        .unwrap();
+    w.register_command::<First, _>(
+        move |_: In<CommandInvocation>, world: &mut World| -> CommandResult {
+            Workbench::new(world).close_panel(panel)
+        },
+    )
+    .unwrap();
+    w.world.resource_mut::<CommandRequests>().invoke::<First>();
+    w.world.resource_mut::<CommandRequests>().invoke::<Second>();
+    app.update();
+    assert!(app.world().resource::<Calls>().0.is_empty());
+    let results = results(&mut app);
+    assert!(results[0].result.is_ok());
+    assert!(results[1].result.is_err());
+}
+
+#[test]
+fn a_native_owned_shortcut_has_only_one_invocation_path() {
+    let mut app = app();
+    Workbench::new(app.world_mut())
+        .register_command::<First, _>(record)
+        .unwrap();
+    let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyK);
+    app.world_mut().spawn(KeyBinding::new::<First>(chord));
+    app.world_mut()
+        .resource_mut::<crate::commands::NativeShortcuts>()
+        .0
+        .insert(chord);
+    let mut keys = ButtonInput::<KeyCode>::default();
+    keys.press(KeyCode::ControlLeft);
+    keys.press(KeyCode::KeyK);
+    app.world_mut().insert_resource(keys);
+    app.world_mut()
+        .resource_mut::<CommandRequests>()
+        .invoke::<First>();
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0.len(), 1);
+}
 #[cfg(feature = "ui")]
 #[test]
-fn ui_activations_execute_in_the_same_frame_without_application_ordering() {
+fn ui_requests_execute_in_the_same_frame_without_application_ordering() {
     let mut app = app();
-    let command = Workbench::new(app.world_mut())
+    app.add_plugins(WorkbenchUiPlugin);
+    Workbench::new(app.world_mut())
         .register_command::<First, _>(record)
         .unwrap();
-    let source = app.world_mut().spawn_empty().id();
     app.add_systems(
         PostUpdate,
-        (move |mut actions: MessageWriter<DesktopAction>| {
-            actions.write(DesktopAction::Activated {
-                source,
-                target: command,
-            });
-        })
-        .in_set(bedtime_ui2::UiSystems::Draw),
+        (|mut requests: ResMut<CommandRequests>| requests.invoke::<First>())
+            .in_set(bedtime_ui2::UiSystems::Draw),
     );
     app.update();
-    assert_eq!(
-        app.world().resource::<Calls>().0,
-        [CommandInvocation {
-            command,
-            source: Some(source)
-        }]
-    );
+    assert_eq!(app.world().resource::<Calls>().0.len(), 1);
 }
 
 #[test]

@@ -1,5 +1,9 @@
 # Step 2: UI foundation and widget gallery
 
+This records the implementation at that migration stage. The later
+[workbench split](step-3-split.md) retires `bedtime-desktop2`, moves native
+integration into workbench and extracts an independent clipboard crate.
+
 This step implements `bedtime-ui2` alongside the existing framework. The runnable
 target is a gallery of reusable controls, animations, and Everforest Medium light
 and dark themes. `bed2` embeds it with the desktop and command plugins; a standalone

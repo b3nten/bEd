@@ -7,7 +7,7 @@ license.workspace = true
 description = "Application scaffold for the second Bedtime foundation"
 
 [dependencies]
-bedtime-desktop2 = { workspace = true }
+bedtime-clipboard2.workspace = true
 bedtime-ui2.workspace = true
 bedtime-workbench2 = { workspace = true, features = ["ui"] }
 bed2-demo-game = { path = "demo-game" }

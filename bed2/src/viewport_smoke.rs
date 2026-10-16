@@ -336,7 +336,7 @@ fn step(world: &mut World) {
             .observe(inspect_tabs);
     }
     crate::panel_smoke::step(world, frame);
-    if frame > 2090
+    if frame > 2240
         && world.resource::<Smoke>().captures.len() == 5
         && world.resource::<Smoke>().tabs_verified
     {
@@ -403,7 +403,9 @@ fn inspect(capture: On<ScreenshotCaptured>, regions: Query<&Region>, mut smoke: 
         region.name
     );
     let clear = if region.name == "overlay" {
-        sample(Vec2::new(region.window.x - 20.0, 12.0))
+        // The in-application menu now covers the top edge. Sample unobstructed
+        // scene output at the right edge, away from chrome and the alpha patch.
+        sample(Vec2::new(region.window.x - 20.0, region.window.y * 0.5))
     } else {
         sample(region.rect.min + Vec2::splat(8.0))
     };

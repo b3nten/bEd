@@ -154,7 +154,7 @@ impl Plugin for UiPlugin {
         );
         icons::install(app);
         app.add_message::<UiError>()
-            .add_message::<bedtime_desktop2::DesktopAction>()
+            .init_resource::<bedtime_clipboard2::Clipboard>()
             .insert_non_send(runtime::Runtime::new())
             .configure_sets(
                 PostUpdate,

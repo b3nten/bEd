@@ -18,11 +18,42 @@ use std::{
 
 #[derive(Default)]
 struct ClipboardSlot {
-    service: Option<bedtime_desktop2::DesktopClipboard>,
+    service: Option<bedtime_clipboard2::Clipboard>,
     errors: Vec<String>,
 }
 
 struct ClipboardAdapter(Rc<RefCell<ClipboardSlot>>);
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+    #[test]
+    fn imgui_and_application_share_a_clipboard_without_removing_the_resource() {
+        let mut app = App::new();
+        app.insert_resource(bedtime_clipboard2::Clipboard::memory());
+        let service = app
+            .world()
+            .resource::<bedtime_clipboard2::Clipboard>()
+            .clone();
+        let mut adapter = ClipboardAdapter(Rc::new(RefCell::new(ClipboardSlot {
+            service: Some(service),
+            errors: Vec::new(),
+        })));
+        adapter.set("from ImGui");
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<bedtime_clipboard2::Clipboard>()
+                .read_text()
+                .unwrap(),
+            "from ImGui"
+        );
+        app.world_mut()
+            .resource_mut::<bedtime_clipboard2::Clipboard>()
+            .write_text("from application")
+            .unwrap();
+        assert_eq!(adapter.get().as_deref(), Some("from application"));
+    }
+}
 
 impl ClipboardBackend for ClipboardAdapter {
     fn get(&mut self) -> Option<String> {
@@ -144,10 +175,6 @@ pub(crate) fn draw(world: &mut World) {
         if world.non_send::<Runtime>().theme.as_ref() != Some(&theme) {
             theme.validate()?;
         }
-        let background = bedtime_desktop2::WindowBackground::new(theme.palette.background);
-        if world.get::<bedtime_desktop2::WindowBackground>(surface) != Some(&background) {
-            world.entity_mut(surface).insert(background);
-        }
         let devices = world.resource::<DeviceBridge>().0.lock().unwrap().clone();
         let Some(devices) = devices else {
             return Ok(());
@@ -158,7 +185,7 @@ pub(crate) fn draw(world: &mut World) {
             .remove_non_send::<Runtime>()
             .expect("UI runtime installed");
         runtime.clipboard.borrow_mut().service =
-            world.remove_non_send::<bedtime_desktop2::DesktopClipboard>();
+            Some(world.resource::<bedtime_clipboard2::Clipboard>().clone());
         let result = WINIT_WINDOWS.with(|windows| {
             let windows = windows.borrow();
             let Some(window) = windows.get_window(surface) else {
@@ -342,9 +369,7 @@ pub(crate) fn draw(world: &mut World) {
             let mut slot = runtime.clipboard.borrow_mut();
             (slot.service.take(), std::mem::take(&mut slot.errors))
         };
-        if let Some(clipboard) = clipboard {
-            world.insert_non_send(clipboard);
-        }
+        drop(clipboard); // All handles share the resource's single backend.
         world.insert_non_send(runtime);
         for error in errors {
             world.write_message(UiError(format!("Clipboard: {error}")));

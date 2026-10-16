@@ -1,5 +1,9 @@
 # Step 1: Desktop foundation, ECS menus and command registration
 
+This records the implementation at that migration stage. The later
+[workbench split](step-3-split.md) retires `bedtime-desktop2`, moves native
+integration into workbench and extracts an independent clipboard crate.
+
 This step establishes the first working implementation of the architecture in
 [overview.md](overview.md). It started with a platform-only desktop crate and a
 small application host. The subsequent menu/identity discussion replaced the

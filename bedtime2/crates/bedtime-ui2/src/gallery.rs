@@ -1,6 +1,6 @@
 //! A reusable gallery view. Its state is ordinary ECS data, not a global singleton.
 use crate::*;
-use bedtime_desktop2::{ActionEnabled, Activates, DesktopAction};
+use bedtime_clipboard2::Clipboard;
 use imgui::{Condition, StyleVar, TableOptions, TableSizingPolicy, WindowFlags};
 
 #[derive(Component)]
@@ -23,12 +23,6 @@ pub struct GalleryState {
     pub icon_size: f32,
     pub custom_icons: Handle<IconSet>,
     pub custom_icon: Handle<Icon>,
-}
-
-/// Optional action placement; application command entities remain independently owned.
-#[derive(Component)]
-pub struct GalleryAction {
-    pub label: String,
 }
 
 pub fn spawn(world: &mut World, surface: Entity, light: Entity, dark: Entity) -> Entity {
@@ -75,9 +69,7 @@ pub fn draw_gallery(
     mut states: Query<&mut GalleryState>,
     mut surfaces: Query<(&mut MotionPolicy, &UiDiagnostics, &UiIconStatus)>,
     mut commands: Commands,
-    placements: Query<(Entity, &GalleryAction, &Activates, &InView)>,
-    availability: Query<&ActionEnabled>,
-    mut actions: MessageWriter<DesktopAction>,
+    mut clipboard: ResMut<Clipboard>,
 ) {
     let mut state = states
         .get_mut(frame.view)
@@ -197,26 +189,19 @@ pub fn draw_gallery(
                     c.close_popup();
                 }
             });
-            c.heading("04   Shared actions");
-            let mut any = false;
-            for (source, placement, target, owner) in &placements {
-                if owner.0 != frame.view {
-                    continue;
+            c.heading("04   Clipboard");
+            if c.button("Copy text") {
+                if let Err(error) = clipboard.write_text(&state.text) {
+                    bevy::log::warn!("Clipboard: {error}");
                 }
-                any = true;
-                let enabled = availability.get(target.0).is_ok_and(|v| v.0);
-                c.disabled(!enabled, || {
-                    if c.button(&placement.label) {
-                        actions.write(DesktopAction::Activated {
-                            source,
-                            target: target.0,
-                        });
-                    }
-                });
             }
-            if !any {
-                c.muted("Applications can attach command buttons to this view.");
+            c.same_line();
+            if c.button("Paste text") {
+                if let Ok(text) = clipboard.read_text() {
+                    state.text = text;
+                }
             }
+            c.muted("Text fields and application controls share one clipboard.");
 
             ui.table_next_column();
             c.heading("05   Palette");

@@ -3,15 +3,9 @@ mod panel_smoke;
 mod viewport_demo;
 mod viewport_smoke;
 mod workbench_demo;
-use bedtime_desktop2::{
-    Accelerator, ActionEnabled, Activates, Code, DesktopAction, DesktopClipboard, DesktopError,
-    DesktopPlugin, InMenu, Menu, MenuBar, MenuItem, MenuSeparator, Modifiers,
-};
-use bedtime_ui2::{UiError, UiGraph, UiPlugin, UiSurface, UsesTheme, gallery, themes};
-use bedtime_workbench2::{
-    CommandDefinition, CommandFinished, CommandInvocation, CommandRequests, CommandResult,
-    Workbench, WorkbenchPlugin,
-};
+use bedtime_clipboard2::Clipboard;
+use bedtime_ui2::{UiError, UiGraph, UiPlugin, UiSurface, UsesTheme, themes};
+use bedtime_workbench2::*;
 use bevy::prelude::*;
 use bevy::{render::camera::CameraRenderGraph, window::PrimaryWindow};
 
@@ -41,7 +35,17 @@ impl CommandDefinition for QuitApplication {
 
 fn main() -> AppExit {
     let mut app = App::new();
-    
+
+    let args: Vec<_> = std::env::args().collect();
+    let ui_first = args.iter().any(|a| a == "--ui-first");
+    let compose = args.iter().any(|a| a == "--compose-workbench");
+    if args
+        .iter()
+        .any(|a| a == "--workbench-smoke-dir" || a == "--viewport-smoke-dir")
+    {
+        // Native smoke must not replace the user's system clipboard.
+        app.insert_resource(Clipboard::memory());
+    }
     app.add_plugins(DefaultPlugins.set(bevy::window::WindowPlugin {
         primary_window: Some(Window {
             title: "bEd 2 — Workbench".into(),
@@ -52,24 +56,35 @@ fn main() -> AppExit {
         }),
         close_when_requested: false,
         ..default()
-    }))
-    .add_plugins((
-        DesktopPlugin,
-        UiPlugin,
-        WorkbenchPlugin,
-        bed2_demo_game::CubeGamePlugin,
-    ))
-    .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.12)))
-    .add_systems(Startup, setup.after(bed2_demo_game::GameSetup))
-    .add_systems(
-        Update,
-        (handle_close_requests, keyboard_quit, report_errors),
-    );
-    
+    }));
+    if ui_first {
+        app.add_plugins(UiPlugin);
+    }
+    if compose {
+        app.add_plugins((
+            WorkbenchCorePlugin,
+            ClipboardPlugin,
+            WorkbenchNativeWindowPlugin,
+            WorkbenchUiPlugin,
+        ));
+    } else {
+        app.add_plugins(WorkbenchPlugin);
+    }
+    if !ui_first {
+        app.add_plugins(UiPlugin);
+    }
+    app.add_plugins(bed2_demo_game::CubeGamePlugin)
+        .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.12)))
+        .add_systems(Startup, setup.after(bed2_demo_game::GameSetup))
+        .add_systems(
+            Update,
+            (handle_close_requests, keyboard_quit, report_errors),
+        );
+
     viewport_demo::install(&mut app);
     workbench_demo::install(&mut app);
     viewport_smoke::install(&mut app);
-    
+
     app.run()
 }
 
@@ -83,33 +98,24 @@ fn setup(world: &mut World) {
         CameraRenderGraph::new(UiGraph),
         viewport_demo::EditorUiCamera,
     ));
-    
+
     let light = world.spawn(themes::light()).id();
     let dark = world.spawn(themes::dark()).id();
-    
+
     let surface = world
         .query_filtered::<Entity, With<PrimaryWindow>>()
         .single(world)
         .unwrap();
-        
+
     world
         .entity_mut(surface)
         .insert((UiSurface, UsesTheme(dark)));
-        
-    let gallery = workbench_demo::setup(world, surface, light, dark);
-    
-    let open = Workbench::new(world)
+
+    workbench_demo::setup(world, surface, light, dark);
+
+    Workbench::new(world)
         .register_command::<OpenViewport, _>(open_viewport)
         .unwrap();
-        
-    world.spawn((
-        gallery::GalleryAction {
-            label: "Open 3D viewport".into(),
-        },
-        bedtime_ui2::InView(gallery),
-        Activates(open),
-    ));
-
     let (copy, toggle, quit) = {
         let mut workbench = Workbench::new(world);
         (
@@ -125,29 +131,15 @@ fn setup(world: &mut World) {
         )
     };
 
-    world.spawn((
-        gallery::GalleryAction {
-            label: "Copy greeting".into(),
-        },
-        bedtime_ui2::InView(gallery),
-        Activates(copy),
-    ));
-    
-    world.spawn((
-        gallery::GalleryAction {
-            label: "Toggle copy availability".into(),
-        },
-        bedtime_ui2::InView(gallery),
-        Activates(toggle),
-    ));
-
-    let primary = if cfg!(target_os = "macos") {
-        Modifiers::META
-    } else {
-        Modifiers::CONTROL
-    };
-
-    let bar = world.spawn(MenuBar).id();
+    world.spawn(KeyBinding::new::<CopyGreeting>(KeyChord::new(
+        Modifiers::PRIMARY | Modifiers::SHIFT,
+        KeyCode::KeyC,
+    )));
+    world.spawn(KeyBinding::new::<QuitApplication>(KeyChord::new(
+        Modifiers::PRIMARY,
+        KeyCode::KeyQ,
+    )));
+    let bar = world.spawn((MenuBar, NativeMenuBar)).id();
 
     let application = world
         .spawn((
@@ -159,12 +151,9 @@ fn setup(world: &mut World) {
         .id();
 
     world.spawn((
-        MenuItem {
-            shortcut: Some(Accelerator::new(primary | Modifiers::SHIFT, Code::KeyC)),
-            ..MenuItem::new(CopyGreeting::LABEL)
-        },
+        MenuItem::new(CopyGreeting::LABEL),
         InMenu(application),
-        Activates(copy),
+        Invokes(copy),
     ));
 
     let tools = world
@@ -175,25 +164,27 @@ fn setup(world: &mut World) {
             InMenu(application),
         ))
         .id();
-        
+
     world.spawn((
         MenuItem::new(ToggleGreeting::LABEL),
         InMenu(tools),
-        Activates(toggle),
+        Invokes(toggle),
     ));
-    
-    world.spawn((MenuSeparator, InMenu(application)));
-    
+
     world.spawn((
-        MenuItem {
-            shortcut: Some(Accelerator::new(primary, Code::KeyQ)),
-            ..MenuItem::new(QuitApplication::LABEL)
-        },
-        InMenu(application),
-        Activates(quit),
+        MenuItem::new(OpenViewport::LABEL),
+        InMenu(tools),
+        Invokes::of::<OpenViewport>(),
     ));
-    
-    info!("bEd 2: native ECS menus on macOS; Escape requests quit on either platform.");
+    world.spawn((MenuSeparator, InMenu(application)));
+
+    world.spawn((
+        MenuItem::new(QuitApplication::LABEL),
+        InMenu(application),
+        Invokes(quit),
+    ));
+
+    info!("bEd 2: workbench native menus on macOS; Escape requests quit on either platform.");
 }
 
 fn open_viewport(_: In<CommandInvocation>, world: &mut World) -> CommandResult {
@@ -203,11 +194,9 @@ fn open_viewport(_: In<CommandInvocation>, world: &mut World) -> CommandResult {
 
 fn copy_greeting(
     In(_invocation): In<CommandInvocation>,
-    mut clipboard: Option<NonSendMut<DesktopClipboard>>,
+    mut clipboard: ResMut<Clipboard>,
 ) -> CommandResult {
     clipboard
-        .as_mut()
-        .ok_or("The native clipboard is not ready")?
         .write_text("Hello from bEd 2")
         .map_err(|error| error.to_string())?;
     info!("Copied greeting");
@@ -218,8 +207,11 @@ fn toggle_greeting(In(_invocation): In<CommandInvocation>, world: &mut World) ->
     let copy = Workbench::new(world)
         .command::<CopyGreeting>()
         .ok_or("Copy Greeting is unavailable")?;
+    let handler = Workbench::new(world)
+        .handler(copy, None)
+        .expect("Registered global handler");
     let mut enabled = world
-        .get_mut::<ActionEnabled>(copy)
+        .get_mut::<ActionEnabled>(handler)
         .expect("registered commands have availability");
     enabled.0 = !enabled.0;
     Ok(())
@@ -227,22 +219,20 @@ fn toggle_greeting(In(_invocation): In<CommandInvocation>, world: &mut World) ->
 
 fn request_quit(
     In(_invocation): In<CommandInvocation>,
-    mut actions: MessageWriter<DesktopAction>,
+    mut actions: MessageWriter<CloseRequested>,
 ) -> CommandResult {
-    actions.write(DesktopAction::CloseRequested { window: None });
+    actions.write(CloseRequested { window: None });
     Ok(())
 }
 
 fn handle_close_requests(
-    mut actions: MessageReader<DesktopAction>,
+    mut actions: MessageReader<CloseRequested>,
     mut exit: MessageWriter<AppExit>,
 ) {
     for action in actions.read() {
-        if let DesktopAction::CloseRequested { window } = action {
-            info!("Application accepted close request: {window:?}");
-            // Workbench document validation will replace this demonstration policy.
-            exit.write(AppExit::Success);
-        }
+        info!("Application accepted close request: {:?}", action.window);
+        // Workbench document validation will replace this demonstration policy.
+        exit.write(AppExit::Success);
     }
 }
 
@@ -258,20 +248,20 @@ fn keyboard_quit(world: &mut World) {
         let quit = Workbench::new(world)
             .command::<QuitApplication>()
             .expect("application registered quit");
-        world.resource_mut::<CommandRequests>().invoke(quit);
+        world.resource_mut::<CommandRequests>().invoke_type(quit);
     }
 }
 
 fn report_errors(
     mut ui: MessageReader<UiError>,
-    mut desktop: MessageReader<DesktopError>,
+    mut native: MessageReader<NativeError>,
     mut commands: MessageReader<CommandFinished>,
 ) {
     for error in ui.read() {
         warn!("UI: {}", error.0);
     }
-    for error in desktop.read() {
-        warn!("Desktop: {}", error.0);
+    for error in native.read() {
+        warn!("Native: {}", error.0);
     }
     for command in commands.read() {
         if let Err(error) = &command.result {

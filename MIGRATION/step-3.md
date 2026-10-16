@@ -1,9 +1,11 @@
 # Stage 3: the workbench foundation
 
-Bedtime's foundation is desktop, UI and workbench. Applications choose what to
+Bedtime's foundation is workbench, UI and an independent clipboard service.
+The subsequent [workbench split](step-3-split.md) folds native desktop integration
+into optional workbench plugins and revises command/menu ownership. Applications choose what to
 open and where to persist it; workbench owns the transitions that make those
 choices happen safely. This extends the architecture recorded in
-[the original migration overview](../MIGRATION/overview.md).
+[the original migration overview](overview.md).
 
 ## Agreed ownership
 
@@ -136,7 +138,7 @@ Verification commands:
 
 ```sh
 cargo test --offline -p bedtime-workbench2 --lib --no-default-features
-cargo test --offline -p bedtime-workbench2 -p bedtime-ui2 -p bedtime-desktop2 --lib --features bedtime-workbench2/ui
+cargo test --offline -p bedtime-workbench2 -p bedtime-ui2 -p bedtime-clipboard2 --lib --features bedtime-workbench2/ui
 python3 scripts/check-crate-boundaries.py --offline
 cargo run --offline -p bed2 -- --workbench-smoke-dir target/workbench2-smoke
 cargo run --offline -p bedtime-ui2 --example gallery -- --smoke-dir target/workbench2-gallery-regression

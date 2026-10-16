@@ -479,6 +479,116 @@ pub(crate) fn step(world: &mut World, frame: u32) {
         Workbench::new(world).activate_layout(original).unwrap();
         info!("Panel interaction smoke passed");
     }
+    // Present the same action model through actual ImGui menus. Smoke's shared
+    // memory clipboard makes the command result observable without OS side effects.
+    for base in [1940, 1980, 2080, 2120] {
+        if frame == base {
+            let menu = world
+                .query::<(Entity, &Menu)>()
+                .iter(world)
+                .find_map(|(e, m)| (m.label == "bEd 2").then_some(e))
+                .unwrap();
+            let r = world.get::<MenuPresentation>(menu).unwrap();
+            assert!(r.visible);
+            save_drag(world, r.rect.center(), r.rect.center());
+        }
+        drag(world, frame, base);
+    }
+    if frame == 1960 {
+        let p = menu_item(world, crate::CopyGreeting::LABEL);
+        save_drag(world, p, p);
+    }
+    drag(world, frame, 1960);
+    if frame == 1975 {
+        assert_eq!(
+            world
+                .resource_mut::<bedtime_clipboard2::Clipboard>()
+                .read_text()
+                .unwrap(),
+            "Hello from bEd 2"
+        );
+    }
+    for base in [2000, 2140] {
+        if frame == base {
+            let tools = world
+                .query::<(Entity, &Menu)>()
+                .iter(world)
+                .find_map(|(e, m)| (m.label == "Tools").then_some(e))
+                .unwrap();
+            let r = world.get::<MenuPresentation>(tools).unwrap();
+            assert!(r.visible);
+            save_drag(world, r.rect.center(), r.rect.center());
+        }
+        drag(world, frame, base);
+    }
+    for base in [2020, 2160] {
+        if frame == base {
+            let p = menu_item(world, crate::ToggleGreeting::LABEL);
+            save_drag(world, p, p);
+        }
+        drag(world, frame, base);
+    }
+    if frame == 2040 {
+        assert!(!command_available(
+            world,
+            CommandType::of::<crate::CopyGreeting>(),
+            CommandContext::Focused
+        ));
+        world
+            .resource_mut::<bedtime_clipboard2::Clipboard>()
+            .write_text("unchanged while disabled")
+            .unwrap();
+    }
+    if frame == 2100 {
+        let p = menu_item(world, crate::CopyGreeting::LABEL);
+        save_drag(world, p, p);
+    }
+    drag(world, frame, 2100);
+    if frame == 2115 {
+        assert_eq!(
+            world
+                .resource_mut::<bedtime_clipboard2::Clipboard>()
+                .read_text()
+                .unwrap(),
+            "unchanged while disabled"
+        );
+        // A disabled item keeps its popup open. Close before reopening the root.
+        pointer(
+            world,
+            Vec2::new(800.0, 300.0),
+            Some((imgui::MouseButton::Left, true)),
+        );
+    }
+    if frame == 2116 {
+        pointer(
+            world,
+            Vec2::new(800.0, 300.0),
+            Some((imgui::MouseButton::Left, false)),
+        );
+    }
+    if frame == 2180 {
+        assert!(command_available(
+            world,
+            CommandType::of::<crate::CopyGreeting>(),
+            CommandContext::Focused
+        ));
+        info!(
+            "Menu smoke: ImGui action invocation, shared clipboard and handler availability passed"
+        );
+    }
+}
+
+fn menu_item(world: &mut World, label: &str) -> Vec2 {
+    let entity = world
+        .query::<(Entity, &MenuItem)>()
+        .iter(world)
+        .find_map(|(e, item)| (item.label == label).then_some(e))
+        .unwrap();
+    let p = world
+        .get::<MenuPresentation>(entity)
+        .expect("Menu item drawn");
+    assert!(p.visible, "Menu item {label} is visible");
+    p.rect.center()
 }
 
 fn receiver(frame: UiFrame, mut state: ResMut<Interaction>) {

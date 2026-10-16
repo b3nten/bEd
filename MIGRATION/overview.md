@@ -27,29 +27,22 @@ The migration is an opportunity to reconsider those distinctions.
 
 ## Three foundational crates
 
-The agreed foundation consists of three layers. Cargo package names use hyphens;
-Rust imports use underscores, for example `bedtime_desktop2`.
+The current split, revised in [the stage 3 follow-up](step-3-split.md), is:
 
 | Crate | Responsibility |
 | --- | --- |
-| `bedtime-desktop2` | Native platform integration around Bevy's window and input facilities: menus, clipboard, native window behavior and input admission. |
-| `bedtime-ui2` | ImGui context and frame lifecycle, Bevy rendering integration, textures, themes, fonts, icons, reusable controls, custom title-bar widgets and effects. |
-| `bedtime-workbench2` | Panels, tabs, layout, shared documents and history, workspaces, settings and scoped persistence. |
+| `bedtime-clipboard2` | Independent text/file clipboard, optional OS access and in-process fallback |
+| `bedtime-ui2` | ImGui lifecycle, Bevy rendering, input adaptation, themes, controls, icons and effects |
+| `bedtime-workbench2` | Headless application/action/menu model, panel layout, workspaces and planned documents/settings; optional native and UI adapters |
 
-The intended dependency direction is:
+UI2 depends on clipboard, with no workbench dependency. Workbench uses clipboard
+and optionally UI2. The separate desktop crate has been retired; native window
+and menu integration now belongs to workbench plugins. A release game can use
+clipboard or UI2 without workbench.
 
-```text
-bed2 / another application
-    -> bedtime-workbench2
-        -> bedtime-ui2
-            -> bedtime-desktop2
-
-Each layer also uses Bevy directly.
-```
-
-Applications can use the lower layers without a workbench. Workbench's document,
-workspace and settings services should be exercisable without opening a native
-window or initializing a renderer.
+WorkbenchCorePlugin runs headlessly. WorkbenchPlugin is a convenience plugin group
+composing core, clipboard, native and UI services according to enabled Cargo
+features. Applications can compose the same individual plugins themselves.
 
 ### Bevy composition
 
@@ -70,24 +63,12 @@ ImGui/Bevy rendering runtime. In the new design, the ImGui integration belongs
 in `bedtime-ui2`, including input translation, frame snapshots, rendering,
 composition and recovery of UI-owned GPU resources.
 
-Desktop accepts native presentation data and emits actions or observations.
-For example, it displays an ECS menu tree and reports an opaque action entity.
-Workbench or the application interprets that action. Native shortcut and artwork contracts must
-not depend on ImGui types or the UI icon collection.
-
-Native title-bar controls belong to desktop. Custom title-bar widgets belong to
-UI. Desktop reports the native space that the UI needs to accommodate. UI owns
-themes and can project the necessary colors and appearance values into desktop.
-
-The ImGui context and live `Ui` borrow remain on the main thread. Owned draw
-snapshots can cross into Bevy's render world. Bevy owns GPU submission and native
-presentation; UI integrates its rendering into that lifecycle.
-
-Input needs one explicit delivery path. Desktop will provide the mechanism for
-admitting input to application systems; UI and workbench integrations report
-which input they consumed. Releases and focus changes must remain correct when
-input capture changes. The initial desktop scaffold does not implement this
-capture mechanism yet.
+Workbench core owns abstract menus and action types. Native and ImGui adapters
+present the same model and submit requests directly to the command dispatcher.
+The workbench UI adapter projects theme background colors to native window
+appearance; UI2 itself has no native workbench dependency. Native platform input
+still enters through Bevy/Winit, while ImGui-specific cursor and IME adaptation
+belongs to UI2.
 
 ## Workbench's semantic model
 
@@ -159,37 +140,18 @@ all content models to use the same internal representation.
 
 ## ECS menus and typed commands
 
-The first follow-up to the desktop scaffold implements menus as ECS entities.
-`InMenu`/`MenuEntries` express ordered ownership, including recursive removal of
-entries when their menu is removed. `Activates`/`ActivationSources` express
-references to shared action entities without owning their lifetimes. Native
-objects are a projection of this tree, with stale activations checked against
-current membership, target and availability.
+The initial desktop scaffold introduced owning ECS menu relationships and
+entity-bound handlers. [The stage 3 split](step-3-split.md) supersedes that model:
+menus are portable workbench data and reference action types through `Invokes`.
+Action definitions retain readable namespaced keys for persistence. Scoped
+handlers remain registered Bevy system entities, owned by their panel when local.
 
-The first service in `bedtime-workbench2` is the command owner. Consumers define
-command types implementing `CommandDefinition`, with `KEY: &'static str` and
-`LABEL: &'static str`. The agreed persistent identity is a readable namespaced
-string; UUIDs are not required.
-
-`workbench.register_command::<SaveDocument, _>(save_document)` registers an ordinary
-Bevy system and returns its entity. The inferred second parameter is Bevy's
-system marker. `CommandInfo` metadata lives on the same entity as the registered
-system; `ActionEnabled` provides shared availability. Runtime menu relationships
-and invocations reference entities, while `CommandKey` serializes to a plain
-string for future saved bindings. The definition's Rust type supports typed
-lookup without persisting `TypeId`.
-
-The workbench collects native activations and owns one queued dispatcher. It
-checks existence and availability before each execution and reports handler
-results. Requests emitted by handlers wait for the next dispatch pass. Command
-execution is not performed by relationship hooks or native callbacks.
-
-This establishes live identity, extension registration and a serializable command
-reference. It does not implement shortcut persistence, panel definition traits,
-documents or the rest of workbench. Workbench currently depends directly on
-desktop for this bridge. The UI layer now publishes the same action observations;
-workbench's optional UI integration orders drawing before command ingress in
-`PostUpdate`.
+There is one request queue. Menus, keybindings and application systems submit
+requests naming an action type and context. Workbench resolves panel/global
+handlers, captures a batch before execution, checks availability and publishes
+results. Handler follow-ups wait for the next dispatch pass. Native callbacks
+never execute application handlers directly. Native and in-application menus
+use the same resolved availability and shortcut bindings.
 
 ## UI foundation
 
@@ -296,7 +258,7 @@ next layer. Keep the original application usable throughout the migration.
 | Desktop scaffold | An ordinary Bevy host plus a native-only desktop plugin. | Implemented; see [step 1](step-1.md). Native GUI validation and further desktop work remain. |
 | Desktop stabilization | Validate native behavior and settle the platform/input boundary needed by UI. | Pending. |
 | UI foundation | ImGui lifecycle, input integration and rendering in the existing Bevy app, followed by appearance and reusable controls. | Implemented for one active surface, with a widget gallery; see [step 2](step-2.md). Additional UI capabilities remain scoped there. |
-| Workbench foundation | Panels/layout plus a coherent document, history, workspace and persistence model. | Typed commands and the in-memory workspace/layout/panel lifecycle are implemented; see [stage 3](../MIGRATIONS/step-3.md). Documents, settings and persistence follow. |
+| Workbench foundation | Panels/layout plus a coherent document, history, workspace and persistence model. | Typed commands and the in-memory workspace/layout/panel lifecycle are implemented; see [stage 3](step-3.md). Documents, settings and persistence follow. |
 | Services and application features | Add filesystem and justified shared services, then migrate bEd features onto them. | Planned. |
 | Remote integration | Exercise the same service contracts across a remote boundary and evaluate replication against concrete requirements. | Deferred. |
 
