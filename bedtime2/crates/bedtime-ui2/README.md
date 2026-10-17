@@ -34,6 +34,11 @@ Drawing systems run sequentially in `SurfaceViews` order. Panel/view identity
 scopes egui IDs. `UiFrame` supplies a borrowed mutable egui Ui, prepared theme and
 motion policy. `scope`, `scroll` and `padded` reborrow the same services into
 nested UIs. Panel hosts supply no content padding or automatic scrolling.
+`clip_rounded` enforces a rounded paint boundary for images, text and custom
+meshes, preserving UVs, colors and transparent backgrounds. Workbench applies it
+to every panel automatically. Child scissors cannot widen that boundary;
+popups on separate layers keep their own bounds. Direct GPU paint callbacks
+crossing a rounded boundary must render into a `UiViewport` image.
 Panels can opt into `frame.padded(frame.panel_settings.padding, draw)`;
 the default panel settings use 14 horizontal and 12 vertical points, matching bed1.
 `scroll` insets the scrollbar's ends by `frame.panel_settings.rounding` so its track clears

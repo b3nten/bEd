@@ -13,9 +13,12 @@ pub struct MenuPresentation {
 pub struct WorkbenchUiPlugin;
 impl Plugin for WorkbenchUiPlugin {
     fn build(&self, app: &mut App) {
-        frontend::configure(app);
-        input::install(app);
-        app.add_systems(PreUpdate, reset_menus.before(UiSystems::Draw));
+        app.add_systems(
+            PreUpdate,
+            frontend::sync_viewports
+                .after(WorkspaceSystems::Prepare)
+                .before(UiSystems::Draw),
+        );
         #[cfg(feature = "native")]
         app.configure_sets(
             PreUpdate,
@@ -31,12 +34,6 @@ impl Plugin for WorkbenchUiPlugin {
             app.is_plugin_added::<WorkbenchCorePlugin>(),
             "WorkbenchUiPlugin requires WorkbenchCorePlugin"
         );
-    }
-}
-
-fn reset_menus(mut menus: Query<&mut MenuPresentation>) {
-    for mut menu in &mut menus {
-        menu.visible = false;
     }
 }
 
@@ -80,6 +77,7 @@ pub fn draw_menu_bar(frame: &mut UiFrame, world: &mut World, root: Entity) -> Re
     );
     Ok(())
 }
+
 pub fn draw_popup_menu(
     _frame: &mut UiFrame,
     world: &mut World,
@@ -93,6 +91,7 @@ pub fn draw_popup_menu(
     });
     Ok(())
 }
+
 fn draw_entries(ui: &mut bedtime_ui2::egui::Ui, world: &mut World, entries: &[MenuNode]) {
     use bedtime_ui2::egui;
     for entry in entries {

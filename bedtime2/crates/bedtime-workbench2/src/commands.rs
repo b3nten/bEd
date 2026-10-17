@@ -1,5 +1,5 @@
 //! Stable contextual command identities with independently scoped bindings and handlers.
-use crate::{ActiveWorkspace, Area, Layout, Panel, Workbench, Workspace};
+use crate::{Area, Layout, Panel, Workbench, Workspace};
 use bevy::{ecs::system::SystemId, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -374,8 +374,7 @@ fn find_handler(
 }
 
 pub(crate) fn focused_panel(world: &World) -> Option<Entity> {
-    let workspace = world.resource::<ActiveWorkspace>().entity();
-    let layout = world.get::<Workspace>(workspace).unwrap().active_layout();
+    let layout = world.resource::<Workspace>().active_layout();
     let area = world.get::<Layout>(layout).unwrap().focused_area();
     world.get::<Area>(area).unwrap().selected_panel()
 }

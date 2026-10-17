@@ -1,167 +1,206 @@
 # bedtime-workbench2
 
-Composable workbench services with optional native and egui presentation.
-The former desktop crate has been folded into this crate; clipboard is an
-[independent crate](../bedtime-clipboard2).
-
-After the application's normal Bevy setup, add `WorkbenchPlugin` and UI2's
-`UiPlugin` in either order. Workbench creates an active temporary workspace and
-layout, but never installs DefaultPlugins, creates a window, camera or GPU device.
+Composable workspace runtimes with optional native and egui presentation.
+Add WorkbenchPlugin and UI2's UiPlugin after the application's normal Bevy setup,
+in either order. Workbench creates an active in-memory Untitled workspace;
+it never installs DefaultPlugins or creates a window, camera or GPU device.
 
 | Plugin | Responsibility |
 | --- | --- |
-| `WorkbenchCorePlugin` | Headless contextual commands, keybindings, abstract menus and workspace/layout/panel ownership |
-| `ClipboardPlugin` | Shared text/file clipboard, usable without workbench |
-| `WorkbenchNativeWindowPlugin` | Native window appearance and application-owned close requests |
-| `WorkbenchNativeMenuPlugin` | Native presentation of the selected abstract menu root |
-| `WorkbenchNativePlugin` | Group of the two native plugins |
-| `WorkbenchUiPlugin` | egui workbench presentation and input integration |
-| `WorkbenchPlugin` | Group of core, clipboard, native and UI capabilities enabled at compile time |
+| WorkbenchCorePlugin | Host workspace registry, activation, scheduling and shutdown |
+| WorkspacePlugin | Local commands, keybindings, menus, layouts and panels; installed by each runtime |
+| ClipboardPlugin | Shared text/file clipboard, usable independently |
+| WorkbenchNativeWindowPlugin | Native appearance and application-owned close requests |
+| WorkbenchNativeMenuPlugin | Native presentation of the active workspace's menu |
+| WorkbenchNativePlugin | Group of native window/menu plugins |
+| WorkbenchUiPlugin | Host adapter for workspace egui presentation |
+| WorkbenchPlugin | Group of enabled core, clipboard, native and UI capabilities |
 
-Default features are `ui`, `native`, `clipboard`. `native` also enables OS access
-in the clipboard crate. With defaults disabled, core compiles without a renderer,
-window backend, native menu library or OS clipboard dependency. Plugins control
-installed systems; Cargo features control compiled dependencies.
+Default features are ui, native and clipboard. With defaults disabled, the core
+compiles without a renderer, window backend, native menu library or OS clipboard.
+Features control compiled dependencies; plugins control installed systems.
 
-```rust,ignore
-// Usual desktop setup, after DefaultPlugins:
+~~~rust,ignore
 app.add_plugins(WorkbenchPlugin).add_plugins(UiPlugin);
-
-// Or compose exactly the capabilities needed:
+// Or compose:
 app.add_plugins((WorkbenchCorePlugin, ClipboardPlugin, WorkbenchUiPlugin, UiPlugin));
+~~~
 
-// Or disable one member of the group:
-app.add_plugins(WorkbenchPlugin.build().disable::<WorkbenchNativeMenuPlugin>());
-```
+When using native window integration, configure Bevy WindowPlugin with
+close_when_requested: false. CloseRequested leaves close/exit decisions with
+the application.
 
-When using native window integration, configure Bevy's WindowPlugin with
-`close_when_requested: false`. Read workbench `CloseRequested` and decide whether
-to exit. Without this integration the application retains its usual Bevy close policy.
+## Workspace ownership
 
-Documents/history, persistence, settings and document-aware close decisions are
-later slices of [stage 3](../../../MIGRATION/step-3.md). There is no file, process
-or remote service in this crate. The architectural follow-up is documented in
-[the split plan](../../../MIGRATION/step-3-split.md).
+Each workspace owns a Bevy SubApp with its own world, resources, schedules,
+registered systems, layouts, panels and command queues. The host owns the window,
+renderer, clipboard and runtime registry. WorkspaceId identifies a host entity;
+panel and layout Entity values are meaningful only inside their workspace world.
 
-## Workspaces, layouts and panels
+There is always exactly one active workspace. Closing it requires an explicit
+live replacement. Closing the final workspace is rejected; the application can
+replace it with an untitled workspace or exit. Workspaces controls lifecycle;
+Workbench selects a world once for the lifetime of its borrow.
 
-Workspace, layout, area and panel instances are entities. Owning relationships
-form workspace → layouts → areas → panels (`InWorkspace`, `InLayout`, `InArea`).
-Every workspace has a selected layout; the final layout cannot be deleted.
-Activate a different workspace before deleting the current one.
+~~~rust,ignore
+let mut runtime = WorkspaceRuntime::new("Project");
+// The application chooses the boundary, plugins, services and persistence.
+runtime.add_plugins(MyProjectPlugin);
+let project = Workspaces::new(host_world).open(runtime);
+Workspaces::new(host_world).activate(project)?;
 
-Areas tile a normalized 0–10,000 integer plane. `Area` owns its rectangle and
-selected panel; `AreaPanels` gives tab order. ECS stores the live arrangement.
-Temporary pure geometry plans handle splits, connected borders and gap filling;
-`Workbench` methods own the commits. Switching layouts/workspaces retains panel
-instances and state. Closing or deleting retires them. These in-memory operations
-do not yet perform document save/discard preflight.
+let mut workbench = Workbench::new(host_world); // Active workspace
+let reading = workbench.create_layout("Reading")?;
+workbench.activate_layout(reading)?;
 
-```rust,ignore
-let mut workbench = Workbench::new(app.world_mut());
-let workspace = workbench.active_workspace();
+// An explicit selection never changes the active workspace.
+let mut background = Workbench::with_workspace(host_world, project)?;
+background.world_mut().insert_resource(MyProjectState::default());
+~~~
+
+Inside a workspace system, Workbench::new(world) operates on that system's own
+world, including when it is inactive. It never looks up the host's active
+workspace. Queues live in their originating world, so switching cannot retarget
+commands or late task results. During UI drawing, queue lifecycle changes in
+WorkspaceRequests; activation runs after drawing so the input router can release
+old ownership. Opening a runtime does not activate it. WorkspaceIdentity supplies the host WorkspaceId
+after opening; identity is available to Startup systems.
+
+Workspace is a local resource containing the name and selected layout.
+Workbench does not interpret a project directory, database path, settings store,
+or persistence format. Each workspace has at least one layout. Layouts own areas,
+which own panels through InLayout and InArea. Removing the workspace world
+releases all of these entities and its plugin resources.
+
+## Layouts, panels and UI
+
+Attach the window in the host and register contents in the selected world:
+
+~~~rust,ignore
+let host = attach_surface(host_world, surface);
+let mut workbench = Workbench::new(host_world);
 let layout = workbench.active_layout();
-let another = workbench.create_layout(workspace, "Reading")?;
-workbench.activate_layout(another)?;
-workbench.activate_layout(layout)?;
-```
-
-With the `ui` feature:
-
-```rust,ignore
-let host = attach_surface(app.world_mut(), surface);
-app.world_mut().get_mut::<WorkbenchHost>(host).unwrap().menu = Some(menu_root);
-let status_bar = app.world().get::<WorkbenchHost>(host).unwrap().status_bar();
-// Pass status_bar to plugins registering UI2 status items.
-let layout = Workbench::new(app.world_mut()).active_layout();
-let panel = register_panel(app.world_mut(), layout, "Notes", draw_notes)?;
-app.world_mut().entity_mut(panel).insert(Notes::default());
+let world = workbench.world_mut();
+let panel = register_panel(world, layout, "Notes", draw_notes)?;
+world.entity_mut(panel).insert(Notes::default());
+let menu = world.spawn(MenuBar).id();
+Workbench::new(world).set_menu(Some(menu))?;
+let status_bar = Workbench::new(world).status_bar();
 
 fn draw_notes(mut frame: bedtime_ui2::UiFrame, mut notes: Query<&mut Notes>) {
     let mut notes = notes.get_mut(frame.view).unwrap();
     frame.text_edit(egui::TextEdit::singleline(&mut notes.text));
 }
-```
+~~~
 
-Each rendered panel is its registered Bevy system entity. It is called only when
-its tab/layout/workspace is visible and receives a clipped child egui Ui, so it draws
-controls inside the allocation supplied by the shell. State can live in ordinary
-components on that entity. `PanelPresentation` reports content/tab geometry,
-visibility and focus; `AreaPresentation` reports the area, inset surface, tab bar
-and content bounds. Inactive state remains alive; it is not drawn. Content UIs
-use the panel entity for their egui identity, so moving a tab retains its native
-scroll and widget state.
+The host lends its egui frame to the active workspace's shell and panel systems.
+Draw systems execute in their workspace world and use ordinary local Queries and
+Resources. Workspaces namespace egui identities, so equal local entity IDs do
+not share widget state. Moving tabs retains panel and widget state.
 
-Panel content reaches the surface edges below the tab bar. The shell adds no
-content padding and does not wrap renderers in a scroll area. Panels choose both
-explicitly through UI2's `padded` and `scroll` helpers. Bed2's gallery, notes and
-Controls use the theme's 14×12-point padding; the viewport pads its text and fills
-the remaining content area with its scene image.
+UiFrame carries borrowed theme, icon, texture and input services. Its surface is
+a host entity and must not be queried in the workspace world. Clipboard handles
+share the host service. WorkspaceViewport components project local UiViewport
+observations into host entities for texture registration and resizing.
+Applications explicitly project simulation into Bevy render entities; ordinary
+renderable entities in workspace worlds are not extracted automatically.
+See bed2/src/viewport_demo.rs for an example.
 
-The host paints the theme background alpha once across its bounds, covering
-panel interiors, gaps and outer margins. Panels keep rounded, inset borders,
-including a single panel. Attaching the shell selects UI2's
-`UiBackground::Transparent` automatically. The root paints the background once
-across native titlebar space, menu, panels, gaps and status bar.
-Focus borders and tab foreground/close colors fade with the surface motion
-policy. Tab hover backgrounds slide upward without moving text or hit bounds.
-Corner-split preview lines end inside the visible surface, respecting both
-shared gaps and outer margins.
-Floating windows and dialogs keep their theme.
+WorkbenchHost configures the host's bounds, minimum area size and panel visibility.
+WorkbenchPresentation reports the resulting titlebar/menu/panel/status allocations.
+Menu and status contributions belong to each workspace: select a local menu with
+Workbench::set_menu and register UI2 contributions on Workbench::status_bar().
+The shell reserves native titlebar space, the optional egui menu and status bar.
 
-The application attaches one workbench to an explicit window surface; the plugin
-owns its shell layout. `WorkbenchHost.bounds` optionally selects an outer
-rectangle in egui points; otherwise the root uses its parent's available space.
-The root reserves the native titlebar, the selected menu's egui row when needed,
-and a bottom status bar, then gives the remaining rectangle to the tiled panels.
-The status bar belongs to the host; plugins register UI2 items on
-`host.status_bar()`. No application-maintained top/bottom insets or ordering of
-separate chrome, panel and status views is needed. `WorkbenchPresentation`
-reports the actual bounds and titlebar/menu/panel/status allocations.
+Areas tile a normalized 0–10,000 integer plane. Area owns its rectangle and selected
+panel; AreaPanels stores tab order. Workbench methods alone commit topology and
+membership changes. Switching layouts retains state; closing retires instances.
+These operations do not perform application save/discard preflight.
 
-`panels_visible = false` retains menu and status while leaving the central region
-transparent for a scene underneath. Application overlays can use the observed
-panel allocation. One native UI surface is supported; the application still
-creates its Bevy window, renderer and camera.
+Panel content is clipped to its content rectangle and the area's rounded outline,
+including viewport images and custom painting. The host enforces this boundary;
+plugins do not need to match their own corner radii. Popups and tooltips retain
+their separate overlay layers.
+Panel content has no implicit padding or scroll area. Plugins opt into UI2's
+padded and scroll helpers. PanelPresentation and AreaPresentation report local
+visibility, focus and geometry. PanelSettings controls gaps, padding, rounding
+and corner targets independently of the theme.
 
-The frontend uses v1's Blender-style interaction model:
+The frontend retains Blender-style interactions:
 
-- Drag tabs along a strip to reorder, into a panel's center to group, or toward
-  any edge to split. Moving a last tab fills its vacated footprint; closing the
-  last tab leaves an empty area.
-- Drag an area's corner inward to split, across an adjacent border to join, or
-  farther into another area to relocate it. Partial joins preserve target tails.
-- Drag a shared border to resize its connected span, including T-junctions.
-- Close with ×, middle click or the tab context menu. Double click keeps a
-  preview tab. Tab icons use UI2's replaceable `IconSource`.
+- Drag tabs to reorder, group or split. Moving a final tab fills its vacated area;
+  closing a final tab leaves an empty area.
+- Drag area corners inward to split, across a border to join, or farther into
+  another area to relocate. Partial joins preserve target tails.
+- Drag shared borders to resize connected spans, including T-junctions.
+- Close with x, middle click or the tab menu. Double click keeps a preview tab.
 
-Gestures, scrolling and preview interpolation stay UI-local.
-Resize previews commit on release. Escape, right click, focus loss, activation or
-bounds changes cancel the current gesture. Drag previews and tab drops use the
-same final geometry calculation and surface insets. Cross-layout moves, OS
-floating panels and persistent restoration remain outside this slice.
+Gestures cancel on Escape, right click, focus loss, activation or bounds changes.
+Resize previews commit on release. Cross-layout moves, floating native panels
+and persistent restoration remain outside this implementation.
 
-Register a reusable panel type with `register_panel_type::<NotesPanel, _>(factory)`.
-`PanelDefinition` supplies `KEY` and `LABEL`; the factory is a Bevy system taking
-`In<Entity>` (the destination area) and returning `Result<Entity, String>`.
-It creates the panel with `register_panel_in_area` (or `create_panel_in_area`
-headlessly), inserts its state and returns it. The registered factory entity owns
-`PanelType` metadata and `ActionEnabled`, with no parallel registry. The area +
-picker and `panel_drag_source(&response, kind, label)` use those entities. Content widgets
-can consume the typed `PanelTypePayload` before the workbench's fallback target. Other
-payload formats, such as file drops, are not integrated yet.
+Register panel factories through register_panel_type. PanelDefinition supplies
+KEY and LABEL; its Bevy factory takes In<Entity> for the destination area and
+returns Result<Entity, String>. It creates the panel using register_panel_in_area
+or create_panel_in_area, inserts local state and returns its entity.
+PanelType and ActionEnabled live on the registered system entity. Empty areas
+present the available factories. panel_drag_source provides typed drag payloads.
 
-Drawing collects `WorkbenchRequests`. `WorkbenchSystems::Apply` processes one FIFO
-batch after drawing and command dispatch, and publishes `WorkbenchFinished`.
-Requests capture target entities. Gesture edits also capture the layout's
-structural revision and activation; structural changes or switching away and
-back reject stale edits. Application
-creation/deletion should run between drawing passes, using the same `Workbench`
-APIs. Do not directly despawn owned instances or rewrite their relationships.
+Drawing queues WorkbenchRequests in the originating world. WorkbenchSystems::Apply
+commits a batch after contextual command dispatch and publishes WorkbenchFinished.
+Gesture requests include layout revision and activation stamps; stale edits fail.
 
-`Workspace::settings_enabled` records whether workspace overrides will be allowed;
-settings resolution and storage are not implemented yet. The temporary workspace
-sets this to false.
+## Execution and external work
+
+WorkspaceSystems::Prepare handles plugin readiness/finish/cleanup, Startup once,
+and schedules preceding PreUpdate before drawing. WorkspaceSystems::Dispatch
+runs the active world's PreUpdate after drawing, before UI2 publishes input.
+WorkspaceSystems::Update runs the remaining MainScheduleOrder schedules.
+Background workspaces use the same order, each once per host frame.
+Workspace clocks use host frame durations and support fixed schedules.
+Install window, renderer and native plugins in the host; plugins that create
+additional SubApps are not supported inside a workspace runtime.
+
+Workspaces::set_background_updates(id, false) suspends the inactive world's ECS
+schedules. Owned workers keep servicing process I/O and retain bounded output.
+Switching releases old input capture and held keys before equal local entity
+IDs appear in another workspace.
+
+~~~rust,ignore
+let mut w = Workbench::new(host_world);
+let task = w.work().spawn_task(Some(panel), "Search", |cancel| {
+    if cancel.wait(Duration::from_secs(2)) { return None; }
+    Some(compute_result())
+})?;
+let process = w.work().spawn_process(
+    Some(session), "Tool", ProcessSpec::new("my-tool"),
+)?;
+~~~
+
+WorkspaceWork owns workers independently of result/I/O handles. An optional local
+owner entity gives work a shorter lifetime: removing the owner cancels its work
+on the next host update, even in a suspended workspace. Typed WorkspaceTask handles
+receive results and distinguish Finished, Cancelled and Failed outcomes. In-process
+cancellation is cooperative.
+
+WorkspaceProcess supplies bounded stdin, drained stdout/stderr, exit status and
+cancellation; close_stdin delivers EOF after queued input. Output retains the newest 256 KiB. Each input write is limited to
+8 KiB, with up to 16 queued writes. These are pipe processes; terminal emulation
+and PTY setup belong to a terminal backend. Custom backends can live in scoped
+tasks and shut down when Cancellation is requested.
+
+After application save/discard preflight, call Workspaces::close(id, replacement).
+It switches to the replacement atomically, rejects access/spawns in the closing
+workspace, requests cancellation and polls cleanup without blocking the UI.
+Its world and host handle retire after managed work finishes. Unix children have
+their own process group: shutdown sends TERM, then KILL after 250 ms, and reaps
+the child. Other platforms terminate the direct child; descendant process-tree
+supervision is currently Unix-specific. Cooperative tasks must return after
+cancellation. Drop force-stops owned processes as a fallback.
+
+For application exit, call Workspaces::shutdown_work(), keep updating until
+work_finished(), then emit AppExit. Persistence, settings, save/discard policy
+and remote services remain application-owned or future work.
 
 ## ContextCommands, handlers and bindings
 
@@ -288,8 +327,13 @@ Tabs fill the bar height up to the inside of the top border. Both top corners us
 the panel rounding. Their icons, labels and close buttons are
 centered vertically in the full bar, independently of the tab background.
 The tab bar reaches both panel edges; only the contents inside each tab are padded.
-Corner splits show both halves immediately. Existing areas animate when tab
-drops or area moves resize them; direct border dragging follows the pointer.
+Areas give up reassigned space immediately and animate only into newly available
+space. A tab drop that splits an area's width while expanding its height snaps
+the width and animates the height independently. Corner splits show both halves
+immediately; direct border dragging follows the pointer.
+While dragging a corner within its own area, the split line follows the pointer
+without easing or minimum-size clamping. Releasing clamps the actual split to
+the minimum panel size.
 Tabs follow their area's geometry without separate interpolation. Panel contents
 fade in when first shown or when their committed area or placement changes, using
 the surface motion policy. Nested widgets, icons and viewport images inherit the

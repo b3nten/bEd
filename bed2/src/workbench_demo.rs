@@ -1,714 +1,369 @@
-//! Application policy and panel contributions. All layouts and panels use public workbench APIs.
-use bedtime_ui2::{UiFrame, egui, gallery, register_view};
+//! Application policy lives in the host; plugin state lives in each workspace.
+use bedtime_ui2::{UiFrame, egui};
 use bedtime_workbench2::*;
 use bevy::prelude::*;
+use std::time::Duration;
 
 #[derive(Resource)]
 pub(crate) struct DemoWorkbench {
-    pub drag_source: Rect,
-    pub light: Entity,
-    pub dark: Entity,
-    pub home: Entity,
-    pub split: Entity,
-    pub reading: Entity,
-    pub scratch: Entity,
+    pub host: Entity,
+    pub surface: Entity,
+    pub gallery: bedtime_ui2::gallery::GalleryState,
+}
+#[derive(Resource, Default)]
+pub(crate) struct Session {
+    pub ticks: u64,
+    pub angle: f32,
+}
+pub(crate) fn plugin(app: &mut App) {
+    app.init_resource::<Session>()
+        .add_systems(Update, |mut session: ResMut<Session>| {
+            session.ticks += 1;
+            session.angle += 0.008;
+        })
+        .add_systems(Update, collect);
 }
 #[derive(Component)]
 pub(crate) struct Notes {
     pub text: String,
 }
-
-#[derive(Resource, Default)]
-struct DemoRequests(Vec<DemoRequest>);
-#[derive(Clone, Copy)]
-enum DemoRequest {
-    Controls,
-    Gallery,
-    Notes,
-    Cube,
-    ThemeEditor,
-    NewLayout,
-    DeleteLayout,
-    NewWorkspace,
-    DeleteWorkspace,
-}
-
-pub(crate) fn install(app: &mut App) {
-    app.init_resource::<DemoRequests>()
-        .add_systems(
-            PreUpdate,
-            sync_availability.before(bedtime_ui2::UiSystems::Draw),
-        )
-        .add_systems(
-            PreUpdate,
-            apply
-                .after(ContextCommandSystems::Dispatch)
-                .before(WorkbenchSystems::Apply),
-        );
-}
-
-pub(crate) fn setup(
-    world: &mut World,
-    surface: Entity,
-    menu: Entity,
-    light: Entity,
-    dark: Entity,
-) -> Entity {
-    let (home, split, reading, scratch, scratch_layout) = {
-        let mut w = Workbench::new(world);
-        let home = w.active_workspace();
-        let split = w.active_layout();
-        let reading = w.create_layout(home, "Reading").unwrap();
-        let scratch = w.create_workspace("Scratch", false);
-        w.activate_workspace(scratch).unwrap();
-        let scratch_layout = w.active_layout();
-        w.activate_workspace(home).unwrap();
-        (home, split, reading, scratch, scratch_layout)
-    };
-    world.get_mut::<Workspace>(home).unwrap().name = "Playground".into();
-    world.get_mut::<Layout>(split).unwrap().name = "Split".into();
-    world.insert_resource(DemoWorkbench {
-        drag_source: Rect::default(),
-        light,
-        dark,
-        home,
-        split,
-        reading,
-        scratch,
-    });
-    setup_menus(world);
-    let host = attach_surface(world, surface);
-    world.get_mut::<WorkbenchHost>(host).unwrap().menu = Some(menu);
-    let status_bar = world.get::<WorkbenchHost>(host).unwrap().status_bar();
-    register_view(world, surface, crate::viewport_demo::draw_overlay);
-    show_controls(world, split);
-    let gallery = add_gallery(world, split);
-    let cube = crate::viewport_demo::spawn(world, split);
-    Workbench::new(world)
-        .move_panel(cube, gallery, Some(SplitAxis::Horizontal))
-        .unwrap();
-    Workbench::new(world)
-        .resize_border(split, SplitAxis::Horizontal, 5000, [0, 7400], 5900, 1)
-        .unwrap();
-    Workbench::new(world)
-        .register_panel_type::<GalleryPanel, _>(gallery_factory)
-        .unwrap();
-    Workbench::new(world)
-        .register_panel_type::<NotesPanel, _>(notes_factory)
-        .unwrap();
-    Workbench::new(world)
-        .register_panel_type::<ControlsPanel, _>(controls_factory)
-        .unwrap();
-    Workbench::new(world)
-        .register_panel_type::<crate::theme_editor::ThemeEditor, _>(crate::theme_editor::factory)
-        .unwrap();
-    show_controls(world, reading);
-    add_gallery(world, reading);
-    show_controls(world, scratch_layout);
-    let area = Workbench::new(world)
-        .destination_area(scratch_layout)
-        .unwrap();
-    let notes = notes_factory(In(area), world).unwrap();
-    world.get_mut::<Panel>(notes).unwrap().title = "Scratch notes".into();
-    world.get_mut::<Notes>(notes).unwrap().text = "This is panel-local state. Switch workspaces and come back.\n\nFocus this panel to reveal its Notes menu.".into();
-    crate::status_demo::setup(world, status_bar);
-    gallery
-}
-
-#[derive(Component)]
-pub(crate) struct Controls;
-
-fn show_controls(world: &mut World, layout: Entity) {
-    let existing = world
-        .query_filtered::<(Entity, &InArea), With<Controls>>()
-        .iter(world)
-        .find_map(|(entity, owner)| {
-            (world.get::<InLayout>(owner.0).unwrap().0 == layout).then_some(entity)
-        });
-    if let Some(panel) = existing {
-        Workbench::new(world).focus_panel(panel).unwrap();
-        return;
-    }
-    let areas = world.get::<LayoutAreas>(layout).unwrap().entities();
-    let empty = areas
-        .iter()
-        .copied()
-        .find(|&a| areas.len() > 1 && panels_in_area(world, a).is_empty());
-    let area = empty.unwrap_or_else(|| {
-        let area = Workbench::new(world).destination_area(layout).unwrap();
-        let rect = world.get::<Area>(area).unwrap().rect();
-        let at = rect.min[1] + (rect.max[1] - rect.min[1]) * 74 / 100;
-        Workbench::new(world)
-            .split_area(area, SplitAxis::Vertical, at, [1, 1])
-            .unwrap()
-    });
-    controls_factory(In(area), world).unwrap();
-}
-
-fn add_gallery(world: &mut World, layout: Entity) -> Entity {
-    let context = world.resource::<DemoWorkbench>();
-    let (light, dark) = (context.light, context.dark);
-    let mut state = gallery::create_state(world, light, dark);
-    state.embedded = true;
-    let panel = register_panel(world, layout, "Widget gallery", gallery::draw_gallery).unwrap();
-    world.entity_mut(panel).insert((
-        state,
-        bedtime_ui2::IconSource::from(bedtime_ui2::BuiltinIcon::Folder),
-    ));
-    panel
-}
-
-fn draw_notes(mut frame: UiFrame, mut notes: Query<&mut Notes>) {
-    let mut notes = notes.get_mut(frame.view).unwrap();
-    let padding = frame.panel_settings.padding;
-    frame.scroll("notes", |mut frame| {
-        frame.padded(padding, |mut frame| {
-            frame.ui.heading("A workspace with its own panels");
-            frame
-                .ui
-                .weak("Layout switches retain instances; closing a panel retires it.");
-            frame.text_edit(
-                egui::TextEdit::multiline(&mut notes.text)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(18),
-            );
-        })
-    });
-}
-fn draw_controls(mut frame: UiFrame, world: &mut World) {
-    let active_workspace = Workbench::new(world).active_workspace();
-    let active_layout = Workbench::new(world).active_layout();
-    let workspaces: Vec<_> = world
-        .query::<(Entity, &Workspace)>()
-        .iter(world)
-        .map(|(e, w)| (e, w.name.clone()))
-        .collect();
-    let layouts: Vec<_> = world
-        .query::<(Entity, &Layout, &InWorkspace)>()
-        .iter(world)
-        .filter(|(_, _, w)| w.0 == active_workspace)
-        .map(|(e, l, _)| (e, l.name.clone()))
-        .collect();
-    let padding = frame.panel_settings.padding;
-    frame.scroll("controls", |mut frame| {
-        frame.padded(padding, |frame| {
-            frame.ui.horizontal_wrapped(|ui| {
-                bedtime_ui2::ComboBox::from_label("Workspace")
-                    .selected_text(&world.get::<Workspace>(active_workspace).unwrap().name)
-                    .width(140.0)
-                    .show_ui(ui, |ui| {
-                        for (entity, name) in &workspaces {
-                            if ui
-                                .selectable_label(*entity == active_workspace, name)
-                                .clicked()
-                            {
-                                world
-                                    .resource_mut::<WorkbenchRequests>()
-                                    .submit(WorkbenchRequest::ActivateWorkspace(*entity));
-                            }
-                        }
-                    });
-                bedtime_ui2::ComboBox::from_label("Layout")
-                    .selected_text(&world.get::<Layout>(active_layout).unwrap().name)
-                    .width(110.0)
-                    .show_ui(ui, |ui| {
-                        for (entity, name) in &layouts {
-                            if ui
-                                .selectable_label(*entity == active_layout, name)
-                                .clicked()
-                            {
-                                world
-                                    .resource_mut::<WorkbenchRequests>()
-                                    .submit(WorkbenchRequest::ActivateLayout(*entity));
-                            }
-                        }
-                    });
-            });
-            let mut settings = frame.panel_settings;
-            let settings_changed = frame
-                .ui
-                .horizontal_wrapped(|ui| {
-                    let root = world
-                        .query_filtered::<Entity, With<MenuBar>>()
-                        .iter(world)
-                        .next();
-                    if let Some(root) = root {
-                        let mut native = world.get::<NativeMenuBar>(root).is_some();
-                        let supported = world
-                            .get_resource::<NativeCapabilities>()
-                            .is_some_and(|c| c.native_menus);
-                        if ui
-                            .add_enabled(supported, egui::Checkbox::new(&mut native, "Native menu"))
-                            .changed()
-                        {
-                            if native {
-                                world.entity_mut(root).insert(NativeMenuBar);
-                            } else {
-                                world.entity_mut(root).remove::<NativeMenuBar>();
-                            }
-                        }
-                    }
-                    let mut blur = world.get::<WindowBlur>(frame.surface).is_some_and(|b| b.0);
-                    if ui
-                        .add_enabled(
-                            cfg!(target_os = "macos"),
-                            egui::Checkbox::new(&mut blur, "Blur"),
-                        )
-                        .changed()
-                    {
-                        world.entity_mut(frame.surface).insert(WindowBlur(blur));
-                    }
-                    let mut opacity = frame.theme.palette.background[3];
-                    if ui
-                        .add(egui::Slider::new(&mut opacity, 0.25..=1.0).text("Opacity"))
-                        .changed()
-                    {
-                        let context = world.resource::<DemoWorkbench>();
-                        let themes = [context.light, context.dark];
-                        for theme in themes {
-                            world
-                                .get_mut::<bedtime_ui2::Theme>(theme)
-                                .unwrap()
-                                .palette
-                                .background[3] = opacity;
-                        }
-                    }
-                    let debug_changed = ui
-                        .checkbox(&mut settings.debug, "Show corner targets")
-                        .changed();
-                    let size_changed = ui
-                        .add(
-                            egui::Slider::new(&mut settings.hit_size, 0.0..=64.0)
-                                .text("Corner size"),
-                        )
-                        .changed();
-                    let rounding_changed = ui
-                        .add(
-                            egui::DragValue::new(&mut settings.rounding)
-                                .prefix("Panel rounding ")
-                                .speed(0.25)
-                                .range(0.0..=64.0),
-                        )
-                        .changed();
-                    debug_changed || size_changed || rounding_changed
-                })
-                .inner;
-            let spacing_changed = frame
-                .ui
-                .horizontal(|ui| {
-                    ui.label("Panel padding");
-                    let x_changed = ui
-                        .add(
-                            egui::DragValue::new(&mut settings.padding[0])
-                                .prefix("X ")
-                                .speed(0.25)
-                                .range(0.0..=128.0),
-                        )
-                        .changed();
-                    let y_changed = ui
-                        .add(
-                            egui::DragValue::new(&mut settings.padding[1])
-                                .prefix("Y ")
-                                .speed(0.25)
-                                .range(0.0..=128.0),
-                        )
-                        .changed();
-                    let gap_changed = ui
-                        .add(
-                            egui::DragValue::new(&mut settings.panel_gap)
-                                .prefix("Panel gap ")
-                                .speed(0.25)
-                                .range(0.0..=64.0),
-                        )
-                        .changed();
-                    x_changed || y_changed || gap_changed
-                })
-                .inner;
-            if settings_changed || spacing_changed {
-                world.entity_mut(frame.surface).insert(settings);
-            }
-            frame.ui.horizontal_wrapped(|ui| {
-                for (label, request, enabled) in [
-                    ("New layout", DemoRequest::NewLayout, true),
-                    (
-                        "Delete layout",
-                        DemoRequest::DeleteLayout,
-                        layouts.len() > 1,
-                    ),
-                    ("Open gallery", DemoRequest::Gallery, true),
-                    ("Open 3D viewport", DemoRequest::Cube, true),
-                    ("Open notes", DemoRequest::Notes, true),
-                    ("Theme editor", DemoRequest::ThemeEditor, true),
-                    ("New workspace", DemoRequest::NewWorkspace, true),
-                    (
-                        "Delete workspace",
-                        DemoRequest::DeleteWorkspace,
-                        workspaces.len() > 1,
-                    ),
-                ] {
-                    if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
-                        world.resource_mut::<DemoRequests>().0.push(request);
-                    }
-                }
-                let response =
-                    ui.add(egui::Button::new("Drag notes").sense(egui::Sense::click_and_drag()));
-                world.resource_mut::<DemoWorkbench>().drag_source = Rect::from_corners(
-                    Vec2::new(response.rect.min.x, response.rect.min.y),
-                    Vec2::new(response.rect.max.x, response.rect.max.y),
-                );
-                if let Some(kind) = world
-                    .query::<(Entity, &PanelType)>()
-                    .iter(world)
-                    .find_map(|(e, p)| (p.key == NotesPanel::KEY).then_some(e))
-                {
-                    panel_drag_source(&response, kind, "Notes");
-                }
-            });
-            frame.ui.weak(concat!(
-                "Drag corners to split/join. Drag tabs to move or split. ",
-                "Focus Notes to reveal its menu."
-            ));
-        })
-    });
-}
-
-fn apply(world: &mut World) {
-    let requests = std::mem::take(&mut world.resource_mut::<DemoRequests>().0);
-    for request in requests {
-        let workspace = Workbench::new(world).active_workspace();
-        let layout = Workbench::new(world).active_layout();
-        match request {
-            DemoRequest::Controls => show_controls(world, layout),
-            DemoRequest::Gallery => {
-                let panel = world
-                    .query_filtered::<(Entity, &InArea), With<gallery::GalleryState>>()
-                    .iter(world)
-                    .find_map(|(e, l)| {
-                        (world.get::<InLayout>(l.0).unwrap().0 == layout).then_some(e)
-                    });
-                if let Some(panel) = panel {
-                    Workbench::new(world).focus_panel(panel).unwrap();
-                } else {
-                    add_gallery(world, layout);
-                }
-            }
-            DemoRequest::Notes => {
-                let area = Workbench::new(world).destination_area(layout).unwrap();
-                notes_factory(In(area), world).unwrap();
-            }
-            DemoRequest::Cube => crate::viewport_demo::show(world),
-            DemoRequest::ThemeEditor => {
-                let panel = world
-                    .query_filtered::<(Entity, &InArea), With<crate::theme_editor::ThemeEditor>>()
-                    .iter(world)
-                    .find_map(|(entity, area)| {
-                        (world.get::<InLayout>(area.0).unwrap().0 == layout).then_some(entity)
-                    });
-                if let Some(panel) = panel {
-                    Workbench::new(world).focus_panel(panel).unwrap();
-                } else {
-                    let area = Workbench::new(world).destination_area(layout).unwrap();
-                    crate::theme_editor::factory(In(area), world).unwrap();
-                }
-            }
-            DemoRequest::NewLayout => {
-                let n = world.query::<&Layout>().iter(world).count();
-                let layout = Workbench::new(world)
-                    .create_layout(workspace, format!("Layout {}", n + 1))
-                    .unwrap();
-                Workbench::new(world).activate_layout(layout).unwrap();
-                show_controls(world, layout);
-            }
-            DemoRequest::DeleteLayout => {
-                Workbench::new(world).delete_layout(layout).unwrap();
-            }
-            DemoRequest::NewWorkspace => {
-                let n = world.query::<&Workspace>().iter(world).count();
-                let workspace =
-                    Workbench::new(world).create_workspace(format!("Workspace {}", n + 1), false);
-                Workbench::new(world).activate_workspace(workspace).unwrap();
-                let layout = Workbench::new(world).active_layout();
-                show_controls(world, layout);
-            }
-            DemoRequest::DeleteWorkspace => {
-                let replacement = world
-                    .query_filtered::<Entity, With<Workspace>>()
-                    .iter(world)
-                    .find(|&e| e != workspace)
-                    .unwrap();
-                let mut w = Workbench::new(world);
-                w.activate_workspace(replacement).unwrap();
-                w.delete_workspace(workspace).unwrap();
-            }
-        }
-    }
-}
-
-struct OpenControls;
-impl ContextCommand for OpenControls {
-    const KEY: &'static str = "bed2.open_controls";
-    const LABEL: &'static str = "Open Controls";
-}
-struct OpenGallery;
-impl ContextCommand for OpenGallery {
-    const KEY: &'static str = "bed2.open_gallery";
-    const LABEL: &'static str = "Open Widget Gallery";
-}
-struct OpenNotes;
-impl ContextCommand for OpenNotes {
-    const KEY: &'static str = "bed2.open_notes";
-    const LABEL: &'static str = "Open Notes";
-}
-struct OpenThemeEditor;
-impl ContextCommand for OpenThemeEditor {
-    const KEY: &'static str = "bed2.open_theme_editor";
-    const LABEL: &'static str = "Open Theme Editor";
-}
-struct NewLayout;
-impl ContextCommand for NewLayout {
-    const KEY: &'static str = "bed2.new_layout";
-    const LABEL: &'static str = "New Layout";
-}
-struct DeleteLayout;
-impl ContextCommand for DeleteLayout {
-    const KEY: &'static str = "bed2.delete_layout";
-    const LABEL: &'static str = "Delete Layout";
-}
-struct NewWorkspace;
-impl ContextCommand for NewWorkspace {
-    const KEY: &'static str = "bed2.new_workspace";
-    const LABEL: &'static str = "New Workspace";
-}
-struct DeleteWorkspace;
-impl ContextCommand for DeleteWorkspace {
-    const KEY: &'static str = "bed2.delete_workspace";
-    const LABEL: &'static str = "Delete Workspace";
-}
-struct CopyNotes;
-impl ContextCommand for CopyNotes {
-    const KEY: &'static str = "bed2.copy_notes";
-    const LABEL: &'static str = "Copy Note Text";
-}
-struct ClearNotes;
-impl ContextCommand for ClearNotes {
-    const KEY: &'static str = "bed2.clear_notes";
-    const LABEL: &'static str = "Clear Note Text";
-}
-struct InsertSample;
-impl ContextCommand for InsertSample {
-    const KEY: &'static str = "bed2.insert_sample";
-    const LABEL: &'static str = "Insert Sample Note";
-}
-
-fn register_request<C: ContextCommand>(world: &mut World, request: DemoRequest) {
-    Workbench::new(world)
-        .register_handler::<C, _>(
-            move |_: In<ContextCommandInvocation>,
-                  mut requests: ResMut<DemoRequests>|
-                  -> ContextCommandResult {
-                requests.0.push(request);
-                Ok(())
-            },
-        )
-        .unwrap();
-}
-
-fn setup_menus(world: &mut World) {
-    register_request::<OpenControls>(world, DemoRequest::Controls);
-    register_request::<OpenGallery>(world, DemoRequest::Gallery);
-    register_request::<OpenNotes>(world, DemoRequest::Notes);
-    register_request::<OpenThemeEditor>(world, DemoRequest::ThemeEditor);
-    register_request::<NewLayout>(world, DemoRequest::NewLayout);
-    register_request::<DeleteLayout>(world, DemoRequest::DeleteLayout);
-    register_request::<NewWorkspace>(world, DemoRequest::NewWorkspace);
-    register_request::<DeleteWorkspace>(world, DemoRequest::DeleteWorkspace);
-    world.spawn(Binding::new::<OpenNotes>(KeyChord::new(
-        Modifiers::PRIMARY,
-        KeyCode::KeyN,
-    )));
-    world.spawn(Binding::new::<NewLayout>(KeyChord::new(
-        Modifiers::PRIMARY | Modifiers::SHIFT,
-        KeyCode::KeyN,
-    )));
-    let root = world
-        .query_filtered::<Entity, With<MenuBar>>()
-        .single(world)
-        .unwrap();
-    for (label, items) in [
-        (
-            "View",
-            vec![
-                (OpenControls::LABEL, ContextCommandId::of::<OpenControls>()),
-                (OpenGallery::LABEL, ContextCommandId::of::<OpenGallery>()),
-                (OpenNotes::LABEL, ContextCommandId::of::<OpenNotes>()),
-                (
-                    OpenThemeEditor::LABEL,
-                    ContextCommandId::of::<OpenThemeEditor>(),
-                ),
-                (
-                    crate::OpenViewport::LABEL,
-                    ContextCommandId::of::<crate::OpenViewport>(),
-                ),
-            ],
-        ),
-        (
-            "Layout",
-            vec![
-                (NewLayout::LABEL, ContextCommandId::of::<NewLayout>()),
-                (DeleteLayout::LABEL, ContextCommandId::of::<DeleteLayout>()),
-            ],
-        ),
-        (
-            "Workspace",
-            vec![
-                (NewWorkspace::LABEL, ContextCommandId::of::<NewWorkspace>()),
-                (
-                    DeleteWorkspace::LABEL,
-                    ContextCommandId::of::<DeleteWorkspace>(),
-                ),
-            ],
-        ),
-    ] {
-        let menu = world
-            .spawn((
-                Menu {
-                    label: label.into(),
-                },
-                InMenu(root),
-            ))
-            .id();
-        for (label, command) in items {
-            world.spawn((MenuItem::new(label), InMenu(menu), Invokes(command)));
-        }
-    }
-}
-
-fn sync_availability(world: &mut World) {
-    // The demo is initialized in Startup, before the first UI pass.
-    let workspace = Workbench::new(world).active_workspace();
-    let layouts = world
-        .query::<&InWorkspace>()
-        .iter(world)
-        .filter(|w| w.0 == workspace)
-        .count();
-    let workspaces = world.query::<&Workspace>().iter(world).count();
-    for (command, enabled) in [
-        (ContextCommandId::of::<DeleteLayout>(), layouts > 1),
-        (ContextCommandId::of::<DeleteWorkspace>(), workspaces > 1),
-    ] {
-        let handler = Workbench::new(world)
-            .handler(command, None)
-            .expect("Demo handler");
-        world.get_mut::<ActionEnabled>(handler).unwrap().0 = enabled;
-    }
-}
-
-struct ControlsPanel;
-impl PanelDefinition for ControlsPanel {
-    const KEY: &'static str = "bed2.controls";
-    const LABEL: &'static str = "Controls";
-}
-struct GalleryPanel;
-impl PanelDefinition for GalleryPanel {
-    const KEY: &'static str = "bed2.gallery";
-    const LABEL: &'static str = "Widget gallery";
-}
-struct NotesPanel;
-impl PanelDefinition for NotesPanel {
+impl PanelDefinition for Notes {
     const KEY: &'static str = "bed2.notes";
     const LABEL: &'static str = "Notes";
 }
-fn gallery_factory(In(area): In<Entity>, world: &mut World) -> Result<Entity, String> {
-    let context = world.resource::<DemoWorkbench>();
-    let (light, dark) = (context.light, context.dark);
-    let mut state = gallery::create_state(world, light, dark);
-    state.embedded = true;
-    let panel = register_panel_in_area(world, area, "Widget gallery", gallery::draw_gallery)?;
-    world.entity_mut(panel).insert((
-        state,
-        bedtime_ui2::IconSource::from(bedtime_ui2::BuiltinIcon::Folder),
-    ));
-    Ok(panel)
+#[derive(Component, Default)]
+pub(crate) struct Jobs {
+    task: Option<WorkspaceTask<u64>>,
+    process: Option<WorkspaceProcess>,
+    pub output: String,
+    input: String,
+    result: String,
+}
+impl PanelDefinition for Jobs {
+    const KEY: &'static str = "bed2.jobs";
+    const LABEL: &'static str = "Background work";
+}
+pub(crate) fn runtime(
+    name: &str,
+    image: Handle<Image>,
+    tools: crate::tool_panels::PanelTools,
+) -> WorkspaceRuntime {
+    let mut runtime = WorkspaceRuntime::new(name);
+    runtime.add_plugins(plugin);
+    let world = runtime.world_mut();
+    crate::tool_panels::install(world, tools);
+    let mut w = Workbench::new(world);
+    w.register_panel_type::<Notes, _>(notes_factory).unwrap();
+    w.register_panel_type::<Jobs, _>(jobs_factory).unwrap();
+    let layout = w.active_layout();
+    let area = w.destination_area(layout).unwrap();
+    let notes = notes_factory(In(area), world).unwrap();
+    world.get_mut::<Notes>(notes).unwrap().text = format!(
+        "Notes for {name}\n\nEdit this text, switch workspaces, and return.\nEach workspace has its own entities, resources and systems."
+    );
+    let jobs = jobs_factory(In(area), world).unwrap();
+    Workbench::new(world)
+        .move_panel(jobs, notes, Some(SplitAxis::Horizontal))
+        .unwrap();
+    let viewport = crate::viewport_demo::spawn(world, layout, image);
+    Workbench::new(world)
+        .move_panel(viewport, jobs, Some(SplitAxis::Vertical))
+        .unwrap();
+    let reading = Workbench::new(world).create_layout("Reading").unwrap();
+    let area = Workbench::new(world).destination_area(reading).unwrap();
+    notes_factory(In(area), world).unwrap();
+    setup_menu(world);
+    crate::status_demo::setup(world);
+    Workbench::new(world).focus_panel(notes).unwrap();
+    runtime
 }
 fn notes_factory(In(area): In<Entity>, world: &mut World) -> Result<Entity, String> {
     let panel = register_panel_in_area(world, area, "Notes", draw_notes)?;
     world.entity_mut(panel).insert(Notes {
-        text: "New panel. Drag its tab or split its area.".into(),
+        text: String::new(),
     });
-    Workbench::new(world).register_panel_handler::<CopyNotes, _>(panel, copy_notes)?;
-    Workbench::new(world).register_panel_handler::<ClearNotes, _>(panel, clear_notes)?;
-    Workbench::new(world).register_panel_handler::<InsertSample, _>(panel, insert_sample)?;
-    world.spawn((
-        Binding::new::<CopyNotes>(KeyChord::new(
-            Modifiers::PRIMARY | Modifiers::SHIFT,
-            KeyCode::KeyC,
-        )),
-        InPanel(panel),
-    ));
-    let root = world
-        .query_filtered::<Entity, With<MenuBar>>()
-        .single(world)
+    Ok(panel)
+}
+fn jobs_factory(In(area): In<Entity>, world: &mut World) -> Result<Entity, String> {
+    let panel = register_panel_in_area(world, area, "Background work", draw_jobs)?;
+    world.entity_mut(panel).insert(Jobs::default());
+    Ok(panel)
+}
+fn draw_notes(mut frame: UiFrame, mut notes: Query<&mut Notes>) {
+    let mut notes = notes.get_mut(frame.view).unwrap();
+    let padding = frame.panel_settings.padding;
+    frame.padded(padding, |mut frame| {
+        frame.ui.heading("Workspace notes");
+        frame.text_edit(
+            egui::TextEdit::multiline(&mut notes.text)
+                .desired_width(f32::INFINITY)
+                .desired_rows(22),
+        );
+    });
+}
+
+fn draw_jobs(mut frame: UiFrame, mut jobs: Query<&mut Jobs>, mut work: ResMut<WorkspaceWork>) {
+    let panel = frame.view;
+    let mut jobs = jobs.get_mut(panel).unwrap();
+    let padding = frame.panel_settings.padding;
+    frame.padded(padding, |mut frame| {
+        frame.ui.heading("Owned background work");
+        frame.ui.label("Work continues while this workspace is inactive. Closing this panel cancels its work.");
+        frame.ui.horizontal(|ui| {
+            if ui.button("Run 2-second task").clicked() {
+                if let Some(task) = &jobs.task { task.cancel(); }
+                jobs.result = "Working…".into();
+                match work.spawn_task(Some(panel), "Example calculation", |cancel| {
+                    if cancel.wait(Duration::from_secs(2)) { 0 } else { 42 }
+                }) {
+                    Ok(task) => jobs.task = Some(task), Err(error) => jobs.result = error,
+                }
+            }
+            if ui.button("Cancel task").clicked() {
+                if let Some(task) = &jobs.task { task.cancel(); }
+            }
+        });
+        frame.ui.label(&jobs.result);
+        frame.ui.separator();
+        frame.ui.horizontal(|ui| {
+            if ui.button("Start process").clicked() {
+                if let Some(process) = &jobs.process { process.cancel(); }
+                #[cfg(unix)]
+                let mut spec = ProcessSpec::new("/bin/sh");
+                #[cfg(unix)]
+                { spec.arguments = ["-c", "printf 'Process ready. Type a line below.\\n'; while IFS= read -r line; do printf 'echo: %s\\n' \"$line\"; done"].map(Into::into).to_vec(); }
+                #[cfg(windows)]
+                let mut spec = ProcessSpec::new("cmd.exe");
+                #[cfg(windows)]
+                { spec.arguments = ["/Q"].map(Into::into).to_vec(); }
+                match work.spawn_process(Some(panel), "Demo pipe process", spec) {
+                    Ok(process) => { jobs.output.clear(); jobs.process = Some(process); },
+                    Err(error) => jobs.output.push_str(&error),
+                }
+            }
+            if ui.button("Stop process").clicked() {
+                if let Some(process) = &jobs.process { process.cancel(); }
+            }
+        });
+        if let Some(process) = &jobs.process { frame.ui.weak(format!("PID {} · {:?}", process.process_id, process.status())); }
+        frame.ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut jobs.input);
+            if ui.button("Send").clicked() {
+                if let Some(process) = &jobs.process {
+                    if let Err(error) = process.write(format!("{}\n", jobs.input).as_bytes()) { jobs.output.push_str(&format!("{error}\n")); }
+                }
+                jobs.input.clear();
+            }
+        });
+        frame.ui.weak("This example uses pipes. A terminal plugin would supply a PTY backend.");
+        frame.scroll("process-output", |frame| { frame.ui.monospace(&jobs.output); });
+    });
+}
+fn collect(mut jobs: Query<&mut Jobs>) {
+    for mut jobs in &mut jobs {
+        if let Some(task) = &jobs.task {
+            if let Ok(value) = task.try_recv() {
+                jobs.result = format!("Result: {value}");
+                jobs.task = None;
+            } else if task.status() != WorkStatus::Running {
+                jobs.result = format!("Task: {:?}", task.status());
+            }
+        }
+        let output = jobs
+            .process
+            .as_ref()
+            .map(|process| process.drain_output())
+            .unwrap_or_default();
+        for chunk in output {
+            jobs.output.push_str(&String::from_utf8_lossy(&chunk.bytes));
+        }
+        if jobs.output.len() > 32_768 {
+            let mut start = jobs.output.len() - 16_384;
+            while !jobs.output.is_char_boundary(start) {
+                start += 1;
+            }
+            jobs.output.drain(..start);
+        }
+    }
+}
+struct Quit;
+impl ContextCommand for Quit {
+    const KEY: &'static str = "bed2.quit";
+    const LABEL: &'static str = "Quit bEd 2";
+}
+fn setup_menu(world: &mut World) {
+    Workbench::new(world)
+        .register_handler::<Quit, _>(
+            |_: In<ContextCommandInvocation>,
+             mut close: MessageWriter<CloseRequested>|
+             -> ContextCommandResult {
+                close.write(CloseRequested { window: None });
+                Ok(())
+            },
+        )
         .unwrap();
+    world.spawn(Binding::new::<Quit>(KeyChord::new(
+        Modifiers::PRIMARY,
+        KeyCode::KeyQ,
+    )));
+    let root = world.spawn(MenuBar).id();
+    if !std::env::args().any(|arg| arg == "--egui-menu" || arg == "--compose-workbench") {
+        world.entity_mut(root).insert(NativeMenuBar);
+    }
     let menu = world
         .spawn((
             Menu {
-                label: "Notes".into(),
+                label: "bEd 2".into(),
             },
             InMenu(root),
-            InPanel(panel),
         ))
         .id();
     world.spawn((
-        MenuItem::new(CopyNotes::LABEL),
+        MenuItem::new(Quit::LABEL),
         InMenu(menu),
-        Invokes::of::<CopyNotes>(),
+        Invokes::of::<Quit>(),
     ));
-    world.spawn((MenuSeparator, InMenu(menu)));
-    world.spawn((
-        MenuItem::new(InsertSample::LABEL),
-        InMenu(menu),
-        Invokes::of::<InsertSample>(),
+    Workbench::new(world).set_menu(Some(root)).unwrap();
+}
+/// Host controls deliberately select other workspace worlds through the explicit API.
+pub(crate) fn draw_controls(frame: UiFrame, host: &mut World) {
+    crate::tool_panels::sync(host);
+    let workspaces = Workspaces::new(host).list();
+    let active = Workspaces::new(host).active();
+    let mut action = None;
+    let mut create = false;
+    let mut background = None;
+    let mut layout_action = None;
+    let (current, layouts, name, ticks) = {
+        let mut w = Workbench::new(host);
+        let current = w.active_layout();
+        let name = w.world().resource::<Workspace>().name.clone();
+        let ticks = w.world().resource::<Session>().ticks;
+        let layouts = w
+            .world_mut()
+            .query::<(Entity, &Layout)>()
+            .iter(w.world())
+            .map(|(id, l)| (id, l.name.clone()))
+            .collect::<Vec<_>>();
+        (current, layouts, name, ticks)
+    };
+    let mut ui = frame
+        .ui
+        .new_child(egui::UiBuilder::new().id_salt("workspace-controls"));
+    let background_shape = ui.painter().add(egui::Shape::Noop);
+    let inset = host
+        .get::<WindowTitlebarInset>(frame.surface)
+        .map_or(0.0, |inset| inset.0);
+    ui.add_space(inset / frame.ui.ctx().zoom_factor());
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::same(12))
+        .show(&mut ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.heading("Workbench");
+                bedtime_ui2::ComboBox::from_label("Workspace")
+                    .selected_text(&name)
+                    .width(140.0)
+                    .show_ui(ui, |ui| {
+                        for workspace in workspaces.iter().filter(|w| !w.closing) {
+                            if ui
+                                .selectable_label(workspace.id == active, &workspace.name)
+                                .clicked()
+                            {
+                                action = Some(WorkspaceRequest::Activate(workspace.id));
+                            }
+                        }
+                    });
+                bedtime_ui2::ComboBox::from_label("Layout")
+                    .selected_text(
+                        layouts
+                            .iter()
+                            .find(|(id, _)| *id == current)
+                            .map(|(_, n)| n.as_str())
+                            .unwrap(),
+                    )
+                    .show_ui(ui, |ui| {
+                        for (id, name) in &layouts {
+                            if ui.selectable_label(*id == current, name).clicked() {
+                                layout_action = Some(*id);
+                            }
+                        }
+                    });
+                create = ui.button("New workspace").clicked();
+                let replacement = workspaces
+                    .iter()
+                    .find(|w| w.id != active && !w.closing)
+                    .map(|w| w.id);
+                if ui
+                    .add_enabled(replacement.is_some(), egui::Button::new("Close workspace"))
+                    .clicked()
+                {
+                    action = Some(WorkspaceRequest::Close {
+                        workspace: active,
+                        replacement,
+                    });
+                }
+                let mut enabled = workspaces
+                    .iter()
+                    .find(|w| w.active)
+                    .unwrap()
+                    .background_updates;
+                if ui.checkbox(&mut enabled, "Update in background").changed() {
+                    background = Some(enabled);
+                }
+                ui.weak(format!("{ticks} workspace updates"));
+            });
+            ui.horizontal_wrapped(|ui| {
+                for workspace in workspaces.iter().filter(|w| w.id != active) {
+                    let state = if workspace.closing {
+                        "closing"
+                    } else if workspace.background_updates {
+                        "running"
+                    } else {
+                        "paused"
+                    };
+                    ui.weak(format!("{}: {state}", workspace.name));
+                }
+                if ui.button("Widget gallery").clicked() {
+                    crate::tool_panels::open::<crate::tool_panels::Gallery>(host);
+                }
+                if ui.button("Theme editor").clicked() {
+                    crate::tool_panels::open::<crate::tool_panels::ThemeEditor>(host);
+                }
+            });
+        });
+    let bottom = ui.min_rect().bottom() + 6.0;
+    ui.painter().set(
+        background_shape,
+        egui::Shape::rect_filled(
+            egui::Rect::from_min_max(
+                frame.ui.max_rect().min,
+                egui::pos2(frame.ui.max_rect().right(), bottom),
+            ),
+            0.0,
+            bedtime_ui2::theme::color(frame.theme.palette.background),
+        ),
+    );
+    let host_entity = host.resource::<DemoWorkbench>().host;
+    let available = frame.ui.max_rect();
+    host.get_mut::<WorkbenchHost>(host_entity).unwrap().bounds = Some(Rect::from_corners(
+        Vec2::new(available.left(), bottom),
+        Vec2::new(available.right(), available.bottom()),
     ));
-    world.spawn((
-        MenuItem::new(ClearNotes::LABEL),
-        InMenu(menu),
-        Invokes::of::<ClearNotes>(),
-    ));
-    Ok(panel)
-}
-fn controls_factory(In(area): In<Entity>, world: &mut World) -> Result<Entity, String> {
-    let panel = register_panel_in_area(world, area, "Controls", draw_controls)?;
-    world.entity_mut(panel).insert(Controls);
-    Ok(panel)
-}
-fn copy_notes(
-    In(invocation): In<ContextCommandInvocation>,
-    notes: Query<&Notes>,
-    mut clipboard: ResMut<Clipboard>,
-) -> ContextCommandResult {
-    let notes = notes
-        .get(invocation.panel.expect("Panel handler"))
-        .map_err(|e| e.to_string())?;
-    clipboard.write_text(&notes.text).map_err(|e| e.to_string())
-}
-fn clear_notes(
-    In(invocation): In<ContextCommandInvocation>,
-    mut notes: Query<&mut Notes>,
-) -> ContextCommandResult {
-    notes
-        .get_mut(invocation.panel.expect("Panel handler"))
-        .map_err(|e| e.to_string())?
-        .text
-        .clear();
-    Ok(())
-}
-fn insert_sample(
-    In(invocation): In<ContextCommandInvocation>,
-    mut notes: Query<&mut Notes>,
-) -> ContextCommandResult {
-    let mut notes = notes
-        .get_mut(invocation.panel.expect("Panel handler"))
-        .map_err(|e| e.to_string())?;
-    notes.text.push_str("\nA little room for a new idea.");
-    Ok(())
+    if let Some(layout) = layout_action {
+        Workbench::new(host).activate_layout(layout).unwrap();
+    }
+    if let Some(enabled) = background {
+        Workspaces::new(host)
+            .set_background_updates(active, enabled)
+            .unwrap();
+    }
+    if let Some(action) = action {
+        host.resource_mut::<WorkspaceRequests>().0.push_back(action);
+    }
+    if create {
+        let id = crate::open_workspace(host, &format!("Workspace {}", workspaces.len() + 1));
+        host.resource_mut::<WorkspaceRequests>()
+            .0
+            .push_back(WorkspaceRequest::Activate(id));
+    }
 }

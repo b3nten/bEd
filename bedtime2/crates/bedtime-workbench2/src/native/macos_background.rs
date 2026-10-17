@@ -22,16 +22,19 @@ define_class!(
         fn hit_test(&self,_point:NSPoint)->*mut NSView {std::ptr::null_mut()}
     }
 );
+
 struct Background {
     content: Retained<NSView>,
     material: Retained<Material>,
     applied: Option<([f32; 4], bool)>,
 }
+
 impl Drop for Background {
     fn drop(&mut self) {
         self.material.removeFromSuperview();
     }
 }
+
 #[derive(Default)]
 pub(super) struct Backgrounds(HashMap<Entity, Background>);
 

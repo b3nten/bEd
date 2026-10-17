@@ -2,7 +2,7 @@
 use crate::*;
 use bedtime_clipboard2::Clipboard;
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct GalleryState {
     pub visible: bool,
     /// Draw inside an application/workbench-owned content window.
@@ -77,10 +77,43 @@ pub fn draw_gallery(
     mut clipboard: ResMut<Clipboard>,
 ) {
     let mut state = states.get_mut(frame.view).expect("Gallery state");
-    if !state.visible {
-        return;
-    }
     let (mut policy, diag, status) = surfaces.get_mut(frame.surface).unwrap();
+    let surface = frame.surface;
+    for action in draw_contents(frame, &mut state, &mut policy, diag, status, &mut clipboard) {
+        match action {
+            GalleryAction::Theme(theme) => {
+                commands.entity(surface).insert(UsesTheme(theme));
+            }
+            GalleryAction::Icons(Some(icons)) => {
+                commands.entity(surface).insert(UiIcons(icons));
+            }
+            GalleryAction::Icons(None) => {
+                commands.entity(surface).remove::<UiIcons>();
+            }
+        }
+    }
+}
+
+/// Changes to the hosting surface, applied by its owner after drawing.
+pub enum GalleryAction {
+    Theme(Entity),
+    Icons(Option<Handle<IconSet>>),
+}
+
+/// Render with explicitly supplied surface services, including across ECS worlds.
+/// Theme entities in returned actions belong to the host that created the state.
+pub fn draw_contents(
+    frame: UiFrame,
+    state: &mut GalleryState,
+    policy: &mut MotionPolicy,
+    diag: &UiDiagnostics,
+    status: &UiIconStatus,
+    clipboard: &mut Clipboard,
+) -> Vec<GalleryAction> {
+    if !state.visible {
+        return Vec::new();
+    }
+    let mut actions = Vec::new();
     let embedded = state.embedded;
     let mut draw = |mut frame: UiFrame| {
         state.observations.clear();
@@ -105,13 +138,13 @@ pub fn draw_gallery(
                 state.observations.insert("light", light.rect);
                 f.tooltip(&light, "Light / Everforest Medium");
                 if light.clicked() {
-                    commands.entity(f.surface).insert(UsesTheme(state.light));
+                    actions.push(GalleryAction::Theme(state.light));
                 }
                 let dark = f.icon_button(BuiltinIcon::Moon);
                 state.observations.insert("dark", dark.rect);
                 f.tooltip(&dark, "Dark / Everforest Medium");
                 if dark.clicked() {
-                    commands.entity(f.surface).insert(UsesTheme(state.dark));
+                    actions.push(GalleryAction::Theme(state.dark));
                 }
                 f.ui.checkbox(&mut policy.enabled, "Motion");
                 f.ui.add(egui::Slider::new(&mut policy.seconds, 0.08..=0.8).text("seconds"));
@@ -235,12 +268,10 @@ pub fn draw_gallery(
                 .add(egui::Slider::new(&mut state.icon_size, 16.0..=64.0).text("Icon size"));
             frame.ui.horizontal(|ui| {
                 if ui.button("Bundled pack").clicked() {
-                    commands.entity(frame.surface).remove::<UiIcons>();
+                    actions.push(GalleryAction::Icons(None));
                 }
                 if ui.button("Custom pack").clicked() {
-                    commands
-                        .entity(frame.surface)
-                        .insert(UiIcons(state.custom_icons.clone()));
+                    actions.push(GalleryAction::Icons(Some(state.custom_icons.clone())));
                 }
             });
             if let Some(error) = &status.error {
@@ -279,4 +310,5 @@ pub fn draw_gallery(
             .default_size(egui::vec2(1080.0, 820.0))
             .show(&ctx, |ui| draw(frame.for_view(frame.view, ui)));
     }
+    actions
 }

@@ -3,9 +3,13 @@ mod commands;
 mod geometry;
 mod layout;
 mod menus;
+mod work;
+mod workspaces;
 pub use commands::*;
 pub use layout::*;
 pub use menus::*;
+pub use work::*;
+pub use workspaces::*;
 #[cfg(feature = "native")]
 mod native;
 #[cfg(feature = "clipboard")]
@@ -27,8 +31,8 @@ pub use bedtime_ui2::PanelSettings;
 use bevy::{app::PluginGroupBuilder, prelude::*};
 #[cfg(feature = "ui")]
 pub use frontend::{
-    PanelTypePayload, WorkbenchHost, WorkbenchPresentation, attach_surface, panel_drag_source,
-    register_panel, register_panel_in_area,
+    PanelTypePayload, WorkbenchHost, WorkbenchPresentation, WorkspaceUi, WorkspaceViewport,
+    attach_surface, panel_drag_source, register_panel, register_panel_in_area,
 };
 #[cfg(feature = "ui")]
 pub use input::{PanelInput, register_panel_input};
@@ -41,14 +45,12 @@ pub struct CloseRequested {
     pub window: Option<Entity>,
 }
 
-/// Headless contextual commands, menus, workspace/layout and panel ownership. No renderer,
-/// native services or clipboard is installed by this plugin.
+/// Host registry, workspace scheduling and shutdown. Creates one active Untitled
+/// runtime; installs no renderer, native services or clipboard.
 pub struct WorkbenchCorePlugin;
 impl Plugin for WorkbenchCorePlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<CloseRequested>();
-        commands::install(app);
-        layout::install(app);
+        workspaces::install(app);
     }
 }
 
@@ -69,19 +71,46 @@ impl PluginGroup for WorkbenchPlugin {
     }
 }
 
-/// Controlled registration and transitions in the existing ECS world.
+/// Controlled operations in one selected workspace world. A host selects its
+/// active world once; a workspace system keeps its own local world.
 pub struct Workbench<'w> {
     pub(crate) world: &'w mut World,
 }
+
 impl<'w> Workbench<'w> {
     pub fn new(world: &'w mut World) -> Self {
+        let world = workspaces::selected_world(world, None).expect("Active workspace");
         assert!(
             world.contains_resource::<ContextCommandRequests>(),
             "Install WorkbenchCorePlugin before using workbench"
         );
         Self { world }
     }
+
+    pub fn with_workspace(world: &'w mut World, workspace: WorkspaceId) -> Result<Self, String> {
+        Ok(Self {
+            world: workspaces::selected_world(world, Some(workspace))?,
+        })
+    }
+
+    /// The selected world remains fixed for the lifetime of this borrow.
+    pub fn world(&self) -> &World {
+        self.world
+    }
+
+    pub fn world_mut(&mut self) -> &mut World {
+        self.world
+    }
+
+    pub fn workspace_id(&self) -> WorkspaceId {
+        self.world.resource::<WorkspaceIdentity>().id()
+    }
+
+    pub fn work(&mut self) -> Mut<'_, WorkspaceWork> {
+        self.world.resource_mut::<WorkspaceWork>()
+    }
 }
+
 fn valid_key(key: &str) -> bool {
     let mut count = 0;
     let valid = key.split('.').all(|part| {
@@ -93,5 +122,6 @@ fn valid_key(key: &str) -> bool {
     });
     valid && count >= 2
 }
+
 #[cfg(test)]
 mod tests;

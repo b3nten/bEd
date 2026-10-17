@@ -23,31 +23,18 @@ struct Calls(Vec<ContextCommandInvocation>);
 
 fn app() -> App {
     let mut app = App::new();
-    app.add_plugins(WorkbenchCorePlugin)
-        .init_resource::<Calls>();
+    app.add_plugins(WorkspacePlugin).init_resource::<Calls>();
     app
 }
 
 #[test]
-fn workbench_always_has_a_workspace_and_a_layout() {
+fn workbench_always_has_a_layout() {
     let mut app = app();
-    let workspace = Workbench::new(app.world_mut()).active_workspace();
     let layout = Workbench::new(app.world_mut()).active_layout();
-    assert_eq!(app.world().get::<InWorkspace>(layout).unwrap().0, workspace);
-    assert!(
-        !app.world()
-            .get::<Workspace>(workspace)
-            .unwrap()
-            .settings_enabled
-    );
+    assert_eq!(app.world().resource::<Workspace>().active_layout(), layout);
     assert!(
         Workbench::new(app.world_mut())
             .delete_layout(layout)
-            .is_err()
-    );
-    assert!(
-        Workbench::new(app.world_mut())
-            .delete_workspace(workspace)
             .is_err()
     );
 }
@@ -56,21 +43,16 @@ fn workbench_always_has_a_workspace_and_a_layout() {
 struct Draft(String);
 
 #[test]
-fn switching_layouts_and_workspaces_retains_panel_instances_and_their_state() {
+fn switching_layouts_retains_panel_instances_and_their_state() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
-    let home = w.active_workspace();
     let first = w.active_layout();
     let panel = w.create_panel(first, "Notes").unwrap();
-    let second = w.create_layout(home, "Other").unwrap();
-    let away = w.create_workspace("Away", true);
+    let second = w.create_layout("Other").unwrap();
     w.world
         .entity_mut(panel)
         .insert(Draft("keep this draft".into()));
     w.activate_layout(second).unwrap();
-    w.activate_workspace(away).unwrap();
-    assert!(w.activate_layout(first).is_err());
-    w.activate_workspace(home).unwrap();
     assert_eq!(w.active_layout(), second);
     w.activate_layout(first).unwrap();
     assert_eq!(
@@ -108,28 +90,21 @@ fn panels_can_split_regroup_and_close_without_retiring_other_panels() {
 fn deletion_retires_owned_panels_and_selects_a_surviving_layout() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
-    let home = w.active_workspace();
     let first = w.active_layout();
     let panel = w.create_panel(first, "Disposable").unwrap();
-    let second = w.create_layout(home, "Survives").unwrap();
+    let second = w.create_layout("Survives").unwrap();
     w.delete_layout(first).unwrap();
     assert_eq!(w.active_layout(), second);
     assert!(w.world.get_entity(panel).is_err());
-    let away = w.create_workspace("Away", false);
-    w.activate_workspace(away).unwrap();
-    w.delete_workspace(home).unwrap();
-    assert!(w.world.get_entity(second).is_err());
-    assert_eq!(w.active_workspace(), away);
 }
 
 #[test]
 fn rejected_moves_preserve_layouts_and_stale_requests_do_not_target_new_panels() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
-    let home = w.active_workspace();
     let layout = w.active_layout();
     let first = w.create_panel(layout, "First").unwrap();
-    let other = w.create_layout(home, "Other").unwrap();
+    let other = w.create_layout("Other").unwrap();
     let second = w.create_panel(other, "Second").unwrap();
     assert!(w.move_panel(first, second, None).is_err());
     assert_eq!(w.panels(layout), vec![first]);
@@ -522,18 +497,32 @@ fn normalized_shortcuts_reserve_repeats_without_reexecuting_by_default() {
 #[cfg(feature = "ui")]
 #[test]
 fn ui_requests_execute_in_the_same_frame_without_application_ordering() {
-    let mut app = app();
-    app.add_plugins(WorkbenchUiPlugin);
-    Workbench::new(app.world_mut())
-        .register_handler::<First, _>(record)
-        .unwrap();
+    let mut app = App::new();
+    app.add_plugins((WorkbenchCorePlugin, WorkbenchUiPlugin));
+    {
+        let mut w = Workbench::new(app.world_mut());
+        w.world_mut().init_resource::<Calls>();
+        w.register_handler::<First, _>(record).unwrap();
+    }
     app.add_systems(
         PreUpdate,
-        (|mut requests: ResMut<ContextCommandRequests>| requests.invoke::<First>())
-            .in_set(bedtime_ui2::UiSystems::Draw),
+        (|host: &mut World| {
+            Workbench::new(host)
+                .world_mut()
+                .resource_mut::<ContextCommandRequests>()
+                .invoke::<First>();
+        })
+        .in_set(bedtime_ui2::UiSystems::Draw),
     );
     app.update();
-    assert_eq!(app.world().resource::<Calls>().0.len(), 1);
+    assert_eq!(
+        Workbench::new(app.world_mut())
+            .world()
+            .resource::<Calls>()
+            .0
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -652,10 +641,9 @@ fn switching_away_and_back_invalidates_a_pending_gesture_even_without_a_geometry
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
     let layout = w.active_layout();
-    let workspace = w.active_workspace();
     let area = w.destination_area(layout).unwrap();
     let stamp = w.stamp();
-    let other = w.create_layout(workspace, "Other").unwrap();
+    let other = w.create_layout("Other").unwrap();
     w.activate_layout(other).unwrap();
     w.activate_layout(layout).unwrap();
     let before = w.world.get::<Area>(area).unwrap().rect();

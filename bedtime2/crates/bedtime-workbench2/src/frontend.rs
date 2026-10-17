@@ -6,7 +6,7 @@ use crate::{
     *,
 };
 use bedtime_ui2::{
-    UiFrame, UiSurface, UiSystems,
+    UiFrame, UiSurface,
     egui::{self, CursorIcon, Key, PointerButton},
     register_view,
 };
@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 const PANEL_BORDER_WIDTH: f32 = 1.0;
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 #[require(WorkbenchPresentation)]
 pub struct WorkbenchHost {
     /// Hide the tiled content for a scene underneath, retaining menu and status.
@@ -23,16 +23,6 @@ pub struct WorkbenchHost {
     /// Outer shell bounds in egui points. Defaults to the parent's available UI.
     pub bounds: Option<Rect>,
     pub minimum_area_size: Vec2,
-    /// Explicit menu root; native presentation automatically omits its egui row.
-    pub menu: Option<Entity>,
-    status_bar: Entity,
-}
-
-impl WorkbenchHost {
-    /// Register plugin status contributions on this host-owned bar.
-    pub fn status_bar(&self) -> Entity {
-        self.status_bar
-    }
 }
 
 /// Observed shell allocations, in egui points. The host alone writes these.
@@ -48,6 +38,174 @@ pub struct WorkbenchPresentation {
 #[derive(Component)]
 struct PanelRenderer;
 
+/// Workspace-local menu, status contributions and shell system state.
+#[derive(Resource)]
+pub struct WorkspaceUi {
+    pub menu: Option<Entity>,
+    pub status_bar: Entity,
+    shell: Entity,
+    host: WorkbenchHost,
+    titlebar_inset: f32,
+    focused: bool,
+}
+
+/// Host render projection of a workspace viewport. The source entity is local
+/// to `workspace`; it must never be queried in the host world.
+#[derive(Component, Clone, Copy)]
+pub struct WorkspaceViewport {
+    pub workspace: WorkspaceId,
+    pub panel: Entity,
+}
+
+pub(crate) fn install_workspace(world: &mut World) {
+    let shell = world.register_system(draw).entity();
+    world
+        .entity_mut(shell)
+        .insert(WorkbenchPresentation::default());
+    let status_bar = bedtime_ui2::create_status_bar(world, shell);
+    world.insert_resource(WorkspaceUi {
+        menu: None,
+        status_bar,
+        shell,
+        host: WorkbenchHost {
+            panels_visible: true,
+            bounds: None,
+            minimum_area_size: Vec2::new(100.0, 80.0),
+        },
+        titlebar_inset: 0.0,
+        focused: true,
+    });
+}
+
+impl Workbench<'_> {
+    pub fn status_bar(&self) -> Entity {
+        self.world.resource::<WorkspaceUi>().status_bar
+    }
+    pub fn set_menu(&mut self, root: Option<Entity>) -> Result<(), String> {
+        if root.is_some_and(|root| self.world.get::<MenuBar>(root).is_none()) {
+            return Err("Menu bar is unavailable".into());
+        }
+        self.world.resource_mut::<WorkspaceUi>().menu = root;
+        Ok(())
+    }
+}
+
+pub(crate) fn reset(world: &mut World) {
+    for mut menu in world.query::<&mut MenuPresentation>().iter_mut(world) {
+        menu.visible = false;
+    }
+    for mut panel in world.query::<&mut PanelPresentation>().iter_mut(world) {
+        *panel = default();
+    }
+    for mut area in world.query::<&mut AreaPresentation>().iter_mut(world) {
+        area.visible = false;
+    }
+    for mut viewport in world
+        .query::<&mut bedtime_ui2::UiViewport>()
+        .iter_mut(world)
+    {
+        viewport.visible = false;
+        viewport.hovered = false;
+    }
+}
+
+pub(crate) fn deactivate(world: &mut World) {
+    reset(world);
+}
+
+fn draw_active(frame: UiFrame, host: &mut World) {
+    let descriptor = host.get::<WorkbenchHost>(frame.view).unwrap().clone();
+    let host_entity = frame.view;
+    let focused = host
+        .get::<bevy::window::Window>(frame.surface)
+        .is_none_or(|w| w.focused);
+    #[cfg(feature = "native")]
+    let inset = host
+        .get::<WindowTitlebarInset>(frame.surface)
+        .map_or(0.0, |i| i.0);
+    #[cfg(not(feature = "native"))]
+    let inset = 0.0;
+    #[cfg(feature = "native")]
+    {
+        let background = WindowBackground::new(frame.theme.palette.background);
+        if host.get::<WindowBackground>(frame.surface) != Some(&background) {
+            host.entity_mut(frame.surface).insert(background);
+        }
+    }
+    crate::workspaces::with_active(host, |host, world| {
+        let mut shell = world.resource_mut::<WorkspaceUi>();
+        shell.host = descriptor;
+        shell.titlebar_inset = inset;
+        shell.focused = focused;
+        let shell_entity = shell.shell;
+        let identity = world.resource::<WorkspaceIdentity>().id();
+        {
+            let mut ui = frame
+                .ui
+                .new_child(egui::UiBuilder::new().id_salt(("workspace", identity)));
+            let input = frame.for_view(shell_entity, &mut ui);
+            world
+                .run_system_with(
+                    SystemId::<UiFrame<'static>>::from_entity(shell_entity),
+                    input,
+                )
+                .expect("Workspace shell system");
+            frame.ui.advance_cursor_after_rect(ui.min_rect());
+        }
+        let presentation = *world.get::<WorkbenchPresentation>(shell_entity).unwrap();
+        *host.get_mut::<WorkbenchPresentation>(host_entity).unwrap() = presentation;
+        for error in world
+            .resource_mut::<Messages<bedtime_ui2::UiError>>()
+            .drain()
+        {
+            host.write_message(error);
+        }
+        for request in world
+            .resource_mut::<Messages<bevy::window::RequestRedraw>>()
+            .drain()
+        {
+            host.write_message(request);
+        }
+    });
+    sync_viewports(host);
+}
+
+pub(crate) fn sync_viewports(host: &mut World) {
+    let (workspace, views) = crate::workspaces::with_active(host, |_, world| {
+        (
+            world.resource::<WorkspaceIdentity>().id(),
+            world
+                .query::<(Entity, &bedtime_ui2::UiViewport)>()
+                .iter(world)
+                .map(|(e, v)| (e, v.clone()))
+                .collect::<Vec<_>>(),
+        )
+    });
+    let mut existing: HashMap<_, _> = host
+        .query::<(Entity, &WorkspaceViewport)>()
+        .iter(host)
+        .filter_map(|(e, source)| (source.workspace == workspace).then_some((source.panel, e)))
+        .collect();
+    let stale: Vec<_> = host
+        .query::<(Entity, &WorkspaceViewport)>()
+        .iter(host)
+        .filter_map(|(e, source)| (source.workspace != workspace).then_some(e))
+        .collect();
+    for e in stale {
+        host.despawn(e);
+    }
+    for (panel, viewport) in views {
+        if let Some(entity) = existing.remove(&panel) {
+            host.entity_mut(entity).insert(viewport);
+        } else {
+            host.spawn((WorkspaceViewport { workspace, panel }, viewport));
+        }
+    }
+    for entity in existing.into_values() {
+        host.despawn(entity);
+    }
+}
+
 /// Draw the workbench on this window. The host owns native titlebar reservation,
 /// menu, panel layout, background and status bar; applications supply contributions.
 pub fn attach_surface(world: &mut World, surface: Entity) -> Entity {
@@ -60,8 +218,7 @@ pub fn attach_surface(world: &mut World, surface: Entity) -> Entity {
         world.query::<&WorkbenchHost>().iter(world).next().is_none(),
         "Only one workbench host is supported"
     );
-    let host = register_view(world, surface, draw);
-    let status_bar = bedtime_ui2::create_status_bar(world, host);
+    let host = register_view(world, surface, draw_active);
     world
         .entity_mut(surface)
         .insert(bedtime_ui2::UiBackground::Transparent);
@@ -69,8 +226,6 @@ pub fn attach_surface(world: &mut World, surface: Entity) -> Entity {
         panels_visible: true,
         bounds: None,
         minimum_area_size: Vec2::new(100.0, 80.0),
-        menu: None,
-        status_bar,
     });
     host
 }
@@ -91,28 +246,13 @@ pub fn register_panel_in_area<M>(
     title: impl Into<String>,
     draw: impl IntoSystem<UiFrame<'static>, (), M> + 'static,
 ) -> Result<Entity, String> {
+    let world = crate::workspaces::selected_world(world, None)?;
     world.get::<Area>(area).ok_or("Area is unavailable")?;
     let system = world.register_system(draw);
     let panel = system.entity();
     Workbench::new(world).attach_panel(panel, area, title.into());
     world.entity_mut(panel).insert(PanelRenderer);
     Ok(panel)
-}
-
-pub(crate) fn configure(app: &mut App) {
-    app.add_systems(PreUpdate, reset.before(UiSystems::Draw));
-}
-
-fn reset(mut panels: Query<&mut PanelPresentation>, mut areas: Query<&mut AreaPresentation>) {
-    for mut p in &mut panels {
-        p.visible = false;
-        p.focused = false;
-        p.tab_rect = Rect::default();
-        p.close_rect = Rect::default();
-    }
-    for mut a in &mut areas {
-        a.visible = false;
-    }
 }
 
 #[derive(Default)]
@@ -252,9 +392,23 @@ fn blend_rect(from: Rect, to: Rect, blend: f32) -> Rect {
     Rect::from_corners(settle(from.min, to.min), settle(from.max, to.max))
 }
 
+fn expand_rect(from: Rect, to: Rect, blend: f32) -> Rect {
+    if from.size() == to.size() {
+        return to;
+    }
+    // Give up reassigned space immediately. Only edges growing into available
+    // space interpolate, including when a split also expands the other axis.
+    let retained = Rect::from_corners(
+        from.min.clamp(to.min, to.max),
+        from.max.clamp(to.min, to.max),
+    );
+    blend_rect(retained, to, blend)
+}
+
 fn er(r: Rect) -> egui::Rect {
     egui::Rect::from_min_max(egui::pos2(r.min.x, r.min.y), egui::pos2(r.max.x, r.max.y))
 }
+
 fn hit(ui: &egui::Ui, name: &str, rect: Rect) -> (bool, bool) {
     if rect.width() <= 0.0 || rect.height() <= 0.0 {
         return (false, false);
@@ -266,17 +420,17 @@ fn hit(ui: &egui::Ui, name: &str, rect: Rect) -> (bool, bool) {
             && ui.input(|i| i.pointer.button_pressed(PointerButton::Primary)),
     )
 }
+
 #[derive(Clone)]
 pub struct PanelTypePayload(pub Entity);
 fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
     let state = &mut *local;
-    let host = world
-        .get::<WorkbenchHost>(frame.view)
-        .expect("Workbench host");
+    let shell = world.resource::<WorkspaceUi>();
+    let host = &shell.host;
     let (panels_visible, menu, status_bar, minimum_area_size) = (
         host.panels_visible,
-        host.menu,
-        host.status_bar,
+        shell.menu,
+        shell.status_bar,
         host.minimum_area_size,
     );
     let panel_settings = frame.panel_settings;
@@ -289,21 +443,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
         *world.get_mut::<WorkbenchPresentation>(frame.view).unwrap() = default();
         return;
     }
-    #[cfg(feature = "native")]
-    {
-        let background = WindowBackground::new(frame.theme.palette.background);
-        if world.get::<WindowBackground>(frame.surface) != Some(&background) {
-            world.entity_mut(frame.surface).insert(background);
-        }
-    }
-    // One root owns all shell geometry. The native measurement is in logical
-    // window coordinates; every allocation below uses egui points.
-    #[cfg(feature = "native")]
-    let native_top = world
-        .get::<WindowTitlebarInset>(frame.surface)
-        .map_or(0.0, |inset| inset.0 / frame.ui.ctx().zoom_factor());
-    #[cfg(not(feature = "native"))]
-    let native_top = 0.0_f32;
+    let native_top = shell.titlebar_inset / frame.ui.ctx().zoom_factor();
     let inset = (native_top - outer.top()).clamp(0.0, outer.height());
     let mut root = frame.ui.new_child(
         egui::UiBuilder::new()
@@ -448,15 +588,14 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
     let mut edits = Vec::new();
     let mut preview = None;
     let mut preview_clip = None;
+    let mut preview_blend = blend;
     let mut corner_targets = Vec::new();
     let mut geometry = snapshot.geometry.clone();
     let was_interacting = state.gesture.is_some();
     let cancel = ui.input(|i| i.key_pressed(Key::Escape))
         || ui.input(|i| i.pointer.button_pressed(PointerButton::Secondary))
         || ui.input(|i| i.pointer.latest_pos().is_none())
-        || world
-            .get::<bevy::window::Window>(frame.surface)
-            .is_some_and(|w| !w.focused);
+        || !world.resource::<WorkspaceUi>().focused;
     if cancel && state.gesture.is_some() {
         state.gesture = None;
         state.preview = None;
@@ -509,6 +648,9 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                 if let Some((edit, _, rect)) = proposed {
                     let mut r = screen(rect, bounds);
                     preview = Some(if r.width() == 0.0 || r.height() == 0.0 {
+                        // A split marker follows the pointer without easing;
+                        // only the committed panels obey the minimum size.
+                        preview_blend = 1.0;
                         let source = snapshot.geometry.area(snapshot.id(area).unwrap()).rect;
                         let s = surface(screen(source, bounds), source, panel_settings.panel_gap);
                         let along = if r.width() == 0.0 { 1 } else { 0 };
@@ -578,11 +720,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                 // Only an existing area has a previous rectangle. Newly created
                 // splits appear at their final size, without entrance motion.
                 let from = state.area_bounds.get(&entity).copied().unwrap_or(target);
-                if from.size() == target.size() {
-                    target
-                } else {
-                    blend_rect(from, target, blend)
-                }
+                expand_rect(from, target, blend)
             } else {
                 target
             };
@@ -986,18 +1124,21 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
             if !state.suppress_context {
                 response.context_menu(|ui| picker(ui, &types, group.entity, &mut edits));
             }
-            painter.text(
-                egui::pos2(content.min.x + 14.0, content.min.y + 14.0),
-                egui::Align2::LEFT_TOP,
-                "Right-click to open a panel",
-                font,
-                bedtime_ui2::theme::color(p.muted),
-            );
+            frame.clip_rounded(er(s), panel_settings.rounding, |frame| {
+                frame.ui.painter().with_clip_rect(er(content)).text(
+                    egui::pos2(content.min.x + 14.0, content.min.y + 14.0),
+                    egui::Align2::LEFT_TOP,
+                    "Right-click to open a panel",
+                    font,
+                    bedtime_ui2::theme::color(p.muted),
+                );
+            });
         }
     }
     for group in &groups {
         if let Some(panel) = group.selected {
-            let content = world.get::<AreaPresentation>(group.entity).unwrap().content;
+            let presentation = *world.get::<AreaPresentation>(group.entity).unwrap();
+            let content = presentation.content;
             if content.width() < 1.0 || content.height() < 1.0 {
                 continue;
             }
@@ -1042,16 +1183,22 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                     content_frame.ui.set_clip_rect(er(content));
                     content_frame.ui.multiply_opacity(opacity);
                     content_frame.view = panel;
-                    if world.get::<PanelRenderer>(panel).is_some() {
-                        if let Err(error) = world.run_system_with(
-                            SystemId::<UiFrame<'static>>::from_entity(panel),
-                            content_frame,
-                        ) {
-                            world.write_message(bedtime_ui2::UiError(error.to_string()));
-                        }
-                    } else {
-                        content_frame.ui.weak("This panel has no content renderer.");
-                    }
+                    content_frame.clip_rounded(
+                        er(presentation.surface),
+                        panel_settings.rounding,
+                        |content_frame| {
+                            if world.get::<PanelRenderer>(panel).is_some() {
+                                if let Err(error) = world.run_system_with(
+                                    SystemId::<UiFrame<'static>>::from_entity(panel),
+                                    content_frame,
+                                ) {
+                                    world.write_message(bedtime_ui2::UiError(error.to_string()));
+                                }
+                            } else {
+                                content_frame.ui.weak("This panel has no content renderer.");
+                            }
+                        },
+                    );
                 },
             );
         }
@@ -1127,7 +1274,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
     if let Some(target) = preview {
         let painter =
             preview_clip.map_or_else(|| painter.clone(), |clip| painter.with_clip_rect(clip));
-        let current = blend_rect(state.preview.unwrap_or(target), target, blend);
+        let current = blend_rect(state.preview.unwrap_or(target), target, preview_blend);
         moving |= current != target;
         state.preview = Some(current);
         let border = std::array::from_fn(|i| p.border[i] + (p.text[i] - p.border[i]) * 0.75);
@@ -1169,16 +1316,12 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
         state.suppress_context = false;
     }
     for edit in edits {
-        if let LayoutEdit::SplitArea { area, .. } = &edit {
-            // A corner split reveals both halves in place. Forget the source's
-            // old bounds so it snaps alongside the newly created area.
-            state.area_bounds.remove(area);
-        }
         world
             .resource_mut::<WorkbenchRequests>()
             .submit(WorkbenchRequest::Edit { stamp, edit });
     }
 }
+
 fn picker(
     ui: &mut egui::Ui,
     types: &[(Entity, String, bool)],
@@ -1200,10 +1343,12 @@ fn picker(
         ui.close();
     }
 }
+
 /// Call with a drag-sensitive toolbar response. Payload identity stays typed.
 pub fn panel_drag_source(response: &egui::Response, kind: Entity, _label: &str) {
     response.dnd_set_drag_payload(PanelTypePayload(kind));
 }
+
 fn tab_target(
     groups: &[Group],
     snapshot: &LayoutSnapshot,
@@ -1453,8 +1598,8 @@ fn corner_target(
         );
         next.split(source_id, index, at, minimum[index])?;
         let mut line = rect;
-        line.min[index] = at;
-        line.max[index] = at;
+        line.min[index] = point[index];
+        line.max[index] = point[index];
         Some((
             LayoutEdit::SplitArea {
                 area: source,
@@ -1473,6 +1618,136 @@ fn corner_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tab_splits_release_space_immediately_and_animate_only_the_expansion() {
+        for original_axis in [SplitAxis::Horizontal, SplitAxis::Vertical] {
+            for target_high in [false, true] {
+                for split_high in [false, true] {
+                    for last_tab in [false, true] {
+                        let mut app = App::new();
+                        app.add_plugins(WorkspacePlugin);
+                        let mut w = Workbench::new(app.world_mut());
+                        let layout = w.active_layout();
+                        let low = w.destination_area(layout).unwrap();
+                        let high = w.split_area(low, original_axis, 5000, [100, 100]).unwrap();
+                        let (target, source) = if target_high {
+                            (high, low)
+                        } else {
+                            (low, high)
+                        };
+                        w.create_panel_in_area(target, "Staying").unwrap();
+                        let panel = w.create_panel_in_area(source, "Moving").unwrap();
+                        if !last_tab {
+                            w.create_panel_in_area(source, "Also staying").unwrap();
+                        }
+                        let bounds =
+                            Rect::from_corners(Vec2::new(50.0, 75.0), Vec2::new(1250.0, 875.0));
+                        let before = screen(w.world.get::<Area>(target).unwrap().rect(), bounds);
+                        let split_axis = axis(original_axis.index() ^ 1);
+                        let destination = w
+                            .split_tab(panel, target, split_axis, split_high, [100, 100])
+                            .unwrap();
+                        let to = screen(w.world.get::<Area>(target).unwrap().rect(), bounds);
+                        let incoming =
+                            screen(w.world.get::<Area>(destination).unwrap().rect(), bounds);
+                        let mut current = expand_rect(before, to, 0.25);
+                        let split = split_axis.index();
+                        assert_eq!(current.min[split], to.min[split]);
+                        assert_eq!(current.max[split], to.max[split]);
+                        if last_tab {
+                            assert_ne!(
+                                current, to,
+                                "The surviving area expands into the closed source"
+                            );
+                        } else {
+                            assert_eq!(current, to, "A split without expansion snaps immediately");
+                        }
+                        for _ in 0..128 {
+                            assert!(to.contains(current.min) && to.contains(current.max));
+                            assert!(
+                                current.max[split] <= incoming.min[split]
+                                    || incoming.max[split] <= current.min[split],
+                                "The surviving area must never overlap the dropped panel"
+                            );
+                            let next = expand_rect(current, to, 0.25);
+                            assert!(next.contains(current.min) && next.contains(current.max));
+                            current = next;
+                        }
+                        assert_eq!(current, to);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retargeting_an_expansion_immediately_releases_reclaimed_space() {
+        let bounds = Rect::from_corners(Vec2::ZERO, Vec2::splat(1000.0));
+        let left = Rect::from_corners(Vec2::ZERO, Vec2::new(500.0, 1000.0));
+        let right = Rect::from_corners(Vec2::new(500.0, 0.0), bounds.max);
+        assert_eq!(expand_rect(bounds, left, 0.25), left);
+        let expanding = expand_rect(left, bounds, 0.25);
+        assert_eq!(expanding.max.x, 625.0);
+        let reclaimed = expand_rect(expanding, right, 0.25);
+        assert_eq!(reclaimed.min.x, right.min.x);
+        assert!(reclaimed.max.x > expanding.max.x && reclaimed.max.x < right.max.x);
+        assert_eq!(expand_rect(expanding, right, 1.0), right);
+        assert_eq!(
+            expand_rect(left, right, 0.25),
+            right,
+            "Pure relocation still snaps"
+        );
+    }
+
+    #[test]
+    fn corner_split_line_follows_the_pointer_but_commits_the_minimum_panel_size() {
+        let minimum = [1000, 800];
+        for direction in [SplitAxis::Horizontal, SplitAxis::Vertical] {
+            for offset in [1, 500, 2500, 4500, 4999] {
+                let mut app = App::new();
+                app.add_plugins(WorkspacePlugin);
+                let mut w = Workbench::new(app.world_mut());
+                let layout = w.active_layout();
+                let root = w.destination_area(layout).unwrap();
+                let right = w
+                    .split_area(root, SplitAxis::Horizontal, 5000, minimum)
+                    .unwrap();
+                let source = w
+                    .split_area(right, SplitAxis::Vertical, 5000, minimum)
+                    .unwrap();
+                let snapshot = w.snapshot(layout).unwrap();
+                let id = snapshot.id(source).unwrap();
+                let rect = snapshot.geometry.area(id).rect;
+                let index = direction.index();
+                let mut point = [7500, 7500];
+                point[index] = rect.min[index] + offset;
+                let (edit, planned, line) =
+                    corner_target(&snapshot, source, point, Some(direction), minimum).unwrap();
+                assert_eq!(line.min[index], point[index]);
+                assert_eq!(line.max[index], point[index]);
+                assert_eq!(line.min[index ^ 1], rect.min[index ^ 1]);
+                assert_eq!(line.max[index ^ 1], rect.max[index ^ 1]);
+                let expected = point[index].clamp(
+                    rect.min[index] + minimum[index],
+                    rect.max[index] - minimum[index],
+                );
+                assert_eq!(planned.area(id).rect.max[index], expected);
+                w.edit(w.stamp(), &edit).unwrap();
+                assert_eq!(
+                    w.world.get::<Area>(source).unwrap().rect(),
+                    planned.area(id).rect
+                );
+                let actual = w.snapshot(layout).unwrap();
+                assert_eq!(actual.geometry.areas.len(), planned.areas.len());
+                for area in &actual.geometry.areas {
+                    for axis in 0..2 {
+                        assert!(area.rect.max[axis] - area.rect.min[axis] >= minimum[axis]);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn corner_hit_targets_grow_inward_from_each_outside_corner() {
@@ -1501,15 +1776,12 @@ mod tests {
     }
 
     #[test]
-    fn shell_owns_its_status_contributions_and_preserves_the_application_window() {
+    fn workspace_shell_owns_its_status_contributions() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin);
+        app.add_plugins(WorkspacePlugin);
         let world = app.world_mut();
-        let window = world
-            .spawn((bevy::window::Window::default(), UiSurface))
-            .id();
-        let host = attach_surface(world, window);
-        let bar = world.get::<WorkbenchHost>(host).unwrap().status_bar();
+        let shell = world.resource::<WorkspaceUi>().shell;
+        let bar = Workbench::new(world).status_bar();
         let item = bedtime_ui2::register_status_item(
             world,
             bar,
@@ -1522,15 +1794,10 @@ mod tests {
             |_: UiFrame| {},
         );
         let tooltip = bedtime_ui2::register_status_tooltip(world, item, |_: UiFrame| {});
-        assert_eq!(
-            world.get::<bedtime_ui2::UiBackground>(window),
-            Some(&bedtime_ui2::UiBackground::Transparent)
-        );
-        world.despawn(host);
+        world.despawn(shell);
         for entity in [bar, item, tooltip] {
             assert!(world.get_entity(entity).is_err());
         }
-        assert!(world.get::<bevy::window::Window>(window).is_some());
     }
 
     fn projection(
@@ -1579,7 +1846,7 @@ mod tests {
     #[test]
     fn last_tab_preview_includes_source_gap_and_single_area_border_policy() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin);
+        app.add_plugins(WorkspacePlugin);
         let mut w = Workbench::new(app.world_mut());
         let layout = w.active_layout();
         let source = w.destination_area(layout).unwrap();
@@ -1649,7 +1916,7 @@ mod tests {
                     Vec2::splat(0.5),
                 ] {
                     let mut app = App::new();
-                    app.add_plugins(WorkbenchCorePlugin);
+                    app.add_plugins(WorkspacePlugin);
                     let mut w = Workbench::new(app.world_mut());
                     let layout = w.active_layout();
                     let left = w.destination_area(layout).unwrap();

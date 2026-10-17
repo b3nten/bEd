@@ -14,7 +14,7 @@ The foundation has three crates:
 - [`bedtime-ui2`](crates/bedtime-ui2): egui/Bevy integration, themes, controls,
   asset-backed icons, effects and UI-local motion. It has no workbench dependency.
 - [`bedtime-workbench2`](crates/bedtime-workbench2): headless ContextCommands, scoped handlers,
-  keybindings, menus and workspace/layout/panel ownership, plus optional native
+  keybindings, menus, separate workspace SubApps and scoped tasks/processes, plus optional native
   services and egui workbench presentation. Documents/settings/storage follow.
 
 The former desktop crate has been retired. Native menu/window integration now
@@ -27,8 +27,9 @@ Workbench's default features are `ui`, `native` and `clipboard`; disabling defau
 leaves a headless core. UI2 and workbench share the independent clipboard service,
 which release games can also use without either of them.
 
-The demo contains a Blender-style panel layout, a widget gallery and a spinning
-cube viewport. The cube also runs without Bedtime:
+The demo contains two independent workspace runtimes, Blender-style panel layouts,
+editable notes, managed tasks/processes and a cube viewport. Shared gallery and
+theme tools live in the host. The independent game also runs without Bedtime:
 
 ```sh
 cargo run -p bed2-demo-game --example standalone

@@ -6,11 +6,11 @@ pub use geometry::EXTENT as LAYOUT_EXTENT;
 pub use geometry::Rect as AreaRect;
 use std::collections::{HashMap, VecDeque};
 
-#[derive(Component, Debug)]
+#[derive(Resource, Debug)]
 pub struct Workspace {
     pub name: String,
-    pub settings_enabled: bool,
     active_layout: Entity,
+    pub(crate) activation: u64,
 }
 
 impl Workspace {
@@ -63,14 +63,6 @@ pub struct Panel {
 }
 
 #[derive(Component, Debug)]
-#[relationship(relationship_target = WorkspaceLayouts)]
-pub struct InWorkspace(pub Entity);
-
-#[derive(Component, Default)]
-#[relationship_target(relationship = InWorkspace, linked_spawn)]
-pub struct WorkspaceLayouts(Vec<Entity>);
-
-#[derive(Component, Debug)]
 #[relationship(relationship_target = LayoutAreas)]
 pub struct InLayout(pub Entity);
 
@@ -120,18 +112,6 @@ pub struct AreaPresentation {
     pub surface: Rect,
     pub tab_bar: Rect,
     pub content: Rect,
-}
-
-#[derive(Resource, Debug)]
-pub struct ActiveWorkspace {
-    entity: Entity,
-    activation: u64,
-}
-
-impl ActiveWorkspace {
-    pub fn entity(&self) -> Entity {
-        self.entity
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -245,7 +225,6 @@ pub enum LayoutEdit {
 
 #[derive(Debug, Clone)]
 pub enum WorkbenchRequest {
-    ActivateWorkspace(Entity),
     ActivateLayout(Entity),
     FocusPanel(Entity),
     ClosePanel(Entity),
@@ -297,14 +276,15 @@ pub(crate) fn install(app: &mut App) {
             WorkbenchSystems::Apply.after(crate::ContextCommandSystems::Dispatch),
         )
         .add_systems(PreUpdate, apply.in_set(WorkbenchSystems::Apply));
-    let workspace = new_workspace(app.world_mut(), "Temporary".into(), false);
-    app.insert_resource(ActiveWorkspace {
-        entity: workspace,
+    let layout = new_layout(app.world_mut(), "Default".into());
+    app.insert_resource(Workspace {
+        name: "Untitled".into(),
+        active_layout: layout,
         activation: 0,
     });
 }
 
-fn new_layout(world: &mut World, workspace: Entity, name: String) -> Entity {
+fn new_layout(world: &mut World, name: String) -> Entity {
     let layout = world.spawn_empty().id();
     let area = world
         .spawn((
@@ -318,26 +298,12 @@ fn new_layout(world: &mut World, workspace: Entity, name: String) -> Entity {
             InLayout(layout),
         ))
         .id();
-    world.entity_mut(layout).insert((
-        Layout {
-            name,
-            focused_area: area,
-            revision: 0,
-        },
-        InWorkspace(workspace),
-    ));
-    layout
-}
-
-fn new_workspace(world: &mut World, name: String, settings_enabled: bool) -> Entity {
-    let workspace = world.spawn_empty().id();
-    let layout = new_layout(world, workspace, "Default".into());
-    world.entity_mut(workspace).insert(Workspace {
+    world.entity_mut(layout).insert(Layout {
         name,
-        settings_enabled,
-        active_layout: layout,
+        focused_area: area,
+        revision: 0,
     });
-    workspace
+    layout
 }
 
 /// A short-lived, ordered geometry calculation; IDs are local to this snapshot.
@@ -399,15 +365,8 @@ pub(crate) fn plan_tab_geometry(
 }
 
 impl Workbench<'_> {
-    pub fn active_workspace(&self) -> Entity {
-        self.world.resource::<ActiveWorkspace>().entity
-    }
-
     pub fn active_layout(&self) -> Entity {
-        self.world
-            .get::<Workspace>(self.active_workspace())
-            .expect("Active workspace")
-            .active_layout
+        self.world.resource::<Workspace>().active_layout
     }
 
     pub fn stamp(&self) -> LayoutStamp {
@@ -415,52 +374,22 @@ impl Workbench<'_> {
         LayoutStamp {
             layout,
             revision: self.world.get::<Layout>(layout).unwrap().revision,
-            activation: self.world.resource::<ActiveWorkspace>().activation,
+            activation: self.world.resource::<Workspace>().activation,
         }
     }
 
-    pub fn create_workspace(&mut self, name: impl Into<String>, settings_enabled: bool) -> Entity {
-        new_workspace(self.world, name.into(), settings_enabled)
-    }
-
-    pub fn create_layout(
-        &mut self,
-        workspace: Entity,
-        name: impl Into<String>,
-    ) -> Result<Entity, String> {
-        self.world
-            .get::<Workspace>(workspace)
-            .ok_or("Workspace is unavailable")?;
-        Ok(new_layout(self.world, workspace, name.into()))
-    }
-
-    pub fn activate_workspace(&mut self, workspace: Entity) -> Result<(), String> {
-        self.world
-            .get::<Workspace>(workspace)
-            .ok_or("Workspace is unavailable")?;
-        if workspace != self.active_workspace() {
-            let mut active = self.world.resource_mut::<ActiveWorkspace>();
-            active.entity = workspace;
-            active.activation += 1;
-        }
-        Ok(())
+    pub fn create_layout(&mut self, name: impl Into<String>) -> Result<Entity, String> {
+        Ok(new_layout(self.world, name.into()))
     }
 
     pub fn activate_layout(&mut self, layout: Entity) -> Result<(), String> {
-        let owner = self
-            .world
-            .get::<InWorkspace>(layout)
-            .ok_or("Layout is unavailable")?
-            .0;
-        if owner != self.active_workspace() {
-            return Err("Layout belongs to another workspace".into());
-        }
-        if self.world.get::<Workspace>(owner).unwrap().active_layout != layout {
-            self.world
-                .get_mut::<Workspace>(owner)
-                .unwrap()
-                .active_layout = layout;
-            self.world.resource_mut::<ActiveWorkspace>().activation += 1;
+        self.world
+            .get::<Layout>(layout)
+            .ok_or("Layout is unavailable")?;
+        let mut workspace = self.world.resource_mut::<Workspace>();
+        if workspace.active_layout != layout {
+            workspace.active_layout = layout;
+            workspace.activation += 1;
         }
         Ok(())
     }
@@ -894,36 +823,21 @@ impl Workbench<'_> {
     }
 
     pub fn delete_layout(&mut self, layout: Entity) -> Result<(), String> {
-        let owner = self
-            .world
-            .get::<InWorkspace>(layout)
-            .ok_or("Layout is unavailable")?
-            .0;
+        self.world
+            .get::<Layout>(layout)
+            .ok_or("Layout is unavailable")?;
         let replacement = self
             .world
-            .query::<(Entity, &InWorkspace)>()
+            .query_filtered::<Entity, With<Layout>>()
             .iter(self.world)
-            .find_map(|(e, w)| (e != layout && w.0 == owner).then_some(e))
+            .find(|&entity| entity != layout)
             .ok_or("Cannot delete the last layout")?;
-        if self.world.get::<Workspace>(owner).unwrap().active_layout == layout {
-            self.world
-                .get_mut::<Workspace>(owner)
-                .unwrap()
-                .active_layout = replacement;
-            self.world.resource_mut::<ActiveWorkspace>().activation += 1;
+        let mut workspace = self.world.resource_mut::<Workspace>();
+        if workspace.active_layout == layout {
+            workspace.active_layout = replacement;
+            workspace.activation += 1;
         }
         self.world.despawn(layout);
-        Ok(())
-    }
-
-    pub fn delete_workspace(&mut self, workspace: Entity) -> Result<(), String> {
-        self.world
-            .get::<Workspace>(workspace)
-            .ok_or("Workspace is unavailable")?;
-        if workspace == self.active_workspace() {
-            return Err("Activate another workspace before deleting this one".into());
-        }
-        self.world.despawn(workspace);
         Ok(())
     }
 
@@ -1061,7 +975,6 @@ fn apply(world: &mut World) {
     for request in requests {
         let mut w = Workbench::new(world);
         let result = match &request {
-            WorkbenchRequest::ActivateWorkspace(e) => w.activate_workspace(*e),
             WorkbenchRequest::ActivateLayout(e) => w.activate_layout(*e),
             WorkbenchRequest::FocusPanel(e) => w.focus_panel(*e),
             WorkbenchRequest::ClosePanel(e) => w.close_panel(*e),

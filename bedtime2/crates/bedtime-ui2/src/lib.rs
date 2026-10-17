@@ -1,4 +1,5 @@
 //! Bed presentation on upstream egui/Bevy integration; the host owns its window and camera.
+mod clipping;
 mod combo_box;
 pub mod gallery;
 mod icon_cache;
@@ -188,6 +189,27 @@ impl UiFrame<'_> {
             })
         })
         .inner
+    }
+
+    /// Constrain content painting to a rounded boundary, even if a child painter
+    /// expands its rectangular clip. Popups on separate layers keep their bounds.
+    /// GPU paint callbacks crossing the boundary must use a viewport image instead.
+    pub fn clip_rounded<R>(
+        &mut self,
+        rect: egui::Rect,
+        radius: impl Into<egui::CornerRadius>,
+        draw: impl FnOnce(UiFrame<'_>) -> R,
+    ) -> R {
+        let ctx = self.ui.ctx().clone();
+        let layer = self.ui.layer_id();
+        let start = ctx.graphics_mut(|g| g.entry(layer).next_idx());
+        let content_clip = self.ui.clip_rect().intersect(rect);
+        let result = self.scope(egui::UiBuilder::new(), |frame| {
+            frame.ui.set_clip_rect(content_clip);
+            draw(frame)
+        });
+        clipping::finish(&ctx, layer, start, content_clip, rect, radius.into());
+        result
     }
 
     pub fn scroll<R>(

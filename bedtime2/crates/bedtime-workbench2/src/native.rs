@@ -1,7 +1,6 @@
 //! Optional platform adapters. Core menus and commands have no native dependency.
 use crate::{
-    CloseRequested, ContextCommandRequests, ContextCommandSystems, InvocationContext, MenuSnapshot,
-    menu_snapshot,
+    CloseRequested, ContextCommandRequests, InvocationContext, MenuSnapshot, menu_snapshot,
 };
 use bevy::{
     app::PluginGroupBuilder,
@@ -64,6 +63,7 @@ impl PluginGroup for WorkbenchNativePlugin {
             .add(WorkbenchNativeMenuPlugin)
     }
 }
+
 pub struct WorkbenchNativeWindowPlugin;
 impl Plugin for WorkbenchNativeWindowPlugin {
     fn build(&self, app: &mut App) {
@@ -95,6 +95,7 @@ impl Plugin for WorkbenchNativeWindowPlugin {
         );
     }
 }
+
 fn forward_close_requests(
     mut requests: MessageReader<bevy::window::WindowCloseRequested>,
     mut output: MessageWriter<CloseRequested>,
@@ -105,6 +106,7 @@ fn forward_close_requests(
         });
     }
 }
+
 pub struct WorkbenchNativeMenuPlugin;
 impl Plugin for WorkbenchNativeMenuPlugin {
     fn build(&self, app: &mut App) {
@@ -114,11 +116,18 @@ impl Plugin for WorkbenchNativeMenuPlugin {
         .add_message::<NativeError>()
         .configure_sets(
             PreUpdate,
-            NativeSystems::Poll.before(ContextCommandSystems::PanelInput),
+            NativeSystems::Poll
+                .after(crate::WorkspaceSystems::Prepare)
+                .before(crate::WorkspaceSystems::Dispatch),
         )
         .init_non_send::<NativeState>()
         .add_systems(PreUpdate, poll.in_set(NativeSystems::Poll))
         .add_systems(Last, shutdown.after(bevy::app::OnAppExitSystems));
+        #[cfg(feature = "ui")]
+        app.configure_sets(
+            PreUpdate,
+            NativeSystems::Poll.before(bedtime_ui2::UiSystems::Draw),
+        );
     }
     fn finish(&self, app: &mut App) {
         assert!(
@@ -131,6 +140,7 @@ impl Plugin for WorkbenchNativeMenuPlugin {
 #[derive(Default)]
 pub(crate) struct NativeState {
     attempted: Option<Result<MenuSnapshot, String>>,
+    workspace: Option<crate::WorkspaceId>,
     #[cfg(target_os = "macos")]
     menu: Option<macos::InstalledMenu>,
     _main_thread: PhantomData<Rc<()>>,
@@ -154,6 +164,29 @@ pub(crate) fn poll(world: &mut World) {
     {
         return;
     }
+    crate::workspaces::with_active(world, |host, world| {
+        let mut native = host.remove_non_send::<NativeState>().unwrap();
+        let id = world.resource::<crate::WorkspaceIdentity>().id();
+        if native.workspace != Some(id) {
+            #[cfg(target_os = "macos")]
+            if let Some(menu) = native.menu.take() {
+                let _ = menu.take_activations();
+                menu.remove();
+            }
+            native.attempted = None;
+            native.workspace = Some(id);
+        }
+        world.insert_resource(*host.resource::<NativeCapabilities>());
+        world.insert_non_send(native);
+        poll_workspace(world);
+        host.insert_non_send(world.remove_non_send::<NativeState>().unwrap());
+        for error in world.resource_mut::<Messages<NativeError>>().drain() {
+            host.write_message(error);
+        }
+    });
+}
+
+fn poll_workspace(world: &mut World) {
     let roots: Vec<_> = world
         .query_filtered::<Entity, With<NativeMenuBar>>()
         .iter(world)

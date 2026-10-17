@@ -10,10 +10,13 @@ use bevy::{
     window::WindowEvent,
 };
 use std::collections::HashSet;
+
 #[derive(Component)]
 struct PanelInputSystem;
+
 #[derive(Component)]
 pub(crate) struct HasPanelInput;
+
 /// Eligible state for one panel. Claims and captures are applied by the router.
 pub struct PanelInput<'a> {
     pub panel: Entity,
@@ -23,6 +26,7 @@ pub struct PanelInput<'a> {
     keyboard: &'a mut bool,
     pointer: &'a mut bool,
 }
+
 impl SystemInput for PanelInput<'_> {
     type Param<'i> = PanelInput<'i>;
     type Inner<'i> = PanelInput<'i>;
@@ -30,22 +34,28 @@ impl SystemInput for PanelInput<'_> {
         this
     }
 }
+
 impl PanelInput<'_> {
     pub fn consume(&mut self, event: u64) {
         self.consumed.insert(event);
     }
+
     pub fn capture_keyboard(&mut self) {
         *self.keyboard = true;
     }
+
     pub fn capture_pointer(&mut self) {
         *self.pointer = true;
     }
+
     pub fn release_keyboard(&mut self) {
         *self.keyboard = false;
     }
+
     pub fn release_pointer(&mut self) {
         *self.pointer = false;
     }
+
     pub fn consume_all(&mut self) {
         self.consumed.extend(self.input.events.iter().map(|e| e.id));
     }
@@ -55,6 +65,7 @@ pub fn register_panel_input<M>(
     panel: Entity,
     system: impl IntoSystem<PanelInput<'static>, (), M> + 'static,
 ) -> Result<Entity, String> {
+    let world = crate::workspaces::selected_world(world, None)?;
     if world.get::<Panel>(panel).is_none() {
         return Err("Panel is unavailable".into());
     }
@@ -68,6 +79,7 @@ pub fn register_panel_input<M>(
     world.entity_mut(panel).insert(HasPanelInput);
     Ok(id)
 }
+
 pub(crate) fn install(app: &mut App) {
     app.configure_sets(
         PreUpdate,
@@ -91,6 +103,7 @@ pub(crate) fn install(app: &mut App) {
         publish.in_set(ContextCommandSystems::PublishInput),
     );
 }
+
 fn route(world: &mut World) {
     let Some(mut router) = world.remove_resource::<InputRouter>() else {
         return;
@@ -339,6 +352,43 @@ fn route(world: &mut World) {
 }
 #[derive(Resource)]
 struct InputLayout(LayoutStamp);
+
+/// Release the old workspace before local entity IDs can be reused by another.
+pub(crate) fn deactivate(world: &mut World, router: &mut InputRouter) {
+    let systems: Vec<_> = world
+        .query::<(Entity, &InPanel)>()
+        .iter(world)
+        .filter(|(e, _)| world.get::<PanelInputSystem>(*e).is_some())
+        .map(|(e, panel)| (e, panel.0))
+        .collect();
+    for (system, panel) in systems {
+        router.cancel_panel(panel);
+        if let Some(mut input) = router.panel_states.get(&panel).cloned() {
+            input.begin_frame();
+            input.release_all();
+            let mut consumed = HashSet::new();
+            let (mut keyboard, mut pointer) = (false, false);
+            world
+                .run_system_with(
+                    SystemId::<PanelInput<'static>>::from_entity(system),
+                    PanelInput {
+                        panel,
+                        input: &input,
+                        content_focused: false,
+                        consumed: &mut consumed,
+                        keyboard: &mut keyboard,
+                        pointer: &mut pointer,
+                    },
+                )
+                .expect("Panel input system");
+        }
+    }
+    router.panel_states.clear();
+    router.cancelled_panels.clear();
+    router.frame.get_mut().unwrap().focused_content = None;
+    router.frame.get_mut().unwrap().regions.clear();
+}
+
 fn publish(world: &mut World) {
     let Some(mut router) = world.remove_resource::<InputRouter>() else {
         return;
@@ -384,7 +434,7 @@ mod tests {
     }
     fn app() -> (App, Entity) {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin)
+        app.add_plugins(WorkspacePlugin)
             .init_resource::<InputRouter>()
             .init_resource::<RoutedInput>()
             .init_resource::<Calls>()

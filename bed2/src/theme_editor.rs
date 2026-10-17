@@ -1,38 +1,20 @@
 //! Live, in-memory editing of the window's current theme.
-use crate::workbench_demo::DemoWorkbench;
-use bedtime_ui2::{Theme, UiFrame, UsesTheme, egui, themes};
-use bedtime_workbench2::{PanelDefinition, register_panel_in_area};
+use crate::tool_panels::{PanelTools, ToolRequest};
+use bedtime_ui2::{UiFrame, egui, themes};
 use bevy::prelude::*;
 
-#[derive(Component)]
-pub(crate) struct ThemeEditor;
-
-impl PanelDefinition for ThemeEditor {
-    const KEY: &'static str = "bed2.theme_editor";
-    const LABEL: &'static str = "Theme Editor";
-}
-
-pub(crate) fn factory(In(area): In<Entity>, world: &mut World) -> Result<Entity, String> {
-    let panel = register_panel_in_area(world, area, ThemeEditor::LABEL, draw)?;
-    world.entity_mut(panel).insert(ThemeEditor);
-    Ok(panel)
-}
-
-fn draw(
-    mut frame: UiFrame,
-    surfaces: Query<&UsesTheme>,
-    context: Res<DemoWorkbench>,
-    mut themes: Query<&mut Theme>,
-) {
-    let entity = surfaces.get(frame.surface).unwrap().0;
-    let (name, defaults) = if entity == context.light {
+pub(crate) fn draw(mut frame: UiFrame, mut tools: ResMut<PanelTools>) {
+    let entity = tools.theme;
+    let (name, defaults) = if entity == tools.gallery.light {
         ("Light theme", themes::light())
     } else {
-        assert_eq!(entity, context.dark, "The demo uses light and dark themes");
+        assert_eq!(
+            entity, tools.gallery.dark,
+            "The demo uses light and dark themes"
+        );
         ("Dark theme", themes::dark())
     };
-    let mut current = themes.get_mut(entity).unwrap();
-    let mut edited = current.clone();
+    let mut edited = frame.theme.clone();
     let padding = frame.panel_settings.padding;
     frame.scroll("theme-editor", |mut frame| {
         frame.padded(padding, |frame| {
@@ -138,5 +120,10 @@ fn draw(
                 });
         });
     });
-    current.set_if_neq(edited);
+    if edited != *frame.theme {
+        tools.requests.push(ToolRequest::Theme {
+            entity,
+            value: edited,
+        });
+    }
 }

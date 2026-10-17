@@ -6,6 +6,7 @@ pub struct MotionPolicy {
     pub enabled: bool,
     pub seconds: f32,
 }
+
 impl Default for MotionPolicy {
     fn default() -> Self {
         Self {

@@ -4,6 +4,7 @@ use bevy::input::{
     keyboard::{Key, KeyCode, KeyboardInput},
 };
 use bevy::window::WindowEvent;
+
 #[test]
 fn retargeting_is_continuous_and_reduced_motion_settles() {
     let mut value = motion::Transition::settled(0.0);
@@ -25,6 +26,7 @@ fn retargeting_is_continuous_and_reduced_motion_settles() {
     assert_eq!(value.value(), 0.0);
     assert!(!value.is_active());
 }
+
 #[test]
 fn themes_validate_boundary_values_and_map_to_egui() {
     let ctx = egui::Context::default();
@@ -120,6 +122,7 @@ fn primary_buttons_resolve_hover_and_press_colors_without_restyling_other_widget
         );
     }
 }
+
 #[test]
 fn custom_control_colors_fade_through_hover_press_and_release() {
     let ctx = egui::Context::default();
@@ -294,6 +297,7 @@ fn draw_counter(frame: UiFrame, mut counters: Query<&mut Counter>) {
     counters.get_mut(frame.view).unwrap().0 += 1;
     frame.ui.label("A normal registered Bevy system");
 }
+
 #[test]
 fn borrowed_frames_execute_once_and_surface_ownership_keeps_shared_themes() {
     let mut world = World::new();
@@ -336,6 +340,7 @@ fn borrowed_frames_execute_once_and_surface_ownership_keeps_shared_themes() {
     assert!(world.get_entity(part).is_err());
     assert!(world.get::<Theme>(theme).is_some());
 }
+
 fn key_event(
     id: u64,
     key_code: KeyCode,
@@ -355,6 +360,7 @@ fn key_event(
         }),
     }
 }
+
 #[test]
 fn text_ownership_reserves_typing_noop_edits_and_leaves_save_available() {
     let primary = input::InputModifiers {
@@ -396,6 +402,7 @@ fn text_ownership_reserves_typing_noop_edits_and_leaves_save_available() {
     assert!(frame.claims.contains_key(&6));
     assert!(!frame.claims.contains_key(&3));
 }
+
 #[test]
 fn routed_state_releases_on_focus_loss() {
     let mut routed = input::RoutedInput::default();

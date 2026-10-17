@@ -15,7 +15,7 @@ impl ContextCommand for Paste {
 
 fn app() -> App {
     let mut app = App::new();
-    app.add_plugins(WorkbenchCorePlugin);
+    app.add_plugins(WorkspacePlugin);
     Workbench::new(app.world_mut())
         .register_handler::<Copy, _>(|_: In<ContextCommandInvocation>| -> ContextCommandResult {
             Ok(())

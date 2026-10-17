@@ -291,7 +291,8 @@ next layer. Keep the original application usable throughout the migration.
 | Workbench foundation | Panels/layout plus a coherent document, history, workspace and persistence model. | Typed commands and the in-memory workspace/layout/panel lifecycle are implemented; see [stage 3](step-3.md). Documents, settings and persistence follow. |
 | egui migration | Preserve the Bed shell, themes and motion using egui widgets and upstream Bevy integration. | Implemented and native-smoke tested; see [stage 4](step-4-egui.md). |
 | Contextual input and commands | UI/panel input ownership and independently resolved bindings and handlers. | Implemented, including game capture and effective menu hints; see [stage 4](step-4-egui.md). |
-| Services and application features | Add filesystem and justified shared services, then migrate bEd features onto them. | Planned. |
+| Workspace runtimes | Scope plugin worlds and external work to application-defined boundaries. | Implemented with workspace SubApps, explicit host scheduling, active/explicit APIs and asynchronous task/process cleanup; see the [workspace API](../bedtime2/crates/bedtime-workbench2/README.md). |
+| Services and application features | Add filesystem and justified shared services, then migrate bEd features onto them. | Workspace-scoped tasks and pipe processes implemented; filesystem and feature migration follow. |
 | Remote integration | Exercise the same service contracts across a remote boundary and evaluate replication against concrete requirements. | Deferred. |
 
 Before committing to the workbench API, exercise a text file, database row and
