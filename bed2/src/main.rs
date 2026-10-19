@@ -8,6 +8,7 @@ use bevy::{prelude::*, window::PrimaryWindow};
 
 mod cube;
 mod documents;
+mod file_editor;
 mod files;
 mod tasks;
 mod terminal;
@@ -120,9 +121,7 @@ fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) 
                 {
                     files::open_files(world, layout);
                 }
-                context
-                    .frame(ui)
-                    .tooltip(&documents, "Documents (memory-only demo)");
+                context.frame(ui).tooltip(&documents, "Documents");
                 if documents.clicked()
                     && let Some(layout) = layout
                 {

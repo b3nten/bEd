@@ -1991,37 +1991,12 @@ name = "bed2"
 version = "0.1.0"
 dependencies = [
  "bedtime-automation2",
+ "bedtime-editor2",
  "bedtime-filetree2",
  "bedtime-terminal2",
  "bedtime-ui2",
  "bedtime-workbench2",
  "bevy",
- "serde_json",
-]
-
-[[package]]
-name = "bed2-demo-game"
-version = "0.1.0"
-dependencies = [
- "bedtime-ui2",
- "bevy",
- "wgpu",
-]
-
-[[package]]
-name = "bedside-table"
-version = "0.1.0"
-dependencies = [
- "bedtime",
- "bedtime-core",
- "bedtime-sqlite",
- "bedtime-storage",
- "bedtime-workbench",
- "bevy",
- "dear-imgui-rs",
- "rfd",
- "rusqlite",
- "serde",
  "serde_json",
 ]
 
@@ -2200,6 +2175,17 @@ dependencies = [
  "dear-imgui-sys",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "bedtime-editor2"
+version = "0.1.0"
+dependencies = [
+ "bedtime-ui2",
+ "bedtime-workbench2",
+ "bevy",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]

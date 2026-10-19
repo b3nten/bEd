@@ -1,0 +1,21 @@
+[package]
+name = "bedtime-editor2"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Embeddable plain text editor with optional Workbench document integration"
+
+[features]
+default = []
+workbench = ["dep:bedtime-workbench2"]
+
+[dependencies]
+bedtime-ui2.workspace = true
+bedtime-workbench2 = { path = "../bedtime-workbench2", default-features = false, optional = true }
+bevy = { workspace = true, features = ["std"] }
+unicode-segmentation = "=1.13.3"
+unicode-width.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_log", "x11", "wayland"] }

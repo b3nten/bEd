@@ -2987,10 +2987,18 @@ impl Context {
         self.memory(|m| m.focused().is_some())
     }
 
+    /// Register a custom text input widget for shortcut/capture arbitration.
+    /// Call when drawing with a stable widget ID. This carries no edit buffer,
+    /// selection, undo history or keyboard ownership beyond ordinary egui focus.
+    pub fn register_text_input(&self, id: Id) {
+        self.data_mut(|data| data.insert_temp(id.with("egui.custom_text_input"), true));
+    }
+
     /// Is the currently focused widget a text edit?
     pub fn text_edit_focused(&self) -> bool {
         if let Some(id) = self.memory(|mem| mem.focused()) {
             crate::text_edit::TextEditState::load(self, id).is_some()
+                || self.data(|data| data.get_temp::<bool>(id.with("egui.custom_text_input")).unwrap_or(false))
         } else {
             false
         }

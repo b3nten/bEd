@@ -278,7 +278,7 @@ impl Panel for DocumentsPanel {
             frame.padded(surface.padding, |frame| {
                 let ui = frame.ui;
                 ui.heading(Self::LABEL);
-                ui.weak("Memory-only demonstration. Save writes to a versioned in-memory source, not a file. All data is lost when this application exits.");
+                ui.weak("The creation demos below save to memory only. Files opened from Files save to disk; both use the same document history and lifecycle.");
                 ui.label("Documents belong to this workspace and are shared across its layouts. Closing the last viewer keeps its document here.");
                 ui.add_enabled_ui(!is_closing(world), |ui| {
                     ui.horizontal_wrapped(|ui| {
@@ -296,7 +296,7 @@ impl Panel for DocumentsPanel {
                             ui.strong(&info.title);
                             ui.label(format!("revision {} · {} · {viewers} viewer(s)", info.revision, document_status(&info)));
                             ui.horizontal_wrapped(|ui| {
-                                let supported = DemoKind::of(world, *id).is_some();
+                                let supported = DemoKind::of(world, *id).is_some() || crate::file_editor::file_source(world,*id).is_some();
                                 if ui.add_enabled(supported, egui::Button::new("Open viewer")).clicked() {
                                     action = Some((None, Some(*id), 1));
                                 }
@@ -353,6 +353,9 @@ pub fn open_picker(world: &mut World, layout: Entity) {
 }
 
 fn open_viewer(world: &mut World, layout: Entity, id: DocumentId) -> Result<Entity, String> {
+    if crate::file_editor::file_source(world, id).is_some() {
+        return crate::files::open_document_view(world, layout, id);
+    }
     let info = inspect_document(world, id).map_err(|e| e.to_string())?;
     let kind = DemoKind::of(world, id).ok_or("No demo viewer for this document model")?;
     let mut wb = Workbench::for_entity(world, layout)?;

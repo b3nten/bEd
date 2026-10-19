@@ -18,7 +18,8 @@ Hello World, Theme and the titlebar renderer live in `main.rs`; `cube.rs` owns t
 shared cube/ground/light scene and the viewport implementation. `tasks.rs` adds
 the Tasks & Processes panel, and `documents.rs` adds shared document viewers and
 application-owned quit policy. `files.rs` integrates the reusable filetree panel,
-read-only file previews and root-scoped preference storage.
+text editor tabs and root-scoped preference storage; `file_editor.rs` owns local
+text documents, source identity and streaming save policy.
 `bedtime-terminal2::TerminalPlugin` adds local shell
 panels; `terminal.rs` contributes optional automation inspection only.
 All use the main World and renderer. To open another
@@ -115,11 +116,16 @@ Root resolution, lazy enumeration, sorting and watching run off the UI thread.
   Arrow keys, Home/End, PageUp/PageDown, range/toggle selection and prefix
   navigation work without recursively indexing the project. The duplicate
   name/refresh header has been removed.
-- Single clicks open/reuse a **read-only preview** beside the tree; a double click,
+- Single clicks open/reuse an **editable preview** beside the tree; a double click,
   Enter or context Open pins/reuses that same file rather than making duplicate
-  viewers. Routing retains the originating workspace/layout. UTF-8 text previews
-  are limited to 1 MiB; binary/large/nonregular files show metadata instead.
-  These are not editable Workbench documents and have no fake filesystem Save.
+  viewers. Editing pins the preview, so another file never replaces unsaved work.
+  Routing retains the originating workspace/layout. UTF-8 files up to 256 MiB use
+  the [reusable text editor](../bedtime2/crates/bedtime-editor2/README.md);
+  binary/larger/nonregular files show metadata. **Split view** shares one document
+  and history while keeping independent selections, scrolling and line numbers.
+  Drawing is virtualized vertically and horizontally, including very long lines.
+  Cmd/Ctrl+S saves through the shared document service. File reads, indexing,
+  source comparisons and streaming writes run on managed workers.
 - Direct context menus and inline naming provide file/folder creation,
   rename, cut/copy/paste, duplicate, Move to Trash and visibility controls. Incoming
   file/folder drops copy; internal same-root dragging moves, with Option/Primary
@@ -138,10 +144,11 @@ Root resolution, lazy enumeration, sorting and watching run off the UI thread.
   debounced worker writes. Startup does not create storage or rewrite untouched
   preferences. Parse/save errors create readable dialogs; records above the
   4 MiB application storage limit are rejected before replacing readable storage.
-- Own moves update preview paths and hidden rules after confirmed filesystem
-  success. **Confirmed deletion drops the source and its displayed content**, for
-  both Trash and external disk deletion: close the viewer tab if siblings remain,
-  otherwise leave its unloaded state. Independent worker metadata checks cover
+- Own moves update source paths and save bindings after confirmed filesystem
+  success while preserving text/history. Confirmed deletion unloads **clean**
+  viewers; dirty, drafted or saving documents retain local work and lose their
+  backing save binding. Save As is not implemented yet. Clean tabs close if
+  siblings remain, otherwise leave an unloaded state. Worker metadata checks cover
   hidden/inactive viewers and paths outside all current tree roots, at most 64
   viewers per workspace batch with 500 ms cadence and round-robin coverage.
   Absence decisions defer during admitted mutations so an own move can rebind
@@ -158,10 +165,31 @@ Root resolution, lazy enumeration, sorting and watching run off the UI thread.
 Preview is a tab-lifetime policy, not a second document format. A single click
 reuses the layout's one replaceable preview, while double-click, Enter, context
 Open or **Keep open** pins it. Opening an already displayed path reuses its tab.
-Both modes are currently read-only viewers. Preview labels are italic at 90%
+Preview labels are italic at 90%
 text opacity instead of underlined. Workbench's optional per-item `PanelTabStyle`
 can override italic/opacity independently from semantic `PanelInstance.preview`;
 these style/configuration components are runtime-only.
+
+Reload observes disk contents through the existing source-generation and
+conflict protocol. **Keep my edits** acknowledges the observed disk checkpoint;
+**Use disk contents** explicitly replaces local content. Saves compare exact
+source bytes, preserve permissions and symlinks, and atomically replace the target.
+There is no filesystem content CAS: an unrelated process can still write between
+the final comparison and rename. Known own moves/deletions invalidate pending
+save identities. File sessions currently deduplicate by workspace and source path;
+different aliases can name separate sessions.
+
+The first editor slice includes normal selection/clipboard/navigation/history,
+IME drafts, line numbers and bed1's caret animation. Indentation-aware wrapping,
+smart indentation/backspace, find/replace, folding and language tooling remain
+later milestones. Editor settings are in memory. The standalone example requires
+neither Workbench nor language plugins:
+
+```sh
+cargo run --offline --locked -p bedtime-editor2 --example standalone
+cargo build --offline --locked -p bed2 --features automation
+python3 bedtime2/tools/smoke_editor.py
+```
 
 Git status/ignore integration is deferred. Cross-device moves and atomic
 no-replace commits outside macOS/Linux report Unsupported without deleting the
@@ -200,6 +228,9 @@ session; another workspace gets its own instance.
 
 The demo does not persist restoration descriptors. Restoring a layout creates
 unbound viewers that can select a compatible live document or reopen the sample.
+The Documents picker also reopens retained real-file editors, including unsaved
+documents whose sources were deleted after editing. Its creation buttons and
+memory viewers keep their in-memory save behavior.
 The [document contract](../MIGRATION/workbench-documents.md) describes the core API.
 
 Optional external automation uses the same application setup:

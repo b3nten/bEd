@@ -196,6 +196,12 @@ layouts.
 
 ## Documents
 
+[`bedtime-editor2`](../bedtime-editor2/README.md) optionally adapts its persistent
+`TextBuffer` model to these same sessions/history and supplies embeddable text
+views. Applications retain file/source policy. `document_changes_since` exposes
+a bounded, independently readable journal of all accepted content transitions,
+including undo/redo and whole-model invalidations; readers refresh on a gap.
+
 Workbench owns workspace document sessions independently of their panel viewers.
 The application creates and loads models, supplies source observations and save
 I/O, and owns source identity, storage, merge and recovery policy. Documents use

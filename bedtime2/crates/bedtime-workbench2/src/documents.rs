@@ -61,6 +61,52 @@ pub struct TextChange {
     pub replacement: String,
 }
 
+/// One accepted content transition. Changes use successive pre-change states;
+/// `None` means a whole-model replacement and requires refreshing derived data.
+/// This journal is independent of undo history and includes undo/redo.
+#[derive(Clone, Debug)]
+pub struct DocumentCommit<C> {
+    pub revision: u64,
+    pub changes: Option<Vec<C>>,
+}
+
+const CHANGE_JOURNAL_LIMIT: usize = 128;
+
+/// Read transitions after `revision` without consuming another reader's updates.
+/// `None` means the bounded journal no longer covers that revision. Refresh from
+/// the current model in that case; never interpret a gap as no changes.
+pub fn document_changes_since<M: DocumentModel>(
+    world: &World,
+    handle: DocumentHandle<M>,
+    revision: u64,
+) -> Result<Option<Vec<DocumentCommit<M::Change>>>, DocumentError> {
+    let session = typed_session::<M>(world, handle.id)?;
+    if revision > session.revision {
+        return Err(DocumentError::StaleRevision {
+            expected: revision,
+            actual: session.revision,
+        });
+    }
+    if revision == session.revision {
+        return Ok(Some(Vec::new()));
+    }
+    if session
+        .commits
+        .front()
+        .is_none_or(|first| first.revision > revision + 1)
+    {
+        return Ok(None);
+    }
+    Ok(Some(
+        session
+            .commits
+            .iter()
+            .filter(|commit| commit.revision > revision)
+            .cloned()
+            .collect(),
+    ))
+}
+
 impl DocumentModel for String {
     type Change = TextChange;
     fn apply(&mut self, change: &TextChange) -> Result<TextChange, String> {
@@ -601,12 +647,14 @@ pub fn edit_document_transaction<M: DocumentModel>(
     session.check_group(handle.id, &options)?;
     let mut candidate = session.content.clone();
     let mut inverses = Vec::new();
+    let mut committed = Vec::new();
     for change in changes {
         inverses.push(
             candidate
                 .apply(&change)
                 .map_err(DocumentError::InvalidChange)?,
         );
+        committed.push(change);
     }
     inverses.reverse();
     if options.group.is_none() {
@@ -640,6 +688,7 @@ pub fn edit_document_transaction<M: DocumentModel>(
     }
     session.content = candidate;
     session.revision = revision;
+    session.record_commit(Some(committed));
     Ok(revision)
 }
 
@@ -1217,6 +1266,7 @@ struct Session<M: DocumentModel> {
     /// Acknowledged source knowledge is deliberately outside undo history.
     baseline: Option<M>,
     revision: u64,
+    commits: VecDeque<DocumentCommit<M::Change>>,
     source_generation: u64,
     source_version: Option<SourceVersion>,
     undo: VecDeque<HistoryEntry<M>>,
@@ -1268,6 +1318,7 @@ impl<M: DocumentModel> Session<M> {
             content,
             baseline,
             revision: 0,
+            commits: VecDeque::new(),
             source_generation: 0,
             source_version,
             undo: VecDeque::new(),
@@ -1285,6 +1336,15 @@ impl<M: DocumentModel> Session<M> {
     }
     fn dirty(&self) -> bool {
         self.baseline.as_ref() != Some(&self.content)
+    }
+    fn record_commit(&mut self, changes: Option<Vec<M::Change>>) {
+        self.commits.push_back(DocumentCommit {
+            revision: self.revision,
+            changes,
+        });
+        while self.commits.len() > CHANGE_JOURNAL_LIMIT {
+            self.commits.pop_front();
+        }
     }
     fn check_revision(&self, expected: u64) -> Result<(), DocumentError> {
         if expected != self.revision {
@@ -1332,6 +1392,7 @@ impl<M: DocumentModel> Session<M> {
         let previous = self.content.clone();
         self.revision = next_counter(self.revision);
         self.content = model;
+        self.record_commit(None);
         self.redo.clear();
         self.push_undo(HistoryEntry {
             record: Record::Replace(previous),
@@ -1412,6 +1473,10 @@ impl<M: DocumentModel> ErasedSession for Session<M> {
             DocumentError::NothingToUndo
         })?;
         let (content, record) = self.apply_record(&entry.record)?;
+        let changes = match &entry.record {
+            Record::Changes(changes) => Some(changes.clone()),
+            Record::Replace(_) => None,
+        };
         let label = entry.label.clone();
         let revision = next_counter(self.revision);
         if redo {
@@ -1432,6 +1497,7 @@ impl<M: DocumentModel> ErasedSession for Session<M> {
         self.group = None;
         self.content = content;
         self.revision = revision;
+        self.record_commit(changes);
         Ok(revision)
     }
     fn unbind_save(&mut self) -> Result<(), DocumentError> {

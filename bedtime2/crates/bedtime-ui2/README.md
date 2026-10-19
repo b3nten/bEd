@@ -155,6 +155,9 @@ a convenience for `TextEdit::show`; it adds no event-ownership layer.
 `UiCapture` on the surface reports keyboard/pointer interest, text editing and
 popup/modal activity. Text and modal flags include activity earlier in the same
 frame, so closing a text edit or popup cannot leak its final key into a shortcut.
+Custom text canvases call `egui::Context::register_text_input(id)` when drawing;
+the ordinary focused widget ID then participates in the same text capture policy
+without creating a `TextEdit` buffer or private history.
 Workbench consumes eligible egui shortcuts after drawing. UI2 leaves Bevy input
 messages and `ButtonInput` unchanged. Applications and panels reading that input
 own their focus/visibility gating and any held-key cleanup when it is suspended.

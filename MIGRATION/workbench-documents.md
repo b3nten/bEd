@@ -109,6 +109,22 @@ pub trait DocumentModel: Clone + PartialEq + Send + Sync + 'static {
   history. Undoing back to earlier text does not restore earlier source
   knowledge; it makes the document dirty against the newer checkpoint.
 
+## Committed change observations
+
+`document_changes_since(world, handle, revision)` reads the next accepted content
+transitions without consuming other readers' observations. Each commit records
+its resulting revision and ordered changes over successive states. Undo and redo
+publish their applied changes; whole-model replacements publish an invalidation
+(`changes == None`). Failed edits, no-ops, saves and checkpoint acknowledgements
+publish no content transition. The journal retains 128 commits independently of
+undo history, including when history retention is disabled. An outer `None`
+reports an expired journal; requesting a future revision fails.
+
+The [text editor](../bedtime2/crates/bedtime-editor2/README.md) uses the journal to
+map selections in other/dormant views and clamps positions after invalidation or
+expiry. The editor's persistent model keeps content snapshots and journal
+payloads cheap for large files; the generic built-in String model remains valid.
+
 ## Drafts
 
 A viewer inserts `DocumentDraft` while it holds uncommitted input (for example
@@ -346,9 +362,10 @@ pub fn offer_document_external_update<M: DocumentModel>(
 - Three-way merge and conflict UI; `DocumentConflictResolution::Merged` only
   accepts an application result.
 - Durable undo history, crash recovery, autosave and debounce.
-- A text-edit bridge that converts `egui::TextEdit` output into `TextChange`
-  transactions and routes its undo/redo. No panel type or document viewer is
-  shipped by this module.
+- This module ships no panel type or document viewer. The optional
+  `bedtime-editor2` crate supplies a virtualized editor/bridge using `TextBuffer`
+  and `BufferEdit`, with the same document/history/save machinery. Applications
+  may continue using the built-in String model for other viewers.
 - Multi-window or cross-workspace presentation of one canonical session;
   `DocumentView` currently requires the document's workspace.
 

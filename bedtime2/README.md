@@ -13,6 +13,9 @@ The foundation and its optional panels live in these crates:
   clipboard, optional OS integration, in-process fallback.
 - [`bedtime-ui2`](crates/bedtime-ui2): egui/Bevy integration, themes, controls,
   asset-backed icons, effects and UI-local motion. It has no workbench dependency.
+- [`bedtime-editor2`](crates/bedtime-editor2): embeddable plain text editing,
+  persistent indexed text, viewport-only drawing, shared history and animated
+  carets. Workbench integration is optional; language tooling is not required.
 - [`bedtime-workbench2`](crates/bedtime-workbench2): headless ContextCommands, scoped handlers,
   keybindings, menus, workspace entities, activation markers, shared typed/text
   documents with history/save/reconciliation, and scoped tasks/processes, plus
@@ -43,8 +46,9 @@ which release games can also use without either of them.
 `bed2` opens one workspace and a 3D Viewport panel in the application World.
 Its `cube.rs` module owns the shared scene and per-panel orbit cameras; Hello
 World, live Theme controls, a Tasks & Processes panel in `tasks.rs`, and memory-only
-shared document viewers in `documents.rs`, Files/read-only previews and preference
-storage in `files.rs`, plus the optional Terminal plugin, remain available. The
+shared document viewers in `documents.rs`, Files/editable text tabs and preference
+storage in `files.rs`, local text save policy in `file_editor.rs`, plus the optional
+Terminal plugin, remain available. The
 folder titlebar button opens Documents; the stacked-files button opens Files. bEd2
 explicitly chooses a startup directory from its positional argument or cwd; this
 is application policy, not a library workspace root. Its application-owned quit
@@ -56,10 +60,10 @@ or smoke-test modes.
 The optional [automation plugin](crates/bedtime-automation2/README.md) provides
 stdin/stdout control; external Python scripts own scenarios and assertions.
 
-The independent game examples also run without Workbench:
+The standalone text editor runs without Workbench or language plugins:
 
 ```sh
-cargo run -p bed2-demo-game --example standalone
+cargo run -p bedtime-editor2 --example standalone
 ```
 
 The UI-only gallery uses no workbench or native menu plugins:

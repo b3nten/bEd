@@ -1,5 +1,8 @@
-//! Application policy for local files: explicit roots, read-only previews and storage.
+//! Application policy for local files: explicit roots, text editors and storage.
 //! The reusable tree never chooses cwd, a viewer, or a persistence destination.
+#[cfg(test)]
+use bedtime_editor2::BufferEdit;
+use bedtime_editor2::TextBuffer;
 #[cfg(feature = "automation")]
 use bedtime_filetree2::FileTreeSettings;
 use bedtime_filetree2::{
@@ -22,7 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MAX_PREVIEW_BYTES: u64 = 1024 * 1024;
+const MAX_PREVIEW_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_PREFERENCES_BYTES: u64 = 4 * 1024 * 1024;
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(200);
 const PREVIEW_CHECK_INTERVAL: Duration = Duration::from_millis(500);
@@ -37,7 +40,7 @@ pub enum FilesSystems {
 
 impl Plugin for FilesPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(FileTreePlugin)
+        app.add_plugins((FileTreePlugin, crate::file_editor::FileEditorPlugin))
             .init_resource::<StartupRoot>()
             .init_resource::<FileEvents>()
             .register_panel_type::<FilePreviewPanel>()
@@ -305,7 +308,7 @@ pub fn open_files(world: &mut World, layout: Entity) {
 
 #[derive(Clone, Debug)]
 enum PreviewContent {
-    Text(Arc<str>),
+    Text(TextBuffer),
     Metadata(Arc<str>),
 }
 
@@ -335,10 +338,12 @@ struct PreviewLoad {
     generation: u64,
     path: PathBuf,
     workspace: Entity,
+    document_stamp: Option<(DocumentId, u64)>,
     handle: WorkspaceTask<Result<PreviewContent, PreviewReadError>>,
 }
 
-/// No document/save binding: these viewers cannot mutate a file or pretend to save it.
+/// A replaceable file tab. Text binds to a shared document; unsupported files
+/// keep a bounded metadata presentation. The loaded bytes are a source snapshot.
 #[derive(Component, Default)]
 pub struct FilePreviewPanel {
     path: Option<PathBuf>,
@@ -350,11 +355,16 @@ pub struct FilePreviewPanel {
     // source awaiting an own move's outcome is diagnostic only, not a dialog.
     report_error: bool,
     missing: bool,
+    editor_rect: Option<egui::Rect>,
+    caret_rect: Option<egui::Rect>,
+    rendered_lines: usize,
+    laid_out_bytes: usize,
+    editor_error: Option<String>,
 }
 
 impl Panel for FilePreviewPanel {
     const KEY: &'static str = "bed.file-preview";
-    const LABEL: &'static str = "File preview";
+    const LABEL: &'static str = "Text editor";
 
     fn initialize(entity: &mut EntityWorldMut<'_>) {
         entity.entry::<Self>().or_default();
@@ -363,59 +373,204 @@ impl Panel for FilePreviewPanel {
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
         let surface = *world.get::<WorkbenchSurface>(context.surface).unwrap();
         let state = world.get::<Self>(panel).unwrap();
+        let path = state.path.clone();
+        let loading = state.load.is_some();
+        let missing = state.missing;
+        let metadata = match &state.content {
+            Some(PreviewContent::Metadata(summary)) => Some(summary.clone()),
+            _ => None,
+        };
+        let document = world.get::<DocumentView>(panel).map(DocumentView::document);
+        let info = document.and_then(|id| inspect_document(world, id).ok());
         let mut pin = false;
         let mut reload = false;
+        let mut save = false;
+        let mut split = false;
+        let mut resolution = None;
         let pinned = !world.get::<PanelInstance>(panel).unwrap().preview;
-        context
-            .frame(ui)
-            .scroll("file-preview", surface.rounding, |mut frame| {
-                frame.padded(surface.padding, |frame| {
+        context.frame(ui).padded(surface.padding, |frame| {
                     let ui = frame.ui;
                     ui.horizontal_wrapped(|ui| {
-                        ui.weak("Read-only file preview");
                         if !pinned && ui.button("Keep open").clicked() {
                             pin = true;
                         }
-                        if state.path.is_some() && ui.button("Reload").clicked() {
+                        if path.is_some() && ui.button("Reload").clicked() {
                             reload = true;
                         }
+                        if let Some(info) = &info {
+                            save = ui.add_enabled(info.dirty && !info.saving && !info.conflict && !info.has_drafts && info.has_save_binding, egui::Button::new("Save")).clicked();
+                            split = ui.button("Split view").clicked();
+                            if let Some(mut editor) = world.get_mut::<bedtime_editor2::workbench::WorkbenchEditor>(panel) {
+                                ui.checkbox(&mut editor.view.settings.line_numbers, "Line numbers");
+                            }
+                            if info.saving { ui.spinner(); }
+                            else if info.dirty { ui.weak("Modified"); }
+                        }
                     });
-                    if let Some(path) = &state.path {
-                        ui.weak(path.to_string_lossy());
+                    if let Some(path) = &path {
+                        ui.add(egui::Label::new(egui::RichText::new(path.to_string_lossy()).weak()).truncate());
                     } else {
-                        ui.label(if state.missing {
+                        ui.label(if missing && document.is_some() {
+                        "Source deleted. Your edits are retained; saving to another path is not available yet."
+                    } else if missing {
                         "File unloaded because its source was deleted. Open a file from Files."
                     } else {
                         "Open a file from Files. Layout restoration does not restore file contents."
                     });
                     }
-                    if state.load.is_some() {
+                    if loading {
                         ui.spinner();
                     }
-                    ui.separator();
-                    match &state.content {
-                        Some(PreviewContent::Text(text)) => {
-                            // A selectable Label, not an editable buffer with misleading save semantics.
-                            ui.add(
-                                egui::Label::new(egui::RichText::new(text.as_ref()).monospace())
-                                    .selectable(true)
-                                    .wrap(),
-                            );
+                    if let Some(info) = &info {
+                        if let Some(error) = &info.last_save_error { ui.colored_label(ui.visuals().error_fg_color, error.to_string()); }
+                        if info.conflict {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label("The file changed on disk.");
+                                if info.requires_source_refresh { ui.weak("Reload to compare before resolving."); }
+                                else {
+                                    if ui.button("Keep my edits").clicked() { resolution = Some(DocumentConflictResolution::KeepLocal); }
+                                    if ui.button("Use disk contents").clicked() { resolution = Some(DocumentConflictResolution::AcceptIncoming); }
+                                }
+                            });
                         }
-                        Some(PreviewContent::Metadata(summary)) => {
-                            ui.monospace(summary.as_ref());
-                        }
-                        None => {}
                     }
-                });
-            });
-        if pin {
+                    ui.separator();
+                    if document.is_some() {
+                        match bedtime_editor2::workbench::draw_editor(ui, world, context, panel) {
+                            Ok(output) => {
+                                let mut state = world.get_mut::<Self>(panel).unwrap();
+                                state.editor_rect = Some(output.text_rect);
+                                state.caret_rect = Some(output.caret_rect);
+                                state.rendered_lines = output.rendered_lines;
+                                state.laid_out_bytes = output.laid_out_bytes;
+                                if info.as_ref().is_some_and(|info| info.revision != output.revision) { state.editor_error = None; }
+                            }
+                            Err(error) => {
+                                let composing = world.get::<bedtime_editor2::workbench::WorkbenchEditor>(panel).is_some_and(|editor| editor.view.is_composing());
+                                let error = error.to_string();
+                                if !composing && world.get::<Self>(panel).unwrap().editor_error.as_ref() != Some(&error) {
+                                    world.get_mut::<Self>(panel).unwrap().editor_error = Some(error.clone());
+                                    request_error_dialog(world,ErrorDialog { title: "Unable to apply edit".into(), message: "Your edit was not applied. Finish text composition in other views, or reload the document, then try again.".into(), details: Some(error) });
+                                }
+                            }
+                        }
+                    } else if let Some(summary) = &metadata {
+                        egui::ScrollArea::vertical().show(ui, |ui| { ui.monospace(summary.as_ref()); });
+                    }
+        });
+        if pin
+            || document.is_some_and(|id| {
+                inspect_document(world, id).is_ok_and(|info| info.dirty || info.has_drafts)
+            })
+        {
             world.get_mut::<PanelInstance>(panel).unwrap().preview = false;
         }
-        if reload && let Some(path) = world.get::<Self>(panel).unwrap().path.clone() {
-            let _ = load_preview(world, panel, path, true);
+        let result = (|| {
+            if save {
+                save_document(world, document.unwrap()).map_err(|e| e.to_string())?;
+            }
+            if let Some(resolution) = resolution {
+                let id = document.unwrap();
+                let info = inspect_document(world, id).map_err(|e| e.to_string())?;
+                let handle = cast_document::<TextBuffer>(world, id).map_err(|e| e.to_string())?;
+                resolve_document_conflict(
+                    world,
+                    handle,
+                    info.revision,
+                    info.source_generation,
+                    resolution,
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            if split {
+                split_editor(world, panel)?;
+            }
+            if reload && let Some(path) = path {
+                load_preview(world, panel, path, true)?;
+            }
+            Ok::<_, String>(())
+        })();
+        if let Err(error) = result {
+            let mut state = world.get_mut::<Self>(panel).unwrap();
+            state.error = Some(error);
+            state.report_error = true;
         }
     }
+}
+
+fn split_editor(world: &mut World, panel: Entity) -> Result<Entity, String> {
+    let id = world
+        .get::<DocumentView>(panel)
+        .ok_or("No editor document")?
+        .document();
+    let handle = cast_document::<TextBuffer>(world, id).map_err(|e| e.to_string())?;
+    let original = world.get::<FilePreviewPanel>(panel).unwrap();
+    let path = original.path.clone();
+    let content = original.content.clone();
+    let title = world.get::<PanelInstance>(panel).unwrap().title.clone();
+    let source_area = world.get::<InArea>(panel).unwrap().0;
+    let mut workbench = Workbench::for_entity(world, panel)?;
+    let bounds = workbench.world().get::<Area>(source_area).unwrap().rect;
+    let at = bounds.min[0] + (bounds.max[0] - bounds.min[0]) / 2;
+    let area = workbench.split_area(source_area, SplitAxis::Horizontal, at, [1, 1])?;
+    let other = workbench.register_panel_in_area::<FilePreviewPanel>(area)?;
+    workbench
+        .world_mut()
+        .entity_mut(other)
+        .insert(FilePreviewPanel {
+            path,
+            content,
+            ..Default::default()
+        });
+    let mut instance = workbench
+        .world_mut()
+        .get_mut::<PanelInstance>(other)
+        .unwrap();
+    instance.title = title;
+    instance.preview = false;
+    bedtime_editor2::workbench::bind_text_editor(workbench.world_mut(), other, handle)
+        .map_err(|e| e.to_string())?;
+    workbench.focus_panel(other)?;
+    Ok(other)
+}
+
+/// Reopen a retained file document, including an unsaved deleted source. No
+/// loading or copying of canonical content occurs here.
+pub fn open_document_view(
+    world: &mut World,
+    layout: Entity,
+    document: DocumentId,
+) -> Result<Entity, String> {
+    let path = crate::file_editor::file_source(world, document).ok_or("Not a file document")?;
+    let handle = cast_document::<TextBuffer>(world, document).map_err(|e| e.to_string())?;
+    let info = inspect_document(world, document).map_err(|e| e.to_string())?;
+    let title = path
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or(info.title);
+    let mut workbench = Workbench::for_entity(world, layout)?;
+    if workbench.workspace_id().entity() != info.workspace {
+        return Err("Viewer destination is in another workspace".into());
+    }
+    let panel = workbench.register_panel::<FilePreviewPanel>(layout)?;
+    workbench
+        .world_mut()
+        .entity_mut(panel)
+        .insert(FilePreviewPanel {
+            missing: path.is_none(),
+            path,
+            ..Default::default()
+        });
+    workbench
+        .world_mut()
+        .get_mut::<PanelInstance>(panel)
+        .unwrap()
+        .title = title;
+    bedtime_editor2::workbench::bind_text_editor(workbench.world_mut(), panel, handle)
+        .map_err(|e| e.to_string())?;
+    workbench.focus_panel(panel)?;
+    Ok(panel)
 }
 
 fn open_requested(world: &mut World, request: &FileTreeOpenRequested) -> Result<Entity, String> {
@@ -470,11 +625,13 @@ fn open_requested(world: &mut World, request: &FileTreeOpenRequested) -> Result<
             .world()
             .get::<FilePreviewPanel>(*panel)
             .is_some_and(|state| {
-                state.path.is_none()
-                    || workbench
-                        .world()
-                        .get::<PanelInstance>(*panel)
-                        .is_some_and(|instance| instance.preview)
+                crate::file_editor::can_replace(workbench.world(), *panel) && {
+                    state.path.is_none()
+                        || workbench
+                            .world()
+                            .get::<PanelInstance>(*panel)
+                            .is_some_and(|instance| instance.preview)
+                }
             })
     });
     let panel = if let Some(panel) = replace {
@@ -541,6 +698,18 @@ fn load_preview(
         .get::<InWorkspace>(panel)
         .ok_or("Preview has no workspace")?
         .0;
+    let same_source = crate::file_editor::same_source(world, panel, &path);
+    if world.get::<DocumentDraft>(panel).is_some() {
+        return Err("Finish text composition before reloading or replacing this editor.".into());
+    }
+    if !same_source && !crate::file_editor::can_replace(world, panel) {
+        return Err("This editor has unsaved changes or a pending save. Keep it open before opening another file.".into());
+    }
+    let document_stamp = crate::file_editor::load_stamp(world, panel, &path);
+    let snapshots = crate::file_editor::load_snapshots(world, panel, &path);
+    if !same_source {
+        crate::file_editor::detach(world, panel)?;
+    }
     let generation = {
         let mut state = world
             .get_mut::<FilePreviewPanel>(panel)
@@ -572,7 +741,13 @@ fn load_preview(
             if cancel.is_cancelled() {
                 return Err(PreviewReadError::Failed("Preview cancelled".into()));
             }
-            read_preview(&source)
+            let mut content = read_preview(&source)?;
+            if let PreviewContent::Text(text) = &mut content {
+                if let Some(snapshot) = snapshots.iter().find(|snapshot| *snapshot == text) {
+                    *text = snapshot.clone();
+                }
+            }
+            Ok(content)
         })
     } else {
         Err("Missing workspace work".into())
@@ -583,6 +758,7 @@ fn load_preview(
                 generation,
                 path,
                 workspace,
+                document_stamp,
                 handle,
             });
             Ok(())
@@ -612,20 +788,20 @@ fn read_preview(path: &Path) -> Result<PreviewContent, PreviewReadError> {
         )))
     };
     if metadata.len() > MAX_PREVIEW_BYTES {
-        return Ok(summary("File is larger than the 1 MiB text preview limit."));
+        return Ok(summary("File is larger than the 256 MiB text file limit."));
     }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
     File::open(path)
         .and_then(|file| file.take(MAX_PREVIEW_BYTES + 1).read_to_end(&mut bytes))
         .map_err(|error| preview_read_error(path, error))?;
     if bytes.len() as u64 > MAX_PREVIEW_BYTES {
-        return Ok(summary("File grew beyond the 1 MiB text preview limit."));
+        return Ok(summary("File grew beyond the 256 MiB text file limit."));
     }
     if bytes.contains(&0) {
         return Ok(summary("Binary file; content is not shown as text."));
     }
     match String::from_utf8(bytes) {
-        Ok(text) => Ok(PreviewContent::Text(Arc::from(text))),
+        Ok(text) => Ok(PreviewContent::Text(TextBuffer::from(text))),
         Err(_) => Ok(summary(
             "Binary or non-UTF-8 file; content is not shown as text.",
         )),
@@ -669,12 +845,31 @@ fn poll_previews(world: &mut World) {
             }
         };
         if let Some(result) = result {
+            let stamp = state.load.as_ref().and_then(|load| load.document_stamp);
+            let path = state.path.clone();
             state.load = None;
             match result {
                 Ok(content) => {
-                    state.content = Some(content);
+                    state.content = Some(content.clone());
                     state.error = None;
                     state.missing = false;
+                    if let (Some(path), PreviewContent::Text(text)) = (path, content) {
+                        if let Err(error) =
+                            crate::file_editor::bind_loaded(world, panel, &path, &text, stamp)
+                        {
+                            let mut state = world.get_mut::<FilePreviewPanel>(panel).unwrap();
+                            state.error = Some(error);
+                            state.report_error = true;
+                        }
+                    } else if world.get::<DocumentView>(panel).is_some() {
+                        if crate::file_editor::can_replace(world, panel) {
+                            let _ = crate::file_editor::detach(world, panel);
+                        } else {
+                            let mut state = world.get_mut::<FilePreviewPanel>(panel).unwrap();
+                            state.error = Some("The source is no longer a supported text file. Your edits were retained.".into());
+                            state.report_error = true;
+                        }
+                    }
                 }
                 Err(PreviewReadError::Missing) if !mutations_pending => {
                     unload_deleted_preview(world, panel);
@@ -694,6 +889,7 @@ fn poll_previews(world: &mut World) {
 }
 
 fn move_previews(world: &mut World, source: &Path, destination: &Path) {
+    crate::file_editor::move_sources(world, source, destination);
     // The physical source is shared even across layouts/workspaces. Only an own
     // confirmed outcome supplies identity; external renames are disappearance.
     let moved: Vec<_> = world
@@ -710,7 +906,18 @@ fn move_previews(world: &mut World, source: &Path, destination: &Path) {
         })
         .collect();
     for (panel, path) in moved {
-        let _ = load_preview(world, panel, path, true);
+        if world.get::<DocumentView>(panel).is_some() {
+            // A confirmed move changes identity, not document content. Keep
+            // edits, history and active composition without starting a reload.
+            world.get_mut::<FilePreviewPanel>(panel).unwrap().path = Some(path.clone());
+            world.get_mut::<PanelInstance>(panel).unwrap().title = path
+                .file_name()
+                .unwrap_or(path.as_os_str())
+                .to_string_lossy()
+                .into_owned();
+        } else {
+            let _ = load_preview(world, panel, path, true);
+        }
     }
 }
 
@@ -735,6 +942,16 @@ fn trash_previews(world: &mut World, path: &Path) {
 /// here. Never retain deleted-source bytes or a reload association. Sequential
 /// closes leave one unloaded tab if every tab in an area lost its source.
 fn unload_deleted_preview(world: &mut World, panel: Entity) {
+    let retained = crate::file_editor::retain_deleted(world, panel);
+    if !retained {
+        if let Err(error) = crate::file_editor::detach(world, panel) {
+            if let Some(mut state) = world.get_mut::<FilePreviewPanel>(panel) {
+                state.error = Some(error);
+                state.report_error = true;
+            }
+            return;
+        }
+    }
     let Some(mut state) = world.get_mut::<FilePreviewPanel>(panel) else {
         return;
     };
@@ -746,10 +963,15 @@ fn unload_deleted_preview(world: &mut World, panel: Entity) {
         .checked_add(1)
         .expect("Preview generation exhausted");
     state.path = None;
-    state.content = None;
+    if !retained {
+        state.content = None;
+    }
     state.error = None;
     state.report_error = false;
     state.missing = true;
+    if retained {
+        return;
+    }
     let mut instance = world.get_mut::<PanelInstance>(panel).unwrap();
     instance.title = FilePreviewPanel::LABEL.into();
     instance.preview = false;
@@ -1516,10 +1738,16 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
         }).collect();
     let previews: Vec<_> = world.query::<(Entity, &FilePreviewPanel, &PanelInstance, &InWorkspace)>()
         .iter(world).map(|(entity, preview, instance, owner)| {
-            let (kind, content) = match &preview.content {
-                Some(PreviewContent::Text(text)) => ("text", Some(text.as_ref())),
-                Some(PreviewContent::Metadata(text)) => ("metadata", Some(text.as_ref())),
-                None => ("empty", None),
+            let document = world.get::<DocumentView>(entity).map(DocumentView::document);
+            let canonical = document.and_then(|id| cast_document::<TextBuffer>(world, id).ok()).and_then(|handle| read_document(world, handle).ok());
+            let text = canonical.or_else(|| match &preview.content { Some(PreviewContent::Text(text)) => Some(text), _ => None });
+            let (kind, content) = if let Some(text) = text {
+                ("text", Some(text.range_text(0..text.clamp_boundary(text.len().min(16*1024)))))
+            } else {
+                match &preview.content {
+                    Some(PreviewContent::Metadata(text)) => ("metadata",Some(text.to_string())),
+                    _ => ("empty",None),
+                }
             };
             json!({"entity": entity.to_bits().to_string(), "workspace": owner.0.to_bits().to_string(),
                 "area": world.get::<InArea>(entity).map(|area| area.0.to_bits().to_string()),
@@ -1528,8 +1756,14 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
                 "path": preview.path.as_ref().map(|path| path.to_string_lossy()),
                 "generation": preview.generation, "loading": preview.load.is_some(),
                 "pinned": !instance.preview, "title": instance.title, "kind": kind,
-                "content": content, "error": preview.error, "missing": preview.missing,
-                "unloaded": preview.path.is_none()})
+                "content": content, "byte_len": text.map(TextBuffer::len), "line_count": text.map(TextBuffer::line_count), "content_truncated": text.is_some_and(|text| text.len() > 16*1024), "rendered_lines": preview.rendered_lines, "laid_out_bytes": preview.laid_out_bytes, "error": preview.error, "missing": preview.missing,
+                "unloaded": preview.path.is_none() && document.is_none(),
+                "document": document.map(|id| id.entity().to_bits().to_string()),
+                "document_info": document.and_then(|id| inspect_document(world, id).ok()).map(|info| json!({"revision": info.revision, "dirty": info.dirty, "saving": info.saving, "conflict": info.conflict, "draft": info.has_drafts})),
+                "editor_rect": preview.editor_rect.map(|rect| json!({"min": [rect.min.x,rect.min.y], "max": [rect.max.x,rect.max.y]})),
+                "caret_rect": preview.caret_rect.map(|rect| json!({"min": [rect.min.x,rect.min.y], "max": [rect.max.x,rect.max.y]})),
+                "editor": world.get::<bedtime_editor2::workbench::WorkbenchEditor>(entity).map(|editor| json!({"anchor": editor.view.selection().anchor(), "head": editor.view.selection().head(), "scroll": [editor.view.scroll_offset().x,editor.view.scroll_offset().y], "line_numbers": editor.view.settings.line_numbers})),
+            })
         }).collect();
     let storage: Vec<_> = world
         .query::<(Entity, &FileTreeStorage)>()
@@ -1651,11 +1885,234 @@ mod tests {
             .filter_map(|(panel, owner, _)| (owner.0 == workspace).then_some(panel))
             .collect()
     }
-    fn text(app: &App, panel: Entity) -> &str {
+    fn text(app: &App, panel: Entity) -> &TextBuffer {
+        if let Some(view) = app.world().get::<DocumentView>(panel) {
+            let handle = cast_document::<TextBuffer>(app.world(), view.document()).unwrap();
+            return read_document(app.world(), handle).unwrap();
+        }
         match &app.world().get::<FilePreviewPanel>(panel).unwrap().content {
             Some(PreviewContent::Text(text)) => text,
             content => panic!("Expected text, got {content:?}"),
         }
+    }
+
+    fn edit_text(app: &mut App, panel: Entity, replacement: &str) -> DocumentHandle<TextBuffer> {
+        let id = app.world().get::<DocumentView>(panel).unwrap().document();
+        let handle = cast_document::<TextBuffer>(app.world(), id).unwrap();
+        let revision = inspect_document(app.world(), id).unwrap().revision;
+        let len = read_document(app.world(), handle).unwrap().len();
+        edit_document(
+            app.world_mut(),
+            handle,
+            revision,
+            BufferEdit::new(0..len, replacement),
+            EditOptions::new("Test edit"),
+        )
+        .unwrap();
+        handle
+    }
+
+    #[test]
+    fn editable_files_share_history_across_split_views_and_save_real_bytes() {
+        let fixture = Fixture::new();
+        let path = fixture.text("edit.txt", "original\r\nUnicode é🙂\r\n");
+        let mut app = host();
+        let (workspace, layout) = workspace(&mut app, "Editor");
+        let tree = tree(&mut app, layout, &fixture.0);
+        request(&mut app, tree, &path, FileTreeActivation::SingleClick);
+        wait(&mut app, |world| {
+            world
+                .query::<(&FilePreviewPanel, &DocumentView)>()
+                .iter(world)
+                .any(|(state, _)| state.path.as_ref() == Some(&path))
+        });
+        let panel = viewers(&mut app, workspace)[0];
+        let other = split_editor(app.world_mut(), panel).unwrap();
+        let handle = edit_text(&mut app, panel, "edited\r\nUnicode é🙂\r\n");
+        assert_eq!(
+            app.world().get::<DocumentView>(other).unwrap().document(),
+            handle.id()
+        );
+        assert_eq!(text(&app, other), "edited\r\nUnicode é🙂\r\n");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "original\r\nUnicode é🙂\r\n"
+        );
+        undo_document(app.world_mut(), handle.id()).unwrap();
+        assert_eq!(text(&app, other), "original\r\nUnicode é🙂\r\n");
+        redo_document(app.world_mut(), handle.id()).unwrap();
+        save_document(app.world_mut(), handle.id()).unwrap();
+        wait(&mut app, |world| {
+            !inspect_document(world, handle.id()).unwrap().saving
+        });
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "edited\r\nUnicode é🙂\r\n"
+        );
+        assert!(!inspect_document(app.world(), handle.id()).unwrap().dirty);
+        stop(&mut app);
+    }
+
+    #[test]
+    fn opening_another_file_never_replaces_a_dirty_preview() {
+        let fixture = Fixture::new();
+        let first = fixture.text("first.txt", "first");
+        let next = fixture.text("next.txt", "next");
+        let mut app = host();
+        let (workspace, layout) = workspace(&mut app, "Editor");
+        let tree = tree(&mut app, layout, &fixture.0);
+        request(&mut app, tree, &first, FileTreeActivation::SingleClick);
+        wait(&mut app, |world| {
+            world.query::<&DocumentView>().iter(world).next().is_some()
+        });
+        let panel = viewers(&mut app, workspace)[0];
+        edit_text(&mut app, panel, "unsaved");
+        request(&mut app, tree, &next, FileTreeActivation::SingleClick);
+        wait(&mut app, |world| {
+            world
+                .query::<(&FilePreviewPanel, &DocumentView)>()
+                .iter(world)
+                .any(|(state, _)| state.path.as_ref() == Some(&next))
+        });
+        assert_eq!(text(&app, panel), "unsaved");
+        assert_eq!(
+            app.world()
+                .get::<FilePreviewPanel>(panel)
+                .unwrap()
+                .path
+                .as_ref(),
+            Some(&first)
+        );
+        assert_eq!(viewers(&mut app, workspace).len(), 2);
+        stop(&mut app);
+    }
+
+    #[test]
+    fn changed_disk_bytes_reject_save_and_reload_preserves_edits_for_resolution() {
+        let fixture = Fixture::new();
+        let path = fixture.text("conflict.txt", "base");
+        let mut app = host();
+        let (workspace, layout) = workspace(&mut app, "Editor");
+        let tree = tree(&mut app, layout, &fixture.0);
+        request(&mut app, tree, &path, FileTreeActivation::SingleClick);
+        wait(&mut app, |world| {
+            world.query::<&DocumentView>().iter(world).next().is_some()
+        });
+        let panel = viewers(&mut app, workspace)[0];
+        let handle = edit_text(&mut app, panel, "mine");
+        fs::write(&path, "theirs").unwrap();
+        save_document(app.world_mut(), handle.id()).unwrap();
+        wait(&mut app, |world| {
+            !inspect_document(world, handle.id()).unwrap().saving
+        });
+        assert_eq!(fs::read_to_string(&path).unwrap(), "theirs");
+        assert_eq!(text(&app, panel), "mine");
+        assert!(
+            inspect_document(app.world(), handle.id())
+                .unwrap()
+                .requires_source_refresh
+        );
+        load_preview(app.world_mut(), panel, path.clone(), true).unwrap();
+        wait(&mut app, |world| {
+            world.get::<FilePreviewPanel>(panel).unwrap().load.is_none()
+        });
+        let conflict = document_conflict(app.world(), handle).unwrap().unwrap();
+        assert_eq!(conflict.local, "mine");
+        assert_eq!(conflict.incoming, "theirs");
+        resolve_document_conflict(
+            app.world_mut(),
+            handle,
+            conflict.revision,
+            conflict.source_generation,
+            DocumentConflictResolution::KeepLocal,
+        )
+        .unwrap();
+        save_document(app.world_mut(), handle.id()).unwrap();
+        wait(&mut app, |world| {
+            !inspect_document(world, handle.id()).unwrap().saving
+        });
+        assert_eq!(fs::read_to_string(&path).unwrap(), "mine");
+        stop(&mut app);
+    }
+
+    #[test]
+    fn confirmed_rename_keeps_unsaved_text_and_history_and_saves_to_new_path() {
+        let fixture = Fixture::new();
+        let path = fixture.text("old.txt", "base");
+        let renamed = fixture.path("new.txt");
+        let mut app = host();
+        let (workspace, layout) = workspace(&mut app, "Editor");
+        let tree = tree(&mut app, layout, &fixture.0);
+        request(&mut app, tree, &path, FileTreeActivation::SingleClick);
+        wait(&mut app, |world| {
+            world.query::<&DocumentView>().iter(world).next().is_some()
+        });
+        let panel = viewers(&mut app, workspace)[0];
+        let handle = edit_text(&mut app, panel, "mine");
+        fs::rename(&path, &renamed).unwrap();
+        move_previews(app.world_mut(), &path, &renamed);
+        assert_eq!(text(&app, panel), "mine");
+        assert_eq!(
+            app.world().get::<DocumentView>(panel).unwrap().document(),
+            handle.id()
+        );
+        undo_document(app.world_mut(), handle.id()).unwrap();
+        assert_eq!(text(&app, panel), "base");
+        redo_document(app.world_mut(), handle.id()).unwrap();
+        save_document(app.world_mut(), handle.id()).unwrap();
+        wait(&mut app, |world| {
+            !inspect_document(world, handle.id()).unwrap().saving
+        });
+        assert!(
+            inspect_document(app.world(), handle.id())
+                .unwrap()
+                .last_save_error
+                .is_none()
+        );
+        assert!(!path.exists());
+        assert_eq!(fs::read_to_string(renamed).unwrap(), "mine");
+        stop(&mut app);
+    }
+
+    #[test]
+    fn deleting_a_dirty_source_retains_edits_and_removes_save_binding() {
+        let fixture = Fixture::new();
+        let path = fixture.text("deleted.txt", "base");
+        let mut app = host();
+        let (workspace, layout) = workspace(&mut app, "Editor");
+        let tree = tree(&mut app, layout, &fixture.0);
+        request(&mut app, tree, &path, FileTreeActivation::SingleClick);
+        wait(&mut app, |world| {
+            world.query::<&DocumentView>().iter(world).next().is_some()
+        });
+        let panel = viewers(&mut app, workspace)[0];
+        let handle = edit_text(&mut app, panel, "mine");
+        fs::remove_file(&path).unwrap();
+        unload_deleted_preview(app.world_mut(), panel);
+        assert_eq!(text(&app, panel), "mine");
+        let info = inspect_document(app.world(), handle.id()).unwrap();
+        assert!(info.dirty);
+        assert!(!info.has_save_binding);
+        assert_eq!(
+            save_document(app.world_mut(), handle.id()),
+            Err(DocumentError::NoSaveBinding)
+        );
+        assert!(
+            preflight_workspace_close(app.world(), workspace, WorkspaceCloseMode::Saved).is_err()
+        );
+        Workbench::for_entity(app.world_mut(), panel)
+            .unwrap()
+            .close_panel(panel)
+            .unwrap();
+        let reopened = open_document_view(app.world_mut(), layout, handle.id()).unwrap();
+        assert_eq!(text(&app, reopened), "mine");
+        assert!(
+            app.world()
+                .get::<FilePreviewPanel>(reopened)
+                .unwrap()
+                .missing
+        );
+        stop(&mut app);
     }
     fn change_preferences(app: &mut App, workspace: Entity, root: &Path) {
         let mut preferences = app
@@ -2056,7 +2513,7 @@ mod tests {
         let PreviewContent::Metadata(summary) = read_preview(&large).unwrap() else {
             panic!()
         };
-        assert!(summary.contains("1 MiB"));
+        assert!(summary.contains("256 MiB"));
         let missing = fixture.path("missing.txt");
         assert!(matches!(
             read_preview(&missing),
@@ -2092,7 +2549,7 @@ mod tests {
             .unwrap()
             .spawn_task(Some(viewer), "Old preview", |cancel| {
                 cancel.wait(Duration::from_secs(2));
-                Ok(PreviewContent::Text(Arc::from("stale result")))
+                Ok(PreviewContent::Text(TextBuffer::from("stale result")))
             })
             .unwrap();
         {
@@ -2104,6 +2561,7 @@ mod tests {
                 workspace,
                 path: old_path,
                 handle: delayed,
+                document_stamp: None,
             });
         }
         load_preview(app.world_mut(), viewer, file.clone(), false).unwrap();
@@ -2470,7 +2928,7 @@ mod tests {
                 // cancellation alone must not be the data-integrity guarantee.
                 waiting.recv_timeout(Duration::from_secs(8)).unwrap();
                 finished.send(()).unwrap();
-                Ok(PreviewContent::Text(Arc::from("late deleted bytes")))
+                Ok(PreviewContent::Text(TextBuffer::from("late deleted bytes")))
             })
             .unwrap();
         {
@@ -2482,6 +2940,7 @@ mod tests {
                 path: source.clone(),
                 workspace,
                 handle: task,
+                document_stamp: None,
             });
         }
         // A real existing source with an outstanding read must NOT unload just
@@ -2547,7 +3006,7 @@ mod tests {
                 .unwrap();
             let mut state = app.world_mut().get_mut::<FilePreviewPanel>(panel).unwrap();
             state.path = Some(retained.clone());
-            state.content = Some(PreviewContent::Text(Arc::from("retain")));
+            state.content = Some(PreviewContent::Text(TextBuffer::from("retain")));
             panels.push(panel);
         }
         // Entity order is the batch order; leave the first full batch intact so
@@ -2597,7 +3056,7 @@ mod tests {
         {
             let mut state = app.world_mut().get_mut::<FilePreviewPanel>(viewer).unwrap();
             state.path = Some(source.clone());
-            state.content = Some(PreviewContent::Text(Arc::from(
+            state.content = Some(PreviewContent::Text(TextBuffer::from(
                 "retained on uncertain metadata",
             )));
         }

@@ -48,6 +48,134 @@ fn app() -> (App, Entity) {
     let workspace = Workspaces::new(app.world_mut()).open("Documents").entity();
     (app, workspace)
 }
+
+#[test]
+fn committed_changes_include_transactions_history_and_external_replacement() {
+    let (mut app, workspace) = app();
+    let handle = text(app.world_mut(), workspace, "abcdef");
+    edit_document_transaction(
+        app.world_mut(),
+        handle,
+        0,
+        [
+            TextChange {
+                range: 0..0,
+                replacement: "L".into(),
+            },
+            TextChange {
+                range: 7..7,
+                replacement: "R".into(),
+            },
+        ],
+        EditOptions::new("Surround"),
+    )
+    .unwrap();
+    let commits = document_changes_since(app.world(), handle, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0].changes.as_ref().unwrap().len(), 2);
+    let mut observed = "abcdef".to_owned();
+    for change in commits[0].changes.as_ref().unwrap() {
+        DocumentModel::apply(&mut observed, change).unwrap();
+    }
+    assert_eq!(observed, "LabcdefR");
+    undo_document(app.world_mut(), handle.id()).unwrap();
+    redo_document(app.world_mut(), handle.id()).unwrap();
+    for commit in document_changes_since(app.world(), handle, 1)
+        .unwrap()
+        .unwrap()
+    {
+        for change in commit.changes.unwrap() {
+            DocumentModel::apply(&mut observed, &change).unwrap();
+        }
+    }
+    assert_eq!(
+        observed,
+        read_document(app.world(), handle).unwrap().as_str()
+    );
+    // A rejected transaction and a no-op do not publish transitions.
+    let revision = info(app.world(), handle).revision;
+    assert!(
+        edit_document(
+            app.world_mut(),
+            handle,
+            revision,
+            TextChange {
+                range: 999..999,
+                replacement: "bad".into()
+            },
+            EditOptions::default()
+        )
+        .is_err()
+    );
+    assert!(
+        document_changes_since(app.world(), handle, revision)
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
+    offer(app.world_mut(), handle, "disk", "disk");
+    let info = info(app.world(), handle);
+    resolve_document_conflict(
+        app.world_mut(),
+        handle,
+        info.revision,
+        info.source_generation,
+        DocumentConflictResolution::AcceptIncoming,
+    )
+    .unwrap();
+    let commits = document_changes_since(app.world(), handle, revision)
+        .unwrap()
+        .unwrap();
+    assert_eq!(commits.len(), 1);
+    assert!(commits[0].changes.is_none());
+}
+
+#[test]
+fn committed_change_readers_are_independent_and_journal_gaps_are_explicit() {
+    let (mut app, workspace) = app();
+    let handle = text(app.world_mut(), workspace, "");
+    for revision in 0..140 {
+        edit_document(
+            app.world_mut(),
+            handle,
+            revision,
+            TextChange {
+                range: 0..0,
+                replacement: "x".into(),
+            },
+            EditOptions::default(),
+        )
+        .unwrap();
+    }
+    assert!(
+        document_changes_since(app.world(), handle, 0)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        document_changes_since(app.world(), handle, 139)
+            .unwrap()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        document_changes_since(app.world(), handle, 139)
+            .unwrap()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        document_changes_since(app.world(), handle, 140)
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(document_changes_since(app.world(), handle, 141).is_err());
+}
 fn panel(world: &mut World, workspace: Entity, title: &str) -> Entity {
     let mut workbench = Workbench::with_workspace(world, WorkspaceId(workspace)).unwrap();
     let layout = workbench.active_layout();

@@ -15,10 +15,10 @@ an explicit package when working on v2.
 | v2 foundation and crate boundaries | [Bedtime 2](bedtime2/README.md) |
 | v2 application: viewports, tasks, documents, Files and Theme controls | [bEd 2](bed2/README.md), [main.rs](bed2/src/main.rs), [files.rs](bed2/src/files.rs), [documents.rs](bed2/src/documents.rs) |
 | v2 drawing, themes, input, components and viewports | [UI2](bedtime2/crates/bedtime-ui2/README.md) |
+| v2 virtualized text editor, buffer and optional document adapter | [Editor2](bedtime2/crates/bedtime-editor2/README.md) |
 | v2 workspaces, layouts, panels, commands and snapshots | [Workbench2](bedtime2/crates/bedtime-workbench2/README.md) |
 | v2 lazy local filetree, watching, operations and visibility | [Filetree2](bedtime2/crates/bedtime-filetree2/README.md) |
 | v2 local terminal plugin and lifecycle | [Terminal2](bedtime2/crates/bedtime-terminal2/README.md) |
-| Independent SQLite client | [Bedside Table](bedside-table/README.md) |
 | Engineering guidance by task | [Engineering index](ENGINEERING.md) |
 
 ## Current implementation and decision records
@@ -73,7 +73,7 @@ READMEs for controls and verification limits.
 roots, viewport-only animated rows, file operations and root-scoped hiding.
 Buffered activations capture panel/workspace/path/click type; the application
 owns routing and persistence. `bed2/files.rs` supplies CLI/cwd root policy,
-read-only previews and atomic `.bed/filetree2.json` preferences. Git is deferred.
+editable previews and atomic `.bed/filetree2.json` preferences. Git is deferred.
 macOS uses directory-only kqueue (not notify's recursive-child kqueue behavior or
 its FSEvents restart path). Reloads retain last-known rows; results outlive panel
 and workspace retirement, and ordinary snapshot disposal returns to work.
@@ -81,14 +81,19 @@ See the filetree contract for bounds, clipboard ownership and platform limits.
 Review follow-up adds root collapse, folder-wide eligible drop regions, per-panel
 `FileTreeSettings`, direct menus without operation shortcuts, and corrected
 rename/move retirement. Native macOS drag coordinates are bridged by Workbench.
-Bed's real-file viewers close/unload confirmed deleted sources rather than retain
-them; generic shared-document retention remains unchanged. Per-item
+Bed's clean real-file viewers close/unload deleted sources; dirty/drafted/saving
+documents retain edits and lose their backing save binding. Per-item
 `PanelTabStyle` supports italic/dim previews. Files/preview/preferences failures
 use acknowledged human-readable Workbench error dialogs with optional details.
 
-No next product milestone is recorded here. Take the next scope from the user's
-current task rather than treating an old migration checklist as unfinished work.
-Update this section when a concrete milestone or interruption needs a handoff.
+`bedtime-editor2` implements the first plain editor slice: persistent indexed
+UTF-8 text, viewport-only line/long-line layout, selection/navigation/clipboard,
+shared history, IME drafts, line numbers and bed1 caret motion. Its Workbench
+adapter uses canonical document transactions and a 128-commit change journal;
+default builds and the standalone example require no Workbench or language tools.
+`bed2/file_editor.rs` owns path identity, worker source comparison and streaming
+saves. Files tabs now edit shared text and expose Split view and Save. See the
+editor README for contracts, limits and later editing/tooling milestones.
 
 ## Verification recipes
 
@@ -97,6 +102,8 @@ For v2 library/application work, start with the affected package or test filter:
 ```sh
 cargo test --offline --locked -p bedtime-ui2 -p bedtime-workbench2 -p bedtime-terminal2 -p bedtime-filetree2 -p bedtime-clipboard2 -p bed2
 cargo check --offline --locked -p bedtime-workbench2 --no-default-features
+cargo test --offline --locked -p bedtime-editor2 --features workbench
+cargo test --offline --locked -p bedtime-editor2 --features workbench million_line_editing -- --ignored --nocapture
 ```
 
 When changing feature boundaries, also check the relevant `ui` and `native`
@@ -120,6 +127,7 @@ python3 bedtime2/tools/smoke_tasks.py
 python3 bedtime2/tools/smoke_documents.py
 python3 bedtime2/tools/smoke_terminal.py
 python3 bedtime2/tools/smoke_filetree.py --binary target/debug/bed2 --wide-entries 20000
+python3 bedtime2/tools/smoke_editor.py
 ```
 
 These are recipes, not a claim of a passing run on the current worktree.

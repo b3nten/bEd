@@ -12,6 +12,7 @@ automation = ["dep:bedtime-automation2", "dep:serde_json"]
 [dependencies]
 bedtime-automation2 = { workspace = true, optional = true }
 bedtime-ui2.workspace = true
+bedtime-editor2 = { workspace = true, features = ["workbench"] }
 bedtime-terminal2.workspace = true
 bedtime-filetree2.workspace = true
 bedtime-workbench2 = { workspace = true, features = ["ui"] }

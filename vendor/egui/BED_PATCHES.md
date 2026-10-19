@@ -84,6 +84,11 @@ required. Dialogs keep their existing Area motion.
 
 ## Verification and upgrades
 
+Custom text canvases can call the additive `Context::register_text_input(id)`.
+`text_edit_focused` recognizes the ordinary focused ID without a hidden TextEdit
+buffer/history. UI2 and Workbench use the existing text capture/shortcut policy
+for the virtualized editor; this adds no event-routing or second focus owner.
+
 From the repository root:
 
 ```sh
