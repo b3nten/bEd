@@ -38,7 +38,7 @@ The current split, revised in [the stage 3 follow-up](step-3-split.md), is:
 | --- | --- |
 | `bedtime-clipboard2` | Independent text/file clipboard, optional OS access and in-process fallback |
 | `bedtime-ui2` | Upstream egui/Bevy integration, input ownership, themes, icons, viewports and motion |
-| `bedtime-workbench2` | Headless ContextCommands, bindings/handlers/menus, panel layout, workspaces and planned documents/settings; optional native and UI adapters |
+| `bedtime-workbench2` | Headless ContextCommands, bindings/handlers/menus, panel layout, workspaces and typed/text document sessions; settings remain planned; optional native and UI adapters |
 
 UI2 depends on clipboard, with no workbench dependency. Workbench uses clipboard
 and optionally UI2. The separate desktop crate has been retired; native window
@@ -113,6 +113,11 @@ write for workspace A must not be redirected to workspace B because the active
 workspace changed. Workbench should enforce this centrally.
 
 ### Documents and undo/redo
+
+The v2 implementation now provides workspace-owned typed/text sessions, shared
+history, asynchronous save bindings and explicit external-update reconciliation.
+See the [implemented document contract](workbench-documents.md) for the current
+API, invariants and remaining application-owned/deferred work.
 
 The document system manages document instances and history independently of
 where their contents originate. A document's creator supplies its persistence
@@ -288,7 +293,7 @@ next layer. Keep the original application usable throughout the migration.
 | Desktop scaffold | An ordinary Bevy host plus a native-only desktop plugin. | Initial implementation recorded in [step 1](step-1.md); services now live in workbench and GUI validation is covered by stage 4. |
 | Desktop stabilization | Validate native behavior and settle the platform/input boundary needed by UI. | Native window/menu integration and input ordering exercised through stage 4. |
 | UI foundation | UI input/rendering, appearance and reusable controls in the existing Bevy app. | Initial ImGui implementation recorded in [step 2](step-2.md); superseded by stage 4. |
-| Workbench foundation | Panels/layout plus a coherent document, history, workspace and persistence model. | Typed commands and the in-memory workspace/layout/panel lifecycle are implemented; see [stage 3](step-3.md). Documents, settings and persistence follow. |
+| Workbench foundation | Panels/layout plus a coherent document, history, workspace and persistence model. | Typed commands, workspace/layout/panel lifecycle, layout snapshots and [document sessions](workbench-documents.md) are implemented. Settings, document restoration policy and storage integrations remain application-owned or deferred. |
 | egui migration | Preserve the Bed shell, themes and motion using egui widgets and upstream Bevy integration. | Implemented and native-smoke tested; see [stage 4](step-4-egui.md). |
 | Contextual input and commands | UI/panel input ownership and independently resolved bindings and handlers. | Implemented, including game capture and effective menu hints; see [stage 4](step-4-egui.md). |
 | Workspace runtimes | Scope plugin worlds and external work to application-defined boundaries. | Implemented with workspace SubApps, explicit host scheduling, active/explicit APIs and asynchronous task/process cleanup; see the [workspace API](../bedtime2/crates/bedtime-workbench2/README.md). |

@@ -131,9 +131,9 @@ fn clip_mesh(mut mesh: Mesh, boundary: &[Pos2]) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{UiFrame, icon_cache, input, themes};
+    use crate::{UiFrame, icon_cache, themes};
     use bevy::prelude::{Entity, default};
-    use std::{collections::HashMap, sync::Mutex};
+    use std::sync::Mutex;
 
     #[test]
     fn rounded_clipping_contains_images_text_and_custom_paint_without_moving_their_uvs() {
@@ -143,8 +143,6 @@ mod tests {
                 ctx.set_pixels_per_point(dpi);
                 let theme = themes::dark();
                 let icons = Mutex::new(icon_cache::IconCache::default());
-                let input = Mutex::new(input::UiInputFrame::default());
-                let textures = HashMap::new();
                 let outline = Rect::from_min_max(egui::pos2(50.0, 60.0), egui::pos2(250.0, 180.0));
                 let content = outline.with_min_y(90.0);
                 let image = outline.expand(30.0);
@@ -158,10 +156,7 @@ mod tests {
                         ui,
                         theme: &theme,
                         motion: default(),
-                        panel_settings: default(),
                         icons: &icons,
-                        textures: &textures,
-                        input: &input,
                     };
                     frame.clip_rounded(outline, radius, |frame| {
                         // Oversized application painting cannot widen the host's boundary.
@@ -235,8 +230,6 @@ mod tests {
         let ctx = Context::default();
         let theme = themes::dark();
         let icons = Mutex::new(icon_cache::IconCache::default());
-        let input = Mutex::new(input::UiInputFrame::default());
-        let textures = HashMap::new();
         let outline = Rect::from_min_size(egui::pos2(40.0, 50.0), egui::vec2(100.0, 80.0));
         let outside = Rect::from_min_size(egui::pos2(220.0, 50.0), egui::vec2(60.0, 60.0));
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -246,13 +239,10 @@ mod tests {
                 ui,
                 theme: &theme,
                 motion: default(),
-                panel_settings: default(),
                 icons: &icons,
-                textures: &textures,
-                input: &input,
             };
             frame.clip_rounded(outline, 20.0, |mut frame| {
-                frame.scroll("nested", |frame| {
+                frame.scroll("nested", 7.0, |frame| {
                     frame
                         .ui
                         .painter()

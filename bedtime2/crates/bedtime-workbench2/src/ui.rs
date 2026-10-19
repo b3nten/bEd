@@ -15,9 +15,7 @@ impl Plugin for WorkbenchUiPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             PreUpdate,
-            frontend::sync_viewports
-                .after(WorkspaceSystems::Prepare)
-                .before(UiSystems::Draw),
+            crate::surface::configure.before(UiSystems::Configure),
         );
         #[cfg(feature = "native")]
         app.configure_sets(
@@ -37,6 +35,26 @@ impl Plugin for WorkbenchUiPlugin {
     }
 }
 
+/// The surface root owns error presentation, not any originating panel. Draw
+/// the modal first so its layer and dismissal keys gate the rest of this pass.
+pub(crate) fn draw_active(
+    ui: &mut bedtime_ui2::egui::Ui,
+    world: &mut World,
+    context: &bedtime_ui2::UiContext<'_>,
+) {
+    let modal_this_frame = crate::dialogs::draw(ui.ctx(), world, context.surface);
+    // Keep the shell's ID scope stable whether or not a dialog is visible.
+    let mut shell = bedtime_ui2::egui::UiBuilder::new().id_salt("workbench-shell");
+    if modal_this_frame {
+        // egui's modal hit/focus observations use the previous pass. Explicitly
+        // disable this pass's shell, including the first and closing frames.
+        shell = shell.disabled();
+    }
+    ui.scope_builder(shell, |ui| {
+        crate::frontend::draw_active(ui, world, context);
+    });
+}
+
 fn observe_item(world: &mut World, entity: Entity, response: &bedtime_ui2::egui::Response) {
     world.entity_mut(entity).insert(MenuPresentation {
         visible: true,
@@ -47,6 +65,8 @@ fn observe_item(world: &mut World, entity: Entity, response: &bedtime_ui2::egui:
     });
 }
 
+/// Draw abstract menu entries followed by optional application content from a
+/// UiView on the MenuBar entity. The renderer receives the menu root as its view.
 pub fn draw_menu_bar(frame: &mut UiFrame, world: &mut World, root: Entity) -> Result<(), String> {
     #[cfg(feature = "native")]
     if world.get::<NativeMenuBar>(root).is_some()
@@ -57,14 +77,25 @@ pub fn draw_menu_bar(frame: &mut UiFrame, world: &mut World, root: Entity) -> Re
         return Ok(());
     }
     let menu = menu_snapshot(world, root, InvocationContext::Focused)?;
+    let workspace = crate::menus::menu_workspace(world, root)?;
     use bedtime_ui2::egui;
     let available = frame.ui.available_rect_before_wrap();
-    let padding = frame.panel_settings.panel_gap.min(available.width() * 0.5);
+    let padding = world
+        .get::<WorkbenchSurface>(frame.surface)
+        .copied()
+        .unwrap_or_default()
+        .panel_gap
+        .min(available.width() * 0.5);
     let inner = available.shrink2(egui::vec2(padding, 0.0));
     let mut row = frame.ui.new_child(egui::UiBuilder::new().max_rect(inner));
     row.set_clip_rect(frame.ui.clip_rect().intersect(inner));
     let response = egui::MenuBar::new()
-        .ui(&mut row, |ui| draw_entries(ui, world, &menu.entries))
+        .ui(&mut row, |ui| {
+            draw_entries(ui, world, workspace, &menu.entries);
+            if let Some(draw) = world.get::<bedtime_ui2::UiView>(root).map(|view| view.draw) {
+                draw(ui, world, &frame.context().for_view(root));
+            }
+        })
         .response;
     let bounds = egui::Rect::from_min_max(
         available.min,
@@ -86,13 +117,19 @@ pub fn draw_popup_menu(
     context: InvocationContext,
 ) -> Result<(), String> {
     let menu = menu_snapshot(world, root, context)?;
+    let workspace = crate::menus::menu_workspace(world, root)?;
     response.context_menu(|ui| {
-        draw_entries(ui, world, &menu.entries);
+        draw_entries(ui, world, workspace, &menu.entries);
     });
     Ok(())
 }
 
-fn draw_entries(ui: &mut bedtime_ui2::egui::Ui, world: &mut World, entries: &[MenuNode]) {
+fn draw_entries(
+    ui: &mut bedtime_ui2::egui::Ui,
+    world: &mut World,
+    workspace: WorkspaceId,
+    entries: &[MenuNode],
+) {
     use bedtime_ui2::egui;
     for entry in entries {
         match entry {
@@ -103,7 +140,7 @@ fn draw_entries(ui: &mut bedtime_ui2::egui::Ui, world: &mut World, entries: &[Me
             } => {
                 let response = ui
                     .push_id(entity.to_bits(), |ui| {
-                        ui.menu_button(label, |ui| draw_entries(ui, world, entries))
+                        ui.menu_button(label, |ui| draw_entries(ui, world, workspace, entries))
                     })
                     .inner
                     .response;
@@ -126,8 +163,9 @@ fn draw_entries(ui: &mut bedtime_ui2::egui::Ui, world: &mut World, entries: &[Me
                     .inner;
                 observe_item(world, *entity, &response);
                 if response.clicked() {
-                    world
-                        .resource_mut::<ContextCommandRequests>()
+                    Workbench::with_workspace(world, workspace)
+                        .expect("Menu workspace")
+                        .commands()
                         .submit(ContextCommandRequest {
                             command: target.clone().expect("Enabled menu action"),
                             source: Some(*entity),

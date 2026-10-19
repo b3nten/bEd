@@ -219,6 +219,10 @@ pub struct TerminalSnapshot {
     pub cursor: TerminalCursor,
     pub modes: TerminalModes,
     pub palette: Arc<[[u8; 3]; 260]>,
+    /// OSC 11 currently overrides the host's default background. This remains
+    /// explicit even if its RGB matches the host theme, so frontends need not
+    /// infer shell ownership from colors or a potentially stale theme snapshot.
+    pub background_is_overridden: bool,
     pub faint_palette: Option<Arc<[[u8; 3]; 260]>>,
     pub selection: Vec<TerminalSelectionSpan>,
     pub selection_text: Option<Arc<str>>,
@@ -310,9 +314,114 @@ impl EventListener for EventQueue {
     }
 }
 
+// Rio currently decodes iTerm2 OSC images before calling Handler, and has no
+// runtime graphics switch. Text-only terminals therefore remove control strings
+// before Processor sees them. No image payload is buffered, parsed or decoded.
+// Keep the escape/C0 behavior aligned with vendor/rio-vt's streaming parser.
+#[derive(Default)]
+enum TextOnlyFilter {
+    #[default]
+    Ground,
+    Escape,
+    OscPrefix(usize),
+    Osc,
+    Discard {
+        bell_terminates: bool,
+    },
+}
+
+impl TextOnlyFilter {
+    fn filter(&mut self, bytes: &[u8]) -> Vec<u8> {
+        const IMAGE_OSC: &[u8] = b"1337;";
+        let mut output = Vec::with_capacity(bytes.len().saturating_add(7));
+        for &byte in bytes {
+            match *self {
+                Self::Ground => {
+                    if byte == 0x1b {
+                        *self = Self::Escape;
+                    } else {
+                        output.push(byte);
+                    }
+                }
+                Self::Escape => match byte {
+                    b'P' | b'_' => {
+                        // Cancel an earlier incomplete CSI/OSC in Rio, rather
+                        // than joining the text on either side of this string.
+                        output.push(0x18);
+                        *self = Self::Discard {
+                            bell_terminates: byte == b'_',
+                        };
+                    }
+                    b']' => *self = Self::OscPrefix(0),
+                    0x18 | 0x1a => {
+                        output.push(byte);
+                        *self = Self::Ground;
+                    }
+                    0x1b | 0x7f..=0xff => {}
+                    0x00..=0x17 | 0x19 | 0x1c..=0x1f => output.push(byte),
+                    _ => {
+                        output.extend_from_slice(&[0x1b, byte]);
+                        *self = Self::Ground;
+                    }
+                },
+                Self::OscPrefix(matched) => {
+                    if byte == IMAGE_OSC[matched] {
+                        if matched + 1 == IMAGE_OSC.len() {
+                            output.push(0x18);
+                            *self = Self::Discard {
+                                bell_terminates: true,
+                            };
+                        } else {
+                            *self = Self::OscPrefix(matched + 1);
+                        }
+                    } else if matches!(byte, 0x00..=0x06 | 0x08..=0x17 | 0x19 | 0x1c..=0x1f) {
+                        // Rio ignores these inside OSC; they must not disguise
+                        // an OSC 1337 introducer from the filter.
+                    } else {
+                        output.extend_from_slice(b"\x1b]");
+                        output.extend_from_slice(&IMAGE_OSC[..matched]);
+                        if byte == 0x1b {
+                            *self = Self::Escape;
+                        } else {
+                            output.push(byte);
+                            *self = if matches!(byte, 0x07 | 0x18 | 0x1a) {
+                                Self::Ground
+                            } else {
+                                Self::Osc
+                            };
+                        }
+                    }
+                }
+                Self::Osc => {
+                    if byte == 0x1b {
+                        *self = Self::Escape;
+                    } else {
+                        output.push(byte);
+                        if matches!(byte, 0x07 | 0x18 | 0x1a) {
+                            *self = Self::Ground;
+                        }
+                    }
+                }
+                Self::Discard { bell_terminates } => {
+                    if byte == 0x1b {
+                        *self = Self::Escape;
+                    } else if matches!(byte, 0x18 | 0x1a)
+                        || (!bell_terminates && byte == 0x9c)
+                        || (bell_terminates && byte == 0x07)
+                    {
+                        *self = Self::Ground;
+                    }
+                }
+            }
+        }
+        output
+    }
+}
+
 pub struct Terminal {
     term: Crosswords<EventQueue>,
     parser: Processor,
+    text_only: Option<TextOnlyFilter>,
     events: EventQueue,
     theme: Option<TerminalTheme>,
     theme_palette: [[u8; 3]; 260],
@@ -340,6 +449,21 @@ impl Default for Terminal {
 
 impl Terminal {
     pub fn new(cols: usize, rows: usize) -> Self {
+        Self::with_text_filter(cols, rows, None)
+    }
+
+    /// Construct a terminal that never parses or decodes graphics payloads.
+    ///
+    /// Drops APC, DCS (including sixel/tmux passthrough), and OSC 1337 strings
+    /// before Rio. Consequently DCS queries/synchronized updates and OSC 1337
+    /// user variables are also unsupported. Ordinary ANSI/CSI, CSI synchronized
+    /// updates, titles, colors and OSC 8 hyperlinks retain their usual behavior.
+    /// The streaming filter retains at most a partial introducer, not payloads.
+    pub fn new_text_only(cols: usize, rows: usize) -> Self {
+        Self::with_text_filter(cols, rows, Some(TextOnlyFilter::default()))
+    }
+
+    fn with_text_filter(cols: usize, rows: usize, text_only: Option<TextOnlyFilter>) -> Self {
         let events = EventQueue::default();
         let mut term = Crosswords::new(
             CrosswordsSize::new_with_dimensions(
@@ -357,10 +481,15 @@ impl Terminal {
             SCROLLBACK_LINES,
         );
         term.title = "Terminal".into();
-        term.graphics.total_limit = IMAGE_STORE_BUDGET_BYTES;
+        term.graphics.total_limit = if text_only.is_some() {
+            0
+        } else {
+            IMAGE_STORE_BUDGET_BYTES
+        };
         let mut terminal = Self {
             term,
             parser: Processor::default(),
+            text_only,
             events,
             theme: None,
             theme_palette: default_palette(),
@@ -570,7 +699,9 @@ impl Terminal {
 
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<TerminalEvent> {
         let cursor = self.cursor();
-        self.parser.advance(&mut self.term, bytes);
+        let filtered = self.text_only.as_mut().map(|filter| filter.filter(bytes));
+        self.parser
+            .advance(&mut self.term, filtered.as_deref().unwrap_or(bytes));
         if !bytes.is_empty() {
             self.changed();
         }
@@ -895,6 +1026,7 @@ impl Terminal {
             cursor: self.cursor(),
             modes: self.modes(),
             palette: self.palette.clone(),
+            background_is_overridden: self.term.colors()[native_color_index(259)].is_some(),
             faint_palette: self.faint_palette.clone(),
             selection,
             selection_text: self.selection_text().map(Arc::from),
@@ -1381,6 +1513,127 @@ pub fn parse_color(spec: &str) -> Option<[u8; 3]> {
         *out = (value * 65535 / range / 256) as u8;
     }
     Some(rgb)
+}
+
+#[cfg(test)]
+mod text_only_tests {
+    use super::*;
+
+    fn text(terminal: &mut Terminal) -> String {
+        terminal.snapshot().lines[0]
+            .cells
+            .iter()
+            .map(|cell| cell.text.as_ref())
+            .collect::<String>()
+            .trim_end()
+            .to_owned()
+    }
+
+    #[test]
+    fn text_only_discards_all_image_protocols_at_every_chunk_boundary() {
+        let protocols: &[&[u8]] = &[
+            b"\x1b_Ga=T,f=32,s=1,v=1,i=7;/////w==\x1b\\",
+            b"\x1bPq\"1;1;1;1#0;2;100;0;0#0~\x1b\\",
+            concat!(
+                "\x1b]1337;File=inline=1:",
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+                "\x07"
+            ).as_bytes(),
+        ];
+        for protocol in protocols {
+            let stream = [b"before".as_slice(), protocol, "afteré🦀".as_bytes()].concat();
+            for split in 0..=stream.len() {
+                let mut terminal = Terminal::new_text_only(40, 3);
+                let mut events = terminal.feed(&stream[..split]);
+                events.extend(terminal.feed(&stream[split..]));
+                assert_eq!(text(&mut terminal), "beforeafteré🦀", "split {split}");
+                assert!(
+                    events.is_empty(),
+                    "graphics must not reply or warn: {events:?}"
+                );
+                let snapshot = terminal.snapshot();
+                assert!(snapshot.images.is_empty());
+                assert!(snapshot.warnings.is_empty());
+                assert_eq!(terminal.term.graphics.total_bytes, 0);
+                assert!(terminal.term.graphics.sixel_parser.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn text_only_preserves_titles_colors_links_and_csi_sync() {
+        let mut terminal = Terminal::new_text_only(40, 3);
+        let stream = concat!(
+            "\x1b]2;Title\x1b\\",
+            "\x1b[?2026h\x1b[31m",
+            "\x1b]8;;https://example.test\x1b\\",
+            "linked\x1b]8;;\x1b\\\x1b[0m",
+            "\x1b[?2026l\x1b[6n"
+        );
+        let mut events = Vec::new();
+        for byte in stream.bytes() {
+            events.extend(terminal.feed(&[byte]));
+        }
+        assert_eq!(terminal.title(), "Title");
+        assert_eq!(text(&mut terminal), "linked");
+        let cell = terminal.snapshot().cell(0, 0);
+        assert_eq!(cell.fg, TerminalColor::Indexed(1));
+        assert_eq!(cell.hyperlink.as_deref(), Some("https://example.test"));
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, TerminalEvent::Write(bytes) if bytes == b"\x1b[1;7R"))
+        );
+    }
+
+    #[test]
+    fn background_override_metadata_tracks_shell_ownership_not_rgb_equality() {
+        let mut terminal = Terminal::new_text_only(8, 2);
+        let mut theme = TerminalTheme::new([0.1, 0.2, 0.3, 0.5], [1.0; 4], [[1.0; 4]; 16]);
+        terminal.set_theme(&theme);
+        let initial = terminal.snapshot();
+        assert!(!initial.background_is_overridden);
+        let [r, g, b] = initial.palette[259];
+        terminal.feed(format!("\x1b]11;#{r:02x}{g:02x}{b:02x}\x07").as_bytes());
+        let overridden = terminal.snapshot();
+        assert_eq!(overridden.palette, initial.palette);
+        assert!(overridden.background_is_overridden, "An equal RGB is still an explicit OSC override");
+        theme.background = [0.3, 0.2, 0.1, 0.0];
+        terminal.set_theme(&theme);
+        assert!(terminal.snapshot().background_is_overridden);
+        terminal.feed(b"\x1b]111\x07");
+        let reset = terminal.snapshot();
+        assert!(!reset.background_is_overridden);
+        assert_ne!(reset.palette[259], initial.palette[259]);
+        terminal.feed(b"\x1b]11;#123456\x07\x1bc");
+        assert!(!terminal.snapshot().background_is_overridden, "A full terminal reset restores host ownership");
+    }
+
+    #[test]
+    fn text_only_does_not_accumulate_unterminated_payloads() {
+        let mut terminal = Terminal::new_text_only(20, 3);
+        terminal.feed(b"\x1b_Ga=t,m=1;");
+        for _ in 0..128 {
+            assert!(terminal.feed(&[b'A'; 16 * 1024]).is_empty());
+        }
+        terminal.feed(b"\x1b\\TAIL");
+        assert_eq!(text(&mut terminal), "TAIL");
+        assert_eq!(terminal.term.graphics.total_bytes, 0);
+        assert!(terminal.snapshot().warnings.is_empty());
+    }
+
+    #[test]
+    fn text_only_cannot_be_bypassed_by_ignored_controls_or_interrupted_sequences() {
+        let mut terminal = Terminal::new_text_only(40, 3);
+        for byte in b"\x1b[12;\x1b\0_Ga=T,f=32,s=1,v=1,i=7;/////w==\x07\
+                      \x1b]\x0013\x0037;File=inline=1:bogus\x1b\\OK"
+        {
+            terminal.feed(&[*byte]);
+        }
+        assert_eq!(text(&mut terminal), "OK");
+        assert!(terminal.snapshot().images.is_empty());
+        assert!(terminal.snapshot().warnings.is_empty());
+    }
 }
 
 #[cfg(test)]

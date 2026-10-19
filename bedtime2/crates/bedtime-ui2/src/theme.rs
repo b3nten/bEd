@@ -3,9 +3,13 @@ use egui::{Color32, Context};
 
 pub type Rgba = [f32; 4];
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Palette {
+    /// Window background, including titlebar, status bar, menu bar and panel gaps.
     pub background: Rgba,
+    /// Panel bodies and tab bars.
+    pub panel_background: Rgba,
     pub surface: Rgba,
     pub elevated: Rgba,
     pub border: Rgba,
@@ -16,9 +20,14 @@ pub struct Palette {
     pub success: Rgba,
     pub warning: Rgba,
     pub error: Rgba,
+    /// ANSI colors: 0..=7 normal, 8..=15 bright, each ordered black, red, green,
+    /// yellow, blue, magenta, cyan, white. Host default foreground and background
+    /// colors are independent of these entries.
+    pub terminal: [Rgba; 16],
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Metrics {
     pub font_size: f32,
     pub padding: [f32; 2],
@@ -48,7 +57,8 @@ impl Default for Metrics {
     }
 }
 
-#[derive(Component, Clone, Debug, PartialEq)]
+#[derive(Component, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Theme {
     pub palette: Palette,
     pub metrics: Metrics,
@@ -59,6 +69,7 @@ impl Theme {
         let p = &self.palette;
         if [
             p.background,
+            p.panel_background,
             p.surface,
             p.elevated,
             p.border,
@@ -71,6 +82,7 @@ impl Theme {
             p.error,
         ]
         .into_iter()
+        .chain(p.terminal)
         .flatten()
         .any(|v| !v.is_finite() || !(0.0..=1.0).contains(&v))
         {
@@ -117,9 +129,9 @@ impl Theme {
                 };
         }
         style.visuals.override_text_color = Some(color(p.text));
-        style.visuals.panel_fill = color(p.background);
+        style.visuals.panel_fill = color(p.panel_background);
         style.visuals.window_fill = color(p.elevated);
-        style.visuals.extreme_bg_color = color(p.background);
+        style.visuals.extreme_bg_color = color(p.panel_background);
         style.visuals.faint_bg_color = color(p.surface);
         style.visuals.selection.bg_fill = color(p.selection);
         style.visuals.selection.stroke = egui::Stroke::new(1.0, color(p.accent));
@@ -168,7 +180,8 @@ pub mod themes {
     pub fn dark() -> Theme {
         Theme {
             palette: Palette {
-                background: rgb(0x2d353b),
+                background: rgb(0x343f44),
+                panel_background: rgb(0x2d353b),
                 surface: rgb(0x343f44),
                 elevated: rgb(0x3d484d),
                 border: rgb(0x56635f),
@@ -179,6 +192,11 @@ pub mod themes {
                 success: rgb(0xa7c080),
                 warning: rgb(0xdbbc7f),
                 error: rgb(0xe67e80),
+                terminal: [
+                    0x475258, 0xe67e80, 0xa7c080, 0xdbbc7f, 0x7fbbb3, 0xd699b6, 0x83c092, 0xd3c6aa,
+                    0x475258, 0xe67e80, 0xa7c080, 0xdbbc7f, 0x7fbbb3, 0xd699b6, 0x83c092, 0xd3c6aa,
+                ]
+                .map(rgb),
             },
             metrics: Metrics::default(),
         }
@@ -187,7 +205,8 @@ pub mod themes {
     pub fn light() -> Theme {
         Theme {
             palette: Palette {
-                background: rgb(0xfdf6e3),
+                background: rgb(0xf4f0d9),
+                panel_background: rgb(0xfdf6e3),
                 surface: rgb(0xf4f0d9),
                 elevated: rgb(0xefebd4),
                 border: rgb(0xbdc3af),
@@ -198,6 +217,11 @@ pub mod themes {
                 success: rgb(0x8da101),
                 warning: rgb(0xdfa000),
                 error: rgb(0xf85552),
+                terminal: [
+                    0x5c6a72, 0xf85552, 0x8da101, 0xdfa000, 0x3a94c5, 0xdf69ba, 0x35a77c, 0xe6e2cc,
+                    0x5c6a72, 0xf85552, 0x8da101, 0xdfa000, 0x3a94c5, 0xdf69ba, 0x35a77c, 0xe6e2cc,
+                ]
+                .map(rgb),
             },
             metrics: Metrics::default(),
         }

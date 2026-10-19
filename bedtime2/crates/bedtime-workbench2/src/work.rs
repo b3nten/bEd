@@ -207,7 +207,7 @@ pub struct WorkInfo {
     pub status: WorkStatus,
 }
 
-#[derive(Resource, Default)]
+#[derive(Component, Default)]
 pub struct WorkspaceWork {
     next_id: u64,
     closing: bool,
@@ -215,6 +215,11 @@ pub struct WorkspaceWork {
 }
 
 impl WorkspaceWork {
+    /// Shutdown is final for this scope: no further work may be admitted.
+    pub fn is_closing(&self) -> bool {
+        self.closing
+    }
+
     fn admit(&mut self) -> Result<WorkId, String> {
         if self.closing {
             return Err("Workspace is closing".into());

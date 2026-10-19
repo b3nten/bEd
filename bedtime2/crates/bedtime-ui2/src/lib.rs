@@ -1,61 +1,51 @@
 //! Bed presentation on upstream egui/Bevy integration; the host owns its window and camera.
 mod clipping;
 mod combo_box;
+mod component;
+mod embedded;
+pub mod fonts;
 pub mod gallery;
 mod icon_cache;
 pub mod icons;
-pub mod input;
 mod motion;
 mod runtime;
-mod status_bar;
 pub mod theme;
 mod viewport;
-use bevy::{
-    ecs::system::{SystemId, SystemInput},
-    prelude::*,
-};
+use bevy::prelude::*;
 pub use combo_box::ComboBox;
+pub use component::{Component, UiContext, UiDraw};
 pub use egui;
+pub use embedded::{EmbeddedRenderPlugin, ViewportHostPlugin, ViewportOutput};
 pub use icons::{BuiltinIcon, Icon, IconSet, IconSource, UiIconStatus, UiIcons};
 pub use motion::MotionPolicy;
-pub use status_bar::{
-    InStatusBar, StatusBar, StatusBarItems, StatusItem, StatusItemPresentation, StatusSide,
-    create_status_bar, draw_status_bar, register_status_item, register_status_tooltip,
-    status_bar_height,
-};
-use std::{collections::HashMap, sync::Mutex};
+use std::sync::Mutex;
 pub use theme::{Theme, themes};
 pub use viewport::{UiViewport, viewport_image};
+
+/// Shared destination treatment for panel and content drag-and-drop. The caller
+/// owns eligibility, geometry, clipping and any motion; invalid targets must not
+/// call this painter. Thin targets retain the panel insertion-line treatment.
+pub fn paint_drop_overlay(
+    painter: &egui::Painter,
+    palette: &theme::Palette,
+    rect: egui::Rect,
+    rounding: f32,
+) {
+    let border =
+        std::array::from_fn(|i| palette.border[i] + (palette.text[i] - palette.border[i]) * 0.75);
+    let fill = [border[0], border[1], border[2], border[3] * 0.14];
+    let stroke = egui::Stroke::new(2.0, theme::color(border));
+    if rect.width().abs() < 0.5 || rect.height().abs() < 0.5 {
+        painter.line_segment([rect.min, rect.max], stroke);
+    } else {
+        painter.rect_filled(rect, rounding, theme::color(fill));
+        painter.rect_stroke(rect, rounding, stroke, egui::StrokeKind::Inside);
+    }
+}
 
 #[derive(Component, Default)]
 #[require(UiCapture, MotionPolicy, UiDiagnostics, UiIconStatus, UiBackground)]
 pub struct UiSurface;
-
-/// Optional panel settings on a UI surface, independent of its color theme.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct PanelSettings {
-    pub rounding: f32,
-    /// Opt-in content padding; panel hosts still provide the complete content area.
-    pub padding: [f32; 2],
-    /// Spacing in egui points between panels and from panels to the shell edges.
-    pub panel_gap: f32,
-    /// Corner-target side length in egui points, measured inward from the area's
-    /// outside corner, including its gutter. Zero disables corner handles.
-    pub hit_size: f32,
-    pub debug: bool,
-}
-
-impl Default for PanelSettings {
-    fn default() -> Self {
-        Self {
-            rounding: 7.0,
-            padding: [14.0, 12.0],
-            panel_gap: 5.0,
-            hit_size: 13.0,
-            debug: false,
-        }
-    }
-}
 
 /// Choose whether UI2 paints the theme background or the application paints its
 /// own surfaces. UI cameras always clear to transparent before drawing.
@@ -67,7 +57,10 @@ pub enum UiBackground {
 }
 
 /// Attach upstream egui to an application-owned camera targeting this window.
+/// Removing this component ends its egui session and restores camera settings.
+/// Reattaching creates a fresh EguiContext.
 #[derive(Component)]
+#[component(on_remove = runtime::remove_camera)]
 #[require(bevy_egui::EguiContext)]
 pub struct UiCamera(pub Entity);
 
@@ -75,7 +68,10 @@ pub struct UiCamera(pub Entity);
 pub struct UiCapture {
     pub keyboard: bool,
     pub pointer: bool,
+    /// Text editing was active during this frame, including when Enter ended it.
     pub text: bool,
+    /// A popup or modal was active during this frame, including its closing key.
+    pub modal: bool,
 }
 
 #[derive(Component, Default, Clone, Debug)]
@@ -88,7 +84,6 @@ pub struct UiDiagnostics {
     pub active_animations: usize,
     pub icon_textures: usize,
     pub icon_rasterizations: u64,
-    pub viewport_textures: usize,
 }
 
 #[derive(Component)]
@@ -116,15 +111,21 @@ pub struct InView(pub Entity);
 pub struct ViewParts(Vec<Entity>);
 
 #[derive(Component)]
-pub struct UiView;
+pub struct UiView {
+    pub draw: UiDraw,
+}
 
 #[derive(Message, Clone, Debug)]
 pub struct UiError(pub String);
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum UiSystems {
+    Configure,
     Draw,
-    PublishInput,
+    /// PostUpdate: route scene cameras and copy simulation state using this
+    /// frame's viewport observations. Runs before target resizing and Bevy's
+    /// camera updates, so new targets receive their projection refresh together.
+    SyncViewports,
     PrepareTargets,
 }
 
@@ -134,21 +135,21 @@ pub struct UiFrame<'a> {
     pub ui: &'a mut egui::Ui,
     pub theme: &'a Theme,
     pub motion: MotionPolicy,
-    pub panel_settings: PanelSettings,
     pub(crate) icons: &'a Mutex<icon_cache::IconCache>,
-    pub(crate) textures: &'a HashMap<bevy::asset::AssetId<Image>, egui::TextureId>,
-    pub(crate) input: &'a Mutex<input::UiInputFrame>,
 }
 
-impl SystemInput for UiFrame<'_> {
-    type Param<'i> = UiFrame<'i>;
-    type Inner<'i> = UiFrame<'i>;
-    fn wrap(this: Self::Inner<'_>) -> Self::Param<'_> {
-        this
+impl<'services> UiFrame<'services> {
+    /// Reborrow the drawing services separately from the current egui allocation.
+    pub fn context(&self) -> UiContext<'services> {
+        UiContext {
+            view: self.view,
+            surface: self.surface,
+            theme: self.theme,
+            motion: self.motion,
+            icons: self.icons,
+        }
     }
-}
 
-impl UiFrame<'_> {
     pub fn for_view<'a>(&'a self, view: Entity, ui: &'a mut egui::Ui) -> UiFrame<'a> {
         UiFrame {
             view,
@@ -156,10 +157,7 @@ impl UiFrame<'_> {
             ui,
             theme: self.theme,
             motion: self.motion,
-            panel_settings: self.panel_settings,
             icons: self.icons,
-            textures: self.textures,
-            input: self.input,
         }
     }
 
@@ -170,10 +168,7 @@ impl UiFrame<'_> {
             ui,
             theme,
             motion,
-            panel_settings,
             icons,
-            textures,
-            input,
         } = self;
         ui.scope_builder(builder, |ui| {
             draw(UiFrame {
@@ -182,10 +177,7 @@ impl UiFrame<'_> {
                 ui,
                 theme,
                 motion: *motion,
-                panel_settings: *panel_settings,
                 icons,
-                textures,
-                input,
             })
         })
         .inner
@@ -212,9 +204,12 @@ impl UiFrame<'_> {
         result
     }
 
+    /// Scroll vertically, keeping the track clear of the caller's corner radius
+    /// without padding or shrinking the content itself. Use zero for square edges.
     pub fn scroll<R>(
         &mut self,
         id: impl std::hash::Hash + std::fmt::Debug,
+        corner_radius: f32,
         draw: impl FnOnce(UiFrame<'_>) -> R,
     ) -> R {
         let Self {
@@ -223,15 +218,12 @@ impl UiFrame<'_> {
             ui,
             theme,
             motion,
-            panel_settings,
             icons,
-            textures,
-            input,
         } = self;
         // Keep the track clear of rounded container corners without padding
         // or shrinking the content itself.
         let bounds = ui.available_rect_before_wrap().intersect(ui.clip_rect());
-        let inset = panel_settings.rounding.min(bounds.height() * 0.5);
+        let inset = corner_radius.min(bounds.height() * 0.5);
         let track = bounds.shrink2(egui::vec2(0.0, inset));
         egui::ScrollArea::vertical()
             .id_salt(id)
@@ -243,10 +235,7 @@ impl UiFrame<'_> {
                     ui,
                     theme,
                     motion: *motion,
-                    panel_settings: *panel_settings,
                     icons,
-                    textures,
-                    input,
                 })
             })
             .inner
@@ -260,10 +249,7 @@ impl UiFrame<'_> {
             ui,
             theme,
             motion,
-            panel_settings,
             icons,
-            textures,
-            input,
         } = self;
         egui::Frame::NONE
             .inner_margin(egui::Margin::symmetric(padding[0] as i8, padding[1] as i8))
@@ -274,61 +260,14 @@ impl UiFrame<'_> {
                     ui,
                     theme,
                     motion: *motion,
-                    panel_settings: *panel_settings,
                     icons,
-                    textures,
-                    input,
                 })
             })
             .inner
     }
 
-    pub fn claim_pointer(&self) {
-        let mut frame = self.input.lock().unwrap();
-        let ids: Vec<_> = frame
-            .events
-            .iter()
-            .filter(|e| {
-                matches!(
-                    e.event,
-                    bevy::window::WindowEvent::CursorMoved(_)
-                        | bevy::window::WindowEvent::MouseButtonInput(_)
-                        | bevy::window::WindowEvent::MouseWheel(_)
-                )
-            })
-            .map(|e| e.id)
-            .collect();
-        for id in ids {
-            frame.consume(id, self.view);
-        }
-    }
-
-    pub fn claim_key(&self, key: KeyCode) {
-        let mut frame = self.input.lock().unwrap();
-        let ids: Vec<_> = frame
-            .events
-            .iter()
-            .filter(|e| e.key().is_some_and(|k| k.key_code == key))
-            .map(|e| e.id)
-            .collect();
-        for id in ids {
-            frame.consume(id, self.view);
-        }
-    }
-
     pub fn text_edit(&mut self, edit: egui::TextEdit<'_>) -> egui::text_edit::TextEditOutput {
-        let before = self.ui.ctx().memory(|m| m.focused());
-        let output = edit.show(self.ui);
-        if before == Some(output.response.id)
-            || output.response.has_focus()
-            || output.response.lost_focus()
-        {
-            self.input
-                .lock()
-                .unwrap()
-                .claim_text(self.view, output.response.id);
-        }
-        output
+        edit.show(self.ui)
     }
 
     pub fn icon_at(&self, icon: impl Into<IconSource>, min: [f32; 2], side: f32) {
@@ -346,7 +285,7 @@ impl UiFrame<'_> {
     /// An accent button using egui's normal hover, press and focus interaction.
     pub fn primary_button(&mut self, text: impl Into<egui::WidgetText>) -> egui::Response {
         let p = &self.theme.palette;
-        let mut ink = p.background;
+        let mut ink = p.panel_background;
         ink[3] = 1.0;
         self.ui
             .scope(|ui| {
@@ -437,7 +376,7 @@ impl UiFrame<'_> {
         let base = if *value { p.accent } else { p.border };
         let fill =
             if response.is_pointer_button_down_on() || response.has_focus() || response.clicked() {
-                theme::mix(base, p.background, 0.18)
+                theme::mix(base, p.panel_background, 0.18)
             } else if response.hovered() || response.highlighted() {
                 theme::mix(base, p.text, 0.12)
             } else {
@@ -492,52 +431,6 @@ impl UiFrame<'_> {
             .show(|ui| draw(self.for_view(self.view, ui)))
             .map(|response| response.inner)
     }
-
-    pub fn viewport(
-        &mut self,
-        id: &str,
-        viewport: &mut UiViewport,
-        size: [f32; 2],
-    ) -> egui::Response {
-        let (rect, _) = self.ui.allocate_exact_size(
-            egui::vec2(size[0].max(1.0), size[1].max(1.0)),
-            egui::Sense::hover(),
-        );
-        let response = self.ui.interact(
-            rect,
-            self.ui.id().with(id),
-            egui::Sense::CLICK | egui::Sense::DRAG,
-        );
-        viewport.rect = Rect::from_corners(
-            Vec2::new(rect.min.x, rect.min.y),
-            Vec2::new(rect.max.x, rect.max.y),
-        );
-        viewport.visible = self.ui.is_rect_visible(rect);
-        viewport.hovered = response.hovered();
-        viewport.physical_size = (viewport.rect.size() * self.ui.ctx().pixels_per_point())
-            .ceil()
-            .as_uvec2()
-            .max(UVec2::ONE);
-        if let Some(texture) = self.textures.get(&viewport.image.id()) {
-            egui::Image::new(egui::load::SizedTexture::new(*texture, rect.size()))
-                .corner_radius(viewport.corner_radius)
-                .paint_at(self.ui, rect);
-        }
-        let clicked = response.clicked()
-            || response.is_pointer_button_down_on() && self.ui.input(|i| i.pointer.any_pressed());
-        if clicked {
-            self.ui.ctx().memory_mut(|memory| {
-                if let Some(focused) = memory.focused() {
-                    memory.surrender_focus(focused);
-                }
-            });
-        }
-        self.input
-            .lock()
-            .unwrap()
-            .region(self.view, self.ui.id().with(id), rect, clicked);
-        response
-    }
 }
 
 pub struct UiPlugin;
@@ -556,6 +449,9 @@ impl Plugin for UiPlugin {
             ..default()
         })
         .add_plugins(bevy_egui::EguiPlugin::default());
+        if !app.is_plugin_added::<ViewportHostPlugin>() {
+            app.add_plugins(ViewportHostPlugin);
+        }
         bevy::asset::load_internal_asset!(
             app,
             bevy_egui::render::EGUI_SHADER_HANDLE,
@@ -563,52 +459,47 @@ impl Plugin for UiPlugin {
             bevy::shader::Shader::from_wesl
         );
         icons::install(app);
+        viewport::install(app);
         app.add_message::<UiError>()
             .init_resource::<bedtime_clipboard2::Clipboard>()
             .init_resource::<runtime::Runtime>()
-            .init_resource::<input::RoutedInput>()
-            .init_resource::<input::InputRouter>()
             .configure_sets(
                 PreUpdate,
                 UiSystems::Draw.after(bevy_egui::EguiPreUpdateSet::ProcessInput),
             )
-            .configure_sets(PreUpdate, UiSystems::PublishInput.after(UiSystems::Draw))
-            .add_systems(PreUpdate, input::publish.in_set(UiSystems::PublishInput))
-            .configure_sets(
-                PostUpdate,
-                UiSystems::PrepareTargets.before(bevy::camera::CameraUpdateSystems),
-            )
             .add_systems(
                 PreUpdate,
-                runtime::configure.before(bevy_egui::EguiPreUpdateSet::InitContexts),
+                runtime::configure
+                    .in_set(UiSystems::Configure)
+                    .before(bevy_egui::EguiPreUpdateSet::InitContexts),
             )
             .add_systems(
                 PreUpdate,
                 (viewport::reset_visibility, runtime::draw)
                     .chain()
                     .in_set(UiSystems::Draw),
-            )
-            .add_systems(
-                PostUpdate,
-                viewport::resize_targets.in_set(UiSystems::PrepareTargets),
             );
     }
 }
 
-pub fn register_view<M>(
-    world: &mut World,
-    surface: Entity,
-    draw: impl IntoSystem<UiFrame<'static>, (), M> + 'static,
-) -> Entity {
+/// Create a surface root renderer. Nested components are ordinary function calls.
+pub fn register_view(world: &mut World, surface: Entity, draw: UiDraw) -> Entity {
     assert!(
         world.get::<UiSurface>(surface).is_some(),
         "Drawing requires a UiSurface"
     );
-    let id: SystemId<UiFrame<'static>> = world.register_system(draw);
-    world
-        .entity_mut(id.entity())
-        .insert((UiView, OnSurface(surface)));
-    id.entity()
+    world.spawn((UiView { draw }, OnSurface(surface))).id()
+}
+
+/// Mount a component with no external props as a surface root. Components with
+/// props are composed by their caller and need no registration.
+pub fn register_component<C>(world: &mut World, surface: Entity) -> Entity
+where
+    for<'a> C: Component<Props<'a> = ()>,
+{
+    register_view(world, surface, |ui, world, context| {
+        C::draw(ui, world, context, ())
+    })
 }
 
 #[cfg(test)]

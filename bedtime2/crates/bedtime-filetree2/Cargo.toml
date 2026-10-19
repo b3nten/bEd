@@ -1,0 +1,27 @@
+[package]
+name = "bedtime-filetree2"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Lazy native filesystem panels with application-owned roots and file opening"
+
+[dependencies]
+bedtime-clipboard2.workspace = true
+bedtime-ui2.workspace = true
+bedtime-workbench2 = { path = "../bedtime-workbench2", default-features = false, features = ["ui"] }
+bevy = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+trash.workspace = true
+
+# macOS uses directory-only kqueue directly: no FSEvents restart or implicit
+# recursive-child behavior from notify's kqueue backend.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+notify = { version = "=8.2.0", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { workspace = true, features = ["NSPasteboard"] }

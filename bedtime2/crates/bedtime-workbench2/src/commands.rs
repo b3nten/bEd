@@ -1,5 +1,5 @@
 //! Stable contextual command identities with independently scoped bindings and handlers.
-use crate::{Area, Layout, Panel, Workbench, Workspace};
+use crate::{Area, InWorkspace, Layout, PanelInstance, Workbench, WorkspaceId};
 use bevy::{ecs::system::SystemId, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -100,6 +100,7 @@ impl ContextCommandRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContextCommandInvocation {
+    pub workspace: WorkspaceId,
     pub command: ContextCommandId,
     pub source: Option<Entity>,
     pub panel: Option<Entity>,
@@ -107,7 +108,7 @@ pub struct ContextCommandInvocation {
 
 pub type ContextCommandResult = Result<(), String>;
 
-#[derive(Resource, Default)]
+#[derive(Component, Default)]
 pub struct ContextCommandRequests(VecDeque<ContextCommandRequest>);
 
 impl ContextCommandRequests {
@@ -134,10 +135,9 @@ pub struct ContextCommandFinished {
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ContextCommandSystems {
-    PanelInput,
+    CollectInput,
     Shortcuts,
     Dispatch,
-    PublishInput,
 }
 
 /// Portable modifier data; no native menu or egui types occur in the model.
@@ -229,18 +229,15 @@ impl Binding {
 }
 
 /// Normalized chord ingress, independent of any UI backend. UI adapters admit
-/// only unclaimed presses; headless hosts can provide the same input directly.
+/// shortcut presses; headless hosts can provide the same input directly.
 #[derive(Clone, Copy, Debug)]
 pub struct BindingPress {
-    pub event: u64,
     pub chord: KeyChord,
     pub repeat: bool,
     pub context: InvocationContext,
 }
 #[derive(Resource, Default)]
 pub struct BindingInput(pub Vec<BindingPress>);
-#[derive(Resource, Default)]
-pub struct BindingClaims(pub Vec<u64>);
 #[derive(Message, Clone, Debug)]
 pub struct BindingConflict {
     pub chord: KeyChord,
@@ -248,15 +245,13 @@ pub struct BindingConflict {
 }
 
 pub(crate) fn install(app: &mut App) {
-    app.init_resource::<ContextCommandRequests>()
-        .init_resource::<BindingInput>()
-        .init_resource::<BindingClaims>()
+    app.init_resource::<BindingInput>()
         .add_message::<ContextCommandFinished>()
         .add_message::<BindingConflict>()
         .configure_sets(
             PreUpdate,
             (
-                ContextCommandSystems::PanelInput,
+                ContextCommandSystems::CollectInput.after(crate::WorkspaceSystems::Prepare),
                 ContextCommandSystems::Shortcuts,
                 ContextCommandSystems::Dispatch,
             )
@@ -269,31 +264,55 @@ pub(crate) fn install(app: &mut App) {
         .add_systems(PreUpdate, dispatch.in_set(ContextCommandSystems::Dispatch));
 }
 
+fn register_context_command<C: ContextCommand>(
+    world: &mut World,
+) -> Result<ContextCommandId, String> {
+    if !crate::valid_key(C::KEY) || C::LABEL.trim().is_empty() {
+        return Err("ContextCommand requires a namespaced key and nonempty label".into());
+    }
+    let command = ContextCommandId::of::<C>();
+    for info in world.query::<&ContextCommandInfo>().iter(world) {
+        if info.command == command {
+            return if info.label == C::LABEL {
+                Ok(command)
+            } else {
+                Err(format!(
+                    "Command key {:?} is already registered with different metadata",
+                    C::KEY
+                ))
+            };
+        }
+    }
+    world.spawn(ContextCommandInfo {
+        command: command.clone(),
+        label: C::LABEL.into(),
+    });
+    Ok(command)
+}
+
+/// Plugin-owned application-wide handlers can be installed before a workspace exists.
+pub(crate) fn install_global_handler<C: ContextCommand, M>(
+    world: &mut World,
+    handler: impl IntoSystem<In<ContextCommandInvocation>, ContextCommandResult, M> + 'static,
+) -> Result<Entity, String> {
+    let command = register_context_command::<C>(world)?;
+    if world
+        .query_filtered::<&Handler, (Without<InPanel>, Without<crate::InWorkspace>)>()
+        .iter(world)
+        .any(|handler| handler.command == command)
+    {
+        return Err("Command already has a handler in this scope".into());
+    }
+    let entity = world.register_system(handler).entity();
+    world.entity_mut(entity).insert(Handler { command });
+    Ok(entity)
+}
+
 impl Workbench<'_> {
     pub fn register_context_command<C: ContextCommand>(
         &mut self,
     ) -> Result<ContextCommandId, String> {
-        if !crate::valid_key(C::KEY) || C::LABEL.trim().is_empty() {
-            return Err("ContextCommand requires a namespaced key and nonempty label".into());
-        }
-        let command = ContextCommandId::of::<C>();
-        for info in self.world.query::<&ContextCommandInfo>().iter(self.world) {
-            if info.command == command {
-                return if info.label == C::LABEL {
-                    Ok(command)
-                } else {
-                    Err(format!(
-                        "Command key {:?} is already registered with different metadata",
-                        C::KEY
-                    ))
-                };
-            }
-        }
-        self.world.spawn(ContextCommandInfo {
-            command: command.clone(),
-            label: C::LABEL.into(),
-        });
-        Ok(command)
+        register_context_command::<C>(self.world)
     }
 
     pub fn register_handler<C: ContextCommand, M>(
@@ -309,8 +328,9 @@ impl Workbench<'_> {
         panel: Entity,
         handler: impl IntoSystem<In<ContextCommandInvocation>, ContextCommandResult, M> + 'static,
     ) -> Result<Entity, String> {
+        self.require_owned(panel)?;
         self.world
-            .get::<Panel>(panel)
+            .get::<PanelInstance>(panel)
             .ok_or("Panel is unavailable")?;
         self.install_handler::<C, M>(Some(panel), handler)
     }
@@ -320,6 +340,9 @@ impl Workbench<'_> {
         panel: Option<Entity>,
         handler: impl IntoSystem<In<ContextCommandInvocation>, ContextCommandResult, M> + 'static,
     ) -> Result<Entity, String> {
+        if panel.is_none() {
+            return install_global_handler::<C, M>(self.world, handler);
+        }
         let command = match self.command::<C>() {
             Some(command) => command,
             None => self.register_context_command::<C>()?,
@@ -330,7 +353,9 @@ impl Workbench<'_> {
         let entity = self.world.register_system(handler).entity();
         self.world.entity_mut(entity).insert(Handler { command });
         if let Some(panel) = panel {
-            self.world.entity_mut(entity).insert(InPanel(panel));
+            self.world
+                .entity_mut(entity)
+                .insert((InPanel(panel), InWorkspace(self.workspace.0)));
         }
         Ok(entity)
     }
@@ -352,18 +377,22 @@ impl Workbench<'_> {
     }
 
     pub fn handler(&mut self, command: ContextCommandId, panel: Option<Entity>) -> Option<Entity> {
-        find_handler(self.world, command, panel)
+        find_handler(self.world, self.workspace, command, panel)
     }
 }
 
 fn find_handler(
     world: &mut World,
+    workspace: WorkspaceId,
     command: ContextCommandId,
     panel: Option<Entity>,
 ) -> Option<Entity> {
-    let mut query = world.query::<(Entity, &Handler, Option<&InPanel>)>();
-    let mut handlers = query.iter(world).filter_map(|(entity, h, p)| {
-        (h.command == command && p.map(|p| p.0) == panel).then_some(entity)
+    let mut query = world.query::<(Entity, &Handler, Option<&InPanel>, Option<&InWorkspace>)>();
+    let mut handlers = query.iter(world).filter_map(|(entity, h, p, owner)| {
+        (owner.is_none_or(|o| o.0 == workspace.0)
+            && h.command == command
+            && p.map(|p| p.0) == panel)
+            .then_some(entity)
     });
     let handler = handlers.next();
     assert!(
@@ -374,31 +403,42 @@ fn find_handler(
 }
 
 pub(crate) fn focused_panel(world: &World) -> Option<Entity> {
-    let layout = world.resource::<Workspace>().active_layout();
-    let area = world.get::<Layout>(layout).unwrap().focused_area();
-    world.get::<Area>(area).unwrap().selected_panel()
+    focused_panel_in(world, crate::workspaces::selected(world)?)
+}
+
+pub(crate) fn focused_panel_in(world: &World, workspace: WorkspaceId) -> Option<Entity> {
+    let layout = crate::active_layout(world, workspace.0)?;
+    let area = world.get::<Layout>(layout)?.focused_area()?;
+    world.get::<Area>(area)?.selected_panel()
 }
 
 pub(crate) fn resolve(
     world: &mut World,
+    workspace: WorkspaceId,
     request: ContextCommandRequest,
 ) -> (ContextCommandInvocation, Result<Entity, String>) {
     let panel = match request.context {
-        InvocationContext::Focused => focused_panel(world),
+        InvocationContext::Focused => focused_panel_in(world, workspace),
         InvocationContext::Global => None,
         InvocationContext::Panel(p) => Some(p),
     };
     let invocation = ContextCommandInvocation {
+        workspace,
         command: request.command.clone(),
         source: request.source,
         panel,
     };
-    if panel.is_some_and(|p| world.get::<Panel>(p).is_none()) {
+    if crate::workspaces::validate(world, workspace).is_err()
+        || panel.is_some_and(|p| {
+            world.get::<PanelInstance>(p).is_none()
+                || crate::workspaces::owner(world, p) != Some(workspace)
+        })
+    {
         return (invocation, Err("Target panel is unavailable".into()));
     }
     let handler = panel
-        .and_then(|p| find_handler(world, request.command.clone(), Some(p)))
-        .or_else(|| find_handler(world, request.command, None));
+        .and_then(|p| find_handler(world, workspace, request.command.clone(), Some(p)))
+        .or_else(|| find_handler(world, workspace, request.command, None));
     let result = handler
         .ok_or_else(|| "No handler for this action in the requested context".into())
         .and_then(|h| {
@@ -420,8 +460,16 @@ pub fn command_available(
     command: ContextCommandId,
     context: InvocationContext,
 ) -> bool {
+    let workspace = match context {
+        InvocationContext::Panel(panel) => crate::workspaces::owner(world, panel),
+        _ => crate::workspaces::selected(world),
+    };
+    let Some(workspace) = workspace else {
+        return false;
+    };
     resolve(
         world,
+        workspace,
         ContextCommandRequest {
             command,
             source: None,
@@ -440,9 +488,13 @@ struct ResolvedBinding {
     panel: Option<Entity>,
 }
 
-fn resolved_bindings(world: &mut World, context: InvocationContext) -> Vec<ResolvedBinding> {
+fn resolved_bindings(
+    world: &mut World,
+    workspace: WorkspaceId,
+    context: InvocationContext,
+) -> Vec<ResolvedBinding> {
     let panel = match context {
-        InvocationContext::Focused => focused_panel(world),
+        InvocationContext::Focused => focused_panel_in(world, workspace),
         InvocationContext::Panel(p) => Some(p),
         InvocationContext::Global => None,
     };
@@ -451,6 +503,9 @@ fn resolved_bindings(world: &mut World, context: InvocationContext) -> Vec<Resol
         .query::<(Entity, &Binding, Option<&InPanel>)>()
         .iter(world)
     {
+        if crate::workspaces::owner(world, source).is_some_and(|w| w != workspace) {
+            continue;
+        }
         let scope = scope.map(|p| p.0);
         if scope.is_some() && scope != panel {
             continue;
@@ -479,17 +534,20 @@ fn resolved_bindings(world: &mut World, context: InvocationContext) -> Vec<Resol
 
 pub(crate) fn shortcut_for(
     world: &mut World,
+    workspace: WorkspaceId,
     command: ContextCommandId,
     context: InvocationContext,
 ) -> Option<KeyChord> {
-    resolved_bindings(world, context)
+    resolved_bindings(world, workspace, context)
         .into_iter()
         .find_map(|b| (b.command == command).then_some(b.chord))
 }
 
 fn shortcuts(world: &mut World) {
-    world.resource_mut::<BindingClaims>().0.clear();
     let presses = std::mem::take(&mut world.resource_mut::<BindingInput>().0);
+    if crate::workspaces::selected(world).is_none() {
+        return;
+    }
     for press in presses {
         let panel = match press.context {
             InvocationContext::Focused => focused_panel(world),
@@ -499,7 +557,12 @@ fn shortcuts(world: &mut World) {
         let mut candidates: Vec<_> = world
             .query::<(Entity, &Binding, Option<&InPanel>)>()
             .iter(world)
-            .filter(|(_, b, scope)| {
+            .filter(|(entity, b, scope)| {
+                if crate::workspaces::owner(world, *entity)
+                    .is_some_and(|w| w != crate::workspaces::active(world))
+                {
+                    return false;
+                }
                 KeyChord::new(b.chord.modifiers.resolved(), b.chord.key) == press.chord
                     && scope.is_none_or(|s| Some(s.0) == panel)
             })
@@ -511,7 +574,6 @@ fn shortcuts(world: &mut World) {
         if candidates.is_empty() {
             continue;
         }
-        world.resource_mut::<BindingClaims>().0.push(press.event);
         if candidates.len() > 1 {
             world.write_message(BindingConflict {
                 chord: press.chord,
@@ -521,8 +583,8 @@ fn shortcuts(world: &mut World) {
         }
         let (source, command, repeat, _) = candidates.pop().unwrap();
         if !press.repeat || repeat {
-            world
-                .resource_mut::<ContextCommandRequests>()
+            Workbench::new(world)
+                .commands()
                 .submit(ContextCommandRequest {
                     command,
                     source: Some(source),
@@ -533,9 +595,20 @@ fn shortcuts(world: &mut World) {
 }
 
 fn dispatch(world: &mut World) {
-    let pending = std::mem::take(&mut world.resource_mut::<ContextCommandRequests>().0);
-    // Capture every target before any handler can change focus or close panels.
-    let admitted: Vec<_> = pending.into_iter().map(|r| resolve(world, r)).collect();
+    let pending: Vec<_> = world
+        .query::<(Entity, &mut ContextCommandRequests)>()
+        .iter_mut(world)
+        .flat_map(|(entity, mut requests)| {
+            std::mem::take(&mut requests.0)
+                .into_iter()
+                .map(move |r| (WorkspaceId(entity), r))
+        })
+        .collect();
+    // Capture origin and targets before any handler changes focus or activation.
+    let admitted: Vec<_> = pending
+        .into_iter()
+        .map(|(workspace, r)| resolve(world, workspace, r))
+        .collect();
     for (invocation, handler) in admitted {
         let result = handler.and_then(|entity| {
             if world.get::<Handler>(entity).is_none() {

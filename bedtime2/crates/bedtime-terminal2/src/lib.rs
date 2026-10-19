@@ -1,0 +1,586 @@
+//! Local terminal panels. Workbench owns the runtime's lifetime; the terminal
+//! worker alone owns the PTY and emulator. Drawing never starts or reaps a child.
+mod input;
+mod view;
+
+use bedtime_terminal::{
+    terminal::{Terminal, TerminalTheme},
+    terminal_pty::{PtyEvent, TerminalCommand, TerminalPty},
+};
+use bedtime_ui2::{Theme, UiContext, egui};
+use bedtime_workbench2::{
+    Binding, InPanel, InWorkspace, Panel, PanelInstance, PanelPresentation, WorkStatus,
+    WorkbenchAppExt, WorkspaceTask, WorkspaceWork,
+};
+use bevy::prelude::*;
+use std::{collections::VecDeque, io, process::ExitStatus, sync::Arc};
+use view::{TerminalInput, TerminalView};
+
+pub use bedtime_terminal::{
+    terminal::TerminalSnapshot,
+    terminal_pty::{PtyOptions as TerminalOptions, TerminalShell, WindowSize},
+};
+
+/// Installs the Terminal panel type and its ordinary Update system. Requires the
+/// application's Workbench and UI2 plugins; installs no windows or renderer.
+pub struct TerminalPlugin;
+
+impl Plugin for TerminalPlugin {
+    fn build(&self, app: &mut App) {
+        app.register_panel_type::<TerminalPanel>()
+            .add_systems(Update, update_terminals);
+    }
+}
+
+/// Child status, separate from the scoped runtime: an exited shell's emulator
+/// remains available for scrolling, selection and copying until the panel closes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalStatus {
+    Pending,
+    Starting,
+    Running,
+    Stopping,
+    Exited(Option<ExitStatus>),
+    Failed(String),
+}
+
+/// One panel owns one local shell. Explicitly supplied launch options survive
+/// panel initialization. Editing options affects the next start/restart only.
+#[derive(Component)]
+pub struct TerminalPanel {
+    pub options: TerminalOptions,
+    status: TerminalStatus,
+    runtime: Option<Runtime>,
+    snapshot: Arc<TerminalSnapshot>,
+    view: TerminalView,
+    size: Option<WindowSize>,
+    theme: Option<TerminalTheme>,
+    drawn: bool,
+    action: Option<Action>,
+    restart_after_stop: bool,
+    error: Option<String>,
+}
+
+// A saturated backend pauses new process input while this bounded, ordered
+// handoff is retried. Releases/focus cleanup must not be dropped on WouldBlock.
+const MAX_PENDING_INPUTS: usize = 512;
+const MAX_PENDING_BYTES: usize = 4 * 1024 * 1024;
+
+struct Runtime {
+    pty: TerminalPty,
+    pending_inputs: VecDeque<TerminalInput>,
+    task: WorkspaceTask<Result<(), String>>,
+    size: WindowSize,
+    theme: Option<TerminalTheme>,
+}
+
+#[derive(Clone, Copy)]
+enum Action {
+    Stop,
+    Restart,
+}
+
+impl Default for TerminalPanel {
+    fn default() -> Self {
+        Self {
+            options: TerminalOptions::default(),
+            status: TerminalStatus::Pending,
+            runtime: None,
+            snapshot: Terminal::new_text_only(80, 24).snapshot(),
+            view: TerminalView::default(),
+            size: None,
+            theme: None,
+            drawn: false,
+            action: None,
+            restart_after_stop: false,
+            error: None,
+        }
+    }
+}
+
+impl TerminalPanel {
+    pub fn new(options: TerminalOptions) -> Self {
+        Self {
+            options,
+            ..Self::default()
+        }
+    }
+
+    pub fn status(&self) -> &TerminalStatus {
+        &self.status
+    }
+
+    /// None until the worker has started its child. A PID is observation only,
+    /// never a restoration descriptor or an authorization to signal a process.
+    pub fn process_id(&self) -> Option<u32> {
+        let pid = self.runtime.as_ref()?.pty.process_id();
+        (pid != 0).then_some(pid)
+    }
+
+    /// Latest immutable viewport; hidden output is parsed continuously, but a
+    /// hidden view may retain an older viewport until it is drawn again.
+    pub fn snapshot(&self) -> &Arc<TerminalSnapshot> {
+        &self.snapshot
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref().or_else(|| match &self.status {
+            TerminalStatus::Failed(error) => Some(error.as_str()),
+            _ => None,
+        })
+    }
+
+    /// Stop the child while retaining its transcript. Pending user input is
+    /// discarded so backpressure cannot block termination. Applied next update.
+    pub fn stop(&mut self) {
+        self.action = Some(Action::Stop);
+    }
+
+    /// Cancel and finish the old runtime before starting a fresh terminal. Applied
+    /// by the next update; never overlaps two child lifetimes for one panel.
+    pub fn restart(&mut self) {
+        self.action = Some(Action::Restart);
+    }
+}
+
+impl Panel for TerminalPanel {
+    const KEY: &'static str = "bedtime.terminal";
+    const LABEL: &'static str = "Terminal";
+
+    fn initialize(entity: &mut EntityWorldMut<'_>) {
+        entity.entry::<Self>().or_default();
+    }
+
+    fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
+        let focused = world
+            .get::<PanelPresentation>(panel)
+            .is_some_and(|p| p.focused);
+        let window_focused = world
+            .get::<Window>(context.surface)
+            .is_some_and(|w| w.focused);
+        let prior_capture = world.get::<bedtime_ui2::UiCapture>(context.surface);
+        let allow_interaction = window_focused
+            && ui.is_enabled()
+            && !prior_capture.is_some_and(|capture| capture.modal || capture.text)
+            && !ui.ctx().any_popup_open()
+            && ui.ctx().memory(|m| m.top_modal_layer().is_none());
+        let reserved = reserved_shortcuts(world, panel);
+        let mut panel_state = world.get_mut::<Self>(panel).unwrap();
+        let state = &mut *panel_state;
+        state.drawn = true;
+        state.theme = Some(terminal_theme(context.theme));
+
+        let snapshot = state.snapshot.clone();
+        let accepts_input = matches!(state.status, TerminalStatus::Running)
+            && state
+                .runtime
+                .as_ref()
+                .is_none_or(|runtime| runtime.pending_inputs.is_empty());
+        // A healthy shell needs no second header beneath the workbench tab.
+        // Keep lifecycle/recovery information visible only when it is useful.
+        if !accepts_input || state.error().is_some() {
+            egui::Frame::new()
+                .inner_margin(egui::Margin {
+                    left: view::PADDING.x as i8,
+                    right: view::PADDING.x as i8,
+                    top: view::PADDING.y as i8,
+                    bottom: 0,
+                })
+                .show(ui, |ui| {
+                    if !accepts_input {
+                        ui.horizontal(|ui| {
+                            match &state.status {
+                                TerminalStatus::Pending | TerminalStatus::Starting => {
+                                    ui.weak("Starting shell…");
+                                }
+                                TerminalStatus::Running => {
+                                    ui.weak("Input paused: waiting for the terminal worker…");
+                                }
+                                TerminalStatus::Stopping => {
+                                    ui.weak("Stopping…");
+                                }
+                                TerminalStatus::Exited(Some(exit)) => {
+                                    ui.weak(format!("Shell exited: {exit}"));
+                                }
+                                TerminalStatus::Exited(None) => {
+                                    ui.weak("Shell stopped");
+                                }
+                                TerminalStatus::Failed(_) => {
+                                    ui.weak("Terminal unavailable");
+                                }
+                            }
+                            if matches!(
+                                state.status,
+                                TerminalStatus::Exited(_) | TerminalStatus::Failed(_)
+                            ) && ui.small_button("Restart").clicked()
+                            {
+                                state.restart();
+                            }
+                        });
+                    }
+                    if let Some(error) = state.error() {
+                        ui.colored_label(
+                            bedtime_ui2::theme::color(context.theme.palette.error),
+                            error,
+                        );
+                    }
+                });
+        }
+        let output = ui
+            .add_enabled_ui(allow_interaction, |ui| {
+                state.view.show(
+                    ui,
+                    &snapshot,
+                    context.theme,
+                    focused,
+                    accepts_input,
+                    &reserved,
+                )
+            })
+            .inner;
+        state.size = Some(output.size);
+        send_inputs(state, output.inputs);
+    }
+}
+
+fn send_inputs(state: &mut TerminalPanel, inputs: Vec<TerminalInput>) {
+    let Some(runtime) = &mut state.runtime else {
+        return;
+    };
+    if !matches!(runtime.task.status(), WorkStatus::Running) {
+        return;
+    }
+    let count = runtime.pending_inputs.len().saturating_add(inputs.len());
+    let bytes = runtime
+        .pending_inputs
+        .iter()
+        .chain(&inputs)
+        .fold(0usize, |total, input| {
+            total.saturating_add(match input {
+                TerminalInput::Bytes(bytes) => bytes.len(),
+                TerminalInput::Command(
+                    TerminalCommand::Text(text) | TerminalCommand::Paste(text),
+                ) => text.len(),
+                TerminalInput::Command(TerminalCommand::Key(event)) => {
+                    event.text.as_ref().map_or(0, String::len)
+                }
+                _ => 0,
+            })
+        });
+    if count > MAX_PENDING_INPUTS || bytes > MAX_PENDING_BYTES {
+        // Do not discard an arbitrary release and leave the child believing a
+        // key/button is held. Overflow stops this runtime explicitly instead.
+        runtime.pending_inputs.clear();
+        runtime.task.cancel();
+        state.view.suspend();
+        state.status =
+            TerminalStatus::Failed("Terminal input backlog limit exceeded; runtime stopped".into());
+        return;
+    }
+    runtime.pending_inputs.extend(inputs);
+    while let Some(input) = runtime.pending_inputs.pop_front() {
+        let result = match input {
+            TerminalInput::Command(command) => {
+                if !runtime.pty.is_alive()
+                    && matches!(
+                        command,
+                        TerminalCommand::Key(_)
+                            | TerminalCommand::Text(_)
+                            | TerminalCommand::Paste(_)
+                            | TerminalCommand::Focus(_)
+                    )
+                {
+                    continue;
+                }
+                runtime
+                    .pty
+                    .try_command(command)
+                    .map_err(|(command, error)| (TerminalInput::Command(command), error))
+            }
+            TerminalInput::Bytes(bytes) if runtime.pty.is_alive() => runtime
+                .pty
+                .write(&bytes)
+                .map_err(|error| (TerminalInput::Bytes(bytes), error)),
+            TerminalInput::Bytes(_) => continue,
+        };
+        if let Err((input, error)) = result {
+            if error.kind() == io::ErrorKind::WouldBlock {
+                runtime.pending_inputs.push_front(input);
+            } else {
+                // A permanently rejected input must not let a later Enter run
+                // an unintended partial line or strand earlier held input.
+                runtime.pending_inputs.clear();
+                runtime.task.cancel();
+                state.view.suspend();
+                state.status = TerminalStatus::Failed(format!(
+                    "Terminal input rejected; runtime stopped: {error}"
+                ));
+            }
+            break;
+        }
+    }
+}
+
+/// One visible execution point for startup, restart, status and snapshot handoff.
+/// Deliberately not gated by InActiveWorkspace/InRunningWorkspace.
+fn update_terminals(
+    mut panels: Query<(Entity, &InWorkspace, &mut TerminalPanel, &mut PanelInstance)>,
+    mut scopes: Query<&mut WorkspaceWork>,
+) {
+    for (panel, workspace, mut state, mut instance) in &mut panels {
+        let mut scope = scopes
+            .get_mut(workspace.0)
+            .expect("Terminal workspace work scope");
+        update_terminal(panel, &mut state, &mut scope);
+
+        // The PTY worker owns OS process queries, including quiet/hidden jobs.
+        // This reads its cached observation; OSC titles do not rename the tab.
+        let name = state.runtime.as_ref().map(|runtime| {
+            runtime
+                .pty
+                .foreground_process_name()
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| runtime.pty.shell_name().to_owned())
+        });
+        let title: String = name
+            .as_deref()
+            .unwrap_or(TerminalPanel::LABEL)
+            .chars()
+            .filter(|ch| !ch.is_control())
+            .take(64)
+            .collect();
+        let title = if title.is_empty() {
+            TerminalPanel::LABEL.into()
+        } else {
+            title
+        };
+        if instance.title != title {
+            instance.title = title;
+        }
+    }
+}
+
+fn update_terminal(panel: Entity, state: &mut TerminalPanel, scope: &mut WorkspaceWork) {
+    if !state.drawn {
+        let cleanup = state.view.suspend();
+        send_inputs(state, cleanup);
+    }
+    send_inputs(state, Vec::new());
+    if let Some(action) = state.action.take() {
+        state.error = None;
+        match action {
+            Action::Restart => {
+                state.restart_after_stop = true;
+                if let Some(runtime) = &mut state.runtime {
+                    runtime.pending_inputs.clear();
+                    runtime.task.cancel();
+                    state.status = TerminalStatus::Stopping;
+                }
+            }
+            Action::Stop => {
+                // The retained exited emulator ignores Stop and emits no second
+                // exit event. Repeated/application Stop is deliberately a no-op.
+                if matches!(
+                    state.status,
+                    TerminalStatus::Running | TerminalStatus::Starting
+                ) && state
+                    .runtime
+                    .as_ref()
+                    .is_some_and(|runtime| runtime.pty.is_alive())
+                {
+                    // Termination bypasses a pending write whose byte budget is
+                    // exhausted. Backend Stop needs no input reservation and
+                    // clears its accepted write backlog on the owner thread.
+                    state.runtime.as_mut().unwrap().pending_inputs.clear();
+                    state.view.suspend();
+                    send_inputs(state, vec![TerminalInput::Command(TerminalCommand::Stop)]);
+                    if !matches!(state.status, TerminalStatus::Failed(_)) {
+                        state.status = TerminalStatus::Stopping;
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(runtime) = &mut state.runtime {
+        let pty = &mut runtime.pty;
+        for event in pty.poll() {
+            match event {
+                PtyEvent::Exited(exit) => state.status = TerminalStatus::Exited(exit),
+                PtyEvent::Error(error) => state.status = TerminalStatus::Failed(error),
+                PtyEvent::Output(_) => {
+                    unreachable!("Production PTYs publish snapshots, not raw output")
+                }
+            }
+        }
+        if matches!(state.status, TerminalStatus::Starting)
+            && pty.process_id() != 0
+            && pty.is_alive()
+        {
+            state.status = TerminalStatus::Running;
+        }
+        state.snapshot = pty.snapshot();
+        if state.drawn {
+            if let Some(size) = state.size.filter(|size| *size != runtime.size) {
+                match pty.resize(size) {
+                    Ok(()) => runtime.size = size,
+                    Err(error) => state.error = Some(error.to_string()),
+                }
+            }
+            if state.theme != runtime.theme {
+                if let Some(theme) = &state.theme {
+                    match pty.command(TerminalCommand::Theme(theme.clone())) {
+                        Ok(()) => runtime.theme = state.theme.clone(),
+                        Err(error) => state.error = Some(error.to_string()),
+                    }
+                }
+            }
+            pty.request_snapshot();
+        }
+        match runtime.task.status() {
+            WorkStatus::Failed(error) => state.status = TerminalStatus::Failed(error),
+            WorkStatus::Finished => {
+                if let Ok(Err(error)) = runtime.task.try_recv() {
+                    state.status = TerminalStatus::Failed(error);
+                }
+            }
+            WorkStatus::Cancelling | WorkStatus::Cancelled
+                if !state.restart_after_stop
+                    && !matches!(state.status, TerminalStatus::Failed(_)) =>
+            {
+                state.status = TerminalStatus::Stopping;
+            }
+            _ => {}
+        }
+    }
+
+    if state.restart_after_stop
+        && state.runtime.as_ref().is_none_or(|runtime| {
+            !matches!(
+                runtime.task.status(),
+                WorkStatus::Running | WorkStatus::Cancelling
+            )
+        })
+    {
+        // Cancellation discards WorkspaceTask's return value. Re-read the
+        // terminal mailbox after completion and require positive cleanup proof.
+        // WorkStatus::Cancelled alone must never admit an overlapping child.
+        let cleanup_confirmed = state.runtime.as_mut().is_none_or(|runtime| {
+            for event in runtime.pty.poll() {
+                if let PtyEvent::Error(error) = event {
+                    state.error = Some(error);
+                }
+            }
+            runtime.pty.cleanup_confirmed()
+        });
+        state.restart_after_stop = false;
+        if cleanup_confirmed {
+            state.runtime = None;
+            state.status = TerminalStatus::Pending;
+            state.error = None;
+            state.snapshot = Terminal::new_text_only(80, 24).snapshot();
+            state.view = TerminalView::default();
+        } else {
+            state.status = TerminalStatus::Failed(
+                "Terminal cleanup could not be confirmed; restart refused".into(),
+            );
+        }
+    }
+
+    if matches!(state.status, TerminalStatus::Pending)
+        && let Some(size) = state.size
+    {
+        let result = start_terminal(panel, state, size, scope);
+        if let Err(error) = result {
+            state.status = TerminalStatus::Failed(error);
+        }
+    }
+    state.drawn = false;
+}
+
+fn start_terminal(
+    panel: Entity,
+    state: &mut TerminalPanel,
+    size: WindowSize,
+    scope: &mut WorkspaceWork,
+) -> Result<(), String> {
+    let mut terminal = Terminal::new_text_only(size.num_cols as usize, size.num_lines as usize);
+    if let Some(theme) = &state.theme {
+        terminal.set_theme(theme);
+    }
+    let mut options = state.options.clone();
+    if !options.env_remove.iter().any(|name| name == "TERM_PROGRAM") {
+        options
+            .env
+            .entry("TERM_PROGRAM".into())
+            .or_insert_with(|| "bed2".into());
+    }
+    let (pty, worker) =
+        TerminalPty::prepare_terminal(options, size, terminal).map_err(|e| e.to_string())?;
+    let task = scope.spawn_task(Some(panel), "Terminal", move |cancel| {
+        worker
+            .run(|| cancel.is_cancelled())
+            .map_err(|e| e.to_string())
+    })?;
+    state.snapshot = pty.snapshot();
+    state.runtime = Some(Runtime {
+        pty,
+        pending_inputs: VecDeque::new(),
+        task,
+        size,
+        theme: state.theme.clone(),
+    });
+    state.status = TerminalStatus::Starting;
+    Ok(())
+}
+
+/// Reserve every applicable registered chord, including disabled/conflicted
+/// bindings: Workbench owns resolution after drawing. A terminal otherwise owns
+/// its raw control/navigation keys instead of using text-editor key policy.
+fn reserved_shortcuts(world: &mut World, panel: Entity) -> Vec<egui::KeyboardShortcut> {
+    let Some(workspace) = world.get::<InWorkspace>(panel).map(|owner| owner.0) else {
+        return Vec::new();
+    };
+    world
+        .query::<(&Binding, Option<&InPanel>, Option<&InWorkspace>)>()
+        .iter(world)
+        .filter(|(_, scope, owner)| {
+            scope.is_none_or(|scope| scope.0 == panel)
+                && owner.is_none_or(|owner| owner.0 == workspace)
+        })
+        .filter_map(|(binding, _, _)| {
+            let key = bevy_egui::helpers::bevy_to_egui_physical_key(&binding.chord.key)?;
+            let flags = binding.chord.modifiers.resolved();
+            use bedtime_workbench2::Modifiers;
+            let ctrl = flags.contains(Modifiers::CONTROL);
+            let meta = flags.contains(Modifiers::META);
+            Some(egui::KeyboardShortcut::new(
+                egui::Modifiers {
+                    alt: flags.contains(Modifiers::ALT),
+                    ctrl,
+                    shift: flags.contains(Modifiers::SHIFT),
+                    mac_cmd: meta,
+                    command: if cfg!(target_os = "macos") {
+                        meta
+                    } else {
+                        ctrl
+                    },
+                },
+                key,
+            ))
+        })
+        .collect()
+}
+
+fn terminal_theme(theme: &Theme) -> TerminalTheme {
+    // The shared core ensures theme contrast while retaining shell OSC overrides
+    // independently of host updates. Explicit xterm/truecolor output stays intact.
+    TerminalTheme::new(
+        theme.palette.panel_background,
+        theme.palette.text,
+        theme.palette.terminal,
+    )
+}
+
+#[cfg(test)]
+mod tests;

@@ -2,22 +2,46 @@
 //! interpolation are local to this drawing system; only completed edits commit.
 use crate::{
     geometry,
-    layout::{LayoutSnapshot, plan_tab_geometry},
+    layout::{GeometrySnapshot, plan_tab_geometry},
     *,
 };
 use bedtime_ui2::{
-    UiFrame, UiSurface,
+    UiContext, UiDraw, UiFrame, UiView,
     egui::{self, CursorIcon, Key, PointerButton},
-    register_view,
 };
-use bevy::{ecs::system::SystemId, prelude::*};
-use std::collections::HashMap;
+use bevy::prelude::*;
+use std::{collections::HashMap, sync::Arc};
 
 const PANEL_BORDER_WIDTH: f32 = 1.0;
 
+fn allows_panel_edit(settings: WorkbenchSurface, edit: &LayoutEdit) -> bool {
+    match edit {
+        LayoutEdit::FocusArea(_) | LayoutEdit::FocusPanel(_) | LayoutEdit::KeepPanel(_) => true,
+        LayoutEdit::ClosePanels(_) | LayoutEdit::CloseArea(_) => settings.panel_closure,
+        LayoutEdit::OpenPanel { .. } => settings.panel_creation,
+        LayoutEdit::DropPanel { .. } => settings.panel_creation && settings.layout_editing,
+        _ => settings.layout_editing,
+    }
+}
+
+/// Who renders and handles input in the window's titlebar. Native geometry is
+/// still reserved in either mode, so the workspace stays below native chrome.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TitlebarOwnership {
+    /// Render the optional application slot and handle background window moves.
+    #[default]
+    Workbench,
+    /// Leave titlebar drawing, native appearance and gestures to the application.
+    /// The Titlebar component is suspended until ownership returns to Workbench.
+    Application,
+}
+
+/// The workbench shell required by WorkbenchSurface on a window. This entity
+/// lives in the application world and remains stable across workspace switches.
 #[derive(Component, Clone)]
 #[require(WorkbenchPresentation)]
-pub struct WorkbenchHost {
+pub struct WorkbenchShell {
+    pub titlebar_ownership: TitlebarOwnership,
     /// Hide the tiled content for a scene underneath, retaining menu and status.
     pub panels_visible: bool,
     /// Outer shell bounds in egui points. Defaults to the parent's available UI.
@@ -30,62 +54,159 @@ pub struct WorkbenchHost {
 pub struct WorkbenchPresentation {
     pub bounds: Rect,
     pub titlebar: Rect,
+    /// Usable titlebar content, after excluding native controls and edge padding.
+    pub titlebar_content: Rect,
     pub menu: Rect,
     pub panels: Rect,
     pub status_bar: Rect,
 }
 
-#[derive(Component)]
-struct PanelRenderer;
+/// Optional titlebar content on the same window as WorkbenchSurface.
+/// The renderer receives that window as UiContext::view and UiContext::surface.
+#[derive(Component, Clone, Copy)]
+#[require(WorkbenchSurface)]
+pub struct Titlebar {
+    /// Requested content height in egui points. The host adds four points above
+    /// the content; native chrome may require a taller band. The header fallback
+    /// uses the same spacing.
+    pub height: f32,
+    pub draw: UiDraw,
+}
 
-/// Workspace-local menu, status contributions and shell system state.
-#[derive(Resource)]
+#[derive(Component)]
+pub(crate) struct PanelRenderer {
+    pub(crate) draw: fn(&mut egui::Ui, &mut World, &UiContext<'_>, Entity),
+}
+
+/// Workspace-local menu, status renderer and shell system state.
+#[derive(Component, Default)]
 pub struct WorkspaceUi {
     pub menu: Option<Entity>,
-    pub status_bar: Entity,
-    shell: Entity,
-    host: WorkbenchHost,
-    titlebar_inset: f32,
-    focused: bool,
+    status_bar: Option<Entity>,
+    frontend: Frontend,
+    pub(crate) drawing: bool,
 }
 
-/// Host render projection of a workspace viewport. The source entity is local
-/// to `workspace`; it must never be queried in the host world.
-#[derive(Component, Clone, Copy)]
-pub struct WorkspaceViewport {
-    pub workspace: WorkspaceId,
-    pub panel: Entity,
-}
-
-pub(crate) fn install_workspace(world: &mut World) {
-    let shell = world.register_system(draw).entity();
+pub(crate) fn workspace_ui(world: &World) -> &WorkspaceUi {
     world
-        .entity_mut(shell)
-        .insert(WorkbenchPresentation::default());
-    let status_bar = bedtime_ui2::create_status_bar(world, shell);
-    world.insert_resource(WorkspaceUi {
-        menu: None,
-        status_bar,
-        shell,
-        host: WorkbenchHost {
-            panels_visible: true,
-            bounds: None,
-            minimum_area_size: Vec2::new(100.0, 80.0),
-        },
-        titlebar_inset: 0.0,
-        focused: true,
-    });
+        .get::<WorkspaceUi>(crate::workspaces::active(world).0)
+        .expect("Workspace UI")
+}
+pub(crate) fn workspace_ui_mut(world: &mut World) -> Mut<'_, WorkspaceUi> {
+    let workspace = crate::workspaces::active(world);
+    world
+        .get_mut::<WorkspaceUi>(workspace.0)
+        .expect("Workspace UI")
 }
 
 impl Workbench<'_> {
-    pub fn status_bar(&self) -> Entity {
-        self.world.resource::<WorkspaceUi>().status_bar
+    /// Instantiate a typed panel in the layout's destination area.
+    pub fn register_panel<P: Panel>(&mut self, layout: Entity) -> Result<Entity, String> {
+        let area = self.destination_area(layout)?;
+        self.register_panel_in_area::<P>(area)
     }
+
+    pub fn register_panel_in_area<P: Panel>(&mut self, area: Entity) -> Result<Entity, String> {
+        let kind = self
+            .world
+            .query::<(Entity, &PanelType)>()
+            .iter(self.world)
+            .find_map(|(e, p)| (p.key == P::KEY).then_some(e))
+            .ok_or("Register the panel type before opening it")?;
+        self.open_panel(kind, area)
+    }
+
+    pub fn has_focus(&self, panel: Entity) -> bool {
+        self.world
+            .get::<PanelPresentation>(panel)
+            .is_some_and(|p| p.visible && p.focused)
+    }
+
+    /// Apply a user-originated edit with the surface's configured permissions.
+    /// Direct application operations deliberately bypass this user policy.
+    pub fn user_edit(&mut self, stamp: LayoutStamp, edit: &LayoutEdit) -> Result<(), String> {
+        let settings = self
+            .world
+            .query::<&WorkbenchSurface>()
+            .iter(self.world)
+            .next()
+            .copied()
+            .unwrap_or_default();
+        if !allows_panel_edit(settings, edit) {
+            return Err("User panel editing is disabled by the workbench surface".into());
+        }
+        self.edit(stamp, edit)
+    }
+
+    /// Install or replace this workspace's application-owned status renderer.
+    /// The renderer receives its entity as UiContext::view and owns the row's contents.
+    pub fn register_status_bar(&mut self, draw: UiDraw) -> Entity {
+        self.remove_status_bar();
+        let renderer = self
+            .world
+            .spawn((
+                UiView { draw },
+                InWorkspace(self.workspace.0),
+                bedtime_ui2::InView(self.workspace.0),
+            ))
+            .id();
+        self.world
+            .get_mut::<WorkspaceUi>(self.workspace.0)
+            .unwrap()
+            .status_bar = Some(renderer);
+        renderer
+    }
+
+    /// The optional renderer entity, whose state belongs to this workspace.
+    pub fn status_bar(&self) -> Option<Entity> {
+        self.world
+            .get::<WorkspaceUi>(self.workspace.0)
+            .unwrap()
+            .status_bar
+    }
+
+    /// Remove the renderer and its state. The shell stops reserving status space.
+    pub fn remove_status_bar(&mut self) {
+        if let Some(renderer) = self
+            .world
+            .get_mut::<WorkspaceUi>(self.workspace.0)
+            .unwrap()
+            .status_bar
+            .take()
+        {
+            self.world.despawn(renderer);
+        }
+    }
+
     pub fn set_menu(&mut self, root: Option<Entity>) -> Result<(), String> {
         if root.is_some_and(|root| self.world.get::<MenuBar>(root).is_none()) {
             return Err("Menu bar is unavailable".into());
         }
-        self.world.resource_mut::<WorkspaceUi>().menu = root;
+        if let Some(root) = root {
+            // Validate the whole tree before changing ownership.
+            menu_snapshot(self.world, root, InvocationContext::Global)?;
+            let mut pending = vec![root];
+            let mut members = Vec::new();
+            while let Some(entity) = pending.pop() {
+                if crate::workspaces::owner(self.world, entity).is_some_and(|w| w != self.workspace)
+                {
+                    return Err("Menu belongs to another workspace".into());
+                }
+                if let Some(entries) = self.world.get::<MenuEntries>(entity) {
+                    pending.extend_from_slice(entries.entities());
+                }
+                members.push(entity);
+            }
+            for entity in members {
+                self.world
+                    .entity_mut(entity)
+                    .insert(InWorkspace(self.workspace.0));
+            }
+        }
+        self.world
+            .get_mut::<WorkspaceUi>(self.workspace.0)
+            .unwrap()
+            .menu = root;
         Ok(())
     }
 }
@@ -101,7 +222,7 @@ pub(crate) fn reset(world: &mut World) {
         area.visible = false;
     }
     for mut viewport in world
-        .query::<&mut bedtime_ui2::UiViewport>()
+        .query_filtered::<&mut bedtime_ui2::UiViewport, With<InWorkspace>>()
         .iter_mut(world)
     {
         viewport.visible = false;
@@ -113,145 +234,227 @@ pub(crate) fn deactivate(world: &mut World) {
     reset(world);
 }
 
-fn draw_active(frame: UiFrame, host: &mut World) {
-    let descriptor = host.get::<WorkbenchHost>(frame.view).unwrap().clone();
+pub(crate) fn draw_active(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
+    if world.get::<WorkbenchSurface>(context.surface).is_none() {
+        return;
+    }
+    reset(world);
+    let context = context.for_view(context.surface);
+    let frame = context.frame(ui);
+    let mut descriptor = world.get::<WorkbenchShell>(frame.view).unwrap().clone();
     let host_entity = frame.view;
-    let focused = host
+    let focused = world
         .get::<bevy::window::Window>(frame.surface)
         .is_none_or(|w| w.focused);
     #[cfg(feature = "native")]
-    let inset = host
-        .get::<WindowTitlebarInset>(frame.surface)
-        .map_or(0.0, |i| i.0);
+    let (native_height, controls) = world
+        .get::<WindowTitlebarGeometry>(frame.surface)
+        .map_or((0.0, None), |geometry| (geometry.height, geometry.controls));
     #[cfg(not(feature = "native"))]
-    let inset = 0.0;
+    let (native_height, controls) = (0.0, None);
     #[cfg(feature = "native")]
     {
         let background = WindowBackground::new(frame.theme.palette.background);
-        if host.get::<WindowBackground>(frame.surface) != Some(&background) {
-            host.entity_mut(frame.surface).insert(background);
+        if world.get::<WindowBackground>(frame.surface) != Some(&background) {
+            world.entity_mut(frame.surface).insert(background);
         }
     }
-    crate::workspaces::with_active(host, |host, world| {
-        let mut shell = world.resource_mut::<WorkspaceUi>();
-        shell.host = descriptor;
-        shell.titlebar_inset = inset;
-        shell.focused = focused;
-        let shell_entity = shell.shell;
-        let identity = world.resource::<WorkspaceIdentity>().id();
-        {
-            let mut ui = frame
-                .ui
-                .new_child(egui::UiBuilder::new().id_salt(("workspace", identity)));
-            let input = frame.for_view(shell_entity, &mut ui);
-            world
-                .run_system_with(
-                    SystemId::<UiFrame<'static>>::from_entity(shell_entity),
-                    input,
-                )
-                .expect("Workspace shell system");
-            frame.ui.advance_cursor_after_rect(ui.min_rect());
-        }
-        let presentation = *world.get::<WorkbenchPresentation>(shell_entity).unwrap();
-        *host.get_mut::<WorkbenchPresentation>(host_entity).unwrap() = presentation;
-        for error in world
-            .resource_mut::<Messages<bedtime_ui2::UiError>>()
-            .drain()
-        {
-            host.write_message(error);
-        }
-        for request in world
-            .resource_mut::<Messages<bevy::window::RequestRedraw>>()
-            .drain()
-        {
-            host.write_message(request);
-        }
-    });
-    sync_viewports(host);
-}
-
-pub(crate) fn sync_viewports(host: &mut World) {
-    let (workspace, views) = crate::workspaces::with_active(host, |_, world| {
-        (
-            world.resource::<WorkspaceIdentity>().id(),
-            world
-                .query::<(Entity, &bedtime_ui2::UiViewport)>()
-                .iter(world)
-                .map(|(e, v)| (e, v.clone()))
-                .collect::<Vec<_>>(),
-        )
-    });
-    let mut existing: HashMap<_, _> = host
-        .query::<(Entity, &WorkspaceViewport)>()
-        .iter(host)
-        .filter_map(|(e, source)| (source.workspace == workspace).then_some((source.panel, e)))
-        .collect();
-    let stale: Vec<_> = host
-        .query::<(Entity, &WorkspaceViewport)>()
-        .iter(host)
-        .filter_map(|(e, source)| (source.workspace != workspace).then_some(e))
-        .collect();
-    for e in stale {
-        host.despawn(e);
+    let outer = descriptor
+        .bounds
+        .map(er)
+        .unwrap_or_else(|| frame.ui.available_rect_before_wrap())
+        .intersect(frame.ui.clip_rect());
+    if !outer.is_positive() {
+        *world.get_mut::<WorkbenchPresentation>(host_entity).unwrap() = default();
+        return;
     }
-    for (panel, viewport) in views {
-        if let Some(entity) = existing.remove(&panel) {
-            host.entity_mut(entity).insert(viewport);
+    let owns_titlebar = descriptor.titlebar_ownership == TitlebarOwnership::Workbench;
+    let background = {
+        let titlebar = world
+            .get::<Titlebar>(frame.surface)
+            .copied()
+            .filter(|_| owns_titlebar);
+        let (band, content) = titlebar_rects(
+            outer,
+            native_height,
+            controls,
+            titlebar.map_or(0.0, |titlebar| titlebar.height),
+            frame.ui.ctx().zoom_factor(),
+        );
+        let mut root = frame.ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("workbench-world")
+                .max_rect(outer),
+        );
+        frame.ui.advance_cursor_after_rect(outer);
+        root.set_clip_rect(outer);
+        let background = owns_titlebar.then(|| {
+            root.painter().rect_filled(
+                band,
+                0.0,
+                bedtime_ui2::theme::color(frame.theme.palette.background),
+            );
+            // Register the background first: child widgets own presses that begin on
+            // them, including drag sources, even after the pointer leaves their bounds.
+            root.interact(
+                band,
+                root.id().with("titlebar-drag"),
+                // Claim only clicks. A drag sense would also claim the pending drag
+                // behind a click-only child button, before egui decides click vs drag.
+                egui::Sense::click(),
+            )
+        });
+        if let Some(titlebar) = titlebar {
+            if content.is_positive() {
+                let mut ui = root.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt(("titlebar-content", frame.surface))
+                        .max_rect(content)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                ui.set_clip_rect(content);
+                frame
+                    .for_view(frame.surface, &mut ui)
+                    .clip_rounded(content, 0, |frame| {
+                        (titlebar.draw)(frame.ui, world, &context);
+                    });
+            }
+        }
+        if world.get::<WorkbenchSurface>(frame.surface).is_none() {
+            return;
+        }
+        let body = egui::Rect::from_min_max(egui::pos2(outer.left(), band.bottom()), outer.max);
+        descriptor.bounds = Some(observed(body));
+        // Resolve selection after the titlebar so it can open or select a workspace.
+        let workspace = crate::workspaces::selected(world);
+        let mut presentation = if let Some(workspace) = workspace {
+            world.get_mut::<WorkspaceUi>(workspace.0).unwrap().drawing = true;
+            let mut ui = root.new_child(
+                egui::UiBuilder::new()
+                    .id_salt(("workspace", workspace))
+                    .max_rect(body),
+            );
+            let mut state = std::mem::take(&mut workspace_ui_mut(world).frontend);
+            draw(
+                frame.for_view(workspace.0, &mut ui),
+                world,
+                &mut state,
+                &descriptor,
+                focused,
+            );
+            workspace_ui_mut(world).frontend = state;
+            workspace_ui_mut(world).drawing = false;
+            *world.get::<WorkbenchPresentation>(workspace.0).unwrap()
         } else {
-            host.spawn((WorkspaceViewport { workspace, panel }, viewport));
+            if descriptor.panels_visible {
+                root.painter().rect_filled(
+                    body,
+                    0.0,
+                    bedtime_ui2::theme::color(frame.theme.palette.background),
+                );
+            }
+            WorkbenchPresentation {
+                panels: observed(body),
+                ..default()
+            }
+        };
+        if world.get::<WorkbenchSurface>(frame.surface).is_none() {
+            return;
+        }
+        presentation.bounds = observed(outer);
+        presentation.titlebar = observed(band);
+        presentation.titlebar_content = observed(content);
+        if let Some(workspace) = workspace {
+            *world.get_mut::<WorkbenchPresentation>(workspace.0).unwrap() = presentation;
+        }
+        *world.get_mut::<WorkbenchPresentation>(host_entity).unwrap() = presentation;
+        background
+    };
+    if let Some(background) = background {
+        if background.double_clicked() {
+            #[cfg(all(feature = "native", target_os = "macos"))]
+            if let Some(handle) = world.get::<bevy::window::RawHandleWrapper>(frame.surface) {
+                crate::native::titlebar_double_click(handle);
+            }
+        } else if background.is_pointer_button_down_on()
+            && frame
+                .ui
+                .input(|i| i.pointer.button_pressed(PointerButton::Primary))
+            && let Some(mut window) = world.get_mut::<bevy::window::Window>(frame.surface)
+            && window.mode == bevy::window::WindowMode::Windowed
+        {
+            window.start_drag_move();
+            #[cfg(all(feature = "native", target_os = "macos"))]
+            world
+                .entity_mut(frame.surface)
+                .insert(crate::native::WindowDrag);
         }
     }
-    for entity in existing.into_values() {
-        host.despawn(entity);
+}
+
+fn observed(rect: egui::Rect) -> Rect {
+    Rect::from_corners(
+        Vec2::new(rect.min.x, rect.min.y),
+        Vec2::new(rect.max.x, rect.max.y),
+    )
+}
+
+/// Native coordinates are window-relative. Intersect before reserving space so
+/// an embedded workbench below the titlebar never acquires a phantom native gap.
+fn titlebar_rects(
+    outer: egui::Rect,
+    native_height: f32,
+    controls: Option<Rect>,
+    requested: f32,
+    zoom: f32,
+) -> (egui::Rect, egui::Rect) {
+    let top_padding = if requested > 0.0 { 4.0 } else { 0.0 };
+    let height = (requested + top_padding)
+        .max((native_height / zoom - outer.top()).max(0.0))
+        .min(outer.height());
+    let band = egui::Rect::from_min_size(outer.min, egui::vec2(outer.width(), height));
+    let padding = 6.0_f32.min(band.width() * 0.5);
+    let mut content = band.shrink2(egui::vec2(padding, 0.0));
+    content.min.y += top_padding.min(height);
+    if let Some(controls) = controls {
+        let controls = egui::Rect::from_min_max(
+            egui::pos2(controls.min.x / zoom, controls.min.y / zoom),
+            egui::pos2(controls.max.x / zoom, controls.max.y / zoom),
+        );
+        if controls.intersects(band) {
+            let control_padding = 24.0;
+            if controls.center().x <= band.center().x {
+                content.min.x =
+                    (controls.right() + control_padding).clamp(content.left(), content.right());
+            } else {
+                content.max.x =
+                    (controls.left() - control_padding).clamp(content.left(), content.right());
+            }
+        }
     }
+    (band, content)
 }
 
-/// Draw the workbench on this window. The host owns native titlebar reservation,
-/// menu, panel layout, background and status bar; applications supply contributions.
-pub fn attach_surface(world: &mut World, surface: Entity) -> Entity {
-    assert!(world.get::<UiSurface>(surface).is_some());
-    assert!(
-        world.get::<bevy::window::Window>(surface).is_some(),
-        "Workbench surfaces must be windows"
-    );
-    assert!(
-        world.query::<&WorkbenchHost>().iter(world).next().is_none(),
-        "Only one workbench host is supported"
-    );
-    let host = register_view(world, surface, draw_active);
-    world
-        .entity_mut(surface)
-        .insert(bedtime_ui2::UiBackground::Transparent);
-    world.entity_mut(host).insert(WorkbenchHost {
-        panels_visible: true,
-        bounds: None,
-        minimum_area_size: Vec2::new(100.0, 80.0),
-    });
-    host
-}
-
-pub fn register_panel<M>(
+pub fn register_panel(
     world: &mut World,
     layout: Entity,
     title: impl Into<String>,
-    draw: impl IntoSystem<UiFrame<'static>, (), M> + 'static,
+    draw: fn(&mut egui::Ui, &mut World, &UiContext<'_>, Entity),
 ) -> Result<Entity, String> {
-    let area = Workbench::new(world).destination_area(layout)?;
+    let area = Workbench::for_entity(world, layout)?.destination_area(layout)?;
     register_panel_in_area(world, area, title, draw)
 }
 
-pub fn register_panel_in_area<M>(
+pub fn register_panel_in_area(
     world: &mut World,
     area: Entity,
     title: impl Into<String>,
-    draw: impl IntoSystem<UiFrame<'static>, (), M> + 'static,
+    draw: fn(&mut egui::Ui, &mut World, &UiContext<'_>, Entity),
 ) -> Result<Entity, String> {
-    let world = crate::workspaces::selected_world(world, None)?;
     world.get::<Area>(area).ok_or("Area is unavailable")?;
-    let system = world.register_system(draw);
-    let panel = system.entity();
-    Workbench::new(world).attach_panel(panel, area, title.into());
-    world.entity_mut(panel).insert(PanelRenderer);
+    let panel = world.spawn_empty().id();
+    Workbench::for_entity(world, area)?.attach_panel(panel, area, title.into());
+    world.entity_mut(panel).insert(PanelRenderer { draw });
     Ok(panel)
 }
 
@@ -314,8 +517,54 @@ struct Tab {
     entity: Entity,
     title: String,
     dirty: bool,
-    preview: bool,
+    style: PanelTabStyle,
     icon: Option<bedtime_ui2::IconSource>,
+}
+
+impl Tab {
+    fn from_world(world: &World, entity: Entity) -> Self {
+        let panel = world.get::<PanelInstance>(entity).expect("Owned tab");
+        Self {
+            entity,
+            title: panel.title.clone(),
+            dirty: panel.dirty,
+            style: world
+                .get::<PanelTabStyle>(entity)
+                .copied()
+                .unwrap_or(if panel.preview {
+                    PanelTabStyle {
+                        italic: true,
+                        text_opacity: 0.9,
+                    }
+                } else {
+                    PanelTabStyle::default()
+                }),
+            icon: world.get::<bedtime_ui2::IconSource>(entity).cloned(),
+        }
+    }
+
+    fn layout_label(&self, painter: &egui::Painter, font: egui::FontId) -> Arc<egui::Galley> {
+        painter.layout_job(egui::text::LayoutJob::single_section(
+            self.title.clone(),
+            egui::TextFormat {
+                font_id: font,
+                italics: self.style.italic,
+                // Resolve the animated theme color when painting, without
+                // reshaping or changing the metrics used to measure this tab.
+                color: egui::Color32::PLACEHOLDER,
+                ..default()
+            },
+        ))
+    }
+
+    fn label_color(&self, themed: egui::Color32) -> egui::Color32 {
+        let opacity = if self.style.text_opacity.is_finite() {
+            self.style.text_opacity.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        themed.gamma_multiply(opacity)
+    }
 }
 
 fn screen(r: geometry::Rect, bounds: Rect) -> Rect {
@@ -423,17 +672,64 @@ fn hit(ui: &egui::Ui, name: &str, rect: Rect) -> (bool, bool) {
 
 #[derive(Clone)]
 pub struct PanelTypePayload(pub Entity);
-fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
-    let state = &mut *local;
-    let shell = world.resource::<WorkspaceUi>();
-    let host = &shell.host;
+
+/// Lay out the optional application row once, within the current shell allocation.
+fn draw_status_bar(
+    ui: &mut egui::Ui,
+    band: egui::Frame,
+    draw: Option<impl FnOnce(&mut egui::Ui)>,
+) -> egui::Rect {
+    let Some(draw) = draw else {
+        return egui::Rect::from_min_size(
+            ui.available_rect_before_wrap().left_bottom(),
+            egui::Vec2::ZERO,
+        );
+    };
+    let height = (ui
+        .text_style_height(&egui::TextStyle::Body)
+        .max(ui.spacing().interact_size.y)
+        + 8.0)
+        .min(ui.available_height().max(0.0));
+    let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+    egui::Panel::bottom(ui.id().with("status"))
+        .exact_size(height)
+        .show_separator_line(false)
+        .frame(band)
+        .show(ui, |ui| {
+            let bounds = ui.max_rect().intersect(ui.clip_rect());
+            ui.painter()
+                .line_segment([bounds.left_top(), bounds.right_top()], stroke);
+            let content = bounds.shrink2(egui::vec2(10.0, 4.0));
+            if content.is_positive() {
+                let mut row = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt("status-content")
+                        .max_rect(content)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                row.set_clip_rect(content);
+                draw(&mut row);
+            }
+        })
+        .response
+        .rect
+}
+
+fn draw(
+    frame: UiFrame,
+    world: &mut World,
+    state: &mut Frontend,
+    host: &WorkbenchShell,
+    window_focused: bool,
+) {
+    let shell = workspace_ui(world);
     let (panels_visible, menu, status_bar, minimum_area_size) = (
         host.panels_visible,
         shell.menu,
         shell.status_bar,
         host.minimum_area_size,
     );
-    let panel_settings = frame.panel_settings;
+    let mut settings = *world.get::<WorkbenchSurface>(frame.surface).unwrap();
     let outer = host
         .bounds
         .map(er)
@@ -443,8 +739,6 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
         *world.get_mut::<WorkbenchPresentation>(frame.view).unwrap() = default();
         return;
     }
-    let native_top = shell.titlebar_inset / frame.ui.ctx().zoom_factor();
-    let inset = (native_top - outer.top()).clamp(0.0, outer.height());
     let mut root = frame.ui.new_child(
         egui::UiBuilder::new()
             .id_salt("workbench-shell")
@@ -463,13 +757,6 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
     } else {
         background
     });
-    let titlebar = egui::Panel::top(root.id().with("native-titlebar"))
-        .exact_size(inset)
-        .show_separator_line(false)
-        .frame(band)
-        .show(&mut root, |_| {})
-        .response
-        .rect;
     let menu_rect = if let Some(menu) = menu {
         egui::Panel::top(root.id().with("menu"))
             .min_size(0.0)
@@ -487,23 +774,24 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
     } else {
         egui::Rect::from_min_size(root.available_rect_before_wrap().min, egui::Vec2::ZERO)
     };
-    let status_height = bedtime_ui2::status_bar_height(&root).min(root.available_height().max(0.0));
-    let status_rect = egui::Panel::bottom(root.id().with("status"))
-        .exact_size(status_height)
-        .show_separator_line(false)
-        .frame(band)
-        .show(&mut root, |ui| {
-            bedtime_ui2::draw_status_bar(&mut frame.for_view(status_bar, ui), world, status_bar);
-        })
-        .response
-        .rect;
+    let status_rect = draw_status_bar(
+        &mut root,
+        band,
+        status_bar.map(|renderer| {
+            let draw = world.get::<UiView>(renderer).expect("Status renderer").draw;
+            let context = frame.context().for_view(renderer);
+            let world = &mut *world;
+            move |ui: &mut egui::Ui| draw(ui, world, &context)
+        }),
+    );
     let content = root.available_rect_before_wrap();
     let observed = |r: egui::Rect| {
         Rect::from_corners(Vec2::new(r.min.x, r.min.y), Vec2::new(r.max.x, r.max.y))
     };
     *world.get_mut::<WorkbenchPresentation>(frame.view).unwrap() = WorkbenchPresentation {
         bounds: observed(outer),
-        titlebar: observed(titlebar),
+        titlebar: default(),
+        titlebar_content: default(),
         menu: observed(menu_rect),
         panels: observed(content),
         status_bar: observed(status_rect),
@@ -524,9 +812,33 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
             .ceil()
             .clamp(1.0, LAYOUT_EXTENT as f32) as i32,
     ];
+    let workspace = crate::workspaces::active(world);
+    if crate::active_layout(world, workspace.0).is_none_or(|layout| {
+        world
+            .get::<LayoutAreas>(layout)
+            .is_none_or(|a| a.entities().is_empty())
+    }) {
+        state.gesture = None;
+        state.preview = None;
+        state.stamp = None;
+        return;
+    }
     let stamp = Workbench::new(world).stamp();
     let layout = stamp.layout;
     let snapshot = Workbench::new(world).snapshot(layout).unwrap();
+    let flush = settings.single_area_edge_to_edge && snapshot.geometry.areas.len() == 1;
+    if flush {
+        settings.panel_gap = 0.0;
+        settings.rounding = 0.0;
+    }
+    if !settings.layout_editing
+        || !settings.drag_corners && matches!(state.gesture, Some(Gesture::Corner { .. }))
+        || settings.tab_bar == TabBarVisibility::Hidden
+            && matches!(state.gesture, Some(Gesture::Tab { .. }))
+    {
+        state.gesture = None;
+        state.preview = None;
+    }
     if state.stamp != Some(stamp) || state.bounds != bounds {
         state.gesture = None;
         state.preview = None;
@@ -554,16 +866,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                 selected: info.selected_panel(),
                 tabs: panels_in_area(world, e)
                     .iter()
-                    .map(|&entity| {
-                        let p = world.get::<Panel>(entity).expect("Owned tab");
-                        Tab {
-                            entity,
-                            title: p.title.clone(),
-                            dirty: p.dirty,
-                            preview: p.preview,
-                            icon: world.get::<bedtime_ui2::IconSource>(entity).cloned(),
-                        }
-                    })
+                    .map(|&entity| Tab::from_world(world, entity))
                     .collect(),
             }
         })
@@ -595,7 +898,8 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
     let cancel = ui.input(|i| i.key_pressed(Key::Escape))
         || ui.input(|i| i.pointer.button_pressed(PointerButton::Secondary))
         || ui.input(|i| i.pointer.latest_pos().is_none())
-        || !world.resource::<WorkspaceUi>().focused;
+        || !window_focused
+        || !ui.is_enabled();
     if cancel && state.gesture.is_some() {
         state.gesture = None;
         state.preview = None;
@@ -652,7 +956,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                         // only the committed panels obey the minimum size.
                         preview_blend = 1.0;
                         let source = snapshot.geometry.area(snapshot.id(area).unwrap()).rect;
-                        let s = surface(screen(source, bounds), source, panel_settings.panel_gap);
+                        let s = surface(screen(source, bounds), source, settings.panel_gap);
                         let along = if r.width() == 0.0 { 1 } else { 0 };
                         // A two-point stroke stays inside the visible surface,
                         // including its gap and window-edge insets.
@@ -661,7 +965,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                         preview_clip = Some(er(s).shrink(1.0));
                         r
                     } else {
-                        surface(r, rect, panel_settings.panel_gap)
+                        surface(r, rect, settings.panel_gap)
                     });
                     if released {
                         edits.push(edit);
@@ -691,7 +995,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                         mouse,
                         bounds,
                         minimum,
-                        panel_settings.panel_gap,
+                        settings.panel_gap,
                     ) {
                         preview = Some(rect);
                         if released {
@@ -729,7 +1033,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                 entity,
                 a.rect,
                 rect,
-                surface(rect, a.rect, panel_settings.panel_gap),
+                surface(rect, a.rect, settings.panel_gap),
             )
         })
         .collect();
@@ -742,12 +1046,15 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
         frame.ui.id().with("preview"),
     ));
     for &(entity, _, r, _) in &visual {
+        if !settings.layout_editing || !settings.drag_corners {
+            continue;
+        }
         // Corner ownership precedes border ownership at junctions.
         for (corner, high) in [[false, false], [true, false], [false, true], [true, true]]
             .into_iter()
             .enumerate()
         {
-            let zone = corner_hit_rect(r, high, panel_settings.hit_size);
+            let zone = corner_hit_rect(r, high, settings.hit_size);
             if zone.width() <= 0.0 || zone.height() <= 0.0 {
                 continue;
             }
@@ -756,7 +1063,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
             // Interaction uses the previous pass's widgets. Register these
             // handles after panel content below, so they have priority over it.
             let response = frame.ui.ctx().read_response(id);
-            if panel_settings.debug {
+            if settings.debug {
                 let debug = overlay.with_clip_rect(er(bounds));
                 debug.rect_filled(
                     er(zone),
@@ -787,6 +1094,9 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
         }
     }
     for &(entity, model, r, _) in &visual {
+        if !settings.layout_editing {
+            continue;
+        }
         for index in 0..2 {
             let at = model.max[index];
             if at == LAYOUT_EXTENT {
@@ -841,9 +1151,21 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
             .iter()
             .find(|(e, _, _, _)| *e == group.entity)
             .unwrap();
-        let bar_height = frame.theme.metrics.font_size + 15.0;
+        let show_tabs = match settings.tab_bar {
+            TabBarVisibility::Always => true,
+            TabBarVisibility::MultipleTabs => group.tabs.len() > 1,
+            TabBarVisibility::Hidden => false,
+        };
+        let bar_height = if show_tabs {
+            frame.theme.metrics.font_size + 15.0
+        } else {
+            0.0
+        };
         let bar = Rect::from_corners(s.min, Vec2::new(s.max.x, s.min.y + bar_height));
-        let content = Rect::from_corners(Vec2::new(s.min.x, bar.max.y + 1.0), s.max);
+        let content = Rect::from_corners(
+            Vec2::new(s.min.x, bar.max.y + if show_tabs { 1.0 } else { 0.0 }),
+            s.max,
+        );
         state.tab_bars.insert(group.entity, bar);
         *world.get_mut::<AreaPresentation>(group.entity).unwrap() = AreaPresentation {
             visible: true,
@@ -852,6 +1174,38 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
             tab_bar: bar,
             content,
         };
+        painter.rect_filled(
+            er(s),
+            settings.rounding,
+            bedtime_ui2::theme::color(p.panel_background),
+        );
+        if group.tabs.is_empty() {
+            let response = frame.ui.interact(
+                er(content),
+                frame.ui.id().with(("empty", group.entity)),
+                egui::Sense::click(),
+            );
+            if response.clicked() {
+                edits.push(LayoutEdit::FocusArea(group.entity));
+            }
+            if !state.suppress_context && (settings.panel_creation || settings.panel_closure) {
+                response.context_menu(|ui| picker(ui, &types, group.entity, &mut edits, settings));
+            }
+            if settings.panel_creation {
+                frame.clip_rounded(er(s), settings.rounding, |frame| {
+                    frame.ui.painter().with_clip_rect(er(content)).text(
+                        egui::pos2(content.min.x + 14.0, content.min.y + 14.0),
+                        egui::Align2::LEFT_TOP,
+                        "Right-click to open a panel",
+                        egui::FontId::proportional(frame.theme.metrics.font_size),
+                        bedtime_ui2::theme::color(p.muted),
+                    );
+                });
+            }
+        }
+        if !show_tabs {
+            continue;
+        }
         let painter = frame.ui.painter().clone();
         painter.line_segment(
             [
@@ -866,25 +1220,21 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
             .tabs
             .iter()
             .map(|t| {
-                let width = painter
-                    .layout_no_wrap(t.title.clone(), font.clone(), egui::Color32::WHITE)
-                    .size()
-                    .x;
-                (
-                    t,
-                    (width
-                        + 37.0
-                        + if t.dirty { 8.0 } else { 0.0 }
-                        + if t.icon.is_some() {
-                            frame.theme.metrics.font_size + 5.0
-                        } else {
-                            0.0
-                        })
-                    .clamp(70.0, 210.0),
-                )
+                // Measure and paint the same shaped label, including italics.
+                let galley = t.layout_label(&painter, font.clone());
+                let width = (galley.size().x
+                    + 37.0
+                    + if t.dirty { 8.0 } else { 0.0 }
+                    + if t.icon.is_some() {
+                        frame.theme.metrics.font_size + 5.0
+                    } else {
+                        0.0
+                    })
+                .clamp(70.0, 210.0);
+                (t, galley, width)
             })
             .collect();
-        let total: f32 = labels.iter().map(|(_, w)| *w).sum();
+        let total: f32 = labels.iter().map(|(_, _, w)| *w).sum();
         let available = (bar.max.x - tabs_min.x).max(1.0);
         let scroll = state.tab_scroll.entry(group.entity).or_default();
         if Rect::from_corners(tabs_min, bar.max).contains(mouse) {
@@ -903,7 +1253,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
         }
         if scroll.selected != group.selected {
             let mut left = 0.0;
-            for (tab, width) in &labels {
+            for (tab, _, width) in &labels {
                 if Some(tab.entity) == group.selected {
                     if left < scroll.offset {
                         scroll.offset = left;
@@ -923,7 +1273,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
             tabs_min,
             bar.max + Vec2::Y / frame.ui.ctx().pixels_per_point(),
         )));
-        for (tab, width) in labels {
+        for (tab, galley, width) in labels {
             let target = Rect::from_corners(
                 Vec2::new(x, bar.min.y + PANEL_BORDER_WIDTH),
                 Vec2::new(
@@ -942,8 +1292,11 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                 Vec2::new((position.max.x - 21.0).max(tabs_min.x), position.min.y),
                 position.max.min(bar.max),
             );
-            let (close_hover, close_pressed) =
-                hit(frame.ui, &format!("close-{}", tab.entity.to_bits()), close);
+            let (close_hover, close_pressed) = if settings.panel_closure {
+                hit(frame.ui, &format!("close-{}", tab.entity.to_bits()), close)
+            } else {
+                (false, false)
+            };
             let zone = Rect::from_corners(
                 clipped.min,
                 Vec2::new(close.min.x.min(clipped.max.x), clipped.max.y),
@@ -977,7 +1330,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                     egui::CornerRadius {
                         sw: 0,
                         se: 0,
-                        ..egui::CornerRadius::from(panel_settings.rounding)
+                        ..egui::CornerRadius::from(settings.rounding)
                     },
                     bedtime_ui2::theme::color(tint),
                 );
@@ -1001,12 +1354,10 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                     Vec2::new(position.min.x + 8.0, bar.min.y),
                     Vec2::new(close.min.x - 3.0, bar.max.y),
                 )))
-                .text(
-                    egui::pos2(text_x, bar.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    &tab.title,
-                    font.clone(),
-                    text,
+                .galley(
+                    egui::pos2(text_x, bar.center().y - galley.size().y * 0.5),
+                    galley,
+                    tab.label_color(text),
                 );
             if let Some(icon) = &tab.icon {
                 // icon_at paints through the Ui, so use the tab painter's clip.
@@ -1022,15 +1373,6 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                 );
                 frame.ui.set_clip_rect(clip);
             }
-            if tab.preview {
-                tabs_painter.line_segment(
-                    [
-                        egui::pos2(position.min.x + 8.0, bar.max.y - 4.0),
-                        egui::pos2(close.min.x - 3.0, bar.max.y - 4.0),
-                    ],
-                    egui::Stroke::new(1.0, text),
-                );
-            }
             if tab.dirty {
                 tabs_painter.circle_filled(
                     egui::pos2(close.min.x - 5.0, bar.center().y),
@@ -1043,7 +1385,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                 close_hover,
                 hover_seconds,
             );
-            if emphasis > 0.0 {
+            if emphasis > 0.0 && settings.panel_closure {
                 let c = egui::pos2(close.center().x, bar.center().y);
                 let mut fill = p.elevated;
                 fill[3] *= close_tint;
@@ -1064,11 +1406,12 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                 observation.close_rect = close;
             }
             frame.tooltip(&response, &tab.title);
-            if close_pressed
-                || (clipped.contains(mouse)
-                    && frame
-                        .ui
-                        .input(|i| i.pointer.button_released(PointerButton::Middle)))
+            if settings.panel_closure
+                && (close_pressed
+                    || (clipped.contains(mouse)
+                        && frame
+                            .ui
+                            .input(|i| i.pointer.button_released(PointerButton::Middle))))
             {
                 edits.push(LayoutEdit::ClosePanels(vec![tab.entity]));
             }
@@ -1077,13 +1420,15 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                 if response.double_clicked() {
                     edits.push(LayoutEdit::KeepPanel(tab.entity));
                 }
-                state.gesture = Some(Gesture::Tab {
-                    panel: tab.entity,
-                    start: mouse,
-                    dragging: false,
-                });
+                if settings.layout_editing {
+                    state.gesture = Some(Gesture::Tab {
+                        panel: tab.entity,
+                        start: mouse,
+                        dragging: false,
+                    });
+                }
             }
-            if !state.suppress_context {
+            if !state.suppress_context && settings.panel_closure {
                 response.context_menu(|ui| {
                     let at = group
                         .tabs
@@ -1112,28 +1457,6 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                 });
             }
         }
-        if group.tabs.is_empty() {
-            let response = frame.ui.interact(
-                er(content),
-                frame.ui.id().with(("empty", group.entity)),
-                egui::Sense::click(),
-            );
-            if response.clicked() {
-                edits.push(LayoutEdit::FocusArea(group.entity));
-            }
-            if !state.suppress_context {
-                response.context_menu(|ui| picker(ui, &types, group.entity, &mut edits));
-            }
-            frame.clip_rounded(er(s), panel_settings.rounding, |frame| {
-                frame.ui.painter().with_clip_rect(er(content)).text(
-                    egui::pos2(content.min.x + 14.0, content.min.y + 14.0),
-                    egui::Align2::LEFT_TOP,
-                    "Right-click to open a panel",
-                    font,
-                    bedtime_ui2::theme::color(p.muted),
-                );
-            });
-        }
     }
     for group in &groups {
         if let Some(panel) = group.selected {
@@ -1160,7 +1483,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
             };
             let opacity = 1.0 - (1.0 - fade.progress).powi(3);
             moving |= fade.progress < 1.0;
-            let focus = focused == group.entity;
+            let focus = focused == Some(group.entity);
             *world.get_mut::<PanelPresentation>(panel).unwrap() = PanelPresentation {
                 visible: true,
                 focused: focus,
@@ -1168,7 +1491,8 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                 tab_rect: world.get::<PanelPresentation>(panel).unwrap().tab_rect,
                 close_rect: world.get::<PanelPresentation>(panel).unwrap().close_rect,
             };
-            if content.contains(mouse)
+            if frame.ui.is_enabled()
+                && content.contains(mouse)
                 && frame.ui.input(|i| i.pointer.any_pressed())
                 && !frame.ui.ctx().any_popup_open()
             {
@@ -1185,15 +1509,12 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                     content_frame.view = panel;
                     content_frame.clip_rounded(
                         er(presentation.surface),
-                        panel_settings.rounding,
+                        settings.rounding,
                         |content_frame| {
-                            if world.get::<PanelRenderer>(panel).is_some() {
-                                if let Err(error) = world.run_system_with(
-                                    SystemId::<UiFrame<'static>>::from_entity(panel),
-                                    content_frame,
-                                ) {
-                                    world.write_message(bedtime_ui2::UiError(error.to_string()));
-                                }
+                            if let Some(renderer) = world.get::<PanelRenderer>(panel) {
+                                let draw = renderer.draw;
+                                let context = content_frame.context();
+                                draw(content_frame.ui, world, &context, panel);
                             } else {
                                 content_frame.ui.weak("This panel has no content renderer.");
                             }
@@ -1218,9 +1539,12 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
     }
     // Draw borders after content so edge-to-edge surfaces retain their outline.
     for &(entity, _, _, s) in &visual {
+        if flush {
+            continue;
+        }
         let focus = frame.animate_bool(
             frame.ui.id().with(("area-focus", entity.to_bits())),
-            entity == focused,
+            Some(entity) == focused,
         );
         let mut border = p.border;
         for v in &mut border[..3] {
@@ -1228,14 +1552,16 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
         }
         painter.rect_stroke(
             er(s),
-            panel_settings.rounding,
+            settings.rounding,
             egui::Stroke::new(PANEL_BORDER_WIDTH, bedtime_ui2::theme::color(border)),
             egui::StrokeKind::Inside,
         );
     }
     // Content has first opportunity to take a typed egui payload. The shell
     // receives only the remaining payload, preserving widget target priority.
-    if let Some(payload) = egui::DragAndDrop::payload::<PanelTypePayload>(frame.ui.ctx()) {
+    if let Some(payload) = egui::DragAndDrop::payload::<PanelTypePayload>(frame.ui.ctx())
+        .filter(|_| frame.ui.is_enabled() && settings.layout_editing && settings.panel_creation)
+    {
         if cancel {
             state.payload_cancelled = true;
             state.suppress_context = true;
@@ -1249,7 +1575,7 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
                 mouse,
                 bounds,
                 minimum,
-                panel_settings.panel_gap,
+                settings.panel_gap,
             ) {
                 preview = Some(rect);
                 if frame
@@ -1277,31 +1603,14 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
         let current = blend_rect(state.preview.unwrap_or(target), target, preview_blend);
         moving |= current != target;
         state.preview = Some(current);
-        let border = std::array::from_fn(|i| p.border[i] + (p.text[i] - p.border[i]) * 0.75);
-        let fill = [border[0], border[1], border[2], border[3] * 0.14];
-        if current.width().abs() < 0.5 || current.height().abs() < 0.5 {
-            painter.line_segment(
-                [er(current).min, er(current).max],
-                egui::Stroke::new(2.0, bedtime_ui2::theme::color(border)),
-            );
-        } else {
-            let rounding = panel_settings.rounding;
-            painter.rect_filled(er(current), rounding, bedtime_ui2::theme::color(fill));
-            painter.rect_stroke(
-                er(current),
-                rounding,
-                egui::Stroke::new(2.0, bedtime_ui2::theme::color(border)),
-                egui::StrokeKind::Inside,
-            );
-        }
+        bedtime_ui2::paint_drop_overlay(&painter, p, er(current), settings.rounding);
     } else {
         state.preview = None;
     }
-    if was_interacting || state.gesture.is_some() {
-        frame.claim_pointer();
-        if cancel {
-            frame.claim_key(KeyCode::Escape);
-        }
+    if (was_interacting || state.gesture.is_some()) && cancel {
+        frame.ui.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, Key::Escape);
+        });
     }
     if moving || state.gesture.is_some() {
         frame.ui.ctx().request_repaint();
@@ -1316,9 +1625,12 @@ fn draw(frame: UiFrame, world: &mut World, mut local: Local<Frontend>) {
         state.suppress_context = false;
     }
     for edit in edits {
-        world
-            .resource_mut::<WorkbenchRequests>()
-            .submit(WorkbenchRequest::Edit { stamp, edit });
+        if !allows_panel_edit(settings, &edit) {
+            continue;
+        }
+        Workbench::new(world)
+            .requests()
+            .submit(WorkbenchRequest::UserEdit { stamp, edit });
     }
 }
 
@@ -1327,8 +1639,9 @@ fn picker(
     types: &[(Entity, String, bool)],
     area: Entity,
     edits: &mut Vec<LayoutEdit>,
+    settings: WorkbenchSurface,
 ) {
-    for (kind, label, enabled) in types {
+    for (kind, label, enabled) in types.iter().filter(|_| settings.panel_creation) {
         if ui.add_enabled(*enabled, egui::Button::new(label)).clicked() {
             edits.push(LayoutEdit::OpenPanel { area, kind: *kind });
             ui.close();
@@ -1338,7 +1651,7 @@ fn picker(
         ui.weak("No panel types registered");
     }
     ui.separator();
-    if ui.button("Close area").clicked() {
+    if settings.panel_closure && ui.button("Close area").clicked() {
         edits.push(LayoutEdit::CloseArea(area));
         ui.close();
     }
@@ -1351,7 +1664,7 @@ pub fn panel_drag_source(response: &egui::Response, kind: Entity, _label: &str) 
 
 fn tab_target(
     groups: &[Group],
-    snapshot: &LayoutSnapshot,
+    snapshot: &GeometrySnapshot,
     state: &Frontend,
     panel: Option<Entity>,
     mouse: Vec2,
@@ -1497,7 +1810,7 @@ fn tab_target(
 }
 
 fn corner_target(
-    snapshot: &LayoutSnapshot,
+    snapshot: &GeometrySnapshot,
     source: Entity,
     point: [i32; 2],
     direction: Option<SplitAxis>,
@@ -1620,13 +1933,360 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tab_style_overrides_are_per_item_and_follow_live_component_edits() {
+        let mut world = World::new();
+        let normal = world.spawn(PanelInstance::default()).id();
+        let preview = world
+            .spawn(PanelInstance {
+                preview: true,
+                ..default()
+            })
+            .id();
+        let preview_style = PanelTabStyle {
+            italic: true,
+            text_opacity: 0.9,
+        };
+        let custom = PanelTabStyle {
+            italic: true,
+            text_opacity: 0.5,
+        };
+        assert_eq!(
+            Tab::from_world(&world, normal).style,
+            PanelTabStyle::default()
+        );
+        assert_eq!(Tab::from_world(&world, preview).style, preview_style);
+
+        world.entity_mut(normal).insert(custom);
+        world.entity_mut(preview).insert(PanelTabStyle::default());
+        assert_eq!(Tab::from_world(&world, normal).style, custom);
+        assert_eq!(
+            Tab::from_world(&world, preview).style,
+            PanelTabStyle::default()
+        );
+        assert!(!world.get::<PanelInstance>(normal).unwrap().preview);
+        assert!(world.get::<PanelInstance>(preview).unwrap().preview);
+
+        world
+            .get_mut::<PanelTabStyle>(preview)
+            .unwrap()
+            .text_opacity = 0.7;
+        assert_eq!(Tab::from_world(&world, preview).style.text_opacity, 0.7);
+        world.entity_mut(preview).remove::<PanelTabStyle>();
+        assert_eq!(Tab::from_world(&world, preview).style, preview_style);
+        world.get_mut::<PanelInstance>(preview).unwrap().preview = false;
+        assert_eq!(
+            Tab::from_world(&world, preview).style,
+            PanelTabStyle::default()
+        );
+        assert_eq!(Tab::from_world(&world, normal).style, custom);
+    }
+
+    #[test]
+    fn tab_labels_shape_italics_with_the_theme_font_and_preserve_themed_emphasis() {
+        let mut world = World::new();
+        let normal = world
+            .spawn(PanelInstance {
+                title: "Normal label".into(),
+                ..default()
+            })
+            .id();
+        let preview = world
+            .spawn(PanelInstance {
+                title: "Preview label".into(),
+                preview: true,
+                ..default()
+            })
+            .id();
+        let custom = world
+            .spawn((
+                PanelInstance {
+                    title: "Custom label".into(),
+                    ..default()
+                },
+                PanelTabStyle {
+                    italic: true,
+                    text_opacity: 0.5,
+                },
+            ))
+            .id();
+        for density in [1.0, 1.25, 2.0] {
+            for mut theme in [bedtime_ui2::themes::dark(), bedtime_ui2::themes::light()] {
+                // The opacity multiplier must preserve an already-translucent theme.
+                theme.palette.text[3] = 0.8;
+                theme.palette.muted[3] = 0.6;
+                let ctx = egui::Context::default();
+                ctx.set_pixels_per_point(density);
+                ctx.set_fonts(bedtime_ui2::fonts::definitions());
+                ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(1).unwrap());
+                let mut measured = Vec::new();
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    for size in [12.0, 15.5, 24.0] {
+                        let font = egui::FontId::proportional(size);
+                        for (panel, italic, opacity) in [
+                            (normal, false, 1.0),
+                            (preview, true, 0.9),
+                            (custom, true, 0.5),
+                        ] {
+                            let tab = Tab::from_world(&world, panel);
+                            let galley = tab.layout_label(ui.painter(), font.clone());
+                            let format = &galley.job.sections[0].format;
+                            assert_eq!(format.font_id, font);
+                            assert_eq!(format.italics, italic);
+                            assert_eq!(format.underline, egui::Stroke::NONE);
+                            assert_eq!(format.color, egui::Color32::PLACEHOLDER);
+                            if panel == normal {
+                                let old = ui.painter().layout_no_wrap(
+                                    tab.title.clone(),
+                                    font.clone(),
+                                    egui::Color32::WHITE,
+                                );
+                                assert_eq!(
+                                    galley.size(),
+                                    old.size(),
+                                    "Normal tab metrics stay unchanged"
+                                );
+                            } else {
+                                let regular = ui.painter().layout_no_wrap(
+                                    tab.title.clone(),
+                                    font.clone(),
+                                    egui::Color32::PLACEHOLDER,
+                                );
+                                assert_ne!(
+                                    galley.rows[0].visuals.mesh, regular.rows[0].visuals.mesh,
+                                    "Italic text must change the actual glyph rendering"
+                                );
+                            }
+                            for emphasis in [0.0, 0.5, 1.0] {
+                                let themed = bedtime_ui2::theme::color(bedtime_ui2::theme::mix(
+                                    theme.palette.muted,
+                                    theme.palette.text,
+                                    emphasis,
+                                ));
+                                let color = tab.label_color(themed);
+                                assert_eq!(color, themed.gamma_multiply(opacity));
+                                ui.painter()
+                                    .galley(egui::pos2(8.0, 8.0), galley.clone(), color);
+                                measured.push((galley.clone(), color));
+                            }
+                        }
+                    }
+                });
+                let painted: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) => Some(text),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(painted.len(), measured.len());
+                for (text, (galley, color)) in painted.iter().zip(&measured) {
+                    assert_eq!(text.galley.job, galley.job);
+                    assert_eq!(text.galley.size(), galley.size());
+                    assert_eq!(text.fallback_color, *color);
+                    assert_eq!(text.underline, egui::Stroke::NONE);
+                }
+                output.textures_delta.clear();
+            }
+        }
+    }
+
+    #[test]
+    fn tab_label_opacity_has_defined_rendering_at_its_boundaries() {
+        let mut world = World::new();
+        let panel = world.spawn(PanelInstance::default()).id();
+        let themed = egui::Color32::from_rgba_unmultiplied(80, 140, 200, 180);
+        for (opacity, expected) in [
+            (-1.0, 0.0),
+            (0.0, 0.0),
+            (0.4, 0.4),
+            (1.0, 1.0),
+            (2.0, 1.0),
+            (f32::NAN, 1.0),
+            (f32::INFINITY, 1.0),
+            (f32::NEG_INFINITY, 1.0),
+        ] {
+            world.entity_mut(panel).insert(PanelTabStyle {
+                italic: false,
+                text_opacity: opacity,
+            });
+            assert_eq!(
+                Tab::from_world(&world, panel).label_color(themed),
+                themed.gamma_multiply(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn free_panel_creation_uses_the_supplied_inactive_layout_owner() {
+        let mut app = App::new();
+        app.add_plugins(WorkbenchCorePlugin);
+        Workspaces::new(app.world_mut()).open("Test");
+        let active = Workspaces::new(app.world_mut()).active();
+        let other = Workspaces::new(app.world_mut()).open("Other");
+        let layout = Workbench::with_workspace(app.world_mut(), other)
+            .unwrap()
+            .active_layout();
+        let panel = register_panel(app.world_mut(), layout, "Inactive", |_, _, _, _| {}).unwrap();
+        assert_eq!(
+            app.world().get::<InWorkspace>(panel).unwrap().0,
+            other.entity()
+        );
+        assert_eq!(Workspaces::new(app.world_mut()).active(), active);
+        let area = app.world().get::<InArea>(panel).unwrap().0;
+        assert!(
+            Workbench::new(app.world_mut())
+                .create_panel_in_area(area, "Foreign")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn user_permissions_do_not_restrict_application_layout_operations() {
+        let mut app = App::new();
+        app.add_plugins(WorkbenchCorePlugin);
+        Workspaces::new(app.world_mut()).open("Test");
+        app.world_mut()
+            .spawn((Window::default(), WorkbenchSurface::single_panel()));
+        let mut w = Workbench::new(app.world_mut());
+        let layout = w.active_layout();
+        let area = w.destination_area(layout).unwrap();
+        let panel = w.create_panel(layout, "Application content").unwrap();
+        assert!(
+            w.user_edit(w.stamp(), &LayoutEdit::ClosePanels(vec![panel]))
+                .is_err()
+        );
+        assert!(
+            w.user_edit(
+                w.stamp(),
+                &LayoutEdit::OpenPanel {
+                    area,
+                    kind: Entity::PLACEHOLDER
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            w.user_edit(
+                w.stamp(),
+                &LayoutEdit::SplitArea {
+                    area,
+                    axis: SplitAxis::Horizontal,
+                    at: 5000,
+                    minimum: [100, 100],
+                }
+            )
+            .is_err()
+        );
+        let split = w
+            .split_area(area, SplitAxis::Horizontal, 5000, [100, 100])
+            .unwrap();
+        assert_ne!(split, area);
+        w.close_panel(panel).unwrap();
+        assert!(w.panels(layout).is_empty());
+        assert!(w.create_panel(layout, "Replacement content").is_ok());
+    }
+
+    #[test]
+    fn titlebar_excludes_native_controls_at_either_edge_and_scales_with_zoom() {
+        let outer = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        for zoom in [0.75, 1.0, 2.0] {
+            for right in [false, true] {
+                let x = if right {
+                    outer.width() * zoom - 80.0
+                } else {
+                    8.0
+                };
+                let controls = Rect::from_corners(Vec2::new(x, 6.0), Vec2::new(x + 72.0, 22.0));
+                let (band, content) = titlebar_rects(outer, 28.0, Some(controls), 32.0, zoom);
+                assert_eq!(band.height(), 36.0_f32.max(28.0 / zoom));
+                let controls = egui::Rect::from_min_max(
+                    egui::pos2(controls.min.x / zoom, controls.min.y / zoom),
+                    egui::pos2(controls.max.x / zoom, controls.max.y / zoom),
+                );
+                if controls.intersects(band) {
+                    assert!(!content.intersects(controls));
+                    let gap = if right {
+                        controls.left() - content.right()
+                    } else {
+                        content.left() - controls.right()
+                    };
+                    assert!(gap >= 12.0 - 0.001);
+                }
+                assert!(band.contains_rect(content));
+            }
+        }
+    }
+
+    #[test]
+    fn titlebar_fallback_embedded_bounds_and_hidden_controls_have_no_native_gap() {
+        let outer = egui::Rect::from_min_size(egui::pos2(100.0, 80.0), egui::vec2(400.0, 250.0));
+        let controls = Rect::from_corners(Vec2::new(8.0, 6.0), Vec2::new(80.0, 22.0));
+        let fallback = titlebar_rects(outer, 0.0, None, 32.0, 1.0);
+        assert_eq!(
+            fallback,
+            titlebar_rects(outer, 28.0, Some(controls), 32.0, 1.0)
+        );
+        assert_eq!(fallback.0.height(), 36.0);
+        assert_eq!(fallback.1.top(), outer.top() + 4.0);
+        assert_eq!(fallback.1.height(), 32.0);
+        assert_eq!(
+            titlebar_rects(outer, 28.0, Some(controls), 0.0, 1.0)
+                .0
+                .height(),
+            0.0
+        );
+        let tiny = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(20.0, 12.0));
+        let (band, content) = titlebar_rects(tiny, 28.0, Some(controls), 32.0, 1.0);
+        assert_eq!(band.height(), 12.0);
+        assert!(band.contains_rect(content));
+    }
+
+    #[test]
+    fn replacing_and_removing_the_titlebar_keeps_the_surface_and_root() {
+        let mut app = App::new();
+        app.add_plugins(WorkbenchUiPlugin);
+        let surface = app
+            .world_mut()
+            .spawn((
+                Window::default(),
+                Titlebar {
+                    height: 32.0,
+                    draw: |_, _, _| {},
+                },
+            ))
+            .id();
+        assert!(app.world().get::<WorkbenchSurface>(surface).is_some());
+        app.world_mut().spawn((Camera2d, WorkbenchCamera));
+        app.update();
+        let root = app
+            .world_mut()
+            .query_filtered::<Entity, With<UiView>>()
+            .single(app.world())
+            .unwrap();
+        app.world_mut().entity_mut(surface).insert(Titlebar {
+            height: 40.0,
+            draw: |_, _, _| {},
+        });
+        app.update();
+        assert_eq!(app.world().get::<Titlebar>(surface).unwrap().height, 40.0);
+        assert!(app.world().get::<UiView>(root).is_some());
+        app.world_mut().entity_mut(surface).remove::<Titlebar>();
+        app.update();
+        assert!(app.world().get::<Titlebar>(surface).is_none());
+        assert!(app.world().get::<WorkbenchSurface>(surface).is_some());
+        assert!(app.world().get::<UiView>(root).is_some());
+    }
+
+    #[test]
     fn tab_splits_release_space_immediately_and_animate_only_the_expansion() {
         for original_axis in [SplitAxis::Horizontal, SplitAxis::Vertical] {
             for target_high in [false, true] {
                 for split_high in [false, true] {
                     for last_tab in [false, true] {
                         let mut app = App::new();
-                        app.add_plugins(WorkspacePlugin);
+                        app.add_plugins(WorkbenchCorePlugin);
+                        Workspaces::new(app.world_mut()).open("Test");
                         let mut w = Workbench::new(app.world_mut());
                         let layout = w.active_layout();
                         let low = w.destination_area(layout).unwrap();
@@ -1706,7 +2366,8 @@ mod tests {
         for direction in [SplitAxis::Horizontal, SplitAxis::Vertical] {
             for offset in [1, 500, 2500, 4500, 4999] {
                 let mut app = App::new();
-                app.add_plugins(WorkspacePlugin);
+                app.add_plugins(WorkbenchCorePlugin);
+                Workspaces::new(app.world_mut()).open("Test");
                 let mut w = Workbench::new(app.world_mut());
                 let layout = w.active_layout();
                 let root = w.destination_area(layout).unwrap();
@@ -1776,28 +2437,82 @@ mod tests {
     }
 
     #[test]
-    fn workspace_shell_owns_its_status_contributions() {
-        let mut app = App::new();
-        app.add_plugins(WorkspacePlugin);
-        let world = app.world_mut();
-        let shell = world.resource::<WorkspaceUi>().shell;
-        let bar = Workbench::new(world).status_bar();
-        let item = bedtime_ui2::register_status_item(
-            world,
-            bar,
-            bedtime_ui2::StatusItem::new(
-                bedtime_ui2::StatusSide::Left,
-                bedtime_ui2::BuiltinIcon::Folder,
-                "Owned",
-                60.0,
-            ),
-            |_: UiFrame| {},
-        );
-        let tooltip = bedtime_ui2::register_status_tooltip(world, item, |_: UiFrame| {});
-        world.despawn(shell);
-        for entity in [bar, item, tooltip] {
-            assert!(world.get_entity(entity).is_err());
+    fn status_space_is_reserved_only_when_an_application_renderer_is_provided() {
+        let ctx = egui::Context::default();
+        let bounds = egui::Rect::from_min_max(egui::pos2(40.0, 60.0), egui::pos2(640.0, 460.0));
+        let mut calls = 0;
+        for provided in [false, true, false] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    ..default()
+                },
+                |ui| {
+                    let mut root = ui.new_child(egui::UiBuilder::new().max_rect(bounds));
+                    root.set_clip_rect(bounds);
+                    let before = root.available_rect_before_wrap();
+                    let status = draw_status_bar(
+                        &mut root,
+                        egui::Frame::NONE,
+                        provided.then_some(|ui: &mut egui::Ui| {
+                            calls += 1;
+                            assert!(bounds.contains_rect(ui.clip_rect()));
+                            ui.label("Ready").on_hover_text("Application-owned status");
+                        }),
+                    );
+                    let content = root.available_rect_before_wrap();
+                    if provided {
+                        assert!(status.height() > 0.0);
+                        assert!(bounds.contains_rect(status));
+                        assert_eq!(status.bottom(), before.bottom());
+                        assert_eq!(content.bottom(), status.top());
+                    } else {
+                        assert_eq!(status.height(), 0.0);
+                        assert_eq!(content, before, "The panels retain all available height");
+                    }
+                },
+            );
+            output.textures_delta.clear();
         }
+        assert_eq!(calls, 1, "Drawing is never replayed for measurement");
+    }
+
+    #[test]
+    fn application_status_renderers_are_optional_replaceable_and_owned_by_their_workspace() {
+        let mut app = App::new();
+        app.add_plugins(WorkbenchCorePlugin);
+        let a = Workspaces::new(app.world_mut()).open("A");
+        let mut w = Workbench::new(app.world_mut());
+        assert_eq!(w.status_bar(), None);
+        let old = w.register_status_bar(|_, _, _| {});
+        let old_part = w.world_mut().spawn(bedtime_ui2::InView(old)).id();
+        let replacement = w.register_status_bar(|_, _, _| {});
+        assert_eq!(w.status_bar(), Some(replacement));
+        assert!(w.world().get_entity(old).is_err());
+        assert!(w.world().get_entity(old_part).is_err());
+        w.remove_status_bar();
+        assert_eq!(w.status_bar(), None);
+        assert!(w.world().get_entity(replacement).is_err());
+        let bar = w.register_status_bar(|_, _, _| {});
+        let part = w.world_mut().spawn(bedtime_ui2::InView(bar)).id();
+        assert_eq!(w.world().get::<InWorkspace>(bar).unwrap().0, a.entity());
+
+        let b = Workspaces::new(app.world_mut()).open("B");
+        let other = Workbench::with_workspace(app.world_mut(), b)
+            .unwrap()
+            .register_status_bar(|_, _, _| {});
+        Workspaces::new(app.world_mut()).activate(b).unwrap();
+        assert_eq!(Workbench::new(app.world_mut()).status_bar(), Some(other));
+        Workspaces::new(app.world_mut()).activate(a).unwrap();
+        assert_eq!(Workbench::new(app.world_mut()).status_bar(), Some(bar));
+        Workspaces::new(app.world_mut()).close(a, Some(b)).unwrap();
+        app.update();
+        assert!(app.world().get_entity(bar).is_err());
+        assert!(app.world().get_entity(part).is_err());
+        assert!(app.world().get_entity(other).is_ok());
     }
 
     fn projection(
@@ -1832,7 +2547,7 @@ mod tests {
                             entity,
                             title: String::new(),
                             dirty: false,
-                            preview: false,
+                            style: PanelTabStyle::default(),
                             icon: None,
                         })
                         .collect(),
@@ -1846,7 +2561,8 @@ mod tests {
     #[test]
     fn last_tab_preview_includes_source_gap_and_single_area_border_policy() {
         let mut app = App::new();
-        app.add_plugins(WorkspacePlugin);
+        app.add_plugins(WorkbenchCorePlugin);
+        Workspaces::new(app.world_mut()).open("Test");
         let mut w = Workbench::new(app.world_mut());
         let layout = w.active_layout();
         let source = w.destination_area(layout).unwrap();
@@ -1916,7 +2632,8 @@ mod tests {
                     Vec2::splat(0.5),
                 ] {
                     let mut app = App::new();
-                    app.add_plugins(WorkspacePlugin);
+                    app.add_plugins(WorkbenchCorePlugin);
+                    Workspaces::new(app.world_mut()).open("Test");
                     let mut w = Workbench::new(app.world_mut());
                     let layout = w.active_layout();
                     let left = w.destination_area(layout).unwrap();
@@ -1962,13 +2679,13 @@ mod tests {
                         surface(screen(rect, bounds), rect, panel_gap),
                         "T={t_junction}, last={last_tab}, mouse={relative:?}"
                     );
-                    assert!(w.world.get::<Panel>(target_panel).is_some());
+                    assert!(w.world.get::<PanelInstance>(target_panel).is_some());
                 }
             }
         }
     }
     #[test]
-    fn a_single_panel_keeps_the_shell_inset() {
+    fn configured_gaps_can_inset_a_single_area() {
         let old = Rect::from_corners(Vec2::ZERO, Vec2::splat(1000.0));
         assert_eq!(
             surface(

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 pub const EXTENT: i32 = 10_000;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Rect {
     pub min: [i32; 2],
     pub max: [i32; 2],
@@ -99,7 +99,6 @@ impl Layout {
     }
     /// Construct a tiling at a persistence or migration boundary. Internal
     /// transitions preserve the same invariant without repeating validation.
-    #[cfg(test)]
     pub fn from_areas(areas: Vec<Area>) -> Result<Self, &'static str> {
         if areas.is_empty() || areas.len() > 4096 {
             return Err("Missing or oversized workspace tiling");

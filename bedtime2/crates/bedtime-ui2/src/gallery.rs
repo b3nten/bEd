@@ -69,26 +69,34 @@ pub fn create_state(world: &mut World, light: Entity, dark: Entity) -> GallerySt
     }
 }
 
-pub fn draw_gallery(
-    frame: UiFrame,
-    mut states: Query<&mut GalleryState>,
-    mut surfaces: Query<(&mut MotionPolicy, &UiDiagnostics, &UiIconStatus)>,
-    mut commands: Commands,
-    mut clipboard: ResMut<Clipboard>,
-) {
-    let mut state = states.get_mut(frame.view).expect("Gallery state");
-    let (mut policy, diag, status) = surfaces.get_mut(frame.surface).unwrap();
-    let surface = frame.surface;
-    for action in draw_contents(frame, &mut state, &mut policy, diag, status, &mut clipboard) {
+pub fn draw_gallery(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
+    let mut policy = *world.get::<MotionPolicy>(context.surface).unwrap();
+    let diag = world.get::<UiDiagnostics>(context.surface).unwrap().clone();
+    let status = world.get::<UiIconStatus>(context.surface).unwrap().clone();
+    let actions = world.resource_scope(|world, mut clipboard: Mut<Clipboard>| {
+        let mut state = world
+            .get_mut::<GalleryState>(context.view)
+            .expect("Gallery state");
+        draw_contents(
+            context.frame(ui),
+            &mut state,
+            &mut policy,
+            &diag,
+            &status,
+            &mut clipboard,
+        )
+    });
+    *world.get_mut::<MotionPolicy>(context.surface).unwrap() = policy;
+    for action in actions {
         match action {
             GalleryAction::Theme(theme) => {
-                commands.entity(surface).insert(UsesTheme(theme));
+                world.entity_mut(context.surface).insert(UsesTheme(theme));
             }
             GalleryAction::Icons(Some(icons)) => {
-                commands.entity(surface).insert(UiIcons(icons));
+                world.entity_mut(context.surface).insert(UiIcons(icons));
             }
             GalleryAction::Icons(None) => {
-                commands.entity(surface).remove::<UiIcons>();
+                world.entity_mut(context.surface).remove::<UiIcons>();
             }
         }
     }
@@ -301,8 +309,9 @@ pub fn draw_contents(
     };
     if embedded {
         let mut frame = frame;
-        let padding = frame.panel_settings.padding;
-        frame.scroll("gallery-panel", |mut frame| frame.padded(padding, draw));
+        frame.scroll("gallery-panel", 7.0, |mut frame| {
+            frame.padded([14.0, 12.0], draw)
+        });
     } else {
         let ctx = frame.ui.ctx().clone();
         egui::Window::new("Bedtime UI 2")

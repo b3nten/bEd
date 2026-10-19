@@ -4,8 +4,11 @@ members = [
     "bed2",
     "bed2/demo-game",
     "bedtime2/crates/bedtime-clipboard2",
+    "bedtime2/crates/bedtime-automation2",
     "bedtime2/crates/bedtime-ui2",
     "bedtime2/crates/bedtime-workbench2",
+    "bedtime2/crates/bedtime-terminal2",
+    "bedtime2/crates/bedtime-filetree2",
     "bedside-table",
     "bedtime/crates/bedtime-sqlite",
     "bedtime/crates/bedtime-keybindings",
@@ -74,9 +77,12 @@ license = "GPL-3.0-only"
 opt-level = 1
 
 [workspace.dependencies]
+bedtime-automation2 = { path = "bedtime2/crates/bedtime-automation2" }
 bedtime-clipboard2 = { path = "bedtime2/crates/bedtime-clipboard2", default-features = false }
 bedtime-ui2 = { path = "bedtime2/crates/bedtime-ui2" }
 bedtime-workbench2 = { path = "bedtime2/crates/bedtime-workbench2" }
+bedtime-terminal2 = { path = "bedtime2/crates/bedtime-terminal2" }
+bedtime-filetree2 = { path = "bedtime2/crates/bedtime-filetree2" }
 bedtime-sqlite = { path = "bedtime/crates/bedtime-sqlite", version = "0.1.0" }
 bedtime-keybindings = { path = "bedtime/crates/bedtime-keybindings" }
 bedtime-plugin-idle = { path = "bedtime/crates/bedtime-plugin-idle" }

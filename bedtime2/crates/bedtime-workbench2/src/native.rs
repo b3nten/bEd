@@ -1,7 +1,5 @@
 //! Optional platform adapters. Core menus and commands have no native dependency.
-use crate::{
-    CloseRequested, ContextCommandRequests, InvocationContext, MenuSnapshot, menu_snapshot,
-};
+use crate::{CloseRequested, InvocationContext, MenuSnapshot, menu_snapshot};
 use bevy::{
     app::PluginGroupBuilder,
     prelude::*,
@@ -25,11 +23,18 @@ impl WindowBackground {
     }
 }
 
-/// Native space reserved above app controls when drawing behind the titlebar.
-/// Updated from AppKit's content layout rectangle; zero for ordinary content views.
-/// Measured in native logical window coordinates; the shell accounts for egui zoom.
+/// Observed native titlebar geometry in logical content-view coordinates, with
+/// a top-left origin. Zero for windows whose titlebar is outside their content.
+/// The host converts these measurements to egui points before allocating UI.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
-pub struct WindowTitlebarInset(pub f32);
+pub struct WindowTitlebarGeometry {
+    pub height: f32,
+    pub controls: Option<Rect>,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Component)]
+pub(crate) struct WindowDrag;
 
 /// Select one abstract MenuBar for native presentation. Other roots remain
 /// available to in-application menu bars and contextual menus.
@@ -69,12 +74,14 @@ impl Plugin for WorkbenchNativeWindowPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<CloseRequested>()
             .add_message::<NativeError>()
+            .add_message::<bevy::input::mouse::MouseButtonInput>()
             .add_systems(
                 PreUpdate,
                 forward_close_requests.in_set(NativeSystems::Poll),
             );
         #[cfg(target_os = "macos")]
         app.init_non_send::<macos_background::Backgrounds>()
+            .add_systems(First, macos_background::finish_window_drags)
             .add_systems(
                 PreUpdate,
                 macos_background::measure_titlebar.in_set(NativeSystems::WindowGeometry),
@@ -83,6 +90,11 @@ impl Plugin for WorkbenchNativeWindowPlugin {
                 Last,
                 macos_background::sync.before(bevy::app::OnAppExitSystems),
             );
+        #[cfg(all(target_os = "macos", feature = "ui"))]
+        app.add_systems(
+            PreUpdate,
+            macos_background::sample_file_drag_cursor.before(bevy_egui::EguiInputSet::FocusContext),
+        );
     }
     fn finish(&self, app: &mut App) {
         let plugins = app.get_added_plugins::<bevy::window::WindowPlugin>();
@@ -94,6 +106,11 @@ impl Plugin for WorkbenchNativeWindowPlugin {
             "Set WindowPlugin::close_when_requested to false: application/workbench close policy owns close decisions"
         );
     }
+}
+
+#[cfg(all(target_os = "macos", feature = "ui"))]
+pub(crate) fn titlebar_double_click(handle: &RawHandleWrapper) {
+    macos_background::double_click(handle);
 }
 
 fn forward_close_requests(
@@ -164,31 +181,23 @@ pub(crate) fn poll(world: &mut World) {
     {
         return;
     }
-    crate::workspaces::with_active(world, |host, world| {
-        let mut native = host.remove_non_send::<NativeState>().unwrap();
-        let id = world.resource::<crate::WorkspaceIdentity>().id();
-        if native.workspace != Some(id) {
-            #[cfg(target_os = "macos")]
-            if let Some(menu) = native.menu.take() {
-                let _ = menu.take_activations();
-                menu.remove();
-            }
-            native.attempted = None;
-            native.workspace = Some(id);
+    let id = crate::workspaces::selected(world);
+    if world.non_send::<NativeState>().workspace != id {
+        #[cfg(target_os = "macos")]
+        if let Some(menu) = world.non_send_mut::<NativeState>().menu.take() {
+            let _ = menu.take_activations();
+            menu.remove();
         }
-        world.insert_resource(*host.resource::<NativeCapabilities>());
-        world.insert_non_send(native);
-        poll_workspace(world);
-        host.insert_non_send(world.remove_non_send::<NativeState>().unwrap());
-        for error in world.resource_mut::<Messages<NativeError>>().drain() {
-            host.write_message(error);
-        }
-    });
+        let mut native = world.non_send_mut::<NativeState>();
+        native.attempted = None;
+        native.workspace = id;
+    }
+    poll_workspace(world);
 }
 
 fn poll_workspace(world: &mut World) {
     let roots: Vec<_> = world
-        .query_filtered::<Entity, With<NativeMenuBar>>()
+        .query_filtered::<Entity, (With<NativeMenuBar>, With<crate::InActiveWorkspace>)>()
         .iter(world)
         .collect();
     let requested = match roots.as_slice() {
@@ -215,9 +224,7 @@ fn poll_workspace(world: &mut World) {
                 .and_then(|snapshot| snapshot.request(source, target))
                 .filter(|request| request.context == context)
             {
-                world
-                    .resource_mut::<ContextCommandRequests>()
-                    .submit(request);
+                crate::Workbench::new(world).commands().submit(request);
             }
         }
     }

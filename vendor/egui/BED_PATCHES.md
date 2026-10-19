@@ -91,7 +91,6 @@ cargo test -p egui --offline
 cargo test -p bedtime-ui2 -p bedtime-workbench2 --offline
 cargo check -p bed2 --all-targets --offline
 cargo run -p bedtime-ui2 --example gallery --offline -- --smoke-dir target/egui-vendor-gallery-smoke
-cargo run -p bed2 --offline -- --workbench-smoke-dir target/egui-vendor-workbench-smoke --blur --egui-menu --ui-first --compose-workbench
 ```
 
 The added regression tests live in `src/widget_animation/tests.rs`. They verify

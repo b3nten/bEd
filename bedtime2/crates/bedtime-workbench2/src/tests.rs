@@ -1,4 +1,10 @@
 use super::*;
+fn local_mut<T: Component<Mutability = bevy::ecs::component::Mutable>>(
+    world: &mut World,
+) -> Mut<'_, T> {
+    let workspace = workspaces::active(world);
+    world.get_mut::<T>(workspace.entity()).unwrap()
+}
 
 struct First;
 impl ContextCommand for First {
@@ -23,20 +29,22 @@ struct Calls(Vec<ContextCommandInvocation>);
 
 fn app() -> App {
     let mut app = App::new();
-    app.add_plugins(WorkspacePlugin).init_resource::<Calls>();
+    app.add_plugins(WorkbenchCorePlugin)
+        .init_resource::<Calls>();
+    Workspaces::new(app.world_mut()).open("Test");
     app
 }
 
 #[test]
-fn workbench_always_has_a_layout() {
+fn last_layout_can_be_deleted() {
     let mut app = app();
+    let workspace = workspaces::active(app.world()).entity();
     let layout = Workbench::new(app.world_mut()).active_layout();
-    assert_eq!(app.world().resource::<Workspace>().active_layout(), layout);
-    assert!(
-        Workbench::new(app.world_mut())
-            .delete_layout(layout)
-            .is_err()
-    );
+    Workbench::new(app.world_mut())
+        .delete_layout(layout)
+        .unwrap();
+    assert_eq!(active_layout(app.world(), workspace), None);
+    app.update();
 }
 
 #[derive(Component, PartialEq, Debug)]
@@ -108,12 +116,8 @@ fn rejected_moves_preserve_layouts_and_stale_requests_do_not_target_new_panels()
     let second = w.create_panel(other, "Second").unwrap();
     assert!(w.move_panel(first, second, None).is_err());
     assert_eq!(w.panels(layout), vec![first]);
-    w.world
-        .resource_mut::<WorkbenchRequests>()
-        .submit(WorkbenchRequest::ClosePanel(first));
-    w.world
-        .resource_mut::<WorkbenchRequests>()
-        .submit(WorkbenchRequest::FocusPanel(first));
+    w.requests().submit(WorkbenchRequest::ClosePanel(first));
+    w.requests().submit(WorkbenchRequest::FocusPanel(first));
     app.update();
     let results: Vec<_> = app
         .world_mut()
@@ -122,7 +126,7 @@ fn rejected_moves_preserve_layouts_and_stale_requests_do_not_target_new_panels()
         .collect();
     assert!(results[0].result.is_ok());
     assert!(results[1].result.is_err());
-    assert!(app.world().get::<Panel>(second).is_some());
+    assert!(app.world().get::<PanelInstance>(second).is_some());
 }
 
 #[test]
@@ -135,18 +139,16 @@ fn a_splitter_request_cannot_mutate_a_replaced_layout_tree() {
     w.move_panel(second, first, Some(SplitAxis::Horizontal))
         .unwrap();
     let stamp = w.stamp();
-    w.world
-        .resource_mut::<WorkbenchRequests>()
-        .submit(WorkbenchRequest::Edit {
-            stamp,
-            edit: LayoutEdit::ResizeBorder {
-                axis: SplitAxis::Horizontal,
-                at: 5000,
-                span: [0, LAYOUT_EXTENT],
-                to: 8000,
-                minimum: 1,
-            },
-        });
+    w.requests().submit(WorkbenchRequest::Edit {
+        stamp,
+        edit: LayoutEdit::ResizeBorder {
+            axis: SplitAxis::Horizontal,
+            at: 5000,
+            span: [0, LAYOUT_EXTENT],
+            to: 8000,
+            minimum: 1,
+        },
+    });
     w.move_panel(second, first, Some(SplitAxis::Vertical))
         .unwrap();
     app.update();
@@ -186,7 +188,7 @@ fn typed_commands_run_in_submission_order_and_report_handler_errors() {
         )
         .unwrap();
     let source = app.world_mut().spawn_empty().id();
-    let mut requests = app.world_mut().resource_mut::<ContextCommandRequests>();
+    let mut requests = local_mut::<ContextCommandRequests>(app.world_mut());
     requests.submit(ContextCommandRequest {
         command: first.clone(),
         source: Some(source),
@@ -199,11 +201,13 @@ fn typed_commands_run_in_submission_order_and_report_handler_errors() {
         app.world().resource::<Calls>().0,
         [
             ContextCommandInvocation {
+                workspace: workspaces::active(app.world()),
                 command: first.clone(),
                 source: Some(source),
                 panel: None
             },
             ContextCommandInvocation {
+                workspace: workspaces::active(app.world()),
                 command: first.clone(),
                 source: None,
                 panel: None
@@ -267,7 +271,7 @@ fn disabled_and_removed_handlers_never_run_queued_requests() {
     let h2 = w.handler(second.clone(), None).unwrap();
     w.world.get_mut::<ActionEnabled>(h1).unwrap().0 = false;
     w.world.despawn(h2);
-    let mut requests = w.world.resource_mut::<ContextCommandRequests>();
+    let mut requests = w.commands();
     requests.invoke_id(first.clone());
     requests.invoke_id(second.clone());
     app.update();
@@ -283,15 +287,11 @@ fn panel_handlers_override_globals_and_disabled_panel_handlers_block_fallback() 
     let second = w.create_panel(w.active_layout(), "Second").unwrap();
     let local = w.register_panel_handler::<First, _>(first, record).unwrap();
     w.focus_panel(first).unwrap();
-    w.world
-        .resource_mut::<ContextCommandRequests>()
-        .invoke::<First>();
+    w.commands().invoke::<First>();
     app.update();
     assert_eq!(app.world().resource::<Calls>().0[0].panel, Some(first));
     app.world_mut().get_mut::<ActionEnabled>(local).unwrap().0 = false;
-    app.world_mut()
-        .resource_mut::<ContextCommandRequests>()
-        .invoke::<First>();
+    local_mut::<ContextCommandRequests>(app.world_mut()).invoke::<First>();
     app.update();
     assert_eq!(app.world().resource::<Calls>().0.len(), 1);
     assert!(results(&mut app).last().unwrap().result.is_err());
@@ -301,9 +301,7 @@ fn panel_handlers_override_globals_and_disabled_panel_handlers_block_fallback() 
         command,
         InvocationContext::Focused
     ));
-    app.world_mut()
-        .resource_mut::<ContextCommandRequests>()
-        .invoke::<First>();
+    local_mut::<ContextCommandRequests>(app.world_mut()).invoke::<First>();
     app.update();
     assert_eq!(
         app.world().resource::<Calls>().0.last().unwrap().panel,
@@ -340,9 +338,7 @@ fn handler_replacement_does_not_rewire_menu_action_types() {
         .unwrap()
         .request(item, command.clone())
         .unwrap();
-    w.world
-        .resource_mut::<ContextCommandRequests>()
-        .submit(request);
+    w.commands().submit(request);
     app.update();
     assert_eq!(app.world().resource::<Calls>().0[0].source, Some(item));
 }
@@ -354,17 +350,18 @@ fn handlers_enqueue_followups_without_reentrant_execution() {
         .unwrap();
     Workbench::new(app.world_mut())
         .register_handler::<First, _>(
-            |In(_): In<ContextCommandInvocation>,
-             mut requests: ResMut<ContextCommandRequests>|
+            |In(invocation): In<ContextCommandInvocation>,
+             mut requests: Query<&mut ContextCommandRequests>|
              -> ContextCommandResult {
-                requests.invoke::<Second>();
+                requests
+                    .get_mut(invocation.workspace.entity())
+                    .unwrap()
+                    .invoke::<Second>();
                 Ok(())
             },
         )
         .unwrap();
-    app.world_mut()
-        .resource_mut::<ContextCommandRequests>()
-        .invoke::<First>();
+    local_mut::<ContextCommandRequests>(app.world_mut()).invoke::<First>();
     app.update();
     assert!(app.world().resource::<Calls>().0.is_empty());
     assert_eq!(results(&mut app).len(), 1);
@@ -385,7 +382,7 @@ fn a_batch_captures_all_panels_before_handlers_change_focus_or_destroy_targets()
     )
     .unwrap();
     w.focus_panel(a).unwrap();
-    let mut requests = w.world.resource_mut::<ContextCommandRequests>();
+    let mut requests = w.commands();
     requests.invoke::<First>();
     requests.invoke::<Second>();
     app.update();
@@ -405,7 +402,6 @@ fn keybindings_resolve_independently_from_handlers_and_conflicts_reserve_input()
     w.world
         .spawn((Binding::new::<Second>(chord), InPanel(panel)));
     w.world.resource_mut::<BindingInput>().0.push(BindingPress {
-        event: 1,
         chord,
         repeat: false,
         context: InvocationContext::Focused,
@@ -415,21 +411,19 @@ fn keybindings_resolve_independently_from_handlers_and_conflicts_reserve_input()
         app.world().resource::<Calls>().0[0].command,
         ContextCommandId::of::<Second>()
     );
-    assert_eq!(app.world().resource::<BindingClaims>().0, vec![1]);
+
     app.world_mut()
         .spawn((Binding::new::<First>(chord), InPanel(panel)));
     app.world_mut()
         .resource_mut::<BindingInput>()
         .0
         .push(BindingPress {
-            event: 2,
             chord,
             repeat: false,
             context: InvocationContext::Focused,
         });
     app.update();
     assert_eq!(app.world().resource::<Calls>().0.len(), 1);
-    assert_eq!(app.world().resource::<BindingClaims>().0, vec![2]);
 }
 
 #[test]
@@ -446,12 +440,8 @@ fn retiring_an_admitted_panel_handler_does_not_redirect_to_a_global_handler() {
         },
     )
     .unwrap();
-    w.world
-        .resource_mut::<ContextCommandRequests>()
-        .invoke::<First>();
-    w.world
-        .resource_mut::<ContextCommandRequests>()
-        .invoke::<Second>();
+    w.commands().invoke::<First>();
+    w.commands().invoke::<Second>();
     app.update();
     assert!(app.world().resource::<Calls>().0.is_empty());
     let results = results(&mut app);
@@ -460,19 +450,18 @@ fn retiring_an_admitted_panel_handler_does_not_redirect_to_a_global_handler() {
 }
 
 #[test]
-fn normalized_shortcuts_reserve_repeats_without_reexecuting_by_default() {
+fn normalized_shortcuts_do_not_repeat_unless_enabled() {
     let mut app = app();
     Workbench::new(app.world_mut())
         .register_handler::<First, _>(record)
         .unwrap();
     let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyK);
     let binding = app.world_mut().spawn(Binding::new::<First>(chord)).id();
-    for (event, repeat) in [(1, false), (2, true)] {
+    for repeat in [false, true] {
         app.world_mut()
             .resource_mut::<BindingInput>()
             .0
             .push(BindingPress {
-                event,
                 chord,
                 repeat,
                 context: InvocationContext::Focused,
@@ -480,13 +469,12 @@ fn normalized_shortcuts_reserve_repeats_without_reexecuting_by_default() {
     }
     app.update();
     assert_eq!(app.world().resource::<Calls>().0.len(), 1);
-    assert_eq!(app.world().resource::<BindingClaims>().0, vec![1, 2]);
+
     app.world_mut().get_mut::<Binding>(binding).unwrap().repeat = true;
     app.world_mut()
         .resource_mut::<BindingInput>()
         .0
         .push(BindingPress {
-            event: 3,
             chord,
             repeat: true,
             context: InvocationContext::Focused,
@@ -499,6 +487,7 @@ fn normalized_shortcuts_reserve_repeats_without_reexecuting_by_default() {
 fn ui_requests_execute_in_the_same_frame_without_application_ordering() {
     let mut app = App::new();
     app.add_plugins((WorkbenchCorePlugin, WorkbenchUiPlugin));
+    Workspaces::new(app.world_mut()).open("Test");
     {
         let mut w = Workbench::new(app.world_mut());
         w.world_mut().init_resource::<Calls>();
@@ -507,10 +496,7 @@ fn ui_requests_execute_in_the_same_frame_without_application_ordering() {
     app.add_systems(
         PreUpdate,
         (|host: &mut World| {
-            Workbench::new(host)
-                .world_mut()
-                .resource_mut::<ContextCommandRequests>()
-                .invoke::<First>();
+            Workbench::new(host).commands().invoke::<First>();
         })
         .in_set(bedtime_ui2::UiSystems::Draw),
     );
@@ -555,6 +541,93 @@ fn closing_content_retains_its_area_but_moving_the_last_tab_closes_its_footprint
 }
 
 #[test]
+fn per_item_tab_style_does_not_change_preview_keep_or_move_semantics() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let area = w.destination_area(layout).unwrap();
+    let preview = w.create_panel_in_area(area, "Preview").unwrap();
+    let permanent = w.create_panel_in_area(area, "Permanent").unwrap();
+    assert_eq!(
+        PanelTabStyle::default(),
+        PanelTabStyle {
+            italic: false,
+            text_opacity: 1.0,
+        }
+    );
+    assert!(w.world.get::<PanelTabStyle>(preview).is_none());
+    let permanent_style = PanelTabStyle {
+        italic: true,
+        text_opacity: 0.6,
+    };
+    w.world.get_mut::<PanelInstance>(preview).unwrap().preview = true;
+    // A normal-looking preview remains a preview; an italic permanent tab does not become one.
+    w.world.entity_mut(preview).insert(PanelTabStyle::default());
+    w.world.entity_mut(permanent).insert(permanent_style);
+    reconcile_workbench(w.world).unwrap();
+    assert!(w.world.get::<PanelInstance>(preview).unwrap().preview);
+    assert!(!w.world.get::<PanelInstance>(permanent).unwrap().preview);
+
+    w.edit(w.stamp(), &LayoutEdit::KeepPanel(preview)).unwrap();
+    assert!(!w.world.get::<PanelInstance>(preview).unwrap().preview);
+    assert_eq!(
+        w.world.get::<PanelTabStyle>(preview),
+        Some(&PanelTabStyle::default())
+    );
+    w.world.get_mut::<PanelInstance>(permanent).unwrap().preview = true;
+    w.move_tab(permanent, area, 0).unwrap();
+    assert!(!w.world.get::<PanelInstance>(permanent).unwrap().preview);
+    assert_eq!(
+        w.world.get::<PanelTabStyle>(permanent),
+        Some(&permanent_style)
+    );
+    assert_eq!(panels_in_area(w.world, area), &[permanent, preview]);
+
+    w.world.get_mut::<PanelInstance>(preview).unwrap().preview = true;
+    w.world.entity_mut(preview).remove::<PanelTabStyle>();
+    reconcile_workbench(w.world).unwrap();
+    assert!(w.world.get::<PanelInstance>(preview).unwrap().preview);
+    assert!(w.world.get::<PanelTabStyle>(preview).is_none());
+    assert_eq!(
+        w.world.get::<PanelTabStyle>(permanent),
+        Some(&permanent_style)
+    );
+}
+
+#[test]
+fn tab_style_is_runtime_only_and_does_not_invalidate_layout_gestures() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let area = w.destination_area(layout).unwrap();
+    let kind = w.register_panel_type::<TestPanelType>().unwrap();
+    let panel = w.open_panel(kind, area).unwrap();
+    w.world.get_mut::<PanelInstance>(panel).unwrap().preview = true;
+    reconcile_workbench(w.world).unwrap();
+    let stamp = w.stamp();
+    let before = capture_workspace(w.world, w.workspace_id().entity()).unwrap();
+    w.world.entity_mut(panel).insert(PanelTabStyle {
+        italic: false,
+        text_opacity: 0.5,
+    });
+    reconcile_workbench(w.world).unwrap();
+    assert_eq!(w.stamp(), stamp);
+    assert_eq!(
+        capture_workspace(w.world, w.workspace_id().entity()).unwrap(),
+        before
+    );
+    let restored = restore_workspace(w.world, &before).unwrap();
+    let restored_panel = restored.layouts[0].areas[0].panels[0];
+    assert!(
+        w.world
+            .get::<PanelInstance>(restored_panel)
+            .unwrap()
+            .preview
+    );
+    assert!(w.world.get::<PanelTabStyle>(restored_panel).is_none());
+}
+
+#[test]
 fn tab_reordering_uses_destination_order_after_removing_the_source() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
@@ -563,10 +636,10 @@ fn tab_reordering_uses_destination_order_after_removing_the_source() {
     let a = w.create_panel_in_area(area, "A").unwrap();
     let b = w.create_panel_in_area(area, "B").unwrap();
     let c = w.create_panel_in_area(area, "C").unwrap();
-    w.world.get_mut::<Panel>(a).unwrap().preview = true;
+    w.world.get_mut::<PanelInstance>(a).unwrap().preview = true;
     w.move_tab(a, area, 2).unwrap();
     assert_eq!(panels_in_area(w.world, area), &[b, c, a]);
-    assert!(!w.world.get::<Panel>(a).unwrap().preview);
+    assert!(!w.world.get::<PanelInstance>(a).unwrap().preview);
     w.move_tab(c, area, 0).unwrap();
     assert_eq!(panels_in_area(w.world, area), &[c, b, a]);
     assert_eq!(w.focused_panel(layout), Some(c));
@@ -663,21 +736,26 @@ fn switching_away_and_back_invalidates_a_pending_gesture_even_without_a_geometry
 }
 
 struct TestPanelType;
-impl PanelDefinition for TestPanelType {
+impl Panel for TestPanelType {
     const KEY: &'static str = "test.panel";
     const LABEL: &'static str = "Test panel";
+    #[cfg(feature = "ui")]
+    fn draw(
+        _: &mut bedtime_ui2::egui::Ui,
+        _: &mut World,
+        _: &bedtime_ui2::UiContext<'_>,
+        _: Entity,
+    ) {
+    }
 }
 #[test]
-fn factories_are_entities_and_failed_drops_do_not_modify_layout_geometry() {
+fn disabled_panel_types_do_not_modify_layout_geometry() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
     let layout = w.active_layout();
     let area = w.destination_area(layout).unwrap();
-    let kind = w
-        .register_panel_type::<TestPanelType, _>(|In(_): In<Entity>| -> Result<Entity, String> {
-            Err("load failed".into())
-        })
-        .unwrap();
+    let kind = w.register_panel_type::<TestPanelType>().unwrap();
+    w.world.entity_mut(kind).insert(ActionEnabled(false));
     let stamp = w.stamp();
     let original = w.world.get::<Area>(area).unwrap().rect();
     assert!(
@@ -733,9 +811,8 @@ fn global_bindings_use_panel_handlers_and_panel_bindings_use_workbench_handlers(
     w.world.spawn(Binding::new::<Second>(global));
     w.world
         .spawn((Binding::new::<First>(local), InPanel(panel)));
-    for (event, chord) in [(1, global), (2, local)] {
+    for chord in [global, local] {
         w.world.resource_mut::<BindingInput>().0.push(BindingPress {
-            event,
             chord,
             repeat: false,
             context: InvocationContext::Focused,
@@ -759,14 +836,13 @@ fn unavailable_panel_binding_does_not_retry_the_shadowed_workbench_binding() {
     w.world
         .spawn((Binding::new::<Second>(chord), InPanel(panel)));
     w.world.resource_mut::<BindingInput>().0.push(BindingPress {
-        event: 1,
         chord,
         repeat: false,
         context: InvocationContext::Focused,
     });
     app.update();
     assert!(app.world().resource::<Calls>().0.is_empty());
-    assert_eq!(app.world().resource::<BindingClaims>().0, vec![1]);
+
     assert!(results(&mut app)[0].result.is_err());
 }
 
@@ -782,7 +858,6 @@ fn extra_modifiers_do_not_match_a_shortcut() {
         .resource_mut::<BindingInput>()
         .0
         .push(BindingPress {
-            event: 1,
             chord: KeyChord::new(
                 Modifiers::PRIMARY.resolved() | Modifiers::SHIFT,
                 KeyCode::KeyS,
@@ -792,12 +867,11 @@ fn extra_modifiers_do_not_match_a_shortcut() {
         });
     app.update();
     assert!(app.world().resource::<Calls>().0.is_empty());
-    assert!(app.world().resource::<BindingClaims>().0.is_empty());
+
     app.world_mut()
         .resource_mut::<BindingInput>()
         .0
         .push(BindingPress {
-            event: 2,
             chord,
             repeat: false,
             context: InvocationContext::Focused,

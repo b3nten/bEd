@@ -228,21 +228,7 @@ fn smoke(world: &mut World) {
         world.write_message(bevy::window::WindowEvent::KeyboardInput(key));
     }
     if frame == 208 {
-        assert!(
-            world
-                .resource::<input::InputRouter>()
-                .frame
-                .lock()
-                .unwrap()
-                .modal
-        );
-        assert!(
-            !world
-                .resource::<input::RoutedInput>()
-                .keys
-                .pressed(KeyCode::KeyS),
-            "Modal keyboard must not reach the application"
-        );
+        assert!(world.get::<UiCapture>(window).unwrap().modal);
     }
     if frame == 250 {
         world

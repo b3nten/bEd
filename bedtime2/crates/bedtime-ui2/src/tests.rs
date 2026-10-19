@@ -1,10 +1,4 @@
 use crate::*;
-use bevy::input::{
-    ButtonState,
-    keyboard::{Key, KeyCode, KeyboardInput},
-};
-use bevy::window::WindowEvent;
-
 #[test]
 fn retargeting_is_continuous_and_reduced_motion_settles() {
     let mut value = motion::Transition::settled(0.0);
@@ -35,14 +29,14 @@ fn themes_validate_boundary_values_and_map_to_egui() {
     dark.apply(&ctx);
     assert_eq!(
         ctx.global_style().visuals.panel_fill,
-        theme::color(dark.palette.background)
+        theme::color(dark.palette.panel_background)
     );
     let light = themes::light();
     light.validate().unwrap();
     light.apply(&ctx);
     assert_eq!(
         ctx.global_style().visuals.panel_fill,
-        theme::color(light.palette.background)
+        theme::color(light.palette.panel_background)
     );
     let mut bad = light;
     bad.metrics.font_size = f32::NAN;
@@ -53,6 +47,79 @@ fn themes_validate_boundary_values_and_map_to_egui() {
 }
 
 #[test]
+fn terminal_palettes_match_everforest_medium_ansi_order() {
+    for (theme, expected) in [
+        (
+            themes::dark(),
+            [
+                0x475258_u32,
+                0xe67e80,
+                0xa7c080,
+                0xdbbc7f,
+                0x7fbbb3,
+                0xd699b6,
+                0x83c092,
+                0xd3c6aa,
+            ],
+        ),
+        (
+            themes::light(),
+            [
+                0x5c6a72, 0xf85552, 0x8da101, 0xdfa000, 0x3a94c5, 0xdf69ba, 0x35a77c, 0xe6e2cc,
+            ],
+        ),
+    ] {
+        // Everforest Medium uses the same eight colors for normal and bright ANSI.
+        for (index, color) in theme.palette.terminal.into_iter().enumerate() {
+            let [_, r, g, b] = expected[index % 8].to_be_bytes();
+            assert_eq!(
+                theme::color(color).to_array(),
+                [r, g, b, 255],
+                "ANSI entry {index}"
+            );
+        }
+    }
+}
+
+#[test]
+fn terminal_colors_validate_every_entry_and_channel() {
+    for theme in [themes::dark(), themes::light()] {
+        for entry in 0..theme.palette.terminal.len() {
+            for channel in 0..4 {
+                for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.01, 1.01] {
+                    let mut invalid = theme.clone();
+                    invalid.palette.terminal[entry][channel] = value;
+                    assert!(
+                        invalid.validate().is_err(),
+                        "ANSI entry {entry}, channel {channel} must reject {value}"
+                    );
+                }
+                for value in [0.0, 1.0] {
+                    let mut boundary = theme.clone();
+                    boundary.palette.terminal[entry][channel] = value;
+                    boundary.validate().unwrap();
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn themes_roundtrip_preset_and_edited_terminal_colors() {
+    for preset in [themes::dark(), themes::light()] {
+        let mut edited = preset.clone();
+        edited.palette.terminal[0] = [0.1, 0.2, 0.3, 0.4];
+        edited.palette.terminal[15] = [0.6, 0.7, 0.8, 0.9];
+        for theme in [preset, edited] {
+            let json = serde_json::to_string(&theme).unwrap();
+            let restored: Theme = serde_json::from_str(&json).unwrap();
+            restored.validate().unwrap();
+            assert_eq!(restored, theme);
+        }
+    }
+}
+
+#[test]
 fn primary_buttons_resolve_hover_and_press_colors_without_restyling_other_widgets() {
     for theme in [themes::dark(), themes::light()] {
         let ctx = egui::Context::default();
@@ -60,8 +127,6 @@ fn primary_buttons_resolve_hover_and_press_colors_without_restyling_other_widget
         theme.apply(&ctx);
         ctx.global_style_mut(|s| s.animation_time = 0.0);
         let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
-        let textures = HashMap::new();
-        let input = std::sync::Mutex::new(input::UiInputFrame::default());
         let mut target = egui::pos2(-100.0, -100.0);
         let mut fills = Vec::new();
         for step in 0..5 {
@@ -82,10 +147,7 @@ fn primary_buttons_resolve_hover_and_press_colors_without_restyling_other_widget
                     ui,
                     theme: &theme,
                     motion: default(),
-                    panel_settings: default(),
                     icons: &icons,
-                    textures: &textures,
-                    input: &input,
                 };
                 let response = frame.primary_button("Primary action");
                 target = response.rect.center();
@@ -129,8 +191,6 @@ fn custom_control_colors_fade_through_hover_press_and_release() {
     let theme = themes::dark();
     theme.apply(&ctx);
     let icons = Mutex::new(icon_cache::IconCache::default());
-    let textures = HashMap::new();
-    let input = Mutex::new(input::UiInputFrame::default());
     let render = |time, pointer, button: Option<bool>, enabled| {
         ctx.global_style_mut(|s| {
             s.animation_time = if enabled {
@@ -165,10 +225,7 @@ fn custom_control_colors_fade_through_hover_press_and_release() {
                         enabled,
                         ..default()
                     },
-                    panel_settings: default(),
                     icons: &icons,
-                    textures: &textures,
-                    input: &input,
                 };
                 let response = frame.icon_button(BuiltinIcon::Sun);
                 rect = response.rect;
@@ -223,18 +280,13 @@ fn custom_control_colors_fade_through_hover_press_and_release() {
 fn scroll_track_clears_rounded_corners_without_insetting_content() {
     let ctx = egui::Context::default();
     let theme = themes::dark();
-    let panel_settings = PanelSettings {
-        rounding: 18.0,
-        ..default()
-    };
+    let corner_radius = 18.0;
     theme.apply(&ctx);
     ctx.global_style_mut(|s| {
         s.spacing.scroll = egui::style::ScrollStyle::solid();
         s.animation_time = 0.0;
     });
     let icons = Mutex::new(icon_cache::IconCache::default());
-    let textures = HashMap::new();
-    let input = Mutex::new(input::UiInputFrame::default());
     let mut bounds = egui::Rect::NOTHING;
     let mut clip = egui::Rect::NOTHING;
     let mut body = egui::Rect::NOTHING;
@@ -256,12 +308,9 @@ fn scroll_track_clears_rounded_corners_without_insetting_content() {
                     ui,
                     theme: &theme,
                     motion: default(),
-                    panel_settings,
                     icons: &icons,
-                    textures: &textures,
-                    input: &input,
                 };
-                frame.scroll("overflow", |frame| {
+                frame.scroll("overflow", corner_radius, |frame| {
                     clip = frame.ui.clip_rect();
                     body = frame
                         .ui
@@ -274,7 +323,7 @@ fn scroll_track_clears_rounded_corners_without_insetting_content() {
             },
         );
         track = output.shapes.iter().find_map(|s| match &s.shape {
-            egui::Shape::Rect(r) if r.fill == theme::color(theme.palette.background) => {
+            egui::Shape::Rect(r) if r.fill == theme::color(theme.palette.panel_background) => {
                 Some(r.rect)
             }
             _ => None,
@@ -282,8 +331,8 @@ fn scroll_track_clears_rounded_corners_without_insetting_content() {
         output.textures_delta.clear();
     }
     let track = track.expect("Visible scrollbar track");
-    assert!(track.min.y >= bounds.min.y + panel_settings.rounding);
-    assert!(track.max.y <= bounds.max.y - panel_settings.rounding);
+    assert!(track.min.y >= bounds.min.y + corner_radius);
+    assert!(track.max.y <= bounds.max.y - corner_radius);
     assert_eq!(
         body.min, bounds.min,
         "The scrolling content keeps its original origin"
@@ -293,9 +342,9 @@ fn scroll_track_clears_rounded_corners_without_insetting_content() {
 
 #[derive(Component, Default)]
 struct Counter(u32);
-fn draw_counter(frame: UiFrame, mut counters: Query<&mut Counter>) {
-    counters.get_mut(frame.view).unwrap().0 += 1;
-    frame.ui.label("A normal registered Bevy system");
+fn draw_counter(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
+    world.get_mut::<Counter>(context.view).unwrap().0 += 1;
+    ui.label("An ordinary drawing function");
 }
 
 #[test]
@@ -309,26 +358,17 @@ fn borrowed_frames_execute_once_and_surface_ownership_keeps_shared_themes() {
     let ctx = egui::Context::default();
     ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(1).unwrap());
     let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
-    let textures = HashMap::new();
-    let input = std::sync::Mutex::new(input::UiInputFrame::default());
     let theme_data = themes::dark();
     let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-        world
-            .run_system_with(
-                SystemId::<UiFrame<'static>>::from_entity(view),
-                UiFrame {
-                    view,
-                    surface,
-                    ui,
-                    theme: &theme_data,
-                    motion: default(),
-                    panel_settings: default(),
-                    icons: &icons,
-                    textures: &textures,
-                    input: &input,
-                },
-            )
-            .unwrap();
+        let context = UiContext {
+            view,
+            surface,
+            theme: &theme_data,
+            motion: default(),
+            icons: &icons,
+        };
+        let draw = world.get::<UiView>(view).unwrap().draw;
+        draw(ui, &mut world, &context);
         ui.ctx()
             .request_discard("Do not replay stateful drawing systems");
     });
@@ -341,83 +381,57 @@ fn borrowed_frames_execute_once_and_surface_ownership_keeps_shared_themes() {
     assert!(world.get::<Theme>(theme).is_some());
 }
 
-fn key_event(
-    id: u64,
-    key_code: KeyCode,
-    text: Option<&str>,
-    modifiers: input::InputModifiers,
-) -> input::InputEvent {
-    input::InputEvent {
-        id,
-        modifiers,
-        event: WindowEvent::KeyboardInput(KeyboardInput {
-            key_code,
-            logical_key: Key::Character("a".into()),
-            state: ButtonState::Pressed,
-            text: text.map(Into::into),
-            repeat: false,
-            window: Entity::PLACEHOLDER,
-        }),
+#[test]
+fn borrowed_props_compose_in_normal_egui_layout_and_keep_instances_independent() {
+    struct Detail;
+    impl crate::Component for Detail {
+        type Props<'a> = (&'a str, Entity);
+        fn draw(
+            ui: &mut egui::Ui,
+            world: &mut World,
+            _: &UiContext<'_>,
+            (label, owner): Self::Props<'_>,
+        ) {
+            world.get_mut::<Counter>(owner).unwrap().0 += label.len() as u32;
+            ui.label(label);
+        }
     }
-}
-
-#[test]
-fn text_ownership_reserves_typing_noop_edits_and_leaves_save_available() {
-    let primary = input::InputModifiers {
-        control: !cfg!(target_os = "macos"),
-        meta: cfg!(target_os = "macos"),
-        ..default()
+    struct Row;
+    impl crate::Component for Row {
+        type Props<'a> = [(&'a str, Entity); 2];
+        fn draw(
+            ui: &mut egui::Ui,
+            world: &mut World,
+            context: &UiContext<'_>,
+            props: Self::Props<'_>,
+        ) {
+            ui.horizontal(|ui| {
+                for props in props {
+                    Detail::draw(ui, world, context, props);
+                }
+            });
+        }
+    }
+    let mut world = World::new();
+    let a = world.spawn(Counter::default()).id();
+    let b = world.spawn(Counter::default()).id();
+    let theme = themes::dark();
+    let icons = default();
+    let context = UiContext {
+        view: a,
+        surface: a,
+        theme: &theme,
+        motion: default(),
+        icons: &icons,
     };
-    let mut frame = input::UiInputFrame {
-        events: vec![
-            key_event(
-                1,
-                KeyCode::KeyA,
-                Some("A"),
-                input::InputModifiers {
-                    shift: true,
-                    ..default()
-                },
-            ),
-            key_event(2, KeyCode::Backspace, None, default()),
-            key_event(3, KeyCode::KeyS, None, primary),
-            key_event(4, KeyCode::Enter, None, default()),
-            input::InputEvent {
-                id: 5,
-                modifiers: default(),
-                event: WindowEvent::Ime(bevy::window::Ime::Commit {
-                    window: Entity::PLACEHOLDER,
-                    value: "漢字".into(),
-                }),
-            },
-            key_event(6, KeyCode::KeyC, None, primary),
-        ],
-        ..default()
-    };
-    frame.claim_text(Entity::PLACEHOLDER, egui::Id::new("text"));
-    assert!(frame.claims.contains_key(&1));
-    assert!(frame.claims.contains_key(&2));
-    assert!(frame.claims.contains_key(&4));
-    assert!(frame.claims.contains_key(&5));
-    assert!(frame.claims.contains_key(&6));
-    assert!(!frame.claims.contains_key(&3));
-}
-
-#[test]
-fn routed_state_releases_on_focus_loss() {
-    let mut routed = input::RoutedInput::default();
-    routed.admit(key_event(1, KeyCode::KeyA, Some("a"), default()));
-    assert!(routed.keys.pressed(KeyCode::KeyA));
-    routed.admit(input::InputEvent {
-        id: 2,
-        modifiers: default(),
-        event: WindowEvent::WindowFocused(bevy::window::WindowFocused {
-            window: Entity::PLACEHOLDER,
-            focused: false,
-        }),
+    let labels = [String::from("One"), String::from("Second")];
+    let ui = egui::Context::default();
+    let mut output = ui.run_ui(default(), |ui| {
+        Row::draw(ui, &mut world, &context, [(&labels[0], a), (&labels[1], b)]);
     });
-    assert!(!routed.keys.pressed(KeyCode::KeyA));
-    assert!(routed.keys.just_released(KeyCode::KeyA));
+    output.textures_delta.clear();
+    assert_eq!(world.get::<Counter>(a).unwrap().0, 3);
+    assert_eq!(world.get::<Counter>(b).unwrap().0, 6);
 }
 
 #[test]
@@ -431,8 +445,6 @@ fn tooltip_contents_fade_at_their_final_size_and_pixel_grid() {
         style.interaction.show_tooltips_only_when_still = false;
     });
     let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
-    let textures = HashMap::new();
-    let input = std::sync::Mutex::new(input::UiInputFrame::default());
     let render = |time| {
         let mut shown = false;
         let mut output = ctx.run_ui(
@@ -449,10 +461,7 @@ fn tooltip_contents_fade_at_their_final_size_and_pixel_grid() {
                     ui,
                     theme: &theme,
                     motion: default(),
-                    panel_settings: default(),
                     icons: &icons,
-                    textures: &textures,
-                    input: &input,
                 };
                 shown = frame.tooltip(&response, "Popup text");
             },
@@ -559,132 +568,4 @@ fn dropdown_clears_its_anchor_and_long_lists_still_scroll() {
         "Hiding the scrollbar must preserve wheel scrolling"
     );
     assert!(egui::Popup::is_id_open(&ctx, popup));
-}
-
-#[test]
-fn enter_ending_text_focus_is_claimed_in_the_same_pass() {
-    let ctx = egui::Context::default();
-    let id = egui::Id::new("editing");
-    let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
-    let textures = HashMap::new();
-    let input = std::sync::Mutex::new(input::UiInputFrame::default());
-    let theme = themes::dark();
-    let mut text = "Some text".to_owned();
-    ctx.memory_mut(|m| m.request_focus(id));
-    for step in 0..2 {
-        let mut raw = egui::RawInput::default();
-        if step == 1 {
-            raw.events.push(egui::Event::Key {
-                key: egui::Key::Enter,
-                physical_key: Some(egui::Key::Enter),
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            });
-            input
-                .lock()
-                .unwrap()
-                .events
-                .push(key_event(1, KeyCode::Enter, None, default()));
-        }
-        let mut output = ctx.run_ui(raw, |ui| {
-            let mut frame = UiFrame {
-                view: Entity::PLACEHOLDER,
-                surface: Entity::PLACEHOLDER,
-                ui,
-                theme: &theme,
-                motion: default(),
-                panel_settings: default(),
-                icons: &icons,
-                textures: &textures,
-                input: &input,
-            };
-            let response = frame
-                .text_edit(egui::TextEdit::singleline(&mut text).id(id))
-                .response;
-            if step == 1 {
-                assert!(response.lost_focus());
-            }
-        });
-        output.textures_delta.clear();
-    }
-    assert!(input.lock().unwrap().claims.contains_key(&1));
-}
-#[test]
-fn ui_owned_held_key_cannot_become_an_application_press_after_focus_changes() {
-    let mut router = input::InputRouter::default();
-    let mut application = input::RoutedInput::default();
-    router.frame.get_mut().unwrap().events =
-        vec![key_event(1, KeyCode::KeyA, Some("a"), default())];
-    router
-        .frame
-        .get_mut()
-        .unwrap()
-        .claims
-        .insert(1, input::InputOwner::Ui);
-    router.publish(&mut application);
-    let mut repeat = key_event(2, KeyCode::KeyA, Some("a"), default());
-    if let WindowEvent::KeyboardInput(k) = &mut repeat.event {
-        k.repeat = true;
-    }
-    *router.frame.get_mut().unwrap() = input::UiInputFrame {
-        events: vec![repeat],
-        ..default()
-    };
-    router.publish(&mut application);
-    assert!(!application.keys.pressed(KeyCode::KeyA));
-    assert!(application.events.is_empty());
-    let mut released = key_event(3, KeyCode::KeyA, None, default());
-    if let WindowEvent::KeyboardInput(k) = &mut released.event {
-        k.state = ButtonState::Released;
-    }
-    router.frame.get_mut().unwrap().events =
-        vec![released, key_event(4, KeyCode::KeyA, Some("a"), default())];
-    router.publish(&mut application);
-    assert!(application.keys.just_pressed(KeyCode::KeyA));
-    assert_eq!(application.events.len(), 1);
-}
-
-#[test]
-fn widgets_claim_pointer_presses_before_panel_input_but_viewport_regions_delegate_them() {
-    for delegate in [false, true] {
-        let ctx = egui::Context::default();
-        let mut target = egui::pos2(10.0, 10.0);
-        for pressed in [false, true] {
-            let mut raw = egui::RawInput::default();
-            raw.events.push(egui::Event::PointerMoved(target));
-            if pressed {
-                raw.events.push(egui::Event::PointerButton {
-                    pos: target,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers::NONE,
-                });
-            }
-            let mut frame = input::UiInputFrame::default();
-            if pressed {
-                frame.events.push(input::InputEvent {
-                    id: 1,
-                    modifiers: default(),
-                    event: WindowEvent::MouseButtonInput(bevy::input::mouse::MouseButtonInput {
-                        window: Entity::PLACEHOLDER,
-                        button: MouseButton::Left,
-                        state: ButtonState::Pressed,
-                    }),
-                });
-            }
-            let mut output = ctx.run_ui(raw, |ui| {
-                let response = ui.button("Interactive content");
-                target = response.rect.center();
-                if delegate {
-                    frame.region(Entity::PLACEHOLDER, response.id, response.rect, false);
-                }
-            });
-            output.textures_delta.clear();
-            frame.claim_widgets(&ctx);
-            if pressed {
-                assert_eq!(frame.claims.contains_key(&1), !delegate);
-            }
-        }
-    }
 }
