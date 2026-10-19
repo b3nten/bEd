@@ -179,10 +179,16 @@ the final comparison and rename. Known own moves/deletions invalidate pending
 save identities. File sessions currently deduplicate by workspace and source path;
 different aliases can name separate sessions.
 
-The first editor slice includes normal selection/clipboard/navigation/history,
-IME drafts, line numbers and bed1's caret animation. Indentation-aware wrapping,
-smart indentation/backspace, find/replace, folding and language tooling remain
-later milestones. Editor settings are in memory. The standalone example requires
+The editor includes selection/clipboard/navigation/history, IME drafts, line
+numbers and bed1's caret animation. **Editing** offers indentation-aware **Wrap
+lines**, smart indentation, tabs or 2/4/8 spaces, and Find/Replace. Tab/Shift+Tab
+indent selections; Enter preserves indentation and splits matching delimiter
+pairs; Backspace removes leading whitespace by indentation stops. Cmd/Ctrl+F
+opens literal Find with case/whole-word options. Enter/Shift+Enter navigate,
+Escape returns to editing, and Replace all is one shared undo step. Full-file
+search, wrapping preparation and large indentation run off-thread. Folding
+waits for Tree-sitter integration; language tooling remains optional future work.
+Editor settings/search are per view and in memory. The standalone example requires
 neither Workbench nor language plugins:
 
 ```sh

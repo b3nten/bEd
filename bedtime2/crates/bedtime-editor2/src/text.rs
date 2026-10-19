@@ -10,6 +10,9 @@ const BASE: u64 = 0x100000001b3;
 #[derive(Clone, Copy, Debug, Default)]
 struct Summary {
     bytes: usize,
+    leading: usize,
+    trailing: usize,
+    ascii: bool,
     breaks: usize,
     starts_lf: bool,
     ends_cr: bool,
@@ -23,6 +26,16 @@ impl Summary {
     fn leaf(text: &str) -> Self {
         let mut summary = Self {
             bytes: text.len(),
+            ascii: text.is_ascii(),
+            trailing: text
+                .bytes()
+                .rev()
+                .take_while(|b| matches!(b, b' ' | b'\t'))
+                .count(),
+            leading: text
+                .bytes()
+                .take_while(|b| matches!(b, b' ' | b'\t'))
+                .count(),
             starts_lf: text.starts_with('\n'),
             ends_cr: text.ends_with('\r'),
             power: 1,
@@ -83,6 +96,17 @@ impl Summary {
         let joined = a.last + b.first[a.last % 4];
         Self {
             bytes: a.bytes + b.bytes,
+            leading: if a.leading == a.bytes {
+                a.bytes + b.leading
+            } else {
+                a.leading
+            },
+            trailing: if b.trailing == b.bytes {
+                a.trailing + b.bytes
+            } else {
+                b.trailing
+            },
+            ascii: a.ascii && b.ascii,
             breaks,
             starts_lf: a.starts_lf,
             ends_cr: b.ends_cr,
@@ -480,6 +504,9 @@ impl TextBuffer {
     pub fn len(&self) -> usize {
         self.0.summary().bytes
     }
+    pub(crate) fn is_ascii(&self) -> bool {
+        self.0.summary().ascii
+    }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -517,6 +544,17 @@ impl TextBuffer {
             row = row.saturating_sub(1);
         }
         row
+    }
+    pub(crate) fn leading_whitespace_end(&self, row: usize, limit: usize) -> usize {
+        let start = self.line_start(row);
+        let end = self.clamp_boundary(self.line_range(row).end.min(limit));
+        start + self.0.range_summary(start..end).leading
+    }
+    pub(crate) fn trailing_whitespace_start(&self, range: Range<usize>) -> usize {
+        range.end - self.0.range_summary(range).trailing
+    }
+    pub(crate) fn concat(&self, other: &Self) -> Self {
+        Self(Node::join(self.0.clone(), other.0.clone()))
     }
     pub fn column(&self, byte: usize) -> usize {
         let row = self.line_of(byte);
@@ -751,3 +789,63 @@ impl BufferEdit {
 
 #[cfg(test)]
 mod tests;
+
+/// Streaming construction for worker-produced content. Never owns a flat copy
+/// of the complete result. CRLF may cross leaves; Node summaries handle it.
+#[derive(Default)]
+pub(crate) struct BufferBuilder {
+    leaves: Vec<Arc<Node>>,
+    pending: String,
+}
+impl BufferBuilder {
+    pub fn push(&mut self, mut text: &str) {
+        while !text.is_empty() {
+            let mut take = (LEAF_BYTES - self.pending.len()).min(text.len());
+            while !text.is_char_boundary(take) {
+                take -= 1;
+            }
+            if take == 0 {
+                self.leaves
+                    .push(Node::leaf(std::mem::take(&mut self.pending)));
+                continue;
+            }
+            self.pending.push_str(&text[..take]);
+            text = &text[take..];
+            if self.pending.len() == LEAF_BYTES {
+                self.leaves
+                    .push(Node::leaf(std::mem::take(&mut self.pending)));
+            }
+        }
+    }
+    pub fn push_range(
+        &mut self,
+        text: &TextBuffer,
+        range: Range<usize>,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> bool {
+        let mut at = range.start;
+        while at < range.end {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return false;
+            }
+            let (chunk, base) = text.chunk_at(at);
+            let end = (base + chunk.len()).min(range.end);
+            self.push(&chunk[at - base..end - base]);
+            at = end;
+        }
+        true
+    }
+    pub fn finish(mut self) -> TextBuffer {
+        if !self.pending.is_empty() {
+            self.leaves.push(Node::leaf(self.pending));
+        }
+        fn build(leaves: &[Arc<Node>]) -> Arc<Node> {
+            match leaves.len() {
+                0 => Node::leaf(String::new()),
+                1 => leaves[0].clone(),
+                n => Node::branch(build(&leaves[..n / 2]), build(&leaves[n / 2..])),
+            }
+        }
+        TextBuffer(build(&self.leaves))
+    }
+}

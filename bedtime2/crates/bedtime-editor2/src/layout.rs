@@ -49,8 +49,8 @@ pub(crate) struct VisibleLine {
     pub galley: Arc<egui::Galley>,
     pub source_bytes: usize,
     left: f32,
-    start: usize,
-    end: usize,
+    pub start: usize,
+    pub end: usize,
     carets: Vec<(usize, usize)>,
 }
 
@@ -65,6 +65,18 @@ impl VisibleLine {
         let start = text.byte_at_column(row, cells.start.saturating_sub(2));
         let end = text.byte_at_column(row, cells.end);
         let end = text.clamp_boundary(end.min(start.saturating_add(MAX_LINE_LAYOUT_BYTES)));
+        Self::fragment(ui, text, metrics, start..end, 0.0)
+    }
+
+    pub fn fragment(
+        ui: &egui::Ui,
+        text: &TextBuffer,
+        metrics: &Metrics,
+        range: Range<usize>,
+        offset: f32,
+    ) -> Self {
+        let start = range.start;
+        let end = text.clamp_boundary(range.end.min(start.saturating_add(MAX_LINE_LAYOUT_BYTES)));
         let source = text.range_text(start..end);
         let start_column = text.column(start);
         let mut display = String::new();
@@ -95,7 +107,7 @@ impl VisibleLine {
         Self {
             galley,
             source_bytes: source.len(),
-            left: start_column as f32 * metrics.cell,
+            left: start_column as f32 * metrics.cell + offset,
             start,
             end,
             carets,
@@ -144,21 +156,125 @@ impl VisibleLine {
     }
 }
 
-pub(crate) fn hit(
-    ui: &egui::Ui,
-    text: &TextBuffer,
-    metrics: &Metrics,
-    position: egui::Pos2,
-) -> usize {
-    let row = (((position.y - 6.0) / metrics.height).floor().max(0.0) as usize)
-        .min(text.line_count() - 1);
-    let column = ((position.x - 8.0) / metrics.cell).floor().max(0.0) as usize;
-    VisibleLine::new(
-        ui,
-        text,
-        metrics,
-        row,
-        column.saturating_sub(8)..column.saturating_add(16),
-    )
-    .hit(position.x - 8.0)
+/// One mapping for scrolling, painting, pointer hits and keyboard movement.
+/// A pending wrap build uses the ordinary unwrapped mapping consistently.
+pub(crate) struct Geometry<'a> {
+    pub text: &'a TextBuffer,
+    pub metrics: &'a Metrics,
+    pub wrap: Option<&'a crate::wrapping::WrapIndex>,
+}
+impl Geometry<'_> {
+    pub fn rows(&self) -> usize {
+        self.wrap
+            .map_or_else(|| self.text.line_count(), |w| w.rows())
+    }
+    pub fn size(&self, viewport: Vec2) -> Vec2 {
+        if self.wrap.is_some() {
+            egui::vec2(viewport.x, self.rows() as f32 * self.metrics.height + 12.0).max(viewport)
+        } else {
+            self.metrics.content_size(self.text).max(viewport)
+        }
+    }
+    pub fn visual_row(&self, byte: usize) -> usize {
+        self.wrap
+            .map_or_else(|| self.text.line_of(byte), |w| w.visual_row(byte))
+    }
+    pub fn segment(&self, row: usize) -> crate::wrapping::Segment {
+        self.wrap.map_or_else(
+            || crate::wrapping::Segment {
+                line: row,
+                part: 0,
+                bytes: self.text.line_range(row),
+                columns: 0..self.text.column(self.text.line_range(row).end),
+                indent: 0,
+            },
+            |w| w.segment(row),
+        )
+    }
+    pub fn line(&self, ui: &egui::Ui, row: usize, cells: Range<usize>) -> VisibleLine {
+        if self.wrap.is_some() {
+            let segment = self.segment(row);
+            VisibleLine::fragment(
+                ui,
+                self.text,
+                self.metrics,
+                segment.bytes,
+                (segment.indent as f32 - segment.columns.start as f32) * self.metrics.cell,
+            )
+        } else {
+            VisibleLine::new(ui, self.text, self.metrics, row, cells)
+        }
+    }
+    pub fn visual_row_for(&self, byte: usize, upstream: bool) -> usize {
+        let row = self.visual_row(byte);
+        if upstream && self.wrap.is_some() && row > 0 && self.segment(row).bytes.start == byte {
+            row - 1
+        } else {
+            row
+        }
+    }
+    pub fn caret(&self, byte: usize) -> Rect {
+        self.caret_for(byte, false)
+    }
+    pub fn caret_for(&self, byte: usize, upstream: bool) -> Rect {
+        if self.wrap.is_none() {
+            return self.metrics.caret(self.text, byte);
+        }
+        let row = self.visual_row_for(byte, upstream);
+        let segment = self.segment(row);
+        Rect::from_min_size(
+            egui::pos2(
+                8.0 + (self.text.column(byte).saturating_sub(segment.columns.start)
+                    + segment.indent) as f32
+                    * self.metrics.cell,
+                6.0 + row as f32 * self.metrics.height,
+            ),
+            egui::vec2(0.0, self.metrics.height),
+        )
+    }
+    pub fn hit(&self, ui: &egui::Ui, position: egui::Pos2) -> usize {
+        let row = (((position.y - 6.0) / self.metrics.height).floor().max(0.0) as usize)
+            .min(self.rows() - 1);
+        let column = ((position.x - 8.0) / self.metrics.cell).floor().max(0.0) as usize;
+        self.line(ui, row, column.saturating_sub(8)..column.saturating_add(16))
+            .hit(position.x - 8.0)
+    }
+    pub fn vertical(
+        &self,
+        byte: usize,
+        column: usize,
+        step: isize,
+        upstream: bool,
+    ) -> (usize, bool) {
+        if let Some(wrap) = self.wrap {
+            let row = self
+                .visual_row_for(byte, upstream)
+                .saturating_add_signed(step)
+                .min(wrap.rows() - 1);
+            let segment = wrap.segment(row);
+            let at = self
+                .text
+                .byte_at_column(
+                    segment.line,
+                    segment.columns.start + column.saturating_sub(segment.indent),
+                )
+                .clamp(segment.bytes.start, segment.bytes.end);
+            (at, at == segment.bytes.end)
+        } else {
+            let row = self
+                .text
+                .line_of(byte)
+                .saturating_add_signed(step)
+                .min(self.text.line_count() - 1);
+            (self.text.byte_at_column(row, column), false)
+        }
+    }
+    pub fn column_for(&self, byte: usize, upstream: bool) -> usize {
+        if let Some(wrap) = self.wrap {
+            let segment = wrap.segment(self.visual_row_for(byte, upstream));
+            self.text.column(byte).saturating_sub(segment.columns.start) + segment.indent
+        } else {
+            self.text.column(byte)
+        }
+    }
 }

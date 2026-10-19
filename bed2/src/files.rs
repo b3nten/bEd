@@ -402,6 +402,7 @@ impl Panel for FilePreviewPanel {
                             split = ui.button("Split view").clicked();
                             if let Some(mut editor) = world.get_mut::<bedtime_editor2::workbench::WorkbenchEditor>(panel) {
                                 ui.checkbox(&mut editor.view.settings.line_numbers, "Line numbers");
+                                editor.view.editing_menu(ui);
                             }
                             if info.saving { ui.spinner(); }
                             else if info.dirty { ui.weak("Modified"); }
@@ -1762,7 +1763,7 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
                 "document_info": document.and_then(|id| inspect_document(world, id).ok()).map(|info| json!({"revision": info.revision, "dirty": info.dirty, "saving": info.saving, "conflict": info.conflict, "draft": info.has_drafts})),
                 "editor_rect": preview.editor_rect.map(|rect| json!({"min": [rect.min.x,rect.min.y], "max": [rect.max.x,rect.max.y]})),
                 "caret_rect": preview.caret_rect.map(|rect| json!({"min": [rect.min.x,rect.min.y], "max": [rect.max.x,rect.max.y]})),
-                "editor": world.get::<bedtime_editor2::workbench::WorkbenchEditor>(entity).map(|editor| json!({"anchor": editor.view.selection().anchor(), "head": editor.view.selection().head(), "scroll": [editor.view.scroll_offset().x,editor.view.scroll_offset().y], "line_numbers": editor.view.settings.line_numbers})),
+                "editor": world.get::<bedtime_editor2::workbench::WorkbenchEditor>(entity).map(|editor| json!({"anchor": editor.view.selection().anchor(), "head": editor.view.selection().head(), "scroll": [editor.view.scroll_offset().x,editor.view.scroll_offset().y], "line_numbers": editor.view.settings.line_numbers, "wrap": editor.view.settings.wrap, "wrapping_ready": editor.view.wrapping_ready(), "search_query": editor.view.search_query().map(|query| query.text.as_str()), "search_matches": editor.view.search_match_count()})),
             })
         }).collect();
     let storage: Vec<_> = world

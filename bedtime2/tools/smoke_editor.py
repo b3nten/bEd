@@ -110,6 +110,80 @@ def main():
             app.click_text("Line numbers", index=1)
             state = inspect(app)
             assert sum(not p["editor"]["line_numbers"] for p in state["previews"] if p["path"] == str(small)) == 1
+            # Find owns its input, replacements share history, and wrapping is
+            # view-local. Exercise the real controls rather than mutating state.
+            navigate(app, second, 0)
+            primary(app, "KeyF")
+            app.input({"type": "text", "text": "café"})
+            wait(app, lambda state: viewer(state, second)["editor"]["search_matches"] == 1,seconds=10)
+            app.click_text("Replace", index=0)
+            app.click_text("Replacement")
+            app.input({"type": "text", "text": "mundo"})
+            app.click_text("Replace next")
+            expected = "🙂edited mundo"
+            wait(app, lambda state: viewer(state, second)["content"] == expected)
+            app.click_text("Close find")
+            primary(app, "KeyZ")
+            wait(app, lambda state: viewer(state, second)["content"] == "🙂edited café")
+            primary(app, "KeyZ", shift=True)
+            wait(app, lambda state: viewer(state, second)["content"] == expected)
+
+            # Replace all is one canonical undo step, including both viewers.
+            primary(app, "KeyF")
+            primary(app, "KeyA")
+            app.input({"type": "text", "text": "o"})
+            wait(app, lambda state: viewer(state, second)["editor"]["search_matches"] == 1,seconds=10)
+            app.click_text("Replace")
+            app.click_text("mundo")
+            primary(app, "KeyA")
+            app.input({"type": "text", "text": "OO"})
+            app.click_text("Replace all")
+            expected = "🙂edited mundOO"
+            wait(app, lambda state: all(p["content"] == expected for p in state["previews"] if p["path"] == str(small)))
+            captures.append(app.capture("02-find-replace.png"))
+            app.click_text("Close find")
+            primary(app, "KeyZ")
+            wait(app, lambda state: viewer(state, second)["content"] == "🙂edited mundo")
+            primary(app, "KeyZ", shift=True)
+            wait(app, lambda state: viewer(state, second)["content"] == expected)
+            primary(app, "KeyS")
+            wait(app, lambda state: not viewer(state, second)["document_info"]["dirty"])
+            assert small.read_text() == expected
+
+            # Smart newline, tab-stop backspace and block indentation use the
+            # same canonical editing path as ordinary typing.
+            navigate(app, second, 0)
+            primary(app, "KeyA")
+            app.input({"type": "text", "text": "    {}"},
+                      {"type": "key", "code": "ArrowLeft", "pressed": True},
+                      {"type": "key", "code": "ArrowLeft", "pressed": False},
+                      {"type": "key", "code": "Enter", "pressed": True},
+                      {"type": "key", "code": "Enter", "pressed": False})
+            block = "    {\n        \n    }"
+            wait(app, lambda state: viewer(state, second)["content"] == block)
+            app.input({"type": "key", "code": "Backspace", "pressed": True},
+                      {"type": "key", "code": "Backspace", "pressed": False})
+            block = "    {\n    \n    }"
+            wait(app, lambda state: viewer(state, second)["content"] == block)
+            primary(app, "KeyA")
+            app.input({"type": "key", "code": "Tab", "pressed": True},
+                      {"type": "key", "code": "Tab", "pressed": False})
+            wait(app, lambda state: viewer(state, second)["content"] == "        {\n        \n        }")
+            primary(app, "KeyZ")
+            wait(app, lambda state: viewer(state, second)["content"] == block)
+            primary(app, "KeyA")
+            app.input({"type": "text", "text": expected})
+            primary(app, "KeyS")
+            wait(app, lambda state: not viewer(state, second)["document_info"]["dirty"])
+            assert small.read_text() == expected
+
+            # The first editor's wrap setting does not change its sibling.
+            app.click_text("Editing", index=0)
+            app.click_text("Wrap lines")
+            app.input({"type": "key", "code": "Escape", "pressed": True},
+                      {"type": "key", "code": "Escape", "pressed": False})
+            wait(app, lambda state: viewer(state, first)["editor"]["wrapping_ready"])
+            assert not viewer(inspect(app), second)["editor"]["wrap"]
             captures.append(app.capture("01-shared-editors.png"))
 
             app.click_text("large.txt")
@@ -142,7 +216,7 @@ def main():
             primary(app, "KeyZ", shift=True)
             state = wait(app, lambda state: viewer(state, big)["byte_len"] == large_size + 1 and not viewer(state, big)["document_info"]["dirty"])
             current = viewer(state, big)
-            captures.append(app.capture("02-million-line-editor.png"))
+            captures.append(app.capture("03-million-line-editor.png"))
             app.request("workspace.close", workspace=workspace)
             summary = {"passed": True, "large_file_bytes": large_size, "line_count": 1000001,
                        "rendered_lines": current["rendered_lines"], "laid_out_bytes": current["laid_out_bytes"],

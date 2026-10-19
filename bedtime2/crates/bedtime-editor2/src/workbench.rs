@@ -49,7 +49,7 @@ pub fn unbind_text_editor(
 }
 
 /// Draw inside any host panel. Applications can add controls around this call;
-/// the editor itself draws only the text, optional numbers and scroll bars.
+/// the editor draws text, optional numbers/scroll bars and its local Find bar.
 pub fn draw_editor(
     ui: &mut egui::Ui,
     world: &mut World,
@@ -171,13 +171,12 @@ impl TextSession for WorkbenchTextSession<'_> {
                     .collect()
             }))
     }
-    fn edit(&mut self, revision: u64, change: TextEdit) -> Result<u64, EditorError> {
+    fn edit_buffer(&mut self, revision: u64, change: BufferEdit) -> Result<u64, EditorError> {
         if document_has_drafts(self.world, self.handle.id()) {
             return Err(EditorError(
                 "Another view has uncommitted text composition".into(),
             ));
         }
-        let change = BufferEdit::new(change.range, change.replacement);
         let group = match *self.group {
             Some(group) => group,
             None => begin_document_undo_group(self.world, self.handle.id(), self.panel)

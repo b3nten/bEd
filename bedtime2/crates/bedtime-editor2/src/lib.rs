@@ -1,7 +1,14 @@
 //! Viewport-only plain text editor. Canonical text and history belong to a
 //! TextSession; views own selection, composition and navigation. No full-file
 //! string or galley is constructed while drawing or performing ordinary edits.
+mod background;
 mod caret;
+mod search;
+mod search_ui;
+mod whitespace;
+mod wrapping;
+pub use search::SearchQuery;
+pub use whitespace::Indentation;
 mod document;
 mod layout;
 mod text;
@@ -65,6 +72,9 @@ pub struct EditorSettings {
     pub line_numbers: bool,
     pub read_only: bool,
     pub animate_caret: bool,
+    pub wrap: bool,
+    pub smart_indent: bool,
+    pub indentation: Indentation,
 }
 impl Default for EditorSettings {
     fn default() -> Self {
@@ -72,6 +82,9 @@ impl Default for EditorSettings {
             line_numbers: true,
             read_only: false,
             animate_caret: true,
+            wrap: false,
+            smart_indent: true,
+            indentation: Indentation::default(),
         }
     }
 }
@@ -90,9 +103,21 @@ pub struct EditorView {
     caret: caret::CaretAnimation,
     last_edit: Option<f64>,
     preferred_column: Option<usize>,
+    upstream: bool,
     focused: bool,
+    request_focus: bool,
     scroll: egui::Vec2,
     drag_anchor: Option<usize>,
+    wrapping: wrapping::Wrapping,
+    wrap_active: bool,
+    wrap_reveal: Option<(Range<usize>, Reveal)>,
+    search: search::Search,
+    indent_job: Option<(
+        u64,
+        TextSelection,
+        background::Job<(BufferEdit, TextSelection)>,
+    )>,
+    edit_message: Option<String>,
 }
 pub struct EditorOutput {
     pub response: egui::Response,
@@ -111,6 +136,23 @@ impl EditorView {
     }
     pub fn scroll_offset(&self) -> egui::Vec2 {
         self.scroll
+    }
+    pub fn wrapping_ready(&self) -> bool {
+        self.settings.wrap && self.wrap_active
+    }
+    pub fn search_query(&self) -> Option<&SearchQuery> {
+        self.search.open.then_some(&self.search.query)
+    }
+    pub fn search_match_count(&self) -> Option<usize> {
+        self.search
+            .results
+            .as_ref()
+            .filter(|r| {
+                self.search.open
+                    && r.query == self.search.query
+                    && Some(r.revision) == self.observed_revision
+            })
+            .map(|r| r.count)
     }
     pub fn is_composing(&self) -> bool {
         self.composition.is_some()
@@ -162,8 +204,83 @@ impl EditorView {
         )?;
         *snapshot = session.snapshot()?;
         self.selection = TextSelection::caret(&snapshot.text, head)?;
+        self.upstream = false;
         self.preferred_column = None;
         self.last_edit = Some(now);
+        Ok(())
+    }
+    fn apply_edit(
+        &mut self,
+        id: egui::Id,
+        session: &mut dyn TextSession,
+        snapshot: &mut TextSnapshot,
+        edit: TextEdit,
+        selection: TextSelection,
+        now: f64,
+    ) -> Result<(), EditorError> {
+        self.apply_buffer_edit(
+            id,
+            session,
+            snapshot,
+            BufferEdit::new(edit.range, edit.replacement),
+            selection,
+            now,
+        )
+    }
+    fn apply_buffer_edit(
+        &mut self,
+        id: egui::Id,
+        session: &mut dyn TextSession,
+        snapshot: &mut TextSnapshot,
+        edit: BufferEdit,
+        selection: TextSelection,
+        now: f64,
+    ) -> Result<(), EditorError> {
+        session.set_edit_owner(id);
+        session.edit_buffer(snapshot.revision, edit)?;
+        *snapshot = session.snapshot()?;
+        self.selection = TextSelection::new(&snapshot.text, selection.anchor, selection.head)?;
+        self.upstream = false;
+        self.preferred_column = None;
+        self.last_edit = Some(now);
+        Ok(())
+    }
+    fn active_wrap(
+        &self,
+        snapshot: &TextSnapshot,
+        width: Option<usize>,
+    ) -> Option<&wrapping::WrapIndex> {
+        self.wrapping.index.as_ref().filter(|index| {
+            Some(index.width) == width && index.snapshot.revision == snapshot.revision
+        })
+    }
+    fn prepare_wrapping(
+        &mut self,
+        ctx: &egui::Context,
+        session: &dyn TextSession,
+        snapshot: &TextSnapshot,
+        width: Option<usize>,
+    ) -> Result<(), EditorError> {
+        let changes = if let Some(index) = &self.wrapping.index {
+            if index.snapshot.revision != snapshot.revision {
+                session
+                    .changes_since(index.snapshot.revision)?
+                    .and_then(|commits| {
+                        commits
+                            .into_iter()
+                            .try_fold(Vec::new(), |mut changes, commit| {
+                                changes.extend(commit.changes?);
+                                Some(changes)
+                            })
+                    })
+            } else {
+                Some(Vec::new())
+            }
+        } else {
+            None
+        };
+        self.wrapping
+            .prepare(ctx, snapshot, width, changes.as_deref());
         Ok(())
     }
     pub fn show(
@@ -197,6 +314,56 @@ impl EditorView {
         } else {
             session.end_undo_group();
         }
+        if let Some((revision, selection, job)) = &self.indent_job {
+            let (revision, selection) = (*revision, *selection);
+            match job.poll() {
+                Ok(Some((edit, mapped))) => {
+                    self.indent_job = None;
+                    if revision != snapshot.revision
+                        || selection != self.selection
+                        || self.settings.read_only
+                        || self.navigation.is_some()
+                        || self.is_composing()
+                    {
+                        self.edit_message =
+                            Some("Editor changed; indentation was not applied. Try again.".into());
+                    } else {
+                        session.end_undo_group();
+                        let result =
+                            self.apply_buffer_edit(id, session, &mut snapshot, edit, mapped, now);
+                        session.end_undo_group();
+                        if let Err(error) = result {
+                            self.edit_message =
+                                Some(format!("Indentation was not applied: {error}"));
+                        }
+                    }
+                }
+                Err(()) => {
+                    self.indent_job = None;
+                    self.edit_message =
+                        Some("Indentation worker stopped; no changes applied".into());
+                }
+                _ => {}
+            }
+        }
+        if self.indent_job.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Preparing indentation…");
+                if ui.button("Cancel indentation").clicked() {
+                    self.indent_job = None;
+                }
+            });
+        }
+        if let Some(message) = self.edit_message.clone() {
+            ui.horizontal_wrapped(|ui| {
+                ui.weak(message);
+                if ui.button("Dismiss").clicked() {
+                    self.edit_message = None;
+                }
+            });
+        }
+        self.search_ui(ui, id, session, &mut snapshot)?;
         let navigation = self.navigation.take();
         if let Some(nav) = &navigation {
             if nav.revision != snapshot.revision {
@@ -206,6 +373,7 @@ impl EditorView {
             }
             if let Some(selection) = nav.selection {
                 self.selection = selection;
+                self.upstream = false;
             }
             if nav.focus {
                 ui.memory_mut(|memory| memory.request_focus(id));
@@ -252,7 +420,20 @@ impl EditorView {
                     })
                     .show_viewport(ui, |ui, viewport| {
                         let origin = ui.cursor().min;
-                        let size = metrics.content_size(&snapshot.text).max(viewport.size());
+                        let wrap_width = self.settings.wrap.then_some(
+                            (((viewport.width() - 16.0) / metrics.cell).floor() as usize).max(8),
+                        );
+                        if let Err(error) =
+                            self.prepare_wrapping(ui.ctx(), session, &snapshot, wrap_width)
+                        {
+                            failure = Some(error);
+                        }
+                        let geometry = layout::Geometry {
+                            text: &snapshot.text,
+                            metrics: &metrics,
+                            wrap: self.active_wrap(&snapshot, wrap_width),
+                        };
+                        let size = geometry.size(viewport.size());
                         let rect = egui::Rect::from_min_size(origin, size);
                         ui.allocate_rect(rect, egui::Sense::hover());
                         let response = ui.interact(rect, id, egui::Sense::click_and_drag());
@@ -265,12 +446,15 @@ impl EditorView {
                             self.cancel_composition(session, id);
                             response.request_focus();
                             let position = ui.input(|i| i.pointer.interact_pos()).unwrap();
-                            let hit = layout::hit(
-                                ui,
-                                &snapshot.text,
-                                &metrics,
-                                position - origin.to_vec2(),
-                            );
+                            let geometry = layout::Geometry {
+                                text: &snapshot.text,
+                                metrics: &metrics,
+                                wrap: self.active_wrap(&snapshot, wrap_width),
+                            };
+                            let local = position - origin.to_vec2();
+                            let hit = geometry.hit(ui, local);
+                            self.upstream = geometry.visual_row(hit)
+                                > (((local.y - 6.0) / metrics.height).floor().max(0.0) as usize);
                             session.end_undo_group();
                             self.preferred_column = None;
                             if ui.input(|i| i.modifiers.shift) {
@@ -285,12 +469,16 @@ impl EditorView {
                         }
                         if response.dragged_by(egui::PointerButton::Primary) {
                             if let Some(position) = ui.input(|i| i.pointer.interact_pos()) {
-                                let hit = layout::hit(
-                                    ui,
-                                    &snapshot.text,
-                                    &metrics,
-                                    position - origin.to_vec2(),
-                                );
+                                let geometry = layout::Geometry {
+                                    text: &snapshot.text,
+                                    metrics: &metrics,
+                                    wrap: self.active_wrap(&snapshot, wrap_width),
+                                };
+                                let local = position - origin.to_vec2();
+                                let hit = geometry.hit(ui, local);
+                                self.upstream = geometry.visual_row(hit)
+                                    > (((local.y - 6.0) / metrics.height).floor().max(0.0)
+                                        as usize);
                                 self.selection = TextSelection {
                                     anchor: self.drag_anchor.unwrap_or(self.selection.anchor),
                                     head: hit,
@@ -324,6 +512,7 @@ impl EditorView {
                                         tab: true,
                                         horizontal_arrows: true,
                                         vertical_arrows: true,
+                                        escape: self.search.open || self.is_composing(),
                                         ..Default::default()
                                     },
                                 )
@@ -382,40 +571,82 @@ impl EditorView {
                         } else {
                             (snapshot.text.clone(), self.selection)
                         };
-                        ui.set_min_size(metrics.content_size(&display).max(viewport.size()));
+                        if let Err(error) =
+                            self.prepare_wrapping(ui.ctx(), session, &snapshot, wrap_width)
+                        {
+                            failure = Some(error);
+                        }
+                        let active_wrap = self.wrapping.index.as_ref().filter(|index| {
+                            Some(index.width) == wrap_width
+                                && index.snapshot.revision == snapshot.revision
+                        });
+                        let draft_wrap = if let (Some(index), Some(composition)) =
+                            (active_wrap, &self.composition)
+                        {
+                            let mut draft = index.clone();
+                            let change = TextDelta {
+                                range: composition.selection.range(),
+                                inserted_bytes: composition.text.len(),
+                            };
+                            draft
+                                .update(
+                                    TextSnapshot {
+                                        revision: snapshot.revision,
+                                        text: display.clone(),
+                                    },
+                                    &[change],
+                                )
+                                .then_some(draft)
+                        } else {
+                            None
+                        };
+                        let wrap = if self.composition.is_some() {
+                            draft_wrap.as_ref()
+                        } else {
+                            active_wrap
+                        };
+                        let wrapped = wrap.is_some();
+                        let geometry = layout::Geometry {
+                            text: &display,
+                            metrics: &metrics,
+                            wrap,
+                        };
+                        ui.set_min_size(geometry.size(viewport.size()));
                         let clip = ui.clip_rect();
                         let painter = ui.painter().with_clip_rect(clip);
                         let first =
                             ((viewport.top() - 6.0) / metrics.height).floor().max(0.0) as usize;
                         let last = (((viewport.bottom() + 6.0) / metrics.height).ceil() as usize
                             + 1)
-                        .min(display.line_count());
+                        .min(geometry.rows());
                         let first_cell =
                             ((viewport.left() - 8.0) / metrics.cell).floor().max(0.0) as usize;
                         let last_cell =
                             ((viewport.right() + 8.0) / metrics.cell).ceil().max(1.0) as usize + 4;
-                        let mut local_caret = metrics.caret(&display, selection.head);
-                        let caret_row = display.line_of(selection.head);
+                        let mut local_caret = geometry.caret_for(selection.head, self.upstream);
+                        let caret_row = geometry.visual_row_for(selection.head, self.upstream);
                         for row in first..last {
-                            let line = layout::VisibleLine::new(
-                                ui,
-                                &display,
-                                &metrics,
-                                row,
-                                first_cell..last_cell,
-                            );
+                            let segment = geometry.segment(row);
+                            let line = geometry.line(ui, row, first_cell..last_cell);
                             laid_out_bytes += line.source_bytes;
                             rendered_lines += 1;
                             let y = origin.y + 6.0 + row as f32 * metrics.height;
-                            number_rows.push((row, y));
+                            if segment.part == 0 {
+                                number_rows.push((segment.line, y));
+                            }
                             let selected = selection.range();
-                            let body = display.line_range(row);
-                            if selected.start < display.line_start(row + 1)
+                            let body = segment.bytes.clone();
+                            if selected.start
+                                < if wrapped {
+                                    body.end
+                                } else {
+                                    display.line_start(segment.line + 1)
+                                }
                                 && selected.end > body.start
                                 && !selected.is_empty()
                             {
                                 let left = if selected.start <= body.start {
-                                    0.0
+                                    segment.indent as f32 * metrics.cell
                                 } else {
                                     line.x_at(selected.start)
                                 };
@@ -432,6 +663,39 @@ impl EditorView {
                                     0.0,
                                     ui.visuals().selection.bg_fill,
                                 );
+                            }
+                            if self.search.open && self.composition.is_none() {
+                                if let Some(results) = &self.search.results {
+                                    if results.revision == snapshot.revision
+                                        && results.query == self.search.query
+                                    {
+                                        for range in search::visible_matches(
+                                            &display,
+                                            results,
+                                            line.start..line.end,
+                                        ) {
+                                            painter.rect_filled(
+                                                egui::Rect::from_min_max(
+                                                    egui::pos2(
+                                                        origin.x
+                                                            + 8.0
+                                                            + line
+                                                                .x_at(range.start.max(body.start)),
+                                                        y,
+                                                    ),
+                                                    egui::pos2(
+                                                        origin.x
+                                                            + 8.0
+                                                            + line.x_at(range.end.min(body.end)),
+                                                        y + metrics.height,
+                                                    ),
+                                                ),
+                                                0.0,
+                                                ui.visuals().warn_fg_color.gamma_multiply(0.25),
+                                            );
+                                        }
+                                    }
+                                }
                             }
                             painter.galley(
                                 egui::pos2(origin.x + 8.0 + line.left(), y),
@@ -469,13 +733,23 @@ impl EditorView {
                             }
                         }
                         caret_rect = local_caret.translate(origin.to_vec2());
+                        if wrapped != self.wrap_active {
+                            if reveal.is_none() {
+                                reveal = self.wrap_reveal.take().or_else(|| {
+                                    Some((selection.head..selection.head, Reveal::Minimal))
+                                });
+                            }
+                        }
+                        if wrap_width.is_some() && !wrapped {
+                            self.wrap_reveal = reveal.clone().or_else(|| self.wrap_reveal.take());
+                        }
+                        // Geometry borrows wrap metadata, so update the flag only
+                        // after all mappings below have been read.
                         if let Some((range, alignment)) = &reveal {
                             let target = if self.composition.is_some() {
                                 local_caret
                             } else {
-                                metrics
-                                    .caret(&display, range.start)
-                                    .union(metrics.caret(&display, range.end))
+                                geometry.caret(range.start).union(geometry.caret(range.end))
                             };
                             ui.scroll_to_rect(
                                 target.translate(origin.to_vec2()).expand(2.0),
@@ -484,6 +758,16 @@ impl EditorView {
                                 } else {
                                     None
                                 },
+                            );
+                        }
+                        self.wrap_active = wrapped;
+                        if self.settings.wrap && !wrapped {
+                            painter.text(
+                                clip.right_top() - egui::vec2(8.0, -4.0),
+                                egui::Align2::RIGHT_TOP,
+                                "Preparing wrapping…",
+                                metrics.font.clone(),
+                                ui.visuals().weak_text_color(),
                             );
                         }
                         if focused && !self.settings.read_only {
@@ -516,6 +800,12 @@ impl EditorView {
                 (gutter, scroll)
             })
             .inner;
+        if self.request_focus {
+            // Request only after the canvas has registered its current rect.
+            // Removing the find bar changes the scroll layout in this pass.
+            scroll.inner.request_focus();
+            self.request_focus = false;
+        }
         self.scroll = scroll.state.offset;
         self.observed_revision = Some(snapshot.revision);
         if self.settings.line_numbers {
@@ -616,7 +906,42 @@ impl EditorView {
                     if paste {
                         session.end_undo_group();
                     }
-                    self.replace_selection(id, session, snapshot, text.clone(), now)?;
+                    if !paste
+                        && self.settings.smart_indent
+                        && self.selection.range().is_empty()
+                        && matches!(text.as_str(), "}" | "]" | ")")
+                        && self.selection.head
+                            > snapshot
+                                .text
+                                .line_start(snapshot.text.line_of(self.selection.head))
+                        && whitespace::leading_end(
+                            &snapshot.text,
+                            snapshot.text.line_of(self.selection.head),
+                            self.selection.head,
+                        ) == self.selection.head
+                    {
+                        let target = whitespace::backspace(
+                            &snapshot.text,
+                            self.selection.head,
+                            self.settings.indentation,
+                        );
+                        let head = target + text.len();
+                        session.end_undo_group();
+                        self.apply_edit(
+                            id,
+                            session,
+                            snapshot,
+                            TextEdit {
+                                range: target..self.selection.head,
+                                replacement: text.clone(),
+                            },
+                            TextSelection { anchor: head, head },
+                            now,
+                        )?;
+                        session.end_undo_group();
+                    } else {
+                        self.replace_selection(id, session, snapshot, text.clone(), now)?;
+                    }
                     if paste {
                         session.end_undo_group();
                     }
@@ -693,6 +1018,22 @@ impl EditorView {
                 let row = snapshot.text.line_of(head);
                 let body = snapshot.text.line_range(row);
                 let selection = self.selection.range();
+                let mut target_upstream = matches!(key, egui::Key::ArrowLeft | egui::Key::End);
+                let wrapped_segment = self
+                    .wrapping
+                    .index
+                    .as_ref()
+                    .filter(|index| {
+                        self.settings.wrap && index.snapshot.revision == snapshot.revision
+                    })
+                    .map(|index| {
+                        let mut visual = index.visual_row(head);
+                        if self.upstream && visual > 0 && index.segment(visual).bytes.start == head
+                        {
+                            visual -= 1;
+                        }
+                        index.segment(visual)
+                    });
                 let target = match key {
                     egui::Key::ArrowLeft => Some(if !modifiers.shift && !selection.is_empty() {
                         selection.start
@@ -712,11 +1053,27 @@ impl EditorView {
                     } else {
                         snapshot.text.next_grapheme(head)
                     }),
-                    egui::Key::Home => Some(if primary { 0 } else { body.start }),
+                    egui::Key::Home => Some(if primary {
+                        0
+                    } else {
+                        if let Some(segment) = &wrapped_segment {
+                            if segment.part > 0 {
+                                segment.bytes.start
+                            } else {
+                                let first = whitespace::leading_end(&snapshot.text, row, body.end);
+                                if head == first { body.start } else { first }
+                            }
+                        } else {
+                            let first = whitespace::leading_end(&snapshot.text, row, body.end);
+                            if head == first { body.start } else { first }
+                        }
+                    }),
                     egui::Key::End => Some(if primary {
                         snapshot.text.len()
                     } else {
-                        body.end
+                        wrapped_segment
+                            .as_ref()
+                            .map_or(body.end, |segment| segment.bytes.end)
                     }),
                     egui::Key::ArrowUp
                     | egui::Key::ArrowDown
@@ -727,20 +1084,31 @@ impl EditorView {
                         } else if mac && primary && *key == egui::Key::ArrowDown {
                             Some(snapshot.text.len())
                         } else {
+                            let wrap = self.wrapping.index.as_ref().filter(|index| {
+                                self.settings.wrap && index.snapshot.revision == snapshot.revision
+                            });
+                            let geometry = layout::Geometry {
+                                text: &snapshot.text,
+                                metrics: &layout::Metrics::new(ui),
+                                wrap,
+                            };
                             let column = *self
                                 .preferred_column
-                                .get_or_insert_with(|| snapshot.text.column(head));
+                                .get_or_insert_with(|| geometry.column_for(head, self.upstream));
                             let step = if matches!(key, egui::Key::PageUp | egui::Key::PageDown) {
                                 page
                             } else {
                                 1
                             };
-                            let row = if matches!(key, egui::Key::ArrowUp | egui::Key::PageUp) {
-                                row.saturating_sub(step)
+                            let step = if matches!(key, egui::Key::ArrowUp | egui::Key::PageUp) {
+                                -(step as isize)
                             } else {
-                                (row + step).min(snapshot.text.line_count() - 1)
+                                step as isize
                             };
-                            Some(snapshot.text.byte_at_column(row, column))
+                            let (target, upstream) =
+                                geometry.vertical(head, column, step, self.upstream);
+                            target_upstream = upstream;
+                            Some(target)
                         }
                     }
                     _ => None,
@@ -755,6 +1123,7 @@ impl EditorView {
                     ) {
                         self.preferred_column = None;
                     }
+                    self.upstream = target_upstream;
                     self.selection = TextSelection {
                         anchor: if modifiers.shift {
                             self.selection.anchor
@@ -776,7 +1145,15 @@ impl EditorView {
                                     } else if word {
                                         word_boundary(&snapshot.text, head, false)
                                     } else {
-                                        snapshot.text.previous_grapheme(head)
+                                        if self.settings.smart_indent {
+                                            whitespace::backspace(
+                                                &snapshot.text,
+                                                head,
+                                                self.settings.indentation,
+                                            )
+                                        } else {
+                                            snapshot.text.previous_grapheme(head)
+                                        }
                                     }
                                 } else if mac && primary {
                                     body.end
@@ -793,26 +1170,73 @@ impl EditorView {
                     }
                     egui::Key::Enter | egui::Key::Tab if !primary && !modifiers.alt => {
                         if !self.settings.read_only {
-                            let first_end = snapshot.text.line_start(1);
-                            let ending = if first_end > 0
-                                && snapshot.text.byte(first_end - 1) == Some(b'\r')
-                            {
-                                "\r"
-                            } else if first_end > 1
-                                && snapshot.text.byte(first_end - 1) == Some(b'\n')
-                                && snapshot.text.byte(first_end - 2) == Some(b'\r')
-                            {
-                                "\r\n"
+                            if *key == egui::Key::Enter {
+                                let (edit, head) = whitespace::newline(
+                                    &snapshot.text,
+                                    self.selection,
+                                    self.settings.indentation,
+                                    self.settings.smart_indent,
+                                );
+                                session.end_undo_group();
+                                self.apply_buffer_edit(
+                                    id,
+                                    session,
+                                    snapshot,
+                                    edit,
+                                    TextSelection { anchor: head, head },
+                                    now,
+                                )?;
+                                session.end_undo_group();
+                            } else if modifiers.shift || !self.selection.range().is_empty() {
+                                let range = self.selection.range();
+                                let first =
+                                    snapshot.text.line_start(snapshot.text.line_of(range.start));
+                                let last = snapshot
+                                    .text
+                                    .line_start(snapshot.text.line_of(range.end) + 1);
+                                if last - first > 256 * 1024 {
+                                    let source = snapshot.clone();
+                                    let selection = self.selection;
+                                    let style = self.settings.indentation;
+                                    let outdent = modifiers.shift;
+                                    self.indent_job = Some((
+                                        source.revision,
+                                        selection,
+                                        background::Job::start(ui.ctx(), move |cancel| {
+                                            whitespace::indent_cancellable(
+                                                &source.text,
+                                                selection,
+                                                style,
+                                                outdent,
+                                                cancel,
+                                            )
+                                        }),
+                                    ));
+                                } else {
+                                    let (edit, selection) = whitespace::indent(
+                                        &snapshot.text,
+                                        self.selection,
+                                        self.settings.indentation,
+                                        modifiers.shift,
+                                    );
+                                    session.end_undo_group();
+                                    self.apply_buffer_edit(
+                                        id, session, snapshot, edit, selection, now,
+                                    )?;
+                                    session.end_undo_group();
+                                }
                             } else {
-                                "\n"
-                            };
-                            self.replace_selection(
-                                id,
-                                session,
-                                snapshot,
-                                if *key == egui::Key::Tab { "\t" } else { ending }.into(),
-                                now,
-                            )?;
+                                let text = if self.settings.indentation == Indentation::Tabs {
+                                    "\t".into()
+                                } else {
+                                    " ".repeat(
+                                        self.settings.indentation.width()
+                                            - snapshot.text.column(head)
+                                                % self.settings.indentation.width(),
+                                    )
+                                };
+                                self.replace_selection(id, session, snapshot, text, now)?;
+                            }
                         }
                         Ok(true)
                     }
@@ -918,3 +1342,6 @@ fn word_range(text: &TextBuffer, from: usize) -> Range<usize> {
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod everyday_tests;

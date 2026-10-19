@@ -88,7 +88,10 @@ use acknowledged human-readable Workbench error dialogs with optional details.
 
 `bedtime-editor2` implements the first plain editor slice: persistent indexed
 UTF-8 text, viewport-only line/long-line layout, selection/navigation/clipboard,
-shared history, IME drafts, line numbers and bed1 caret motion. Its Workbench
+shared history, IME drafts, line numbers and bed1 caret motion. Everyday editing
+adds indentation-aware soft rows, smart whitespace, selection indent/outdent and
+literal Find/Replace. Cancellable workers prepare wrapping/search/bulk edits;
+revision checks gate acceptance. Folding waits for Tree-sitter integration. Its Workbench
 adapter uses canonical document transactions and a 128-commit change journal;
 default builds and the standalone example require no Workbench or language tools.
 `bed2/file_editor.rs` owns path identity, worker source comparison and streaming
@@ -103,7 +106,7 @@ For v2 library/application work, start with the affected package or test filter:
 cargo test --offline --locked -p bedtime-ui2 -p bedtime-workbench2 -p bedtime-terminal2 -p bedtime-filetree2 -p bedtime-clipboard2 -p bed2
 cargo check --offline --locked -p bedtime-workbench2 --no-default-features
 cargo test --offline --locked -p bedtime-editor2 --features workbench
-cargo test --offline --locked -p bedtime-editor2 --features workbench million_line_editing -- --ignored --nocapture
+cargo test --offline --locked -p bedtime-editor2 --features workbench million_line_ -- --ignored --nocapture
 ```
 
 When changing feature boundaries, also check the relevant `ui` and `native`

@@ -1,6 +1,6 @@
 use super::*;
 
-fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+pub(super) fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
     egui::Event::Key {
         key,
         physical_key: None,
@@ -9,7 +9,7 @@ fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
         modifiers,
     }
 }
-fn frame(
+pub(super) fn frame(
     ctx: &egui::Context,
     view: &mut EditorView,
     document: &mut dyn TextSession,
@@ -40,7 +40,12 @@ fn frame(
     full_output.textures_delta.clear();
     result.unwrap()
 }
-fn focus(ctx: &egui::Context, view: &mut EditorView, document: &mut dyn TextSession, id: egui::Id) {
+pub(super) fn focus(
+    ctx: &egui::Context,
+    view: &mut EditorView,
+    document: &mut dyn TextSession,
+    id: egui::Id,
+) {
     ctx.memory_mut(|memory| memory.request_focus(id));
     frame(ctx, view, document, id, vec![]);
 }

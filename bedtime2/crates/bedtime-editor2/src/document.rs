@@ -94,7 +94,11 @@ pub enum HistoryAction {
 pub trait TextSession {
     fn snapshot(&self) -> Result<TextSnapshot, EditorError>;
     fn changes_since(&self, revision: u64) -> Result<Option<Vec<TextCommit>>, EditorError>;
-    fn edit(&mut self, revision: u64, change: TextEdit) -> Result<u64, EditorError>;
+    fn edit(&mut self, revision: u64, change: TextEdit) -> Result<u64, EditorError> {
+        self.edit_buffer(revision, BufferEdit::new(change.range, change.replacement))
+    }
+    /// Accept a worker-built replacement without flattening it on the UI thread.
+    fn edit_buffer(&mut self, revision: u64, change: BufferEdit) -> Result<u64, EditorError>;
     fn history(&mut self, action: HistoryAction) -> Result<u64, EditorError>;
     fn end_undo_group(&mut self);
     fn set_composing(&mut self, view: egui::Id, composing: bool);
@@ -179,14 +183,13 @@ impl TextSession for TextDocument {
         ))
     }
 
-    fn edit(&mut self, revision: u64, change: TextEdit) -> Result<u64, EditorError> {
+    fn edit_buffer(&mut self, revision: u64, change: BufferEdit) -> Result<u64, EditorError> {
         if revision != self.snapshot.revision {
             return Err(EditorError("Stale document revision".into()));
         }
         if !self.composing.is_empty() {
             return Err(EditorError("Finish composition before editing".into()));
         }
-        let change = BufferEdit::new(change.range, change.replacement);
         let mut candidate = self.snapshot.text.clone();
         let inverse = change.apply(&mut candidate).map_err(EditorError)?;
         if candidate == self.snapshot.text {

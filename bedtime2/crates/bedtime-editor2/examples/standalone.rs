@@ -38,7 +38,7 @@ fn setup(world: &mut World) {
     world.spawn((Camera2d, UiCamera(window)));
     let view = register_view(world, window, draw);
     world.entity_mut(view).insert(Example {
-        document: TextDocument::new("One document, two independent views.\n\nType in either pane. Undo and redo use the same history.\nLine numbers can be toggled per view.\nThe cursor uses bed1's motion.\n\nNo Workbench, LSP, syntax or structure plugin is installed.\n"),
+        document: TextDocument::new("One document, two independent views.\n\nType in either pane. Undo and redo use the same history.\nUse Editing for wrapping, indentation and Find/Replace.\nLine numbers can be toggled per view.\nThe cursor uses bed1's motion.\n\nNo Workbench, LSP, syntax or structure plugin is installed.\n"),
         views: Default::default(),
     });
 }
@@ -54,6 +54,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
                     &mut state.views[index].settings.line_numbers,
                     "Line numbers",
                 );
+                state.views[index].editing_menu(ui);
                 if ui.button("Go to beginning").clicked() {
                     let snapshot = state.document.snapshot().unwrap();
                     state.views[index]

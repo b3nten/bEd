@@ -12,7 +12,8 @@ cargo run --offline --locked -p bedtime-editor2 --example standalone
 
 The example shows two views of one in-memory document without Workbench. bEd2
 uses the same editor for files opened from Files, with Save, Split view and a
-per-view Line numbers toggle. Edited previews become pinned tabs.
+per-view Line numbers toggle. The **Editing** menu exposes wrapping, indentation
+and Find/Replace. Edited previews become pinned tabs.
 
 ## Ownership and execution
 
@@ -60,8 +61,9 @@ Closing a Workbench viewer retains its document under the existing contract.
   loss or 650 ms of idle time, as well as document-service history/save barriers.
 
 Only explicit copy or file I/O materializes complete selected/source bytes.
-Document snapshots and history share immutable roots. Views retain an observed
-revision rather than another text buffer, so dormant views do not pin old text.
+Document snapshots and history share immutable roots. Unwrapped views retain an observed
+revision rather than another text buffer. A prepared wrap index retains its
+snapshot so journal changes can update the affected line metadata.
 
 ## Large files
 
@@ -113,16 +115,67 @@ Line-number visibility must remain independent of other gutter contributions.
 Debug execution locations and breakpoints must remain independent of selections.
 No provider registration framework is implemented in this slice.
 
-Indentation-aware soft wrapping, smart indentation/backspace, find/replace,
-folding, multicursor interaction and language-tool contributions remain later
-milestones. Ordinary typing, selection/drag, word/line/document/page navigation,
-clipboard, read-only presentation and history are implemented here.
+Multicursor interaction and language-tool contributions remain later milestones.
+Folding is deliberately deferred until Tree-sitter integration; no manual or
+heuristic folding is installed.
+
+## Everyday editing
+
+The **Editing** menu is optional host UI (`EditorView::editing_menu`); keyboard
+editing and Find/Replace also work when embedded without that menu. Settings and
+search belong to the view, independently of sibling views and document history.
+
+- **Wrap lines** uses viewport-width soft rows with continuation indentation
+  matching the line's leading whitespace, capped at half the row width. Breaks
+  use display cells and snap to complete graphemes, without syntax assumptions.
+  Numbers appear only on the first visual row. Pointer hits, selections, arrow/
+  page movement, Home/End, reveal and caret painting use the same row mapping;
+  caret affinity distinguishes the two sides of a soft row boundary.
+- **Smart indentation** preserves leading spaces/tabs and LF/CRLF/CR on Enter,
+  removes whitespace around the split, and adds one indentation unit after an
+  opening brace/bracket/parenthesis. Between a matching pair, Enter inserts a
+  separate closing line. Typing a closing delimiter in leading whitespace
+  outdents one level. These are local character rules, not language parsing.
+- **Tab** inserts tabs or spaces to the next indentation stop. Tab/Shift+Tab on
+  a selection indent/outdent whole lines, preserve selection direction and omit
+  an exclusive final line. Backspace steps through leading whitespace by stops,
+  respecting mixed spaces/tabs; Home toggles between indentation and row start.
+  Choose tabs or 2/4/8 spaces; existing whitespace is preserved. Tabs still
+  display at four-cell stops. Smart indentation can be disabled.
+- **Cmd/Ctrl+F** opens Find. **Cmd+Option+F** or **Ctrl+H** opens Replace;
+  the menu also exposes both. Enter/Shift+Enter, F3/Shift+F3 and Cmd/Ctrl+G with
+  optional Shift navigate forward/backward with wraparound. Escape closes Find
+  and returns focus to the editor. Selection seeds the query when at most 4 KiB.
+- Search is literal, with Unicode lowercase matching, Match case and Whole word
+  options. Matches can span rope leaves and include line endings; no regex or
+  Unicode normalization is applied. Queries accept at most 4,096 characters.
+  Replace next changes an observed selected match, then finds the next one.
+  Replace all is one atomic, undoable replacement; replacement text is literal.
+  Read-only views can search but cannot replace.
+
+Wrap metadata is prepared in cancellable view-owned workers. While a new width
+or bulk edit is being indexed, the view consistently uses ordinary unwrapped
+coordinates and displays a preparation indicator. A ready index updates only
+changed logical lines using shared 256-line blocks and block prefix totals.
+Viewport layout remains bounded, including for a single very long wrapped line.
+Widths/fonts can differ between sibling views.
+
+Search scans immutable snapshots in cancellable workers. Count/navigation results
+are revision-bound; edits invalidate them. Only 10,000 match ranges are cached,
+plus bounded source-region summaries for exact visible highlighting. Navigation
+beyond the cache requests another anchored observation, so all matches remain
+reachable without storing a range for every character. Replace all streams every
+match into a new rope in a worker rather than using that limited cache, with a
+256 MiB result limit. Indentation spans above 256 KiB are prepared off-thread too.
+Workers never mutate documents. Explicit acceptance checks revision, read-only
+and draft gates; stale or cancelled preparation changes no text or history.
+Closing Find cancels its work; dropping a view cancels all its workers.
 
 ## Verification
 
 ```sh
 cargo test --offline --locked -p bedtime-editor2 --features workbench
-cargo test --offline --locked -p bedtime-editor2 --features workbench million_line_editing -- --ignored --nocapture
+cargo test --offline --locked -p bedtime-editor2 --features workbench million_line_ -- --ignored --nocapture
 cargo check --offline --locked -p bedtime-editor2 --no-default-features --example standalone
 cargo test --offline --locked -p bedtime-workbench2 --no-default-features
 cargo build --offline --locked -p bed2 --features automation
@@ -135,9 +188,14 @@ small/large files and a memory clipboard, exercises real inputs and saves, and
 retains screenshots and a summary under `target/editor-smoke`.
 
 Verified on 2026-10-18 on an Apple M4 Pro in an unoptimized development build:
-the 112,000,000-byte fixture loaded/indexed in 5.55 s; headless egui editor frames
-had a 0.47 ms idle median, 0.83 ms maximum, 0.87 ms edit and 0.49 ms undo. These
-measure editor CPU work, not total native application/GPU frame time. The native
-smoke rendered 23 rows and shaped 506 bytes near EOF while exercising editing,
-shared history and saving the complete file. Measurements are local evidence,
-not performance guarantees for other machines or file contents.
+all 34 editor tests, including both explicit million-line fixtures, passed; the
+40 bEd2 application tests and the standalone no-Workbench build also passed.
+The 112,000,000-byte unwrapped fixture loaded/indexed in 5.90 s, with a 0.73 ms
+idle median, 1.14 ms maximum and 1.14 ms edit. The wrapped fixture prepared its
+index in 1.32 s, edited in 1.13 ms and searched asynchronously in 1.27 s, rendering
+17 rows / 889 bytes near EOF. These measure headless editor CPU work, not total
+native application/GPU frame time. The expanded native smoke verifies wrapping,
+Find reopening, replace-one/all, shared undo/redo, smart whitespace and real saves.
+Its final pinned-executable run passed with 21 rendered rows / 460 shaped bytes
+near EOF; three captures and `summary.json` are in `target/editor-everyday-smoke`.
+Measurements are local evidence, not guarantees for other machines or contents.
