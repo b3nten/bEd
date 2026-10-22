@@ -126,7 +126,9 @@ positions, avoiding the changing glyph sampling of scaled bitmap text. Layout
 and hit bounds keep their final coordinates. Interaction settles background
 growth while fading continues.
 `tooltip_ui` accepts custom tooltip content with the same theme, timing and view
-identity as `tooltip`.
+identity as `tooltip`. Runtime tooltips have zero delay and do not require a
+stationary pointer; feature controllers may impose their own delay (bEd2 LSP
+hover uses 200 ms).
 
 `MotionPolicy` is independent of theme. Default duration is 160 ms. Toggle motion
 uses cubic ease-out with continuous retargeting; disabling motion settles

@@ -554,8 +554,11 @@ impl Panel for FilePreviewPanel {
                         }
                     }
                     if document.is_some() {
+                        let language_tools = bedtime_lsp2::workbench::language_activity(world,panel).is_some();
+                        if let Some(mut editor) = world.get_mut::<bedtime_editor2::workbench::WorkbenchEditor>(panel) { editor.view.language_tools = language_tools; }
                         match bedtime_editor2::workbench::draw_editor(ui, world, context, panel) {
                             Ok(output) => {
+                                crate::lsp::editor_input(ui, world, panel, &output);
                                 output.response.context_menu(|ui| {
                                     if !pinned && ui.button("Keep open").clicked() { pin = true; ui.close(); }
                                     if ui.button("Reload").clicked() { reload = true; ui.close(); }

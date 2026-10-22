@@ -24,6 +24,34 @@ struct FileSource {
     pending_binding: bool,
     identity_generation: Arc<AtomicU64>,
     checkpoint: Arc<std::sync::Mutex<TextBuffer>>,
+    saved: Arc<std::sync::Mutex<Option<SavedText>>>,
+}
+struct SavedText {
+    revision: u64,
+    identity: u64,
+    text: TextBuffer,
+}
+pub(crate) fn source_path(world: &World, document: DocumentId) -> Option<&Path> {
+    world.get::<FileSource>(document.0)?.path.as_deref()
+}
+/// Pair the worker's actual write capture with Workbench's acknowledged receipt.
+/// SourceChanged and failed writes never become language-server save events.
+pub(crate) fn take_saved_text(
+    world: &World,
+    completion: &DocumentSaveFinished,
+) -> Option<TextBuffer> {
+    let source = world.get::<FileSource>(completion.document.0)?;
+    let mut saved = source.saved.lock().unwrap();
+    if saved
+        .as_ref()
+        .is_none_or(|s| s.revision != completion.captured_revision)
+    {
+        return None;
+    }
+    let saved = saved.take().unwrap();
+    (completion.result.is_ok()
+        && saved.identity == source.identity_generation.load(Ordering::Acquire))
+    .then_some(saved.text)
 }
 
 pub struct FileEditorPlugin;
@@ -214,6 +242,7 @@ pub fn bind_loaded(
             pending_binding: true,
             identity_generation: Arc::new(AtomicU64::new(0)),
             checkpoint: Arc::new(std::sync::Mutex::new(text.clone())),
+            saved: Arc::new(std::sync::Mutex::new(None)),
         });
         update_binding(world, handle.id()).map_err(|e| e.to_string())?;
         handle
@@ -334,14 +363,27 @@ fn update_binding(world: &mut World, id: DocumentId) -> Result<(), DocumentError
                 .unwrap()
                 .checkpoint
                 .clone();
+            let saved = world.get::<FileSource>(id.entity()).unwrap().saved.clone();
             bind_document_save(
                 world,
                 handle,
-                DocumentSaveBinding::new(Some(key), move |snapshot| {
-                    save_text(&path, snapshot, &checkpoint, || {
-                        identity.load(Ordering::Acquire) == generation
-                    })
-                }),
+                DocumentSaveBinding::new(
+                    Some(key),
+                    move |snapshot: DocumentSaveSnapshot<TextBuffer>| {
+                        let observation = SavedText {
+                            revision: snapshot.revision,
+                            identity: generation,
+                            text: snapshot.model.clone(),
+                        };
+                        let result = save_text(&path, snapshot, &checkpoint, || {
+                            identity.load(Ordering::Acquire) == generation
+                        });
+                        if result.is_ok() {
+                            *saved.lock().unwrap() = Some(observation);
+                        }
+                        result
+                    },
+                ),
             )?;
         }
         None => unbind_document_save(world, id)?,

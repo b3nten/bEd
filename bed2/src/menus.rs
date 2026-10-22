@@ -654,6 +654,7 @@ pub const PANELS: &[(&str, &str)] = &[
     (bedtime_terminal2::TerminalPanel::KEY, "Terminal"),
     (crate::cube::CubeViewport::KEY, "3D Viewport"),
     (crate::tasks::TasksPanel::KEY, "Tasks & Processes"),
+    (crate::lsp_panel::LspPanel::KEY, "Language Servers"),
     (crate::settings::SettingsPanel::KEY, "Settings"),
 ];
 
@@ -750,6 +751,7 @@ mod tests {
                         "Terminal",
                         "3D Viewport",
                         "Tasks & Processes",
+                        "Language Servers",
                         "Settings",
                         "Layout"
                     ]

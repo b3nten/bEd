@@ -10,9 +10,11 @@ description = "Application scaffold for the second Bedtime foundation"
 automation = ["dep:bedtime-automation2"]
 
 [dependencies]
+pulldown-cmark.workspace = true
 bed-structure2.workspace = true
 bedtime-treesitter2.workspace = true
 bedtime-editor2 = { workspace = true, features = ["workbench", "treesitter"] }
+bedtime-lsp2 = { workspace = true, features = ["workbench"] }
 bedtime-automation2 = { workspace = true, optional = true }
 bedtime-ui2.workspace = true
 bedtime-filetree2.workspace = true

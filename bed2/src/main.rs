@@ -15,10 +15,13 @@ mod files;
 mod fonts;
 mod keybindings;
 mod layouts;
+mod lsp;
+mod lsp_panel;
 mod menus;
 mod opening;
 mod session;
 mod settings;
+mod status_bar;
 mod storage;
 mod tasks;
 mod terminal;
@@ -215,6 +218,7 @@ fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) 
             });
         }
     });
+
     #[cfg(feature = "automation")]
     {
         world.resource_mut::<ToolbarRects>().0 = tool_rects;

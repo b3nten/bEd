@@ -224,6 +224,143 @@ viewed document and retires after its last editor closes. Closing viewers retain
 the canonical document under Workbench's existing contract. Files reopens retained
 file documents; folder session recipes reopen file descriptors, not unsaved contents.
 
+## Language servers and status bar
+
+Open a folder and a supported code file to start its configured local language
+server. Rust defaults to an installed `rust-analyzer`; no server is downloaded
+or installed. **Settings → Editor → Language servers** enables/disables language
+tools and edits configured programs/arguments. **Apply** commits a server draft
+and restarts affected processes; typing in a draft does not restart on each key.
+Settings inherit Global/Workspace values and use the existing centralized RON
+`.bed` stores. The home workspace does not launch project servers.
+
+Current features are document synchronization, push diagnostics, definition
+navigation, symbol hover and completion. Diagnostics draw revision-bound underlines and message tooltips.
+**F12** or the canvas menu's **Go to Definition** resolves the caret, opens the
+destination through the common Files route and selects/reveals its range.
+Multiple targets present a chooser. Destinations use temporary preview tabs:
+another clean preview can be reused, editing/Keep open pins normally, and an
+already pinned destination stays pinned. A source preview can itself be replaced;
+the accepted navigation retains its ticket/workspace and validates the target
+load stamp and revision before applying. Closed/rebound/newer requests cannot
+deliver late selection changes. Conversion for long target lines runs off-thread.
+
+**Cmd-click** (Ctrl-click on Linux) resolves the symbol under the pointer without
+first moving the caret. Modifier-hover underlines symbols and uses a link cursor.
+It shares F12's chooser, preview policy and revision/generation gates.
+
+Symbol hover waits **200 ms** before requesting information. Ordinary UI tooltips
+remain instant. The input-capable popup combines documentation and current
+intersecting diagnostics, remains readable under the pointer, scrolls vertically,
+and dismisses with Escape. Bed1's presentation is the reference: compact text,
+wrapped signatures, themed code highlighting, bold/inline-code prose and rules.
+Documentation is parsed once per payload; a panel-owned managed Tree-sitter worker
+prepares fenced-code colors. It does not install the bed1 renderer/runtime.
+
+Completion starts on identifier typing, negotiated trigger characters and
+**Ctrl-Space**. Arrow keys select, Enter/Tab or a click accepts, and Escape closes.
+Lists preserve server sorting, filter the identifier prefix and refresh incomplete
+results. Item details/documentation resolve lazily; accepting an unresolved item
+waits for its additional edits. A revision-checked editor transaction applies the
+replacement and auto-import edits together, with one undo step. Supported snippets
+have numbered/default/choice placeholders, mirrors, escapes and variable defaults;
+Tab/Shift-Tab traverse placeholders. Transform expressions are unsupported, and
+unusable items are omitted. Server completion commands and commit characters are
+not executed. Composition/read-only gates remain authoritative.
+
+Hover/completion/resolve have independent per-view tickets and cancellation; they
+cannot supersede definition navigation. Explicit ContentModified/ServerCancelled
+responses retry at most three times (100/200/400 ms) within the original deadline,
+using the same captured source. Edits, detachment and superseding requests cancel
+obsolete work; this is request retry, not automatic process restart.
+
+Empty hovers are not permanently cached across accepted diagnostic reports,
+completed work or rust-analyzer project-status changes. The client handles
+`experimental/serverStatus`; empty hover/definition responses received while that
+server reports loading wait for it to settle, under the original request deadline.
+The Language Servers panel exposes project loading/health separately from process
+readiness. A real native regression covers `Vec`/`Vec::new` hover and selects the
+actual standard-library method in a temporary tab.
+
+`status_bar.rs` installs the application's renderer in Workbench's existing
+workspace status slot. It displays startup/ready/failure state, current-document
+nonzero error/warning counts and document/save errors. It uses focused text or the application's remembered Structure source
+while Files/other tools have focus. A compact diagnostics icon opens status details and
+restart controls; server failures elsewhere in that workspace remain visible.
+Counts are cached with the report and never scan the source or diagnostics while
+drawing. Stale reports do not count as current errors. Without LSP state or a
+document error, the renderer is absent and the shell reserves no status height.
+The renderer tolerates the empty workspace before restoration creates a layout.
+
+**View → Language Servers**, or **Open Language Servers** in the status menu,
+opens the application-owned `LspPanelPlugin` panel. It shows configured/inactive
+integrations, process/server identity, roots, negotiated synchronization/encoding,
+attached documents, outstanding requests, work progress, recent server messages
+and stderr, with managed restart controls. Panels persist in workspace sessions
+and layout defaults; closing an observer does not stop workspace language workers.
+
+Server activity and diagnostic freshness are independent. The bar spins for
+startup or actual `$/progress` work, showing its title and percentage. Begin,
+report and end tokens are tracked per process, including simultaneous numeric and
+string tokens. The idle row contains only its menu icon; zero/unknown counts,
+missing/stale report labels and the document title stay out of the row. Diagnostic
+freshness and server lifecycle remain available in the menu and panel. Neither a
+missing nor stale report implies background work. An unfinished operation remains visible, with its age in
+the panel/menu after 30 seconds without an update; the client never invents an end.
+
+`lsp.rs` projects canonical document URIs/language IDs and folder settings into
+the optional [LSP2 plugin](../bedtime2/crates/bedtime-lsp2/README.md). The plugin
+uses one managed process per root/identical launch configuration, shared roots,
+ordered journal edits, negotiated UTF-8/UTF-16 and generation/ticket checks.
+Hidden and inactive views keep syncing; clean viewless documents detach and
+dirty ones retain synchronization. bEd2 pairs a worker's actual saved root with
+the successful Workbench receipt for `didSave`, including saves of older edits.
+CAS/conflict/source-changed failures do not emit save notifications. Workspace
+quit waits for protocol shutdown, process-group termination and actual reaping.
+
+The persisted `language_servers` setting is a map from protocol language IDs to
+`ServerConfig`; a workspace override replaces that map as one setting value.
+`language_servers_enabled` is independently inherited. Other server definitions
+can be configured through `.bed` preferences or `app.set_settings` automation.
+For example, a Python entry can use program `pyright-langserver` with arguments
+`["--stdio"]`; executables must already be installed. Server settings and
+initialization options are JSON values; Rust's defaults are an empty settings
+object and null initialization options. A complete launch definition round-trips
+literal arguments and environment overrides without invoking a shell.
+
+The first slice is macOS/Linux local stdio only, with an 8 MiB source limit and
+explicit queue/frame/result limits. Larger files keep plain editing and do not
+launch language workers. The folder root is supplied by the host; nested marker
+discovery and multi-folder sessions remain pending. Signature help, references,
+pull diagnostics, filesystem-watch registration, formatting, rename, code actions,
+workspace edits and remote transport are not implemented. Current syntax/folds
+continue to use Tree-sitter independently. The removal of full-source retry-cache
+copies is structural; no comparative frame-time speedup has been measured.
+
+```sh
+cargo test --offline --locked -p bedtime-lsp2 --features workbench
+cargo test --offline --locked -p bedtime-lsp2 --features workbench real_rust_analyzer -- --ignored --nocapture
+cargo build --offline --locked -p bed2 --features automation
+python3 bedtime2/tools/smoke_lsp.py
+python3 bedtime2/tools/smoke_lsp_interaction.py --real-rust
+```
+
+The native scenario uses an isolated config/project and deterministic server to
+exercise diagnostic rendering, F12 cross-file previews, saved captures, restart,
+status errors, progress/report completion and observer lifetime through managed
+quit. `app.inspect_lsp`, `app.inspect_lsp_servers` and `app.inspect_status_bar`
+expose runtime/presentation observations; `app.inspect_lsp_interaction` also
+reports hover/completion state, popup bounds and documentation syntax readiness; `app.lsp_definition` and
+`app.lsp_restart` exercise the same controller entrypoints as user actions.
+
+The backend was written for v2, using bed1's behavior and regression cases as
+references. It does not depend on the bed1 LSP runtime or Helix. Bed1's
+[Helix attribution](../NOTICE) covers its adapted language catalog and
+configuration/root-selection approach, while transport/document ownership stayed
+local. V2 currently supplies its own small configuration map, without importing
+that catalog. The [Zed review](../MIGRATION/lsp2-investigation.md#status-and-robustness-review)
+records the progress/observability changes and remaining reliability work.
+
 ## Viewports
 
 Each viewport panel is also its `Camera3d`, with an independent `UiViewport` image
@@ -559,3 +696,9 @@ passed. Native scenarios passed for file-backed syntax/Structure (8 captures,
 preview routing and persisted preferences (11 captures,
 `target/restored-filetree-smoke`). Python syntax, Rust formatting and local
 documentation links also passed.
+
+Interactive LSP verification on 2026-10-22: 108 application, 57 editor, 29 LSP
+and 27 UI tests passed; the real Rust/Go intelligence regression passed, including
+standard-library hover/definitions. The native interaction smoke passed seven
+nonempty captures and the existing LSP smoke passed five. The normal release
+executable was rebuilt. Native Linux interaction verification remains pending.

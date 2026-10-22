@@ -602,7 +602,10 @@ fn draw_status(ui: &mut egui::Ui, world: &mut World, context: &bedtime_ui2::UiCo
 
 The renderer owns all row contents, layout and tooltips; it can compose ordinary
 egui widgets and UI2 components. The shell supplies a padded row at the bottom
-of its allocation and draws it once per frame. `register_status_bar` replaces
+of its allocation and draws it once per frame. The row height accounts for themed
+text and interaction height, with two-point top/bottom insets and compact
+button padding capped at one point vertically. Panel button padding does not
+inflate the strip. `register_status_bar` replaces
 the previous renderer and its owned state. `status_bar()` returns its optional
 entity; `remove_status_bar()` removes it and restores the full panel height.
 The renderer and its state retire with their workspace.

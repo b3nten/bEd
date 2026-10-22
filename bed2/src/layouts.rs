@@ -12,6 +12,7 @@ pub enum LayoutSlot {
     Four,
     Five,
 }
+
 impl LayoutSlot {
     pub const ALL: [Self; 5] = [Self::One, Self::Two, Self::Three, Self::Four, Self::Five];
     pub fn index(self) -> usize {
@@ -21,8 +22,10 @@ impl LayoutSlot {
         ["Layout 1", "Layout 2", "Layout 3", "Layout 4", "Layout 5"][self.index()]
     }
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolKind {
+    LanguageServers,
     Files,
     Structure,
     Terminal,
@@ -30,8 +33,10 @@ pub enum ToolKind {
     Tasks,
     Settings,
 }
+
 impl ToolKind {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
+        Self::LanguageServers,
         Self::Files,
         Self::Structure,
         Self::Terminal,
@@ -39,8 +44,10 @@ impl ToolKind {
         Self::Tasks,
         Self::Settings,
     ];
+    
     pub fn key(self) -> &'static str {
         match self {
+            Self::LanguageServers => crate::lsp_panel::LspPanel::KEY,
             Self::Files => bedtime_filetree2::FileTreePanel::KEY,
             Self::Structure => bed_structure2::StructurePanel::KEY,
             Self::Terminal => bedtime_terminal2::TerminalPanel::KEY,
@@ -49,8 +56,10 @@ impl ToolKind {
             Self::Settings => crate::settings::SettingsPanel::KEY,
         }
     }
+    
     fn panel_kind(self) -> PanelKind {
         match self {
+            Self::LanguageServers => PanelKind::LanguageServers,
             Self::Files => PanelKind::Files,
             Self::Structure => PanelKind::Structure,
             Self::Terminal => PanelKind::Terminal,
@@ -60,12 +69,14 @@ impl ToolKind {
         }
     }
 }
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LayoutTemplate {
     pub areas: Vec<TemplateArea>,
     pub focused_area: Option<usize>,
 }
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TemplateArea {
@@ -73,6 +84,7 @@ pub struct TemplateArea {
     pub tools: Vec<ToolKind>,
     pub selected: Option<usize>,
 }
+
 impl LayoutTemplate {
     pub fn validate(&self) -> Result<(), String> {
         if self.areas.is_empty() {
@@ -112,6 +124,7 @@ impl LayoutTemplate {
             }],
         })
     }
+    
     fn empty() -> Self {
         Self {
             areas: vec![TemplateArea {
@@ -125,6 +138,7 @@ impl LayoutTemplate {
             focused_area: Some(0),
         }
     }
+    
     fn terminal() -> Self {
         let mut template = Self::empty();
         template.areas[0].tools.push(ToolKind::Terminal);
@@ -132,6 +146,7 @@ impl LayoutTemplate {
         template
     }
 }
+
 #[derive(Resource, Clone)]
 pub struct LayoutDefaults(pub [LayoutTemplate; 5]);
 impl Default for LayoutDefaults {
@@ -168,6 +183,7 @@ impl Plugin for LayoutsPlugin {
             .add_systems(Update, initialize.after(crate::files::FilesSystems::Update));
     }
 }
+
 fn initialize(world: &mut World) {
     // Only bEd-owned rooted workspaces receive application defaults. Bare
     // Workbench composition stays explicit, including its existing area IDs.
@@ -213,6 +229,7 @@ fn initialize(world: &mut World) {
         }
     }
 }
+
 fn initialize_first(world: &mut World, workspace: Entity) -> Result<(), String> {
     let template = world.resource::<LayoutDefaults>().0[0].clone();
     template.validate()?;
@@ -231,6 +248,7 @@ fn initialize_first(world: &mut World, workspace: Entity) -> Result<(), String> 
     crate::session::seed_initial_layout(world, workspace);
     Ok(())
 }
+
 pub fn switch(world: &mut World, workspace: Entity, slot: LayoutSlot) -> Result<(), String> {
     if !crate::close::accepts_user_actions(world) || !crate::storage::ready(world, workspace) {
         return Err("Workspace settings are loading or a close decision is pending".into());
@@ -264,6 +282,7 @@ pub fn switch(world: &mut World, workspace: Entity, slot: LayoutSlot) -> Result<
     };
     Workbench::for_entity(world, workspace)?.activate_layout(layout)
 }
+
 pub fn save_current(world: &mut World, workspace: Entity) -> Result<(), String> {
     if !crate::close::accepts_user_actions(world) || !crate::storage::ready(world, workspace) {
         return Err("Finish loading or cancel quit before saving a layout default".into());
@@ -276,6 +295,7 @@ pub fn save_current(world: &mut World, workspace: Entity) -> Result<(), String> 
     world.resource_mut::<LayoutDefaults>().0[slot.index()] = template;
     Ok(())
 }
+
 pub fn reset_current(world: &mut World, workspace: Entity) -> Result<(), String> {
     if !crate::close::accepts_user_actions(world) || !crate::storage::ready(world, workspace) {
         return Err("Finish loading or cancel quit before resetting a layout".into());
@@ -287,6 +307,7 @@ pub fn reset_current(world: &mut World, workspace: Entity) -> Result<(), String>
     let template = world.resource::<LayoutDefaults>().0[slot.index()].clone();
     apply(world, layout, &template)
 }
+
 fn capture(world: &World, layout: Entity) -> Result<LayoutTemplate, String> {
     let areas = world
         .get::<LayoutAreas>(layout)
@@ -398,6 +419,7 @@ fn apply(world: &mut World, layout: Entity, template: &LayoutTemplate) -> Result
 
 pub fn spawn_tool(world: &mut World, area: Entity, kind: ToolKind) -> Entity {
     match kind {
+        ToolKind::LanguageServers => world.spawn((crate::lsp_panel::LspPanel, InArea(area))).id(),
         ToolKind::Files => {
             let workspace = world.get::<InWorkspace>(area).unwrap().0;
             let root = world
@@ -462,16 +484,19 @@ impl<const N: usize> ContextCommand for UseLayout<N> {
     ][N];
     const LABEL: &'static str = ["Layout 1", "Layout 2", "Layout 3", "Layout 4", "Layout 5"][N];
 }
+
 pub struct SaveCurrentLayout;
 impl ContextCommand for SaveCurrentLayout {
     const KEY: &'static str = "bed.layout.save_default";
     const LABEL: &'static str = "Save Current Layout";
 }
+
 pub struct ResetCurrentLayout;
 impl ContextCommand for ResetCurrentLayout {
     const KEY: &'static str = "bed.layout.reset";
     const LABEL: &'static str = "Reset Current Layout";
 }
+
 pub fn install_menu(world: &mut World, view: Entity) {
     register_context_command::<SaveCurrentLayout>(world).unwrap();
     register_context_command::<ResetCurrentLayout>(world).unwrap();
@@ -526,6 +551,7 @@ pub fn install_menu(world: &mut World, view: Entity) {
         Invokes::of::<ResetCurrentLayout>(),
     ));
 }
+
 fn install_slot<const N: usize>(world: &mut World, menu: Entity, key: KeyCode) {
     register_context_command::<UseLayout<N>>(world).unwrap();
     install_global_handler::<UseLayout<N>, _>(

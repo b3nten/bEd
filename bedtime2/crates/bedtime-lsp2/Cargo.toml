@@ -1,0 +1,19 @@
+[package]
+name = "bedtime-lsp2"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Managed local language servers for canonical Bedtime documents"
+
+[features]
+default = []
+workbench = ["dep:bedtime-workbench2", "bedtime-editor2/workbench"]
+
+[dependencies]
+bedtime-editor2.workspace = true
+bedtime-workbench2 = { path = "../bedtime-workbench2", default-features = false, optional = true }
+bevy = { workspace = true, features = ["std"] }
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true

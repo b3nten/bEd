@@ -8,7 +8,11 @@ use bevy::prelude::*;
 pub struct CodePlugin;
 impl Plugin for CodePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((EditorAnalysisPlugin, bed_structure2::StructurePlugin));
+        app.add_plugins((
+            EditorAnalysisPlugin,
+            bed_structure2::StructurePlugin,
+            crate::lsp::LanguageToolsPlugin,
+        ));
         #[cfg(feature = "automation")]
         {
             use bedtime_automation2::AutomationAppExt;
@@ -39,6 +43,7 @@ fn inspect(world: &mut World, _: serde_json::Value) -> Result<serde_json::Value,
 
 /// Optional editor actions live in the canvas context menu, leaving its top edge clear.
 pub fn context_menu(ui: &mut bedtime_ui2::egui::Ui, world: &mut World, panel: Entity) {
+    crate::lsp::context_menu(ui, world, panel);
     use bedtime_editor2::{
         TextBuffer, TextSnapshot,
         workbench::{CodeLanguage, WorkbenchEditor},

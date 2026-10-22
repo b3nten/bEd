@@ -74,7 +74,8 @@ impl SyntaxPalette {
             punctuation: c(theme.palette.text),
         }
     }
-    pub(crate) fn color(&self, capture: &str, normal: egui::Color32) -> egui::Color32 {
+    /// Resolve the shared capture palette for editor and documentation syntax.
+    pub fn color(&self, capture: &str, normal: egui::Color32) -> egui::Color32 {
         match capture.split('.').next().unwrap_or(capture) {
             "comment" => self.comment,
             "string" | "character" | "text" => self.string,

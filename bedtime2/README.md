@@ -16,6 +16,9 @@ The foundation and its optional panels live in these crates:
 - [`bedtime-editor2`](crates/bedtime-editor2): embeddable plain text editing,
   persistent indexed text, viewport-only drawing, shared history and animated
   carets. Workbench and Tree-sitter integration are independent optional features.
+- [`bedtime-lsp2`](crates/bedtime-lsp2): optional local language-server workers,
+  canonical document synchronization, indexed diagnostics, definition requests
+  and managed shutdown. File/settings/navigation policy stays in the application.
 - [`bedtime-grammars2`](crates/bedtime-grammars2): one pinned native bundle of 30
   selected languages and Markdown inline, with upstream queries and notices.
 - [`bedtime-treesitter2`](crates/bedtime-treesitter2): shared incremental trees,

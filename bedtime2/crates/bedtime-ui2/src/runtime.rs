@@ -152,7 +152,11 @@ pub(crate) fn draw(world: &mut World) {
         theme.apply(&ctx);
         runtime.themes.insert(camera, theme.clone());
     }
-    ctx.global_style_mut(|s| s.animation_time = if policy.enabled { policy.seconds } else { 0.0 });
+    ctx.global_style_mut(|s| {
+        s.animation_time = if policy.enabled { policy.seconds } else { 0.0 };
+        s.interaction.tooltip_delay = 0.0;
+        s.interaction.show_tooltips_only_when_still = false;
+    });
     let pixels = (theme.metrics.font_size * ctx.pixels_per_point())
         .ceil()
         .max(1.0) as u32;

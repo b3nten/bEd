@@ -69,9 +69,25 @@ settings! {
     line_numbers: bool = true,
     smart_wrapping: bool = true,
     smart_indentation: bool = true,
+    language_servers_enabled: bool = true,
+    language_servers: std::collections::BTreeMap<String, bedtime_lsp2::ServerConfig> = [("rust".into(), bedtime_lsp2::ServerConfig::default())].into(),
 }
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
+        if self.language_servers.len() > 32 {
+            return Err("At most 32 language server definitions are supported".into());
+        }
+        for (language, server) in &self.language_servers {
+            if language.is_empty()
+                || language.len() > 64
+                || !language
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
+            {
+                return Err("Invalid language server language ID".into());
+            }
+            server.validate()?;
+        }
         if self.font_family.trim().is_empty()
             || self.font_family.len() > 256
             || self.font_family.chars().any(char::is_control)
@@ -603,6 +619,89 @@ impl Panel for SettingsPanel {
                                     .checkbox(value, "Smart wrapping"));
                                 row!(smart_indentation, |ui: &mut egui::Ui, value: &mut bool| ui
                                     .checkbox(value, "Smart indentation"));
+                                ui.separator();
+                                row!(
+                                    language_servers_enabled,
+                                    |ui: &mut egui::Ui, value: &mut bool| ui
+                                        .checkbox(value, "Language servers")
+                                );
+                                row!(
+                                    language_servers,
+                                    |ui: &mut egui::Ui,
+                                     servers: &mut std::collections::BTreeMap<
+                                        String,
+                                        bedtime_lsp2::ServerConfig,
+                                    >| {
+                                        let mut changed = false;
+                                        let mut response = ui
+                                            .vertical(|ui| {
+                                                for (language, server) in servers.iter_mut() {
+                                                    let id =
+                                                        ui.id().with(("server-draft", language));
+                                                    let (baseline, mut draft) = ui.data_mut(|d| {
+                                                        d.get_temp::<(
+                                                            bedtime_lsp2::ServerConfig,
+                                                            bedtime_lsp2::ServerConfig,
+                                                        )>(
+                                                            id
+                                                        )
+                                                        .unwrap_or_else(|| {
+                                                            (server.clone(), server.clone())
+                                                        })
+                                                    });
+                                                    if baseline != *server {
+                                                        draft = server.clone();
+                                                    }
+                                                    ui.label(language);
+                                                    ui.text_edit_singleline(&mut draft.program);
+                                                    for argument in &mut draft.arguments {
+                                                        ui.text_edit_singleline(argument);
+                                                    }
+                                                    ui.horizontal(|ui| {
+                                                        if ui.small_button("Add argument").clicked()
+                                                            && draft.arguments.len() < 128
+                                                        {
+                                                            draft.arguments.push(String::new());
+                                                        }
+                                                        if !draft.arguments.is_empty()
+                                                            && ui
+                                                                .small_button(
+                                                                    "Remove last argument",
+                                                                )
+                                                                .clicked()
+                                                        {
+                                                            draft.arguments.pop();
+                                                        }
+                                                        if ui
+                                                            .add_enabled(
+                                                                draft != *server
+                                                                    && draft.validate().is_ok(),
+                                                                egui::Button::new("Apply"),
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            *server = draft.clone();
+                                                            changed = true;
+                                                        }
+                                                    });
+                                                    if let Err(error) = draft.validate() {
+                                                        ui.colored_label(
+                                                            ui.visuals().error_fg_color,
+                                                            error,
+                                                        );
+                                                    }
+                                                    ui.data_mut(|d| {
+                                                        d.insert_temp(id, (server.clone(), draft))
+                                                    });
+                                                }
+                                            })
+                                            .response;
+                                        if changed {
+                                            response.mark_changed();
+                                        }
+                                        response
+                                    }
+                                );
                             }
                         }
                     });

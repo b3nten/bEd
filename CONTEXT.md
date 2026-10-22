@@ -17,6 +17,7 @@ an explicit package when working on v2.
 | v2 drawing, themes, input, components and viewports | [UI2](bedtime2/crates/bedtime-ui2/README.md) |
 | v2 virtualized text editor, buffer and optional document adapter | [Editor2](bedtime2/crates/bedtime-editor2/README.md) |
 | v2 shared Tree-sitter analysis, bundled grammars and code Structure | [Analysis](bedtime2/crates/bedtime-treesitter2/README.md), [grammar bundle](bedtime2/crates/bedtime-grammars2/README.md), [Structure](bed2/crates/bed-structure2/README.md) |
+| v2 local language servers, diagnostics and definition navigation | [LSP2](bedtime2/crates/bedtime-lsp2/README.md), [application bridge and status](bed2/README.md#language-servers-and-status-bar) |
 | v2 workspaces, layouts, concrete panels, commands and documents | [Workbench2](bedtime2/crates/bedtime-workbench2/README.md) |
 | v2 lazy local filetree, watching, operations and visibility | [Filetree2](bedtime2/crates/bedtime-filetree2/README.md) |
 | v2 local terminal plugin and lifecycle | [Terminal2](bedtime2/crates/bedtime-terminal2/README.md) |
@@ -67,10 +68,54 @@ Distinguish those plans and historical notes from implemented capabilities.
 
 ## Work status
 
-LSP for v2 is an investigation, with no runtime installed. The
-[proposal and bed1 findings](MIGRATION/lsp2-investigation.md) cover shared-root
-document synchronization, managed server ownership, protocol corrections,
-integration gaps and a staged verification plan. Implementation remains pending.
+Git for v2 is an investigation, with no runtime installed. The
+[Git and comparison viewer proposal](MIGRATION/git2-investigation.md) covers
+reuse of the GUI-free `bedtime-git` backend, UI2 panel/diff work, canonical
+save/reconciliation gates and staged image/glTF extensions. On 2026-10-22 its
+19 existing backend regression tests passed in an isolated Cargo harness;
+v2 Git implementation remains pending. Inline diff presentation belongs inside
+Editor2; the proposed optional `diff` feature accepts text comparisons and
+returns host-defined hunk actions, keeping Git operations in the integration.
+
+The optional [LSP2 plugin](bedtime2/crates/bedtime-lsp2/README.md) implements local
+stdio synchronization, diagnostics/progress and definition, hover and
+completion/resolve requests with
+shared text roots and managed server cleanup. bEd2 owns source/settings/save
+bridges, F12/context-menu/Cmd-click navigation into temporary previews and a conditional
+status bar with diagnostic counts, actual server progress, document/server errors
+and restart controls. View → Language Servers opens a persistent observer panel
+with process/capability/document state, bounded messages/stderr and restart.
+Closing that panel preserves workers. The compact status row uses an icon menu,
+active work and nonzero counts; missing/stale diagnostic details remain in the
+menu/panel and never imply background work. See the
+[Zed-informed robustness review](MIGRATION/lsp2-investigation.md#status-and-robustness-review)
+for implemented changes and remaining reliability work.
+The [important parity milestones and Rust latency probe](MIGRATION/lsp2-investigation.md#important-ide-parity-milestones)
+separate native unsaved diagnostics from Cargo-on-save latency. Installed
+rust-analyzer's experimental diagnostics improved a small `String::foo()` fixture
+but showed inconsistent syntax results; they remain opt-in and defaults are unchanged.
+The bar reserves no space without LSP state or a document error; empty startup
+workspaces need no layout. See the [application contract](bed2/README.md#language-servers-and-status-bar)
+and [original investigation](MIGRATION/lsp2-investigation.md) for limits and later
+features. No comparative speedup has been measured.
+Hover waits 200 ms while ordinary UI tooltips remain instant. Bed1-style
+wrapped documentation uses compact typography, inline styles, rules and managed
+Tree-sitter highlighting. Completion supports automatic/manual triggers, lazy
+resolve, atomic auto-import edits and snippet placeholders/mirrors. Explicit
+transient errors retry with finite backoff; empty hover results refresh on
+analysis changes. Rust-analyzer's reported project state prevents empty loading
+responses from becoming final results. See the
+[interactive editing record](MIGRATION/lsp2-investigation.md#interactive-editing-implementation--2026-10-22).
+On 2026-10-22, 29 deterministic LSP tests, the opt-in real Rust/Go intelligence
+regression, 108 application tests, 57 editor tests and 27 UI tests passed. The
+native interaction smoke passed seven rendered captures, including delayed hover,
+syntax-colored documentation, empty-result refresh, completion/resolve/snippets,
+atomic undo and actual `Vec::new` navigation into a temporary standard-library tab.
+The existing five-capture LSP smoke also passed diagnostics/progress/restart/quit.
+Native Linux LSP UI verification remains pending.
+The compact icon/menu and shorter row revisions passed the five-capture native
+smoke on the same date; the geometry regression verifies centered, unclipped
+controls despite roomy panel padding. The normal release binary was rebuilt.
 
 bEd2 now owns centralized RON `.bed` metadata under the user config directory:
 `preferences.bed` holds global per-value settings and five layout defaults;
@@ -195,6 +240,7 @@ For v2 library/application work, start with the affected package or test filter:
 cargo test --offline --locked -p bedtime-ui2 -p bedtime-workbench2 -p bedtime-terminal2 -p bedtime-filetree2 -p bedtime-clipboard2 -p bed2
 cargo check --offline --locked -p bedtime-workbench2 --no-default-features
 cargo test --offline --locked -p bedtime-treesitter2 -p bed-structure2
+cargo test --offline --locked -p bedtime-lsp2 --features workbench
 cargo test --offline --locked -p bedtime-editor2 --features workbench,treesitter
 cargo test --offline --locked -p bedtime-editor2 --features workbench,treesitter million_line_ -- --ignored --nocapture
 ```
@@ -225,6 +271,8 @@ python3 bedtime2/tools/smoke_open.py
 python3 bedtime2/tools/smoke_fonts.py
 python3 bedtime2/tools/smoke_code.py
 python3 bedtime2/tools/smoke_editor.py
+python3 bedtime2/tools/smoke_lsp.py
+python3 bedtime2/tools/smoke_lsp_interaction.py --real-rust
 python3 bedtime2/tools/smoke_filetree.py
 python3 bedtime2/tools/smoke_workspace_policy.py
 ```

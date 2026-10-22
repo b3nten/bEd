@@ -1,7 +1,11 @@
 # LSP integration for Bedtime 2
 
-Status: investigation and proposed implementation sequence, 2026-10-22.
-The runtime and APIs below are proposals. Current v2 installs no LSP services.
+Status: local synchronization, diagnostics, definition navigation, hover,
+completion/resolve and status rendering implemented, 2026-10-22. Current contracts and bounds are in
+the [LSP crate](../bedtime2/crates/bedtime-lsp2/README.md) and
+[application README](../bed2/README.md#language-servers-and-status-bar).
+The remaining design and implementation sequence below is the investigation
+record; later features and comparative performance work remain proposals.
 
 Build an optional `bedtime-lsp2` plugin around Workbench's canonical documents
 and managed work. Use bed1's protocol behavior and regression scenarios as the
@@ -15,6 +19,131 @@ wire synchronization still accompanies a complete source join and retry-cache
 copy after edits. V2 can replace those copies with shared immutable roots.
 Actual latency and memory improvements require a prototype and measurements;
 the existing test results below establish behavior, not a speed comparison.
+
+## Status and robustness review
+
+Implemented 2026-10-22: an application Language Servers observer panel, bounded
+work-done progress/messages/stderr observations and status updates driven by
+actual server activity. Missing or stale push diagnostics never prove that a
+server is busy. Reports remain revision-gated; unknown counts remain unavailable.
+The compact row uses an icon menu and displays only nonzero counts and active work;
+missing/stale-report details live in that menu and the panel.
+Closing an observer preserves the workspace worker; restart retires
+the process generation before replacement.
+
+The [Zed LSP store](https://github.com/zed-industries/zed/blob/main/crates/project/src/lsp_store.rs)
+separates server lifecycle, pending work tokens and diagnostic activity, with
+throttled progress updates. Its
+[log store](https://github.com/zed-industries/zed/blob/main/crates/project/src/lsp_store/log_store.rs)
+provides bounded logs. These are useful design references; v2 retains its own
+worker/ECS ownership and introduces no Zed or Helix runtime dependency. Bed1's
+Helix-derived catalog/configuration provenance is recorded in [NOTICE](../NOTICE).
+
+The next reliability slices remain unimplemented: server-requested filesystem
+watch registration and external-change delivery; capability-driven pull
+diagnostics with cancellation/refresh; project/root and multiple-server policy;
+and a measured crash-recovery policy with retry limits/backoff. Preserve the
+current generation/revision checks, explicit failure state, bounded queues and
+worker-owned cleanup when adding them. Manual restart remains deliberate; do not
+mask a persistent startup failure with an unlimited automatic restart loop.
+
+Verification on 2026-10-22: 21 deterministic LSP tests, the real rust-analyzer
+test, 106 application tests and five native captures passed. Native coverage
+includes progress begin/report/end, numeric/string token separation, panel
+restart, missing-diagnostic idle state, observer closure and shutdown/exit.
+No comparative performance claim or broad Zed feature parity is established.
+
+## Interactive editing implementation — 2026-10-22
+
+bEd2 adds modifier-click definitions through the existing preview route, 200 ms
+symbol hover and completion/resolve. Editor2 owns pointer hit testing, input
+arbitration, popup list mechanics and atomic completion/snippet acceptance;
+LSP2 owns wire requests, cancellation, range conversion and normalization; bEd2
+owns documentation presentation and navigation. Bed1's documentation code was
+reviewed as the rendering reference: wrapped prose/signatures, inline styles,
+rules, a compact input-capable scrolling popup and themed fenced-code colors.
+V2 uses its existing managed Tree-sitter backend, without a v1 UI dependency.
+
+A real rust-analyzer probe reproduced ContentModified during project loading
+without an editor edit. Such errors previously left the pointer target empty.
+Explicit ContentModified/ServerCancelled responses now retry three times with
+bounded backoff and the original source/deadline; other failures are not retried.
+The native probe also reproduced a null hover before analysis settled. Empty
+observations now refresh when the worker's analysis epoch changes; accepted
+reports, completed progress and rust-analyzer's `experimental/serverStatus` are
+explicit refresh evidence. Empty hover/definition replies while rust-analyzer
+reports loading remain pending under the original timeout, rather than becoming
+permanent empty observations. Project health/loading is observable in the panel.
+The real-server regression checks Rust and Go hover/completion/resolve and Rust
+standard-library `Vec`/`Vec::new` hover plus readable definition paths. Native
+interaction coverage is in `smoke_lsp_interaction.py` (`--real-rust` additionally
+opens standard-library sources in a temporary tab). On 2026-10-22, all seven
+interaction captures and five existing LSP captures passed; 29 LSP, 108 app,
+57 editor and 27 UI tests and the opt-in real Rust/Go regression passed.
+Consult the current crate and
+application READMEs for exact scope and unsupported completion features.
+
+## Important IDE parity milestones
+
+This roadmap includes implemented hover/completion work described above; the
+remaining items are proposals. The existing
+managed worker and canonical document ownership remain the foundation.
+
+1. **Diagnostic feedback and project correctness.** Measure edit → admitted sync →
+   inbound report → presentation separately from save → Cargo check. Retain a
+   bounded set of wire-version snapshots and map unaffected diagnostic ranges
+   through known edits; discard overlapping/unknown mappings and distinguish
+   native buffer reports from compiler reports about saved text. Keep provenance,
+   code/data and related locations for later fixes. Add file-watch registration,
+   Cargo/config/external-change delivery, language-specific root/toolchain policy
+   and capability-driven pull/refresh where needed. Pull requests alone do not
+   make Cargo diagnostics faster.
+2. **Everyday interactive intelligence.** Completion/resolve with replacement
+   ranges, snippets and auto-import edits; hover and signature help; references
+   and implementations. Capture source revision/view/ticket, cancel superseded
+   work, and test rapid typing, IME, Unicode and multiple views. Completion must
+   never apply stale additional edits or create a second content owner.
+3. **Safe cross-file actions and recovery.** A common version-checked edit plan
+   and canonical transaction boundary for rename, code actions and formatting;
+   explicit policy for file operations and server-requested commands. Add Problems
+   navigation, multiple-provider policy and bounded restart/backoff with visible
+   failures. Exercise dirty/conflicted/unopened files, undo, worker crashes,
+   saturated queues and closure during pending work.
+
+Zed's [snapshot/diagnostic handling](https://github.com/zed-industries/zed/blob/main/crates/project/src/lsp_store.rs)
+retains versioned buffer snapshots and accounts for unsaved edits when applying
+disk-based diagnostics. That is a useful next improvement over v2's current
+strict policy of hiding reports as soon as their revision becomes stale.
+
+### Rust diagnostic latency evidence — 2026-10-22
+
+[Zed's Rust documentation](https://zed.dev/docs/languages/rust#large-projects-and-performance)
+states that rust-analyzer runs with default parameters and checks on save.
+It documents optional experimental native diagnostics and narrower Cargo checks.
+The [rust-analyzer configuration](https://rust-analyzer.github.io/book/configuration#diagnostics.experimental.enable)
+defaults experimental diagnostics off and notes their false-positive tradeoff.
+
+The `diagnostic_probe` example uses the installed rust-analyzer
+`1.98.1 (48a229ce 2026-09-01)` against an isolated dependency-free Cargo fixture,
+without save notifications and with checking disabled. In two runs, unsaved
+`String::foo()` produced no matching report in a five-second default-settings
+window, and produced `no such associated item` in 1,144 ms / 1,105 ms with
+experimental native diagnostics enabled. Default syntax reports arrived in
+5–6 ms. Experimental syntax results varied across runs, including an empty
+current-version report instead of syntax errors; do not assume this option is
+a complete substitute for compiler checks. The probe includes startup/cache
+effects and worker/poll time; it is not an end-to-end latency benchmark or a
+measurement of this repository's large project. Application defaults are unchanged.
+
+bEd2's default one-second idle autosave plus rust-analyzer's save-triggered Cargo
+work is a plausible explanation for a reported 5–10-second semantic-error delay,
+not a measured attribution of that user's session. Profile the actual workspace
+before changing default check scope, target directory or save policy. A separate
+Cargo target directory can avoid build contention but duplicates build artifacts.
+
+```sh
+cargo run --offline --locked -p bedtime-lsp2 --example diagnostic_probe
+```
 
 ## Evidence from bed1
 

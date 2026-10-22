@@ -19,12 +19,14 @@ impl Plugin for AutosavePlugin {
         );
     }
 }
+
 #[derive(Resource, Default)]
 struct Autosaves {
     documents: BTreeMap<DocumentId, Pending>,
     focused: Option<(Entity, DocumentId)>,
     saves: MessageCursor<DocumentSaveFinished>,
 }
+
 struct Pending {
     revision: u64,
     edited_at: Instant,
@@ -32,6 +34,7 @@ struct Pending {
     attempted: Option<(u64, u64)>,
     work: Option<WorkId>,
 }
+
 fn focused_editor(world: &mut World) -> Option<(Entity, DocumentId)> {
     let contexts: Vec<_> = world
         .query_filtered::<&mut bevy_egui::EguiContext, With<bedtime_ui2::UiCamera>>()
@@ -68,10 +71,12 @@ fn focused_editor(world: &mut World) -> Option<(Entity, DocumentId)> {
             .then_some((panel, view.document()))
         })
 }
+
 fn update(world: &mut World) {
     let focused = focused_editor(world);
     tick(world, Instant::now(), focused);
 }
+
 fn tick(world: &mut World, now: Instant, focused: Option<(Entity, DocumentId)>) {
     if !crate::close::accepts_user_actions(world) {
         return;
@@ -137,6 +142,7 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+    
     fn host(mode: Autosave) -> (App, Entity, DocumentHandle<String>, Arc<AtomicUsize>) {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin)
@@ -167,6 +173,7 @@ mod tests {
         edit(&mut app, document, "first");
         (app, workspace, document, saves)
     }
+    
     fn edit(app: &mut App, document: DocumentHandle<String>, text: &str) {
         let revision = inspect_document(app.world(), document.id())
             .unwrap()
@@ -184,6 +191,7 @@ mod tests {
         )
         .unwrap();
     }
+    
     fn finish(app: &mut App, document: DocumentId) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while inspect_document(app.world(), document).unwrap().saving {
@@ -192,6 +200,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
+    
     #[test]
     fn timer_waits_for_idle_and_saves_documents_without_viewers() {
         let (mut app, _, document, saves) = host(Autosave::Timer);
@@ -208,6 +217,7 @@ mod tests {
         assert_eq!(saves.load(Ordering::SeqCst), 1);
         assert!(!inspect_document(app.world(), document.id()).unwrap().dirty);
     }
+    
     #[test]
     fn focus_save_is_deduplicated_and_never_mode_does_not_write() {
         let (mut app, _, document, saves) = host(Autosave::ChangeFocus);
@@ -232,6 +242,7 @@ mod tests {
         tick(app.world_mut(), now + Duration::from_secs(200), None);
         assert_eq!(saves.load(Ordering::SeqCst), 1);
     }
+    
     #[test]
     fn failure_is_visible_and_does_not_retry_the_same_revision_forever() {
         let (mut app, _, document, saves) = host(Autosave::Timer);
@@ -261,6 +272,7 @@ mod tests {
         finish(&mut app, document.id());
         assert_eq!(saves.load(Ordering::SeqCst), 2);
     }
+    
     #[test]
     fn workspace_overrides_control_inactive_documents_and_unbound_documents_are_skipped() {
         let (mut app, workspace, document, saves) = host(Autosave::Timer);
@@ -297,6 +309,7 @@ mod tests {
         tick(app.world_mut(), now + Duration::from_secs(10), None);
         assert!(inspect_document(app.world(), unbound.id()).unwrap().dirty);
     }
+    
     #[test]
     fn composition_and_source_conflicts_block_autosave() {
         let (mut app, workspace, document, saves) = host(Autosave::Timer);
@@ -335,6 +348,7 @@ mod tests {
         );
         assert_eq!(saves.load(Ordering::SeqCst), 0);
     }
+    
     #[test]
     fn a_busy_destination_defers_without_suppressing_the_later_save() {
         let (mut app, workspace, first, saves) = host(Autosave::Timer);
@@ -364,6 +378,7 @@ mod tests {
         assert!(!inspect_document(app.world(), second.id()).unwrap().dirty);
         assert_eq!(saves.load(Ordering::SeqCst), 2);
     }
+    
     #[test]
     fn quit_decisions_suspend_new_autosaves() {
         let (mut app, _, document, saves) = host(Autosave::Timer);

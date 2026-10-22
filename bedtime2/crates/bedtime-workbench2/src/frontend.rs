@@ -703,10 +703,13 @@ fn draw_status_bar(
             egui::Vec2::ZERO,
         );
     };
+    // Status controls are a compact strip, independent of roomy panel buttons.
+    let button_padding_y = ui.spacing().button_padding.y.min(1.0);
     let height = (ui
         .text_style_height(&egui::TextStyle::Body)
+        .max(ui.text_style_height(&egui::TextStyle::Button) + 2.0 * button_padding_y)
         .max(ui.spacing().interact_size.y)
-        + 8.0)
+        + 4.0)
         .min(ui.available_height().max(0.0));
     let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
     egui::Panel::bottom(ui.id().with("status"))
@@ -717,7 +720,7 @@ fn draw_status_bar(
             let bounds = ui.max_rect().intersect(ui.clip_rect());
             ui.painter()
                 .line_segment([bounds.left_top(), bounds.right_top()], stroke);
-            let content = bounds.shrink2(egui::vec2(10.0, 4.0));
+            let content = bounds.shrink2(egui::vec2(10.0, 2.0));
             if content.is_positive() {
                 let mut row = ui.new_child(
                     egui::UiBuilder::new()
@@ -725,6 +728,7 @@ fn draw_status_bar(
                         .max_rect(content)
                         .layout(egui::Layout::left_to_right(egui::Align::Center)),
                 );
+                row.spacing_mut().button_padding.y = button_padding_y;
                 row.set_clip_rect(content);
                 draw(&mut row);
             }
@@ -2482,6 +2486,7 @@ mod tests {
     #[test]
     fn status_space_is_reserved_only_when_an_application_renderer_is_provided() {
         let ctx = egui::Context::default();
+        ctx.global_style_mut(|style| style.spacing.button_padding = egui::vec2(10.0, 6.0));
         let bounds = egui::Rect::from_min_max(egui::pos2(40.0, 60.0), egui::pos2(640.0, 460.0));
         let mut calls = 0;
         for provided in [false, true, false] {
@@ -2504,11 +2509,20 @@ mod tests {
                             calls += 1;
                             assert!(bounds.contains_rect(ui.clip_rect()));
                             ui.label("Ready").on_hover_text("Application-owned status");
+                            let button = ui.menu_button("LSP ready", |_| {}).response;
+                            assert!(ui.clip_rect().contains_rect(button.rect));
+                            assert!(
+                                (button.rect.center().y - ui.clip_rect().center().y).abs() < 0.5
+                            );
                         }),
                     );
                     let content = root.available_rect_before_wrap();
                     if provided {
                         assert!(status.height() > 0.0);
+                        assert!(
+                            status.height() < 32.0,
+                            "Panel padding must not make status controls tall"
+                        );
                         assert!(bounds.contains_rect(status));
                         assert_eq!(status.bottom(), before.bottom());
                         assert_eq!(content.bottom(), status.top());

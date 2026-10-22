@@ -174,8 +174,28 @@ header when collapsed. Edits before folds map their ranges; edits touching them,
 journal gaps and changed source/language identities expand uncertain regions.
 Folding and navigation reject active composition.
 
-Diagnostics, other gutter markers, multicursor interaction, hover and LSP/debugger
-integration remain later milestones. No universal provider framework is installed.
+`EditorView::set_diagnostics` accepts an immutable shared `Diagnostics` report
+with UTF-8 byte ranges, severity, messages and a captured revision. Producers
+prepare its interval index and severity counts off-thread. Visible fragments
+draw clipped underlines with message tooltips only at that revision and outside
+IME composition; edits hide old contributions until refreshed. Unversioned
+reports are visually muted best-effort observations. The API has no LSP types.
+The optional [LSP plugin](../bedtime-lsp2/README.md) supplies these contributions
+through canonical Workbench documents. `language_tools` enables revision-bound
+pointer text/symbol hits and modifier-click definition intentions in `EditorOutput`;
+the host owns language requests and diagnostic/documentation popup arbitration.
+
+Host-supplied `set_completions` lists reserve navigation/acceptance keys before
+ordinary editing and paint a virtualized caret-anchored list. `queue_completion`
+accepts a captured revision and `CompletionEdit`; canonical editing/read-only/IME
+gates are checked when applying it. Replacement and nonoverlapping additional
+edits form one persistent-buffer change and undo step, preserving intervening
+rope roots. Numbered snippet defaults, choices, escapes, mirrors and variable
+defaults support Tab/Shift-Tab navigation. Unsupported transforms fail preparation.
+Stale proposals change no text. None of these contribution APIs depends on LSP.
+
+Other gutter markers, multicursor and debugger integration remain later milestones. No universal
+provider framework is installed.
 
 ## Everyday editing
 

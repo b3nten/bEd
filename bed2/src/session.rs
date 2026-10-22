@@ -116,6 +116,7 @@ pub(crate) struct TabRecipe {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PanelKind {
+    LanguageServers,
     Files,
     Code,
     Structure,
@@ -256,6 +257,8 @@ pub(crate) fn capture(world: &World, workspace: Entity) -> Result<Session, Strin
                     PanelKind::Terminal
                 } else if world.get::<crate::cube::CubeViewport>(panel).is_some() {
                     PanelKind::Viewport
+                } else if world.get::<crate::lsp_panel::LspPanel>(panel).is_some() {
+                    PanelKind::LanguageServers
                 } else if world.get::<crate::tasks::TasksPanel>(panel).is_some() {
                     PanelKind::Tasks
                 } else if world.get::<crate::settings::SettingsPanel>(panel).is_some() {
@@ -418,6 +421,9 @@ fn restore(world: &mut World, workspace: Entity, session: &Session) -> Result<()
                     }
                     PanelKind::Viewport => {
                         world.spawn((crate::cube::CubeViewport, InArea(area))).id()
+                    }
+                    PanelKind::LanguageServers => {
+                        world.spawn((crate::lsp_panel::LspPanel, InArea(area))).id()
                     }
                     PanelKind::Tasks => world
                         .spawn((crate::tasks::TasksPanel::default(), InArea(area)))
@@ -984,6 +990,42 @@ mod tests {
             )))
             .unwrap(),
             bytes
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn language_server_panel_roundtrips_without_starting_workers() {
+        let root = root();
+        let (mut app, owner) = host(&root, true);
+        settle(&mut app).unwrap();
+        let layout = active_layout(app.world(), owner).unwrap();
+        let area = Workbench::for_entity(app.world_mut(), owner)
+            .unwrap()
+            .destination_area(layout)
+            .unwrap();
+        app.world_mut()
+            .spawn((crate::lsp_panel::LspPanel, InArea(area)));
+        let expected = capture(app.world(), owner).unwrap();
+        app.update();
+        settle(&mut app).unwrap();
+        let (mut restored, owner) = host(&root, true);
+        settle(&mut restored).unwrap();
+        assert_eq!(capture(restored.world(), owner).unwrap(), expected);
+        assert_eq!(
+            restored
+                .world_mut()
+                .query::<&crate::lsp_panel::LspPanel>()
+                .iter(restored.world())
+                .count(),
+            1
+        );
+        assert!(
+            restored
+                .world()
+                .get::<WorkspaceWork>(owner)
+                .unwrap()
+                .list()
+                .is_empty()
         );
         std::fs::remove_dir_all(root).unwrap();
     }
