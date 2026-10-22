@@ -2,7 +2,7 @@
 
 Composable workspace entities with optional native and egui presentation.
 Add WorkbenchPlugin and UI2's UiPlugin after the application's normal Bevy setup,
-in either order. Applications compose workspace entities or restore saved data;
+in either order. Applications compose concrete workspace and panel entities;
 an empty workbench is valid. Workbench never installs
 DefaultPlugins or creates a window or GPU device. Adding
 `WorkbenchSurface::default()` to a window creates the default shell and wires an
@@ -27,8 +27,7 @@ app.add_plugins(WorkbenchPlugin).add_plugins(UiPlugin);
 // Or compose:
 app.add_plugins((WorkbenchCorePlugin, ClipboardPlugin, WorkbenchUiPlugin, UiPlugin));
 
-// Panel types register application-wide, even before any workspace exists.
-app.register_panel_type::<Notes>(); // Import WorkbenchAppExt.
+// No panel-type registration is needed.
 ~~~
 
 On macOS with `ui`, the native window adapter also supplies live file-drag
@@ -50,8 +49,9 @@ the application.
 Workbench uses the application's World and renderer. Local defaults are required
 components: `Workspace` supplies work queues, lifecycle state and (with UI enabled)
 `WorkspaceUi`; `Layout` supplies its area collection and revision state;
-`Area`/`PanelInstance` supply presentation components. Application-specific state
-can be composed in the same spawn. No facade calls are required:
+`Area`/`PanelInstance` supply presentation components. Concrete panel components
+require `PanelInstance::of::<Self>()` to supply metadata and drawing immediately.
+Application-specific state can be composed in the same spawn. No facade calls are required:
 
 ```rust,ignore
 fn setup(mut commands: Commands) {
@@ -67,9 +67,8 @@ fn setup(mut commands: Commands) {
     )).id();
     let area = commands.spawn((Area::default(), InLayout(layout))).id();
     commands.spawn((
-        PanelInstance::new(Notes::KEY),
-        InArea(area),
         Notes { text: "Initial draft".into() },
+        InArea(area),
     ));
 }
 ```
@@ -79,8 +78,12 @@ is authoritative within each workspace, with at most one per workspace. There
 can be zero of either. A bare workspace creates no layout; a bare layout creates
 no area. `Area::default()` covers the complete layout. Several areas must form a
 complete nonoverlapping tiling in integer `0..LAYOUT_EXTENT` coordinates. Areas
-can contain zero panels. Missing focus/selection defaults to the first area/tab;
-removing or moving the selected entity chooses the first remaining one. Conflicting
+can contain zero panels. Attaching a new concrete panel selects its tab in the
+destination area without changing the layout's focused area. Missing focus/selection
+defaults to the first area/tab. Removing or moving the selected panel chooses a
+remaining tab near its former index; removing the focused area chooses a remaining
+area. `Workbench::select_panel` selects a tab, `focus_area` changes
+area focus, and `focus_panel` is an explicit convenience that does both. Conflicting
 live references or duplicate active selections fail clearly at reconciliation.
 
 Lifecycle hooks derive area/panel `InWorkspace` from their parents and maintain
@@ -92,20 +95,23 @@ the new membership in the next without waiting for a workbench schedule stage.
 Keep deferred writers and readers ordered normally; commands that have not yet
 been applied are not visible to queries.
 
-One scheduled reconciliation function validates the graph, initializes newly
-composed panels, resolves missing focus/selection and invalidates stale layout
-gestures before drawing, after queued workbench/workspace operations, and in
-PostUpdate. Entities created during Update receive panel initialization in
-PostUpdate. `reconcile_workbench(world)` is available when those operations are
-needed immediately. Keep structural edits valid at that boundary. Required
-components supply defaults immediately.
+Lifecycle hooks also maintain selection/focus fallbacks as relationships change.
+Scheduled reconciliation validates the graph and invalidates stale layout gestures
+before drawing, after queued workbench/workspace operations, and in PostUpdate.
+It is not an initialization pass: required components supply defaults, metadata
+and drawing as soon as composition applies. `reconcile_workbench(world)` is
+available for immediate validation. Keep structural edits valid at that boundary.
 
 `InWorkspace`/`WorkspaceMembers`, `InLayout`/`LayoutAreas` and
 `InArea`/`AreaPanels` are Bevy relationships with linked despawning. Workspace
 members retire with their workspace; areas/panels also retire with their layout.
 Moving a layout, area or panel updates its descendants' workspace ownership as
 the relationship change is applied, before subsequent despawns can act on the
-old workspace's ownership list.
+old workspace's ownership list. Use `Workbench::relocate_panel` for checked moves
+between layouts/workspaces. Cross-workspace relocation rejects drafts and
+panel-owned work and detaches `DocumentView`; documents do not migrate implicitly.
+Detach other application-owned scoped links before calling. Raw cross-workspace
+reparenting of a bound document viewer is unsupported and rejected by validation.
 Application editor entities can use `InWorkspace` directly. Ordinary game
 entities need no workbench components. Workspace-specific state belongs on the
 workspace entity; resources remain application-wide.
@@ -140,59 +146,32 @@ and area, while direct component composition creates only what was spawned.
 Closing the final workspace or deleting its final layout is allowed. Use queued
 requests for activation/closure during drawing so that drawing can finish first.
 
-## Saving, loading and layout templates
+## Application-owned sessions and close decisions
 
-`capture_workspace(world, workspace_entity)` returns a serde-compatible
-`WorkspaceSnapshot` with all layouts and the workspace's selected layout.
-`capture_layout(world, layout_entity)` returns a `LayoutSnapshot`. Both contain
-workspace background-update policy, names, integer area rectangles, tab order,
-registered panel keys/titles/preview
-metadata, selected tabs and focused areas. References are vector indices, not
-Bevy entities. Format versions are explicit. Capture after reconciliation when
-using freshly composed entities.
+Workbench provides live composition and layout transitions, not a generic session
+format. Core workspace/layout snapshots, capture/restore/replace APIs, layout
+templates and snapshot-derived `WorkspaceChanged` notifications have been removed.
+Applications own validation, persistence formats, storage, defaults, creation
+choices, restore descriptors and reconstruction of their concrete panels and
+documents. Observe relevant ECS state or application transitions explicitly when
+implementing persistence; there is no replacement generic serialization registry.
+See [application composition](../../../MIGRATION/application-composition.md) for
+the accepted design and unfinished application work.
 
-```rust,ignore
-let saved = capture_workspace(world, workspace)?;
-let bytes = serde_json::to_vec(&saved)?; // Application chooses format and storage.
+Destructive UI layout intentions emit `PanelCloseRequested` rather than granting
+permission to destroy views. The application may reject a request, retain it while
+prompting/saving, or approve it with `Workbench::commit_close(&request)`. The commit
+revalidates the captured layout/activation stamp and targets, so delayed approval
+cannot silently close a changed layout. `close_targets(&request)` is a read-only
+policy preflight that uses the same geometry planner as commit, including the exact
+panels removed by joins/docks. Activation hooks invalidate stamps immediately on
+marker changes, including leave-and-return before reconciliation. This includes
+panel/area closure and destructive joins/docks. Workbench owns structural and document preflight checks;
+the application owns the user-facing decision and recovery policy.
 
-let saved: WorkspaceSnapshot = serde_json::from_slice(&bytes)?;
-let restored = restore_workspace(world, &saved)?;
-world.entity_mut(restored.workspace).insert((Project::default(), ActiveWorkspace));
-// Remove ActiveWorkspace from any previously selected workspace first.
-```
-
-Restoration validates the whole document, geometry, indices and registered panel
-types before creating entities. Unknown versions/types and malformed geometry or
-references return errors without partially creating/replacing a graph. Each
-panel is a fresh entity initialized by its application-wide registration. The
-returned `RestoredWorkspace`/`RestoredLayout` maps layouts, areas and panels in
-snapshot order so applications can attach their own project/slot metadata and
-reopen application-owned document descriptors; the snapshots contain no
-document sessions. Restoring a workspace preserves its selected layout but
-leaves selection of the workspace itself to the application. No fallback
-workspace or layout is created.
-
-A layout template is simply a `LayoutSnapshot`. `restore_layout` creates a fresh
-layout in an existing workspace without selecting it. `replace_layout` replaces
-an existing layout's name, focus, areas and panels while retaining its root entity,
-active marker and application components. Applications can store nine templates,
-associate slots with layout entities, and persist each workspace's current state
-independently; slot policy and reset/default selection stay application-owned.
-
-Read `WorkspaceChanged` messages in PostUpdate after
-`WorkspaceSystems::Notify` (or on the next frame). They coalesce persisted core
-changes into one Created/Modified/Removed message per workspace per frame,
-including direct component edits, tab/area changes and direct despawning. Loading
-emits one Created notification per workspace at the next observation pass.
-Comparing core snapshots catches changes independently of the mutation path.
-Applications own debounce, filesystem/database I/O, save/discard decisions,
-project/document data and additional component serialization. Global workspace
-activation, worker state, presentation, dirty flags and arbitrary application
-components are not included in these snapshots. Document sessions are separate;
-see [Documents](#documents). Observe active-marker changes
-with ordinary Bevy queries if the application also stores the selected workspace.
-Anonymous runtime panels cannot be saved; register stable panel keys for persisted
-layouts.
+Raw entity despawn still performs ownership/worker cleanup, with no veto and no
+save prompt. It is not a safe user-facing close-decision API. The controlled
+workspace/document APIs below retain their explicit preflights.
 
 ## Documents
 
@@ -398,11 +377,12 @@ can call the read-only preflight before showing their own save/discard/cancel
 UI, then again after asynchronous saves. Direct raw entity despawn bypasses these
 checks; the controlled APIs enforce them.
 
-The core plugin installs global `SaveDocument`, `UndoDocument` and
-`RedoDocument` handlers. They act on the focused panel's `DocumentView` and fail
-without rerouting when no document viewer is admitted. Shortcuts are opt-in:
+Document handlers and shortcuts are explicit application choices, not installed
+by the core plugin (which supplies their command definitions). The supplied world handlers act on the focused panel's
+`DocumentView` and fail without rerouting when no document viewer is admitted:
 
 ```rust,ignore
+register_document_handlers(world)?; // SaveDocument, UndoDocument, RedoDocument.
 register_document_shortcuts(world); // Primary+S, Primary+Z, Primary+Shift+Z, Primary+Y.
 ```
 
@@ -411,18 +391,11 @@ chords and call `undo_document`/`redo_document`. The general shortcut collector
 deliberately leaves text-editing chords to widgets, so a widget-private history
 would diverge from the document; use the same document undo instead.
 
-Workspace and layout snapshots contain no document data. Store application-owned
-restore descriptors (title, source key, model contents/token and target tab) and
-reopen them after restore; `source_key` deduplicates them within the restored
-workspace:
-
-```rust,ignore
-let restored = restore_workspace(world, &snapshot)?; // Layout metadata only.
-let document = open_document(world, restored.workspace, contents,
-    DocumentOptions { source_key: Some(saved.source_key),
-        ..DocumentOptions::loaded(saved.title) })?;
-bind_document_view(world, restored.layouts[0].areas[0].panels[0], document)?;
-```
+Session persistence is application-owned. Workbench has no workspace/layout
+snapshot or restore API. A host restoring a session must validate its own data,
+compose layouts and concrete panels, reopen documents and bind viewers explicitly.
+Application restore descriptors may contain title, source key, model contents/token
+and target tab; `source_key` deduplicates documents within a workspace.
 
 Replacing a save binding is not a complete Save As workflow: source identity,
 any chooser and source-key changes remain application-owned. Workbench provides
@@ -522,31 +495,34 @@ Every workbench content instance is a panel. `Panel` is the rendering/type
 contract; `PanelInstance` is the ECS metadata attached to each instance:
 
 ~~~rust,ignore
+#[derive(Component, Default)]
+#[require(PanelInstance = PanelInstance::of::<Self>())]
+struct Notes { text: String }
+
 impl bedtime_workbench2::Panel for Notes {
     const KEY: &'static str = "example.notes";
     const LABEL: &'static str = "Notes";
-    fn initialize(entity: &mut EntityWorldMut<'_>) {
-        entity.entry::<Notes>().or_default(); // Preserve explicitly supplied state.
-    }
     fn draw(ui: &mut egui::Ui, world: &mut World,
             context: &bedtime_ui2::UiContext<'_>, panel: Entity) {
         let mut notes = world.get_mut::<Notes>(panel).unwrap();
         context.frame(ui).text_edit(egui::TextEdit::singleline(&mut notes.text));
     }
 }
-app.register_panel_type::<Notes>(); // Once, without needing any workspace.
-// Compose PanelInstance::new(Notes::KEY) + InArea(area), plus optional state.
+commands.spawn((Notes { text: "Draft".into() }, InArea(area)));
+// Required components preserve explicitly supplied component overrides.
 ~~~
 
 Panel draw methods are ordinary Rust calls with exclusive world access, not
 registered Bevy systems. Panels compose `bedtime_ui2::Component` renderers with
 arbitrary associated props. The shell, panels, menus, titlebars and status renderers all draw in the
 application World during the same egui pass. Scheduled input,
-commands and updates remain Bevy systems. `Panel::initialize` receives the already
-spawned entity, supplies missing application defaults, and runs once per instance.
-Use `entry().or_default()` or required components to preserve supplied state.
-Registration installs drawing on that same entity. Workspace and entity identities
-keep widget state distinct. Moving tabs retains panel and widget state.
+commands and updates remain Bevy systems. `Panel` has no initializer. Bevy
+required components supply only missing state, preserving explicit overrides in
+the spawn. `PanelInstance::of::<P>()` carries `P`'s label, descriptive key and draw
+function on that same entity. `Panel::KEY` is retained as descriptive application
+identity (an empty key is usable), not a construction registry or validated type ID.
+Workspace and entity identities keep widget state distinct. Moving tabs retains
+panel and widget state.
 
 `WorkbenchSurface` owns panel rounding, suggested padding, gaps and corner hit
 targets, along with single-area edge-to-edge presentation, tab visibility, corner
@@ -759,9 +735,8 @@ theme-owned. Tab width and painting use the same shaped label, including italics
 keeping or moving a preview still clears that flag. Explicit styles stay on the
 same item when it moves or becomes permanent. Style insertion, edits and removal
 are observed on the next draw without changing layout revisions. This is
-**runtime-only appearance configuration**: workspace/layout snapshots do not
-capture it or report it as a persisted change. Applications reapply overrides
-through panel initialization or to restored panel entities if needed.
+**runtime-only appearance configuration**. Applications own any serialization
+and reapply overrides when composing their panels.
 
 The frontend retains Blender-style interactions:
 
@@ -773,16 +748,17 @@ The frontend retains Blender-style interactions:
 - Close with x, middle click or the tab menu. Double click keeps a preview tab.
 
 Gestures cancel on Escape, right click, focus loss, activation or bounds changes.
-Resize previews commit on release. Cross-layout moves and floating native panels
-remain outside this implementation.
+Resize previews commit on release. Interactive cross-layout dragging and floating
+native panels remain outside this implementation; checked `relocate_panel` is an
+explicit programmatic transition, not a cross-layout drag implementation.
 
-Import `WorkbenchAppExt` and register panel types through
-`app.register_panel_type::<P>()`. This returns `&mut App` for chaining with Bevy's
-setup methods and does not depend on plugin registration order. Invalid or
-duplicate keys and empty labels panic as application setup errors.
-`Panel` supplies a stable key, label, initializer and optional UI drawing.
-`PanelType` and optional `ActionEnabled` live on the registration entity. Empty
-areas present available types. `panel_drag_source` supplies typed drag payloads.
+Workbench has no `PanelType`, panel registry/catalog or built-in panel picker.
+The application owns creation discovery (for example, a View menu) and directly
+spawns its concrete components. For creation drags, pass an application-owned
+`PanelFactory::new(label, create)` to `panel_drag_source`, where
+`create: fn(&mut World, Entity) -> Entity` creates exactly one panel in the supplied
+area and returns it. Validate application-specific inputs before offering this
+infallible factory; Workbench does not resolve descriptive keys to constructors.
 
 Drawing queues WorkbenchRequests on the originating workspace entity. WorkbenchSystems::Apply
 commits a batch after contextual command dispatch and publishes WorkbenchFinished.
@@ -790,8 +766,8 @@ Gesture requests include layout revision and activation stamps; stale edits fail
 
 ## Execution and external work
 
-`WorkspaceSystems::Prepare` validates composed graphs and initializes panels
-before drawing. Selection and membership hooks update query markers as commands
+`WorkspaceSystems::Prepare` validates composed graphs before drawing; it does
+not initialize panels. Selection and membership hooks update query markers as commands
 are applied. UI focus observations precede shortcuts, contextual
 commands and layout edits. `WorkspaceSystems::Dispatch` then handles queued
 workspace activation/closure requests. `WorkspaceSystems::Sync` validates those edits
@@ -803,6 +779,8 @@ Workspace layout/command queues are components, accessible through
 Queued operations retain their originating workspace when activation changes.
 `ContextCommandInvocation.workspace` identifies that origin inside a handler.
 Global resources are shared; workspace-specific handler data uses that entity.
+`GlobalCommandRequests` is a distinct resource for application-wide command
+requests, including commands when no workspace exists.
 
 ```rust,ignore
 Workbench::with_workspace(world, project)?.commands().invoke::<Save>();
@@ -875,30 +853,39 @@ impl ContextCommand for Save {
     const KEY: &'static str = "example.save";
     const LABEL: &'static str = "Save";
 }
-Workbench::new(world).register_context_command::<Save>()?;
-Workbench::new(world).register_handler::<Save, _>(save_workbench)?;
-Workbench::new(world).register_panel_handler::<Save, _>(panel, save_panel)?;
+register_context_command::<Save>(world)?; // Metadata, independent of handlers.
+install_global_handler::<Save, _>(world, save_application)?;
+install_workspace_handler::<Save, _>(world, workspace, save_workspace)?;
+install_panel_handler::<Save, _>(world, panel, save_panel)?;
 world.spawn(Binding::new::<Save>(KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS)));
 world.spawn((MenuItem::new("Save"), InMenu(file_menu), Invokes::of::<Save>()));
 ```
 
-Registering a handler also registers missing metadata. One handler per command
-and scope is permitted. A panel's `InPanel` ownership retires its handlers,
-bindings and menu roots when the panel closes. Menu descendants inherit their
-root's lifetime.
+Installing a handler does not register command metadata. Definition registration
+and handler installation work without a selected workspace. One handler per command
+and scope is permitted. `Workbench::register_handler` is explicitly workspace-scoped;
+the free `install_global_handler` installs a world handler. As a direct function
+alternative to Bevy system handlers, attach `CommandHandler::<Save>::new(call)`
+to its panel/workspace (or an unscoped entity for world scope). This installs no
+command definition and runs no application code during composition. A panel's
+`InPanel` ownership retires separately owned handlers, bindings and menu roots
+when the panel closes. Menu descendants inherit their root's lifetime.
 
-Binding lookup starts at the focused panel and falls back to workbench by chord.
-Handler lookup independently starts at the invocation's panel and falls back to
-workbench by command ID. A global binding can use a panel handler; a panel binding
-can use a workbench handler. Disabled local handlers block fallback. Handler
-errors and stale admitted targets never reroute to another handler/binding.
+Bindings form a nearest-scope overlay by chord: panel, workspace, then world.
+Handler lookup independently follows panel → workspace → world by command ID.
+A world binding can use a panel handler; a panel binding can use a world handler.
+Disabled local handlers block fallback. Handler errors and stale admitted targets
+never reroute to another handler/binding. Admission captures handler generation and
+scope identity, so replaced or retargeted handlers reject an old request rather
+than executing the new capability under stale admission.
 
 Modifiers match exactly; PRIMARY resolves to Cmd on macOS and Ctrl elsewhere.
 Chords retain physical Bevy KeyCode identity. Repeats default to disabled. A
 selected binding reserves its input even when unavailable. Same-scope conflicts
 reserve the chord, execute nothing and publish `BindingConflict`.
 
-The workspace component `ContextCommandRequests` accepts typed `invoke::<Save>()`, `invoke_id(id)` or
+The workspace component `ContextCommandRequests` and the distinct application
+resource `GlobalCommandRequests` accept typed `invoke::<Save>()`, `invoke_id(id)` or
 explicit requests with `InvocationContext::{Focused, Global, Panel(entity)}`.
 Dispatch admits one batch before execution, captures workspace/panel/handler targets,
 checks availability and publishes `ContextCommandFinished`. Handler follow-ups
@@ -928,8 +915,12 @@ menu presentation.
 `draw_popup_menu(&mut frame, world, &response, root, context)` associates a menu
 with an egui response. Adding `NativeMenuBar` selects native presentation; removing it returns to egui
 when the application calls `draw_menu_bar`. The egui bar is suppressed while
-that root is natively presented. Native menu clicks enqueue requests. Native shortcut hints
-are label text; keyboard accelerators do not create a second execution path.
+that root is successfully natively installed (`native_menu_installed`), rather
+than merely supported by the platform. Global application menu roots also work
+without a selected workspace. Native menu clicks and supported physical keyboard
+accelerators enqueue the same revalidated command requests; applications own their
+actions and modal/shutdown gates. Unsupported native key mappings retain a textual
+hint and the ordinary keyboard route.
 
 ## Shortcuts and direct panel input
 
@@ -983,8 +974,8 @@ Single-area layouts are edge-to-edge by default. `WorkbenchSurface.panel_gap` se
 and between panels and the shell's window, menu, titlebar and status edges.
 Tabs have transparent fills with a 12% text-color hover
 tint, square lower corners and meet their border. Tab bars have no add button;
-empty areas retain a context menu for opening panels. Corner handles use a
-crosshair cursor and take egui input priority over panel contents. A tab's faint
+empty areas have no built-in type picker; creation UI belongs to the application.
+Corner handles use a crosshair cursor and take egui input priority over panel contents. A tab's faint
 hover background slides up from its bottom edge at twice the surface's motion
 speed; its geometry and text stay fixed. Reduced motion
 settles the highlight immediately. New areas appear at their final size.
@@ -1003,7 +994,9 @@ Tabs follow their area's geometry without separate interpolation. Panel contents
 fade in when first shown or when their committed area or placement changes, using
 the surface motion policy. Nested widgets, icons and viewport images inherit the
 fade. Geometry interpolation does not restart it; reduced motion settles it
-immediately. Pure area relocation snaps its geometry while fading its contents.
+immediately. Fade timing starts at first display and uses elapsed egui time:
+preceding idle time and repeated layout passes cannot consume the animation.
+Pure area relocation snaps its geometry while fading its contents.
 
 `WorkbenchSurface` also configures panel rounding, suggested opt-in content
 padding, panel gaps, corner hit size and debug visibility, independently of `Theme`.

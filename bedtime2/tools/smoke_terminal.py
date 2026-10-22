@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise real local PTYs through bed2's Terminal picker and native input (Unix)."""
+"""Exercise real local PTYs through bed2's View menu and native input (Unix)."""
 import argparse
 import json
 import os
@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from automation import Application, AutomationError
+from smoke_bed2 import open_panel, prepare_demo_layout
 
 
 PANEL_KEY = "bedtime.terminal"
@@ -93,7 +94,8 @@ def jobs(value, workspace):
 
 
 def assert_owned(app, workspace, panels):
-    owned = jobs(inspection(app), workspace)
+    # Workspace-owned preference I/O is independent of panel-owned PTY work.
+    owned = [job for job in jobs(inspection(app), workspace) if job["owner"] is not None]
     assert {j["owner"] for j in owned} == set(panels), owned
     assert len(owned) == len(panels) and all(j["status"] == "Running" for j in owned), owned
 
@@ -217,13 +219,13 @@ def capture_checked(app, filename, *, different_from=None):
             # A separate layout hides ALL terminals, including a second split
             # panel; covering only the focused tab would not isolate terminal UI.
             control_layout = app.request("layout.create", name="Capture diagnostic", activate=True)["layout"]
-            app.request("panel.open", key="bed.hello", layout=control_layout)
+            open_panel(app, "Settings", layout=control_layout)
             control_snapshot = app.wait_until(
-                lambda s: any(t["text"] == "Hello, world!" for t in s["ui"]["texts"])
+                lambda s: any(t["text"] == "Changes apply live and are not saved." for t in s["ui"]["texts"])
                 and not any(p["presentation"]["visible"] for p in inspection(app)["panels"]))
             diagnostics["nonterminal_control"] = {
                 "observation": render_observation(control_snapshot),
-                "capture": app.capture("diagnostic-hello-control.png"),
+                "capture": app.capture("diagnostic-theme-control.png"),
             }
             diagnostics["scope"] = "full-window failure; nonterminal control recorded for comparison"
     except AutomationError as error:
@@ -252,6 +254,7 @@ def main():
     captures = []
 
     with Application([str(Path(args.binary).resolve())], output=output, timeout=60) as app:
+        prepare_demo_layout(app, viewport=True)
         app.request("configure", fixed_dt=1 / 60, clipboard="")
         snapshot = app.wait_until(lambda s: bool(s["viewports"])
                                   and s["viewports"][0]["visible"]
@@ -277,10 +280,8 @@ def main():
         area = workspace["layouts"][0]["areas"][0]["entity"]
         app.request("panel.close", panel=snapshot["viewports"][0]["entity"])
 
-        # The first terminal comes from the real empty-area context menu.
-        app.input({"type": "click", "button": "Right", "position": [300, 180]})
-        app.wait_until(lambda s: any(t["text"] == "Terminal" for t in s["ui"]["texts"]))
-        app.click_text("Terminal")
+        # The first terminal comes from the application's real View menu.
+        open_panel(app, "Terminal")
         app.wait_until(lambda _: bool(inspection(app)["panels"]))
         first = inspection(app)["panels"][0]["entity"]
         initial = bootstrap(app, first, "BED2_READY")
@@ -418,7 +419,7 @@ def main():
 
         # A second ordinary panel gets its own shell, grid and input target.
         split = app.request("area.split", area=area, axis="horizontal", fraction=0.5)
-        second = app.request("panel.open", key=PANEL_KEY, area=split["area"])["panel"]
+        second = open_panel(app, "Terminal", area=split["area"])
         second_state = bootstrap(app, second, "BED2_SECOND_ONLY")
         second_pid = second_state["pid"]
         assert second_pid != first_pid and "BED2_SECOND_ONLY" not in state(app, first)["text"]
@@ -438,7 +439,7 @@ def main():
                 "i=0; while [ \"$i\" -lt 60 ]; do printf '\\n%s%s:%s\\n' 'BED2_' 'TICK' \"$i\"; "
                 "i=$((i + 1)); sleep 1; done")
         before = tick(wait_state(app, first, lambda p: tick(p) >= 0))
-        cover = app.request("panel.open", key="bed.hello", area=area)["panel"]
+        cover = open_panel(app, "Settings", area=area)
         wait_state(app, first, lambda p: not p["presentation"]["visible"])
         observe_hidden(app, first, first_pid)
         app.request("panel.focus", panel=first)
@@ -472,25 +473,24 @@ def main():
         assert state(app, second)["pid"] == second_pid
         captures.append(capture_checked(app, "07-restarted.png", different_from=captures[-1]))
 
-        # Inactive layout restoration contains panel descriptions, not sessions.
-        saved = app.request("layout.capture", layout=layout)
-        restored = app.request("layout.restore", workspace=workspace_id, snapshot=saved)
-        restored_panels = [p for p in inspection(app)["panels"] if p["entity"] not in (first, second)]
-        assert len(restored_panels) == 2, restored_panels
-        assert all(p["status"] == "Pending" and p["pid"] is None and not p["text"].strip()
-                   for p in restored_panels), restored_panels
-        assert_owned(app, workspace_id, [first, second])
-        app.request("layout.activate", layout=restored["layout"])
-        restored_ids = [p["entity"] for p in restored_panels]
-        restored_pids = [wait_state(app, p, lambda v: v["status"] == "Running" and v["pid"] is not None)["pid"]
-                         for p in restored_ids]
-        assert len(set(restored_pids + [first_pid, second_pid])) == 4, restored_pids
+        # New concrete panels in another layout own fresh independent sessions.
+        fresh = app.request("layout.create", name="Fresh terminals", activate=True)
+        fresh_ids = [open_panel(app, "Terminal")]
+        snapshot = app.inspect()
+        fresh_area = next(a["entity"] for w in snapshot["workbench"]["workspaces"]
+                          for l in w["layouts"] if l["entity"] == fresh["layout"] for a in l["areas"])
+        fresh_split = app.request("area.split", area=fresh_area, axis="horizontal", fraction=0.5)
+        fresh_ids.append(open_panel(app, "Terminal", area=fresh_split["area"]))
+        fresh_pids = [wait_state(app, p, lambda v: v["status"] == "Running" and v["pid"] is not None)["pid"]
+                      for p in fresh_ids]
+        assert len(set(fresh_pids + [first_pid, second_pid])) == 4, fresh_pids
         assert all("BED2_RESTARTED" not in state(app, p)["text"] and "BED2_SECOND_ONLY" not in state(app, p)["text"]
-                   for p in restored_ids)
-        bootstrap(app, restored_ids[0], "BED2_RESTORED_FRESH")
-        captures.append(capture_checked(app, "08-restored.png"))
-        app.request("layout.delete", layout=restored["layout"])
-        wait_retired(app, workspace_id, restored_ids, restored_pids)
+                   for p in fresh_ids)
+        assert_owned(app, workspace_id, [first, second] + fresh_ids)
+        bootstrap(app, fresh_ids[0], "BED2_NEW_LAYOUT_FRESH")
+        captures.append(capture_checked(app, "08-fresh-layout.png"))
+        app.request("layout.delete", layout=fresh["layout"])
+        wait_retired(app, workspace_id, fresh_ids, fresh_pids)
         app.request("layout.activate", layout=layout)
         assert state(app, first)["pid"] == first_pid
 
@@ -508,7 +508,7 @@ def main():
         assert inspection(app)["panels"] == []
 
         # Rebuilding after cleanup still uses the ordinary panel lifecycle.
-        rebuilt = app.request("panel.open", key=PANEL_KEY)["panel"]
+        rebuilt = open_panel(app, "Terminal")
         bootstrap(app, rebuilt, "BED2_REBUILT")
         captures.append(capture_checked(app, "09-rebuilt.png"))
         assert all(s["diagnostics"]["error"] is None for s in app.inspect()["ui"]["surfaces"])

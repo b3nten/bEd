@@ -3,31 +3,34 @@
 #[cfg(test)]
 use bedtime_editor2::BufferEdit;
 use bedtime_editor2::TextBuffer;
+#[cfg(any(test, feature = "automation"))]
+use bedtime_filetree2::FileTreePreferences;
 #[cfg(feature = "automation")]
 use bedtime_filetree2::FileTreeSettings;
 use bedtime_filetree2::{
     FileTreeActivation, FileTreeChange, FileTreeOpenRequested, FileTreeOperationFinished,
-    FileTreePanel, FileTreePlugin, FileTreePreferences, FileTreePreferencesChanged, FileTreeRoot,
-    FileTreeVisibility,
+    FileTreePanel, FileTreePlugin, FileTreeRoot,
 };
+#[cfg(test)]
+use bedtime_filetree2::{FileTreePreferencesChanged, FileTreeVisibility};
 use bedtime_ui2::{UiContext, egui};
 use bedtime_workbench2::*;
 use bevy::{ecs::message::MessageCursor, prelude::*};
+#[cfg(any(test, feature = "automation"))]
+#[cfg(feature = "automation")]
+use std::collections::BTreeSet;
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
-    path::{Component as PathComponent, Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    collections::BTreeMap,
+    fs::{self, File},
+    io::Read,
+    path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 const MAX_PREVIEW_BYTES: u64 = 256 * 1024 * 1024;
+#[cfg(test)]
 const MAX_PREFERENCES_BYTES: u64 = 4 * 1024 * 1024;
-const SAVE_DEBOUNCE: Duration = Duration::from_millis(200);
 const PREVIEW_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_PREVIEW_CHECKS: usize = 64;
 
@@ -42,13 +45,14 @@ impl Plugin for FilesPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((FileTreePlugin, crate::file_editor::FileEditorPlugin))
             .init_resource::<StartupRoot>()
+            .init_resource::<FolderOpens>()
             .init_resource::<FileEvents>()
-            .register_panel_type::<FilePreviewPanel>()
             .add_systems(
                 Update,
                 update_files
                     .in_set(FilesSystems::Update)
-                    .after(bedtime_filetree2::FileTreeSystems::Update),
+                    .after(bedtime_filetree2::FileTreeSystems::Update)
+                    .before(bedtime_editor2::workbench::update_document_analysis),
             )
             // UI preference changes must be admitted BEFORE workspace.close can
             // cancel storage. No filesystem work happens in this system.
@@ -56,12 +60,21 @@ impl Plugin for FilesPlugin {
                 PreUpdate,
                 admit_preferences
                     .after(bedtime_ui2::UiSystems::Draw)
+                    .after(WorkbenchSystems::Apply)
                     .before(WorkspaceSystems::Dispatch),
             );
         #[cfg(feature = "automation")]
         {
             use bedtime_automation2::AutomationAppExt;
             app.register_automation_command("app.inspect_filetree", inspect)
+                .register_automation_command("app.open_folder", |world, arguments| {
+                    let path = arguments
+                        .get("path")
+                        .and_then(|value| value.as_str())
+                        .ok_or("path must be a string")?;
+                    open_folder(world, PathBuf::from(path))?;
+                    Ok(serde_json::json!({"admitted": true}))
+                })
                 .register_automation_command("app.set_filetree_root", set_tree_root)
                 .register_automation_command("app.set_filetree_settings", set_tree_settings)
                 .register_automation_command("app.drop_files", drop_files);
@@ -69,13 +82,97 @@ impl Plugin for FilesPlugin {
     }
 }
 
+/// Stable project identity belongs to its workspace, never to the active window.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceRoot(pub PathBuf);
+
+/// Explicit folder-backed identity. A browsing/cwd root alone never opts into
+/// workspace storage: the default home workspace remains entirely in memory.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct FolderWorkspace;
+
+#[derive(Resource, Default)]
+struct FolderOpens(Vec<std::thread::JoinHandle<Result<PathBuf, String>>>);
+
+/// Admit an explicit folder choice. Validation/canonicalization is off-thread;
+/// cancellation is represented by not calling this function at all.
+pub fn open_folder(world: &mut World, path: PathBuf) -> Result<(), String> {
+    if !crate::close::accepts_user_actions(world) {
+        return Err("Cancel quit before opening another folder".into());
+    }
+    if !world.contains_resource::<FolderOpens>() {
+        return Err("Files capability is unavailable".into());
+    }
+    world
+        .resource_mut::<FolderOpens>()
+        .0
+        .push(std::thread::spawn(move || resolve_root(Some(path))));
+    Ok(())
+}
+
+fn poll_folder_opens(world: &mut World) {
+    if !crate::close::accepts_user_actions(world) {
+        return;
+    }
+    let completed = {
+        let mut requests = world.resource_mut::<FolderOpens>();
+        let mut completed = Vec::new();
+        let mut index = 0;
+        while index < requests.0.len() {
+            if requests.0[index].is_finished() {
+                let job = requests.0.remove(index);
+                completed.push(
+                    job.join()
+                        .unwrap_or_else(|_| Err("Folder validation worker panicked".into())),
+                );
+            } else {
+                index += 1;
+            }
+        }
+        completed
+    };
+    for result in completed {
+        let result = result.and_then(|root| {
+            let existing = world.query_filtered::<(Entity, &WorkspaceRoot), (With<Workspace>, With<FolderWorkspace>)>()
+                .iter(world).find_map(|(workspace, current)| (current.0 == root).then_some(workspace));
+            if let Some(existing) = existing {
+                let id = Workbench::for_entity(world, existing)?.workspace_id();
+                Workspaces::new(world).activate(id)?;
+                return Ok(());
+            }
+            let name = root.file_name().unwrap_or(root.as_os_str()).to_string_lossy().into_owned();
+            let workspace = Workspaces::new(world).open(name);
+            world.entity_mut(workspace.entity()).insert((WorkspaceRoot(root), FolderWorkspace));
+            Workspaces::new(world).activate(workspace)?;
+            crate::session::remember_initial_state(world, workspace.entity())?;
+            Ok(())
+        });
+        if let Err(error) = result {
+            request_error_dialog(
+                world,
+                ErrorDialog {
+                    title: "Open Folder".into(),
+                    message:
+                        "This folder couldn't be opened. The current workspace was left unchanged."
+                            .into(),
+                    details: Some(error),
+                },
+            );
+        }
+    }
+}
+
 #[derive(Resource, Default)]
 struct StartupRoot {
-    // None means no application default was requested, including in headless
-    // hosts/tests. Some(None) intentionally requests the worker's current_dir.
+    // None means no application default was requested, including headless hosts.
+    // Some(None) requests the user's home root, without enabling project storage.
     requested: Option<Option<PathBuf>>,
+    persistent: bool,
+    policy_resolved: bool,
+    restoring_last: bool,
     loading: Option<(Entity, WorkspaceTask<Result<PathBuf, String>>)>,
     root: Option<PathBuf>,
+    assigned: Option<Entity>,
     error: Option<String>,
     reported_error: Option<String>,
 }
@@ -88,29 +185,74 @@ pub fn configure_startup(app: &mut App) {
         .find(|argument| !argument.to_string_lossy().starts_with('-'))
         .map(PathBuf::from);
     app.insert_resource(StartupRoot {
+        persistent: argument.is_some(),
         requested: Some(argument),
         ..default()
     });
 }
 
-fn resolve_root(requested: Option<PathBuf>) -> Result<PathBuf, String> {
-    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
-    let path = match requested {
-        Some(path) if path.is_absolute() => path,
-        Some(path) => cwd.join(path),
-        None => cwd,
-    };
-    // Canonicalize a real root. A missing root still has an absolute lexical
-    // identity, allowing the tree to report its own useful filesystem error.
-    Ok(fs::canonicalize(&path).unwrap_or_else(|_| lexical_path(&path)))
+fn home_directory() -> Result<PathBuf, String> {
+    std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
+        .ok_or_else(|| "The user's home directory is unavailable".into())
 }
 
+/// No terminal may start in a launch-directory fallback while its application
+/// root is still resolving. Headless hosts that chose no startup policy remain
+/// valid; production's startup request targets exactly one workspace.
+pub fn root_ready(world: &World, workspace: Entity) -> bool {
+    if world.get::<WorkspaceRoot>(workspace).is_some() {
+        return true;
+    }
+    let Some(startup) = world.get_resource::<StartupRoot>() else {
+        return true;
+    };
+    if startup
+        .loading
+        .as_ref()
+        .is_some_and(|(owner, _)| *owner == workspace)
+    {
+        return false;
+    }
+    startup.requested.is_none() && startup.error.is_none()
+}
+
+pub fn workspace_directory(world: &World, workspace: Entity) -> Option<PathBuf> {
+    world
+        .get::<WorkspaceRoot>(workspace)
+        .map(|root| root.0.clone())
+        .or_else(|| home_directory().ok())
+}
+
+fn resolve_root(requested: Option<PathBuf>) -> Result<PathBuf, String> {
+    let path = match requested {
+        Some(path) if path.is_absolute() => path,
+        Some(path) => std::env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join(path),
+        None => home_directory()?,
+    };
+    let canonical =
+        fs::canonicalize(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    if !canonical.is_dir() {
+        return Err(format!("{} is not a folder", canonical.display()));
+    }
+    Ok(canonical)
+}
+
+#[cfg(feature = "automation")]
 fn lexical_path(path: &Path) -> PathBuf {
     let mut result = PathBuf::new();
     for part in path.components() {
         match part {
-            PathComponent::CurDir => {}
-            PathComponent::ParentDir => {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
                 result.pop();
             }
             other => result.push(other.as_os_str()),
@@ -123,7 +265,6 @@ fn lexical_path(path: &Path) -> PathBuf {
 struct FileEvents {
     opens: MessageCursor<FileTreeOpenRequested>,
     operations: MessageCursor<FileTreeOperationFinished>,
-    preferences: MessageCursor<FileTreePreferencesChanged>,
     activations: BTreeMap<Entity, ActivationCounts>,
     errors: BTreeMap<Entity, String>,
 }
@@ -138,9 +279,9 @@ struct ActivationCounts {
 
 fn update_files(world: &mut World) {
     update_startup_root(world);
+    poll_folder_opens(world);
     configure_panels(world);
     admit_preferences(world);
-    poll_storage(world);
     world.resource_scope(|world, mut events: Mut<FileEvents>| {
         let opens: Vec<_> = events
             .opens
@@ -200,18 +341,66 @@ fn update_files(world: &mut World) {
 }
 
 fn update_startup_root(world: &mut World) {
+    if crate::close::shutting_down(world) {
+        return;
+    }
     world.resource_scope(|world, mut startup: Mut<StartupRoot>| {
+        if !startup.policy_resolved {
+            if !crate::storage::global_ready(world) {
+                return;
+            }
+            if startup.requested == Some(None)
+                && let Some(preferences) = world.get_resource::<crate::settings::StartupPreferences>()
+                && preferences.open_last_workspace
+                && let Some(root) = &preferences.last_workspace
+            {
+                startup.requested = Some(Some(root.clone()));
+                startup.persistent = true;
+                startup.restoring_last = true;
+            }
+            startup.policy_resolved = true;
+        }
         if let Some((workspace, task)) = &startup.loading {
             match task.try_recv() {
                 Ok(Ok(root)) => {
+                    if world.get::<Workspace>(*workspace).is_some()
+                        && world.get::<WorkspaceRoot>(*workspace).is_none()
+                    {
+                        world
+                            .entity_mut(*workspace)
+                            .insert(WorkspaceRoot(root.clone()));
+                        if startup.persistent {
+                            world.entity_mut(*workspace).insert(FolderWorkspace);
+                            let name = root
+                                .file_name()
+                                .unwrap_or(root.as_os_str())
+                                .to_string_lossy()
+                                .into_owned();
+                            crate::session::initialize_folder_name(world, *workspace, name);
+                        }
+                    }
+                    // Even a retired target consumes this startup request; its
+                    // project must not silently migrate to another workspace.
+                    startup.assigned = Some(*workspace);
                     startup.root = Some(root);
                     startup.loading = None;
                     startup.requested = None;
                 }
                 Ok(Err(error)) => {
-                    startup.error = Some(error);
                     startup.loading = None;
-                    startup.requested = None;
+                    if startup.restoring_last {
+                        startup.restoring_last = false;
+                        startup.persistent = false;
+                        startup.requested = Some(None);
+                        request_error_dialog(world, ErrorDialog {
+                            title: "Open last workspace".into(),
+                            message: "The last workspace couldn't be opened. Opening a terminal in your home directory.".into(),
+                            details: Some(error),
+                        });
+                    } else {
+                        startup.error = Some(error);
+                        startup.requested = None;
+                    }
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     let closing = world
@@ -220,8 +409,8 @@ fn update_startup_root(world: &mut World) {
                     if !closing {
                         startup.error =
                             Some(format!("Root resolution stopped: {:?}", task.status()));
-                        startup.requested = None;
                     }
+                    startup.requested = None;
                     startup.loading = None;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
@@ -252,42 +441,65 @@ fn update_startup_root(world: &mut World) {
 }
 
 fn configure_panels(world: &mut World) {
-    let Some(root) = world.resource::<StartupRoot>().root.clone() else {
-        return;
-    };
-    let panels: Vec<_> = world
-        .query_filtered::<Entity, (With<FileTreePanel>, Without<FileTreeRoot>)>()
-        .iter(world)
-        .collect();
-    for panel in panels {
-        world.entity_mut(panel).insert(FileTreeRoot(root.clone()));
+    // The command-line root seeds one workspace only. Later workspaces must
+    // explicitly supply their own project identity rather than inheriting it.
+    if world.resource::<StartupRoot>().assigned.is_none()
+        && let Some(root) = world.resource::<StartupRoot>().root.clone()
+    {
+        let workspace = world
+            .query_filtered::<Entity, With<Workspace>>()
+            .iter(world)
+            .next();
+        if let Some(workspace) = workspace {
+            if world.get::<WorkspaceRoot>(workspace).is_none() {
+                world.entity_mut(workspace).insert(WorkspaceRoot(root));
+                if world.resource::<StartupRoot>().persistent {
+                    world.entity_mut(workspace).insert(FolderWorkspace);
+                }
+            }
+            world.resource_mut::<StartupRoot>().assigned = Some(workspace);
+        }
     }
-    let workspaces: Vec<_> = world
-        .query_filtered::<Entity, (With<Workspace>, Without<FileTreeStorage>)>()
+    let panels: Vec<_> = world
+        .query_filtered::<(Entity, &InWorkspace), (With<FileTreePanel>, Without<FileTreeRoot>)>()
         .iter(world)
+        .filter_map(|(panel, owner)| {
+            world
+                .get::<WorkspaceRoot>(owner.0)
+                .map(|root| (panel, root.0.clone()))
+        })
         .collect();
-    for workspace in workspaces {
-        start_storage(world, workspace, root.clone());
+    for (panel, root) in panels {
+        world.entity_mut(panel).insert(FileTreeRoot(root));
     }
 }
 
 /// Focus or open Files in this layout, never the currently active workspace by accident.
+#[cfg(test)]
 pub fn open_files(world: &mut World, layout: Entity) {
     let result = (|| {
         let mut workbench = Workbench::for_entity(world, layout)?;
-        let existing = workbench.panels(layout).into_iter().find(|panel| {
-            workbench
-                .world()
-                .get::<PanelInstance>(*panel)
-                .is_some_and(|instance| instance.key == FileTreePanel::KEY)
-        });
+        let existing = workbench
+            .panels(layout)
+            .into_iter()
+            .find(|panel| workbench.world().get::<FileTreePanel>(*panel).is_some());
         let panel = if let Some(panel) = existing {
             workbench.focus_panel(panel)?;
             panel
         } else {
-            workbench.register_panel::<FileTreePanel>(layout)?
+            let area = workbench.destination_area(layout)?;
+            let panel = workbench
+                .world_mut()
+                .spawn((FileTreePanel::default(), InArea(area)))
+                .id();
+            workbench.focus_panel(panel)?;
+            panel
         };
-        let root = workbench.world().resource::<StartupRoot>().root.clone();
+        let workspace = workbench.workspace_id().entity();
+        let root = workbench
+            .world()
+            .get::<WorkspaceRoot>(workspace)
+            .map(|root| root.0.clone());
         if workbench.world().get::<FileTreeRoot>(panel).is_none()
             && let Some(root) = root
         {
@@ -345,6 +557,7 @@ struct PreviewLoad {
 /// A replaceable file tab. Text binds to a shared document; unsupported files
 /// keep a bounded metadata presentation. The loaded bytes are a source snapshot.
 #[derive(Component, Default)]
+#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct FilePreviewPanel {
     path: Option<PathBuf>,
     generation: u64,
@@ -363,19 +576,14 @@ pub struct FilePreviewPanel {
 }
 
 impl Panel for FilePreviewPanel {
-    const KEY: &'static str = "bed.file-preview";
-    const LABEL: &'static str = "Text editor";
-
-    fn initialize(entity: &mut EntityWorldMut<'_>) {
-        entity.entry::<Self>().or_default();
-    }
+    const KEY: &'static str = "bed.code";
+    const LABEL: &'static str = "Code";
 
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
         let surface = *world.get::<WorkbenchSurface>(context.surface).unwrap();
         let state = world.get::<Self>(panel).unwrap();
         let path = state.path.clone();
         let loading = state.load.is_some();
-        let missing = state.missing;
         let metadata = match &state.content {
             Some(PreviewContent::Metadata(summary)) => Some(summary.clone()),
             _ => None,
@@ -390,34 +598,12 @@ impl Panel for FilePreviewPanel {
         let pinned = !world.get::<PanelInstance>(panel).unwrap().preview;
         context.frame(ui).padded(surface.padding, |frame| {
                     let ui = frame.ui;
-                    ui.horizontal_wrapped(|ui| {
-                        if !pinned && ui.button("Keep open").clicked() {
-                            pin = true;
+                    if document.is_none() {
+                        if let Some(path) = &path {
+                            ui.label(path.to_string_lossy());
+                        } else {
+                            ui.weak("Open a file from Files.");
                         }
-                        if path.is_some() && ui.button("Reload").clicked() {
-                            reload = true;
-                        }
-                        if let Some(info) = &info {
-                            save = ui.add_enabled(info.dirty && !info.saving && !info.conflict && !info.has_drafts && info.has_save_binding, egui::Button::new("Save")).clicked();
-                            split = ui.button("Split view").clicked();
-                            if let Some(mut editor) = world.get_mut::<bedtime_editor2::workbench::WorkbenchEditor>(panel) {
-                                ui.checkbox(&mut editor.view.settings.line_numbers, "Line numbers");
-                                editor.view.editing_menu(ui);
-                            }
-                            if info.saving { ui.spinner(); }
-                            else if info.dirty { ui.weak("Modified"); }
-                        }
-                    });
-                    if let Some(path) = &path {
-                        ui.add(egui::Label::new(egui::RichText::new(path.to_string_lossy()).weak()).truncate());
-                    } else {
-                        ui.label(if missing && document.is_some() {
-                        "Source deleted. Your edits are retained; saving to another path is not available yet."
-                    } else if missing {
-                        "File unloaded because its source was deleted. Open a file from Files."
-                    } else {
-                        "Open a file from Files. Layout restoration does not restore file contents."
-                    });
                     }
                     if loading {
                         ui.spinner();
@@ -427,7 +613,7 @@ impl Panel for FilePreviewPanel {
                         if info.conflict {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label("The file changed on disk.");
-                                if info.requires_source_refresh { ui.weak("Reload to compare before resolving."); }
+                                if info.requires_source_refresh { if ui.button("Reload to compare").clicked() { reload = true; } }
                                 else {
                                     if ui.button("Keep my edits").clicked() { resolution = Some(DocumentConflictResolution::KeepLocal); }
                                     if ui.button("Use disk contents").clicked() { resolution = Some(DocumentConflictResolution::AcceptIncoming); }
@@ -435,10 +621,17 @@ impl Panel for FilePreviewPanel {
                             });
                         }
                     }
-                    ui.separator();
                     if document.is_some() {
                         match bedtime_editor2::workbench::draw_editor(ui, world, context, panel) {
                             Ok(output) => {
+                                output.response.context_menu(|ui| {
+                                    if !pinned && ui.button("Keep open").clicked() { pin = true; ui.close(); }
+                                    if ui.button("Reload").clicked() { reload = true; ui.close(); }
+                                    if ui.button("Save").clicked() { save = true; ui.close(); }
+                                    if ui.button("Split view").clicked() { split = true; ui.close(); }
+                                    ui.separator();
+                                    crate::code::context_menu(ui, world, panel);
+                                });
                                 let mut state = world.get_mut::<Self>(panel).unwrap();
                                 state.editor_rect = Some(output.text_rect);
                                 state.caret_rect = Some(output.caret_rect);
@@ -514,15 +707,17 @@ fn split_editor(world: &mut World, panel: Entity) -> Result<Entity, String> {
     let bounds = workbench.world().get::<Area>(source_area).unwrap().rect;
     let at = bounds.min[0] + (bounds.max[0] - bounds.min[0]) / 2;
     let area = workbench.split_area(source_area, SplitAxis::Horizontal, at, [1, 1])?;
-    let other = workbench.register_panel_in_area::<FilePreviewPanel>(area)?;
-    workbench
+    let other = workbench
         .world_mut()
-        .entity_mut(other)
-        .insert(FilePreviewPanel {
-            path,
-            content,
-            ..Default::default()
-        });
+        .spawn((
+            FilePreviewPanel {
+                path,
+                content,
+                ..Default::default()
+            },
+            InArea(area),
+        ))
+        .id();
     let mut instance = workbench
         .world_mut()
         .get_mut::<PanelInstance>(other)
@@ -531,47 +726,9 @@ fn split_editor(world: &mut World, panel: Entity) -> Result<Entity, String> {
     instance.preview = false;
     bedtime_editor2::workbench::bind_text_editor(workbench.world_mut(), other, handle)
         .map_err(|e| e.to_string())?;
+    crate::settings::configure_editor(workbench.world_mut(), other);
     workbench.focus_panel(other)?;
     Ok(other)
-}
-
-/// Reopen a retained file document, including an unsaved deleted source. No
-/// loading or copying of canonical content occurs here.
-pub fn open_document_view(
-    world: &mut World,
-    layout: Entity,
-    document: DocumentId,
-) -> Result<Entity, String> {
-    let path = crate::file_editor::file_source(world, document).ok_or("Not a file document")?;
-    let handle = cast_document::<TextBuffer>(world, document).map_err(|e| e.to_string())?;
-    let info = inspect_document(world, document).map_err(|e| e.to_string())?;
-    let title = path
-        .as_ref()
-        .and_then(|path| path.file_name())
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or(info.title);
-    let mut workbench = Workbench::for_entity(world, layout)?;
-    if workbench.workspace_id().entity() != info.workspace {
-        return Err("Viewer destination is in another workspace".into());
-    }
-    let panel = workbench.register_panel::<FilePreviewPanel>(layout)?;
-    workbench
-        .world_mut()
-        .entity_mut(panel)
-        .insert(FilePreviewPanel {
-            missing: path.is_none(),
-            path,
-            ..Default::default()
-        });
-    workbench
-        .world_mut()
-        .get_mut::<PanelInstance>(panel)
-        .unwrap()
-        .title = title;
-    bedtime_editor2::workbench::bind_text_editor(workbench.world_mut(), panel, handle)
-        .map_err(|e| e.to_string())?;
-    workbench.focus_panel(panel)?;
-    Ok(panel)
 }
 
 fn open_requested(world: &mut World, request: &FileTreeOpenRequested) -> Result<Entity, String> {
@@ -615,9 +772,14 @@ fn open_requested(world: &mut World, request: &FileTreeOpenRequested) -> Result<
                 .unwrap()
                 .preview = false;
         }
-        workbench.focus_panel(panel)?;
-        if !pin {
-            workbench.focus_panel(request.panel)?;
+        workbench.select_panel(panel)?;
+        select_structure_source(workbench.world_mut(), panel);
+        if matches!(
+            request.activation,
+            FileTreeActivation::DoubleClick | FileTreeActivation::Keyboard
+        ) {
+            let area = workbench.world().get::<InArea>(panel).unwrap().0;
+            workbench.focus_area(area)?;
         }
         return Ok(panel);
     }
@@ -674,19 +836,51 @@ fn open_requested(world: &mut World, request: &FileTreeOpenRequested) -> Result<
                 workbench.split_area(source_area, SplitAxis::Horizontal, at, [1, 1])?
             }
         };
-        workbench.register_panel_in_area::<FilePreviewPanel>(area)?
+        workbench
+            .world_mut()
+            .spawn((FilePreviewPanel::default(), InArea(area)))
+            .id()
     };
     workbench
         .world_mut()
         .get_mut::<PanelInstance>(panel)
         .unwrap()
         .preview = !pin;
-    workbench.focus_panel(panel)?;
-    if !pin {
-        workbench.focus_panel(request.panel)?;
+    workbench.select_panel(panel)?;
+    if matches!(
+        request.activation,
+        FileTreeActivation::DoubleClick | FileTreeActivation::Keyboard
+    ) {
+        let area = workbench.world().get::<InArea>(panel).unwrap().0;
+        workbench.focus_area(area)?;
     }
     load_preview(workbench.world_mut(), panel, request.path.clone(), false)?;
     Ok(panel)
+}
+
+/// A selected file preview supplies Structure even while Files retains focus.
+pub(crate) fn select_structure_source(world: &mut World, panel: Entity) {
+    let Some(owner) = world.get::<InWorkspace>(panel).map(|owner| owner.0) else {
+        return;
+    };
+    let source = bedtime_editor2::workbench::code_document_for_panel(world, panel)
+        .map(|document| bed_structure2::SourceBinding { panel, document });
+    world
+        .entity_mut(owner)
+        .insert(bed_structure2::StructureSource { source });
+}
+
+/// A session descriptor, not canonical content or an ECS identity.
+pub fn panel_path(world: &World, panel: Entity) -> Option<PathBuf> {
+    world
+        .get::<FilePreviewPanel>(panel)
+        .and_then(|state| state.path.clone())
+}
+
+/// Restore file capabilities on an already composed concrete Code panel. Reading
+/// remains asynchronous and uses the ordinary generation-gated document flow.
+pub fn restore_file_panel(world: &mut World, panel: Entity, path: PathBuf) -> Result<(), String> {
+    load_preview(world, panel, path, false)
 }
 
 fn load_preview(
@@ -1154,317 +1348,62 @@ fn observe_preview_sources(world: &mut World) {
     }
 }
 
-// One worker/record per workspace. Changes are admitted into the shared mailbox
-// immediately; debounce is worker-owned. Cancellation flushes admitted changes
-// before returning, so normal Workspaces close/shutdown waits for the final save.
-#[derive(Component)]
-struct FileTreeStorage {
-    root: PathBuf,
-    mailbox: Arc<Mutex<StorageMailbox>>,
-    handle: WorkspaceTask<()>,
-    observed: FileTreePreferences,
-    touched: BTreeSet<PathBuf>,
-    revision: u64,
-    loaded: bool,
-    saved_revision: u64,
-    error: Option<String>,
-    error_revision: u64,
-    reported_error: Option<(u64, String)>,
-}
-
-#[derive(Default)]
-struct StorageMailbox {
-    loaded: Option<Result<FileTreePreferences, String>>,
-    pending: BTreeMap<PathBuf, Option<FileTreeVisibility>>,
-    revision: u64,
-    changed_at: Option<Instant>,
-    saved_revision: u64,
-    // Revision of the actual failed attempt, not a newer pending retry.
-    save_error: Option<(u64, String)>,
-    stopped: bool,
-}
-
-fn start_storage(world: &mut World, workspace: Entity, root: PathBuf) {
-    let mailbox = Arc::new(Mutex::new(StorageMailbox::default()));
-    let shared = mailbox.clone();
-    let destination = root.join(".bed/filetree2.json");
-    let Some(mut work) = world.get_mut::<WorkspaceWork>(workspace) else {
-        return;
-    };
-    let task = work.spawn_task(None, "File tree preferences", move |cancel| {
-        storage_worker(destination, shared, cancel);
-    });
-    match task {
-        Ok(handle) => {
-            let observed = FileTreePreferences::default();
-            world.entity_mut(workspace).insert(FileTreeStorage {
-                root,
-                mailbox,
-                handle,
-                observed,
-                touched: BTreeSet::new(),
-                revision: 0,
-                loaded: false,
-                saved_revision: 0,
-                error: None,
-                error_revision: 0,
-                reported_error: None,
-            });
-        }
-        Err(error) => {
-            world.resource_mut::<StartupRoot>().error = Some(error);
-        }
-    }
-}
-
-/// Also safe to call immediately before an application's shutdown_work(). It
-/// admits queued UI preference changes; filesystem work remains worker-owned.
+// Capture application metadata before workspace retirement can remove its owner.
 pub fn admit_preferences(world: &mut World) {
-    if !world.contains_resource::<FileEvents>() {
-        return;
-    }
-    world.resource_scope(|world, mut events: Mut<FileEvents>| {
-        let changed: BTreeSet<_> = events.preferences
-            .read(world.resource::<Messages<FileTreePreferencesChanged>>())
-            .map(|message| message.workspace).collect();
-        for workspace in changed {
-            let Some(preferences) = world.get::<FileTreePreferences>(workspace).cloned() else { continue };
-            // Normally configure_panels already started this worker. An explicitly
-            // rooted application workspace can still use Files without a global default.
-            if world.get::<FileTreeStorage>(workspace).is_none() {
-                let root = world.resource::<StartupRoot>().root.clone();
-                if let Some(root) = root { start_storage(world, workspace, root); }
-            }
-            let Some(mut storage) = world.get_mut::<FileTreeStorage>(workspace) else { continue };
-            let roots: BTreeSet<_> = storage.observed.roots.keys().chain(preferences.roots.keys()).cloned().collect();
-            let patch: BTreeMap<_, _> = roots.into_iter().filter_map(|root| {
-                (storage.observed.roots.get(&root) != preferences.roots.get(&root))
-                    .then(|| (root.clone(), preferences.roots.get(&root).cloned()))
-            }).collect();
-            if patch.is_empty() { continue; }
-            storage.revision = storage.revision.checked_add(1).expect("Preference revision exhausted");
-            storage.touched.extend(patch.keys().cloned());
-            storage.observed = preferences;
-            let mut mailbox = storage.mailbox.lock().unwrap();
-            if mailbox.stopped {
-                drop(mailbox);
-                let error = "File preferences changed after workspace storage stopped; those changes were not saved";
-                eprintln!("{error}");
-                storage.error = Some(error.into());
-                continue;
-            }
-            mailbox.pending.extend(patch);
-            mailbox.revision = storage.revision;
-            mailbox.changed_at = Some(Instant::now());
+    // Remember only a resolved active folder. The temporary home workspace does
+    // not erase the last folder, and preference loading must finish first.
+    if crate::storage::global_ready(world) {
+        let root = world
+            .query_filtered::<&WorkspaceRoot, (With<ActiveWorkspace>, With<FolderWorkspace>)>()
+            .iter(world)
+            .next()
+            .map(|root| root.0.clone());
+        if let Some(root) = root
+            && let Some(mut preferences) =
+                world.get_resource_mut::<crate::settings::StartupPreferences>()
+        {
+            preferences.last_workspace = Some(root);
         }
-    });
+    }
+    crate::session::admit(world);
 }
 
-fn poll_storage(world: &mut World) {
+pub fn flush_preferences(world: &mut World) -> Result<bool, String> {
+    if !world.contains_resource::<FileEvents>() {
+        return Ok(true);
+    }
+    // Startup identity is part of the persistence barrier: don't discover a
+    // folder-backed workspace only after the final flush/cancellation point.
+    update_startup_root(world);
+    if world.resource::<StartupRoot>().loading.is_some() {
+        return Ok(false);
+    }
+    if world.resource::<StartupRoot>().requested.is_some() {
+        let has_target = world
+            .query::<&WorkspaceWork>()
+            .iter(world)
+            .any(|work| !work.is_closing());
+        if has_target {
+            return Ok(false);
+        }
+        world.resource_mut::<StartupRoot>().requested = None;
+    }
     let workspaces: Vec<_> = world
-        .query_filtered::<Entity, With<FileTreeStorage>>()
+        .query_filtered::<Entity, With<Workspace>>()
         .iter(world)
         .collect();
-    for workspace in workspaces {
-        let (loaded, saved_revision, save_error) = {
-            let storage = world.get::<FileTreeStorage>(workspace).unwrap();
-            let mut mailbox = storage.mailbox.lock().unwrap();
-            (
-                mailbox.loaded.take(),
-                mailbox.saved_revision,
-                mailbox.save_error.clone(),
-            )
-        };
-        if let Some(result) = loaded {
-            match result {
-                Ok(initial) => {
-                    let touched = world
-                        .get::<FileTreeStorage>(workspace)
-                        .unwrap()
-                        .touched
-                        .clone();
-                    let mut merged = world
-                        .get::<FileTreePreferences>(workspace)
-                        .cloned()
-                        .unwrap_or_default();
-                    for (root, visibility) in initial.roots {
-                        if !touched.contains(&root) {
-                            merged.roots.insert(root, visibility);
-                        }
-                    }
-                    // No Changed message: a restore is not a user edit or a save.
-                    world.entity_mut(workspace).insert(merged.clone());
-                    world
-                        .get_mut::<FileTreeStorage>(workspace)
-                        .unwrap()
-                        .observed = merged;
-                }
-                Err(error) => {
-                    world.get_mut::<FileTreeStorage>(workspace).unwrap().error = Some(error);
-                }
-            }
-            world.get_mut::<FileTreeStorage>(workspace).unwrap().loaded = true;
-        }
-        let mut storage = world.get_mut::<FileTreeStorage>(workspace).unwrap();
-        if saved_revision > storage.saved_revision {
-            storage.saved_revision = saved_revision;
-            storage.error = None;
-        }
-        if let Some((revision, error)) = save_error {
-            storage.error = Some(error);
-            storage.error_revision = revision;
-        }
-        if matches!(storage.handle.status(), WorkStatus::Failed(_)) {
-            storage.error = Some(format!(
-                "Preference worker stopped: {:?}",
-                storage.handle.status()
-            ));
-        }
+    if workspaces
+        .iter()
+        .any(|&workspace| bedtime_filetree2::filetree_operation_count(world, workspace) != 0)
+    {
+        return Ok(false);
     }
+    Ok(true)
 }
 
-fn read_preferences(path: &Path) -> Result<FileTreePreferences, String> {
-    match fs::metadata(path) {
-        Ok(metadata) if !metadata.is_file() => {
-            return Err(format!(
-                "{} is not a regular preference file",
-                path.display()
-            ));
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(default()),
-        Err(error) => return Err(format!("{}: {error}", path.display())),
-    }
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(default()),
-        Err(error) => return Err(format!("{}: {error}", path.display())),
-    };
-    let mut bytes = Vec::new();
-    file.take(MAX_PREFERENCES_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    if bytes.len() as u64 > MAX_PREFERENCES_BYTES {
-        return Err(format!(
-            "{} exceeds the 4 MiB preference limit",
-            path.display()
-        ));
-    }
-    FileTreePreferences::decode(&bytes).map_err(|error| format!("{}: {error}", path.display()))
-}
-
-fn storage_worker(path: PathBuf, mailbox: Arc<Mutex<StorageMailbox>>, cancel: Cancellation) {
-    let initial = read_preferences(&path);
-    let mut preferences = initial.as_ref().cloned().unwrap_or_default();
-    let mut dirty_roots = BTreeSet::new();
-    mailbox.lock().unwrap().loaded = Some(initial);
-    loop {
-        let stopping = cancel.is_cancelled();
-        let pending = {
-            let mut shared = mailbox.lock().unwrap();
-            let ready = shared
-                .changed_at
-                .is_some_and(|time| time.elapsed() >= SAVE_DEBOUNCE);
-            if !shared.pending.is_empty() && (stopping || ready) {
-                let patch = std::mem::take(&mut shared.pending);
-                shared.changed_at = None;
-                Some((shared.revision, patch))
-            } else {
-                None
-            }
-        };
-        if let Some((revision, patch)) = pending {
-            for (root, visibility) in patch {
-                dirty_roots.insert(root.clone());
-                if let Some(visibility) = visibility {
-                    preferences.roots.insert(root, visibility);
-                } else {
-                    preferences.roots.remove(&root);
-                }
-            }
-            // Two application workspaces may deliberately refer to one project.
-            // Serialize read/merge/replace within this process and replace only
-            // touched roots, rather than overwriting another workspace's roots
-            // from this worker's older startup snapshot. Cross-process CAS is not
-            // promised. Even cancellation finishes an admitted atomic save.
-            static SAVES: Mutex<()> = Mutex::new(());
-            let result = {
-                let _save = SAVES.lock().unwrap();
-                let mut merged = read_preferences(&path).unwrap_or_else(|_| preferences.clone());
-                for root in &dirty_roots {
-                    if let Some(visibility) = preferences.roots.get(root) {
-                        merged.roots.insert(root.clone(), visibility.clone());
-                    } else {
-                        merged.roots.remove(root);
-                    }
-                }
-                merged
-                    .encode()
-                    .and_then(|bytes| atomic_write(&path, &bytes))
-                    .map(|()| {
-                        preferences = merged;
-                        dirty_roots.clear();
-                    })
-            };
-            let mut shared = mailbox.lock().unwrap();
-            match result {
-                Ok(()) => {
-                    shared.saved_revision = revision;
-                    shared.save_error = None;
-                }
-                Err(error) => {
-                    // A closing workspace may retire before another UI pass.
-                    // Preserve evidence of a failed final flush in application logs.
-                    eprintln!("File tree preference save failed: {error}");
-                    shared.save_error = Some((revision, error));
-                }
-            }
-        }
-        if stopping {
-            let mut shared = mailbox.lock().unwrap();
-            // A change admitted while the final write was in progress must also
-            // be flushed. Mark the boundary under the same admission lock.
-            if shared.pending.is_empty() {
-                shared.stopped = true;
-                return;
-            }
-            continue;
-        }
-        cancel.wait(Duration::from_millis(20));
-    }
-}
-
+#[cfg(test)]
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    // Never commit a preferences document this application's bounded loader
-    // would reject on the next launch. Failure preserves the previous file.
-    if bytes.len() as u64 > MAX_PREFERENCES_BYTES {
-        return Err("File tree preferences exceed the 4 MiB storage limit; the previous file was preserved.".into());
-    }
-    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
-    let parent = path
-        .parent()
-        .ok_or("Preference destination has no parent")?;
-    fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
-    let temporary = parent.join(format!(
-        ".filetree2-{}-{}.tmp",
-        std::process::id(),
-        NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
-    ));
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&temporary, path)
-    })();
-    if let Err(error) = result {
-        let _ = fs::remove_file(&temporary);
-        return Err(format!("{}: {error}", path.display()));
-    }
-    Ok(())
+    crate::storage::atomic_write(path, bytes)
 }
 
 fn preview_error_dialog(path: Option<&Path>, error: String) -> ErrorDialog {
@@ -1478,14 +1417,6 @@ fn preview_error_dialog(path: Option<&Path>, error: String) -> ErrorDialog {
             Some(path) => format!("File: {}\n\n{error}", path.display()),
             None => error,
         }),
-    }
-}
-
-fn preferences_error_dialog(root: &Path, error: String) -> ErrorDialog {
-    ErrorDialog {
-        title: "File tree settings".into(),
-        message: "We couldn't read or save the file tree settings. You can keep browsing.".into(),
-        details: Some(format!("Project: {}\n\n{error}", root.display())),
     }
 }
 
@@ -1515,18 +1446,6 @@ fn report_file_errors(world: &mut World) {
         state.report_error = false;
         if let Some(error) = &state.error {
             dialogs.push(preview_error_dialog(state.path.as_deref(), error.clone()));
-        }
-    }
-    for mut storage in world.query::<&mut FileTreeStorage>().iter_mut(world) {
-        let current = storage
-            .error
-            .as_ref()
-            .map(|error| (storage.error_revision, error.clone()));
-        if current != storage.reported_error {
-            storage.reported_error = current;
-            if let Some(error) = &storage.error {
-                dialogs.push(preferences_error_dialog(&storage.root, error.clone()));
-            }
         }
     }
     for dialog in dialogs {
@@ -1760,24 +1679,13 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
                 "content": content, "byte_len": text.map(TextBuffer::len), "line_count": text.map(TextBuffer::line_count), "content_truncated": text.is_some_and(|text| text.len() > 16*1024), "rendered_lines": preview.rendered_lines, "laid_out_bytes": preview.laid_out_bytes, "error": preview.error, "missing": preview.missing,
                 "unloaded": preview.path.is_none() && document.is_none(),
                 "document": document.map(|id| id.entity().to_bits().to_string()),
-                "document_info": document.and_then(|id| inspect_document(world, id).ok()).map(|info| json!({"revision": info.revision, "dirty": info.dirty, "saving": info.saving, "conflict": info.conflict, "draft": info.has_drafts})),
+                "document_info": document.and_then(|id| inspect_document(world, id).ok()).map(|info| json!({"revision": info.revision, "dirty": info.dirty, "saving": info.saving, "conflict": info.conflict, "draft": info.has_drafts, "save_binding": info.has_save_binding, "source_generation": info.source_generation, "save_error": info.last_save_error.map(|e| e.to_string())})),
                 "editor_rect": preview.editor_rect.map(|rect| json!({"min": [rect.min.x,rect.min.y], "max": [rect.max.x,rect.max.y]})),
                 "caret_rect": preview.caret_rect.map(|rect| json!({"min": [rect.min.x,rect.min.y], "max": [rect.max.x,rect.max.y]})),
                 "editor": world.get::<bedtime_editor2::workbench::WorkbenchEditor>(entity).map(|editor| json!({"anchor": editor.view.selection().anchor(), "head": editor.view.selection().head(), "scroll": [editor.view.scroll_offset().x,editor.view.scroll_offset().y], "line_numbers": editor.view.settings.line_numbers, "wrap": editor.view.settings.wrap, "wrapping_ready": editor.view.wrapping_ready(), "search_query": editor.view.search_query().map(|query| query.text.as_str()), "search_matches": editor.view.search_match_count()})),
             })
         }).collect();
-    let storage: Vec<_> = world
-        .query::<(Entity, &FileTreeStorage)>()
-        .iter(world)
-        .map(|(entity, storage)| {
-            json!({
-                "workspace": entity.to_bits().to_string(), "root": storage.root.to_string_lossy(),
-                "path": storage.root.join(".bed/filetree2.json").to_string_lossy(),
-                "loaded": storage.loaded, "revision": storage.revision,
-                "saved_revision": storage.saved_revision, "error": storage.error,
-            })
-        })
-        .collect();
+    let storage = crate::session::inspect_storage(world);
     let preferences: Vec<_> = world.query::<(Entity, &FileTreePreferences)>().iter(world)
         .map(|(entity, preferences)| json!({
             "workspace": entity.to_bits().to_string(),
@@ -1792,10 +1700,12 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
             "initialization_error": clipboard.initialization_error(),
         })
     });
+    let roots: Vec<_> = world.query::<(Entity, &WorkspaceRoot, Option<&FolderWorkspace>)>().iter(world)
+        .map(|(workspace, root, folder)| json!({ "workspace": workspace.to_bits().to_string(), "root": root.0.to_string_lossy(), "persistent": folder.is_some(), "session_ready": crate::session::ready(world, workspace), "settings_ready": crate::storage::ready(world, workspace) })).collect();
     let startup = world.resource::<StartupRoot>();
     Ok(
         json!({"panels": trees, "previews": previews, "storage": storage, "clipboard": clipboard,
-        "preferences": preferences, "startup_root": startup.root.as_ref().map(|path| path.to_string_lossy()),
+        "preferences": preferences, "workspace_roots": roots, "startup_root": startup.root.as_ref().map(|path| path.to_string_lossy()),
         "startup_error": startup.error}),
     )
 }
@@ -1803,6 +1713,7 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     struct Fixture(PathBuf);
     impl Fixture {
@@ -1834,8 +1745,182 @@ mod tests {
     fn host() -> App {
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugin, FilesPlugin));
+        register_document_handlers(app.world_mut()).unwrap();
+        register_document_shortcuts(app.world_mut());
         app
     }
+    #[test]
+    fn restarting_with_last_workspace_restores_its_layouts_and_active_slot() {
+        let fixture = Fixture::new();
+        let config = fixture.path("config");
+        let boot = |argument: Option<PathBuf>| {
+            let mut app = host();
+            app.add_plugins((
+                crate::settings::SettingsPlugin,
+                crate::session::SessionPlugin,
+                crate::layouts::LayoutsPlugin,
+            ));
+            crate::storage::configure_directory(&mut app, config.clone());
+            let (owner, _) = workspace(&mut app, "Default");
+            crate::session::remember_initial_state(app.world_mut(), owner).unwrap();
+            app.insert_resource(StartupRoot {
+                persistent: argument.is_some(),
+                requested: Some(argument),
+                ..default()
+            });
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                app.update();
+                if app.world().get::<WorkspaceRoot>(owner).is_some()
+                    && crate::storage::ready(app.world(), owner)
+                    && app
+                        .world()
+                        .get::<WorkspaceMembers>(owner)
+                        .unwrap()
+                        .entities()
+                        .iter()
+                        .any(|&e| app.world().get::<crate::layouts::LayoutSlot>(e).is_some())
+                {
+                    break;
+                }
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            (app, owner)
+        };
+        let (mut app, owner) = boot(Some(fixture.0.clone()));
+        app.world_mut()
+            .resource_mut::<crate::settings::StartupPreferences>()
+            .open_last_workspace = true;
+        crate::layouts::switch(app.world_mut(), owner, crate::layouts::LayoutSlot::Two).unwrap();
+        let layout = Workbench::for_entity(app.world_mut(), owner)
+            .unwrap()
+            .active_layout();
+        let area = Workbench::for_entity(app.world_mut(), layout)
+            .unwrap()
+            .destination_area(layout)
+            .unwrap();
+        crate::layouts::spawn_tool(app.world_mut(), area, crate::layouts::ToolKind::Settings);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            app.update();
+            let global = crate::storage::flush(app.world_mut()).unwrap();
+            let session = crate::session::flush(app.world_mut()).unwrap();
+            if global && session {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        drop(app);
+        let (mut app, owner) = boot(None);
+        assert_eq!(
+            app.world().get::<WorkspaceRoot>(owner).unwrap().0,
+            fixture.0
+        );
+        assert!(app.world().get::<FolderWorkspace>(owner).is_some());
+        let layout = Workbench::for_entity(app.world_mut(), owner)
+            .unwrap()
+            .active_layout();
+        assert_eq!(
+            app.world().get::<crate::layouts::LayoutSlot>(layout),
+            Some(&crate::layouts::LayoutSlot::Two)
+        );
+        assert_eq!(
+            app.world_mut()
+                .query::<&crate::settings::SettingsPanel>()
+                .iter(app.world())
+                .count(),
+            1
+        );
+        assert_eq!(
+            app.world_mut()
+                .query::<&bedtime_terminal2::TerminalPanel>()
+                .iter(app.world())
+                .count(),
+            1
+        );
+        assert_eq!(
+            app.world_mut().query::<&Layout>().iter(app.world()).count(),
+            2
+        );
+    }
+
+    #[test]
+    fn startup_policy_defaults_to_home_restores_opt_in_and_honors_explicit_folder() {
+        let fixture = Fixture::new();
+        for (enabled, explicit, missing) in [
+            (false, false, false),
+            (true, false, false),
+            (true, true, false),
+            (true, false, true),
+        ] {
+            let mut app = host();
+            app.add_plugins((
+                crate::settings::SettingsPlugin,
+                crate::layouts::LayoutsPlugin,
+            ));
+            let (owner, _) = workspace(&mut app, "Default");
+            let last = if missing {
+                fixture.path("missing")
+            } else {
+                fixture.0.clone()
+            };
+            *app.world_mut()
+                .resource_mut::<crate::settings::StartupPreferences>() =
+                crate::settings::StartupPreferences {
+                    open_last_workspace: enabled,
+                    last_workspace: Some(last),
+                };
+            app.insert_resource(StartupRoot {
+                requested: Some(explicit.then(|| fixture.0.clone())),
+                persistent: explicit,
+                ..default()
+            });
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while app.world().get::<WorkspaceRoot>(owner).is_none() {
+                app.update();
+                assert!(Instant::now() < deadline, "startup did not resolve");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            app.update();
+            let persistent = explicit || (enabled && !missing);
+            let expected = if persistent {
+                fixture.0.clone()
+            } else {
+                resolve_root(None).unwrap()
+            };
+            assert_eq!(app.world().get::<WorkspaceRoot>(owner).unwrap().0, expected);
+            assert_eq!(
+                app.world().get::<FolderWorkspace>(owner).is_some(),
+                persistent
+            );
+            let layouts = app
+                .world()
+                .get::<WorkspaceMembers>(owner)
+                .unwrap()
+                .entities()
+                .iter()
+                .filter(|&&e| app.world().get::<crate::layouts::LayoutSlot>(e).is_some())
+                .count();
+            assert_eq!(layouts, 1);
+            assert_eq!(
+                app.world_mut()
+                    .query::<&bedtime_terminal2::TerminalPanel>()
+                    .iter(app.world())
+                    .count(),
+                1
+            );
+            assert_eq!(
+                app.world_mut()
+                    .query::<&FileTreePanel>()
+                    .iter(app.world())
+                    .count(),
+                0
+            );
+        }
+    }
+
     fn workspace(app: &mut App, name: &str) -> (Entity, Entity) {
         let workspace = Workspaces::new(app.world_mut()).open(name).entity();
         let layout = Workbench::for_entity(app.world_mut(), workspace)
@@ -1843,10 +1928,32 @@ mod tests {
             .active_layout();
         (workspace, layout)
     }
-    fn tree(app: &mut App, layout: Entity, root: &Path) -> Entity {
-        let panel = Workbench::for_entity(app.world_mut(), layout)
+    fn preview_panel(world: &mut World, layout: Entity) -> Entity {
+        let area = Workbench::for_entity(world, layout)
             .unwrap()
-            .register_panel::<FileTreePanel>(layout)
+            .destination_area(layout)
+            .unwrap();
+        let panel = world
+            .spawn((FilePreviewPanel::default(), InArea(area)))
+            .id();
+        Workbench::for_entity(world, panel)
+            .unwrap()
+            .focus_panel(panel)
+            .unwrap();
+        panel
+    }
+    fn tree(app: &mut App, layout: Entity, root: &Path) -> Entity {
+        let area = Workbench::for_entity(app.world_mut(), layout)
+            .unwrap()
+            .destination_area(layout)
+            .unwrap();
+        let panel = app
+            .world_mut()
+            .spawn((FileTreePanel::default(), InArea(area)))
+            .id();
+        Workbench::for_entity(app.world_mut(), panel)
+            .unwrap()
+            .focus_panel(panel)
             .unwrap();
         app.world_mut()
             .entity_mut(panel)
@@ -1911,6 +2018,315 @@ mod tests {
         )
         .unwrap();
         handle
+    }
+
+    #[test]
+    fn terminal_creation_waits_for_the_workspace_root_instead_of_using_launch_cwd() {
+        let fixture = Fixture::new();
+        let mut app = host();
+        let (workspace, layout) = workspace(&mut app, "Default");
+        app.world_mut().resource_mut::<StartupRoot>().requested = Some(None);
+        assert!(!root_ready(app.world(), workspace));
+        assert!(!crate::storage::ready(app.world(), workspace));
+        assert!(
+            crate::menus::open_panel(
+                app.world_mut(),
+                layout,
+                bedtime_terminal2::TerminalPanel::KEY
+            )
+            .is_err()
+        );
+        assert_eq!(
+            app.world_mut()
+                .query::<&bedtime_terminal2::TerminalPanel>()
+                .iter(app.world())
+                .count(),
+            0
+        );
+        app.world_mut()
+            .entity_mut(workspace)
+            .insert(WorkspaceRoot(fixture.0.clone()));
+        app.world_mut().resource_mut::<StartupRoot>().requested = None;
+        let panel = crate::menus::open_panel(
+            app.world_mut(),
+            layout,
+            bedtime_terminal2::TerminalPanel::KEY,
+        )
+        .unwrap();
+        assert_eq!(
+            app.world()
+                .get::<bedtime_terminal2::TerminalPanel>(panel)
+                .unwrap()
+                .options
+                .working_directory
+                .as_ref(),
+            Some(&fixture.0)
+        );
+    }
+
+    #[test]
+    fn default_root_is_home_not_the_launch_directory() {
+        assert_eq!(
+            resolve_root(None).unwrap(),
+            fs::canonicalize(home_directory().unwrap()).unwrap()
+        );
+        let fixture = Fixture::new();
+        assert_eq!(resolve_root(Some(fixture.0.clone())).unwrap(), fixture.0);
+        assert!(resolve_root(Some(fixture.path("missing"))).is_err());
+    }
+
+    #[test]
+    fn default_workspace_visibility_changes_never_create_project_storage() {
+        let fixture = Fixture::new();
+        let mut app = host();
+        let (workspace, layout) = workspace(&mut app, "Default");
+        app.world_mut().entity_mut(workspace).insert((
+            WorkspaceRoot(fixture.0.clone()),
+            FileTreePreferences::default(),
+        ));
+        let panel = tree(&mut app, layout, &fixture.0);
+        app.update();
+        app.world_mut()
+            .get_mut::<FileTreePreferences>(workspace)
+            .unwrap()
+            .roots
+            .insert(fixture.0.clone(), FileTreeVisibility::default());
+        app.world_mut()
+            .write_message(FileTreePreferencesChanged { workspace });
+        app.update();
+        assert!(flush_preferences(app.world_mut()).unwrap());
+        assert!(app.world().get::<FileTreePanel>(panel).is_some());
+        assert!(!fixture.path(".bed").exists());
+    }
+
+    #[test]
+    fn explicit_open_folder_creates_or_reuses_a_folder_workspace_without_promoting_default() {
+        let fixture = Fixture::new();
+        let mut app = host();
+        let (default_workspace, _) = workspace(&mut app, "Default");
+        app.world_mut()
+            .entity_mut(default_workspace)
+            .insert(WorkspaceRoot(home_directory().unwrap()));
+        open_folder(app.world_mut(), fixture.0.clone()).unwrap();
+        wait(&mut app, |world| {
+            world
+                .query_filtered::<Entity, With<FolderWorkspace>>()
+                .iter(world)
+                .count()
+                == 1
+        });
+        let folder = app
+            .world_mut()
+            .query_filtered::<Entity, With<FolderWorkspace>>()
+            .single(app.world())
+            .unwrap();
+        assert_ne!(folder, default_workspace);
+        assert_eq!(
+            app.world().get::<WorkspaceRoot>(folder).unwrap().0,
+            fixture.0
+        );
+        assert!(
+            app.world()
+                .get::<FolderWorkspace>(default_workspace)
+                .is_none()
+        );
+        open_folder(app.world_mut(), fixture.0.clone()).unwrap();
+        wait(&mut app, |world| {
+            world.resource::<FolderOpens>().0.is_empty()
+        });
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, With<Workspace>>()
+                .iter(app.world())
+                .count(),
+            2
+        );
+        assert_eq!(Workspaces::new(app.world_mut()).active().entity(), folder);
+        assert!(
+            !fixture.path(".bed").exists(),
+            "opening alone is not a persisted mutation"
+        );
+        Workspaces::new(app.world_mut()).shutdown_work().unwrap();
+        wait(&mut app, |world| Workspaces::new(world).work_finished());
+    }
+
+    #[test]
+    fn project_identity_configures_only_its_own_workspace() {
+        let first_root = Fixture::new();
+        let second_root = Fixture::new();
+        let mut app = host();
+        let (first, first_layout) = workspace(&mut app, "First");
+        let (second, second_layout) = workspace(&mut app, "Second");
+        app.world_mut()
+            .entity_mut(first)
+            .insert((WorkspaceRoot(first_root.0.clone()), FolderWorkspace));
+        app.world_mut()
+            .entity_mut(second)
+            .insert((WorkspaceRoot(second_root.0.clone()), FolderWorkspace));
+        open_files(app.world_mut(), first_layout);
+        open_files(app.world_mut(), second_layout);
+        app.update();
+        for (panel, owner) in app
+            .world_mut()
+            .query_filtered::<(Entity, &InWorkspace), With<FileTreePanel>>()
+            .iter(app.world())
+        {
+            let expected = if owner.0 == first {
+                &first_root.0
+            } else {
+                &second_root.0
+            };
+            assert_eq!(&app.world().get::<FileTreeRoot>(panel).unwrap().0, expected);
+        }
+        assert_eq!(
+            app.world().get::<WorkspaceRoot>(first).unwrap().0,
+            first_root.0
+        );
+        assert_eq!(
+            app.world().get::<WorkspaceRoot>(second).unwrap().0,
+            second_root.0
+        );
+        stop(&mut app);
+    }
+
+    #[test]
+    fn selecting_a_preview_does_not_change_area_focus() {
+        let fixture = Fixture::new();
+        let path = fixture.text("preview.txt", "preview");
+        let mut app = host();
+        let (workspace, layout) = workspace(&mut app, "Project");
+        let tree = tree(&mut app, layout, &fixture.0);
+        request(&mut app, tree, &path, FileTreeActivation::SingleClick);
+        let preview = viewers(&mut app, workspace)[0];
+        let area = app.world().get::<InArea>(preview).unwrap().0;
+        assert_eq!(
+            app.world().get::<Area>(area).unwrap().selected_panel(),
+            Some(preview)
+        );
+        assert_eq!(
+            Workbench::for_entity(app.world_mut(), layout)
+                .unwrap()
+                .focused_panel(layout),
+            Some(tree)
+        );
+        request(&mut app, tree, &path, FileTreeActivation::Keyboard);
+        assert_eq!(
+            Workbench::for_entity(app.world_mut(), layout)
+                .unwrap()
+                .focused_panel(layout),
+            Some(preview)
+        );
+        stop(&mut app);
+    }
+
+    #[test]
+    fn single_click_replaces_the_structure_source_without_focusing_the_editor() {
+        let fixture = Fixture::new();
+        let first = fixture.text("first.rs", "fn first() {}\n");
+        let second = fixture.text("second.rs", "fn second() {}\n");
+        let mut app = host();
+        app.add_plugins(crate::code::CodePlugin);
+        let (workspace, layout) = workspace(&mut app, "Preview structure");
+        let tree = tree(&mut app, layout, &fixture.0);
+        let mut previous = None;
+        for (path, label) in [(&first, "first"), (&second, "second"), (&first, "first")] {
+            request(&mut app, tree, path, FileTreeActivation::SingleClick);
+            wait(&mut app, |world| {
+                world
+                    .get::<bed_structure2::StructureSource>(workspace)
+                    .and_then(|state| state.source)
+                    .and_then(|source| {
+                        bedtime_editor2::workbench::analysis_for_panel(world, source.panel)
+                    })
+                    .is_some_and(|observation| {
+                        observation
+                            .outline
+                            .first()
+                            .is_some_and(|item| item.label == label)
+                    })
+            });
+            let source = app
+                .world()
+                .get::<bed_structure2::StructureSource>(workspace)
+                .unwrap()
+                .source
+                .unwrap();
+            if let Some(document) = previous {
+                assert_ne!(source.document, document);
+            }
+            previous = Some(source.document);
+            assert_eq!(
+                Workbench::for_entity(app.world_mut(), layout)
+                    .unwrap()
+                    .focused_panel(layout),
+                Some(tree)
+            );
+        }
+        stop(&mut app);
+    }
+
+    #[test]
+    fn opened_files_supply_language_analysis_structure_and_shared_views() {
+        use bedtime_editor2::workbench::{CodeLanguage, analysis_for_panel};
+        let fixture = Fixture::new();
+        let path = fixture.text("cats.rs", "fn cat() {\n let age=42;\n}\n");
+        let mut app = host();
+        app.add_plugins(crate::code::CodePlugin);
+        let (workspace, layout) = workspace(&mut app, "Code");
+        let tree = tree(&mut app, layout, &fixture.0);
+        request(&mut app, tree, &path, FileTreeActivation::SingleClick);
+        wait(&mut app, |world| {
+            world
+                .query_filtered::<Entity, With<FilePreviewPanel>>()
+                .iter(world)
+                .any(|panel| analysis_for_panel(world, panel).is_some())
+        });
+        let panel = viewers(&mut app, workspace)[0];
+        let document = app.world().get::<DocumentView>(panel).unwrap().document();
+        assert_eq!(
+            app.world()
+                .get::<CodeLanguage>(document.entity())
+                .unwrap()
+                .0,
+            "rust"
+        );
+        let observation = analysis_for_panel(app.world(), panel).unwrap();
+        assert_eq!(observation.outline[0].label, "cat");
+        assert_eq!(
+            app.world()
+                .get::<bed_structure2::StructureSource>(workspace)
+                .unwrap()
+                .source
+                .unwrap()
+                .panel,
+            panel
+        );
+        let other = split_editor(app.world_mut(), panel).unwrap();
+        app.update();
+        assert!(Arc::ptr_eq(
+            &observation,
+            &analysis_for_panel(app.world(), other).unwrap()
+        ));
+        app.world_mut()
+            .entity_mut(document.entity())
+            .insert(CodeLanguage("python".into()));
+        load_preview(app.world_mut(), panel, path, true).unwrap();
+        wait(&mut app, |world| {
+            world.get::<FilePreviewPanel>(panel).unwrap().load.is_none()
+        });
+        assert_eq!(
+            app.world()
+                .get::<CodeLanguage>(document.entity())
+                .unwrap()
+                .0,
+            "python"
+        );
+        let empty = preview_panel(app.world_mut(), layout);
+        app.update();
+        assert!(
+            app.world().get::<DocumentView>(empty).is_none(),
+            "An empty Code panel must not create a sample document"
+        );
     }
 
     #[test]
@@ -1985,6 +2401,39 @@ mod tests {
             Some(&first)
         );
         assert_eq!(viewers(&mut app, workspace).len(), 2);
+        stop(&mut app);
+    }
+
+    #[test]
+    fn reopening_a_retained_dirty_file_through_files_preserves_edits_and_history() {
+        let fixture = Fixture::new();
+        let path = fixture.text("retained.rs", "fn base() {}\n");
+        let mut app = host();
+        let (workspace, layout) = workspace(&mut app, "Retained");
+        let tree = tree(&mut app, layout, &fixture.0);
+        request(&mut app, tree, &path, FileTreeActivation::Keyboard);
+        wait(&mut app, |world| {
+            world.query::<&DocumentView>().iter(world).next().is_some()
+        });
+        let panel = viewers(&mut app, workspace)[0];
+        let handle = edit_text(&mut app, panel, "fn edited() {}\n");
+        Workbench::for_entity(app.world_mut(), panel)
+            .unwrap()
+            .close_panel(panel)
+            .unwrap();
+        request(&mut app, tree, &path, FileTreeActivation::Keyboard);
+        wait(&mut app, |world| {
+            world
+                .query::<&DocumentView>()
+                .iter(world)
+                .any(|v| v.document() == handle.id())
+        });
+        let other = viewers(&mut app, workspace)[0];
+        assert_eq!(text(&app, other), "fn edited() {}\n");
+        let info = inspect_document(app.world(), handle.id()).unwrap();
+        assert!(info.dirty && info.can_undo && !info.conflict);
+        undo_document(app.world_mut(), handle.id()).unwrap();
+        assert_eq!(text(&app, other), "fn base() {}\n");
         stop(&mut app);
     }
 
@@ -2105,33 +2554,11 @@ mod tests {
             .unwrap()
             .close_panel(panel)
             .unwrap();
-        let reopened = open_document_view(app.world_mut(), layout, handle.id()).unwrap();
-        assert_eq!(text(&app, reopened), "mine");
-        assert!(
-            app.world()
-                .get::<FilePreviewPanel>(reopened)
-                .unwrap()
-                .missing
-        );
+        assert_eq!(read_document(app.world(), handle).unwrap(), "mine");
+        assert!(inspect_document(app.world(), handle.id()).unwrap().dirty);
         stop(&mut app);
     }
-    fn change_preferences(app: &mut App, workspace: Entity, root: &Path) {
-        let mut preferences = app
-            .world()
-            .get::<FileTreePreferences>(workspace)
-            .cloned()
-            .unwrap_or_default();
-        preferences.roots.insert(
-            root.to_owned(),
-            FileTreeVisibility {
-                hide_hidden: false,
-                hidden_paths: BTreeSet::from([PathBuf::from("secret.txt")]),
-            },
-        );
-        app.world_mut().entity_mut(workspace).insert(preferences);
-        app.world_mut()
-            .write_message(FileTreePreferencesChanged { workspace });
-    }
+
     fn operation(
         app: &mut App,
         workspace: Entity,
@@ -2299,10 +2726,6 @@ mod tests {
         assert!(preview.message.contains("Reload"));
         assert!(!preview.message.contains(raw));
         assert!(preview.details.as_deref().unwrap().contains(raw));
-        let settings = preferences_error_dialog(Path::new("/project"), raw.into());
-        assert!(settings.message.contains("You can keep browsing"));
-        assert!(!settings.message.contains(raw));
-        assert!(settings.details.as_deref().unwrap().contains(raw));
     }
 
     #[test]
@@ -2344,10 +2767,7 @@ mod tests {
         let source = fixture.text("source.txt", "content");
         let mut app = host();
         let (_, layout) = workspace(&mut app, "Project");
-        let viewer = Workbench::for_entity(app.world_mut(), layout)
-            .unwrap()
-            .register_panel::<FilePreviewPanel>(layout)
-            .unwrap();
+        let viewer = preview_panel(app.world_mut(), layout);
         Workspaces::new(app.world_mut()).shutdown_work().unwrap();
         let error = load_preview(app.world_mut(), viewer, source.clone(), false).unwrap_err();
         // Open routing may report this same admission failure before Update
@@ -2539,10 +2959,7 @@ mod tests {
         let file = fixture.text("new.txt", "new result");
         let mut app = host();
         let (workspace, layout) = workspace(&mut app, "Origin");
-        let viewer = Workbench::for_entity(app.world_mut(), layout)
-            .unwrap()
-            .register_panel::<FilePreviewPanel>(layout)
-            .unwrap();
+        let viewer = preview_panel(app.world_mut(), layout);
         let old_path = fixture.path("old.txt");
         let delayed = app
             .world_mut()
@@ -2914,10 +3331,7 @@ mod tests {
         let source = fixture.text("source.txt", "old disk bytes");
         let mut app = host();
         let (workspace, layout) = workspace(&mut app, "Project");
-        let viewer = Workbench::for_entity(app.world_mut(), layout)
-            .unwrap()
-            .register_panel::<FilePreviewPanel>(layout)
-            .unwrap();
+        let viewer = preview_panel(app.world_mut(), layout);
         let (release, waiting) = std::sync::mpsc::channel();
         let (finished, completion) = std::sync::mpsc::channel();
         let task = app
@@ -3001,10 +3415,7 @@ mod tests {
         let (_, layout) = workspace(&mut app, "Project");
         let mut panels = Vec::new();
         for _ in 0..=MAX_PREVIEW_CHECKS {
-            let panel = Workbench::for_entity(app.world_mut(), layout)
-                .unwrap()
-                .register_panel::<FilePreviewPanel>(layout)
-                .unwrap();
+            let panel = preview_panel(app.world_mut(), layout);
             let mut state = app.world_mut().get_mut::<FilePreviewPanel>(panel).unwrap();
             state.path = Some(retained.clone());
             state.content = Some(PreviewContent::Text(TextBuffer::from("retain")));
@@ -3050,10 +3461,7 @@ mod tests {
         assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
         let mut app = host();
         let (workspace, layout) = workspace(&mut app, "Project");
-        let viewer = Workbench::for_entity(app.world_mut(), layout)
-            .unwrap()
-            .register_panel::<FilePreviewPanel>(layout)
-            .unwrap();
+        let viewer = preview_panel(app.world_mut(), layout);
         {
             let mut state = app.world_mut().get_mut::<FilePreviewPanel>(viewer).unwrap();
             state.path = Some(source.clone());
@@ -3123,91 +3531,6 @@ mod tests {
     }
 
     #[test]
-    fn preferences_are_lazy_and_atomic_and_flush_on_shutdown_before_debounce() {
-        let fixture = Fixture::new();
-        let mut app = host();
-        app.world_mut().resource_mut::<StartupRoot>().root = Some(fixture.0.clone());
-        let (workspace, _) = workspace(&mut app, "Project");
-        wait(&mut app, |world| {
-            world
-                .get::<FileTreeStorage>(workspace)
-                .is_some_and(|storage| storage.loaded)
-        });
-        assert!(
-            !fixture.path(".bed").exists(),
-            "Merely reading must not create storage"
-        );
-        change_preferences(&mut app, workspace, &fixture.0);
-        admit_preferences(app.world_mut());
-        // No app-frame debounce: cancelling now must still write admitted data.
-        stop(&mut app);
-        let restored = read_preferences(&fixture.path(".bed/filetree2.json")).unwrap();
-        assert!(!restored.roots[&fixture.0].hide_hidden);
-        assert!(
-            restored.roots[&fixture.0]
-                .hidden_paths
-                .contains(Path::new("secret.txt"))
-        );
-        let names: Vec<_> = fs::read_dir(fixture.path(".bed"))
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect();
-        assert_eq!(names, vec![std::ffi::OsString::from("filetree2.json")]);
-    }
-
-    #[test]
-    fn late_initial_load_merges_untouched_roots_without_clobbering_user_change() {
-        let fixture = Fixture::new();
-        let untouched = fixture.path("other-root");
-        fs::create_dir(&untouched).unwrap();
-        let initial = FileTreePreferences {
-            roots: BTreeMap::from([
-                (fixture.0.clone(), FileTreeVisibility::default()),
-                (
-                    untouched.clone(),
-                    FileTreeVisibility {
-                        hide_hidden: false,
-                        ..default()
-                    },
-                ),
-            ]),
-        };
-        atomic_write(
-            &fixture.path(".bed/filetree2.json"),
-            &initial.encode().unwrap(),
-        )
-        .unwrap();
-        let mut app = host();
-        let (workspace, _) = workspace(&mut app, "Project");
-        start_storage(app.world_mut(), workspace, fixture.0.clone());
-        // Wait for worker I/O, deliberately WITHOUT polling/applying the load.
-        let deadline = Instant::now() + Duration::from_secs(8);
-        while app
-            .world()
-            .get::<FileTreeStorage>(workspace)
-            .unwrap()
-            .mailbox
-            .lock()
-            .unwrap()
-            .loaded
-            .is_none()
-        {
-            assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        change_preferences(&mut app, workspace, &fixture.0);
-        admit_preferences(app.world_mut());
-        poll_storage(app.world_mut());
-        let preferences = app.world().get::<FileTreePreferences>(workspace).unwrap();
-        assert!(!preferences.roots[&fixture.0].hide_hidden);
-        assert_eq!(preferences.roots[&untouched], initial.roots[&untouched]);
-        stop(&mut app);
-        let saved = read_preferences(&fixture.path(".bed/filetree2.json")).unwrap();
-        assert_eq!(saved.roots[&untouched], initial.roots[&untouched]);
-        assert!(!saved.roots[&fixture.0].hide_hidden);
-    }
-
-    #[test]
     fn oversized_preferences_cannot_replace_readable_storage_or_create_new_storage() {
         let fixture = Fixture::new();
         let path = fixture.path(".bed/filetree2.json");
@@ -3223,112 +3546,5 @@ mod tests {
         let fresh = fixture.path("new/.bed/filetree2.json");
         assert!(atomic_write(&fresh, &oversized).is_err());
         assert!(!fixture.path("new").exists());
-    }
-
-    #[test]
-    fn background_preference_failures_report_new_attempts_not_each_frame() {
-        let fixture = Fixture::new();
-        fs::create_dir_all(fixture.path(".bed/filetree2.json")).unwrap();
-        let mut app = host();
-        app.world_mut().resource_mut::<StartupRoot>().root = Some(fixture.0.clone());
-        let (workspace, _) = workspace(&mut app, "Project");
-        app.world_mut()
-            .get_mut::<Workspace>(workspace)
-            .unwrap()
-            .background_updates = false;
-        wait(&mut app, |world| {
-            world
-                .get::<FileTreeStorage>(workspace)
-                .is_some_and(|storage| storage.loaded && storage.error.is_some())
-        });
-        assert_eq!(app.world().resource::<ErrorDialogs>().len(), 1);
-        app.world_mut().remove_resource::<ErrorDialogs>();
-        for _ in 0..3 {
-            app.update();
-        }
-        assert!(app.world().get_resource::<ErrorDialogs>().is_none());
-
-        change_preferences(&mut app, workspace, &fixture.0);
-        wait(&mut app, |world| {
-            world
-                .get::<FileTreeStorage>(workspace)
-                .is_some_and(|storage| storage.error_revision == 1)
-        });
-        let failure = app
-            .world()
-            .get::<FileTreeStorage>(workspace)
-            .unwrap()
-            .error
-            .clone();
-        assert_eq!(app.world().resource::<ErrorDialogs>().len(), 1);
-        app.world_mut().remove_resource::<ErrorDialogs>();
-        for _ in 0..3 {
-            app.update();
-        }
-        assert!(app.world().get_resource::<ErrorDialogs>().is_none());
-
-        let mut preferences = app
-            .world()
-            .get::<FileTreePreferences>(workspace)
-            .unwrap()
-            .clone();
-        preferences
-            .roots
-            .get_mut(&fixture.0)
-            .unwrap()
-            .hidden_paths
-            .insert("second.txt".into());
-        app.world_mut().entity_mut(workspace).insert(preferences);
-        app.world_mut()
-            .write_message(FileTreePreferencesChanged { workspace });
-        wait(&mut app, |world| {
-            world
-                .get::<FileTreeStorage>(workspace)
-                .is_some_and(|storage| storage.error_revision == 2)
-        });
-        assert_eq!(
-            app.world().get::<FileTreeStorage>(workspace).unwrap().error,
-            failure
-        );
-        assert_eq!(app.world().resource::<ErrorDialogs>().len(), 1);
-        assert!(fixture.path(".bed/filetree2.json").is_dir());
-        stop(&mut app);
-    }
-
-    #[test]
-    fn malformed_preferences_are_reported_and_preserved_until_explicit_change() {
-        let fixture = Fixture::new();
-        let path = fixture.path(".bed/filetree2.json");
-        atomic_write(&path, b"not valid JSON").unwrap();
-        let mut app = host();
-        app.world_mut().resource_mut::<StartupRoot>().root = Some(fixture.0.clone());
-        let (workspace, _) = workspace(&mut app, "Project");
-        wait(&mut app, |world| {
-            world
-                .get::<FileTreeStorage>(workspace)
-                .is_some_and(|storage| storage.loaded)
-        });
-        assert!(
-            app.world()
-                .get::<FileTreeStorage>(workspace)
-                .unwrap()
-                .error
-                .is_some()
-        );
-        assert_eq!(fs::read(&path).unwrap(), b"not valid JSON");
-        assert_eq!(app.world().resource::<ErrorDialogs>().len(), 1);
-        app.world_mut().remove_resource::<ErrorDialogs>();
-        for _ in 0..3 {
-            app.update();
-        }
-        assert!(app.world().get_resource::<ErrorDialogs>().is_none());
-        change_preferences(&mut app, workspace, &fixture.0);
-        wait(&mut app, |world| {
-            world
-                .get::<FileTreeStorage>(workspace)
-                .is_some_and(|storage| storage.saved_revision == 1 && storage.error.is_none())
-        });
-        assert!(!read_preferences(&path).unwrap().roots[&fixture.0].hide_hidden);
-        stop(&mut app);
     }
 }

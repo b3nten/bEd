@@ -1,24 +1,25 @@
 use super::*;
 use bedtime_workbench2::{
-    Workbench, WorkbenchCorePlugin, WorkspaceId, WorkspaceWork, Workspaces, capture_workspace,
-    restore_workspace,
+    InArea, Workbench, WorkbenchCorePlugin, WorkspaceId, WorkspaceWork, Workspaces,
 };
 use std::time::{Duration, Instant};
 
 fn host() -> (App, WorkspaceId) {
     let mut app = App::new();
-    // Registering a panel does not require a workspace or a UI/GPU context.
+    // Capability installation does not require a workspace or a UI/GPU context.
     app.add_plugins((TerminalPlugin, WorkbenchCorePlugin));
     let workspace = Workspaces::new(app.world_mut()).open("Terminals");
     (app, workspace)
 }
 
 fn panel(app: &mut App, workspace: WorkspaceId, options: TerminalOptions) -> Entity {
-    let mut workbench = Workbench::with_workspace(app.world_mut(), workspace).unwrap();
-    let layout = workbench.active_layout();
-    let panel = workbench.register_panel::<TerminalPanel>(layout).unwrap();
-    *app.world_mut().get_mut::<TerminalPanel>(panel).unwrap() = TerminalPanel::new(options);
-    panel
+    let workbench = Workbench::with_workspace(app.world_mut(), workspace).unwrap();
+    let area = workbench
+        .destination_area(workbench.active_layout())
+        .unwrap();
+    app.world_mut()
+        .spawn((TerminalPanel::new(options), InArea(area)))
+        .id()
 }
 
 fn observe(app: &mut App, panel: Entity) {
@@ -66,7 +67,7 @@ fn finish(app: &mut App) {
 }
 
 #[test]
-fn registration_initialization_and_restore_do_not_start_unseen_shells() {
+fn concrete_composition_preserves_options_and_does_not_start_unseen_shells() {
     let (mut app, workspace) = host();
     let mut options = TerminalOptions::default();
     options
@@ -86,17 +87,15 @@ fn registration_initialization_and_restore_do_not_start_unseen_shells() {
             .is_empty()
     );
 
-    let saved = capture_workspace(app.world(), workspace.entity()).unwrap();
-    let restored = restore_workspace(app.world_mut(), &saved).unwrap();
-    app.update();
-    let restored_panel = restored.layouts[0].areas[0].panels[0];
-    let restored = app.world().get::<TerminalPanel>(restored_panel).unwrap();
-    assert_eq!(restored.status(), &TerminalStatus::Pending);
-    assert!(restored.process_id().is_none());
-    assert!(
-        restored.options.env.is_empty(),
-        "Live launch state is not core layout persistence"
-    );
+    let area = app.world().get::<InArea>(panel).unwrap().0;
+    let fresh = app
+        .world_mut()
+        .spawn((TerminalPanel::default(), InArea(area)))
+        .id();
+    let terminal = app.world().get::<TerminalPanel>(fresh).unwrap();
+    assert_eq!(terminal.status(), &TerminalStatus::Pending);
+    assert!(terminal.process_id().is_none());
+    assert!(terminal.options.env.is_empty());
     finish(&mut app);
 }
 
@@ -198,16 +197,16 @@ fn tab_title_follows_foreground_jobs_and_returns_to_the_shell_even_while_hidden(
         app.world().get::<PanelInstance>(panel).unwrap().title == "bash"
     });
 
-    // Snapshots can retain a live label, but restored sessions are fresh. A
-    // stale foreground command must not name an as-yet-unstarted terminal.
+    // A newly composed session has its own local state and default label.
     app.world_mut()
         .get_mut::<PanelInstance>(panel)
         .unwrap()
         .title = "stale job".into();
-    let saved = capture_workspace(app.world(), workspace.entity()).unwrap();
-    let restored = restore_workspace(app.world_mut(), &saved).unwrap();
-    app.update();
-    let fresh = restored.layouts[0].areas[0].panels[0];
+    let area = app.world().get::<InArea>(panel).unwrap().0;
+    let fresh = app
+        .world_mut()
+        .spawn((TerminalPanel::default(), InArea(area)))
+        .id();
     assert_eq!(
         app.world().get::<PanelInstance>(fresh).unwrap().title,
         TerminalPanel::LABEL

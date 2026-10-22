@@ -18,7 +18,6 @@ fn allows_panel_edit(settings: WorkbenchSurface, edit: &LayoutEdit) -> bool {
     match edit {
         LayoutEdit::FocusArea(_) | LayoutEdit::FocusPanel(_) | LayoutEdit::KeepPanel(_) => true,
         LayoutEdit::ClosePanels(_) | LayoutEdit::CloseArea(_) => settings.panel_closure,
-        LayoutEdit::OpenPanel { .. } => settings.panel_creation,
         LayoutEdit::DropPanel { .. } => settings.panel_creation && settings.layout_editing,
         _ => settings.layout_editing,
     }
@@ -73,11 +72,6 @@ pub struct Titlebar {
     pub draw: UiDraw,
 }
 
-#[derive(Component)]
-pub(crate) struct PanelRenderer {
-    pub(crate) draw: fn(&mut egui::Ui, &mut World, &UiContext<'_>, Entity),
-}
-
 /// Workspace-local menu, status renderer and shell system state.
 #[derive(Component, Default)]
 pub struct WorkspaceUi {
@@ -100,22 +94,6 @@ pub(crate) fn workspace_ui_mut(world: &mut World) -> Mut<'_, WorkspaceUi> {
 }
 
 impl Workbench<'_> {
-    /// Instantiate a typed panel in the layout's destination area.
-    pub fn register_panel<P: Panel>(&mut self, layout: Entity) -> Result<Entity, String> {
-        let area = self.destination_area(layout)?;
-        self.register_panel_in_area::<P>(area)
-    }
-
-    pub fn register_panel_in_area<P: Panel>(&mut self, area: Entity) -> Result<Entity, String> {
-        let kind = self
-            .world
-            .query::<(Entity, &PanelType)>()
-            .iter(self.world)
-            .find_map(|(e, p)| (p.key == P::KEY).then_some(e))
-            .ok_or("Register the panel type before opening it")?;
-        self.open_panel(kind, area)
-    }
-
     pub fn has_focus(&self, panel: Entity) -> bool {
         self.world
             .get::<PanelPresentation>(panel)
@@ -135,7 +113,17 @@ impl Workbench<'_> {
         if !allows_panel_edit(settings, edit) {
             return Err("User panel editing is disabled by the workbench surface".into());
         }
-        self.edit(stamp, edit)
+        if matches!(
+            edit,
+            LayoutEdit::ClosePanels(_)
+                | LayoutEdit::CloseArea(_)
+                | LayoutEdit::JoinAreas { .. }
+                | LayoutEdit::DockArea { .. }
+        ) {
+            self.request_panel_close(stamp, edit.clone())
+        } else {
+            self.edit(stamp, edit)
+        }
     }
 
     /// Install or replace this workspace's application-owned status renderer.
@@ -435,17 +423,17 @@ fn titlebar_rects(
     (band, content)
 }
 
-pub fn register_panel(
+pub fn spawn_panel(
     world: &mut World,
     layout: Entity,
     title: impl Into<String>,
     draw: fn(&mut egui::Ui, &mut World, &UiContext<'_>, Entity),
 ) -> Result<Entity, String> {
     let area = Workbench::for_entity(world, layout)?.destination_area(layout)?;
-    register_panel_in_area(world, area, title, draw)
+    spawn_panel_in_area(world, area, title, draw)
 }
 
-pub fn register_panel_in_area(
+pub fn spawn_panel_in_area(
     world: &mut World,
     area: Entity,
     title: impl Into<String>,
@@ -454,7 +442,7 @@ pub fn register_panel_in_area(
     world.get::<Area>(area).ok_or("Area is unavailable")?;
     let panel = world.spawn_empty().id();
     Workbench::for_entity(world, area)?.attach_panel(panel, area, title.into());
-    world.entity_mut(panel).insert(PanelRenderer { draw });
+    world.get_mut::<PanelInstance>(panel).unwrap().draw = Some(draw);
     Ok(panel)
 }
 
@@ -482,7 +470,29 @@ struct TabScroll {
 struct ContentFade {
     area: Entity,
     placement: geometry::Rect,
-    progress: f32,
+    started_at: f64,
+}
+
+impl ContentFade {
+    fn opacity(
+        &mut self,
+        area: Entity,
+        placement: geometry::Rect,
+        now: f64,
+        motion: bedtime_ui2::MotionPolicy,
+    ) -> f32 {
+        if self.area != area || self.placement != placement {
+            self.area = area;
+            self.placement = placement;
+            self.started_at = now;
+        }
+        if !motion.enabled {
+            self.started_at = now - f64::from(motion.seconds);
+            return 1.0;
+        }
+        let progress = ((now - self.started_at) / f64::from(motion.seconds)).clamp(0.0, 1.0);
+        (1.0 - (1.0 - progress).powi(3)) as f32
+    }
 }
 
 enum Gesture {
@@ -671,7 +681,7 @@ fn hit(ui: &egui::Ui, name: &str, rect: Rect) -> (bool, bool) {
 }
 
 #[derive(Clone)]
-pub struct PanelTypePayload(pub Entity);
+pub struct PanelFactoryPayload(pub PanelFactory);
 
 /// Lay out the optional application row once, within the current shell allocation.
 fn draw_status_bar(
@@ -1135,17 +1145,6 @@ fn draw(
             }
         }
     }
-    let types: Vec<_> = world
-        .query::<(Entity, &PanelType)>()
-        .iter(world)
-        .map(|(e, t)| {
-            (
-                e,
-                t.label.clone(),
-                world.get::<ActionEnabled>(e).is_none_or(|a| a.0),
-            )
-        })
-        .collect();
     for group in &groups {
         let (_, _, r, s) = *visual
             .iter()
@@ -1188,18 +1187,12 @@ fn draw(
             if response.clicked() {
                 edits.push(LayoutEdit::FocusArea(group.entity));
             }
-            if !state.suppress_context && (settings.panel_creation || settings.panel_closure) {
-                response.context_menu(|ui| picker(ui, &types, group.entity, &mut edits, settings));
-            }
-            if settings.panel_creation {
-                frame.clip_rounded(er(s), settings.rounding, |frame| {
-                    frame.ui.painter().with_clip_rect(er(content)).text(
-                        egui::pos2(content.min.x + 14.0, content.min.y + 14.0),
-                        egui::Align2::LEFT_TOP,
-                        "Right-click to open a panel",
-                        egui::FontId::proportional(frame.theme.metrics.font_size),
-                        bedtime_ui2::theme::color(p.muted),
-                    );
+            if !state.suppress_context && settings.panel_closure {
+                response.context_menu(|ui| {
+                    if ui.button("Close area").clicked() {
+                        edits.push(LayoutEdit::CloseArea(group.entity));
+                        ui.close();
+                    }
                 });
             }
         }
@@ -1465,24 +1458,17 @@ fn draw(
             if content.width() < 1.0 || content.height() < 1.0 {
                 continue;
             }
+            let now = frame.ui.input(|i| i.time);
             let fade = state.content_fades.entry(panel).or_insert(ContentFade {
                 area: group.entity,
                 placement: group.rect,
-                progress: 0.0,
+                started_at: now,
             });
+            // Start at first display, excluding the preceding idle/frame time.
+            // UI time is unchanged across egui's repeated layout passes.
             // Compare committed placement, not the interpolated screen bounds.
-            if fade.area != group.entity || fade.placement != group.rect {
-                fade.progress = 0.0;
-                fade.area = group.entity;
-                fade.placement = group.rect;
-            }
-            fade.progress = if frame.motion.enabled {
-                (fade.progress + dt / frame.motion.seconds).min(1.0)
-            } else {
-                1.0
-            };
-            let opacity = 1.0 - (1.0 - fade.progress).powi(3);
-            moving |= fade.progress < 1.0;
+            let opacity = fade.opacity(group.entity, group.rect, now, frame.motion);
+            moving |= opacity < 1.0;
             let focus = focused == Some(group.entity);
             *world.get_mut::<PanelPresentation>(panel).unwrap() = PanelPresentation {
                 visible: true,
@@ -1511,8 +1497,9 @@ fn draw(
                         er(presentation.surface),
                         settings.rounding,
                         |content_frame| {
-                            if let Some(renderer) = world.get::<PanelRenderer>(panel) {
-                                let draw = renderer.draw;
+                            if let Some(draw) =
+                                world.get::<PanelInstance>(panel).and_then(|p| p.draw)
+                            {
                                 let context = content_frame.context();
                                 draw(content_frame.ui, world, &context, panel);
                             } else {
@@ -1559,7 +1546,7 @@ fn draw(
     }
     // Content has first opportunity to take a typed egui payload. The shell
     // receives only the remaining payload, preserving widget target priority.
-    if let Some(payload) = egui::DragAndDrop::payload::<PanelTypePayload>(frame.ui.ctx())
+    if let Some(payload) = egui::DragAndDrop::payload::<PanelFactoryPayload>(frame.ui.ctx())
         .filter(|_| frame.ui.is_enabled() && settings.layout_editing && settings.panel_creation)
     {
         if cancel {
@@ -1582,10 +1569,10 @@ fn draw(
                     .ui
                     .input(|i| i.pointer.button_released(PointerButton::Primary))
                 {
-                    if let LayoutEdit::DropPanel { kind, .. } = &mut edit {
-                        *kind = payload.0;
+                    if let LayoutEdit::DropPanel { factory, .. } = &mut edit {
+                        *factory = payload.0;
                     }
-                    egui::DragAndDrop::take_payload::<PanelTypePayload>(frame.ui.ctx());
+                    egui::DragAndDrop::take_payload::<PanelFactoryPayload>(frame.ui.ctx());
                     edits.push(edit);
                 }
             }
@@ -1634,32 +1621,18 @@ fn draw(
     }
 }
 
-fn picker(
-    ui: &mut egui::Ui,
-    types: &[(Entity, String, bool)],
-    area: Entity,
-    edits: &mut Vec<LayoutEdit>,
-    settings: WorkbenchSurface,
-) {
-    for (kind, label, enabled) in types.iter().filter(|_| settings.panel_creation) {
-        if ui.add_enabled(*enabled, egui::Button::new(label)).clicked() {
-            edits.push(LayoutEdit::OpenPanel { area, kind: *kind });
-            ui.close();
-        }
-    }
-    if types.is_empty() {
-        ui.weak("No panel types registered");
-    }
-    ui.separator();
-    if settings.panel_closure && ui.button("Close area").clicked() {
-        edits.push(LayoutEdit::CloseArea(area));
-        ui.close();
-    }
+/// Offer an application-provided constructor, not a registered panel type.
+/// The caller can attach ordinary egui tooltip content to the response.
+pub fn panel_drag_source(response: &egui::Response, factory: PanelFactory) {
+    response.dnd_set_drag_payload(PanelFactoryPayload(factory));
 }
 
-/// Call with a drag-sensitive toolbar response. Payload identity stays typed.
-pub fn panel_drag_source(response: &egui::Response, kind: Entity, _label: &str) {
-    response.dnd_set_drag_payload(PanelTypePayload(kind));
+// Placeholder used only while computing a drop preview; replaced by the payload
+// before any edit is submitted.
+fn preview_factory() -> PanelFactory {
+    PanelFactory::new("Preview", |_, _| {
+        panic!("Unresolved panel creation preview")
+    })
 }
 
 fn tab_target(
@@ -1698,7 +1671,7 @@ fn tab_target(
             } else {
                 LayoutEdit::DropPanel {
                     area: group.entity,
-                    kind: Entity::PLACEHOLDER,
+                    factory: preview_factory(),
                     index,
                     split: None,
                     minimum,
@@ -1757,7 +1730,7 @@ fn tab_target(
         } else {
             LayoutEdit::DropPanel {
                 area: entity,
-                kind: Entity::PLACEHOLDER,
+                factory: preview_factory(),
                 index: usize::MAX,
                 split: Some((axis(index), high)),
                 minimum,
@@ -1795,7 +1768,7 @@ fn tab_target(
         } else {
             LayoutEdit::DropPanel {
                 area: entity,
-                kind: Entity::PLACEHOLDER,
+                factory: preview_factory(),
                 index,
                 split: None,
                 minimum,
@@ -1931,6 +1904,58 @@ fn corner_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_fade_starts_at_display_and_advances_only_with_elapsed_ui_time() {
+        let area = Entity::PLACEHOLDER;
+        let placement = geometry::Rect {
+            min: [0, 0],
+            max: [LAYOUT_EXTENT, LAYOUT_EXTENT],
+        };
+        let motion = bedtime_ui2::MotionPolicy::default();
+        // First display follows a long idle. A second layout pass at the same
+        // timestamp must paint the same opacity, even partway through the fade.
+        let now = 300.0;
+        let mut fade = ContentFade {
+            area,
+            placement,
+            started_at: now,
+        };
+        assert_eq!(fade.opacity(area, placement, now, motion), 0.0);
+        assert_eq!(fade.opacity(area, placement, now, motion), 0.0);
+        let halfway = now + f64::from(motion.seconds) * 0.5;
+        assert_eq!(fade.opacity(area, placement, halfway, motion), 0.875);
+        assert_eq!(fade.opacity(area, placement, halfway, motion), 0.875);
+        assert_eq!(fade.opacity(area, placement, now + 1.0, motion), 1.0);
+
+        let moved = geometry::Rect {
+            max: [LAYOUT_EXTENT / 2, LAYOUT_EXTENT],
+            ..placement
+        };
+        assert_eq!(fade.opacity(area, moved, now + 20.0, motion), 0.0);
+        assert_eq!(fade.opacity(area, moved, now + 21.0, motion), 1.0);
+        let other = World::new().spawn_empty().id();
+        assert_eq!(fade.opacity(other, moved, now + 30.0, motion), 0.0);
+    }
+
+    #[test]
+    fn panel_fade_settles_immediately_with_reduced_motion() {
+        let area = Entity::PLACEHOLDER;
+        let placement = geometry::Rect {
+            min: [0, 0],
+            max: [LAYOUT_EXTENT, LAYOUT_EXTENT],
+        };
+        let mut motion = bedtime_ui2::MotionPolicy::default();
+        let mut fade = ContentFade {
+            area,
+            placement,
+            started_at: 10.0,
+        };
+        motion.enabled = false;
+        assert_eq!(fade.opacity(area, placement, 10.0, motion), 1.0);
+        motion.enabled = true;
+        assert_eq!(fade.opacity(area, placement, 10.1, motion), 1.0);
+    }
 
     #[test]
     fn tab_style_overrides_are_per_item_and_follow_live_component_edits() {
@@ -2127,7 +2152,7 @@ mod tests {
         let layout = Workbench::with_workspace(app.world_mut(), other)
             .unwrap()
             .active_layout();
-        let panel = register_panel(app.world_mut(), layout, "Inactive", |_, _, _, _| {}).unwrap();
+        let panel = spawn_panel(app.world_mut(), layout, "Inactive", |_, _, _, _| {}).unwrap();
         assert_eq!(
             app.world().get::<InWorkspace>(panel).unwrap().0,
             other.entity()
@@ -2159,9 +2184,12 @@ mod tests {
         assert!(
             w.user_edit(
                 w.stamp(),
-                &LayoutEdit::OpenPanel {
+                &LayoutEdit::DropPanel {
                     area,
-                    kind: Entity::PLACEHOLDER
+                    factory: preview_factory(),
+                    index: 0,
+                    split: None,
+                    minimum: [100, 100],
                 }
             )
             .is_err()

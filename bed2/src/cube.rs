@@ -1,5 +1,5 @@
 use bedtime_ui2::{UiContext, UiSystems, UiViewport, egui, viewport_image};
-use bedtime_workbench2::{InActiveWorkspace, Panel, WorkbenchAppExt};
+use bedtime_workbench2::{InActiveWorkspace, Panel, PanelInstance};
 use bevy::{camera::RenderTarget, core_pipeline::tonemapping::Tonemapping, prelude::*};
 use std::f32::consts::{FRAC_PI_2, TAU};
 
@@ -7,9 +7,11 @@ pub struct CubePlugin;
 
 impl Plugin for CubePlugin {
     fn build(&self, app: &mut App) {
-        app.register_panel_type::<CubeViewport>()
-            .add_systems(Startup, spawn_scene)
-            .add_systems(Update, update_camera_transforms)
+        app.add_systems(Startup, spawn_scene)
+            .add_systems(
+                Update,
+                (prepare_viewports, update_camera_transforms).chain(),
+            )
             .add_systems(PostUpdate, sync_cameras.in_set(UiSystems::SyncViewports));
 
         #[cfg(feature = "automation")]
@@ -90,38 +92,54 @@ impl OrbitCamera {
     }
 }
 
+#[derive(Component, Default)]
+#[require(PanelInstance = PanelInstance::of::<Self>(), OrbitCamera)]
 pub struct CubeViewport;
 
-impl Panel for CubeViewport {
-    const KEY: &'static str = "bed.cube";
-    const LABEL: &'static str = "3D Viewport";
+#[derive(Component)]
+struct PreparedViewport;
 
-    fn initialize(entity: &mut EntityWorldMut<'_>) {
-        entity.entry::<OrbitCamera>().or_default();
-        if !entity.contains::<UiViewport>() {
-            let image = entity.world_scope(|world| {
-                world
-                    .resource_mut::<Assets<Image>>()
-                    .add(viewport_image(UVec2::ONE))
+/// GPU preparation is explicit scheduled work, not a panel-validity condition.
+/// A composed viewport can remain pending until the renderer's image assets exist.
+fn prepare_viewports(world: &mut World) {
+    if !world.contains_resource::<Assets<Image>>() {
+        return;
+    }
+    let pending: Vec<_> = world
+        .query_filtered::<Entity, (With<CubeViewport>, Without<PreparedViewport>)>()
+        .iter(world)
+        .collect();
+    for panel in pending {
+        let image = if let Some(viewport) = world.get::<UiViewport>(panel) {
+            viewport.image.clone()
+        } else {
+            world
+                .resource_mut::<Assets<Image>>()
+                .add(viewport_image(UVec2::ONE))
+        };
+        let camera = world
+            .get::<Camera>(panel)
+            .cloned()
+            .unwrap_or_else(|| Camera {
+                order: -1,
+                is_active: false,
+                clear_color: Color::srgb(0.07, 0.10, 0.14).into(),
+                ..default()
             });
-            entity.insert(UiViewport::new(image));
-        }
-        let image = entity.get::<UiViewport>().unwrap().image.clone();
-        // A panel is also its camera: its lifetime and image ownership need no
-        // entity references or extra teardown. It is not the WorkbenchCamera.
-        let camera = entity.get::<Camera>().cloned().unwrap_or_else(|| Camera {
-            order: -1, // Render the image before the UI samples it.
-            is_active: false,
-            clear_color: Color::srgb(0.07, 0.10, 0.14).into(),
-            ..default()
-        });
-        let camera_3d = entity.get::<Camera3d>().cloned().unwrap_or_default();
-        let tonemapping = entity
-            .get::<Tonemapping>()
+        let camera_3d = world.get::<Camera3d>(panel).cloned().unwrap_or_default();
+        let tonemapping = world
+            .get::<Tonemapping>(panel)
             .copied()
             .unwrap_or(Tonemapping::Reinhard);
-        let transform = entity.get::<OrbitCamera>().unwrap().transform();
-        entity.insert((
+        let transform = world.get::<OrbitCamera>(panel).unwrap().transform();
+        if world.get::<UiViewport>(panel).is_none() {
+            world
+                .entity_mut(panel)
+                .insert(UiViewport::new(image.clone()));
+        }
+        // The panel owns its camera and image, so closure needs no separate owner.
+        world.entity_mut(panel).insert((
+            PreparedViewport,
             camera_3d,
             camera,
             tonemapping,
@@ -129,8 +147,18 @@ impl Panel for CubeViewport {
             transform,
         ));
     }
+}
+
+impl Panel for CubeViewport {
+    const KEY: &'static str = "bed.cube";
+    const LABEL: &'static str = "3D Viewport";
 
     fn draw(ui: &mut egui::Ui, world: &mut World, _: &UiContext<'_>, panel: Entity) {
+        if world.get::<PreparedViewport>(panel).is_none() {
+            ui.spinner();
+            ui.weak("Preparing viewport…");
+            return;
+        }
         let reset = ui
             .horizontal_wrapped(|ui| {
                 let reset = ui.button("Reset view").clicked();
@@ -208,6 +236,36 @@ fn sync_cameras(
 ) {
     for (viewport, active_workspace, mut camera) in &mut cameras {
         camera.is_active = viewport.visible && active_workspace;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn composed_viewports_are_valid_before_gpu_preparation_and_keep_local_state() {
+        let mut world = World::new();
+        let orbit = OrbitCamera {
+            distance: 12.0,
+            ..default()
+        };
+        let panel = world.spawn((CubeViewport, orbit)).id();
+        assert_eq!(
+            world.get::<PanelInstance>(panel).unwrap().title,
+            CubeViewport::LABEL
+        );
+        prepare_viewports(&mut world);
+        assert!(world.get::<UiViewport>(panel).is_none());
+        assert_eq!(*world.get::<OrbitCamera>(panel).unwrap(), orbit);
+        world.init_resource::<Assets<Image>>();
+        prepare_viewports(&mut world);
+        assert!(world.get::<UiViewport>(panel).is_some());
+        assert!(world.get::<Camera3d>(panel).is_some());
+        assert_eq!(*world.get::<OrbitCamera>(panel).unwrap(), orbit);
+        let image = world.get::<UiViewport>(panel).unwrap().image.id();
+        prepare_viewports(&mut world);
+        assert_eq!(world.get::<UiViewport>(panel).unwrap().image.id(), image);
     }
 }
 

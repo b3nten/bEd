@@ -11,6 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 from automation import Application, AutomationError
+from smoke_bed2 import open_panel, prepare_demo_layout
 
 PRIMARY = "SuperLeft" if sys.platform == "darwin" else "ControlLeft"
 
@@ -56,6 +57,13 @@ def navigate(app, panel, position, *, select=True, focus=True, reveal="minimal")
     app.request("wait_frames", frames=2)
 
 
+def editor_context_menu(app, panel):
+    state = app.request("app.inspect_filetree")
+    preview = next(p for p in state["previews"] if str(p["entity"]) == str(panel))
+    rect = preview["editor_rect"]
+    app.input({"type": "click", "position": [rect["min"][0] + 30, rect["min"][1] + 10], "button": "Right"})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", default="target/debug/bed2")
@@ -77,10 +85,11 @@ def main():
                 file.write(chunk)
         large_size = large.stat().st_size
         with Application([str(Path(args.binary).resolve()), str(root)], output=output, timeout=90) as app:
+            prepare_demo_layout(app, viewport=True)
             app.request("configure", fixed_dt=1 / 60, clipboard="")
             initial = app.wait_until(lambda state: bool(state["workbench"]["workspaces"]))
             workspace = initial["workbench"]["workspaces"][0]["entity"]
-            app.request("panel.open", key="bedtime.filetree")
+            open_panel(app, "Files")
             wait(app, lambda state: any(any(row["path"] == str(small) for row in tree["rows"]) for tree in state["panels"]))
             app.click_text("small.txt")
             state = wait(app, lambda state: any(p["path"] == str(small) and p["document"] for p in state["previews"]))
@@ -92,6 +101,7 @@ def main():
             state = wait(app, lambda state: viewer(state, first)["content"] == expected)
             assert viewer(state, first)["pinned"] and viewer(state, first)["document_info"]["dirty"]
             assert small.read_text() == "hello café\nsecond line\n"
+            editor_context_menu(app, first)
             app.click_text("Split view")
             state = wait(app, lambda state: len([p for p in state["previews"] if p["path"] == str(small)]) == 2)
             second = next(p["entity"] for p in state["previews"] if p["path"] == str(small) and p["entity"] != first)
@@ -107,7 +117,9 @@ def main():
             primary(app, "KeyS")
             wait(app, lambda state: not viewer(state, second)["document_info"]["dirty"] and not viewer(state, second)["document_info"]["saving"])
             assert small.read_text() == expected
-            app.click_text("Line numbers", index=1)
+            editor_context_menu(app, second)
+            app.click_text("Line numbers")
+            app.input({"type": "key", "code": "Escape", "pressed": True}, {"type": "key", "code": "Escape", "pressed": False})
             state = inspect(app)
             assert sum(not p["editor"]["line_numbers"] for p in state["previews"] if p["path"] == str(small)) == 1
             # Find owns its input, replacements share history, and wrapping is
@@ -178,7 +190,8 @@ def main():
             assert small.read_text() == expected
 
             # The first editor's wrap setting does not change its sibling.
-            app.click_text("Editing", index=0)
+            editor_context_menu(app, first)
+            app.click_text("Editing")
             app.click_text("Wrap lines")
             app.input({"type": "key", "code": "Escape", "pressed": True},
                       {"type": "key", "code": "Escape", "pressed": False})

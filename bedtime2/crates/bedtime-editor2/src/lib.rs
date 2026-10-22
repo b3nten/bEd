@@ -3,8 +3,11 @@
 //! string or galley is constructed while drawing or performing ordinary edits.
 mod background;
 mod caret;
+mod folding;
 mod search;
 mod search_ui;
+#[cfg(feature = "treesitter")]
+pub mod syntax;
 mod whitespace;
 mod wrapping;
 pub use search::SearchQuery;
@@ -96,6 +99,15 @@ struct Composition {
 #[derive(Component, Default)]
 pub struct EditorView {
     pub settings: EditorSettings,
+    folding: folding::Folding,
+    #[cfg(feature = "treesitter")]
+    syntax: Option<std::sync::Arc<bedtime_treesitter2::Observation>>,
+    #[cfg(feature = "treesitter")]
+    syntax_identity: Option<(u64, u64)>,
+    #[cfg(feature = "treesitter")]
+    syntax_highlights: Option<std::sync::Arc<bedtime_treesitter2::Observation>>,
+    #[cfg(feature = "treesitter")]
+    pub syntax_palette: syntax::SyntaxPalette,
     selection: TextSelection,
     observed_revision: Option<u64>,
     navigation: Option<Navigation>,
@@ -107,7 +119,9 @@ pub struct EditorView {
     focused: bool,
     request_focus: bool,
     scroll: egui::Vec2,
+    scroll_gesture: ScrollGesture,
     drag_anchor: Option<usize>,
+    pointer_presses: PointerPresses,
     wrapping: wrapping::Wrapping,
     wrap_active: bool,
     wrap_reveal: Option<(Range<usize>, Reveal)>,
@@ -118,6 +132,40 @@ pub struct EditorView {
         background::Job<(BufferEdit, TextSelection)>,
     )>,
     edit_message: Option<String>,
+}
+/// Lock each wheel input to its dominant axis. Keep that choice only for
+/// egui's smoothed tail, never across a new independent input.
+#[derive(Default)]
+struct ScrollGesture {
+    axis: Option<usize>,
+}
+impl ScrollGesture {
+    fn multiplier(&mut self, delta: egui::Vec2) -> egui::Vec2 {
+        if delta != egui::Vec2::ZERO {
+            self.axis = Some(if delta.x.abs() > delta.y.abs() { 0 } else { 1 });
+        }
+        match self.axis {
+            Some(0) => egui::vec2(1.0, 0.0),
+            Some(_) => egui::vec2(0.0, 1.0),
+            None => egui::Vec2::splat(1.0),
+        }
+    }
+}
+
+#[derive(Default)]
+struct PointerPresses {
+    last: Option<(egui::Pos2, f64)>,
+    count: u8,
+}
+impl PointerPresses {
+    fn press(&mut self, position: egui::Pos2, now: f64, max_delay: f64, max_distance: f32) -> u8 {
+        let continues = self.last.is_some_and(|(previous, time)| {
+            now - time < max_delay && previous.distance(position) < max_distance
+        });
+        self.count = if continues { self.count % 3 + 1 } else { 1 };
+        self.last = Some((position, now));
+        self.count
+    }
 }
 pub struct EditorOutput {
     pub response: egui::Response,
@@ -130,7 +178,75 @@ pub struct EditorOutput {
     pub rendered_lines: usize,
     pub laid_out_bytes: usize,
 }
+impl Navigation {
+    /// Zero-based logical line. Reveal-only preserves the view's caret.
+    pub fn scroll_to_line(
+        snapshot: &TextSnapshot,
+        line: usize,
+        reveal: Reveal,
+        focus: bool,
+    ) -> Result<Self, EditorError> {
+        if line >= snapshot.text.line_count() {
+            return Err(EditorError("Line is outside the document".into()));
+        }
+        let byte = snapshot.text.line_start(line);
+        Ok(Self {
+            revision: snapshot.revision,
+            range: byte..byte,
+            selection: None,
+            reveal,
+            focus,
+        })
+    }
+}
 impl EditorView {
+    pub fn scroll_to_line(
+        &mut self,
+        snapshot: &TextSnapshot,
+        line: usize,
+        reveal: Reveal,
+        focus: bool,
+    ) -> Result<(), EditorError> {
+        self.request_navigation(
+            snapshot,
+            Navigation::scroll_to_line(snapshot, line, reveal, focus)?,
+        )
+    }
+    fn prepare_folds(&mut self, snapshot: &TextSnapshot, width: Option<usize>) {
+        let wrap = self
+            .wrapping
+            .index
+            .as_ref()
+            .filter(|w| width.is_some() && w.snapshot.revision == snapshot.revision);
+        self.folding
+            .prepare(&snapshot.text, wrap, self.composition.is_none());
+    }
+    fn reconcile_folds(
+        &mut self,
+        session: &dyn TextSession,
+        snapshot: &TextSnapshot,
+    ) -> Result<(), EditorError> {
+        if self.folding.revision() == Some(snapshot.revision) {
+            return Ok(());
+        }
+        if self.folding.collapsed.is_empty() {
+            self.folding.reconcile(snapshot, None);
+            return Ok(());
+        }
+        let changes = if let Some(before) = self.folding.revision() {
+            session.changes_since(before)?.and_then(|commits| {
+                commits.into_iter().try_fold(Vec::new(), |mut all, c| {
+                    all.extend(c.changes?);
+                    Some(all)
+                })
+            })
+        } else {
+            None
+        };
+        self.folding.reconcile(snapshot, changes.as_deref());
+        Ok(())
+    }
+
     pub fn selection(&self) -> TextSelection {
         self.selection
     }
@@ -250,9 +366,10 @@ impl EditorView {
         snapshot: &TextSnapshot,
         width: Option<usize>,
     ) -> Option<&wrapping::WrapIndex> {
-        self.wrapping.index.as_ref().filter(|index| {
-            Some(index.width) == width && index.snapshot.revision == snapshot.revision
-        })
+        self.wrapping
+            .index
+            .as_ref()
+            .filter(|index| width.is_some() && index.snapshot.revision == snapshot.revision)
     }
     fn prepare_wrapping(
         &mut self,
@@ -363,6 +480,7 @@ impl EditorView {
                 }
             });
         }
+        self.reconcile_folds(session, &snapshot)?;
         self.search_ui(ui, id, session, &mut snapshot)?;
         let navigation = self.navigation.take();
         if let Some(nav) = &navigation {
@@ -371,6 +489,7 @@ impl EditorView {
                     "Navigation became stale before presentation".into(),
                 ));
             }
+            self.folding.reveal(&snapshot.text, &nav.range);
             if let Some(selection) = nav.selection {
                 self.selection = selection;
                 self.upstream = false;
@@ -388,9 +507,37 @@ impl EditorView {
         let metrics = layout::Metrics::new(ui);
         let available = ui.available_size().max(egui::vec2(1.0, 1.0));
         let gutter_width = if self.settings.line_numbers {
-            snapshot.text.line_count().to_string().len().max(2) as f32 * metrics.cell + 22.0
+            snapshot.text.line_count().to_string().len().max(2) as f32 * metrics.cell + 8.0
         } else {
             0.0
+        };
+        // Reserve the column before analysis arrives, including plain-text views.
+        let fold_gutter = cfg!(feature = "treesitter");
+        let gutter_width = gutter_width + if fold_gutter { 14.0 } else { 0.0 };
+        let hovered = ui.rect_contains_pointer(ui.available_rect_before_wrap());
+        let wheel = if hovered {
+            let delta = ui.input(|i| {
+                i.events
+                    .iter()
+                    .filter_map(|event| {
+                        if let egui::Event::MouseWheel {
+                            delta, modifiers, ..
+                        } = event
+                        {
+                            Some(if modifiers.shift {
+                                egui::vec2(delta.x + delta.y, 0.0)
+                            } else {
+                                *delta
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .fold(egui::Vec2::ZERO, |total, delta| total + delta)
+            });
+            self.scroll_gesture.multiplier(delta)
+        } else {
+            egui::Vec2::splat(1.0)
         };
         let mut reveal = navigation
             .as_ref()
@@ -411,6 +558,7 @@ impl EditorView {
                     .0;
                 let scroll = egui::ScrollArea::both()
                     .id_salt(id.with("scroll"))
+                    .wheel_scroll_multiplier(wheel)
                     .auto_shrink([false, false])
                     .max_width((available.x - gutter_width).max(1.0))
                     .max_height(available.y)
@@ -428,10 +576,22 @@ impl EditorView {
                         {
                             failure = Some(error);
                         }
+                        self.prepare_folds(&snapshot, wrap_width);
+                        self.folding.animate(
+                            &snapshot.text,
+                            self.wrapping.index.as_ref().filter(|index| {
+                                wrap_width.is_some() && index.snapshot.revision == snapshot.revision
+                            }),
+                            self.composition.is_none(),
+                            now,
+                            motion.enabled,
+                            ui.ctx(),
+                        );
                         let geometry = layout::Geometry {
                             text: &snapshot.text,
                             metrics: &metrics,
                             wrap: self.active_wrap(&snapshot, wrap_width),
+                            folds: &self.folding.display_map,
                         };
                         let size = geometry.size(viewport.size());
                         let rect = egui::Rect::from_min_size(origin, size);
@@ -450,6 +610,7 @@ impl EditorView {
                                 text: &snapshot.text,
                                 metrics: &metrics,
                                 wrap: self.active_wrap(&snapshot, wrap_width),
+                                folds: &self.folding.display_map,
                             };
                             let local = position - origin.to_vec2();
                             let hit = geometry.hit(ui, local);
@@ -457,7 +618,27 @@ impl EditorView {
                                 > (((local.y - 6.0) / metrics.height).floor().max(0.0) as usize);
                             session.end_undo_group();
                             self.preferred_column = None;
-                            if ui.input(|i| i.modifiers.shift) {
+                            let clicks = ui.ctx().options(|options| {
+                                self.pointer_presses.press(
+                                    position,
+                                    now,
+                                    options.input_options.max_double_click_delay,
+                                    options.input_options.max_click_dist,
+                                )
+                            });
+                            if clicks == 3 {
+                                let range = snapshot.text.line_range(snapshot.text.line_of(hit));
+                                self.selection = TextSelection {
+                                    anchor: range.start,
+                                    head: range.end,
+                                };
+                            } else if clicks == 2 {
+                                let range = word_range(&snapshot.text, hit);
+                                self.selection = TextSelection {
+                                    anchor: range.start,
+                                    head: range.end,
+                                };
+                            } else if ui.input(|i| i.modifiers.shift) {
                                 self.selection.head = hit;
                             } else {
                                 self.selection = TextSelection {
@@ -468,11 +649,13 @@ impl EditorView {
                             self.drag_anchor = Some(self.selection.anchor);
                         }
                         if response.dragged_by(egui::PointerButton::Primary) {
+                            self.pointer_presses.last = None;
                             if let Some(position) = ui.input(|i| i.pointer.interact_pos()) {
                                 let geometry = layout::Geometry {
                                     text: &snapshot.text,
                                     metrics: &metrics,
                                     wrap: self.active_wrap(&snapshot, wrap_width),
+                                    folds: &self.folding.display_map,
                                 };
                                 let local = position - origin.to_vec2();
                                 let hit = geometry.hit(ui, local);
@@ -485,19 +668,6 @@ impl EditorView {
                                 };
                                 reveal = Some((hit..hit, Reveal::Minimal));
                             }
-                        }
-                        if response.double_clicked() {
-                            let range = word_range(&snapshot.text, self.selection.head);
-                            self.selection = TextSelection {
-                                anchor: range.start,
-                                head: range.end,
-                            };
-                        } else if response.triple_clicked() {
-                            let row = snapshot.text.line_of(self.selection.head);
-                            self.selection = TextSelection {
-                                anchor: snapshot.text.line_start(row),
-                                head: snapshot.text.line_start(row + 1),
-                            };
                         }
                         let focused =
                             response.has_focus() && ui.input(|i| i.focused) && ui.is_enabled();
@@ -576,9 +746,20 @@ impl EditorView {
                         {
                             failure = Some(error);
                         }
+                        self.reconcile_folds(session, &snapshot)
+                            .unwrap_or_else(|error| failure = Some(error));
+                        if let Some((range, _)) = &reveal {
+                            self.folding.reveal(&snapshot.text, range);
+                        }
+                        #[cfg(feature = "treesitter")]
+                        let highlight_changes = self
+                            .highlight_changes(session, &snapshot)
+                            .unwrap_or_else(|error| {
+                                failure = Some(error);
+                                None
+                            });
                         let active_wrap = self.wrapping.index.as_ref().filter(|index| {
-                            Some(index.width) == wrap_width
-                                && index.snapshot.revision == snapshot.revision
+                            wrap_width.is_some() && index.snapshot.revision == snapshot.revision
                         });
                         let draft_wrap = if let (Some(index), Some(composition)) =
                             (active_wrap, &self.composition)
@@ -605,19 +786,33 @@ impl EditorView {
                         } else {
                             active_wrap
                         };
+                        self.folding
+                            .prepare(&display, wrap, self.composition.is_none());
+                        self.folding.animate(
+                            &display,
+                            wrap,
+                            self.composition.is_none(),
+                            now,
+                            motion.enabled,
+                            ui.ctx(),
+                        );
                         let wrapped = wrap.is_some();
                         let geometry = layout::Geometry {
                             text: &display,
                             metrics: &metrics,
                             wrap,
+                            folds: &self.folding.display_map,
                         };
                         ui.set_min_size(geometry.size(viewport.size()));
                         let clip = ui.clip_rect();
                         let painter = ui.painter().with_clip_rect(clip);
-                        let first =
-                            ((viewport.top() - 6.0) / metrics.height).floor().max(0.0) as usize;
-                        let last = (((viewport.bottom() + 6.0) / metrics.height).ceil() as usize
-                            + 1)
+                        let first = geometry
+                            .folds
+                            .row_at((viewport.top() - 6.0) / metrics.height);
+                        let last = (geometry
+                            .folds
+                            .row_at((viewport.bottom() + 6.0) / metrics.height)
+                            + 2)
                         .min(geometry.rows());
                         let first_cell =
                             ((viewport.left() - 8.0) / metrics.cell).floor().max(0.0) as usize;
@@ -628,12 +823,36 @@ impl EditorView {
                         for row in first..last {
                             let segment = geometry.segment(row);
                             let line = geometry.line(ui, row, first_cell..last_cell);
+                            #[cfg(feature = "treesitter")]
+                            let mut line = line;
+                            #[cfg(feature = "treesitter")]
+                            if let (Some(observation), Some(changes)) =
+                                (&self.syntax_highlights, &highlight_changes)
+                            {
+                                line.apply_syntax(
+                                    ui,
+                                    &metrics,
+                                    observation,
+                                    changes,
+                                    &self.syntax_palette,
+                                );
+                            }
                             laid_out_bytes += line.source_bytes;
                             rendered_lines += 1;
-                            let y = origin.y + 6.0 + row as f32 * metrics.height;
+                            let y = origin.y + 6.0 + geometry.folds.row_y(row) * metrics.height;
                             if segment.part == 0 {
-                                number_rows.push((segment.line, y));
+                                number_rows.push((
+                                    segment.line,
+                                    y,
+                                    geometry.folds.row_height(row) * metrics.height,
+                                ));
                             }
+                            let row_height = geometry.folds.row_height(row) * metrics.height;
+                            let painter =
+                                painter.with_clip_rect(clip.intersect(egui::Rect::from_min_max(
+                                    egui::pos2(clip.left(), y),
+                                    egui::pos2(clip.right(), y + row_height),
+                                )));
                             let selected = selection.range();
                             let body = segment.bytes.clone();
                             if selected.start
@@ -697,6 +916,17 @@ impl EditorView {
                                     }
                                 }
                             }
+                            if segment.part == 0
+                                && self.folding.collapsed_at(&display, segment.line)
+                            {
+                                painter.text(
+                                    egui::pos2(origin.x + 12.0 + line.right(), y),
+                                    egui::Align2::LEFT_TOP,
+                                    " …",
+                                    metrics.font.clone(),
+                                    ui.visuals().weak_text_color(),
+                                );
+                            }
                             painter.galley(
                                 egui::pos2(origin.x + 8.0 + line.left(), y),
                                 line.galley.clone(),
@@ -706,7 +936,7 @@ impl EditorView {
                                 local_caret = egui::Rect::from_min_size(
                                     egui::pos2(
                                         8.0 + line.x_at(selection.head),
-                                        6.0 + row as f32 * metrics.height,
+                                        6.0 + geometry.folds.row_y(row) * metrics.height,
                                     ),
                                     egui::vec2(0.0, metrics.height),
                                 );
@@ -761,15 +991,6 @@ impl EditorView {
                             );
                         }
                         self.wrap_active = wrapped;
-                        if self.settings.wrap && !wrapped {
-                            painter.text(
-                                clip.right_top() - egui::vec2(8.0, -4.0),
-                                egui::Align2::RIGHT_TOP,
-                                "Preparing wrapping…",
-                                metrics.font.clone(),
-                                ui.visuals().weak_text_color(),
-                            );
-                        }
                         if focused && !self.settings.read_only {
                             let transform = ui
                                 .ctx()
@@ -792,7 +1013,7 @@ impl EditorView {
                             selection.head,
                             local_caret,
                             motion.enabled && self.settings.animate_caret,
-                            ui.visuals().text_color(),
+                            bedtime_ui2::rainbow_ink(ui, motion),
                             !self.settings.read_only,
                         );
                         response
@@ -808,18 +1029,63 @@ impl EditorView {
         }
         self.scroll = scroll.state.offset;
         self.observed_revision = Some(snapshot.revision);
-        if self.settings.line_numbers {
+        if self.settings.line_numbers || fold_gutter {
             let painter = ui
                 .painter()
                 .with_clip_rect(gutter.intersect(ui.clip_rect()));
-            for (row, y) in number_rows {
-                painter.text(
-                    egui::pos2(gutter.right() - 10.0, y),
-                    egui::Align2::RIGHT_TOP,
-                    (row + 1).to_string(),
-                    metrics.font.clone(),
-                    ui.visuals().weak_text_color(),
-                );
+            for (row, y, height) in number_rows {
+                let painter = painter.with_clip_rect(gutter.intersect(egui::Rect::from_min_max(
+                    egui::pos2(gutter.left(), y),
+                    egui::pos2(gutter.right(), y + height),
+                )));
+                #[cfg(feature = "treesitter")]
+                if fold_gutter
+                    && (self.folding.collapsed_at(&snapshot.text, row)
+                        || self.syntax.as_ref().is_some_and(|o| {
+                            o.key.revision == snapshot.revision
+                                && o.folds.binary_search_by_key(&row, |f| f.start_line).is_ok()
+                        }))
+                {
+                    let rect = egui::Rect::from_min_size(
+                        egui::pos2(gutter.right() - 14.0, y),
+                        egui::vec2(14.0, metrics.height),
+                    );
+                    bedtime_ui2::paint_chevron(
+                        &painter,
+                        rect.center(),
+                        self.folding.openness(&snapshot.text, row, now),
+                        ui.visuals().weak_text_color(),
+                    );
+                    if ui
+                        .interact(
+                            rect.intersect(painter.clip_rect()),
+                            id.with(("fold", row)),
+                            egui::Sense::click(),
+                        )
+                        .clicked()
+                    {
+                        if let Err(error) = self.toggle_fold(&snapshot, row) {
+                            failure = Some(error);
+                        }
+                        ui.ctx().request_repaint();
+                    }
+                }
+                if self.settings.line_numbers {
+                    painter.text(
+                        egui::pos2(
+                            gutter.right() - 3.0 - if fold_gutter { 14.0 } else { 7.0 },
+                            y,
+                        ),
+                        egui::Align2::RIGHT_TOP,
+                        (row + 1).to_string(),
+                        metrics.font.clone(),
+                        if row == snapshot.text.line_of(self.selection.head) {
+                            bedtime_ui2::rainbow_ink(ui, motion)
+                        } else {
+                            ui.visuals().weak_text_color()
+                        },
+                    );
+                }
             }
         }
         if let Some(error) = failure {
@@ -848,6 +1114,14 @@ impl EditorView {
         now: f64,
         page: usize,
     ) -> Result<bool, EditorError> {
+        self.reconcile_folds(session, snapshot)?;
+        let width = self
+            .wrapping
+            .index
+            .as_ref()
+            .filter(|_| self.settings.wrap)
+            .map(|w| w.width);
+        self.prepare_folds(snapshot, width);
         match event {
             egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) if !self.settings.read_only => {
                 if text.is_empty() {
@@ -1091,6 +1365,7 @@ impl EditorView {
                                 text: &snapshot.text,
                                 metrics: &layout::Metrics::new(ui),
                                 wrap,
+                                folds: &self.folding.map,
                             };
                             let column = *self
                                 .preferred_column
@@ -1345,3 +1620,6 @@ mod tests;
 
 #[cfg(test)]
 mod everyday_tests;
+
+#[cfg(all(test, feature = "treesitter"))]
+mod syntax_tests;

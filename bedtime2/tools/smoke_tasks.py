@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from automation import Application, AutomationError
+from smoke_bed2 import open_panel, prepare_demo_layout
 
 
 def state(app, panel):
@@ -44,8 +45,9 @@ def send(app, panel, text):
 
 
 def jobs(app, workspace):
-    return next(w["jobs"] for w in app.request("app.inspect_tasks")["workspaces"]
-                if w["entity"] == workspace)
+    # Application preference workers are workspace-owned, not task-panel work.
+    return [job for job in next(w["jobs"] for w in app.request("app.inspect_tasks")["workspaces"]
+                if w["entity"] == workspace) if job["owner"] is not None]
 
 
 def main():
@@ -58,16 +60,15 @@ def main():
     captures = []
 
     with Application([str(Path(args.binary).resolve())], output=output, timeout=60) as app:
+        prepare_demo_layout(app, viewport=True)
         app.request("configure", fixed_dt=1 / 60, clipboard="")
         snapshot = app.wait_until(lambda s: bool(s["viewports"]))
         workspace = snapshot["workbench"]["workspaces"][0]["entity"]
         cube = snapshot["viewports"][0]["entity"]
         app.request("panel.close", panel=cube)
 
-        # Open through the actual empty area's context menu, not a test entrypoint.
-        app.input({"type": "click", "button": "Right", "position": [300, 180]})
-        app.wait_until(lambda s: any(t["text"] == "Tasks & Processes" for t in s["ui"]["texts"]))
-        app.click_text("Tasks & Processes")
+        # Open through the application's titlebar menu, not a construction endpoint.
+        open_panel(app, "Tasks & Processes")
         app.wait_until(lambda s: any(t["text"] == "Start task" for t in s["ui"]["texts"]))
         panel = app.request("app.inspect_tasks")["panels"][0]["entity"]
         assert state(app, panel)["task"] is None
@@ -131,23 +132,21 @@ def main():
         wait_state(app, panel, lambda p: p["process"]["status"] == "Cancelled")
         captures.append(app.capture("05-cancelled.png"))
 
-        # Hidden panels still collect results and drain output. Restoring a layout
-        # creates fresh demo state rather than serializing live worker handles.
+        # Hidden panels still collect results and drain output. A separately
+        # created panel starts fresh without sharing live worker handles.
         replace_text(app, "5.0", "30")
         assert state(app, panel)["seconds"] == 30
         app.click_text("Start task")
         app.click_text("Start process")
         wait_state(app, panel, lambda p: "Ready." in p["process"]["stdout"])
         before = state(app, panel)["task"]["progress"]
-        app.request("panel.open", key="bed.hello")
+        open_panel(app, "Settings")
         wait_state(app, panel, lambda p: p["task"]["progress"] > before)
-        saved = app.request("workspace.capture")
-        restored = app.request("workspace.restore", snapshot=saved)
-        restored_panel = next(p for p in app.request("app.inspect_tasks")["panels"]
-                              if p["workspace"] == restored["workspace"])
-        assert restored_panel["task"] is None and restored_panel["process"] is None
-        assert not jobs(app, restored["workspace"])
-        app.request("workspace.close", workspace=restored["workspace"])
+        fresh = app.request("workspace.create", name="Fresh tasks", activate=True)
+        fresh_panel = open_panel(app, "Tasks & Processes")
+        assert state(app, fresh_panel)["task"] is None and state(app, fresh_panel)["process"] is None
+        assert not jobs(app, fresh["workspace"])
+        app.request("workspace.close", workspace=fresh["workspace"], replacement=workspace)
 
         # Workspace query markers do not suspend worker threads or panel polling.
         app.request("workspace.configure", workspace=workspace, background_updates=False)
@@ -163,7 +162,7 @@ def main():
 
         # Closing the whole workspace waits for both workers without stalling UI.
         app.request("workspace.activate", workspace=workspace)
-        panel = app.request("panel.open", key="bed.tasks")["panel"]
+        panel = open_panel(app, "Tasks & Processes")
         app.click_text("Start task")
         app.click_text("Start process")
         wait_state(app, panel, lambda p: p["task"]["progress"] > 0
@@ -173,7 +172,7 @@ def main():
         assert [w["entity"] for w in snapshot["workbench"]["workspaces"]] == [other["workspace"]]
         assert app.request("app.inspect_tasks")["panels"] == []
 
-        app.request("panel.open", key="bed.tasks")
+        open_panel(app, "Tasks & Processes")
         captures.append(app.capture("06-rebuilt.png"))
         assert all(s["diagnostics"]["error"] is None for s in app.inspect()["ui"]["surfaces"])
 

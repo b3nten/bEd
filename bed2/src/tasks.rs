@@ -1,6 +1,6 @@
 use bedtime_ui2::{UiContext, egui};
 use bedtime_workbench2::{
-    Panel, ProcessSpec, WorkStatus, Workbench, WorkbenchAppExt, WorkspaceProcess, WorkspaceTask,
+    Panel, PanelInstance, ProcessSpec, WorkStatus, Workbench, WorkspaceProcess, WorkspaceTask,
 };
 use bevy::prelude::*;
 use std::{
@@ -15,8 +15,7 @@ pub struct TasksPlugin;
 
 impl Plugin for TasksPlugin {
     fn build(&self, app: &mut App) {
-        app.register_panel_type::<TasksPanel>()
-            .add_systems(Update, poll_work);
+        app.add_systems(Update, poll_work);
 
         #[cfg(feature = "automation")]
         {
@@ -27,6 +26,7 @@ impl Plugin for TasksPlugin {
 }
 
 #[derive(Component)]
+#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct TasksPanel {
     seconds: f32,
     task: Option<CountingTask>,
@@ -87,15 +87,11 @@ impl Panel for TasksPanel {
     const KEY: &'static str = "bed.tasks";
     const LABEL: &'static str = "Tasks & Processes";
 
-    fn initialize(entity: &mut EntityWorldMut<'_>) {
-        entity.entry::<Self>().or_default();
-    }
-
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
         let surface = *world
             .get::<bedtime_workbench2::WorkbenchSurface>(context.surface)
             .unwrap();
-            
+
         let mut state = world.get_mut::<Self>(panel).unwrap();
         let mut action = None;
 
@@ -289,10 +285,19 @@ fn apply_action(world: &mut World, panel: Entity, action: Action) -> Result<(), 
             });
         }
         Action::StartProcess => {
+            let workspace = world
+                .get::<bedtime_workbench2::InWorkspace>(panel)
+                .ok_or("Tasks panel has no workspace")?
+                .0;
+            if !crate::files::root_ready(world, workspace) {
+                return Err("Workspace root is still loading".into());
+            }
+            let mut spec = echo_spec();
+            spec.directory = crate::files::workspace_directory(world, workspace);
             let handle = Workbench::for_entity(world, panel)?.work().spawn_process(
                 Some(panel),
                 "Interactive echo",
-                echo_spec(),
+                spec,
             )?;
             world.get_mut::<TasksPanel>(panel).unwrap().process = Some(EchoProcess {
                 handle,

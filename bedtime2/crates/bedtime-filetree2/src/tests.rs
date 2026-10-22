@@ -1,6 +1,6 @@
 //! Headless integration coverage: real workspace workers, files and buffered messages.
 use super::*;
-use bedtime_workbench2::{Workbench, WorkbenchCorePlugin, WorkspaceId, Workspaces};
+use bedtime_workbench2::{InArea, Workbench, WorkbenchCorePlugin, WorkspaceId, Workspaces};
 use bevy::ecs::message::Messages;
 use std::{
     fs,
@@ -52,9 +52,14 @@ pub(super) fn host() -> (App, WorkspaceId) {
 }
 
 pub(super) fn panel(app: &mut App, workspace: WorkspaceId, root: Option<&Path>) -> Entity {
-    let mut workbench = Workbench::with_workspace(app.world_mut(), workspace).unwrap();
-    let layout = workbench.active_layout();
-    let panel = workbench.register_panel::<FileTreePanel>(layout).unwrap();
+    let workbench = Workbench::with_workspace(app.world_mut(), workspace).unwrap();
+    let area = workbench
+        .destination_area(workbench.active_layout())
+        .unwrap();
+    let panel = app
+        .world_mut()
+        .spawn((FileTreePanel::default(), InArea(area)))
+        .id();
     if let Some(root) = root {
         app.world_mut()
             .entity_mut(panel)

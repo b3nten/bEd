@@ -105,7 +105,7 @@ impl MenuSnapshot {
     }
 }
 
-pub(crate) fn menu_workspace(world: &World, root: Entity) -> Result<WorkspaceId, String> {
+pub(crate) fn optional_menu_workspace(world: &World, root: Entity) -> Option<WorkspaceId> {
     crate::workspaces::owner(world, root)
         .or_else(|| {
             world
@@ -113,7 +113,6 @@ pub(crate) fn menu_workspace(world: &World, root: Entity) -> Result<WorkspaceId,
                 .and_then(|panel| crate::workspaces::owner(world, panel.0))
         })
         .or_else(|| crate::workspaces::selected(world))
-        .ok_or_else(|| "Menu has no workspace".into())
 }
 
 /// Snapshot a menu bar or contextual menu root. No native window is required.
@@ -126,7 +125,7 @@ pub fn menu_snapshot(
     if world.get::<MenuBar>(root).is_none() && world.get::<Menu>(root).is_none() {
         return Err("Menu root is unavailable".into());
     }
-    let workspace = menu_workspace(world, root)?;
+    let workspace = optional_menu_workspace(world, root);
     let context = world
         .get::<crate::InPanel>(root)
         .map_or(context, |p| InvocationContext::Panel(p.0));
@@ -146,11 +145,12 @@ pub fn menu_snapshot(
 
 fn capture_context(
     world: &mut World,
-    workspace: WorkspaceId,
+    workspace: Option<WorkspaceId>,
     context: InvocationContext,
 ) -> InvocationContext {
     match context {
-        InvocationContext::Focused => crate::commands::focused_panel_in(world, workspace)
+        InvocationContext::Focused => workspace
+            .and_then(|w| crate::commands::focused_panel_in(world, w))
             .map_or(InvocationContext::Global, InvocationContext::Panel),
         explicit => explicit,
     }
@@ -158,7 +158,7 @@ fn capture_context(
 
 fn read_entries(
     world: &mut World,
-    workspace: WorkspaceId,
+    workspace: Option<WorkspaceId>,
     parent: Entity,
     visited: &mut HashSet<Entity>,
     inherited: InvocationContext,

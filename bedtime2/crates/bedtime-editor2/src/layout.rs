@@ -33,16 +33,6 @@ impl Metrics {
             text.line_count() as f32 * self.height + 12.0,
         )
     }
-
-    pub fn caret(&self, text: &TextBuffer, byte: usize) -> Rect {
-        Rect::from_min_size(
-            egui::pos2(
-                8.0 + text.column(byte) as f32 * self.cell,
-                6.0 + text.line_of(byte) as f32 * self.height,
-            ),
-            egui::vec2(0.0, self.height),
-        )
-    }
 }
 
 pub(crate) struct VisibleLine {
@@ -162,24 +152,39 @@ pub(crate) struct Geometry<'a> {
     pub text: &'a TextBuffer,
     pub metrics: &'a Metrics,
     pub wrap: Option<&'a crate::wrapping::WrapIndex>,
+    pub folds: &'a crate::folding::FoldMap,
 }
 impl Geometry<'_> {
     pub fn rows(&self) -> usize {
-        self.wrap
-            .map_or_else(|| self.text.line_count(), |w| w.rows())
+        self.folds.rows(
+            self.wrap
+                .map_or_else(|| self.text.line_count(), |w| w.rows()),
+        )
     }
     pub fn size(&self, viewport: Vec2) -> Vec2 {
-        if self.wrap.is_some() {
-            egui::vec2(viewport.x, self.rows() as f32 * self.metrics.height + 12.0).max(viewport)
+        let width = if self.wrap.is_some() {
+            viewport.x
         } else {
-            self.metrics.content_size(self.text).max(viewport)
-        }
+            self.metrics.content_size(self.text).x
+        };
+        egui::vec2(
+            width,
+            self.folds.height(
+                self.wrap
+                    .map_or_else(|| self.text.line_count(), |w| w.rows()),
+            ) * self.metrics.height
+                + 12.0,
+        )
+        .max(viewport)
     }
     pub fn visual_row(&self, byte: usize) -> usize {
-        self.wrap
-            .map_or_else(|| self.text.line_of(byte), |w| w.visual_row(byte))
+        self.folds.visible_row(
+            self.wrap
+                .map_or_else(|| self.text.line_of(byte), |w| w.visual_row(byte)),
+        )
     }
     pub fn segment(&self, row: usize) -> crate::wrapping::Segment {
+        let row = self.folds.source_row(row);
         self.wrap.map_or_else(
             || crate::wrapping::Segment {
                 line: row,
@@ -192,8 +197,8 @@ impl Geometry<'_> {
         )
     }
     pub fn line(&self, ui: &egui::Ui, row: usize, cells: Range<usize>) -> VisibleLine {
+        let segment = self.segment(row);
         if self.wrap.is_some() {
-            let segment = self.segment(row);
             VisibleLine::fragment(
                 ui,
                 self.text,
@@ -202,12 +207,17 @@ impl Geometry<'_> {
                 (segment.indent as f32 - segment.columns.start as f32) * self.metrics.cell,
             )
         } else {
-            VisibleLine::new(ui, self.text, self.metrics, row, cells)
+            VisibleLine::new(ui, self.text, self.metrics, segment.line, cells)
         }
     }
     pub fn visual_row_for(&self, byte: usize, upstream: bool) -> usize {
         let row = self.visual_row(byte);
-        if upstream && self.wrap.is_some() && row > 0 && self.segment(row).bytes.start == byte {
+        if upstream
+            && self.wrap.is_some()
+            && row > 0
+            && self.segment(row).bytes.start == byte
+            && self.segment(row).part > 0
+        {
             row - 1
         } else {
             row
@@ -217,9 +227,6 @@ impl Geometry<'_> {
         self.caret_for(byte, false)
     }
     pub fn caret_for(&self, byte: usize, upstream: bool) -> Rect {
-        if self.wrap.is_none() {
-            return self.metrics.caret(self.text, byte);
-        }
         let row = self.visual_row_for(byte, upstream);
         let segment = self.segment(row);
         Rect::from_min_size(
@@ -227,13 +234,15 @@ impl Geometry<'_> {
                 8.0 + (self.text.column(byte).saturating_sub(segment.columns.start)
                     + segment.indent) as f32
                     * self.metrics.cell,
-                6.0 + row as f32 * self.metrics.height,
+                6.0 + self.folds.row_y(row) * self.metrics.height,
             ),
             egui::vec2(0.0, self.metrics.height),
         )
     }
     pub fn hit(&self, ui: &egui::Ui, position: egui::Pos2) -> usize {
-        let row = (((position.y - 6.0) / self.metrics.height).floor().max(0.0) as usize)
+        let row = self
+            .folds
+            .row_at((position.y - 6.0) / self.metrics.height)
             .min(self.rows() - 1);
         let column = ((position.x - 8.0) / self.metrics.cell).floor().max(0.0) as usize;
         self.line(ui, row, column.saturating_sub(8)..column.saturating_add(16))
@@ -246,35 +255,86 @@ impl Geometry<'_> {
         step: isize,
         upstream: bool,
     ) -> (usize, bool) {
-        if let Some(wrap) = self.wrap {
-            let row = self
-                .visual_row_for(byte, upstream)
-                .saturating_add_signed(step)
-                .min(wrap.rows() - 1);
-            let segment = wrap.segment(row);
-            let at = self
-                .text
-                .byte_at_column(
-                    segment.line,
-                    segment.columns.start + column.saturating_sub(segment.indent),
-                )
-                .clamp(segment.bytes.start, segment.bytes.end);
-            (at, at == segment.bytes.end)
-        } else {
-            let row = self
-                .text
-                .line_of(byte)
-                .saturating_add_signed(step)
-                .min(self.text.line_count() - 1);
-            (self.text.byte_at_column(row, column), false)
-        }
+        let row = self
+            .visual_row_for(byte, upstream)
+            .saturating_add_signed(step)
+            .min(self.rows() - 1);
+        let segment = self.segment(row);
+        let at = self
+            .text
+            .byte_at_column(
+                segment.line,
+                segment.columns.start + column.saturating_sub(segment.indent),
+            )
+            .clamp(segment.bytes.start, segment.bytes.end);
+        (at, self.wrap.is_some() && at == segment.bytes.end)
     }
     pub fn column_for(&self, byte: usize, upstream: bool) -> usize {
-        if let Some(wrap) = self.wrap {
-            let segment = wrap.segment(self.visual_row_for(byte, upstream));
-            self.text.column(byte).saturating_sub(segment.columns.start) + segment.indent
-        } else {
-            self.text.column(byte)
+        let segment = self.segment(self.visual_row_for(byte, upstream));
+        self.text.column(byte).saturating_sub(segment.columns.start) + segment.indent
+    }
+}
+
+#[cfg(feature = "treesitter")]
+impl VisibleLine {
+    pub fn apply_syntax(
+        &mut self,
+        ui: &egui::Ui,
+        metrics: &Metrics,
+        observation: &bedtime_treesitter2::Observation,
+        changes: &[crate::TextDelta],
+        palette: &crate::syntax::SyntaxPalette,
+    ) {
+        let spans = crate::syntax::mapped_highlights(observation, changes, self.start..self.end);
+        if spans.is_empty() {
+            return;
         }
+        let mut job = (*self.galley.job).clone();
+        let offsets: Vec<usize> = job
+            .text
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain(std::iter::once(job.text.len()))
+            .collect();
+        let display_byte = |source| {
+            let index = self
+                .carets
+                .partition_point(|(at, _)| *at < source)
+                .min(self.carets.len() - 1);
+            offsets[self.carets[index].1]
+        };
+        job.sections.clear();
+        let normal = ui.visuals().text_color();
+        let mut start = 0;
+        for span in &spans {
+            let from = display_byte(span.range.start.max(self.start));
+            let to = display_byte(span.range.end.min(self.end));
+            if from > start {
+                job.sections.push(egui::text::LayoutSection {
+                    leading_space: 0.0,
+                    byte_range: egui::text::ByteIndex(start)..egui::text::ByteIndex(from),
+                    format: egui::TextFormat::simple(metrics.font.clone(), normal),
+                });
+            }
+            if to > from {
+                job.sections.push(egui::text::LayoutSection {
+                    leading_space: 0.0,
+                    byte_range: egui::text::ByteIndex(from)..egui::text::ByteIndex(to),
+                    format: egui::TextFormat::simple(
+                        metrics.font.clone(),
+                        palette.color(&span.capture, normal),
+                    ),
+                });
+            }
+            start = to;
+        }
+        if start < job.text.len() {
+            job.sections.push(egui::text::LayoutSection {
+                leading_space: 0.0,
+                byte_range: egui::text::ByteIndex(start)..egui::text::ByteIndex(job.text.len()),
+                format: egui::TextFormat::simple(metrics.font.clone(), normal),
+            });
+        }
+        self.galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
     }
 }

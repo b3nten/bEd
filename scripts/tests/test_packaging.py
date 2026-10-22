@@ -61,7 +61,7 @@ class DesktopPackageTests(unittest.TestCase):
         self.root = Path(temporary.name) / "fixture repository"
         (self.root / "scripts").mkdir(parents=True)
         shutil.copytree(SCRIPTS / "lib", self.root / "scripts/lib")
-        for name in ("package-linux.sh", "package-macos.sh"):
+        for name in ("package-linux.sh", "package-macos.sh", "package-bed2-linux.sh", "package-bed2-macos.sh"):
             shutil.copy2(SCRIPTS / name, self.root / "scripts" / name)
         files = {
             "Cargo.toml": f'[package]\nname = "bed"\nversion = "{HELPERS.package_version()}"\n',
@@ -80,6 +80,11 @@ class DesktopPackageTests(unittest.TestCase):
             "resources/terminal/LICENSE": "Retained X.Org license\n",
             "resources/terminal/ATTRIBUTION.txt": "X.Org source/checksum record\n",
             "target/release/bed": "#!/bin/sh\nexit 0\n",
+            "target/release/bed2": "#!/bin/sh\nexit 0\n",
+            "bedtime2/crates/bedtime-ui2/assets/fonts/PaperMono-OFL.txt": "Embedded font notice\n",
+            "bedtime2/crates/bedtime-grammars2/grammars/rust/LICENSE": "Embedded Rust grammar notice\n",
+            "bedtime2/crates/bedtime-grammars2/sources.json": "[]\n",
+            "bedtime2/crates/bedtime-clipboard2/LICENSE-MIT": "Clipboard notice\n",
             "target/release/bedtime-remote-agent": "#!/bin/sh\nexit 0\n",
         }
         files["resources/fonts/PaperMono-OFL.txt"] = "Paper license\n"
@@ -93,7 +98,7 @@ class DesktopPackageTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(contents, encoding="utf-8")
         shutil.copytree(SCRIPTS.parent / "bed/resources/icons", self.root / "bed/resources/icons")
-        for binary in ("bed", "bedtime-remote-agent"):
+        for binary in ("bed", "bed2", "bedtime-remote-agent"):
             (self.root / "target/release" / binary).chmod(0o755)
         (self.root / "bed/assets/bEd-iOS-Default-1024@1x.png").write_bytes(png(1024))
         helpers = self.root / "prebuilt helper bundles"
@@ -139,7 +144,10 @@ output.write_bytes(b'icns' + struct.pack('>I', len(data) + 8) + data)
 """)
         self.tool("ditto", """import pathlib, shutil, sys
 app, output = map(pathlib.Path, sys.argv[-2:])
-shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, base_dir=app.name)
+if '-c' in sys.argv:
+    shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, base_dir=app.name)
+else:
+    shutil.copytree(app, output, symlinks=True)
 """)
         self.environment = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
                                 BED_HELPERS_DIR=str(helpers))
@@ -158,6 +166,68 @@ shutil.make_archive(str(output.with_suffix('')), 'zip', root_dir=app.parent, bas
         return subprocess.run(
             ["bash", str(self.root / "scripts" / f"package-{platform}.sh"), "--skip-build"],
             cwd=self.root.parent, env=self.environment, text=True, capture_output=True, check=False)
+
+    def run_bed2_package(self, platform, *arguments):
+        system, architecture = ("Darwin", "arm64") if platform == "macos" else ("Linux", "x86_64")
+        self.tool("uname", f"import sys; print({system!r} if sys.argv[-1] == '-s' else {architecture!r})")
+        return subprocess.run(
+            ["bash", str(self.root / "scripts" / f"package-bed2-{platform}.sh"), "--skip-build", *arguments],
+            cwd=self.root.parent, env=self.environment, text=True, capture_output=True, check=False)
+
+    def test_bed2_archives_have_distinct_identity_and_embedded_source_notices(self):
+        for platform in ("macos", "linux"):
+            with self.subTest(platform=platform):
+                result = self.run_bed2_package(platform)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                if platform == "macos":
+                    archive, = (self.root / "target/dist/bed2").glob("*.zip")
+                    with zipfile.ZipFile(archive) as package:
+                        info = plistlib.loads(package.read("bEd2.app/Contents/Info.plist"))
+                        self.assertEqual(info["CFBundleExecutable"], "bed2")
+                        self.assertEqual(info["CFBundleIdentifier"], "org.bed-editor.bed2")
+                        notice = package.read("bEd2.app/Contents/Resources/NOTICE")
+                        self.assertIn("bEd2.app/Contents/MacOS/bed2", package.namelist())
+                else:
+                    archive, = (self.root / "target/dist/bed2").glob("*.tar.gz")
+                    with tarfile.open(archive) as package:
+                        self.assertTrue(package.getmember("usr/bin/bed2").mode & 0o111)
+                        desktop = package.extractfile("usr/share/applications/bed2.desktop").read()
+                        self.assertIn(b"Exec=bed2 %F", desktop)
+                        notice = package.extractfile("usr/share/Bed2/NOTICE").read()
+                        self.assertNotIn("usr/bin/bed", package.getnames())
+                self.assertIn(b"Embedded font notice", notice)
+                self.assertIn(b"Embedded Rust grammar notice", notice)
+                self.assertIn(b"Clipboard notice", notice)
+
+    def test_bed2_install_replaces_only_bed2_and_preserves_bed1(self):
+        install = self.root / "test Applications"
+        for name in ("bEd.app", "bEd2.app"):
+            (install / name).mkdir(parents=True)
+            (install / name / "previous").write_text(name)
+        self.environment["BED2_INSTALL_DIR"] = str(install)
+        result = self.run_bed2_package("macos", "--install")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((install / "bEd2.app/Contents/MacOS/bed2").is_file())
+        self.assertFalse((install / "bEd2.app/previous").exists())
+        self.assertEqual((install / "bEd.app/previous").read_text(), "bEd.app")
+        self.assertEqual(sorted(p.name for p in install.iterdir()), ["bEd.app", "bEd2.app"])
+
+    def test_bed2_failed_install_restores_previous_application(self):
+        install = self.root / "test Applications"
+        (install / "bEd2.app").mkdir(parents=True)
+        (install / "bEd2.app/previous").write_text("previous installation")
+        self.environment["BED2_INSTALL_DIR"] = str(install)
+        self.tool("mv", """import os, subprocess, sys
+source, destination = sys.argv[-2:]
+if '.bed2-install.' in source and source.endswith('/bEd2.app'):
+    sys.exit(1)
+sys.exit(subprocess.call(['/bin/mv', *sys.argv[1:]]))
+""")
+        result = self.run_bed2_package("macos", "--install")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((install / "bEd2.app/previous").read_text(), "previous installation")
+        self.assertEqual(sorted(p.name for p in install.iterdir()), ["bEd2.app"])
+
 
     def test_linux_archive_keeps_runtime_resources_helpers_and_notices(self):
         result = self.run_package("linux")

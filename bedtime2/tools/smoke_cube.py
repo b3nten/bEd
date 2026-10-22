@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from automation import Application
+from smoke_bed2 import open_panel, prepare_demo_layout
 
 
 def orbit(app, entity):
@@ -47,6 +48,7 @@ def main():
     (output / "summary.json").unlink(missing_ok=True)
     captures = []
     with Application([str(Path(args.binary).resolve())], output=output, timeout=60) as app:
+        prepare_demo_layout(app, viewport=True)
         app.request("configure", fixed_dt=1 / 60, clipboard="")
         snapshot = app.wait_until(lambda s: len(s["viewports"]) == 1
                                   and s["viewports"][0]["visible"]
@@ -121,7 +123,7 @@ def main():
 
         # Two independent cameras share one scene and renderer.
         split = app.request("area.split", area=area, axis="horizontal", fraction=0.5)
-        other = app.request("panel.open", key="bed.cube", area=split["area"])["panel"]
+        other = open_panel(app, "3D Viewport", area=split["area"])
         snapshot = app.wait_until(lambda s: len(s["viewports"]) == 2
                                   and all(v["visible"] for v in s["viewports"]))
         before = orbit(app, other)
@@ -172,21 +174,25 @@ def main():
         captures.append(app.capture("06-resized.png"))
 
         # Hidden tabs and inactive workspaces suspend rendering without losing
-        # orbit state. Reopening a saved workspace creates fresh view state.
-        app.request("panel.open", key="bed.hello", area=area)
+        # orbit state. A newly created workspace gets fresh concrete view state.
+        open_panel(app, "Settings", area=area)
         assert not orbit(app, entity)["active"]
         app.input({"type": "drag", "from": point(app.inspect(), entity),
                    "to": point(app.inspect(), entity, 0.7, 0.7), "frames": 8})
         assert stable(orbit(app, entity), stopped)
         app.request("panel.focus", panel=entity)
         assert orbit(app, entity)["active"]
-        saved = app.request("workspace.capture")
-        restored = app.request("workspace.restore", snapshot=saved, activate=True)
+        fresh = app.request("workspace.create", name="Fresh viewports", activate=True)
+        fresh_first = open_panel(app, "3D Viewport")
+        fresh_split = app.request("area.split", area=fresh["area"], axis="horizontal", fraction=0.5)
+        fresh_second = open_panel(app, "3D Viewport", area=fresh_split["area"])
+        app.wait_until(lambda s: len(s["viewports"]) == 4
+                       and all(v["visible"] for v in s["viewports"] if v["entity"] in (fresh_first, fresh_second)))
         states = app.request("app.inspect_cube")["viewports"]
         assert len(states) == 4
         assert all(not v["active"] for v in states if v["entity"] in images)
         assert all(stable(v, initial) for v in states if v["entity"] not in images)
-        captures.append(app.capture("07-restored.png"))
+        captures.append(app.capture("07-fresh.png"))
         app.request("workspace.activate", workspace=workspace["entity"])
         assert stable(orbit(app, entity), stopped)
 
@@ -199,10 +205,10 @@ def main():
         app.request("panel.close", panel=other)
         assert all(v["entity"] != other for v in app.request("app.inspect_cube")["viewports"])
         app.request("workspace.close", workspace=workspace["entity"])
-        app.request("workspace.close", workspace=restored["workspace"])
+        app.request("workspace.close", workspace=fresh["workspace"])
         assert app.request("app.inspect_cube")["viewports"] == []
         app.request("workspace.create", name="Fresh", activate=True)
-        app.request("panel.open", key="bed.cube")
+        open_panel(app, "3D Viewport")
         app.wait_until(lambda s: len(s["viewports"]) == 1 and s["viewports"][0]["visible"])
         captures.append(app.capture("08-rebuilt.png"))
         snapshot = app.inspect(entities=True)

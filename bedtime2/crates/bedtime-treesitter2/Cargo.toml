@@ -1,0 +1,13 @@
+[package]
+name = "bedtime-treesitter2"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Shared incremental code analysis using selected Arborium grammars"
+
+[dependencies]
+bedtime-grammars2.workspace = true
+# Use the same Tree-sitter runtime as v1: Cargo permits only one links=tree-sitter.
+tree-sitter = { package = "arborium-tree-sitter", version = "=2.18.2" }
+serde_json.workspace = true

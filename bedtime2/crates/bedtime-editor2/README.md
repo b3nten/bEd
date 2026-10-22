@@ -1,19 +1,19 @@
 # Bedtime text editor
 
 Embeddable plain text editing with a persistent UTF-8 buffer, viewport-only
-rendering, independent views, shared history and bed1's animated caret. No LSP,
-syntax, structure or debugging dependency is installed. The default build has no
-Workbench dependency; the optional `workbench` feature supplies an adapter to
-Workbench's existing document services.
+rendering, independent views, shared history and bed1's animated caret. Default
+builds require neither Workbench nor language tooling. Independent optional
+`workbench` and `treesitter` features add canonical document integration and
+shared syntax/fold contributions; no LSP or debugger is installed.
 
 ```sh
 cargo run --offline --locked -p bedtime-editor2 --example standalone
 ```
 
-The example shows two views of one in-memory document without Workbench. bEd2
-uses the same editor for files opened from Files, with Save, Split view and a
-per-view Line numbers toggle. The **Editing** menu exposes wrapping, indentation
-and Find/Replace. Edited previews become pinned tabs.
+The example shows two views of one in-memory document without Workbench, with
+per-view line numbers and an **Editing** menu for wrapping, indentation and
+Find/Replace. bEd2 uses the editor for files opened through Files; local file
+policy belongs to the embedding application.
 
 ## Ownership and execution
 
@@ -21,7 +21,8 @@ and Find/Replace. Edited previews become pinned tabs.
 | --- | --- |
 | Text, revision, undo/redo and change journal | `TextSession` implementation |
 | Persistent indexed UTF-8 content | `TextBuffer` |
-| Selection, composition, navigation and preferred column | `EditorView` |
+| Selection, composition, navigation, collapsed regions and preferred column | `EditorView` |
+| Optional language and shared analysis | Host session / Workbench document |
 | Scroll presentation and input focus | Stable per-view egui IDs |
 | Caret visual history | `EditorView` |
 | Files, source identity, saves and conflict policy | Application |
@@ -60,7 +61,9 @@ Closing a Workbench viewer retains its document under the existing contract.
 - Consecutive typing groups end on navigation, view ownership changes, focus
   loss or 650 ms of idle time, as well as document-service history/save barriers.
 
-Only explicit copy or file I/O materializes complete selected/source bytes.
+Ordinary UI editing and layout never materialize complete source bytes. Copy
+materializes the selection; optional syntax analysis materializes bounded source
+snapshots in its worker, and hosts own file I/O.
 Document snapshots and history share immutable roots. Unwrapped views retain an observed
 revision rather than another text buffer. A prepared wrap index retains its
 snapshot so journal changes can update the affected line metadata.
@@ -79,11 +82,12 @@ also has a 32 KiB shaping ceiling for pathological zero-width text. The canonica
 document is never truncated. `EditorOutput.rendered_lines` and `laid_out_bytes`
 expose the actual work for verification.
 
-bEd2 loads/builds text on managed workers and currently accepts UTF-8 text files
-up to 256 MiB; larger, binary and nonregular files show metadata. Equal reloads
-reuse known roots after worker-side comparison. Saves stream rope chunks through
-the application's atomic replacement path. Inspection returns at most 16 KiB of
-text plus complete byte/line counts, rather than serializing the whole file.
+The optional syntax worker accepts sources up to 8 MiB; larger documents retain
+plain editing without semantic observations. This is an analysis limit, not an
+editor or file-size limit. bEd2 loads file-backed Code documents on managed
+workers (UTF-8 up to 256 MiB), supplies checked saves and source reconciliation,
+and creates no sample document in an empty editor. Those policies remain outside
+the editor crate.
 
 ## Composition and external control
 
@@ -96,28 +100,82 @@ composition, the draft is retained until explicitly discarded.
 `Navigation` identifies a revision and reveal range, with optional selection,
 minimal/centered reveal and explicit focus. `request_navigation` works on an
 embedded view; `navigate_editor` targets a Workbench panel and selects/focuses
-that panel only when requested. Reveal without selection preserves the caret.
+that panel and activates its existing layout only when requested.
+`Navigation::scroll_to_line`, `EditorView::scroll_to_line` and
+`workbench::scroll_to_line` resolve zero-based logical lines through this same
+revision-bound path, with or without Tree-sitter. Reveal without selection
+preserves the caret and expands enclosing folds.
 Stale or invalid requests fail before changing view state. Applications choose
 which document/view to open before requesting navigation.
+
+Each wheel input locks to its dominant axis, and the next input can immediately
+choose another axis. egui's smoothed tail retains the latest input's axis. Scrollbars remain
+independently draggable. Tree-sitter builds reserve a narrow fold column before
+analysis arrives, so asynchronous fold discovery never shifts text. Disclosure
+triangles share UI2's file-tree artwork. Fold bodies crop at normal font size
+with bed1's reversible 160 ms smoothstep timing; fractional row geometry is shared
+by painting, hit testing and caret placement. Reduced motion settles immediately.
+The caret and active line number use bed1's RGB sine cycle.
+
+Primary pointer presses place the caret immediately; the second press selects a
+word and the third selects the logical line excluding its line ending, with the
+caret after the final character. These selections do not wait for release.
 
 The caret's logical position updates immediately. Its visual leading/trailing
 edges use bed1's 35/110 ms cubic easing and a bounded fading trail. Content
 coordinates prevent scrolling from becoming caret motion. Layout-only changes
 settle the caret, and `MotionPolicy.enabled = false` disables movement animation.
 
-## Optional code capabilities
+## Optional syntax and folding contributions
 
-The editor remains usable without language tools. Future providers will supply
-revision-bound data and explicit actions: syntax spans, diagnostics, fold ranges,
-gutter markers, hover content and edit/navigation requests. Providers will own
-their data and cleanup; the editor will own placement, clipping and interaction.
-Line-number visibility must remain independent of other gutter contributions.
-Debug execution locations and breakpoints must remain independent of selections.
-No provider registration framework is implemented in this slice.
+Enable `treesitter` to depend on [shared Tree-sitter analysis](../bedtime-treesitter2/README.md).
+Standalone hosts own one `AnalysisSession` per document, call
+`syntax::update_analysis` with their language choice, then attach the same accepted
+`AnalysisSession` to sibling views with `EditorView::set_analysis`. This retains
+colors during pending refreshes; `set_syntax` also accepts an explicit observation
+and clears contributions when given `None`. These are direct contribution APIs,
+with no provider registry or hidden parsing during drawing.
 
-Multicursor interaction and language-tool contributions remain later milestones.
-Folding is deliberately deferred until Tree-sitter integration; no manual or
-heuristic folding is installed.
+```sh
+cargo run --offline --locked -p bedtime-editor2 --features treesitter --example syntax
+```
+
+With `workbench,treesitter`, install `EditorAnalysisPlugin`, bind text editors
+normally, and attach `CodeLanguage` to the document entity (`DocumentId.0`).
+`DocumentAnalysis` owns one managed worker/session per document with open editor
+viewers, including hidden tabs. Its ordinary Update system submits cheap roots,
+polls results and retires attachments after the last viewer detaches; Workbench
+owns worker shutdown across document/workspace closure. Drawing attaches the
+document's analysis before temporarily removing the view component.
+`analysis_for_panel` validates the panel binding, current revision and language
+before returning it.
+Changing language invalidates prior results even at the same text revision.
+
+Visible fragments use binary span lookup and a `SyntaxPalette` at layout time;
+color changes preserve font metrics and require no reparse. The Workbench adapter
+maps the current host theme to that palette. Long-line shaping retains its 32 KiB
+ceiling.
+
+During edits and pending analysis, views retain the last accepted colors and map
+only visible spans through the complete change journal, including IME drafts.
+Fresh analysis replaces these provisional colors. Source/language changes,
+analysis refusal, explicit detachment and journal gaps discard them. Retained
+colors never supply fold controls or Structure navigation; those still require a
+matching revision. No full-document highlight copying or remapping runs per edit.
+
+`toggle_fold`, `fold_all` and `unfold_all` keep collapse state in the view, outside
+undo history. Sparse cached hidden-row intervals compose with wrapping for
+scrolling, painting, hit testing, selections and vertical/page navigation. No
+full-document visible-row vector is rebuilt per frame. Gutter controls remain
+available with line numbers hidden; collapsed headers display an ellipsis.
+Selections, copy and edits still use canonical source bytes. Find and external
+navigation reveal hidden targets. A fold containing the caret moves it to its
+header when collapsed. Edits before folds map their ranges; edits touching them,
+journal gaps and changed source/language identities expand uncertain regions.
+Folding and navigation reject active composition.
+
+Diagnostics, other gutter markers, multicursor interaction, hover and LSP/debugger
+integration remain later milestones. No universal provider framework is installed.
 
 ## Everyday editing
 
@@ -153,9 +211,10 @@ search belong to the view, independently of sibling views and document history.
   Replace all is one atomic, undoable replacement; replacement text is literal.
   Read-only views can search but cannot replace.
 
-Wrap metadata is prepared in cancellable view-owned workers. While a new width
-or bulk edit is being indexed, the view consistently uses ordinary unwrapped
-coordinates and displays a preparation indicator. A ready index updates only
+Wrap metadata is prepared in cancellable view-owned workers. During resize the
+last revision-valid wrapped geometry remains visible and interactive until the new
+width is ready; no preparation label is painted. Initial preparation and bulk
+edits without a valid index use unwrapped coordinates. A ready index updates only
 changed logical lines using shared 256-line blocks and block prefix totals.
 Viewport layout remains bounded, including for a single very long wrapped line.
 Widths/fonts can differ between sibling views.
@@ -174,18 +233,16 @@ Closing Find cancels its work; dropping a view cancels all its workers.
 ## Verification
 
 ```sh
-cargo test --offline --locked -p bedtime-editor2 --features workbench
-cargo test --offline --locked -p bedtime-editor2 --features workbench million_line_ -- --ignored --nocapture
+cargo test --offline --locked -p bedtime-editor2 --features workbench,treesitter
+cargo test --offline --locked -p bedtime-editor2 --features workbench,treesitter million_line_ -- --ignored --nocapture
 cargo check --offline --locked -p bedtime-editor2 --no-default-features --example standalone
 cargo test --offline --locked -p bedtime-workbench2 --no-default-features
-cargo build --offline --locked -p bed2 --features automation
-python3 bedtime2/tools/smoke_editor.py
 ```
 
 The explicit large fixture covers 112 MB and one million lines, bounded drawing,
-navigation near EOF, editing and shared-root undo. The native smoke uses temporary
-small/large files and a memory clipboard, exercises real inputs and saves, and
-retains screenshots and a summary under `target/editor-smoke`.
+navigation near EOF, editing and shared-root undo. The former bed2 native editor
+scenario was retired with the application demo; the following results record
+historical evidence from before that cleanup.
 
 Verified on 2026-10-18 on an Apple M4 Pro in an unoptimized development build:
 all 34 editor tests, including both explicit million-line fixtures, passed; the
@@ -199,3 +256,15 @@ Find reopening, replace-one/all, shared undo/redo, smart whitespace and real sav
 Its final pinned-executable run passed with 21 rendered rows / 460 shaped bytes
 near EOF; three captures and `summary.json` are in `target/editor-everyday-smoke`.
 Measurements are local evidence, not guarantees for other machines or contents.
+
+
+Verified 2026-10-19: the plain editor suite and standalone build passed; the
+feature-enabled suite includes independent fold geometry/hit testing, wrapping,
+theme changes, composition gates, grouped edits/history, journal expiry, and
+editable analysis-limited long lines. The two explicit 112 MB/million-line tests
+passed with `workbench,treesitter`: unwrapped idle median 0.83 ms, maximum 1.36 ms,
+edit 1.37 ms; wrapped incremental edit 1.01 ms and 17 rows / 889 shaped bytes.
+These measure headless UI work; large-file semantic analysis is intentionally
+limited. The current Code/Structure native smoke passed eight captures under
+`target/bed2-code-smoke`. Background analysis timing and bounds are recorded in
+the Tree-sitter crate README.

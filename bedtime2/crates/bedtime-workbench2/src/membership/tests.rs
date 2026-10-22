@@ -147,3 +147,140 @@ fn update_consumers_see_selection_changes_after_commands_apply() {
     app.update();
     assert!(app.world().resource::<Checked>().0);
 }
+
+#[derive(Component, Default)]
+#[require(PanelInstance = PanelInstance::of::<Notes>(), LocalState)]
+struct Notes {
+    text: String,
+}
+#[derive(Component, Default)]
+struct LocalState {
+    collapsed: bool,
+}
+impl Panel for Notes {
+    const KEY: &'static str = "test.notes";
+    const LABEL: &'static str = "Notes";
+    #[cfg(feature = "ui")]
+    fn draw(
+        _: &mut bedtime_ui2::egui::Ui,
+        _: &mut World,
+        _: &bedtime_ui2::UiContext<'_>,
+        _: Entity,
+    ) {
+    }
+}
+
+#[test]
+fn concrete_spawn_is_usable_and_selected_without_initialization_or_focus_changes() {
+    let mut world = World::new();
+    let owner = workspace(&mut world);
+    let layout = world.spawn((Layout::default(), InWorkspace(owner))).id();
+    let first = world.spawn((Area::default(), InLayout(layout))).id();
+    let other = world.spawn((Area::default(), InLayout(layout))).id();
+    assert_eq!(
+        world.get::<Layout>(layout).unwrap().focused_area(),
+        Some(first)
+    );
+    let panel = world
+        .spawn((
+            Notes {
+                text: "supplied".into(),
+            },
+            LocalState { collapsed: true },
+            InArea(other),
+        ))
+        .id();
+    assert_eq!(world.get::<Notes>(panel).unwrap().text, "supplied");
+    assert!(world.get::<LocalState>(panel).unwrap().collapsed);
+    assert_eq!(world.get::<PanelInstance>(panel).unwrap().title, "Notes");
+    #[cfg(feature = "ui")]
+    assert!(world.get::<PanelInstance>(panel).unwrap().draw.is_some());
+    assert_eq!(world.get::<InWorkspace>(panel).unwrap().0, owner);
+    assert_eq!(
+        world.get::<Area>(other).unwrap().selected_panel(),
+        Some(panel)
+    );
+    assert_eq!(
+        world.get::<Layout>(layout).unwrap().focused_area(),
+        Some(first)
+    );
+    let next = world.spawn((Notes::default(), InArea(other))).id();
+    assert_eq!(panels_in_area(&world, other), &[panel, next]);
+    assert_eq!(
+        world.get::<Area>(other).unwrap().selected_panel(),
+        Some(next)
+    );
+    // Reinsertion is not a new attachment and must not steal tab selection.
+    world.entity_mut(panel).insert(InArea(other));
+    assert_eq!(
+        world.get::<Area>(other).unwrap().selected_panel(),
+        Some(next)
+    );
+}
+
+#[test]
+fn selected_tab_and_focused_area_fallbacks_are_immediate() {
+    let mut world = World::new();
+    let owner = workspace(&mut world);
+    let (layout, area, first) = contents(&mut world, owner);
+    let middle = world.spawn((Notes::default(), InArea(area))).id();
+    let last = world.spawn((Notes::default(), InArea(area))).id();
+    Workbench::for_entity(&mut world, area)
+        .unwrap()
+        .select_panel(middle)
+        .unwrap();
+    world.despawn(middle);
+    assert_eq!(
+        world.get::<Area>(area).unwrap().selected_panel(),
+        Some(last)
+    );
+    world.despawn(last);
+    assert_eq!(
+        world.get::<Area>(area).unwrap().selected_panel(),
+        Some(first)
+    );
+    let destination = world.spawn((Area::default(), InLayout(layout))).id();
+    world.entity_mut(first).insert(InArea(destination));
+    assert_eq!(world.get::<Area>(area).unwrap().selected_panel(), None);
+    assert_eq!(
+        world.get::<Area>(destination).unwrap().selected_panel(),
+        Some(first)
+    );
+    assert_eq!(
+        world.get::<Layout>(layout).unwrap().focused_area(),
+        Some(area)
+    );
+    world.despawn(area);
+    assert_eq!(
+        world.get::<Layout>(layout).unwrap().focused_area(),
+        Some(destination)
+    );
+}
+
+#[test]
+fn deferred_panel_spawns_select_in_applied_order_and_preserve_local_overrides() {
+    let mut world = World::new();
+    let owner = workspace(&mut world);
+    let (_, area, _) = contents(&mut world, owner);
+    let first = world
+        .commands()
+        .spawn((Notes::default(), InArea(area)))
+        .id();
+    let last = world
+        .commands()
+        .spawn((
+            Notes {
+                text: "last".into(),
+            },
+            InArea(area),
+        ))
+        .id();
+    world.flush();
+    assert_eq!(
+        world.get::<Area>(area).unwrap().selected_panel(),
+        Some(last)
+    );
+    assert_eq!(world.get::<Notes>(last).unwrap().text, "last");
+    assert!(world.get::<LocalState>(first).is_some());
+    assert_eq!(world.get::<InWorkspace>(last).unwrap().0, owner);
+}

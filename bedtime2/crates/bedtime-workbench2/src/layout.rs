@@ -43,6 +43,7 @@ pub(crate) struct LayoutRevision(pub u64);
 /// Selected layout within its workspace. Each workspace may select zero or one.
 #[derive(Component, Default)]
 #[require(Layout)]
+#[component(on_add = crate::membership::layout_selection_changed, on_remove = crate::membership::layout_selection_changed)]
 pub struct ActiveLayout;
 
 #[derive(Component, Debug)]
@@ -66,7 +67,7 @@ impl Layout {
 }
 
 #[derive(Component, Debug)]
-#[require(AreaPresentation)]
+#[require(AreaPresentation, AreaLocation)]
 pub struct Area {
     pub rect: AreaRect,
     pub selected: Option<Entity>,
@@ -92,15 +93,40 @@ impl Area {
 }
 
 #[derive(Component, Debug, Default)]
-#[require(PanelPresentation)]
+#[require(PanelPresentation, PanelLocation)]
 pub struct PanelInstance {
-    /// Application-wide registered key. Empty only for anonymous runtime panels.
+    /// Descriptive application identity, never used by workbench to create a panel.
     pub key: String,
     pub title: String,
     pub dirty: bool,
     pub preview: bool,
+    /// Optional ordinary drawing capability, available as soon as composition applies.
+    #[cfg(feature = "ui")]
+    pub draw: Option<PanelDraw>,
 }
+
+#[cfg(feature = "ui")]
+pub type PanelDraw =
+    fn(&mut bedtime_ui2::egui::Ui, &mut World, &bedtime_ui2::UiContext<'_>, Entity);
+
+/// Last applied parent, used only to distinguish attachment from reinsertion.
+#[derive(Component, Default)]
+pub(crate) struct PanelLocation(pub Option<Entity>);
+#[derive(Component, Default)]
+pub(crate) struct AreaLocation(pub Option<Entity>);
+
 impl PanelInstance {
+    /// Local presentation supplied by a concrete panel's required components.
+    pub fn of<P: Panel>() -> Self {
+        Self {
+            key: P::KEY.into(),
+            title: P::LABEL.into(),
+            #[cfg(feature = "ui")]
+            draw: Some(P::draw),
+            ..default()
+        }
+    }
+
     pub fn new(key: impl Into<String>) -> Self {
         Self {
             key: key.into(),
@@ -126,7 +152,7 @@ pub fn active_layout(world: &World, workspace: Entity) -> Option<Entity> {
 }
 
 #[derive(Component, Debug)]
-#[component(on_insert = crate::membership::member_changed, on_remove = crate::membership::member_changed)]
+#[component(on_insert = crate::membership::area_inserted, on_discard = crate::membership::area_replaced, on_remove = crate::membership::area_removed)]
 #[relationship(relationship_target = LayoutAreas)]
 pub struct InLayout(pub Entity);
 
@@ -141,7 +167,7 @@ impl LayoutAreas {
 }
 
 #[derive(Component, Debug)]
-#[component(on_insert = crate::membership::member_changed, on_remove = crate::membership::member_changed)]
+#[component(on_insert = crate::membership::panel_inserted, on_discard = crate::membership::panel_replaced, on_remove = crate::membership::panel_removed)]
 #[relationship(relationship_target = AreaPanels)]
 pub struct InArea(pub Entity);
 
@@ -275,13 +301,9 @@ pub enum LayoutEdit {
         to: i32,
         minimum: i32,
     },
-    OpenPanel {
-        area: Entity,
-        kind: Entity,
-    },
     DropPanel {
         area: Entity,
-        kind: Entity,
+        factory: PanelFactory,
         index: usize,
         split: Option<(SplitAxis, bool)>,
         minimum: [i32; 2],
@@ -312,6 +334,16 @@ impl WorkbenchRequests {
     }
 }
 
+/// A user intention, not permission to destroy entities. Applications may retain
+/// it while prompting/saving, reject it, or call `Workbench::commit_close`.
+/// The captured stamp prevents delayed approval from targeting a changed layout.
+#[derive(Message, Clone, Debug)]
+pub struct PanelCloseRequested {
+    pub workspace: WorkspaceId,
+    pub stamp: LayoutStamp,
+    pub edit: LayoutEdit,
+}
+
 #[derive(Message, Debug)]
 pub struct WorkbenchFinished {
     pub request: WorkbenchRequest,
@@ -323,12 +355,12 @@ pub enum WorkbenchSystems {
     Apply,
 }
 
-/// A workbench panel type. Instances own ECS state; drawing is an ordinary call.
-/// The picker projects application-wide registration entities.
-pub trait Panel: Send + Sync + 'static {
-    /// Add missing application defaults to the existing entity. Preserve supplied state.
-    fn initialize(_entity: &mut EntityWorldMut<'_>) {}
-    const KEY: &'static str;
+/// Presentation contract for a concrete panel component. No catalog or initializer
+/// is installed: require `PanelInstance::of::<Self>` on the concrete component.
+pub trait Panel: Component {
+    /// Optional descriptive identity for application inspection/persistence policy.
+    /// Workbench never resolves it to a type or constructs a panel from it.
+    const KEY: &'static str = "";
     const LABEL: &'static str;
     #[cfg(feature = "ui")]
     fn draw(
@@ -339,70 +371,28 @@ pub trait Panel: Send + Sync + 'static {
     );
 }
 
-#[derive(Component)]
-pub struct PanelType {
-    pub key: &'static str,
-    pub label: String,
-    pub(crate) initialize: fn(&mut World, Entity),
+/// An application-owned, infallible panel constructor for a creation drag.
+/// Validate application-specific inputs before offering the factory. It must
+/// create exactly one panel in the supplied area, and return that entity.
+#[derive(Clone, Copy, Debug)]
+pub struct PanelFactory {
+    pub label: &'static str,
+    pub create: fn(&mut World, Entity) -> Entity,
 }
-
-/// Application-wide panel registration, independent of workspace initialization.
-pub trait WorkbenchAppExt {
-    /// Register a panel type and return the app for chaining.
-    /// Panics for invalid keys/labels or duplicate keys, which are setup errors.
-    fn register_panel_type<P: Panel>(&mut self) -> &mut Self;
-}
-
-impl WorkbenchAppExt for App {
-    fn register_panel_type<P: Panel>(&mut self) -> &mut Self {
-        register_panel_type::<P>(self.world_mut())
-            .unwrap_or_else(|error| panic!("Failed to register panel type {}: {error}", P::KEY));
-        self
+impl PanelFactory {
+    pub const fn new(label: &'static str, create: fn(&mut World, Entity) -> Entity) -> Self {
+        Self { label, create }
     }
-}
-
-pub(crate) fn register_panel_type<P: Panel>(world: &mut World) -> Result<Entity, String> {
-    if P::LABEL.trim().is_empty() || !crate::valid_key(P::KEY) {
-        return Err("Panel type needs a namespaced key and label".into());
-    }
-    if world
-        .query::<&PanelType>()
-        .iter(world)
-        .any(|p| p.key == P::KEY)
-    {
-        return Err("Panel type is already registered".into());
-    }
-    Ok(world
-        .spawn(PanelType {
-            key: P::KEY,
-            label: P::LABEL.into(),
-            initialize: |world, panel| {
-                P::initialize(&mut world.entity_mut(panel));
-                #[cfg(feature = "ui")]
-                world
-                    .entity_mut(panel)
-                    .insert(crate::frontend::PanelRenderer { draw: P::draw });
-            },
+    pub fn of<P: Panel + Component + Default>() -> Self {
+        Self::new(P::LABEL, |world, area| {
+            world.spawn((P::default(), InArea(area))).id()
         })
-        .id())
-}
-
-#[derive(Component)]
-pub(crate) struct InitializedPanel(pub Entity);
-pub(crate) fn initialize_panel(world: &mut World, panel: Entity, kind: Entity) {
-    let registration = world.get::<PanelType>(kind).expect("Registered panel");
-    let initialize = registration.initialize;
-    let label = registration.label.clone();
-    let mut instance = world.get_mut::<PanelInstance>(panel).unwrap();
-    if instance.title.is_empty() {
-        instance.title = label;
     }
-    initialize(world, panel);
-    world.entity_mut(panel).insert(InitializedPanel(kind));
 }
 
 pub(crate) fn install(app: &mut App) {
     app.add_message::<WorkbenchFinished>()
+        .add_message::<PanelCloseRequested>()
         .configure_sets(
             PreUpdate,
             WorkbenchSystems::Apply.after(crate::ContextCommandSystems::Dispatch),
@@ -537,10 +527,6 @@ impl Workbench<'_> {
                 self.world.entity_mut(previous).remove::<ActiveLayout>();
             }
             self.world.entity_mut(layout).insert(ActiveLayout);
-            self.world
-                .get_mut::<WorkspaceRuntime>(self.workspace.0)
-                .unwrap()
-                .activation += 1;
         }
         Ok(())
     }
@@ -617,6 +603,7 @@ impl Workbench<'_> {
                 title,
                 dirty: false,
                 preview: false,
+                ..default()
             },
             InArea(area),
             InWorkspace(self.workspace.0),
@@ -626,12 +613,10 @@ impl Workbench<'_> {
             .expect("Validated area")
             .selected = Some(panel);
         let layout = self.world.get::<InLayout>(area).unwrap().0;
-        self.world.get_mut::<LayoutRevision>(layout).unwrap().0 += 1;
-        self.focus_area(area).unwrap();
+        crate::membership::topology_changed(self.world, layout);
     }
 
     pub fn focus_area(&mut self, area: Entity) -> Result<(), String> {
-        self.require_owned(area)?;
         self.require_owned(area)?;
         self.world.get::<Area>(area).ok_or("Area is unavailable")?;
         let layout = self.world.get::<InLayout>(area).unwrap().0;
@@ -639,11 +624,18 @@ impl Workbench<'_> {
         Ok(())
     }
 
-    pub fn focus_panel(&mut self, panel: Entity) -> Result<(), String> {
+    /// Select a tab without changing the layout's focused area.
+    pub fn select_panel(&mut self, panel: Entity) -> Result<(), String> {
         self.panel_layout(panel)?;
         let area = self.world.get::<InArea>(panel).unwrap().0;
         self.world.get_mut::<Area>(area).unwrap().selected = Some(panel);
-        self.focus_area(area)
+        Ok(())
+    }
+
+    /// Explicit convenience for selecting a tab and focusing its area.
+    pub fn focus_panel(&mut self, panel: Entity) -> Result<(), String> {
+        self.select_panel(panel)?;
+        self.focus_area(self.world.get::<InArea>(panel).unwrap().0)
     }
 
     pub fn close_panel(&mut self, panel: Entity) -> Result<(), String> {
@@ -660,7 +652,7 @@ impl Workbench<'_> {
         if self.world.get::<Area>(area).unwrap().selected == Some(panel) {
             self.world.get_mut::<Area>(area).unwrap().selected = next;
         }
-        self.world.get_mut::<LayoutRevision>(layout).unwrap().0 += 1;
+        crate::membership::topology_changed(self.world, layout);
         Ok(())
     }
 
@@ -725,7 +717,7 @@ impl Workbench<'_> {
             let fallback = self.destination_area(layout).unwrap();
             self.world.get_mut::<Layout>(layout).unwrap().focused_area = Some(fallback);
         }
-        self.world.get_mut::<LayoutRevision>(layout).unwrap().0 += 1;
+        crate::membership::topology_changed(self.world, layout);
         mapping
     }
 
@@ -766,6 +758,45 @@ impl Workbench<'_> {
         Ok(())
     }
 
+    /// Checked relocation between layouts/workspaces, leaving the old area intact.
+    /// Cross-workspace relocation detaches the non-owning document reference;
+    /// documents never migrate implicitly. Resolve drafts and drain panel-owned
+    /// work first, and detach any application-owned scoped links before calling.
+    /// Raw relationship edits on a bound viewer do not perform this negotiation.
+    pub fn relocate_panel(&mut self, panel: Entity, area: Entity) -> Result<(), String> {
+        self.panel_layout(panel)?;
+        self.world
+            .get::<Area>(area)
+            .ok_or("Destination area is unavailable")?;
+        let destination = self
+            .world
+            .get::<InWorkspace>(area)
+            .ok_or("Destination area has no workspace")?
+            .0;
+        crate::workspaces::validate(self.world, WorkspaceId(destination))?;
+        let layout = self
+            .world
+            .get::<InLayout>(area)
+            .ok_or("Destination area has no layout")?
+            .0;
+        if self.world.get::<InWorkspace>(layout).map(|owner| owner.0) != Some(destination) {
+            return Err("Destination ownership is invalid".into());
+        }
+        if destination != self.workspace.0 {
+            check_panel_drafts(self.world, [panel])?;
+            if self
+                .world
+                .get::<crate::WorkspaceWork>(self.workspace.0)
+                .is_some_and(|work| work.list().iter().any(|job| job.owner == Some(panel)))
+            {
+                return Err("Drain panel-owned work before moving to another workspace".into());
+            }
+            crate::unbind_document_view(self.world, panel).map_err(|error| error.to_string())?;
+        }
+        self.world.entity_mut(panel).insert(InArea(area));
+        Ok(())
+    }
+
     pub fn move_tab(&mut self, panel: Entity, area: Entity, index: usize) -> Result<(), String> {
         self.place_tab(panel, area, index, None, [1, 1]).map(|_| ())
     }
@@ -801,6 +832,16 @@ impl Workbench<'_> {
             return Err("Panels cannot move between layouts".into());
         }
         let source = self.world.get::<InArea>(panel).unwrap().0;
+        if source == area && split.is_none() {
+            // Reordering is not attachment: preserve the open tab and area focus.
+            let mut tabs = panels_in_area(self.world, area).to_vec();
+            tabs.retain(|&tab| tab != panel);
+            tabs.insert(index.min(tabs.len()), panel);
+            self.world.entity_mut(area).replace_related::<InArea>(&tabs);
+            self.world.get_mut::<PanelInstance>(panel).unwrap().preview = false;
+            crate::membership::topology_changed(self.world, layout);
+            return Ok(area);
+        }
         let snapshot = self.snapshot(layout)?;
         let (next, id) = plan_tab_geometry(
             &snapshot.geometry,
@@ -828,7 +869,7 @@ impl Workbench<'_> {
             .replace_related::<InArea>(&tabs);
         self.world.get_mut::<PanelInstance>(panel).unwrap().preview = false;
         self.world.get_mut::<Area>(destination).unwrap().selected = Some(panel);
-        self.world.get_mut::<Layout>(layout).unwrap().focused_area = Some(destination);
+        crate::membership::topology_changed(self.world, layout);
         Ok(destination)
     }
 
@@ -871,13 +912,13 @@ impl Workbench<'_> {
         self.relocate_area(source, target, Some(placement), minimum)
     }
 
-    fn relocate_area(
-        &mut self,
+    fn plan_area_relocation(
+        &self,
         source: Entity,
         target: Entity,
         placement: Option<AreaPlacement>,
         minimum: [i32; 2],
-    ) -> Result<(), String> {
+    ) -> Result<(Entity, GeometrySnapshot, geometry::DockPlan), String> {
         valid_minimum(minimum)?;
         let layout = self
             .world
@@ -904,6 +945,18 @@ impl Workbench<'_> {
             snapshot.geometry.plan_join(a, b, minimum)
         }
         .ok_or("Area placement cannot satisfy the tiling/minimum sizes")?;
+        Ok((layout, snapshot, plan))
+    }
+
+    fn relocate_area(
+        &mut self,
+        source: Entity,
+        target: Entity,
+        placement: Option<AreaPlacement>,
+        minimum: [i32; 2],
+    ) -> Result<(), String> {
+        let (layout, snapshot, plan) =
+            self.plan_area_relocation(source, target, placement, minimum)?;
         // A join/dock can replace target areas and their panels. Validate every
         // removed area before changing geometry or focus.
         check_panel_drafts(
@@ -950,39 +1003,6 @@ impl Workbench<'_> {
         Ok(())
     }
 
-    pub fn register_panel_type<P: Panel>(&mut self) -> Result<Entity, String> {
-        register_panel_type::<P>(self.world)
-    }
-
-    pub fn open_panel(&mut self, kind: Entity, area: Entity) -> Result<Entity, String> {
-        self.require_owned(area)?;
-        self.world.get::<Area>(area).ok_or("Area is unavailable")?;
-        self.world
-            .get::<PanelType>(kind)
-            .ok_or("Panel type is unavailable")?;
-        if self
-            .world
-            .get::<crate::ActionEnabled>(kind)
-            .is_some_and(|a| !a.0)
-        {
-            return Err("Panel type is unavailable".into());
-        }
-        let key = self.world.get::<PanelType>(kind).unwrap().key;
-        let panel = self
-            .world
-            .spawn((
-                PanelInstance::new(key),
-                InArea(area),
-                InWorkspace(self.workspace.0),
-            ))
-            .id();
-        initialize_panel(self.world, panel, kind);
-        let layout = self.world.get::<InLayout>(area).unwrap().0;
-        self.world.get_mut::<LayoutRevision>(layout).unwrap().0 += 1;
-        self.focus_panel(panel)?;
-        Ok(panel)
-    }
-
     pub fn delete_layout(&mut self, layout: Entity) -> Result<(), String> {
         self.require_owned(layout)?;
         self.world
@@ -998,16 +1018,16 @@ impl Workbench<'_> {
             if let Some(next) = replacement {
                 self.world.entity_mut(next).insert(ActiveLayout);
             }
-            self.world
-                .get_mut::<WorkspaceRuntime>(self.workspace.0)
-                .unwrap()
-                .activation += 1;
         }
         self.world.despawn(layout);
         Ok(())
     }
 
-    pub(crate) fn edit(&mut self, stamp: LayoutStamp, edit: &LayoutEdit) -> Result<(), String> {
+    pub(crate) fn validate_edit(
+        &self,
+        stamp: LayoutStamp,
+        edit: &LayoutEdit,
+    ) -> Result<(), String> {
         if active_layout(self.world, self.workspace.0).is_none() || self.stamp() != stamp {
             return Err("Layout changed during interaction".into());
         }
@@ -1024,9 +1044,7 @@ impl Workbench<'_> {
             LayoutEdit::MoveTab { panel, area, .. } | LayoutEdit::SplitTab { panel, area, .. } => {
                 vec![*panel, *area]
             }
-            LayoutEdit::SplitArea { area, .. }
-            | LayoutEdit::OpenPanel { area, .. }
-            | LayoutEdit::DropPanel { area, .. } => vec![*area],
+            LayoutEdit::SplitArea { area, .. } | LayoutEdit::DropPanel { area, .. } => vec![*area],
             LayoutEdit::JoinAreas { source, target, .. }
             | LayoutEdit::DockArea { source, target, .. } => vec![*source, *target],
             LayoutEdit::ResizeBorder { .. } => Vec::new(),
@@ -1041,6 +1059,98 @@ impl Workbench<'_> {
                 return Err("Interaction target is no longer in this layout".into());
             }
         }
+        Ok(())
+    }
+
+    /// Submit a close intention for application policy. This never destroys data.
+    pub fn request_panel_close(
+        &mut self,
+        stamp: LayoutStamp,
+        edit: LayoutEdit,
+    ) -> Result<(), String> {
+        self.validate_edit(stamp, &edit)?;
+        if !matches!(
+            edit,
+            LayoutEdit::ClosePanels(_)
+                | LayoutEdit::CloseArea(_)
+                | LayoutEdit::JoinAreas { .. }
+                | LayoutEdit::DockArea { .. }
+        ) {
+            return Err("Not a destructive layout edit".into());
+        }
+        self.world.write_message(PanelCloseRequested {
+            workspace: self.workspace,
+            stamp,
+            edit,
+        });
+        Ok(())
+    }
+
+    /// Read-only preflight for application close policy, including the exact
+    /// panels removed by joins/docks. Uses the same geometry planner as commit.
+    pub fn close_targets(&self, request: &PanelCloseRequested) -> Result<Vec<Entity>, String> {
+        if request.workspace != self.workspace {
+            return Err("Close request belongs to another workspace".into());
+        }
+        self.validate_edit(request.stamp, &request.edit)?;
+        match &request.edit {
+            LayoutEdit::ClosePanels(panels) => Ok(panels.clone()),
+            LayoutEdit::CloseArea(area) => Ok(panels_in_area(self.world, *area).to_vec()),
+            LayoutEdit::JoinAreas {
+                source,
+                target,
+                minimum,
+            }
+            | LayoutEdit::DockArea {
+                source,
+                target,
+                minimum,
+                ..
+            } => {
+                let placement = if let LayoutEdit::DockArea { placement, .. } = &request.edit {
+                    Some(*placement)
+                } else {
+                    None
+                };
+                let (_, snapshot, plan) =
+                    self.plan_area_relocation(*source, *target, placement, *minimum)?;
+                Ok(snapshot
+                    .entities
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| {
+                        !plan
+                            .layout
+                            .areas
+                            .iter()
+                            .any(|area| area.id == *index as u32 + 1)
+                    })
+                    .flat_map(|(_, &area)| panels_in_area(self.world, area).iter().copied())
+                    .collect())
+            }
+            _ => Err("Not a destructive layout edit".into()),
+        }
+    }
+
+    /// Commit an application-approved intention, revalidating its captured target.
+    pub fn commit_close(&mut self, request: &PanelCloseRequested) -> Result<(), String> {
+        if request.workspace != self.workspace {
+            return Err("Close request belongs to another workspace".into());
+        }
+        if !matches!(
+            request.edit,
+            LayoutEdit::ClosePanels(_)
+                | LayoutEdit::CloseArea(_)
+                | LayoutEdit::JoinAreas { .. }
+                | LayoutEdit::DockArea { .. }
+        ) {
+            return Err("Not a destructive layout edit".into());
+        }
+        self.edit(request.stamp, &request.edit)
+    }
+
+    pub(crate) fn edit(&mut self, stamp: LayoutStamp, edit: &LayoutEdit) -> Result<(), String> {
+        self.validate_edit(stamp, edit)?;
         match edit {
             LayoutEdit::FocusArea(e) => self.focus_area(*e),
             LayoutEdit::FocusPanel(e) => self.focus_panel(*e),
@@ -1105,10 +1215,9 @@ impl Workbench<'_> {
                 to,
                 minimum,
             } => self.resize_border(stamp.layout, *axis, *at, *span, *to, *minimum),
-            LayoutEdit::OpenPanel { area, kind } => self.open_panel(*kind, *area).map(|_| ()),
             LayoutEdit::DropPanel {
                 area,
-                kind,
+                factory,
                 index,
                 split,
                 minimum,
@@ -1120,7 +1229,13 @@ impl Workbench<'_> {
                         return Err("Area is too small to split".into());
                     }
                 }
-                let panel = self.open_panel(*kind, *area)?;
+                // Geometry is validated before invoking the infallible app factory.
+                let panel = (factory.create)(self.world, *area);
+                assert!(
+                    self.world.get::<PanelInstance>(panel).is_some()
+                        && self.world.get::<InArea>(panel).map(|owner| owner.0) == Some(*area),
+                    "PanelFactory must create a panel in its supplied destination"
+                );
                 if let Some((axis, high)) = split {
                     self.split_tab(panel, *area, *axis, *high, *minimum)
                         .map(|_| ())

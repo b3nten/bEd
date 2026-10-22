@@ -42,6 +42,12 @@ remains application-owned; UI2 removes its `EguiContext` and releases its manage
 textures so detached UI stops processing and rendering. Reattaching `UiCamera`
 creates and configures a fresh egui session.
 
+Application post-processing can run in Bevy's `Core2d`/`Core3d` render schedules
+after `bevy_egui::render::egui_pass`, before `UiSystems::PrepareOutput` and before
+Bevy's `upscaling`. `PrepareOutput` owns final platform color/alpha conversion
+(currently macOS transparent-window output); effects must return linear,
+premultiplied color before this phase. UI2 does not own application shaders.
+
 `Component` has associated borrowed `Props<'a>` and a static
 `draw(ui, world, context, props)` method. Props can contain child props, borrowed
 labels, callbacks or entity IDs. Use `()` when no props are needed.
@@ -138,7 +144,16 @@ document the shared animation implementation and upgrade checks.
 
 UI cameras use linear compositing and premultiplied output. A small shader asset
 override corrects upstream premultiplied sRGB colors for linear-light blending;
-all render infrastructure remains upstream. For a scene underneath UI, clear the
+the upstream integration owns normal rendering. On macOS, an LDR window UI camera
+that clears its output and targets `CompositeAlphaMode::PostMultiplied` also runs
+a final conversion after egui and before Bevy's output blit. AppKit expects RGB
+premultiplied in display space, whereas Bevy blends premultiplied linear RGB.
+The conversion unmultiples the completed image, encodes its color, and multiplies
+by alpha in display space. Applying this per widget would corrupt overlapping
+translucent surfaces. It prevents bright fringes around antialiased icons/text
+and keeps background opacity consistent with the compositor. Image viewports,
+HDR targets and scene overlays whose output clear is `None` skip this conversion.
+For a scene underneath UI, clear the
 UI camera's intermediate target to transparent each frame with
 `ClearColorConfig::Custom(Color::NONE)`. Its output preserves the earlier window
 camera. `UiBackground::Theme` paints the theme background. Select
@@ -269,3 +284,13 @@ native window adapter supplies macOS blur via `WindowBlur`. For app-painted nati
 titlebars, use Bevy's `fullsize_content_view` with `titlebar_transparent` and
 use workbench's titlebar slot or reserve the reported `WindowTitlebarGeometry`
 when allocating application controls directly.
+
+`rainbow_ink` supplies bed1's RGB sine cycle for editor carets/active line numbers
+and selected tree labels. `paint_chevron` and `animate_expansion` share filled
+right/down disclosure triangles and reversible 160 ms smoothstep timing.
+`icon_button` animates its background and ink through hover, focus and press;
+with `visuals.button_frame = false` its resting background is transparent.
+`icon_button_sized` fixes the artwork's point size independently of the font;
+egui button padding still supplies the hit rectangle.
+Callers attach descriptive tooltips through the existing themed tooltip helper.
+All respect `MotionPolicy.enabled`.

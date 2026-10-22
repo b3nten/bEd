@@ -300,7 +300,7 @@ impl Wrapping {
         };
         let key = (snapshot.revision, width);
         if let Some(index) = &mut self.index {
-            if index.width == width && index.snapshot.revision != snapshot.revision {
+            if index.snapshot.revision != snapshot.revision {
                 if !changes.is_some_and(|changes| index.update(snapshot.clone(), changes)) {
                     self.index = None;
                 }

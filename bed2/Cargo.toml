@@ -7,14 +7,25 @@ license.workspace = true
 description = "Application scaffold for the second Bedtime foundation"
 
 [features]
-automation = ["dep:bedtime-automation2", "dep:serde_json"]
+automation = ["dep:bedtime-automation2"]
 
 [dependencies]
+bed-structure2.workspace = true
+bedtime-treesitter2.workspace = true
+bedtime-editor2 = { workspace = true, features = ["workbench", "treesitter"] }
 bedtime-automation2 = { workspace = true, optional = true }
 bedtime-ui2.workspace = true
-bedtime-editor2 = { workspace = true, features = ["workbench"] }
-bedtime-terminal2.workspace = true
 bedtime-filetree2.workspace = true
+bedtime-terminal2.workspace = true
 bedtime-workbench2 = { workspace = true, features = ["ui"] }
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_winit", "bevy_log", "keyboard", "mouse", "x11", "wayland"] }
-serde_json = { workspace = true, optional = true }
+serde_json.workspace = true
+serde = { workspace = true, features = ["derive"] }
+rfd.workspace = true
+bevy_egui.workspace = true
+
+ron = "0.12.2"
+blake3 = "1"
+
+[dev-dependencies]
+wgpu.workspace = true

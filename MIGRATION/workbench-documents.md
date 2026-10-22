@@ -295,8 +295,8 @@ pub fn offer_document_external_update<M: DocumentModel>(
 
 - `SaveDocument`, `UndoDocument` and `RedoDocument` are public `ContextCommand`
   types with keys `workbench.document.save`, `workbench.document.undo` and
-  `workbench.document.redo`. The core plugin installs one global handler for
-  each.
+  `workbench.document.redo`. The core plugin defines their metadata; applications
+  separately opt into the supplied handlers with `register_document_handlers(world)`.
 - Handlers resolve the admitted invocation's focused panel, require a
   `DocumentView` owned by that invocation's workspace, and call the public
   document API. A missing viewer or a viewer that moved/closed before execution
@@ -315,18 +315,18 @@ pub fn offer_document_external_update<M: DocumentModel>(
 
 ## Persistence, restore and application-owned descriptors
 
-- `WorkspaceSnapshot`, `LayoutSnapshot` and `PanelSnapshot` contain layout
-  metadata only: names, integer rectangles, tab order, panel key/title/preview,
-  selection and focus. They contain no document contents, source key, source
-  version, revision, dirty flag or save binding.
-- An application that wants to restore documents persists its own descriptor
-  per document/viewer — for example title, source key, model identity/version,
-  chosen tab/panel identity and any source token. After `restore_workspace`,
-  reopen the model with `open_document` and `bind_document_view` the matching
-  restored panel. `RestoredWorkspace`/`RestoredLayout`/`RestoredArea` return
-  fresh entities in snapshot order for this purpose.
-- `source_key` deduplicates reopened sessions within the restored workspace.
-  Loading the actual model remains application I/O.
+- Workbench no longer supplies workspace/layout snapshots, registered panel
+  initializers, restoration or template replacement. The application owns its
+  persisted schema and concrete creation flow. See
+  [application composition](application-composition.md).
+- An application that restores documents persists its own descriptors per
+  document/viewer — for example source identity, model version, chosen panel
+  identity and source token. It composes concrete panels, reopens models with
+  `open_document`, and uses `bind_document_view` to establish valid references.
+  Runtime ECS entities are not durable identities.
+- `source_key` deduplicates reopened sessions within a workspace. Loading the
+  actual model remains application I/O; layout restoration is not unsaved-content
+  recovery.
 - Rebinding a save binding or changing the destination key is not a complete
   Save As workflow: source identity, chooser and any `source_key` change remain
   application-owned. A real rename requires application policy and usually a

@@ -20,7 +20,7 @@ pub use preferences::{FileTreePreferences, FileTreeVisibility};
 use backend::{Backend, ViewRequest};
 use bedtime_clipboard2::Clipboard;
 use bedtime_ui2::{UiContext, egui};
-use bedtime_workbench2::{InWorkspace, Panel, WorkStatus, WorkbenchAppExt, WorkspaceWork};
+use bedtime_workbench2::{InWorkspace, Panel, PanelInstance, WorkStatus, WorkspaceWork};
 use bevy::prelude::*;
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
@@ -118,8 +118,7 @@ pub fn filetree_operation_count(world: &World, workspace: Entity) -> usize {
 pub struct FileTreePlugin;
 impl Plugin for FileTreePlugin {
     fn build(&self, app: &mut App) {
-        app.register_panel_type::<FileTreePanel>()
-            .init_resource::<Clipboard>()
+        app.init_resource::<Clipboard>()
             .init_resource::<FileTreeClipboard>()
             .init_resource::<OperationArchive>()
             .add_message::<FileTreeOpenRequested>()
@@ -132,7 +131,7 @@ impl Plugin for FileTreePlugin {
 /// Per-panel navigation and editing. The worker supplies immutable observations;
 /// selection, expansion and pending user intentions remain in the application World.
 #[derive(Component)]
-#[require(FileTreeSettings)]
+#[require(FileTreeSettings, PanelInstance = PanelInstance::of::<Self>())]
 pub struct FileTreePanel {
     snapshot: Arc<FileTreeSnapshot>,
     retirement: Option<backend::SnapshotRetirementHandle>,
@@ -343,9 +342,6 @@ impl Drop for FileTreePanel {
 impl Panel for FileTreePanel {
     const KEY: &'static str = "bedtime.filetree";
     const LABEL: &'static str = "Files";
-    fn initialize(entity: &mut EntityWorldMut<'_>) {
-        entity.entry::<Self>().or_default();
-    }
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
         view::draw(ui, world, context, panel);
     }

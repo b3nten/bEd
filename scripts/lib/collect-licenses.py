@@ -70,12 +70,12 @@ def supplemental_notices(package, bundle, supplements, checksums):
     return provenance
 
 
-def collect(destination):
+def collect(destination, target=None):
     repository = Path(__file__).resolve().parents[2]
-    metadata = json.loads(subprocess.check_output(
-        ["cargo", "metadata", "--locked", "--format-version", "1"],
-        cwd=repository,
-    ))
+    command = ["cargo", "metadata", "--locked", "--format-version", "1"]
+    if target is not None:
+        command += ["--filter-platform", target]
+    metadata = json.loads(subprocess.check_output(command, cwd=repository))
     # Always start from the committed notices so recollection does not duplicate sections.
     bundle = bytearray((repository / "NOTICE").read_bytes())
     records = json.loads((repository / "scripts/lib/grammar-sources.json").read_text(encoding="utf-8"))
@@ -131,6 +131,9 @@ def collect(destination):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit("Usage: collect-licenses.py PACKAGE_RESOURCE_ROOT")
-    collect(Path(sys.argv[1]).resolve())
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("destination", type=Path)
+    parser.add_argument("--target", help="Collect Cargo notices for this target platform only")
+    args = parser.parse_args()
+    collect(args.destination.resolve(), target=args.target)

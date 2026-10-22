@@ -48,6 +48,16 @@ pub fn unbind_text_editor(
         .map(|view| view.document()))
 }
 
+/// Whether this panel's canonical text canvas (not its Find fields or host
+/// controls) owns egui keyboard focus. Hosts use this to route native Edit actions
+/// without accidentally undoing a document while a different text field is active.
+pub fn editor_has_focus(world: &World, panel: Entity, context: &egui::Context) -> bool {
+    world.get::<DocumentView>(panel).is_some_and(|view| {
+        context.memory(|memory| memory.focused())
+            == Some(egui::Id::new(("bedtime.editor", panel, view.document())))
+    })
+}
+
 /// Draw inside any host panel. Applications can add controls around this call;
 /// the editor draws text, optional numbers/scroll bars and its local Find bar.
 pub fn draw_editor(
@@ -61,6 +71,8 @@ pub fn draw_editor(
         .ok_or_else(|| EditorError("Editor has no document".into()))?
         .document();
     let handle = cast_document::<TextBuffer>(world, document).map_err(error)?;
+    #[cfg(feature = "treesitter")]
+    let syntax_document = code_document_for_panel(world, panel);
     let mut editor = world
         .entity_mut(panel)
         .take::<WorkbenchEditor>()
@@ -76,6 +88,21 @@ pub fn draw_editor(
             document: Some(document),
             ..Default::default()
         };
+    }
+    #[cfg(feature = "treesitter")]
+    {
+        let analysis = syntax_document.and_then(|document| {
+            let language = world.get::<CodeLanguage>(document.0)?;
+            let analysis = world.get::<DocumentAnalysis>(document.0)?;
+            (analysis.session.language() == bedtime_treesitter2::language_name(&language.0))
+                .then_some(analysis)
+        });
+        if let Some(analysis) = analysis {
+            editor.view.set_analysis(&analysis.session);
+        } else {
+            editor.view.set_syntax(None);
+        }
+        editor.view.syntax_palette = crate::syntax::SyntaxPalette::from_theme(context.theme);
     }
     let mut session = WorkbenchTextSession {
         world,
@@ -99,6 +126,7 @@ pub fn navigate_editor(
     panel: Entity,
     navigation: Navigation,
 ) -> Result<(), EditorError> {
+    check_panel_document_draft(world, panel).map_err(error)?;
     let document = world
         .get::<DocumentView>(panel)
         .ok_or_else(|| EditorError("Editor has no document".into()))?
@@ -109,15 +137,26 @@ pub fn navigate_editor(
         revision: inspect_document(world, document).map_err(error)?.revision,
     };
     let focus = navigation.focus;
+    // Preflight visibility before queuing navigation. Once the view accepts,
+    // these graph operations cannot fail without an intervening graph mutation.
+    let layout = if focus {
+        Some(
+            Workbench::for_entity(world, panel)
+                .and_then(|w| w.panel_layout(panel))
+                .map_err(EditorError)?,
+        )
+    } else {
+        None
+    };
     world
         .get_mut::<WorkbenchEditor>(panel)
         .ok_or_else(|| EditorError("Panel has no editor".into()))?
         .view
         .request_navigation(&snapshot, navigation)?;
-    if focus {
-        Workbench::for_entity(world, panel)
-            .and_then(|mut workbench| workbench.focus_panel(panel))
-            .map_err(EditorError)?;
+    if let Some(layout) = layout {
+        let mut workbench = Workbench::for_entity(world, panel).map_err(EditorError)?;
+        workbench.activate_layout(layout).map_err(EditorError)?;
+        workbench.focus_panel(panel).map_err(EditorError)?;
     }
     Ok(())
 }
@@ -237,3 +276,36 @@ impl TextSession for WorkbenchTextSession<'_> {
 
 #[cfg(test)]
 mod tests;
+
+/// Reveal a zero-based logical line through the same revision-bound path.
+pub fn scroll_to_line(
+    world: &mut World,
+    panel: Entity,
+    revision: u64,
+    line: usize,
+    reveal: Reveal,
+    focus: bool,
+) -> Result<(), EditorError> {
+    let document = world
+        .get::<DocumentView>(panel)
+        .ok_or_else(|| EditorError("Editor has no document".into()))?
+        .document();
+    let handle = cast_document::<TextBuffer>(world, document).map_err(error)?;
+    let snapshot = TextSnapshot {
+        text: read_document(world, handle).map_err(error)?.clone(),
+        revision: inspect_document(world, document).map_err(error)?.revision,
+    };
+    if revision != snapshot.revision {
+        return Err(EditorError("Stale navigation revision".into()));
+    }
+    navigate_editor(
+        world,
+        panel,
+        Navigation::scroll_to_line(&snapshot, line, reveal, focus)?,
+    )
+}
+
+#[cfg(feature = "treesitter")]
+mod analysis;
+#[cfg(feature = "treesitter")]
+pub use analysis::*;

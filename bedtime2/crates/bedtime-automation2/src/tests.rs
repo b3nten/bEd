@@ -255,6 +255,8 @@ fn custom_operations_share_the_same_completion_boundary() {
 mod workbench {
     use super::*;
     use bedtime_workbench2::*;
+    #[derive(Component, Default)]
+    #[require(PanelInstance = PanelInstance::of::<Self>())]
     struct TestPanel;
     impl Panel for TestPanel {
         const KEY: &'static str = "automation.test";
@@ -269,8 +271,7 @@ mod workbench {
     }
     fn app() -> App {
         let mut app = super::app();
-        app.add_plugins(WorkbenchCorePlugin)
-            .register_panel_type::<TestPanel>();
+        app.add_plugins(WorkbenchCorePlugin);
         app
     }
     #[test]
@@ -286,14 +287,10 @@ mod workbench {
             json!({"id":2,"op":"workspace.create","name":"Two","with_layout":false}),
         )["result"]
             .clone();
-        let opened = call(
-            &mut app,
-            json!({"id":3,"op":"panel.open","key":TestPanel::KEY}),
-        )["result"]
-            .clone();
         let workspace = entity(app.world(), &first, "workspace").unwrap();
         let layout = entity(app.world(), &first, "layout").unwrap();
-        let panel = entity(app.world(), &opened, "panel").unwrap();
+        let area = entity(app.world(), &first, "area").unwrap();
+        let panel = app.world_mut().spawn((TestPanel, InArea(area))).id();
         let document = open_document(
             app.world_mut(),
             workspace,
@@ -318,7 +315,7 @@ mod workbench {
     }
 
     #[test]
-    fn workspace_layout_roundtrips_moves_and_teardown_use_live_application_entities() {
+    fn workspace_layout_moves_and_teardown_use_live_application_entities() {
         let mut app = app();
         let first = call(
             &mut app,
@@ -330,23 +327,23 @@ mod workbench {
             json!({"id":2,"op":"workspace.create","name":"Two","with_layout":false}),
         )["result"]
             .clone();
-        let panel = call(
-            &mut app,
-            json!({"id":3,"op":"panel.open","key":TestPanel::KEY}),
-        )["result"]["panel"]
-            .clone();
-        assert!(panel.is_string());
-        let snapshot = call(&mut app, json!({"id":4,"op":"workspace.capture"}))["result"].clone();
-        let restored = call(
-            &mut app,
-            json!({"id":5,"op":"workspace.restore","snapshot":snapshot,"activate":true}),
-        )["result"]["workspace"]
-            .clone();
-        assert!(restored.is_string());
+        let area = entity(app.world(), &first, "area").unwrap();
+        let e = app.world_mut().spawn((TestPanel, InArea(area))).id();
         assert_eq!(
-            call(&mut app, json!({"id":6,"op":"workspace.capture"}))["result"],
-            snapshot
+            app.world().get::<Area>(area).unwrap().selected_panel(),
+            Some(e)
         );
+        let inspected = call(&mut app, json!({"id":3,"op":"inspect"}));
+        let inspected_workspace = inspected["result"]["workbench"]["workspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|workspace| workspace["entity"] == first["workspace"])
+            .unwrap();
+        let inspected_panel = &inspected_workspace["layouts"][0]["areas"][0]["panels"][0];
+        assert_eq!(inspected_panel["entity"], entity_id(e));
+        assert_eq!(inspected_panel["key"], TestPanel::KEY);
+        assert_eq!(inspected_panel["title"], TestPanel::LABEL);
         let moved = call(
             &mut app,
             json!({"id":7,"op":"layout.move","layout":first["layout"],"workspace":second["workspace"]}),
@@ -356,7 +353,6 @@ mod workbench {
             &mut app,
             json!({"id":8,"op":"workspace.close","workspace":first["workspace"]}),
         );
-        let e = entity(app.world(), &json!({"panel":panel}), "panel").unwrap();
         let owner = entity(
             app.world(),
             &json!({"workspace":second["workspace"]}),
@@ -385,6 +381,7 @@ mod workbench {
             &mut app,
             json!({"id":1,"op":"workspace.create","name":"Commands","activate":true}),
         );
+        register_context_command::<Failing>(app.world_mut()).unwrap();
         Workbench::new(app.world_mut())
             .register_handler::<Failing, _>(
                 |_: In<ContextCommandInvocation>| -> ContextCommandResult {
@@ -399,15 +396,59 @@ mod workbench {
         assert_eq!(response["error"]["message"], "Expected handler failure");
     }
     #[test]
-    fn invalid_restoration_is_rejected_before_creating_entities() {
+    fn removed_registry_and_snapshot_endpoints_are_unknown_without_mutation() {
         let mut app = app();
+        let description = call(&mut app, json!({"id":1,"op":"describe"}));
         let count = app.world().entities().len();
+        for (index, operation) in [
+            "panel.open",
+            "workspace.capture",
+            "workspace.restore",
+            "layout.capture",
+            "layout.restore",
+            "layout.replace",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert!(
+                !description["result"]["operations"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(operation))
+            );
+            let response = call(&mut app, json!({"id":index + 2,"op":operation}));
+            assert_eq!(
+                response["error"]["message"],
+                format!("Unknown operation: {operation}")
+            );
+            assert_eq!(app.world().entities().len(), count);
+        }
+    }
+    #[test]
+    fn world_command_invocation_needs_no_workspace_and_retains_context() {
+        struct Global;
+        impl ContextCommand for Global {
+            const KEY: &'static str = "automation.global";
+            const LABEL: &'static str = "Global";
+        }
+        let mut app = app();
+        register_context_command::<Global>(app.world_mut()).unwrap();
+        install_global_handler::<Global, _>(
+            app.world_mut(),
+            |In(invocation): In<ContextCommandInvocation>| -> ContextCommandResult {
+                assert_eq!(invocation.workspace, None);
+                assert_eq!(invocation.context, InvocationContext::Global);
+                assert_eq!(invocation.panel, None);
+                Ok(())
+            },
+        )
+        .unwrap();
         let response = call(
             &mut app,
-            json!({"id":1,"op":"workspace.restore","snapshot":{"version":99,"name":"Bad","background_updates":true,"layouts":[],"active_layout":null}}),
+            json!({"id":1,"op":"invoke","command":Global::KEY,"global":true}),
         );
-        assert!(response.get("error").is_some());
-        assert_eq!(app.world().entities().len(), count);
+        assert!(response.get("result").is_some(), "{response}");
     }
     #[test]
     fn invalid_configuration_patches_preserve_the_current_components() {

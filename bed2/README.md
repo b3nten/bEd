@@ -1,9 +1,26 @@
 # bEd 2
 
-A small workbench application with one workspace and an initial 3D Viewport panel.
-The titlebar's settings icon opens a Theme panel with live color, dimension,
-panel rounding/gap, opacity and macOS background blur controls, plus normal/bright
-terminal ANSI swatches. Changes are in memory.
+A workbench application with a temporary default workspace rooted at the user's
+home directory. An explicit directory argument or **File → Open Folder…** opens
+or reuses a folder workspace. Application metadata lives in the user configuration
+directory, never inside the opened project.
+
+The titlebar controls are **Terminal, Files, Structure, Settings**. Click to open
+or focus a tool in the current layout; drag to create a new panel in an area or
+along its edge. **View** also offers concrete panel creation. Workbench has no
+panel-type registry or picker.
+The controls match bed1's native toolbar geometry: 16-point artwork in 26×22-point
+buttons, 2-point gaps and a 10-point trailing inset. UI2 owns the macOS final alpha
+conversion so antialiased edges remain smooth over transparent window backgrounds.
+Toolbar icons use the theme's text color through hover and press, with animated
+interaction backgrounds.
+
+Settings has General, Appearance and Editor sections with a Global/Workspace
+switch. Startup opens a single terminal layout by default; General can opt into
+reopening the last folder workspace. Document autosave defaults to a one-second idle delay. Five numbered layout
+slots retain live views and workers; their starting arrangements can be saved as
+global defaults. See the [composition record](../MIGRATION/application-composition.md)
+for boundaries and the remaining Save As/recovery and workspace-management work.
 
 ```sh
 cargo run --offline -p bed2
@@ -11,22 +28,162 @@ cargo run --offline -p bed2
 
 `src/main.rs` installs Bevy, UI2 and Workbench. Startup attaches `WorkbenchSurface`
 and `Titlebar { height, draw }` to the window and spawns an explicit
-`WorkbenchCamera`. `WorkbenchSurface` owns the panel appearance and interaction
-settings edited by the Theme panel. An ordinary `Commands` system composes a
-workspace, layout, area and registered viewport panel.
-Hello World, Theme and the titlebar renderer live in `main.rs`; `cube.rs` owns the
-shared cube/ground/light scene and the viewport implementation. `tasks.rs` adds
-the Tasks & Processes panel, and `documents.rs` adds shared document viewers and
-application-owned quit policy. `files.rs` integrates the reusable filetree panel,
-text editor tabs and root-scoped preference storage; `file_editor.rs` owns local
-text documents, source identity and streaming save policy.
-`bedtime-terminal2::TerminalPlugin` adds local shell
-panels; `terminal.rs` contributes optional automation inspection only.
-All use the main World and renderer. To open another
-panel, close the viewport tab and right-click the empty area to choose its type.
-Workbench resolves membership and local defaults automatically. Closing the window
-requests save/discard/cancel across all workspaces, then drains managed work before
-exiting.
+`WorkbenchCamera`. `settings.rs` owns explicit global values, individual workspace
+overrides and their application to UI/editor/tree state. `storage.rs` owns global
+RON preferences I/O; `session.rs` owns one combined file per folder workspace.
+`layouts.rs` creates concrete layouts after settings/session readiness and keeps
+live instances while switching slots. Required components supply panel metadata
+and drawing immediately; there is no panel registry or delayed panel initialization.
+`menus.rs` owns creation choices, and `main.rs` renders the titlebar.
+`cube.rs` owns the shared cube/ground/light scene and viewport implementation;
+`tasks.rs` adds the Tasks & Processes panel. `bedtime-terminal2::TerminalPlugin` adds local shell
+panels; `terminal.rs` contributes optional automation inspection.
+`files.rs` installs the file tree and file-backed Code panels; `file_editor.rs`
+owns their canonical document bindings and save backend. `code.rs` supplies
+canvas context-menu actions, analysis execution and the application-owned
+[Structure viewer](crates/bed-structure2/README.md).
+`close.rs` owns application quit decisions and workspace worker shutdown.
+All use the main World and renderer. Open another panel through **View**; empty
+areas no longer discover registered types. A concrete panel spawn selects its tab
+without changing area focus. `select_panel` and `focus_area` are independent;
+`focus_panel` explicitly does both. Workbench hooks maintain ownership and fallback
+selection/focus immediately as composition applies.
+
+The memory-only Documents and Hello World demos remain removed. The file tree is
+the application entry point for opening documents; the standalone library examples
+remain available independently.
+
+## Local packages and installation
+
+On macOS, build a release app and install it for testing:
+
+```sh
+scripts/package-bed2-macos.sh --install
+open /Applications/bEd2.app
+```
+
+The script creates an ad-hoc signed `target/dist/bed2/bEd2.app` and
+`bEd2-<version>-<architecture>.zip`. Installation stages and verifies the new app
+before replacing `/Applications/bEd2.app`, restoring the previous app if the
+replacement fails. Its bundle ID is `org.bed-editor.bed2`; bed1's `bEd.app` and
+settings remain separate. Omit `--install` to build packages only.
+
+Use `--skip-build` to package an existing `target/release/bed2`.
+`BED2_BINARY`, `BED2_DIST_DIR` and `BED2_INSTALL_DIR` override the executable,
+package output directory and macOS installation directory. For a user-local
+installation, use `BED2_INSTALL_DIR="$HOME/Applications"`.
+
+On Linux:
+
+```sh
+scripts/package-bed2-linux.sh
+```
+
+This produces a `bEd2-<version>-<architecture>-linux.tar.gz` and, when `dpkg-deb`
+is available, `bed2_<version>_<architecture>.deb`. The archive contains a `usr/`
+tree with `bin/bed2`, a distinct desktop entry and icons, and notices. Extract
+with `--strip-components=1 -C /usr/local` to install its contents under
+`/usr/local`, or install the Debian package with the system package manager.
+Linux packaging requires ImageMagick and the normal desktop build dependencies.
+
+Both scripts build only `bed2` and package its embedded-asset license notices;
+no SSH helpers or Docker builds run. macOS packages are for local testing and
+are not notarized. Run packaging and license regression checks with:
+
+```sh
+python3 -m unittest discover -s scripts/tests
+```
+
+Verified on 2026-10-21: release build, real macOS app/ZIP assembly, signature
+verification and `--install` into an isolated temporary Applications directory
+passed. All 34 script tests passed, including Linux archive assembly and failed
+installation rollback fixtures. Native Linux packaging was not exercised.
+
+## Files and documents
+
+On macOS the application installs real native **bEd**, **File**, **Edit** and
+auxiliary **View** menus:
+
+- **bEd → Quit bEd**;
+- **File → Open Folder…, Save**;
+- **Edit → Undo, Redo**, a separator, then **Cut, Copy, Paste**;
+- **View** creates Files, Structure, Terminal, viewport, tasks and Settings
+  panels; it never creates an empty Code panel.
+
+The same abstract definitions supply an in-window fallback where native menus are
+unavailable. Standard editing accelerators use the focused canonical editor or
+text widget, not a second undo history. Save/Open Folder/Quit bindings are app-owned.
+The constrained menus expose no New, Save All or Reload actions. Reload remains in
+the editor's context menu; Save As remains unfinished.
+
+Click **Files** in the titlebar to open or focus the tree in the current layout.
+With no argument its root and default terminal cwd are the user's home directory,
+not the executable's launch directory. **View** creates auxiliary panels, not Code:
+open Code by opening a file from Files. An explicit directory chooses a folder root:
+
+```sh
+cargo run --offline --locked -p bed2 -- /path/to/project
+```
+
+The code editor has no top control bar. Right-click its canvas for Save, Reload,
+Split view, Keep open and editing/language/folding options. Titlebar tool icons
+animate their background and ink on hover and show descriptive tooltips.
+
+Single-click opens a replaceable preview beside Files, updates Structure to that
+file, and retains tree focus.
+Double-click, Enter, or **Keep open** pins the tab; double-click/Enter focus the
+editor. Modified/drafting/saving/conflicted documents are never replaced by another
+preview. Reopening a file within a workspace shares its canonical document,
+including retained edits/history after its last viewer closes. Different layouts
+have separate preview slots. **Split view** opens another view of the same document
+in an adjacent area.
+
+UTF-8 files up to 256 MiB load on managed background workers. Binary, oversized and
+nonregular files show metadata. No synchronous full-file reads occur while drawing.
+**Save** or Cmd/Ctrl+S uses the canonical save service, source checkpoints and atomic
+replacement. A changed disk source refuses overwrite; **Reload** compares incoming
+bytes while preserving local edits, then **Keep my edits** / **Use disk contents**
+resolve an observed conflict. Confirmed tree moves preserve document/history and
+rebind saving to the new path. Deleted dirty sources retain edits and lose their
+save binding; Save As and missing-source recovery remain future application work.
+
+The restored tree includes lazy watching, file operations, per-panel settings and
+root-scoped visibility. The application stores root-scoped visibility in the owning folder workspace's
+config file, together with its settings and layout state. One asynchronous writer
+owns the entire workspace record; admitted changes survive workspace retirement.
+The default home workspace retains visibility changes in memory, including when
+home contains an existing `.bed` directory. The reusable plugin chooses neither
+cwd nor storage itself. Core Workbench snapshots/restoration remain removed; application session recipes
+are described below.
+
+## Code and Structure
+
+Open a file through **Files**, then choose **Structure** from the application's
+**View** menu. File extensions choose the initial language; the language selector
+can override it, including Plain text. **Split view** shares the canonical document
+with independent selection, scrolling, wrapping and collapsed regions. **Folding** exposes Fold all
+and Unfold all; gutter arrows also work with **Line numbers** hidden. Syntax colors
+follow the live theme. Plain text remains editable without structural analysis.
+
+Structure uses the current eligible editor or remembers the last one while
+Structure/Terminal/other panels have focus. It retains the last same-source
+outline while analysis refreshes, so editing does not flash the empty-state message.
+Automatic tab focus after closing a
+source may establish another eligible source. Otherwise a closed/rebound source
+shows **No structure available**, without scanning previous editors. Clicking a
+declaration reveals its actual source tab/layout, unfolds its name, selects it
+and focuses that view. Stale or composition-blocked activation has no effect.
+The [Structure contract](crates/bed-structure2/README.md) and
+[editor APIs](../bedtime2/crates/bedtime-editor2/README.md) describe ownership.
+
+The editor's `treesitter` feature proves external contributions through shared
+observations. The source viewer is application-owned and code-only; no generic
+structure API is introduced. Analysis shares one bounded managed worker per
+viewed document and retires after its last editor closes. Closing viewers retains
+the canonical document under Workbench's existing contract. Files reopens retained
+file documents; folder session recipes reopen file descriptors, not unsaved contents.
+
+## Viewports
 
 Each viewport panel is also its `Camera3d`, with an independent `UiViewport` image
 and `OrbitCamera` state. Left-drag orbits, Shift-left-drag or middle-drag pans,
@@ -37,8 +194,8 @@ and distance are clamped. Camera transforms update in `Update`; visibility is
 synchronized in `UiSystems::SyncViewports` before UI2 resizes images and Bevy
 updates projections. Hidden views stop rendering. Closing a panel retires its
 camera and image ownership; the application-owned scene remains available.
-Workspace snapshots store the panel type and layout, so restoring creates fresh
-orbit state. Camera-state persistence is not part of the layout format.
+No core layout/session serializer persists viewports. Any camera-state restore
+recipe belongs to the application; the current session format does not store orbit state.
 
 The Tasks & Processes panel demonstrates the existing `WorkspaceWork` API:
 
@@ -56,19 +213,18 @@ Both workers are owned by the workspace where they started, with the panel as a
 shorter-lived owner. Workbench handles cancellation and process cleanup when
 either closes. An ordinary Update system collects results and drains output for
 hidden panels and inactive workspaces too. Worker timing uses real time, not
-Bevy's virtual time. Workspace snapshots restore the panel type with fresh idle
-state; live workers, logs and results are not serialized.
+Bevy's virtual time. No session serializer stores live workers, logs or results;
+applications reconstruct fresh idle panels if implementing restore.
 
 ## Terminal
 
-Choose **Terminal** from an empty area's panel picker. Each panel owns one local
+Choose **Terminal** from the application's **View** menu. Each panel owns one local
 shell, started automatically after its first size observation. Normal shell input,
 ANSI/truecolor output, wide/combining cells, scrollback, selection/copy, paste,
 alternate screen, mouse reporting and resize use the headless terminal core with
 a new egui canvas. The terminal follows the active theme's font size, default and
-ANSI colors, with bed1's Everforest palettes for dark/light presets. **Theme →
-Terminal ANSI colors** edits normal/bright colors independently and recolors
-existing indexed output without restarting the shell. Explicit truecolor and shell
+ANSI colors, with bed1's Everforest palettes for dark/light presets. Changing the Settings theme recolors existing indexed output without restarting
+the shell. The library also supports application-supplied ANSI palettes. Explicit truecolor and shell
 OSC overrides remain intact. PaperMono bold uses the actual bold face rather than
 an overstrike; faint suppresses bold, and the grid/text align to physical pixels.
 Tabs follow the local foreground process (falling back to the shell name), and
@@ -87,9 +243,11 @@ background inherits panel opacity without adding another background layer.
 - Hidden/inactive sessions continue draining/parsing output, even with workspace
   background updates disabled. Panel/workspace closure and the normal quit flow
   cancel and drain the workbench-owned runtime off the UI thread.
-- Workspace/layout snapshots restore fresh, lazily started panels, not live PIDs,
-  launch options or transcripts. Shell/cwd/environment defaults are local; the
-  application does not add shell helper executables or another entrypoint.
+- There is no core workspace/layout snapshot. Application folder recipes can
+  reconstruct a terminal panel, which starts lazily, never from a persisted PID or
+  transcript. Startup waits for root/preferences readiness, and uses home for the
+  default workspace or the explicit folder root (unless launch policy is overridden).
+  No shell helper executable or extra entrypoint is installed.
 
 Initial support is macOS/Linux only, without SSH, `+` commands, inline images or
 shared debugger sessions. Fonts determine glyph coverage; cross-cell contextual
@@ -97,258 +255,247 @@ shaping, bidi reordering and color emoji are not implemented. The text-only pars
 also omits DCS protocols and OSC 1337. See the
 [terminal contract](../bedtime2/crates/bedtime-terminal2/README.md).
 
-## Files
+## Settings, layouts and persistence
 
-The titlebar's **stacked-files icon** opens Files; it is also available in the empty-area
-panel picker. Supply a directory as the first positional application argument:
+All application metadata uses versioned RON with a `.bed` extension. The config
+root is `$XDG_CONFIG_HOME/bed2`, falling back to `$HOME/.config/bed2`:
 
-```sh
-cargo run --offline --locked -p bed2 -- /path/to/project
-```
+| File | Contents |
+| --- | --- |
+| `preferences.bed` | Global settings, startup policy/last folder and five saved layout defaults |
+| `workspaces/<id>.bed` | One folder workspace's settings overrides, file visibility, layouts and active slot |
 
-Without an argument, bEd2 explicitly chooses cwd. The reusable
-[`bedtime-filetree2`](../bedtime2/crates/bedtime-filetree2/README.md) library never
-chooses cwd or assumes one root per workspace: each panel has a `FileTreeRoot`.
-Root resolution, lazy enumeration, sorting and watching run off the UI thread.
+The workspace ID is the BLAKE3 digest of its canonical folder path's native encoded
+bytes. Each record includes the root and checks it before restore/replacement.
+Explicit folder opening canonicalizes off-thread and reuses an already-open
+workspace. No JSON import runs: older JSON and project `.bed` files stay untouched.
+`WorkspaceRoot` supplies browsing/cwd; only `FolderWorkspace` opts into persistence.
+The default workspace keeps its settings, visibility and layouts in memory. Global
+settings and explicitly saved global layout defaults persist normally.
 
-- Folders expand/collapse with animated disclosure arrows and viewport-only rows.
-  The root collapses too, without forgetting nested expansion or cached listings.
-  Arrow keys, Home/End, PageUp/PageDown, range/toggle selection and prefix
-  navigation work without recursively indexing the project. The duplicate
-  name/refresh header has been removed.
-- Single clicks open/reuse an **editable preview** beside the tree; a double click,
-  Enter or context Open pins/reuses that same file rather than making duplicate
-  viewers. Editing pins the preview, so another file never replaces unsaved work.
-  Routing retains the originating workspace/layout. UTF-8 files up to 256 MiB use
-  the [reusable text editor](../bedtime2/crates/bedtime-editor2/README.md);
-  binary/larger/nonregular files show metadata. **Split view** shares one document
-  and history while keeping independent selections, scrolling and line numbers.
-  Drawing is virtualized vertically and horizontally, including very long lines.
-  Cmd/Ctrl+S saves through the shared document service. File reads, indexing,
-  source comparisons and streaming writes run on managed workers.
-- Direct context menus and inline naming provide file/folder creation,
-  rename, cut/copy/paste, duplicate, Move to Trash and visibility controls. Incoming
-  file/folder drops copy; internal same-root dragging moves, with Option/Primary
-  for copying. A hovered child file chooses its enclosing folder, whose whole
-  visible subtree gets the panel-style overlay. Invalid drops are silent and
-  unhighlighted. Operations preserve symlinks and never overwrite a destination.
-  Operation commands/shortcuts are deferred; tree navigation and Enter/Escape in
-  naming remain. `FileTreeSettings` supplies per-panel `read_only` and
-  `indent_size`; read-only governs tree operations, not viewer loading.
-  Cancel is cooperative and reports already-completed items; conflicts remain
-  errors rather than replacing or merging existing trees.
-- Explicit Hide/Unhide rules and the hidden-file policy are shared by root within
-  a workspace. Reveal Hidden Entries temporarily bypasses filtering for recovery.
-  bEd2 loads/stores all root records in the startup project's
-  `.bed/filetree2.json`, using lossless native-path JSON, lazy loading and atomic,
-  debounced worker writes. Startup does not create storage or rewrite untouched
-  preferences. Parse/save errors create readable dialogs; records above the
-  4 MiB application storage limit are rejected before replacing readable storage.
-- Own moves update source paths and save bindings after confirmed filesystem
-  success while preserving text/history. Confirmed deletion unloads **clean**
-  viewers; dirty, drafted or saving documents retain local work and lose their
-  backing save binding. Save As is not implemented yet. Clean tabs close if
-  siblings remain, otherwise leave an unloaded state. Worker metadata checks cover
-  hidden/inactive viewers and paths outside all current tree roots, at most 64
-  viewers per workspace batch with 500 ms cadence and round-robin coverage.
-  Absence decisions defer during admitted mutations so an own move can rebind
-  first. Permission/temporary errors are not deletion. Late work cannot resurrect
-  an unloaded source. This is bed's filesystem-viewer policy, not a change to
-  generic Workbench document retention or the memory-only Documents demo.
-- Filetree, preview and preference failures use **human-readable error dialogs**,
-  not inline OS diagnostics. Technical details are optional and initially
-  collapsed; acknowledgement does not reopen an unchanged persistent failure.
-  Invalid drag/drop and deliberate cancellation stay silent. Normal quit rejects
-  still-admitted file operations, then admits the latest preferences and drains
-  the storage worker's cancellation flush.
+Settings has no header or storage-location prose. Its sidebar contains:
 
-Preview is a tab-lifetime policy, not a second document format. A single click
-reuses the layout's one replaceable preview, while double-click, Enter, context
-Open or **Keep open** pins it. Opening an already displayed path reuses its tab.
-Preview labels are italic at 90%
-text opacity instead of underlined. Workbench's optional per-item `PanelTabStyle`
-can override italic/opacity independently from semantic `PanelInstance.preview`;
-these style/configuration components are runtime-only.
+- **General:** Open last workspace on open (Global only, default off), Autosave
+  (Never, Change Focus, Timer), plus timeout for Timer.
+- **Appearance:** Dark/Light theme, window opacity, macOS-only blur, panel opacity,
+  border radius/gap, file-tree indentation and shader effects.
+- **Editor:** Line numbers, smart wrapping and smart indentation, all enabled by default.
 
-Reload observes disk contents through the existing source-generation and
-conflict protocol. **Keep my edits** acknowledges the observed disk checkpoint;
-**Use disk contents** explicitly replaces local content. Saves compare exact
-source bytes, preserve permissions and symlinks, and atomically replace the target.
-There is no filesystem content CAS: an unrelated process can still write between
-the final comparison and rename. Known own moves/deletions invalidate pending
-save identities. File sessions currently deduplicate by workspace and source path;
-different aliases can name separate sessions.
+Startup policy is global because it is resolved before a workspace is opened.
+With **Open last workspace on open** enabled, launching without a folder argument
+reopens the last active folder workspace through normal session restoration,
+including its layouts and active slot. An explicit folder argument takes precedence.
+If the remembered folder is unavailable, startup reports the error and opens home.
+The temporary home workspace does not replace the remembered folder.
 
-The editor includes selection/clipboard/navigation/history, IME drafts, line
-numbers and bed1's caret animation. **Editing** offers indentation-aware **Wrap
-lines**, smart indentation, tabs or 2/4/8 spaces, and Find/Replace. Tab/Shift+Tab
-indent selections; Enter preserves indentation and splits matching delimiter
-pairs; Backspace removes leading whitespace by indentation stops. Cmd/Ctrl+F
-opens literal Find with case/whole-word options. Enter/Shift+Enter navigate,
-Escape returns to editing, and Replace all is one shared undo step. Full-file
-search, wrapping preparation and large indentation run off-thread. Folding
-waits for Tree-sitter integration; language tooling remains optional future work.
-Editor settings/search are per view and in memory. The standalone example requires
-neither Workbench nor language plugins:
+Other values support workspace inheritance. Editing a Workspace value creates an
+individual override; its reset icon resumes following Global. Unedited values
+continue inheriting global changes. Switching workspaces applies effective
+appearance to the window. Keybinding settings are deferred; Save, Open Folder,
+Quit and layouts retain fixed Primary+S/O/Q and Primary+1–5 shortcuts. Primary is
+Command on macOS and Control elsewhere. Widget-owned editing shortcuts retain
+first refusal. The standalone Theme editor is retired.
+
+**Shader effects** enables whole-window CRT processing, disabled by default.
+Independent 0–1 sliders control scanlines, vignette, bloom, static noise,
+curvature, pixel grid, phosphor persistence and brightness pulse. Values remain
+editable and persist while effects are off. Each value supports the same
+Global/Workspace inheritance and reset behavior as other settings; older records
+default to effects off. There are no presets, jitter or chromatic aberration.
+
+`effects.rs` and its embedded `effects.wesl` own the application rendering.
+Bevy runs persistence, when enabled, then CRT processing after egui and before
+UI2's platform alpha conversion and final output. Effects operate on
+display-premultiplied color and return linear-premultiplied color, preserving
+transparent coverage and embedded viewport composition. Off bypasses all effect passes.
+History textures belong to the camera's render entity, are allocated only for
+persistence, and reset on resize, effect-value changes and workspace/layout
+switches. Decay uses real elapsed frame time rather than frame count.
+
+Bloom downsamples to half width/height, then uses a separable five-tap Gaussian
+blur with three bilinear samples per axis. Two camera-owned `Rgba16Float`
+textures hold display-premultiplied color, so blur samples require no color
+conversion. The final CRT pass adds one filtered bloom sample at the curved
+source coordinate. Bloom runs after persistence and before curvature; zero
+intensity or disabled effects release its textures and skip all three bloom
+passes. Resizing rounds reduced dimensions upward, including odd window sizes.
+The blur approximates the original radial kernel with a similar four-pixel
+radius; it preserves flat-color gain and source alpha, but is not pixel-identical.
+
+Before UI2 draws, bed2 maps egui pointer movement, button and touch coordinates
+through the same display-to-source curvature formula used by the shader. Native
+cursor coordinates stay unchanged. Stationary pointers reproject when curvature
+changes or is disabled. Input and rendering capture the same effective settings
+before drawing, so Appearance edits take effect together on the next frame.
+At the curved border, input follows the shader's clamped source coordinates.
+
+The native regression uses an isolated config directory and checks curved clicks
+and slider dragging, GPU color/alpha, resize/layout changes, viewport composition
+and restoration after restart:
 
 ```sh
-cargo run --offline --locked -p bedtime-editor2 --example standalone
 cargo build --offline --locked -p bed2 --features automation
-python3 bedtime2/tools/smoke_editor.py
+python3 bedtime2/tools/smoke_effects.py
 ```
 
-Git status/ignore integration is deferred. Cross-device moves and atomic
-no-replace commits outside macOS/Linux report Unsupported without deleting the
-source. Native clipboard Cut requires reliable ownership evidence (macOS/Windows;
-other native backends offer Copy/internal dragging). See the library contract for
-resource limits, copy metadata limits and concurrent-filesystem caveats.
-
-## Documents
-
-The titlebar's folder icon opens **Documents** (the memory-only demo); it is also available in the panel
-picker. **Create / reopen text** and **Create / reopen model** open a multiline
-text session or a typed title/integer model. **Duplicate viewer** creates another
-panel with independent selection/scroll state and the same canonical contents,
-revision and undo/redo history. Drag tabs into separate areas, or reopen the same
-document from another layout in the workspace. Closing every viewer retains the
-session; another workspace gets its own instance.
-
-- Accepted widget edits commit immediately. Typing groups end after an idle gap,
-  focus loss, another viewer's edit, save, history operation or source observation.
-  Text widgets route Ctrl/Cmd+Z, Shift+Z and Y through document history rather than
-  their own private undo buffers. Save is also available through Primary+S.
-- **Save** writes a captured snapshot to a **versioned in-memory source only**.
-  There are no filesystem writes and all demo data disappears at application exit.
-  A short worker delay makes editing during a pending save observable; a later
-  edit remains dirty when that captured save completes.
-- **External update + observe** modifies the memory source and offers the new
-  value to the document. Clean updates are undoable without rolling back source
-  knowledge. Divergent changes retain base/local/incoming for **Accept incoming**
-  or **Keep local**. Neither conflict choice writes to the source.
-- **Change source only** followed by Save demonstrates conditional-write failure;
-  **Observe source** supplies the required refresh. **Reject saves** simulates a
-  retryable backend error while retaining content, history and viewers.
-- Quit offers **Save All and quit**, **Discard and quit**, and **Cancel**. Pending
-  writes/drafts block destructive shutdown; errors or documents changed during
-  Save All return to the decision. Cancel abandons only quit, not admitted writes.
-
-The demo does not persist restoration descriptors. Restoring a layout creates
-unbound viewers that can select a compatible live document or reopen the sample.
-The Documents picker also reopens retained real-file editors, including unsaved
-documents whose sources were deleted after editing. Its creation buttons and
-memory viewers keep their in-memory save behavior.
-The [document contract](../MIGRATION/workbench-documents.md) describes the core API.
-
-Optional external automation uses the same application setup:
+The opt-in native GPU regression compares flat colors, text-like edges and
+transparent regions against the original shader, and measures the complete
+bloom + CRT GPU time at 4K using render-pass timestamps:
 
 ```sh
-cargo build --offline -p bed2 --features automation
+cargo test --offline --locked -p bed2 native_bloom_quality_and_gpu_cost -- --ignored --nocapture
+```
+
+It requires a timestamp-capable GPU; timing excludes image upload/readback.
+On 2026-10-22, the Apple M4 Pro/Metal synthetic 4K comparison measured median
+bloom + CRT GPU time of 2.900 ms for the original and 0.447 ms for the reduced
+pipeline (6.49× faster). This measures the effect passes, not whole-app frame
+time or thermal behavior. Frame pacing remains unchanged.
+
+Document autosave is independent of metadata persistence. Timer defaults to one
+second since the last content edit (supported timeout: 0.01–86400 seconds).
+Change Focus saves when leaving an editor's text canvas, including panel/layout/
+workspace changes and OS focus loss. Canonical document IDs deduplicate viewers;
+inactive and viewless documents remain eligible. Composition, pending saves,
+conflicts and missing bindings defer/prevent writes. Saves use the existing
+source-checked service. Failures remain visible and do not retry the same revision
+indefinitely; manual Save remains available. Quit decisions suspend new autosaves.
+
+**View → Layout** selects layouts 1–5 and offers **Save Current Layout** and
+**Reset Current Layout**. Switching retains panel/document/terminal instances.
+A slot first uses its current global default, then retains its workspace edits.
+Saving a default captures geometry, auxiliary tool placement, selection and focus,
+without file paths, Code viewers or process state. It does not rearrange existing
+workspace layouts. Reset reuses matching tools in stable tab order, creates
+missing tools, and appends remaining panels to the largest area (first area wins
+a size tie). Existing documents, drafts, histories and workers retain their owners.
+
+The built-in layout 1 is one full-area Terminal. Only that layout is created at
+startup; layouts 2–5 start empty when first selected. Saved global layout defaults
+continue to apply to new layouts. Startup waits for
+global preferences and workspace restoration before composing default tools, so
+an initial shell cannot block restoration. Installing untouched defaults does not
+create a workspace file.
+
+Global and workspace stores validate bounded reads, merge untouched setting
+values from late reads, buffer changes for 250 ms, and atomically replace files
+on background workers. Workspace capture runs after layout edits and before
+workspace retirement, and again after ordinary updates. Writes outlive retired
+entities. Malformed/unsupported files and late composition conflicts are preserved
+with visible errors; repair/access retry revalidates disk before saving live work.
+Unresolved policy keeps editor/file operations read-only and blocks new terminals.
+The quit barrier drains final snapshots before cancelling managed work.
+
+Workspace records restore geometry, panel kinds, file/tree descriptors, tab
+order/selection and area focus. They do not recover unsaved content/history/drafts,
+editor cursor/folds/scroll, tree expansion/selection, terminal processes/transcripts
+or viewport orbit state. Save As, New/Untitled creation, unsaved-content recovery
+and broader workspace-management UI remain later work.
+
+## Close decisions and application shutdown
+
+Destructive panel/area UI intentions arrive as `PanelCloseRequested`. `close.rs`
+currently approves through `commit_close` only while quit is idle and rejects
+viewer-local text composition. `close_targets` preflights the exact views removed
+by joins/docks using the same geometry planner as commit. Closing a view retains its canonical document and
+edits; this is distinct from discarding a workspace. Workbench revalidates the
+captured layout stamp at commit. Raw entity despawn bypasses decisions and prompts,
+though ownership/worker cleanup still runs.
+
+Closing a clean application flushes buffered metadata/settings and shuts down
+without a save-workspace question. Only dirty/conflicted/composing documents need a
+Save All / Discard / Cancel decision, across all workspaces including retained
+viewless documents. Cancel retains live state and workers. Persistence failures
+have a separate Retry / Cancel path, never a workspace Save/Discard decision.
+Native actions obey the same close-modal gate; pending folder results resume on
+cancellation, not after the final shutdown barrier. Already admitted editing
+follow-ups are observed before deciding documents are clean. Quit preflights
+closure, drains persistence, cancels managed work, waits for cleanup, then exits.
+
+The quit policy retains Workbench's document gates for future integrations:
+Save All awaits admitted writes, failures or changed revisions return to the
+decision, and pending writes/drafts prevent destructive shutdown. File-backed Code documents participate in Save All, discard and cancel decisions;
+missing-source documents require explicit discard or recovery.
+
+## Verification
+
+```sh
+cargo test --offline --locked -p bed2 --features automation
+cargo check --offline --locked -p bed2
+cargo build --offline --locked -p bed2 --features automation
 python3 bedtime2/tools/smoke_bed2.py
 python3 bedtime2/tools/smoke_cube.py
 python3 bedtime2/tools/smoke_tasks.py
-python3 bedtime2/tools/smoke_documents.py
 python3 bedtime2/tools/smoke_terminal.py
-python3 bedtime2/tools/smoke_filetree.py --binary target/debug/bed2 --wide-entries 20000
+python3 bedtime2/tools/smoke_code.py
+python3 bedtime2/tools/smoke_editor.py
+python3 bedtime2/tools/smoke_filetree.py
+python3 bedtime2/tools/smoke_workspace_policy.py
 ```
 
 The [automation protocol](../bedtime2/crates/bedtime-automation2/README.md) supports
-stdin/stdout control, native input injection, runtime configuration, inspection
+stdin/stdout control, application input injection, runtime configuration, inspection
 and rendered screenshots. Scenarios and assertions live outside `main.rs`.
-The optional `app.inspect_cube` command exposes orbit state, transforms, camera
-activity, projection aspect ratios and image identities for validation. The cube
-scenario checks real input, independent views, texture captures, resizing,
-workspace restoration and cleanup.
-`app.inspect_tasks` exposes panel state, progress, results, process I/O/exit
-status and workspace worker ownership. The task scenario drives the real
-controls, checks completion/cancellation, stdout/stderr, EOF, nonzero exits,
-fresh-state restoration, and panel/workspace cleanup.
-`app.inspect_documents` reports canonical document/source contents, status,
-revision/history availability, viewer bindings and quit phase. The document
-scenario exercises real text input, shared undo, typed edits, memory saves,
-external conflicts, source CAS failures and workspace ownership. Its process
-cleanup uses the automation transport's explicit exit, not the application quit
-dialog; quit decisions are covered by application unit tests.
-`app.inspect_terminal` reports per-panel process status, viewport text/cells/modes,
-geometry, resolved palette and work ownership. Its native scenario uses the real panel picker and
-keyboard input, and checks PTY editing, ANSI/Unicode, alternate screen, native
-resize, independent sessions, hidden/inactive I/O, restart/restoration and cleanup.
-It also captures dark/light/custom terminal colors and font-size changes, checking
-that live edits retain the process/transcript and preserve OSC/truecolor behavior.
+The general scenario verifies sectioned settings, scope/reset behavior, layout
+shortcuts, titlebar click/drag and rendered captures. The workspace-policy scenario
+uses isolated config/home fixtures to verify real Timer/Change Focus autosaves,
+Never/manual Save, temporary startup, centralized RON files and restart restoration. Generic snapshot/restore endpoints have been removed;
+scenarios must use application-owned creation rather than `panel.open`. The other scenarios
+inspect and exercise independent orbit viewports (`app.inspect_cube`), task and
+process ownership/I/O (`app.inspect_tasks`), and real PTY sessions, input,
+rendering, appearance and cleanup (`app.inspect_terminal`). Settings panels also
+serve as cover tabs when checking hidden panels. Files/editor scenarios use temporary
+projects to verify opening, previews, edits/saves, watchers, operations and cleanup.
+The former Documents browser and its automation commands remain retired.
+`app.inspect_menus` reports the shared tree and actual native installation;
+`app.activate_menu` accepts a nested label path such as `["View", "Layout", "Layout 2"]` and revalidates the same action as a native
+click. `app.open_folder` exercises the accepted directory-selection boundary, not
+OS dialog clicking. `app.inspect_filetree` includes workspace roots, persistence
+opt-in and settings/session readiness. `app.inspect_settings`/`app.set_settings`,
+`app.inspect_layouts`/`app.select_layout` and `app.inspect_titlebar` expose the
+application policy and actual titlebar geometry for automation. These are application operations, not a
+reintroduced library panel registry.
 
-`app.inspect_filetree` reports roots, observations, viewport geometry/motion,
-activation counts, preview state, clipboard backend/revision and preference
-storage. `app.set_filetree_root` changes an individual panel's supplied root;
-`app.set_filetree_settings` atomically configures read-only/indentation;
-`app.drop_files` injects bounded Bevy native-drop events through the normal bridge,
-not a direct filesystem action. The native Files scenario uses isolated temporary
-projects and a pinned executable, and overwrites the system clipboard with its
-fixture paths. Injected events do not verify an OS Finder/Explorer drag.
-`--functional-only` explicitly skips pixel validation; normal runs require
-nontransparent, content-change-checked captures. `--wide-entries` additionally
-checks bounded viewport painting and End navigation on a large flat directory.
+Terminal support is initially macOS/Linux; native verification in this repository
+has used macOS/Metal. The Windows task echo script and non-macOS native input
+have not been verified here. Quit choices and worker-draining behavior have
+application unit coverage; automation transport exit is separate from window quit.
 
-Verified on 2026-10-18 on macOS/Metal: the five UI2 viewport tests, ten automation
-tests, normal application compilation, and both native smoke scenarios passed.
-The cube scenario produced eight captures in `target/cube-smoke`; the existing
-workbench scenario produced nine in `target/automation2-smoke`.
+Current workspace/menu policy verification is recorded in
+[application composition](../MIGRATION/application-composition.md#follow-up-verification--2026-10-19):
+the application and affected library suites passed, and the desktop policy scenario
+verified native menus, actual home cwd, memory-only defaults, pre-quit autosave,
+file/layout restore and clean quit. Files functional behavior passed; its full GPU
+capture checks remain intermittent and unverified on the latest run. OS picker
+clicking was not automated. Give each ordinary smoke a fresh `XDG_CONFIG_HOME` to
+avoid modifying personal settings.
 
-The Tasks & Processes addition was verified on 2026-10-18 on macOS/Metal: its
-native scenario passed with six captures in `target/tasks-smoke`, and all 17
-`bedtime-workbench2` workspace tests passed. The ordinary application also
-compiled without the automation feature. The Windows echo script has not been
-run in this environment.
+The following are historical results, predating the entity-first refactor; none
+alone establishes verification of the current worktree.
 
-The Terminal addition was verified on 2026-10-18 on macOS/Metal: 36 Terminal2 tests
-and the full UI2/Workbench2/bed2 suites passed, along with 55 headless and 84
-legacy default-feature terminal tests. Normal bed2 compilation and the legacy
-terminal plugin's remote feature compiled. Its native smoke passed with 10
-nontransparent, content-change-checked captures in `target/terminal-smoke-validated`;
-the existing workbench and task/process native scenarios passed as well. The
-validated run used a pinned automation executable to avoid concurrent builds
-replacing `target/debug/bed2`. Linux and non-macOS native input were not run.
+Cleanup verified on 2026-10-18 on macOS/Metal: all five application quit tests,
+normal bed2 compilation and the automation build passed. The four native scenarios
+passed against the pinned `target/bed2-cleanup-smoke` executable: general workbench
+(9 captures), viewport (8), tasks/processes (6) and terminal (15). Their summaries
+and captures are under `target/bed2-cleanup-*-smoke` and
+`target/bed2-cleanup-smoke-results`. Updated Python syntax and documentation links
+also passed checks.
 
-The terminal appearance update was verified on 2026-10-18 on macOS/Metal: 39
-Terminal2, 27 UI2, 166 Workbench2, 11 automation and 10 bed2 unit tests passed, plus
-the workbench document doctest and normal bed2 compilation. Its expanded native
-scenario passed with 14 captures in `target/terminal-rendering-smoke`, including
-dark/light/custom ANSI and font-size changes. The existing workbench scenario
-passed with nine captures in `target/terminal-rendering-workbench-smoke`. Both
-used `target/bed2-terminal-rendering-smoke`, a pinned automation build. Other
-native platforms were not run.
 
-The initial Files addition was verified on 2026-10-19 on macOS/Metal: 85 Filetree2 tests,
-7 Clipboard2 tests (with native support enabled), 21 bed2 tests, 27 UI2, 166
-Workbench2, 44 Terminal2 and 11 automation tests passed, plus the Workbench document
-doctest. Normal bed2 and headless Workbench compilation passed. The native Files
-scenario passed with seven nontransparent, content-change-checked captures in
-`target/filetree-validated-smoke`; the existing general workbench scenario passed
-with nine captures. Incoming drops were exercised through injected Bevy native
-window events, not an OS Finder drag. Native clipboard cases used the actual
-macOS System backend.
+Tree-sitter/Structure verified on 2026-10-19: backend language/incremental tests,
+editor feature suites, seven Structure lifecycle/navigation tests and the
+application automation build passed. `smoke_code.py` passed eight native captures
+for syntax, folding, Structure activation, shared views, placeholder, hidden-tab
+reveal, automatic replacement focus and fold controls without line numbers.
+Captures and summary are under
+`target/bed2-code-smoke`. Its `app.inspect_code` command exposes current analysis,
+view selections/folds and workspace source bindings without serializing buffers.
 
-A 20,000-entry temporary root reached ready in about 0.30 seconds in one observed
-run and painted 21 viewport rows; End navigation reached the last entry without
-materializing 20,000 widgets. This is an observation on this machine, not a
-portable latency guarantee. All mutation fixtures were removed. Linux/Windows
-native operation/input and successful OS Trash were not exercised.
-
-Earlier runs intermittently produced all-transparent full-window captures, also
-in the pre-Files general workbench scenario. Fresh current/previous-pinned startup
-and Hello controls, followed by the final strict Files/general scenarios, passed.
-No renderer fix is claimed: empty screenshots remain failures, and functional-only
-runs must not be described as pixel verification.
-
-Review follow-up verification: **411 unit tests plus the document doctest passed**
-(35 bed2, 100 Filetree2, 187 Workbench2, 27 UI2, 44 Terminal2, 11 automation and
-7 Clipboard2). Normal bed2 and no-default-features Workbench checks passed. The
-updated Files scenario passed with **11** render-checked captures in
-`target/filetree-review-dialog-smoke`, including a real rename-conflict dialog,
-acknowledgement and retry with its draft intact, root collapse, read-only/indent
-configuration, root/child-file drop routing, native System clipboard symlink Cut,
-and external deletion in active/inactive layouts. The existing workbench scenario
-passed with 9 captures using that pinned automation executable in
-`target/filetree-review-workbench-smoke`. A 20,000-entry root reached ready in
-about 0.26 seconds and painted 22 viewport rows in that run (not a portable
-benchmark). An actual Finder-driven drag remains a manual verification item;
-its new coordinate bridge has source diagnosis and native-coordinate unit tests,
-while the automated drop scenario injects Bevy window messages.
+Files restoration verified on 2026-10-19 on macOS/Metal: 37 application tests,
+100 filetree library tests, normal application checking and the automation build
+passed. Native scenarios passed for file-backed syntax/Structure (8 captures,
+`target/files-code-smoke`), editing/saving/shared views including a 112 MB document
+(3 captures, `target/restored-editor-smoke`), and filetree operations, watching,
+preview routing and persisted preferences (11 captures,
+`target/restored-filetree-smoke`). Python syntax, Rust formatting and local
+documentation links also passed.

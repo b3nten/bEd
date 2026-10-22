@@ -252,16 +252,19 @@ fn queued_commands_retain_their_workspace_when_activation_changes() {
     let mut app = host();
     let a = open(&mut app, "A");
     let b = open(&mut app, "B");
-    Workbench::new(app.world_mut())
-        .register_handler::<Increment, _>(
-            |In(invocation): In<ContextCommandInvocation>,
-             mut counters: Query<&mut Counter>|
-             -> ContextCommandResult {
-                counters.get_mut(invocation.workspace.entity()).unwrap().0 += 100;
-                Ok(())
-            },
-        )
-        .unwrap();
+    install_global_handler::<Increment, _>(
+        app.world_mut(),
+        |In(invocation): In<ContextCommandInvocation>,
+         mut counters: Query<&mut Counter>|
+         -> ContextCommandResult {
+            counters
+                .get_mut(invocation.workspace.unwrap().entity())
+                .unwrap()
+                .0 += 100;
+            Ok(())
+        },
+    )
+    .unwrap();
     Workbench::with_workspace(app.world_mut(), a)
         .unwrap()
         .commands()
@@ -536,7 +539,7 @@ fn inactive_menu_snapshots_capture_their_own_workspaces_focused_panel() {
         .next()
         .unwrap();
     assert!(result.result.is_ok());
-    assert_eq!(result.invocation.workspace, b);
+    assert_eq!(result.invocation.workspace, Some(b));
     assert_eq!(result.invocation.panel, Some(panel));
     assert_eq!(Workspaces::new(app.world_mut()).active(), a);
 }

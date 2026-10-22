@@ -62,6 +62,10 @@ impl FileTreePreferences {
     /// Encode versioned JSON without losing native filename units.
     /// Publicly mutable fields are validated here as well as on decode.
     pub fn encode(&self) -> Result<Vec<u8>, String> {
+        serde_json::to_vec(&self.record()?).map_err(|error| error.to_string())
+    }
+
+    fn record(&self) -> Result<PreferencesRecord, String> {
         let mut roots = Vec::with_capacity(self.roots.len());
         for (root, visibility) in &self.roots {
             validate_root(root)?;
@@ -76,8 +80,7 @@ impl FileTreePreferences {
                 hidden_paths,
             });
         }
-        serde_json::to_vec(&PreferencesRecord { version: 1, roots })
-            .map_err(|error| format!("Cannot encode file tree preferences: {error}"))
+        Ok(PreferencesRecord { version: 1, roots })
     }
 
     /// Validate the entire document before returning any preferences.
@@ -87,6 +90,10 @@ impl FileTreePreferences {
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         let record: PreferencesRecord = serde_json::from_slice(bytes)
             .map_err(|error| format!("Invalid file tree preferences: {error}"))?;
+        Self::from_record(record)
+    }
+
+    fn from_record(record: PreferencesRecord) -> Result<Self, String> {
         if record.version != 1 {
             return Err(format!(
                 "Unsupported file tree preferences version: {}",
@@ -114,6 +121,22 @@ impl FileTreePreferences {
             }
         }
         Ok(Self { roots })
+    }
+}
+
+// The embedding application can store the same validated native-path records in
+// its own format (for example RON), without embedding a JSON string.
+impl Serialize for FileTreePreferences {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.record()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for FileTreePreferences {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_record(PreferencesRecord::deserialize(deserializer)?)
+            .map_err(serde::de::Error::custom)
     }
 }
 

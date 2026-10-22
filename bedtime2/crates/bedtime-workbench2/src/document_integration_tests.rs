@@ -7,6 +7,8 @@ use std::{
 
 const DEADLINE: Duration = Duration::from_secs(10);
 
+#[derive(Component, Default)]
+#[require(PanelInstance = PanelInstance::of::<Self>())]
 struct TextViewer;
 impl Panel for TextViewer {
     const KEY: &'static str = "document-tests.text-viewer";
@@ -24,8 +26,8 @@ impl Panel for TextViewer {
 
 fn app() -> (App, WorkspaceId) {
     let mut app = App::new();
-    app.add_plugins(WorkbenchCorePlugin)
-        .register_panel_type::<TextViewer>();
+    app.add_plugins(WorkbenchCorePlugin);
+    register_document_handlers(app.world_mut()).unwrap();
     let workspace = Workspaces::new(app.world_mut()).open("Documents");
     (app, workspace)
 }
@@ -46,15 +48,11 @@ fn view_in_area(
     area: Entity,
     document: DocumentHandle<String>,
 ) -> Entity {
-    let kind = world
-        .query::<(Entity, &PanelType)>()
-        .iter(world)
-        .find_map(|(entity, kind)| (kind.key == TextViewer::KEY).then_some(entity))
-        .unwrap();
-    let panel = Workbench::with_workspace(world, workspace)
-        .unwrap()
-        .open_panel(kind, area)
-        .unwrap();
+    assert_eq!(
+        world.get::<InWorkspace>(area).unwrap().0,
+        workspace.entity()
+    );
+    let panel = world.spawn((TextViewer, InArea(area))).id();
     bind_document_view(world, panel, document).unwrap();
     panel
 }
@@ -114,7 +112,7 @@ fn make_clean_conflict(world: &mut World, document: DocumentHandle<String>) {
 /// an equal-looking replacement graph cannot pass an atomic-rejection assertion.
 #[derive(Debug, PartialEq, Eq)]
 struct GraphState {
-    snapshot: WorkspaceSnapshot,
+    snapshot: serde_json::Value,
     entities: Vec<(Entity, Vec<(Entity, Vec<Entity>)>)>,
     active: bool,
 }
@@ -139,7 +137,23 @@ fn graph(world: &World, workspace: WorkspaceId) -> GraphState {
         })
         .collect();
     GraphState {
-        snapshot: capture_workspace(world, workspace.entity()).unwrap(),
+        snapshot: serde_json::Value::Array(world.get::<WorkspaceMembers>(workspace.entity()).unwrap().entities().iter()
+            .filter_map(|&layout| world.get::<Layout>(layout).map(|state| {
+                serde_json::json!({
+                    "layout": layout.to_bits(), "name": state.name,
+                    "focused": state.focused_area.map(Entity::to_bits),
+                    "active": world.get::<ActiveLayout>(layout).is_some(),
+                    "areas": world.get::<LayoutAreas>(layout).map(|areas| areas.entities().iter().map(|&area| {
+                        let state = world.get::<Area>(area).unwrap();
+                        serde_json::json!({ "area": area.to_bits(), "rect": [state.rect.min, state.rect.max],
+                            "selected": state.selected.map(Entity::to_bits),
+                            "panels": panels_in_area(world, area).iter().map(|&panel| {
+                                let state = world.get::<PanelInstance>(panel).unwrap();
+                                serde_json::json!([panel.to_bits(), state.title, state.preview, state.dirty])
+                            }).collect::<Vec<_>>() })
+                    }).collect::<Vec<_>>()).unwrap_or_default()
+                })
+            })).collect()),
         entities,
         active: world.get::<ActiveWorkspace>(workspace.entity()).is_some(),
     }
@@ -467,63 +481,34 @@ enum InitializeAction {
     Save,
 }
 
-struct InitializingViewer;
-impl Panel for InitializingViewer {
-    const KEY: &'static str = "document-tests.initializing-viewer";
-    const LABEL: &'static str = "Initializing Viewer";
-
-    fn initialize(entity: &mut EntityWorldMut<'_>) {
-        let action = *entity.get::<InitializeAction>().unwrap();
-        let document = entity.get::<DocumentView>().unwrap().document();
-        entity.world_scope(|world| match action {
-            InitializeAction::Edit => {
-                let document = cast_document::<String>(world, document).unwrap();
-                replace_text(world, document, "edit accepted during initialization");
-            }
-            InitializeAction::Save => {
-                save_document(world, document).unwrap();
-            }
-        });
-    }
-
-    #[cfg(feature = "ui")]
-    fn draw(
-        _: &mut bedtime_ui2::egui::Ui,
-        _: &mut World,
-        _: &bedtime_ui2::UiContext<'_>,
-        _: Entity,
-    ) {
-    }
-}
-
-fn uninitialized_view(
+fn prepared_view(
     world: &mut World,
     area: Entity,
     document: DocumentHandle<String>,
     action: InitializeAction,
 ) -> Entity {
-    let panel = world
-        .spawn((
-            PanelInstance::new(InitializingViewer::KEY),
-            InArea(area),
-            action,
-        ))
-        .id();
+    let panel = world.spawn((TextViewer, InArea(area))).id();
     bind_document_view(world, panel, document).unwrap();
+    // Application preparation is explicit, never deferred to graph validation.
+    match action {
+        InitializeAction::Edit => replace_text(world, document, "explicitly prepared edit"),
+        InitializeAction::Save => {
+            save_document(world, document.id()).unwrap();
+        }
+    }
     panel
 }
 
 #[test]
-fn retirement_checks_edits_accepted_by_pending_panel_initialization_before_destroying_anything() {
+fn retirement_rejects_explicitly_prepared_edits_before_destroying_anything() {
     for retire_document in [false, true] {
         let (mut app, workspace) = app();
-        app.register_panel_type::<InitializingViewer>();
         let (document, original) = text_view(app.world_mut(), workspace);
         let other = Workspaces::new(app.world_mut()).open("Replacement");
         let area = app.world().get::<InArea>(original).unwrap().0;
-        let pending = uninitialized_view(app.world_mut(), area, document, InitializeAction::Edit);
+        let pending = prepared_view(app.world_mut(), area, document, InitializeAction::Edit);
         let (task, release) = held_task(app.world_mut(), workspace, Some(original));
-        assert!(!inspect_document(app.world(), document.id()).unwrap().dirty);
+        assert!(inspect_document(app.world(), document.id()).unwrap().dirty);
 
         let result = if retire_document {
             close_document(app.world_mut(), document.id()).map_err(|error| error.to_string())
@@ -537,7 +522,7 @@ fn retirement_checks_edits_accepted_by_pending_panel_initialization_before_destr
         assert_eq!(task.status(), WorkStatus::Running);
         assert_eq!(
             read_document(app.world(), document).unwrap(),
-            "edit accepted during initialization"
+            "explicitly prepared edit"
         );
         let info = inspect_document(app.world(), document.id()).unwrap();
         assert!(info.dirty && info.can_undo);
@@ -562,17 +547,16 @@ fn retirement_checks_edits_accepted_by_pending_panel_initialization_before_destr
 }
 
 #[test]
-fn workspace_exit_preflight_observes_saves_started_by_pending_panel_initialization() {
+fn workspace_exit_preflight_observes_explicitly_started_saves() {
     for operation in 0..3 {
         let (mut app, workspace) = app();
-        app.register_panel_type::<InitializingViewer>();
         let (document, original) = text_view(app.world_mut(), workspace);
         let other = Workspaces::new(app.world_mut()).open("Replacement");
         let (release_save, snapshots) = controlled_save(app.world_mut(), document);
         let area = app.world().get::<InArea>(original).unwrap().0;
-        let pending = uninitialized_view(app.world_mut(), area, document, InitializeAction::Save);
+        let pending = prepared_view(app.world_mut(), area, document, InitializeAction::Save);
         let (task, release_task) = held_task(app.world_mut(), workspace, Some(original));
-        assert!(!inspect_document(app.world(), document.id()).unwrap().saving);
+        assert!(inspect_document(app.world(), document.id()).unwrap().saving);
 
         let result = match operation {
             0 => Workspaces::new(app.world_mut()).close(workspace, Some(other)),
@@ -862,94 +846,6 @@ fn deleting_a_draft_layout_is_atomic_and_later_deletion_preserves_its_workspace_
     );
 }
 
-#[derive(Component, Debug, PartialEq, Eq)]
-struct LayoutNote(&'static str);
-
-#[test]
-fn replacing_a_draft_layout_is_atomic_and_a_later_reset_retains_the_workspace_document() {
-    let mut scene = split_scene();
-    scene
-        .app
-        .world_mut()
-        .entity_mut(scene.layout)
-        .insert(LayoutNote("Keep the slot identity"));
-    let template = LayoutSnapshot {
-        version: LAYOUT_FORMAT_VERSION,
-        name: "Reset layout".into(),
-        areas: vec![AreaSnapshot {
-            rect: Area::default().rect(),
-            panels: vec![PanelSnapshot {
-                key: TextViewer::KEY.into(),
-                title: "Replacement view".into(),
-                preview: false,
-            }],
-            selected_panel: Some(0),
-        }],
-        focused_area: Some(0),
-    };
-    let before = graph(scene.app.world(), scene.workspace);
-    assert!(replace_layout(scene.app.world_mut(), scene.layout, &template).is_err());
-    assert_draft_scene_unchanged(&scene, &before);
-    assert_eq!(
-        scene.app.world().get::<LayoutNote>(scene.layout),
-        Some(&LayoutNote("Keep the slot identity"))
-    );
-
-    scene
-        .app
-        .world_mut()
-        .entity_mut(scene.draft)
-        .remove::<DocumentDraft>();
-    let restored = replace_layout(scene.app.world_mut(), scene.layout, &template).unwrap();
-    scene.app.update();
-    assert_eq!(restored.layout, scene.layout);
-    assert_eq!(
-        capture_layout(scene.app.world(), scene.layout).unwrap(),
-        template
-    );
-    assert_eq!(
-        active_layout(scene.app.world(), scene.workspace.entity()),
-        Some(scene.layout)
-    );
-    assert_eq!(
-        scene.app.world().get::<LayoutNote>(scene.layout),
-        Some(&LayoutNote("Keep the slot identity"))
-    );
-    for retired in [
-        scene.target,
-        scene.source,
-        scene.first,
-        scene.draft,
-        scene.survivor,
-    ] {
-        assert!(scene.app.world().get_entity(retired).is_err());
-    }
-    assert_eq!(
-        document_ids(scene.app.world(), scene.workspace.entity()),
-        [scene.document.id()]
-    );
-    assert_eq!(
-        read_document(scene.app.world(), scene.document).unwrap(),
-        "local"
-    );
-    let new_view = restored.areas[0].panels[0];
-    bind_document_view(scene.app.world_mut(), new_view, scene.document).unwrap();
-    undo_document(scene.app.world_mut(), scene.document.id()).unwrap();
-    scene.app.update();
-    assert_eq!(
-        read_document(scene.app.world(), scene.document).unwrap(),
-        "base"
-    );
-    assert!(
-        !scene
-            .app
-            .world()
-            .get::<PanelInstance>(new_view)
-            .unwrap()
-            .dirty
-    );
-}
-
 #[test]
 fn area_replace_and_join_preflight_target_drafts_before_geometry_or_selection_changes() {
     for dock in [false, true] {
@@ -1038,8 +934,11 @@ fn document_commands_use_the_admitted_viewer_and_origin_even_after_focus_and_act
                     move |In(invocation): In<ContextCommandInvocation>,
                           world: &mut World|
                           -> ContextCommandResult {
-                        Workbench::with_workspace(world, invocation.workspace)?
-                            .focus_panel(new_focus)?;
+                        Workbench::with_workspace(
+                            world,
+                            invocation.workspace.ok_or("No workspace")?,
+                        )?
+                        .focus_panel(new_focus)?;
                         Workspaces::new(world).activate(other)
                     },
                 )
@@ -1072,7 +971,7 @@ fn document_commands_use_the_admitted_viewer_and_origin_even_after_focus_and_act
             ]
         );
         for result in completed {
-            assert_eq!(result.invocation.workspace, origin);
+            assert_eq!(result.invocation.workspace, Some(origin));
             assert_eq!(result.invocation.panel, Some(admitted));
             assert_eq!(result.result, Ok(()));
         }
@@ -1133,7 +1032,10 @@ fn document_commands_for_a_removed_admitted_panel_error_instead_of_using_new_foc
                 move |In(invocation): In<ContextCommandInvocation>,
                       world: &mut World|
                       -> ContextCommandResult {
-                    let mut workbench = Workbench::with_workspace(world, invocation.workspace)?;
+                    let mut workbench = Workbench::with_workspace(
+                        world,
+                        invocation.workspace.ok_or("No workspace")?,
+                    )?;
                     workbench.close_panel(admitted)?;
                     workbench.focus_panel(replacement)
                 },
@@ -1153,7 +1055,7 @@ fn document_commands_for_a_removed_admitted_panel_error_instead_of_using_new_foc
     assert_eq!(completed.len(), 4);
     assert_eq!(completed[0].result, Ok(()));
     for result in &completed[1..] {
-        assert_eq!(result.invocation.workspace, workspace);
+        assert_eq!(result.invocation.workspace, Some(workspace));
         assert_eq!(result.invocation.panel, Some(admitted));
         assert!(result.result.is_err());
     }
@@ -1353,7 +1255,7 @@ fn conventional_document_shortcuts_are_opt_in_idempotent_and_preserve_host_bindi
         let completed = command_results(app.world_mut());
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0].invocation.command, command);
-        assert_eq!(completed[0].invocation.workspace, workspace);
+        assert_eq!(completed[0].invocation.workspace, Some(workspace));
         assert_eq!(completed[0].invocation.panel, Some(panel));
         assert_eq!(completed[0].result, Ok(()));
         assert!(

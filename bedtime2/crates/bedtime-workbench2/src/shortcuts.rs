@@ -48,9 +48,7 @@ fn collect(world: &mut World) {
     {
         return;
     }
-    let Some(workspace) = crate::workspaces::selected(world) else {
-        return;
-    };
+    let workspace = crate::workspaces::selected(world);
     let panel = crate::commands::focused_panel(world);
     let text = capture.text || ctx.text_edit_focused();
     let mut seen = HashSet::new();
@@ -58,7 +56,7 @@ fn collect(world: &mut World) {
         .query::<(Entity, &Binding, Option<&InPanel>)>()
         .iter(world)
         .filter(|(entity, _, scope)| {
-            crate::workspaces::owner(world, *entity).is_none_or(|owner| owner == workspace)
+            crate::workspaces::owner(world, *entity).is_none_or(|owner| Some(owner) == workspace)
                 && scope.is_none_or(|scope| Some(scope.0) == panel)
         })
         .filter_map(|(_, binding, _)| {
@@ -283,6 +281,30 @@ mod tests {
             ..default()
         };
         app.update();
+    }
+
+    #[test]
+    fn world_shortcut_collection_continues_after_the_last_workspace_is_removed() {
+        let (mut app, surface, ctx) = app();
+        let world = app.world_mut();
+        let workspace = crate::workspaces::selected(world).unwrap();
+        world.despawn(workspace.entity());
+        install_global_handler::<Save, _>(world, record).unwrap();
+        world.spawn(Binding::new::<Save>(KeyChord::new(
+            Modifiers::PRIMARY,
+            KeyCode::KeyS,
+        )));
+        frame(
+            &mut app,
+            surface,
+            &ctx,
+            vec![key(egui::Key::S, egui::Modifiers::COMMAND, false)],
+            |_| {},
+        );
+        assert_eq!(
+            app.world().resource::<Calls>().0,
+            vec![ContextCommandId::of::<Save>()]
+        );
     }
 
     #[test]

@@ -158,6 +158,7 @@ impl Plugin for WorkbenchNativeMenuPlugin {
 pub(crate) struct NativeState {
     attempted: Option<Result<MenuSnapshot, String>>,
     workspace: Option<crate::WorkspaceId>,
+    installed_root: Option<Entity>,
     #[cfg(target_os = "macos")]
     menu: Option<macos::InstalledMenu>,
     _main_thread: PhantomData<Rc<()>>,
@@ -170,6 +171,14 @@ impl Drop for NativeState {
             menu.remove();
         }
     }
+}
+
+/// Whether this abstract root currently has an installed operating-system menu.
+/// Capability alone is not installation success (for example before a window exists).
+pub fn native_menu_installed(world: &World, root: Entity) -> bool {
+    world
+        .get_non_send::<NativeState>()
+        .is_some_and(|state| state.installed_root == Some(root))
 }
 
 pub(crate) fn poll(world: &mut World) {
@@ -190,24 +199,36 @@ pub(crate) fn poll(world: &mut World) {
         }
         let mut native = world.non_send_mut::<NativeState>();
         native.attempted = None;
+        native.installed_root = None;
         native.workspace = id;
     }
     poll_workspace(world);
 }
 
-fn poll_workspace(world: &mut World) {
+// Global application menus survive an empty workbench. Workspace-owned roots
+// participate only while their workspace is active; competing roots are errors.
+fn requested_menu(world: &mut World) -> Result<MenuSnapshot, String> {
     let roots: Vec<_> = world
-        .query_filtered::<Entity, (With<NativeMenuBar>, With<crate::InActiveWorkspace>)>()
+        .query_filtered::<(
+            Entity,
+            Option<&crate::InWorkspace>,
+            Has<crate::InActiveWorkspace>,
+        ), With<NativeMenuBar>>()
         .iter(world)
+        .filter_map(|(entity, owner, active)| (owner.is_none() || active).then_some(entity))
         .collect();
-    let requested = match roots.as_slice() {
+    match roots.as_slice() {
         [] => Ok(MenuSnapshot::default()),
         [root] if world.get::<crate::MenuBar>(*root).is_some() => {
             menu_snapshot(world, *root, InvocationContext::Focused)
         }
         [_] => Err("NativeMenuBar must select an abstract MenuBar".into()),
         _ => Err("Only one native menu bar can be selected".into()),
-    };
+    }
+}
+
+fn poll_workspace(world: &mut World) {
+    let requested = requested_menu(world);
     #[cfg(target_os = "macos")]
     {
         let actions = world
@@ -224,7 +245,21 @@ fn poll_workspace(world: &mut World) {
                 .and_then(|snapshot| snapshot.request(source, target))
                 .filter(|request| request.context == context)
             {
-                crate::Workbench::new(world).commands().submit(request);
+                let workspace = requested
+                    .as_ref()
+                    .ok()
+                    .and_then(|menu| menu.root)
+                    .and_then(|root| crate::menus::optional_menu_workspace(world, root));
+                if let Some(workspace) = workspace {
+                    crate::Workbench::with_workspace(world, workspace)
+                        .expect("Native menu workspace")
+                        .commands()
+                        .submit(request);
+                } else {
+                    world
+                        .resource_mut::<crate::GlobalCommandRequests>()
+                        .submit(request);
+                }
             }
         }
     }
@@ -239,13 +274,25 @@ fn poll_workspace(world: &mut World) {
             let replacement =
                 macos::InstalledMenu::build(&snapshot).map_err(|error| error.to_string())?;
             replacement.install();
-            world.non_send_mut::<NativeState>().menu = Some(replacement);
-        } else if let Some(old) = world.non_send_mut::<NativeState>().menu.take() {
-            old.remove();
+            let mut native = world.non_send_mut::<NativeState>();
+            native.menu = Some(replacement);
+            native.installed_root = snapshot.root;
+        } else {
+            let mut native = world.non_send_mut::<NativeState>();
+            if let Some(old) = native.menu.take() {
+                old.remove();
+            }
+            native.installed_root = None;
         }
         Ok(snapshot)
     });
     if let Err(error) = result {
+        let mut native = world.non_send_mut::<NativeState>();
+        #[cfg(target_os = "macos")]
+        if let Some(old) = native.menu.take() {
+            old.remove();
+        }
+        native.installed_root = None;
         world.write_message(NativeError(error));
     }
 }
@@ -266,6 +313,24 @@ mod macos {
     pub(super) struct InstalledMenu {
         menu: Menu,
         actions: HashMap<MenuId, (Entity, ContextCommandId, InvocationContext)>,
+    }
+
+    fn accelerator(chord: crate::KeyChord) -> Option<muda::accelerator::Accelerator> {
+        use muda::accelerator::{Accelerator, Code, Modifiers};
+        let key = format!("{:?}", chord.key).parse::<Code>().ok()?;
+        let resolved = chord.modifiers.resolved();
+        let mut modifiers = Modifiers::empty();
+        for (source, target) in [
+            (crate::Modifiers::CONTROL, Modifiers::CONTROL),
+            (crate::Modifiers::SHIFT, Modifiers::SHIFT),
+            (crate::Modifiers::ALT, Modifiers::ALT),
+            (crate::Modifiers::META, Modifiers::META),
+        ] {
+            if resolved.contains(source) {
+                modifiers |= target;
+            }
+        }
+        Some(Accelerator::new(modifiers, key))
     }
 
     fn build_submenu(
@@ -290,11 +355,12 @@ mod macos {
                     context,
                     ..
                 } => {
-                    let label = shortcut.map_or_else(
-                        || label.clone(),
-                        |chord| format!("{}    {}", label, chord.label()),
-                    );
-                    let item = MenuItem::new(label, *enabled, None);
+                    let accelerator = shortcut.and_then(accelerator);
+                    let label = match (shortcut, accelerator) {
+                        (Some(chord), None) => format!("{}    {}", label, chord.label()),
+                        _ => label.clone(),
+                    };
+                    let item = MenuItem::new(label, *enabled, accelerator);
                     if let Some(target) = target {
                         actions.insert(item.id().clone(), (*entity, target.clone(), *context));
                     }
@@ -339,11 +405,68 @@ mod macos {
                 .collect()
         }
     }
+
+    #[test]
+    fn primary_chords_use_native_command_accelerators_not_label_suffixes() {
+        use muda::accelerator::{Accelerator, Code, Modifiers};
+        assert_eq!(
+            accelerator(crate::KeyChord::new(
+                crate::Modifiers::PRIMARY,
+                bevy::input::keyboard::KeyCode::KeyS
+            )),
+            Some(Accelerator::new(Modifiers::META, Code::KeyS))
+        );
+        assert_eq!(
+            accelerator(crate::KeyChord::new(
+                crate::Modifiers::PRIMARY | crate::Modifiers::SHIFT,
+                bevy::input::keyboard::KeyCode::KeyZ
+            )),
+            Some(Accelerator::new(
+                Modifiers::META | Modifiers::SHIFT,
+                Code::KeyZ
+            ))
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn global_native_root_survives_empty_workbench_and_workspace_switches() {
+        let mut app = App::new();
+        app.add_plugins(crate::WorkbenchCorePlugin);
+        let root = app.world_mut().spawn((crate::MenuBar, NativeMenuBar)).id();
+        assert_eq!(requested_menu(app.world_mut()).unwrap().root, Some(root));
+        let workspace = crate::Workspaces::new(app.world_mut())
+            .open("Project")
+            .entity();
+        assert_eq!(requested_menu(app.world_mut()).unwrap().root, Some(root));
+        app.world_mut().despawn(workspace);
+        assert_eq!(requested_menu(app.world_mut()).unwrap().root, Some(root));
+        app.world_mut().spawn((crate::MenuBar, NativeMenuBar));
+        assert!(
+            requested_menu(app.world_mut()).is_err(),
+            "Ambiguous roots cannot silently replace the application menu"
+        );
+    }
+
+    #[test]
+    fn inactive_workspace_native_roots_do_not_compete_with_global_root() {
+        let mut app = App::new();
+        app.add_plugins(crate::WorkbenchCorePlugin);
+        let workspace = crate::Workspaces::new(app.world_mut())
+            .open("Project")
+            .entity();
+        app.world_mut()
+            .entity_mut(workspace)
+            .remove::<crate::ActiveWorkspace>();
+        app.world_mut()
+            .spawn((crate::MenuBar, NativeMenuBar, crate::InWorkspace(workspace)));
+        let root = app.world_mut().spawn((crate::MenuBar, NativeMenuBar)).id();
+        assert_eq!(requested_menu(app.world_mut()).unwrap().root, Some(root));
+    }
+
     #[test]
     fn native_window_adapter_reports_close_without_closing_or_installing_menus() {
         let mut app = App::new();

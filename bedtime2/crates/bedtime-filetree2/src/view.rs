@@ -674,7 +674,7 @@ fn animation_fraction(now: f64, started: f64, policy: bedtime_ui2::MotionPolicy)
         return 1.0;
     }
     let t = ((now - started) as f32 / policy.seconds.max(0.001)).clamp(0.0, 1.0);
-    1.0 - (1.0 - t).powi(3)
+    t * t * (3.0 - 2.0 * t)
 }
 fn motion_value(motion: &RowMotion, now: f64, policy: bedtime_ui2::MotionPolicy) -> (f32, f32) {
     let t = animation_fraction(now, motion.started, policy);
@@ -722,26 +722,13 @@ fn paint_row(
     });
     if row.kind == FileTreeEntryKind::Directory {
         let open = state.is_expanded(&row.path);
-        let progress = context
-            .frame(ui)
-            .animate_bool(egui::Id::new((context.view, &row.path, "arrow")), open);
-        let angle = std::f32::consts::FRAC_PI_2 * progress;
-        let rotate = |p: egui::Vec2| {
-            center
-                + egui::vec2(
-                    p.x * angle.cos() - p.y * angle.sin(),
-                    p.x * angle.sin() + p.y * angle.cos(),
-                )
-        };
-        painter.add(egui::Shape::convex_polygon(
-            vec![
-                rotate(egui::vec2(-2.5, -4.0)),
-                rotate(egui::vec2(2.5, 0.0)),
-                rotate(egui::vec2(-2.5, 4.0)),
-            ],
-            ink,
-            egui::Stroke::NONE,
-        ));
+        let progress = bedtime_ui2::animate_expansion(
+            ui.ctx(),
+            egui::Id::new((context.view, &row.path, "arrow")),
+            open,
+            context.motion,
+        );
+        bedtime_ui2::paint_chevron(&painter, center, progress, ink);
     }
     let icon = match row.kind {
         FileTreeEntryKind::Directory if state.is_expanded(&row.path) => BuiltinIcon::FolderOpen,
@@ -765,6 +752,9 @@ fn paint_row(
         .as_ref()
         .is_none_or(|edit| edit.kind != EditKind::Rename || edit.path != row.path)
     {
+        if state.selection.contains(&row.path) {
+            ink = bedtime_ui2::rainbow_ink(ui, context.motion);
+        }
         let font = egui::FontId::proportional(context.theme.metrics.font_size);
         let max_width = (rect.right() - x - 42.0).max(0.0);
         let mut job = egui::text::LayoutJob::simple_singleline(row.label.to_string(), font, ink);

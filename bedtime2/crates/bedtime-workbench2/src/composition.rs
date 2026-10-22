@@ -1,8 +1,8 @@
-//! Scheduled graph validation, panel initialization and layout bookkeeping.
+//! Graph validation and layout bookkeeping; composition is complete before this runs.
 use crate::layout::WorkspaceRuntime;
 use crate::*;
 use bevy::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Optional, runtime-only tab label appearance on a panel item.
 ///
@@ -30,13 +30,74 @@ impl Default for PanelTabStyle {
 
 #[derive(Resource, Default)]
 pub(crate) struct ReconciledState {
-    selections: HashMap<Entity, (bool, Option<Entity>)>,
     topology: HashMap<Entity, Vec<(Entity, AreaRect, Vec<Entity>)>>,
 }
 
+fn layout_topology(world: &World, layout: Entity) -> Vec<(Entity, AreaRect, Vec<Entity>)> {
+    world
+        .get::<LayoutAreas>(layout)
+        .map_or(&[][..], |areas| areas.entities())
+        .iter()
+        .filter_map(|&area| {
+            world
+                .get::<Area>(area)
+                .map(|state| (area, state.rect, panels_in_area(world, area).to_vec()))
+        })
+        .collect()
+}
+
+// Attach/detach hooks already advance revisions. Their queued maintenance can
+// precede Bevy's target-list update, so observing an added/removed member must
+// not count the same transition twice. Detect only edits outside those hooks:
+// changed geometry or reordered members retained in both observations.
+fn untracked_topology_change(
+    old: &[(Entity, AreaRect, Vec<Entity>)],
+    new: &[(Entity, AreaRect, Vec<Entity>)],
+) -> bool {
+    let old_areas: Vec<_> = old
+        .iter()
+        .map(|row| row.0)
+        .filter(|area| new.iter().any(|row| row.0 == *area))
+        .collect();
+    let new_areas: Vec<_> = new
+        .iter()
+        .map(|row| row.0)
+        .filter(|area| old.iter().any(|row| row.0 == *area))
+        .collect();
+    if old_areas != new_areas {
+        return true;
+    }
+    new.iter().any(|(area, rect, tabs)| {
+        old.iter()
+            .find(|row| row.0 == *area)
+            .is_some_and(|(_, old_rect, old_tabs)| {
+                if rect != old_rect {
+                    return true;
+                }
+                let before: Vec<_> = old_tabs.iter().filter(|tab| tabs.contains(tab)).collect();
+                let after: Vec<_> = tabs.iter().filter(|tab| old_tabs.contains(tab)).collect();
+                before != after
+            })
+    })
+}
+
+/// Known structural transitions acknowledge their final shape when they advance
+/// the revision. Scheduled validation must not invalidate the same transition a
+/// second time after callers have already captured a fresh stamp.
+pub(crate) fn observe_topology(world: &mut World, layout: Entity) {
+    if !world.contains_resource::<ReconciledState>() {
+        return;
+    }
+    let shape = layout_topology(world, layout);
+    world
+        .resource_mut::<ReconciledState>()
+        .topology
+        .insert(layout, shape);
+}
+
 /// Resolve a composed graph immediately, or let WorkspaceSystems::Prepare do it.
-/// Required components supply local defaults; this phase only resolves references,
-/// initializes registered panels, and updates layout revisions. Lifecycle hooks
+/// Required components supply local defaults; this phase validates references
+/// and updates layout revisions. Lifecycle hooks
 /// maintain workspace membership and selection markers as commands are applied.
 /// Zero workspaces, layouts, areas or panels is valid. Conflicting live references
 /// and duplicate active selections return an error rather than choosing a winner.
@@ -133,28 +194,10 @@ pub fn reconcile_workbench(world: &mut World) -> Result<(), String> {
             )?;
         }
         let focused = world.get::<Layout>(layout).unwrap().focused_area;
-        if focused.is_some_and(|e| world.get_entity(e).is_ok() && !areas.contains(&e)) {
-            let was_member = world
-                .resource::<ReconciledState>()
-                .topology
-                .get(&layout)
-                .is_some_and(|old| old.iter().any(|(area, _, _)| Some(*area) == focused));
-            if !was_member {
-                return Err("Focused area belongs to another layout".into());
-            }
-        }
-        if focused.is_none_or(|e| !areas.contains(&e)) {
-            let next = areas.first().copied();
-            if focused != next {
-                world.get_mut::<Layout>(layout).unwrap().focused_area = next;
-            }
+        if focused.is_some_and(|entity| !areas.contains(&entity)) {
+            return Err("Focused area belongs to another layout or no longer exists".into());
         }
     }
-    let kinds: HashMap<_, _> = world
-        .query::<(Entity, &PanelType)>()
-        .iter(world)
-        .map(|(e, p)| (p.key.to_owned(), e))
-        .collect();
     let panels: Vec<_> = world
         .query_filtered::<Entity, With<PanelInstance>>()
         .iter(world)
@@ -171,62 +214,19 @@ pub fn reconcile_workbench(world: &mut World) -> Result<(), String> {
         if world.get::<InWorkspace>(panel).map(|w| w.0) != Some(workspace) {
             return Err("Panel workspace membership disagrees with its area".into());
         }
-        let instance = world.get::<PanelInstance>(panel).unwrap();
-        if let Some(initialized) = world.get::<crate::layout::InitializedPanel>(panel) {
-            if world.get::<PanelType>(initialized.0).map(|p| p.key) != Some(instance.key.as_str()) {
-                return Err("Changing the type of an initialized panel is unsupported".into());
-            }
-        } else if !instance.key.is_empty() {
-            let kind = *kinds
-                .get(&instance.key)
-                .ok_or_else(|| format!("Unregistered panel type: {}", instance.key))?;
-            crate::layout::initialize_panel(world, panel, kind);
-        }
     }
     for area in areas {
         let selected = world.get::<Area>(area).unwrap().selected;
         let tabs = panels_in_area(world, area);
-        if selected.is_some_and(|e| world.get_entity(e).is_ok() && !tabs.contains(&e)) {
-            let was_member = world
-                .resource::<ReconciledState>()
-                .topology
-                .values()
-                .flatten()
-                .find(|(old_area, _, _)| *old_area == area)
-                .is_some_and(|(_, _, old_tabs)| selected.is_some_and(|e| old_tabs.contains(&e)));
-            if !was_member {
-                return Err("Selected panel belongs to another area".into());
-            }
-        }
-        if selected.is_none_or(|e| !tabs.contains(&e)) {
-            let next = tabs.first().copied();
-            if selected != next {
-                world.get_mut::<Area>(area).unwrap().selected = next;
-            }
+        if selected.is_some_and(|entity| !tabs.contains(&entity)) {
+            return Err("Selected panel belongs to another area or no longer exists".into());
         }
     }
     // Direct composition must invalidate admitted layout gestures just as the
     // existing editing operations do. Compare topology, excluding focus/hover.
     let topology: HashMap<_, _> = layouts
         .iter()
-        .map(|&layout| {
-            let areas = world
-                .get::<LayoutAreas>(layout)
-                .map_or(&[][..], |a| a.entities());
-            (
-                layout,
-                areas
-                    .iter()
-                    .map(|&area| {
-                        (
-                            area,
-                            world.get::<Area>(area).unwrap().rect,
-                            panels_in_area(world, area).to_vec(),
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        })
+        .map(|&layout| (layout, layout_topology(world, layout)))
         .collect();
     let changed: Vec<_> = topology
         .iter()
@@ -235,7 +235,7 @@ pub fn reconcile_workbench(world: &mut World) -> Result<(), String> {
                 .resource::<ReconciledState>()
                 .topology
                 .get(&layout)
-                .is_some_and(|old| old != shape)
+                .is_some_and(|old| untracked_topology_change(old, shape))
                 .then_some(layout)
         })
         .collect();
@@ -275,18 +275,6 @@ pub fn reconcile_workbench(world: &mut World) -> Result<(), String> {
             return Err("InRunningWorkspace disagrees with workspace running state".into());
         }
     }
-    let previous = &world.resource::<ReconciledState>().selections;
-    let changed: HashSet<_> = current
-        .iter()
-        .filter_map(|(&e, state)| (previous.get(&e).is_some_and(|old| old != state)).then_some(e))
-        .collect();
-    for entity in changed {
-        world
-            .get_mut::<WorkspaceRuntime>(entity)
-            .unwrap()
-            .activation += 1;
-    }
-    world.resource_mut::<ReconciledState>().selections = current;
     crate::documents::reconcile_documents(world)?;
     Ok(())
 }

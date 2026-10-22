@@ -4,11 +4,9 @@ mod composition;
 mod document_commands;
 mod documents;
 mod membership;
-mod storage;
 pub use composition::{PanelTabStyle, reconcile_workbench};
 pub use document_commands::*;
 pub use documents::*;
-pub use storage::*;
 mod geometry;
 mod layout;
 mod menus;
@@ -27,7 +25,7 @@ pub use bedtime_clipboard2::{Clipboard, ClipboardPlugin};
 pub use native::{
     NativeCapabilities, NativeError, NativeMenuBar, NativeSystems, WindowBackground, WindowBlur,
     WindowTitlebarGeometry, WorkbenchNativeMenuPlugin, WorkbenchNativePlugin,
-    WorkbenchNativeWindowPlugin,
+    WorkbenchNativeWindowPlugin, native_menu_installed,
 };
 #[cfg(feature = "ui")]
 mod dialogs;
@@ -46,8 +44,8 @@ mod ui;
 use bevy::{app::PluginGroupBuilder, prelude::*};
 #[cfg(feature = "ui")]
 pub use frontend::{
-    PanelTypePayload, Titlebar, TitlebarOwnership, WorkbenchPresentation, WorkbenchShell,
-    WorkspaceUi, panel_drag_source, register_panel, register_panel_in_area,
+    PanelFactoryPayload, Titlebar, TitlebarOwnership, WorkbenchPresentation, WorkbenchShell,
+    WorkspaceUi, panel_drag_source, spawn_panel, spawn_panel_in_area,
 };
 #[cfg(feature = "ui")]
 pub use ui::{MenuPresentation, WorkbenchUiPlugin, draw_menu_bar, draw_popup_menu};

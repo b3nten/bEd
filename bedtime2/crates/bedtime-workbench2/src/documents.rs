@@ -268,6 +268,26 @@ impl DocumentView {
     }
 }
 
+/// Detach a viewer without retiring its document. Applications must resolve
+/// viewer-local drafts first; local panel state is otherwise left untouched.
+pub fn unbind_document_view(
+    world: &mut World,
+    panel: Entity,
+) -> Result<Option<DocumentId>, DocumentError> {
+    check_panel_document_draft(world, panel)?;
+    let view = world.get::<DocumentView>(panel).copied();
+    if let Some(view) = view {
+        if let Some(mut document) = world.get_mut::<Document>(view.document.0) {
+            document.state.detach_viewer(panel);
+        }
+        world.entity_mut(panel).remove::<DocumentView>();
+        if let Some(mut metadata) = world.get_mut::<PanelInstance>(panel) {
+            metadata.dirty = false;
+        }
+    }
+    Ok(view.map(|view| view.document))
+}
+
 /// Application declaration that a bound panel has uncommitted input. Remove it
 /// only after explicitly committing or abandoning that input. Save, undo, redo
 /// and document/workspace retirement reject drafts rather than using old content.
@@ -1053,8 +1073,6 @@ fn retire_document(world: &mut World, id: DocumentId, discard: bool) -> Result<(
         ));
     }
     crate::reconcile_workbench(world).map_err(DocumentError::InvalidGraph)?;
-    // Initializing newly composed viewers runs application code and can admit
-    // edits, drafts or a save. The final gate must observe those effects too.
     check_document_close(world, id, discard)?;
     let panels: Vec<_> = world
         .query::<(Entity, &DocumentView)>()
@@ -1254,6 +1272,7 @@ trait ErasedSession: Send + Sync + 'static {
     fn info(&self) -> SessionInfo;
     fn begin_group(&mut self, id: DocumentId, viewer: Entity) -> DocumentUndoGroup;
     fn end_group(&mut self, group: DocumentUndoGroup) -> Result<(), DocumentError>;
+    fn detach_viewer(&mut self, viewer: Entity);
     fn undo(&mut self, redo: bool) -> Result<u64, DocumentError>;
     fn unbind_save(&mut self) -> Result<(), DocumentError>;
     fn prepare_save(&self, id: DocumentId) -> Result<(Option<String>, SaveJob), DocumentError>;
@@ -1460,6 +1479,11 @@ impl<M: DocumentModel> ErasedSession for Session<M> {
         }
         self.group = None;
         Ok(())
+    }
+    fn detach_viewer(&mut self, viewer: Entity) {
+        if self.group.is_some_and(|group| group.viewer == viewer) {
+            self.group = None;
+        }
     }
     fn undo(&mut self, redo: bool) -> Result<u64, DocumentError> {
         let entry = if redo {

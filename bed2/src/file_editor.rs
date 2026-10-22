@@ -26,16 +26,9 @@ struct FileSource {
     checkpoint: Arc<std::sync::Mutex<TextBuffer>>,
 }
 
-pub fn file_source(world: &World, document: DocumentId) -> Option<Option<PathBuf>> {
-    world
-        .get::<FileSource>(document.entity())
-        .map(|source| source.path.clone())
-}
-
 pub struct FileEditorPlugin;
 impl Plugin for FileEditorPlugin {
     fn build(&self, app: &mut App) {
-        register_document_shortcuts(app.world_mut());
         app.add_systems(
             Update,
             reconcile_bindings.after(crate::files::FilesSystems::Update),
@@ -225,7 +218,28 @@ pub fn bind_loaded(
         update_binding(world, handle.id()).map_err(|e| e.to_string())?;
         handle
     };
-    bind_text_editor(world, panel, handle).map_err(|e| e.to_string())
+    // Detection runs only for a newly attached language. Explicit choices survive
+    // reloads and sibling views; an unknown extension remains a plain text editor.
+    if world
+        .get::<bedtime_editor2::workbench::CodeLanguage>(handle.id().entity())
+        .is_none()
+    {
+        let language =
+            bedtime_treesitter2::language_name(&path.to_string_lossy()).unwrap_or("text");
+        world
+            .entity_mut(handle.id().entity())
+            .insert(bedtime_editor2::workbench::CodeLanguage(language.into()));
+    }
+    bind_text_editor(world, panel, handle).map_err(|e| e.to_string())?;
+    crate::settings::configure_editor(world, panel);
+    if world
+        .get::<InArea>(panel)
+        .and_then(|owner| world.get::<Area>(owner.0))
+        .is_some_and(|area| area.selected_panel() == Some(panel))
+    {
+        crate::files::select_structure_source(world, panel);
+    }
+    Ok(())
 }
 
 pub fn can_replace(world: &World, panel: Entity) -> bool {
@@ -339,7 +353,7 @@ fn update_binding(world: &mut World, id: DocumentId) -> Result<(), DocumentError
     Ok(())
 }
 
-fn reconcile_bindings(world: &mut World) {
+pub(crate) fn reconcile_bindings(world: &mut World) {
     let pending: Vec<_> = world
         .query::<(Entity, &FileSource)>()
         .iter(world)

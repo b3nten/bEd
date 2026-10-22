@@ -10,7 +10,7 @@ use bedtime_terminal::{
 use bedtime_ui2::{Theme, UiContext, egui};
 use bedtime_workbench2::{
     Binding, InPanel, InWorkspace, Panel, PanelInstance, PanelPresentation, WorkStatus,
-    WorkbenchAppExt, WorkspaceTask, WorkspaceWork,
+    WorkspaceTask, WorkspaceWork,
 };
 use bevy::prelude::*;
 use std::{collections::VecDeque, io, process::ExitStatus, sync::Arc};
@@ -21,14 +21,13 @@ pub use bedtime_terminal::{
     terminal_pty::{PtyOptions as TerminalOptions, TerminalShell, WindowSize},
 };
 
-/// Installs the Terminal panel type and its ordinary Update system. Requires the
+/// Installs the terminal's ordinary Update system. Requires the
 /// application's Workbench and UI2 plugins; installs no windows or renderer.
 pub struct TerminalPlugin;
 
 impl Plugin for TerminalPlugin {
     fn build(&self, app: &mut App) {
-        app.register_panel_type::<TerminalPanel>()
-            .add_systems(Update, update_terminals);
+        app.add_systems(Update, update_terminals);
     }
 }
 
@@ -47,6 +46,7 @@ pub enum TerminalStatus {
 /// One panel owns one local shell. Explicitly supplied launch options survive
 /// panel initialization. Editing options affects the next start/restart only.
 #[derive(Component)]
+#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct TerminalPanel {
     pub options: TerminalOptions,
     status: TerminalStatus,
@@ -146,10 +146,6 @@ impl TerminalPanel {
 impl Panel for TerminalPanel {
     const KEY: &'static str = "bedtime.terminal";
     const LABEL: &'static str = "Terminal";
-
-    fn initialize(entity: &mut EntityWorldMut<'_>) {
-        entity.entry::<Self>().or_default();
-    }
 
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
         let focused = world

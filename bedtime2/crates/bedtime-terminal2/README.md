@@ -1,19 +1,21 @@
 # bedtime-terminal2
 
 Local PTY terminal panels for UI2 and Workbench2. The application installs one
-plugin; the panel picker and ordinary panel composition provide instances.
+plugin and composes concrete panel instances. Creation menus are host policy;
+Workbench has no built-in type picker.
 
 ```rust,ignore
 use bedtime_terminal2::{TerminalPanel, TerminalPlugin};
-use bedtime_workbench2::{InArea, Panel, PanelInstance};
+use bedtime_workbench2::InArea;
 
 app.add_plugins(TerminalPlugin); // After the application's Bevy/Workbench/UI setup.
-commands.spawn((PanelInstance::new(TerminalPanel::KEY), InArea(area)));
+commands.spawn((TerminalPanel::default(), InArea(area)));
 ```
 
-The registered key is `bedtime.terminal`, with label **Terminal**. The plugin does
-not create a workspace, window, camera or renderer. Registering the plugin before
-Workbench is also supported, like other panel registrations.
+The descriptive key is `bedtime.terminal`, with label **Terminal**; it is not a
+construction-registry entry. The component requires `PanelInstance::of::<Self>()`,
+so metadata and drawing exist as soon as the spawn applies. The plugin creates no
+workspace, window, camera or renderer. No panel registration is needed.
 
 Instance tab labels follow the local foreground process, falling back to the
 launched shell name and then **Terminal** before a runtime exists. The shared PTY
@@ -23,8 +25,8 @@ Labels return to the shell when a foreground job finishes. OSC window titles sta
 in `snapshot().title` and do not override process labels. Process names are
 best-effort OS observations (interpreter launchers can be named after their script),
 not full command lines or remote-process inspection. Labels omit control characters
-and are limited to 64 characters. Restored sessions discard stale process labels
-until their fresh runtime supplies a new one.
+and are limited to 64 characters. Fresh panels use fallback labels until their
+runtime supplies a process observation.
 
 Explicit launch options can be attached in the same spawn:
 
@@ -38,13 +40,14 @@ let options = TerminalOptions {
     ..Default::default()
 };
 commands.spawn((
-    PanelInstance::new(TerminalPanel::KEY),
-    InArea(area),
     TerminalPanel::new(options),
+    InArea(area),
 ));
 ```
 
-Initialization preserves supplied state. Changing `options` affects only the next
+Required components preserve supplied state; there is no panel initialization
+pass. Spawning selects the destination tab without changing area focus. Changing
+`options` affects only the next
 start or explicit `restart()`. Cwd/environment setup affects the child, not the
 application. Without a directory override, the child inherits the application's
 working directory. `TERM_PROGRAM` defaults to `bed2` unless explicitly overridden.
@@ -74,9 +77,10 @@ working directory. `TERM_PROGRAM` defaults to `bed2` unless explicitly overridde
   Workspace closure and `Workspaces::shutdown_work()` track actual completion.
   The application's existing save/discard/quit policy remains authoritative; it
   must keep updating until `work_finished()` before exiting.
-- Core workspace/layout snapshots store the panel type and layout, not live
-  processes, launch options, transcripts or runtime handles. Restored panels are
-  fresh and start lazily when shown. Applications own any extra launch recipes.
+- Session persistence and restore recipes are application-owned; core Workbench
+  snapshots/restoration have been removed. Live processes, transcripts and runtime
+  handles are not persistent state. Reconstructed concrete panels start fresh and
+  lazily when shown.
 
 `status()`, `process_id()`, `snapshot()` and `error()` expose observations for
 application UI/inspection. A PID is not a persistent identity or a signaling API.
@@ -171,16 +175,19 @@ cargo build --offline --locked -p bed2 --features automation
 python3 bedtime2/tools/smoke_terminal.py
 ```
 
-The unit tests exercise registration/lazy restoration, actual local PTY I/O,
+The test suite targets concrete composition/lazy startup, actual local PTY I/O,
 resize, exit/transcript selection, restart, hidden/inactive operation, failed
 startup, panel despawn, workspace closure and shutdown admission. The native smoke
-uses the real bed2 panel picker and injected input rather than a test-only terminal
+uses application-owned panel creation and injected input rather than a test-only terminal
 write endpoint. Its appearance scenario covers dark/light/custom ANSI palettes,
 normal/bright colors, live font-size changes, retained sessions/transcripts,
 truecolor and OSC override/reset behavior. It also checks that the running canvas
 has no duplicate heading or Stop button, while the panel tab and exit/restart UI
 remain available. These commands are verification recipes, not a claim that they
 have passed on every platform.
+
+The results below are historical, predating the entity-first refactor; they do
+not establish verification of the current in-progress worktree.
 
 Verified on 2026-10-18 on macOS/Metal: all 55 headless core tests, 84 default-feature
 v1 terminal tests, and 36 Terminal2 tests passed; the UI2/Workbench2/bed2 suites

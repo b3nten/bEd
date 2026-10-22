@@ -8,16 +8,10 @@ pub(crate) const OPERATIONS: &[&str] = &[
     "workspace.activate",
     "workspace.close",
     "workspace.configure",
-    "workspace.capture",
-    "workspace.restore",
     "layout.create",
     "layout.activate",
     "layout.delete",
-    "layout.capture",
-    "layout.restore",
-    "layout.replace",
     "layout.move",
-    "panel.open",
     "panel.focus",
     "panel.close",
     "panel.move",
@@ -89,7 +83,7 @@ pub(crate) fn start(
     if !world.contains_resource::<WorkspaceRequests>() {
         return Err("Install WorkbenchCorePlugin for workbench operations".into());
     }
-    // Validate shared options before an operation can create or replace entities.
+    // Validate shared options before an operation can create entities.
     let _ = optional::<bool>(args, "activate")?;
     let value = match op {
         "workspace.create" => {
@@ -153,17 +147,6 @@ pub(crate) fn start(
             Workspaces::new(world).close(id, replacement)?;
             return Ok(Stage::Closed { entity: e });
         }
-        "workspace.capture" => {
-            let e = workspace(world, args)?;
-            serde_json::to_value(capture_workspace(world, e)?).map_err(|e| e.to_string())?
-        }
-        "workspace.restore" => {
-            let snapshot: WorkspaceSnapshot = required(args, "snapshot")?;
-            let restored = restore_workspace(world, &snapshot)?;
-            active(world, args, restored.workspace)?;
-            reconcile_workbench(world)?;
-            json!({"workspace":entity_id(restored.workspace)})
-        }
         "layout.create" => {
             let owner = workspace(world, args)?;
             let name: String = required(args, "name")?;
@@ -189,27 +172,6 @@ pub(crate) fn start(
             let e = layout(world, args)?;
             Workbench::for_entity(world, e)?.delete_layout(e)?;
             json!({"deleted":entity_id(e)})
-        }
-        "layout.capture" => {
-            let e = layout(world, args)?;
-            serde_json::to_value(capture_layout(world, e)?).map_err(|e| e.to_string())?
-        }
-        "layout.restore" => {
-            let owner = workspace(world, args)?;
-            let snapshot: LayoutSnapshot = required(args, "snapshot")?;
-            let restored = restore_layout(world, owner, &snapshot)?;
-            if optional::<bool>(args, "activate")?.unwrap_or(false) {
-                Workbench::for_entity(world, owner)?.activate_layout(restored.layout)?;
-            }
-            reconcile_workbench(world)?;
-            json!({"layout":entity_id(restored.layout)})
-        }
-        "layout.replace" => {
-            let e = layout(world, args)?;
-            let snapshot: LayoutSnapshot = required(args, "snapshot")?;
-            replace_layout(world, e, &snapshot)?;
-            reconcile_workbench(world)?;
-            json!({"layout":entity_id(e)})
         }
         "layout.move" => {
             let e = entity(world, args, "layout")?;
@@ -242,24 +204,6 @@ pub(crate) fn start(
             world.entity_mut(e).insert(InWorkspace(destination));
             reconcile_workbench(world)?;
             json!({"layout":entity_id(e)})
-        }
-        "panel.open" => {
-            let key: String = required(args, "key")?;
-            let kind = world
-                .query::<(Entity, &PanelType)>()
-                .iter(world)
-                .find_map(|(e, p)| (p.key == key).then_some(e))
-                .ok_or("Unregistered panel type")?;
-            let area = if args.get("area").is_some() {
-                let e = entity(world, args, "area")?;
-                world.get::<Area>(e).ok_or("Entity is not an Area")?;
-                e
-            } else {
-                let layout = layout(world, args)?;
-                Workbench::for_entity(world, layout)?.destination_area(layout)?
-            };
-            let panel = Workbench::for_entity(world, area)?.open_panel(kind, area)?;
-            json!({"panel":entity_id(panel)})
         }
         "panel.focus" | "panel.close" => {
             let e = entity(world, args, "panel")?;
@@ -428,7 +372,11 @@ pub(crate) fn start(
             json!(next)
         }
         "invoke" => {
-            let owner = workspace(world, args)?;
+            let owner = if args.get("workspace").is_some() {
+                Some(workspace(world, args)?)
+            } else {
+                Workspaces::new(world).selected().map(|w| w.entity())
+            };
             let key: String = required(args, "command")?;
             let context = if args.get("panel").is_some() {
                 InvocationContext::Panel(entity(world, args, "panel")?)
@@ -437,18 +385,27 @@ pub(crate) fn start(
             } else {
                 InvocationContext::Focused
             };
-            let command = Workbench::for_entity(world, owner)?
-                .command_by_key(&key)
+            let command = world
+                .query::<&ContextCommandInfo>()
+                .iter(world)
+                .find_map(|info| (info.command().as_str() == key).then(|| info.command()))
                 .ok_or("Unregistered command")?;
             let source = world.spawn_empty().id();
-            world
-                .get_mut::<ContextCommandRequests>(owner)
-                .unwrap()
-                .submit(ContextCommandRequest {
-                    command,
-                    source: Some(source),
-                    context,
-                });
+            let request = ContextCommandRequest {
+                command,
+                source: Some(source),
+                context,
+            };
+            if let Some(owner) = owner {
+                world
+                    .get_mut::<ContextCommandRequests>(owner)
+                    .unwrap()
+                    .submit(request);
+            } else {
+                world
+                    .resource_mut::<GlobalCommandRequests>()
+                    .submit(request);
+            }
             return Ok(Stage::Invoke { source });
         }
         _ => return Err(format!("Unknown workbench operation: {op}")),
@@ -502,16 +459,11 @@ pub(crate) fn inspect(world: &mut World) -> Value {
         let p = world.get::<WorkbenchPresentation>(e).copied().unwrap_or_default();
         json!({"window":entity_id(e),"settings":s,"titlebar_height":world.get::<Titlebar>(e).map(|t|t.height),"blur":world.get::<WindowBlur>(e).map(|b|b.0),"theme":world.get::<UsesTheme>(e).and_then(|u|world.get::<Theme>(u.0)),"panels_visible":world.get::<WorkbenchShell>(e).map(|s|s.panels_visible),"presentation":{"bounds":inspect::rect(p.bounds),"titlebar":inspect::rect(p.titlebar),"titlebar_content":inspect::rect(p.titlebar_content),"panels":inspect::rect(p.panels),"menu":inspect::rect(p.menu),"status_bar":inspect::rect(p.status_bar)}})
     }).collect();
-    let types: Vec<_> = world
-        .query::<&PanelType>()
-        .iter(world)
-        .map(|p| json!({"key":p.key,"label":p.label}))
-        .collect();
     let commands: Vec<_> = world
         .query::<&ContextCommandInfo>()
         .iter(world)
         .map(|c| (c.command(), c.label.clone()))
         .collect();
     let commands:Vec<_> = commands.into_iter().map(|(command,label)|json!({"key":command.as_str(),"label":label,"available":command_available(world,command.clone(),InvocationContext::Focused)})).collect();
-    json!({"workspaces":workspaces,"surfaces":surfaces,"panel_types":types,"commands":commands,"geometry_units":"egui points; multiply by ui surface zoom for input coordinates"})
+    json!({"workspaces":workspaces,"surfaces":surfaces,"commands":commands,"geometry_units":"egui points; multiply by ui surface zoom for input coordinates"})
 }

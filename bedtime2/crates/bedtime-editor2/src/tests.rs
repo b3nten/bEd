@@ -618,3 +618,185 @@ fn million_line_editing_keeps_layout_bounded() {
         undo
     );
 }
+
+#[test]
+fn line_navigation_validates_before_mutation_and_does_not_require_language_features() {
+    let snapshot = TextSnapshot {
+        revision: 7,
+        text: "one\r\né🙂\rlast".into(),
+    };
+    let mut view = EditorView::default();
+    view.scroll_to_line(&snapshot, 2, Reveal::Center, false)
+        .unwrap();
+    assert_eq!(
+        view.navigation.as_ref().unwrap().range,
+        snapshot.text.line_start(2)..snapshot.text.line_start(2)
+    );
+    let before = view.navigation.clone().unwrap();
+    assert!(
+        view.scroll_to_line(&snapshot, 3, Reveal::Minimal, true)
+            .is_err()
+    );
+    let mut stale = before.clone();
+    stale.revision = 6;
+    assert!(view.request_navigation(&snapshot, stale).is_err());
+    assert_eq!(view.navigation.as_ref().unwrap().range, before.range);
+    assert!(!view.navigation.as_ref().unwrap().focus);
+    assert_eq!(view.selection(), TextSelection::default());
+}
+
+#[test]
+fn independent_wheel_inputs_choose_their_axis_without_a_pause() {
+    let mut gesture = ScrollGesture::default();
+    assert_eq!(
+        gesture.multiplier(egui::vec2(-2.0, -10.0)),
+        egui::vec2(0.0, 1.0)
+    );
+    assert_eq!(
+        gesture.multiplier(egui::vec2(-20.0, -1.0)),
+        egui::vec2(1.0, 0.0)
+    );
+    assert_eq!(gesture.multiplier(egui::Vec2::ZERO), egui::vec2(1.0, 0.0));
+    assert_eq!(
+        gesture.multiplier(egui::vec2(-1.0, -20.0)),
+        egui::vec2(0.0, 1.0)
+    );
+}
+
+#[test]
+fn diagonal_wheel_inputs_switch_axes_without_a_gesture_restart() {
+    let ctx = egui::Context::default();
+    let mut document = TextDocument::new(("x".repeat(200) + "\n").repeat(100));
+    let mut view = EditorView::default();
+    let id = egui::Id::new("axis-locked-editor");
+    let initial = frame(&ctx, &mut view, &mut document, id, vec![]);
+    let wheel = |delta, phase| {
+        let mut events = vec![egui::Event::PointerMoved(initial.text_rect.center())];
+        if phase == egui::TouchPhase::Start {
+            events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::Vec2::ZERO,
+                phase,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta,
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        events
+    };
+    let horizontal = frame(
+        &ctx,
+        &mut view,
+        &mut document,
+        id,
+        wheel(egui::vec2(-80.0, -10.0), egui::TouchPhase::Start),
+    );
+    assert!(horizontal.scroll.x > 0.0);
+    assert_eq!(horizontal.scroll.y, 0.0);
+    let wobble = frame(
+        &ctx,
+        &mut view,
+        &mut document,
+        id,
+        wheel(egui::vec2(-1.0, -100.0), egui::TouchPhase::Move),
+    );
+    assert!(wobble.scroll.y > 0.0);
+    assert_eq!(wobble.scroll.x, horizontal.scroll.x);
+    // A native start follows the same per-input rule.
+    let vertical = frame(
+        &ctx,
+        &mut view,
+        &mut document,
+        id,
+        wheel(egui::vec2(-1.0, -80.0), egui::TouchPhase::Start),
+    );
+    assert!(vertical.scroll.y > 0.0);
+    assert_eq!(vertical.scroll.x, wobble.scroll.x);
+}
+
+#[test]
+fn pointer_presses_place_caret_then_select_word_and_line_before_release() {
+    let ctx = egui::Context::default();
+    let mut document = TextDocument::new("alpha beta\r\nnext");
+    let mut view = EditorView::default();
+    let id = egui::Id::new("press-selection");
+    let initial = frame(&ctx, &mut view, &mut document, id, vec![]);
+    let position = initial.text_rect.min + egui::vec2(26.0, 12.0);
+    for click in 1..=3 {
+        let down = frame(
+            &ctx,
+            &mut view,
+            &mut document,
+            id,
+            vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        match click {
+            1 => {
+                assert_eq!(down.selection.anchor, down.selection.head);
+                assert!(down.selection.head > 0);
+            }
+            2 => assert_eq!(down.selection, TextSelection { anchor: 0, head: 5 }),
+            3 => assert_eq!(
+                down.selection,
+                TextSelection {
+                    anchor: 0,
+                    head: 10
+                }
+            ),
+            _ => unreachable!(),
+        }
+        let up = frame(
+            &ctx,
+            &mut view,
+            &mut document,
+            id,
+            vec![egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert_eq!(up.selection, down.selection);
+    }
+}
+
+#[test]
+fn resizing_keeps_wrapped_text_while_new_width_is_prepared() {
+    let ctx = egui::Context::default();
+    let mut document = TextDocument::new("alpha beta ".repeat(200));
+    let snapshot = document.snapshot().unwrap();
+    let mut view = EditorView::default();
+    view.settings.wrap = true;
+    view.wrapping.index = Some(
+        wrapping::WrapIndex::build(
+            snapshot.clone(),
+            24,
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap(),
+    );
+    view.wrap_active = true;
+    let output = frame(
+        &ctx,
+        &mut view,
+        &mut document,
+        egui::Id::new("resize-wrapping"),
+        vec![],
+    );
+    assert!(view.wrapping_ready());
+    assert!(output.rendered_lines > 1);
+    assert!(view.active_wrap(&snapshot, Some(60)).is_some());
+}

@@ -8,16 +8,18 @@ index, Git installation, or generic decoration/provider framework.
 ## Application contract
 
 Install `FileTreePlugin` alongside the application's usual Bevy/UI2/Workbench
-setup. Registering the plugin creates no panels. After opening a `FileTreePanel`,
-supply its root explicitly:
+setup. Installing the plugin creates no panels and registers no panel types.
+Compose a concrete `FileTreePanel` with its root explicitly:
 
 ```rust,ignore
-let panel = Workbench::with_workspace(world, workspace)?
-    .register_panel::<FileTreePanel>(layout)?;
-world.entity_mut(panel).insert((
+let panel = world.spawn((
+    FileTreePanel::default(),
+    InArea(area),
     FileTreeRoot(project_directory),
     FileTreeSettings { read_only: false, indent_size: 16.0 },
-));
+)).id();
+// Required components provide metadata/drawing immediately and preserve overrides.
+// Spawning selects this tab but does not change the layout's focused area.
 ```
 
 - Missing `FileTreeRoot` means **unconfigured**, not cwd. A supplied relative path
@@ -181,10 +183,14 @@ Hidden Entries temporarily bypasses both filters and dims hidden rows. Unhide an
 Clear Explicitly Hidden Entries provide recovery. Temporary reveal is not saved.
 
 `FileTreePreferencesChanged` tells the application to persist its custom component;
-Workbench layout snapshots/`WorkspaceChanged` do not serialize it. `encode`/`decode`
+there are no core Workbench layout snapshots or snapshot change notifications.
+`encode`/`decode`
 provide a strict versioned JSON format, losslessly encoding Unix bytes or Windows
 wide path units. Unsupported versions/platforms, duplicates, malformed paths and
-escaping rules reject the whole document. No filesystem I/O occurs in this codec.
+escaping rules reject the whole document. `FileTreePreferences` also implements
+Serde serialization/deserialization through those same validated native-path
+records, so a host can embed the data directly in another format such as RON
+without embedding a JSON string. No filesystem I/O occurs in this codec.
 The host chooses storage location, read/write policy and errors; the library does
 not create project configuration directories.
 
@@ -199,18 +205,24 @@ Focused commands:
 
 ```sh
 cargo test --offline --locked -p bedtime-filetree2 -p bedtime-clipboard2
-cargo test --offline --locked -p bed2 --features automation files::tests
-cargo build --offline --locked -p bed2 --features automation
-python3 bedtime2/tools/smoke_filetree.py --binary target/debug/bed2
 ```
 
-The native scenario uses temporary projects and a pinned executable. It checks
-ordinary keyboard/pointer/menu editing, preview activation, watcher changes,
-clipboard and internal dragging, injected Bevy native-drop events, preferences
-across restart, independent roots and lifecycle cleanup. Injected drop events are
-not evidence of a Finder/Explorer-driven OS drag. Clipboard cases overwrite the
-system clipboard with temporary fixture paths.
+bEd2 installs Files and routes activations to file-backed editors with optional
+Tree-sitter analysis and Structure. Its application policy chooses home for the temporary workspace or an explicitly
+opened folder, background loading, source-checked saving and centralized RON
+visibility storage alongside the workspace's settings/layouts. The library's explicit per-panel-root/activation contract is unchanged.
+The application scenarios use temporary projects:
 
-`--functional-only` explicitly skips pixel assertions and records
-`capture_validation: false`; it is not a rendering pass. Current execution results
-and platform limits are recorded in the application README.
+```sh
+cargo build --offline --locked -p bed2 --features automation
+python3 bedtime2/tools/smoke_filetree.py
+python3 bedtime2/tools/smoke_editor.py
+python3 bedtime2/tools/smoke_code.py
+```
+
+Injected drops do not verify Finder/Explorer OS dragging. Non-macOS native
+behavior remains unverified.
+
+Selected row labels use bed1's RGB sine cycle. Disclosure arrows share UI2's
+filled triangle with editor folds and Structure; expansion uses 160 ms smoothstep
+timing, including row movement. Reduced motion uses a steady selection color.

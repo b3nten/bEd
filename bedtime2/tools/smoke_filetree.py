@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from automation import Application, AutomationError
+from smoke_bed2 import open_panel, prepare_demo_layout
 
 
 PANEL_KEY = "bedtime.filetree"
@@ -75,9 +76,12 @@ def primary(app, code):
 
 
 def fixture_contents(directory):
-    """Exact disk evidence, restricted to the scenario's finite temporary fixtures."""
+    """Payload evidence; app metadata can autosave focus/layout during read-only UI.
+
+    Visibility storage itself is asserted separately, including exact bytes/mtime.
+    """
     return {path.relative_to(directory).as_posix(): None if path.is_dir() else path.read_bytes()
-            for path in directory.rglob("*")}
+            for path in directory.rglob("*") if ".bed" not in path.relative_to(directory).parts}
 
 
 def select_all_steps():
@@ -168,7 +172,7 @@ def capture(app, filename, *, different_from=None, validate=True):
 
 
 def open_native(app):
-    snapshot = app.wait_until(lambda snapshot: bool(snapshot["viewports"])
+    snapshot = app.wait_until(lambda snapshot: bool(snapshot["workbench"]["workspaces"])
                              and snapshot["render"]["pending_pipelines"] == 0
                              and bool(snapshot["ui"]["surfaces"]))
     render_frame = snapshot["render"]["frames"]
@@ -176,16 +180,21 @@ def open_native(app):
     snapshot = app.wait_until(lambda snapshot: snapshot["windows"][0]["focused"]
                              and snapshot["render"]["frames"] >= render_frame + 2
                              and snapshot["render"]["pending_pipelines"] == 0)
+    wait_value(app, lambda value: any(root["session_ready"] for root in value["workspace_roots"]))
+    snapshot = app.inspect()
     workspace = next(workspace for workspace in snapshot["workbench"]["workspaces"] if workspace["active"])
+    # A restarted folder can now restore its previous panels. Give this focused
+    # preferences scenario its own fresh layout instead of assuming no session.
+    if inspection(app)["panels"]:
+        app.request("layout.create", name="Files preference check", activate=True)
+        snapshot = app.inspect()
+        workspace = next(workspace for workspace in snapshot["workbench"]["workspaces"] if workspace["active"])
     layout = next(layout for layout in workspace["layouts"] if layout["active"])
-    # The actual empty-area picker, not panel.open, opens the first tree.
+    # The application's native View menu opens the scenario's tree.
     for viewport in snapshot["viewports"]:
         app.request("panel.close", panel=viewport["entity"])
-    app.input({"type": "click", "button": "Right", "position": [300, 180]})
-    app.wait_until(lambda snapshot: any(text["text"] == "Files" for text in snapshot["ui"]["texts"]))
-    app.click_text("Files")
-    value = wait_value(app, lambda value: bool(value["panels"]))
-    panel = value["panels"][0]["entity"]
+    panel = open_panel(app, "Files")
+    value = wait_value(app, lambda value: any(tree["entity"] == panel for tree in value["panels"]))
     return workspace["entity"], layout["entity"], panel
 
 
@@ -206,7 +215,7 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
     (root / ".hidden.txt").write_text("HIDDEN_FIXTURE\n", encoding="utf-8")
     (root / "binary.bin").write_bytes(b"\x00\xff\x80binary")
     with (root / "large.bin").open("wb") as large:
-        large.truncate(1024 * 1024 + 1)
+        large.truncate(256 * 1024 * 1024 + 1)
     (alternate / "foreign.txt").write_text("INDEPENDENT_ROOT\n", encoding="utf-8")
     # Flat, finite fixture: a switch can overlap real worker directory I/O, but
     # the assertion never relies on a guessed scan duration or a required race.
@@ -240,10 +249,12 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
     project_preferences = root / ".bed" / "filetree2.json"
     captures = []
     with Application([str(binary), str(root)], output=output / "first", timeout=60) as app:
+        prepare_demo_layout(app, viewport=False)
         # Do not install configure.clipboard: on macOS these cases must exercise
         # the actual system backend and its native cut-ownership observation.
         app.request("configure", fixed_dt=1 / 60)
         workspace, layout, first = open_native(app)
+        project_preferences = Path(storage(wait_value(app, lambda value: storage(value, workspace) is not None), workspace)["path"])
         initial = wait_tree(app, first, lambda tree: tree["root"] == str(root)
                             and not tree["loading"] and str(root / "a.txt") in paths(tree))
         assert str(root / ".hidden.txt") not in paths(initial), initial
@@ -285,7 +296,7 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
         key(app, "ArrowLeft")
         wait_tree(app, first, lambda tree: str(root / "Alpha" / "nested.txt") not in paths(tree))
 
-        # Single click opens/replaces one read-only preview. The source tree stays
+        # Single click opens/replaces one file preview. The source tree stays
         # beside it, allowing a real second click to pin the SAME viewer.
         click_row(app, first, root / "a.txt")
         a = preview(app, root / "a.txt", layout=layout, pinned=False, content="REAL_FILE_A")
@@ -309,7 +320,7 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
         assert tree["activations"]["SingleClick"] >= 2, tree
         local = [value for value in inspection(app)["previews"] if value["layout"] == layout]
         assert len(local) == 2 and len({value["path"] for value in local}) == 2, local
-        captures.append(take_capture(app, "02-read-only-previews.png", different_from=captures[-1]))
+        captures.append(take_capture(app, "02-file-previews.png", different_from=captures[-1]))
 
         # Non-text and oversized sources never become editable/fake documents.
         click_row(app, first, root / "binary.bin")
@@ -318,7 +329,7 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
         click_row(app, first, root / "large.bin")
         large_preview = preview(app, root / "large.bin", layout=layout, pinned=False, kind="metadata")
         assert binary_preview["entity"] == large_preview["entity"], (binary_preview, large_preview)
-        assert "1 MiB" in large_preview["content"], large_preview
+        assert "256 MiB" in large_preview["content"], large_preview
 
         # External observations must arrive from the watcher/poll fallback, not
         # from an automation mutation or an explicit Refresh action.
@@ -347,7 +358,8 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
         wait_tree(app, first, lambda tree: str(renamed_b) in paths(tree)
                   and str(root / "b.txt") not in paths(tree))
         moved_b = preview(app, renamed_b, layout=layout, pinned=True, content="REAL_FILE_B")
-        assert moved_b["entity"] == b["entity"] and moved_b["generation"] > b["generation"], (b, moved_b)
+        assert moved_b["entity"] == b["entity"] and moved_b["document"] == b["document"], (b, moved_b)
+        assert moved_b["document_info"]["revision"] == b["document_info"]["revision"], (b, moved_b)
         assert renamed_b.read_text(encoding="utf-8") == "REAL_FILE_B\n"
         menu(app, first, root, "New File…")
         edit_name(app, "created-inline.txt")
@@ -487,16 +499,15 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
                            and preference(value, workspace, root)["hide_hidden"] is False
                            and "watch-renamed.txt" in preference(value, workspace, root)["hidden_paths"])
         assert storage(value, workspace)["root"] == str(root), value
-        wait_value(app, lambda value: storage(value, workspace)["revision"] > 0
-                   and storage(value, workspace)["saved_revision"] == storage(value, workspace)["revision"]
+        wait_value(app, lambda value: not storage(value, workspace)["pending"]
                    and storage(value, workspace)["error"] is None)
         assert project_preferences.is_file()
-        assert json.loads(project_preferences.read_text(encoding="utf-8"))["version"] == 1
+        assert "version: 1" in project_preferences.read_text(encoding="utf-8")
         captures.append(take_capture(app, "04-visibility.png", different_from=captures[-1]))
 
         # Another panel/layout has independent root, selection and preview slots.
         other_layout = app.request("layout.create", name="Independent Files", activate=False)["layout"]
-        second = app.request("panel.open", key=PANEL_KEY, layout=other_layout)["panel"]
+        second = open_panel(app, "Files", layout=other_layout)
         app.request("app.set_filetree_root", panel=second, path=str(alternate))
         independent = wait_tree(app, second, lambda tree: tree["root"] == str(alternate)
                                 and str(alternate / "foreign.txt") in paths(tree) and not tree["loading"])
@@ -562,7 +573,7 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
         value = inspection(app)
         assert not any(tree["workspace"] == workspace for tree in value["panels"]), value
         assert not any(viewer["workspace"] == workspace for viewer in value["previews"]), value
-        assert not any(record["workspace"] == workspace for record in value["storage"]), value
+        wait_value(app, lambda value: all(not record["pending"] for record in value["storage"]))
         saved_bytes = project_preferences.read_bytes()
         assert saved_bytes
 
@@ -579,10 +590,16 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
         value = inspection(app)
         preferences = preference(value, workspace, root)
         assert preferences["hide_hidden"] is False and "watch-renamed.txt" in preferences["hidden_paths"], value
-        assert storage(value, workspace)["revision"] == 0, value
         assert storage(value, workspace)["error"] is None, value
-        assert project_preferences.read_bytes() == saved_bytes
-        assert project_preferences.stat().st_mtime_ns == before_mtime, "Startup rewrote untouched preferences"
+        # Opening/focusing a new Files panel legitimately updates the workspace
+        # arrangement. Visibility must remain intact, and an idle arrangement
+        # must stop writing after its buffered mutation is acknowledged.
+        wait_value(app, lambda value: not storage(value, workspace)["pending"])
+        idle_bytes = project_preferences.read_bytes()
+        idle_mtime = project_preferences.stat().st_mtime_ns
+        app.request("wait_frames", frames=30)
+        assert project_preferences.read_bytes() == idle_bytes
+        assert project_preferences.stat().st_mtime_ns == idle_mtime, "Idle workspace kept rewriting storage"
         captures.append(take_capture(app, "07-restored-preferences.png"))
         app.request("workspace.close", workspace=workspace)
         assert not inspection(app)["panels"]
@@ -591,7 +608,7 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
             "external_drop_evidence": drop,
             "clipboard_backend": clipboard_before, "cut_paste_evidence": cut_evidence,
             "watcher_error": observed["watcher_error"],
-            "checks": ["native picker", "collapsible root and header removal", "read-only filetree and indent configuration", "keyboard expand/collapse", "lazy cache", "single/double/keyboard/context opens",
+            "checks": ["application View creation menu", "collapsible root and header removal", "read-only filetree and indent configuration", "keyboard expand/collapse", "lazy cache", "single/double/keyboard/context opens",
                        "layout-local preview reuse/pinning", "bounded text/binary reads", "external watcher create/rename",
                        "native inline rename/create", "human-readable error dialog with retained rename draft", "native internal drag move",
                        "injected Bevy external-drop events copy file/folder exactly once, root and enclosing-folder routing (not OS Finder drag)",

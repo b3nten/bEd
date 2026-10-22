@@ -17,6 +17,8 @@ fn app() -> App {
     let mut app = App::new();
     app.add_plugins(WorkbenchCorePlugin);
     Workspaces::new(app.world_mut()).open("Test");
+    register_context_command::<Copy>(app.world_mut()).unwrap();
+    register_context_command::<Paste>(app.world_mut()).unwrap();
     Workbench::new(app.world_mut())
         .register_handler::<Copy, _>(|_: In<ContextCommandInvocation>| -> ContextCommandResult {
             Ok(())
@@ -28,6 +30,37 @@ fn app() -> App {
         })
         .unwrap();
     app
+}
+
+#[test]
+fn world_menu_snapshots_remain_enabled_without_workspaces() {
+    let mut app = App::new();
+    app.add_plugins(WorkbenchCorePlugin);
+    let world = app.world_mut();
+    install_global_handler::<Copy, _>(
+        world,
+        |_: In<ContextCommandInvocation>| -> ContextCommandResult { Ok(()) },
+    )
+    .unwrap();
+    let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyC);
+    world.spawn(Binding::new::<Copy>(chord));
+    let root = world
+        .spawn(Menu {
+            label: "Edit".into(),
+        })
+        .id();
+    let item = world
+        .spawn((MenuItem::new("Copy"), InMenu(root), Invokes::of::<Copy>()))
+        .id();
+    let snapshot = menu_snapshot(world, root, InvocationContext::Focused).unwrap();
+    assert!(
+        matches!(&snapshot.entries[0], MenuNode::Item { enabled: true, shortcut: Some(c), context: InvocationContext::Global, .. } if *c == chord)
+    );
+    assert!(
+        snapshot
+            .request(item, ContextCommandId::of::<Copy>())
+            .is_some()
+    );
 }
 
 #[test]

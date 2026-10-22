@@ -14,7 +14,7 @@ impl WorkspaceId {
 
 /// Transfer membership by replacing this immutable relationship.
 #[derive(Component, Debug)]
-#[component(on_insert = crate::membership::member_changed, on_remove = crate::membership::member_changed)]
+#[component(on_insert = crate::membership::member_changed, on_discard = crate::membership::member_changed)]
 #[relationship(relationship_target = WorkspaceMembers)]
 pub struct InWorkspace(pub Entity);
 #[derive(Component, Default)]
@@ -27,7 +27,7 @@ impl WorkspaceMembers {
 }
 /// Authoritative application selection. Zero active workspaces is valid.
 #[derive(Component, Default)]
-#[component(on_add = crate::membership::workspace_changed, on_remove = crate::membership::workspace_changed)]
+#[component(on_add = crate::membership::workspace_selection_changed, on_remove = crate::membership::workspace_selection_changed)]
 #[require(Workspace)]
 pub struct ActiveWorkspace;
 /// Derived marker maintained when selection or membership commands are applied.
@@ -77,8 +77,6 @@ pub enum WorkspaceSystems {
     Dispatch,
     /// Validate dispatched edits before ordinary Update systems.
     Sync,
-    /// PostUpdate: coalesced core persistence notifications after reconciliation.
-    Notify,
     Close,
 }
 
@@ -87,7 +85,6 @@ pub(crate) fn install(app: &mut App) {
         .init_resource::<crate::composition::ReconciledState>()
         .add_message::<WorkspaceFinished>()
         .add_message::<CloseRequested>();
-    crate::storage::install(app);
     commands::install(app);
     documents::install(app);
     document_commands::install(app);
@@ -346,8 +343,7 @@ impl<'w> Workspaces<'w> {
         {
             return Err("Queue workspace closure while drawing UI".into());
         }
-        // Panel initialization may create or edit documents. Finish composition
-        // before the final preflight, never after shutdown has already started.
+        // Validate the graph before committing any shutdown effects.
         crate::reconcile_workbench(self.world)?;
         preflight_workspace_close(self.world, id.entity(), mode)?;
         if selected(self.world) == Some(id) {

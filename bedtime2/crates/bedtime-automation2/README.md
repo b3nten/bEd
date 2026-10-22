@@ -11,8 +11,8 @@ cargo build --offline -p bed2 --features automation
 python3 bedtime2/tools/smoke_bed2.py
 ```
 
-The smoke script drives the real UI, checks workspace serialization and
-lifecycle behavior, and writes PNGs, `transcript.jsonl`, `stderr.log` and
+The smoke script drives the real UI and lifecycle behavior, and writes PNGs,
+`transcript.jsonl`, `stderr.log` and
 `summary.json` under `target/automation2-smoke`. It uses only Python's standard
 library. Run it in a desktop session with access to the native window server.
 
@@ -74,8 +74,8 @@ stderr and the exit status.
 
 Entity IDs are opaque decimal **strings** containing Bevy's complete entity bits,
 including generation. Inspection returns them; commands reject stale IDs. IDs
-belong only to this process. Saved workspace/layout snapshots contain stable
-panel keys and local indices instead of these IDs.
+belong only to this process. Session persistence and stable restore identities
+are application-owned; the adapter provides no workspace/layout snapshot format.
 
 ## General operations
 
@@ -163,15 +163,10 @@ to that workspace's active layout. Explicit selection may be empty.
 | `workspace.activate` | `workspace`: ID, or `null` to clear selection. |
 | `workspace.configure` | Optional `workspace`, `name`, `background_updates`. |
 | `workspace.close` | Optional `workspace`, `replacement`. Waits for workspace workers to finish and ownership teardown to complete. |
-| `workspace.capture` | Optional `workspace`. Returns an entity-free WorkspaceSnapshot. |
-| `workspace.restore` | `snapshot`, optional `activate`. Validates before materializing entities. |
 | `layout.create` | `name`, optional `workspace`, `activate`. Creates a layout with one empty area. |
 | `layout.activate` | `layout`: ID, or `null` with optional `workspace` to clear its selection. |
-| `layout.delete`, `layout.capture` | Optional `layout`. |
-| `layout.restore` | `snapshot`, optional `workspace`, `activate`. |
-| `layout.replace` | `snapshot`, optional `layout`. Preserves the layout entity. |
+| `layout.delete` | Optional `layout`. |
 | `layout.move` | `layout`, `workspace`. Moves its ownership subtree; rejects conflicting active layout selections. |
-| `panel.open` | `key`: registered panel key; optional `area`, or `layout`/`workspace`. Returns its panel ID. |
 | `panel.focus`, `panel.close` | `panel`. |
 | `panel.move` | `panel`, `area`, optional `index` within the destination tabs. |
 | `area.split` | `area`, `axis`: `horizontal` (x) or `vertical` (y), optional `fraction` (0.5). Returns the new area. |
@@ -184,7 +179,8 @@ to that workspace's active layout. Explicit selection may be empty.
 Surface `settings` accepts the actual WorkbenchSurface fields, including
 `rounding`, `padding`, `panel_gap`, `hit_size`, `drag_corners`, `tab_bar`
 (`always`/`multiple_tabs`/`hidden`), `single_area_edge_to_edge`, `layout_editing`,
-`panel_creation`, `panel_closure` and `debug`. Theme patches recursively merge
+`panel_creation`, `panel_closure` and `debug`. `panel_creation` gates creation
+drags, not a built-in type picker. Theme patches recursively merge
 `palette`/`metrics` fields; inspect returns their complete current values.
 Unknown configuration fields are errors.
 
@@ -193,8 +189,14 @@ Unknown configuration fields are errors.
 {"id":8,"op":"theme.set","preset":"dark","theme":{"palette":{"accent":[0.2,0.9,0.5,1]}}}
 ```
 
-Inspection includes registered panel types and command availability, workspace
-and layout selection, area tiling, inherited active/running markers, panel and
+There is no generic `panel.open`, `workspace.capture`/`workspace.restore`, or
+`layout.capture`/`layout.restore`/`layout.replace` operation. Applications expose
+concrete creation and session operations through their own UI or custom operations;
+descriptive panel keys are not a Workbench construction registry. `capture` in the
+general operations table means a rendered PNG, not session serialization.
+
+Inspection includes command availability, workspace and layout selection, area
+tiling, inherited active/running markers, panel and
 tab/close bounds, surface settings, themes and shell allocations. Derived state
 is observed; automation does not maintain a second workspace model.
 

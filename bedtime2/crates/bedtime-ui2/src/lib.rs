@@ -7,6 +7,8 @@ pub mod fonts;
 pub mod gallery;
 mod icon_cache;
 pub mod icons;
+#[cfg(target_os = "macos")]
+mod macos_output;
 mod motion;
 mod runtime;
 pub mod theme;
@@ -21,6 +23,61 @@ pub use motion::MotionPolicy;
 use std::sync::Mutex;
 pub use theme::{Theme, themes};
 pub use viewport::{UiViewport, viewport_image};
+
+/// bed1's selected text/caret cycle: three sine waves, 120 degrees apart.
+/// Repaint only while a consumer is visible; reduced motion uses the theme accent.
+pub fn rainbow_ink(ui: &egui::Ui, motion: MotionPolicy) -> egui::Color32 {
+    if !motion.enabled {
+        return ui.visuals().selection.stroke.color;
+    }
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(16));
+    let t = ui.input(|i| i.time) as f32 * 2.0;
+    theme::color([
+        t.sin() * 0.5 + 0.5,
+        (t + 2.0944).sin() * 0.5 + 0.5,
+        (t + 4.1888).sin() * 0.5 + 0.5,
+        1.0,
+    ])
+}
+
+/// Shared filled disclosure triangle; openness rotates right to down.
+pub fn paint_chevron(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    openness: f32,
+    ink: egui::Color32,
+) {
+    let angle = openness * std::f32::consts::FRAC_PI_2;
+    let rotate = |p: egui::Vec2| {
+        center
+            + egui::vec2(
+                p.x * angle.cos() - p.y * angle.sin(),
+                p.x * angle.sin() + p.y * angle.cos(),
+            )
+    };
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            rotate(egui::vec2(-2.5, -4.0)),
+            rotate(egui::vec2(2.5, 0.0)),
+            rotate(egui::vec2(-2.5, 4.0)),
+        ],
+        ink,
+        egui::Stroke::NONE,
+    ));
+}
+
+/// bed1's 160 ms smoothstep expansion, including reversals and reduced motion.
+pub fn animate_expansion(
+    ctx: &egui::Context,
+    id: egui::Id,
+    open: bool,
+    motion: MotionPolicy,
+) -> f32 {
+    ctx.animate_bool_with_time_and_easing(id, open, if motion.enabled { 0.16 } else { 0.0 }, |t| {
+        t * t * (3.0 - 2.0 * t)
+    })
+}
 
 /// Shared destination treatment for panel and content drag-and-drop. The caller
 /// owns eligibility, geometry, clipping and any motion; invalid targets must not
@@ -127,6 +184,9 @@ pub enum UiSystems {
     /// camera updates, so new targets receive their projection refresh together.
     SyncViewports,
     PrepareTargets,
+    /// Core2d/Core3d render schedules: final platform color/alpha conversion.
+    /// Application post-processing runs after egui_pass and before this set.
+    PrepareOutput,
 }
 
 pub struct UiFrame<'a> {
@@ -331,16 +391,52 @@ impl<'services> UiFrame<'services> {
     }
 
     pub fn icon_button(&mut self, icon: impl Into<IconSource>) -> egui::Response {
-        let side = self.theme.metrics.font_size;
+        self.icon_button_sized(icon, self.theme.metrics.font_size)
+    }
+
+    /// Fixed artwork size in points; button padding still comes from egui spacing.
+    pub fn icon_button_sized(&mut self, icon: impl Into<IconSource>, side: f32) -> egui::Response {
         let size = egui::vec2(side, side);
         let pixels = (side * self.ui.ctx().pixels_per_point()).ceil().max(1.0) as u32;
         let texture = self.icons.lock().unwrap().texture(&icon.into(), pixels);
-        let button = if let Some(texture) = texture {
-            egui::Button::image((texture, size)).image_tint_follows_text_color(true)
+        let padding = self.ui.spacing().button_padding;
+        let (rect, response) = self
+            .ui
+            .allocate_exact_size(size + padding * 2.0, egui::Sense::click());
+        let t = self.animate_bool(
+            response.id.with("icon-hover"),
+            response.hovered() || response.has_focus(),
+        );
+        let p = &self.theme.palette;
+        let pressed = self.animate_bool(
+            response.id.with("icon-press"),
+            response.is_pointer_button_down_on(),
+        );
+        let fill = theme::color(theme::mix(
+            theme::mix(p.background, p.border, t * 0.65),
+            p.text,
+            pressed * 0.18,
+        ));
+        let ink = theme::color(theme::mix(
+            theme::mix(p.muted, p.text, t),
+            p.accent,
+            pressed * 0.4,
+        ));
+        let fill = if self.ui.visuals().button_frame {
+            fill
         } else {
-            egui::Button::new(egui::Atom::custom(egui::Id::new("icon-placeholder"), size))
+            fill.gamma_multiply(t.max(pressed))
         };
-        self.ui.add(button)
+        self.ui.painter().rect_filled(rect, 4.0, fill);
+        if let Some(texture) = texture {
+            self.ui.painter().image(
+                texture,
+                egui::Rect::from_center_size(rect.center(), size),
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                ink,
+            );
+        }
+        response
     }
 
     pub fn toggle(&mut self, value: &mut bool, label: &str) -> egui::Response {
@@ -449,6 +545,8 @@ impl Plugin for UiPlugin {
             ..default()
         })
         .add_plugins(bevy_egui::EguiPlugin::default());
+        #[cfg(target_os = "macos")]
+        macos_output::install(app);
         if !app.is_plugin_added::<ViewportHostPlugin>() {
             app.add_plugins(ViewportHostPlugin);
         }
