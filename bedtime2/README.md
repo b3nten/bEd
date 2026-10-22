@@ -31,7 +31,8 @@ The foundation and its optional panels live in these crates:
   Applications explicitly supply each panel's root, handle buffered file-open
   requests and own preference storage. Git integration is deferred.
 - [`bedtime-terminal2`](crates/bedtime-terminal2): local Unix PTY terminal panels,
-  egui input/rendering, and workbench-owned runtime cleanup. No SSH or `+` commands.
+  egui input/rendering, workbench-owned runtime cleanup and opt-in local `+`
+  commands with a pre-startup helper. No SSH.
 
 The former desktop crate has been retired. Native menu/window integration now
 belongs to optional workbench plugins. After the application's Bevy setup,

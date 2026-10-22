@@ -81,7 +81,8 @@ class DesktopPackageTests(unittest.TestCase):
             "resources/terminal/ATTRIBUTION.txt": "X.Org source/checksum record\n",
             "target/release/bed": "#!/bin/sh\nexit 0\n",
             "target/release/bed2": "#!/bin/sh\nexit 0\n",
-            "bedtime2/crates/bedtime-ui2/assets/fonts/PaperMono-OFL.txt": "Embedded font notice\n",
+            "bedtime2/crates/bedtime-ui2/assets/fonts/NordwandMono-OFL.txt": "Embedded font notice\n",
+            "bedtime2/crates/bedtime-ui2/assets/fonts/UPSTREAM.md": "Bundled Nordwand Mono provenance\n",
             "bedtime2/crates/bedtime-grammars2/grammars/rust/LICENSE": "Embedded Rust grammar notice\n",
             "bedtime2/crates/bedtime-grammars2/sources.json": "[]\n",
             "bedtime2/crates/bedtime-clipboard2/LICENSE-MIT": "Clipboard notice\n",
@@ -196,6 +197,7 @@ else:
                         notice = package.extractfile("usr/share/Bed2/NOTICE").read()
                         self.assertNotIn("usr/bin/bed", package.getnames())
                 self.assertIn(b"Embedded font notice", notice)
+                self.assertIn(b"Bundled Nordwand Mono provenance", notice)
                 self.assertIn(b"Embedded Rust grammar notice", notice)
                 self.assertIn(b"Clipboard notice", notice)
 

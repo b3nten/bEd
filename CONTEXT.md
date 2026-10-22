@@ -51,7 +51,7 @@ an explicit package when working on v2.
   rejects drafts/owned work and detaches its document view; raw bound reparenting is
   unsupported. See the [document contract](MIGRATION/workbench-documents.md).
   Storage I/O, source ordering/CAS, merge algorithms and restore descriptors stay
-  application-owned; bEd2 opens file-backed code viewers through Files, with
+  application-owned; bEd2 opens file-backed code viewers through its shared opening route, with
   canonical history and a source-checked save backend.
 
 Read the current crate README and relevant implementation for the contract.
@@ -67,6 +67,11 @@ Distinguish those plans and historical notes from implemented capabilities.
 
 ## Work status
 
+LSP for v2 is an investigation, with no runtime installed. The
+[proposal and bed1 findings](MIGRATION/lsp2-investigation.md) cover shared-root
+document synchronization, managed server ownership, protocol corrections,
+integration gaps and a staged verification plan. Implementation remains pending.
+
 bEd2 now owns centralized RON `.bed` metadata under the user config directory:
 `preferences.bed` holds global per-value settings and five layout defaults;
 `workspaces/<canonical-root-digest>.bed` combines each folder workspace's overrides,
@@ -75,7 +80,12 @@ or written and no legacy JSON import runs. The default home workspace remains
 memory-only. See the [application contract](bed2/README.md#settings-layouts-and-persistence).
 
 Settings has General, Appearance and Editor sidebar sections, a Global/Workspace
-switch and individual override reset icons. Keybinding configuration is deferred;
+switch and individual override reset icons. Appearance includes font family and
+8–72-point size (default 15.5); Bedfont bundles Nordwand Mono regular/bold, alongside
+installed monospace families. Both values inherit independently and update the
+UI/editor/terminal; missing families retain their preference and use Bedfont.
+See the [font contract](bed2/README.md#settings-layouts-and-persistence).
+Keybinding configuration is deferred;
 fixed Save/Open Folder/Quit and Primary+1–5 shortcuts remain. Document autosave
 supports Never, Change Focus and Timer (default: one second idle), using canonical
 checked saves and the existing quit gates. Numbered slots retain live entities;
@@ -118,10 +128,15 @@ signing and `--install` into an isolated test directory passed on 2026-10-21;
 all 34 script tests passed, including Linux assembly fixtures and installation
 rollback. Native Linux packaging has not been run here.
 The optional `bedtime-terminal2` plugin adds local Unix PTY panels with egui
-input/rendering and workbench-owned cleanup; no SSH, `+` commands or inline images.
-It reuses the v1 headless core without installing its frontend or shell bridge.
+input/rendering and workbench-owned cleanup, plus opt-in local shell aliases and a
+pre-startup helper; no SSH or inline images. It reuses the v1 headless core/command
+transport without installing its frontend or plugin. bEd2 registers `+open`/`+o`: no
+arguments opens/reuses a folder workspace at the caller's cwd; file arguments open
+pinned viewers through the application-owned `opening.rs` route, shared with Files.
+That route owns viewer selection, safe reuse and area placement; unsupported files
+currently use the text viewer's metadata fallback. See [the opening contract](bed2/README.md#opening-from-the-terminal).
 The canvas uses the active UI2 theme's 16 ANSI colors (bed1 Everforest presets),
-real PaperMono bold and a pixel-aligned grid. Tabs follow worker-observed foreground
+real Bedfont bold and a pixel-aligned grid. Tabs follow worker-observed foreground
 process names. Theme edits preserve the session and shell OSC overrides; global
 appearance now has application-owned storage, not terminal-session persistence.
 See the application and terminal
@@ -137,8 +152,9 @@ workspace retirement. Per-panel settings, direct file menus, native drop bridgin
 and root-scoped preferences remain library capabilities. bEd2 installs the tree
 and explicitly chooses home for the default memory workspace, or an explicitly
 opened folder for a persistent workspace root.
-Its `files.rs` routes previews/pinned opens, background loads and visibility
-storage; `file_editor.rs` binds shared documents and checked atomic saves. The
+Its `files.rs` validates tree activations and owns the current viewer backend and
+visibility storage; `opening.rs` routes file/folder opens independently of the tree.
+`file_editor.rs` binds shared documents and checked atomic saves. The
 titlebar Files button exposes this flow. See the application/filetree contracts
 for preview safety, source reconciliation, storage and platform limits.
 
@@ -201,9 +217,12 @@ personal configuration; the application now persists settings.
 ```sh
 cargo build --offline --locked -p bed2 --features automation
 python3 bedtime2/tools/smoke_bed2.py
+python3 bedtime2/tools/smoke_corners.py
 python3 bedtime2/tools/smoke_cube.py
 python3 bedtime2/tools/smoke_tasks.py
 python3 bedtime2/tools/smoke_terminal.py
+python3 bedtime2/tools/smoke_open.py
+python3 bedtime2/tools/smoke_fonts.py
 python3 bedtime2/tools/smoke_code.py
 python3 bedtime2/tools/smoke_editor.py
 python3 bedtime2/tools/smoke_filetree.py

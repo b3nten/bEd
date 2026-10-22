@@ -2012,6 +2012,7 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "blake3",
+ "fontdb",
  "rfd",
  "ron",
  "serde",

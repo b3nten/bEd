@@ -1014,9 +1014,19 @@ world.entity_mut(window).insert(WorkbenchSurface {
 });
 ```
 
-Hit size is measured inward from each layout area's outside corner, including its
-gutter, so resizing a target changes its intrusion into the panel without moving
-the outside anchor. Zero disables corner handles, as does `WorkbenchSurface.drag_corners = false`.
-Targets are capped at half the
-area's shortest side to prevent overlapping corners. Debug paints the same
-rectangles used for egui hit testing; it does not affect their input priority.
+Hit size is measured inward from each visible panel corner after gaps are applied,
+so changing panel spacing moves the handles with the panels. Zero disables corner
+handles, as does `WorkbenchSurface.drag_corners = false`. Targets are capped at
+half the visible panel's shortest side to prevent overlapping corners. Debug
+paints the rectangles registered with egui; egui's normal interaction radius also
+allows nearby presses in the gutter. Hover cursors and drag startup use the same
+egui response, with priority over panel content and below popups/modals.
+
+The native corner regression scenario exercises all four corners, including a
+four-area junction, at 0-, 5-, 16- and 32-point gaps. It splits and rejoins through
+real pointer input, including presses just into the gutter:
+
+```sh
+cargo build --offline --locked -p bed2 --features automation
+python3 bedtime2/tools/smoke_corners.py
+```

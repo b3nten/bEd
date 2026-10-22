@@ -24,7 +24,9 @@ const MAX_PATHS: usize = 64;
 const MAX_CLIENTS: usize = 32;
 const ACCEPTS_PER_POLL: usize = 16;
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(3);
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+// Application handlers may await background file reads/workspace validation.
+// Only the helper process waits; GUI sockets remain nonblocking and bounded.
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_ERROR_CHARS: usize = 1024;
 const MAX_PANE_BYTES: usize = 128;
 #[cfg(test)]
@@ -461,7 +463,8 @@ fn decode_path(bytes: Vec<u8>) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn validate_alias(alias: &str) -> Result<(), String> {
+/// Validate an executable helper name at registration and protocol boundaries.
+pub fn validate_alias(alias: &str) -> Result<(), String> {
     if alias.strip_prefix('+').is_some_and(|name| {
         !name.is_empty()
             && name.len() <= 63

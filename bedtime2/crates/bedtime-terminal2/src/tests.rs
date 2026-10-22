@@ -54,7 +54,15 @@ fn text(app: &App, panel: Entity) -> String {
 fn eventually(app: &mut App, mut condition: impl FnMut(&mut App) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(8);
     while !condition(app) {
-        assert!(Instant::now() < deadline, "Terminal operation timed out");
+        if Instant::now() >= deadline {
+            let statuses: Vec<_> = app
+                .world_mut()
+                .query::<&TerminalPanel>()
+                .iter(app.world())
+                .map(|terminal| terminal.status().clone())
+                .collect();
+            panic!("Terminal operation timed out: {statuses:?}");
+        }
         app.update();
         std::thread::sleep(Duration::from_millis(2));
     }
@@ -678,6 +686,7 @@ fn queue_backpressure_retains_ordered_key_release_and_focus_cleanup_until_delive
     {
         let mut terminal = app.world_mut().get_mut::<TerminalPanel>(panel).unwrap();
         terminal.runtime = Some(Runtime {
+            shell_token: None,
             pty,
             task,
             pending_inputs: VecDeque::new(),
@@ -760,6 +769,7 @@ fn restart_requires_confirmed_cleanup_even_when_cancelled_task_results_are_disca
     {
         let mut terminal = app.world_mut().get_mut::<TerminalPanel>(panel).unwrap();
         terminal.runtime = Some(Runtime {
+            shell_token: None,
             pty,
             task,
             pending_inputs: VecDeque::new(),
@@ -840,6 +850,7 @@ fn stop_bypasses_an_input_byte_budget_blocked_write_without_waiting_for_the_chil
     {
         let mut terminal = app.world_mut().get_mut::<TerminalPanel>(panel).unwrap();
         terminal.runtime = Some(Runtime {
+            shell_token: None,
             pty,
             task,
             pending_inputs: VecDeque::new(),
@@ -870,5 +881,207 @@ fn stop_bypasses_an_input_byte_budget_blocked_write_without_waiting_for_the_chil
             TerminalStatus::Exited(_)
         )
     });
+    finish(&mut app);
+}
+
+#[test]
+fn shell_registration_is_atomic_and_ordinary_launches_are_not_helpers() {
+    fn unused(_: &mut World, _: ShellInvocation) {}
+    let (mut app, _) = host();
+    assert!(
+        app.add_shell_command(["+custom", "+../invalid"], unused)
+            .is_err()
+    );
+    app.add_shell_command(["+custom", "+alias"], unused)
+        .unwrap();
+    assert!(app.add_shell_command(["+new", "+custom"], unused).is_err());
+    app.add_shell_command(["+new"], unused).unwrap();
+    assert!(run_shell_command(["bed2".into(), "folder".into()]).is_none());
+    assert!(run_shell_command(["bed2".into(), "+open".into()]).is_none());
+    use std::os::unix::ffi::OsStringExt;
+    let error = run_shell_command([
+        "/tmp/helpers/+custom".into(),
+        std::ffi::OsString::from_vec(b"bad\0argument".to_vec()),
+    ])
+    .unwrap()
+    .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    app.update();
+    assert!(app.add_shell_command(["+late"], unused).is_err());
+    finish(&mut app);
+}
+
+#[derive(Resource, Default)]
+struct ShellObservations(Vec<ShellInvocation>);
+
+fn capture_shell(world: &mut World, invocation: ShellInvocation) {
+    world.resource_mut::<ShellObservations>().0.push(invocation);
+}
+
+#[cfg(unix)]
+fn shell_client(app: &App, alias: &str, token: &str) -> std::os::unix::net::UnixStream {
+    use std::io::Write;
+    let mut stream =
+        std::os::unix::net::UnixStream::connect(shell_socket_path(app.world()).unwrap()).unwrap();
+    // Native byte arrays exercise non-UTF-8 cwd/arguments without environment
+    // mutation or invoking the test executable as a desktop application.
+    writeln!(stream, r#"{{"command":"invoke","alias":"{alias}","arguments":[[97,255],[]],"directory":[47,116,109,112,255],"pane":"{token}"}}"#).unwrap();
+    stream.set_nonblocking(true).unwrap();
+    stream
+}
+
+#[cfg(unix)]
+fn shell_reply(app: &mut App, stream: &mut std::os::unix::net::UnixStream) -> String {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    eventually(app, |_| {
+        let mut chunk = [0; 4096];
+        match stream.read(&mut chunk) {
+            Ok(0) => panic!("Helper closed without a reply"),
+            Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+            Err(error) => panic!("Helper reply failed: {error}"),
+        }
+        bytes.last() == Some(&b'\n')
+    });
+    String::from_utf8(bytes).unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn shell_commands_preserve_bytes_origin_and_defer_acknowledgement() {
+    use std::{io::Read, os::unix::ffi::OsStrExt};
+    let (mut app, workspace) = host();
+    app.init_resource::<ShellObservations>();
+    app.add_shell_command(["+custom", "+alias"], capture_shell)
+        .unwrap();
+    let panel = panel(
+        &mut app,
+        workspace,
+        script("printf '%s\\n' \"$BEDTERM_SOCKET\" \"$BEDTERM_PANE\"; while read line; do :; done"),
+    );
+    observe(&mut app, panel);
+    eventually(&mut app, |app| {
+        app.world().get::<TerminalPanel>(panel).unwrap().status() == &TerminalStatus::Running
+    });
+    let token = app
+        .world()
+        .get::<TerminalPanel>(panel)
+        .unwrap()
+        .runtime
+        .as_ref()
+        .unwrap()
+        .shell_token
+        .clone()
+        .unwrap();
+    let socket = shell_socket_path(app.world()).unwrap().to_owned();
+    eventually(&mut app, |app| {
+        observe(app, panel);
+        let output = text(app, panel).replace('\n', "");
+        output.contains(socket.to_str().unwrap()) && output.contains(&token)
+    });
+    assert!(
+        app.world()
+            .get::<TerminalPanel>(panel)
+            .unwrap()
+            .options
+            .env
+            .is_empty(),
+        "Bridge environment is applied to the child launch, not saved options"
+    );
+    let other = Workspaces::new(app.world_mut()).open("Other");
+    Workspaces::new(app.world_mut()).activate(other).unwrap();
+    let mut client = shell_client(&app, "+alias", &token);
+    eventually(&mut app, |app| {
+        !app.world().resource::<ShellObservations>().0.is_empty()
+    });
+    let invocation = app
+        .world_mut()
+        .resource_mut::<ShellObservations>()
+        .0
+        .pop()
+        .unwrap();
+    assert_eq!(invocation.panel, panel);
+    assert_eq!(invocation.workspace, workspace.entity());
+    assert_eq!(invocation.alias, "+alias");
+    assert_eq!(invocation.directory.as_os_str().as_bytes(), b"/tmp\xff");
+    assert_eq!(invocation.arguments[0].as_os_str().as_bytes(), b"a\xff");
+    assert!(invocation.arguments[1].is_empty());
+    let mut byte = [0];
+    assert_eq!(
+        client.read(&mut byte).unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    invocation
+        .reply
+        .complete(Err("Application open failed".into()));
+    assert!(shell_reply(&mut app, &mut client).contains("Application open failed"));
+    finish(&mut app);
+    drop(app);
+    assert!(!socket.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn restarted_or_closed_origins_and_abandoned_commands_fail_explicitly() {
+    let (mut app, workspace) = host();
+    app.init_resource::<ShellObservations>();
+    app.add_shell_command(["+custom"], capture_shell).unwrap();
+    let panel = panel(&mut app, workspace, script("while read line; do :; done"));
+    observe(&mut app, panel);
+    eventually(&mut app, |app| {
+        app.world().get::<TerminalPanel>(panel).unwrap().status() == &TerminalStatus::Running
+    });
+    let old = app
+        .world()
+        .get::<TerminalPanel>(panel)
+        .unwrap()
+        .runtime
+        .as_ref()
+        .unwrap()
+        .shell_token
+        .clone()
+        .unwrap();
+    app.world_mut()
+        .get_mut::<TerminalPanel>(panel)
+        .unwrap()
+        .restart();
+    eventually(&mut app, |app| {
+        observe(app, panel);
+        app.world()
+            .get::<TerminalPanel>(panel)
+            .unwrap()
+            .runtime
+            .as_ref()
+            .is_some_and(|r| r.shell_token.as_deref().is_some_and(|token| token != old))
+            && app.world().get::<TerminalPanel>(panel).unwrap().status() == &TerminalStatus::Running
+    });
+    let mut stale = shell_client(&app, "+custom", &old);
+    assert!(shell_reply(&mut app, &mut stale).contains("closed or restarted"));
+    assert!(app.world().resource::<ShellObservations>().0.is_empty());
+    let token = app
+        .world()
+        .get::<TerminalPanel>(panel)
+        .unwrap()
+        .runtime
+        .as_ref()
+        .unwrap()
+        .shell_token
+        .clone()
+        .unwrap();
+    let mut client = shell_client(&app, "+custom", &token);
+    eventually(&mut app, |app| {
+        !app.world().resource::<ShellObservations>().0.is_empty()
+    });
+    app.world_mut()
+        .resource_mut::<ShellObservations>()
+        .0
+        .clear();
+    assert!(shell_reply(&mut app, &mut client).contains("abandoned"));
+    let mut unknown = shell_client(&app, "+unknown", &token);
+    assert!(shell_reply(&mut app, &mut unknown).contains("Unknown shell command"));
+    app.world_mut().despawn(panel);
+    let mut closed = shell_client(&app, "+custom", &token);
+    assert!(shell_reply(&mut app, &mut closed).contains("closed or restarted"));
     finish(&mut app);
 }

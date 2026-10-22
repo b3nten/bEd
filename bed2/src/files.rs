@@ -1,5 +1,8 @@
 //! Application policy for local files: explicit roots, text editors and storage.
 //! The reusable tree never chooses cwd, a viewer, or a persistence destination.
+#[cfg(any(test, feature = "automation"))]
+use crate::opening::open_folder;
+use crate::opening::{FolderOpens, poll_folder_opens};
 #[cfg(test)]
 use bedtime_editor2::BufferEdit;
 use bedtime_editor2::TextBuffer;
@@ -92,77 +95,6 @@ pub struct WorkspaceRoot(pub PathBuf);
 pub struct FolderWorkspace;
 
 #[derive(Resource, Default)]
-struct FolderOpens(Vec<std::thread::JoinHandle<Result<PathBuf, String>>>);
-
-/// Admit an explicit folder choice. Validation/canonicalization is off-thread;
-/// cancellation is represented by not calling this function at all.
-pub fn open_folder(world: &mut World, path: PathBuf) -> Result<(), String> {
-    if !crate::close::accepts_user_actions(world) {
-        return Err("Cancel quit before opening another folder".into());
-    }
-    if !world.contains_resource::<FolderOpens>() {
-        return Err("Files capability is unavailable".into());
-    }
-    world
-        .resource_mut::<FolderOpens>()
-        .0
-        .push(std::thread::spawn(move || resolve_root(Some(path))));
-    Ok(())
-}
-
-fn poll_folder_opens(world: &mut World) {
-    if !crate::close::accepts_user_actions(world) {
-        return;
-    }
-    let completed = {
-        let mut requests = world.resource_mut::<FolderOpens>();
-        let mut completed = Vec::new();
-        let mut index = 0;
-        while index < requests.0.len() {
-            if requests.0[index].is_finished() {
-                let job = requests.0.remove(index);
-                completed.push(
-                    job.join()
-                        .unwrap_or_else(|_| Err("Folder validation worker panicked".into())),
-                );
-            } else {
-                index += 1;
-            }
-        }
-        completed
-    };
-    for result in completed {
-        let result = result.and_then(|root| {
-            let existing = world.query_filtered::<(Entity, &WorkspaceRoot), (With<Workspace>, With<FolderWorkspace>)>()
-                .iter(world).find_map(|(workspace, current)| (current.0 == root).then_some(workspace));
-            if let Some(existing) = existing {
-                let id = Workbench::for_entity(world, existing)?.workspace_id();
-                Workspaces::new(world).activate(id)?;
-                return Ok(());
-            }
-            let name = root.file_name().unwrap_or(root.as_os_str()).to_string_lossy().into_owned();
-            let workspace = Workspaces::new(world).open(name);
-            world.entity_mut(workspace.entity()).insert((WorkspaceRoot(root), FolderWorkspace));
-            Workspaces::new(world).activate(workspace)?;
-            crate::session::remember_initial_state(world, workspace.entity())?;
-            Ok(())
-        });
-        if let Err(error) = result {
-            request_error_dialog(
-                world,
-                ErrorDialog {
-                    title: "Open Folder".into(),
-                    message:
-                        "This folder couldn't be opened. The current workspace was left unchanged."
-                            .into(),
-                    details: Some(error),
-                },
-            );
-        }
-    }
-}
-
-#[derive(Resource, Default)]
 struct StartupRoot {
     // None means no application default was requested, including headless hosts.
     // Some(None) requests the user's home root, without enabling project storage.
@@ -230,7 +162,7 @@ pub fn workspace_directory(world: &World, workspace: Entity) -> Option<PathBuf> 
         .or_else(|| home_directory().ok())
 }
 
-fn resolve_root(requested: Option<PathBuf>) -> Result<PathBuf, String> {
+pub(crate) fn resolve_root(requested: Option<PathBuf>) -> Result<PathBuf, String> {
     let path = match requested {
         Some(path) if path.is_absolute() => path,
         Some(path) => std::env::current_dir()
@@ -754,108 +686,16 @@ fn open_requested(world: &mut World, request: &FileTreeOpenRequested) -> Result<
     if !request.path.starts_with(root) {
         return Err("File open request belongs to an older root".into());
     }
-    let mut workbench = Workbench::for_entity(world, request.panel)?;
+    let workbench = Workbench::for_entity(world, request.panel)?;
     let layout = workbench.panel_layout(request.panel)?;
-    let panels = workbench.panels(layout);
-    let same = panels.iter().copied().find(|panel| {
-        workbench
-            .world()
-            .get::<FilePreviewPanel>(*panel)
-            .is_some_and(|state| state.path.as_ref() == Some(&request.path))
-    });
-    let pin = !matches!(request.activation, FileTreeActivation::SingleClick);
-    if let Some(panel) = same {
-        if pin {
-            workbench
-                .world_mut()
-                .get_mut::<PanelInstance>(panel)
-                .unwrap()
-                .preview = false;
+    let mode = match request.activation {
+        FileTreeActivation::SingleClick => crate::opening::FileOpenMode::Preview,
+        FileTreeActivation::ContextMenu => crate::opening::FileOpenMode::KeepOpen,
+        FileTreeActivation::DoubleClick | FileTreeActivation::Keyboard => {
+            crate::opening::FileOpenMode::Focus
         }
-        workbench.select_panel(panel)?;
-        select_structure_source(workbench.world_mut(), panel);
-        if matches!(
-            request.activation,
-            FileTreeActivation::DoubleClick | FileTreeActivation::Keyboard
-        ) {
-            let area = workbench.world().get::<InArea>(panel).unwrap().0;
-            workbench.focus_area(area)?;
-        }
-        return Ok(panel);
-    }
-    let replace = panels.into_iter().find(|panel| {
-        workbench
-            .world()
-            .get::<FilePreviewPanel>(*panel)
-            .is_some_and(|state| {
-                crate::file_editor::can_replace(workbench.world(), *panel) && {
-                    state.path.is_none()
-                        || workbench
-                            .world()
-                            .get::<PanelInstance>(*panel)
-                            .is_some_and(|instance| instance.preview)
-                }
-            })
-    });
-    let panel = if let Some(panel) = replace {
-        panel
-    } else {
-        // Keep Files visible beside the preview, including for a native second
-        // click. Reuse an editor area; only split when every area contains Files.
-        let source_area = workbench.world().get::<InArea>(request.panel).unwrap().0;
-        let area = workbench
-            .panels(layout)
-            .into_iter()
-            .find_map(|panel| {
-                workbench
-                    .world()
-                    .get::<FilePreviewPanel>(panel)
-                    .and_then(|_| workbench.world().get::<InArea>(panel).map(|owner| owner.0))
-            })
-            .or_else(|| {
-                workbench
-                    .world()
-                    .get::<LayoutAreas>(layout)?
-                    .entities()
-                    .iter()
-                    .copied()
-                    .find(|area| {
-                        *area != source_area
-                            && panels_in_area(workbench.world(), *area)
-                                .iter()
-                                .all(|panel| {
-                                    workbench.world().get::<FileTreePanel>(*panel).is_none()
-                                })
-                    })
-            });
-        let area = match area {
-            Some(area) => area,
-            None => {
-                let bounds = workbench.world().get::<Area>(source_area).unwrap().rect;
-                let at = bounds.min[0] + (bounds.max[0] - bounds.min[0]) * 2 / 5;
-                workbench.split_area(source_area, SplitAxis::Horizontal, at, [1, 1])?
-            }
-        };
-        workbench
-            .world_mut()
-            .spawn((FilePreviewPanel::default(), InArea(area)))
-            .id()
     };
-    workbench
-        .world_mut()
-        .get_mut::<PanelInstance>(panel)
-        .unwrap()
-        .preview = !pin;
-    workbench.select_panel(panel)?;
-    if matches!(
-        request.activation,
-        FileTreeActivation::DoubleClick | FileTreeActivation::Keyboard
-    ) {
-        let area = workbench.world().get::<InArea>(panel).unwrap().0;
-        workbench.focus_area(area)?;
-    }
-    load_preview(workbench.world_mut(), panel, request.path.clone(), false)?;
-    Ok(panel)
+    crate::opening::open_file(world, layout, request.path.clone(), mode).map(|opened| opened.panel)
 }
 
 /// A selected file preview supplies Structure even while Files retains focus.
@@ -877,13 +717,38 @@ pub fn panel_path(world: &World, panel: Entity) -> Option<PathBuf> {
         .and_then(|state| state.path.clone())
 }
 
-/// Restore file capabilities on an already composed concrete Code panel. Reading
-/// remains asynchronous and uses the ordinary generation-gated document flow.
-pub fn restore_file_panel(world: &mut World, panel: Entity, path: PathBuf) -> Result<(), String> {
-    load_preview(world, panel, path, false)
+pub(crate) fn file_open_generation(world: &World, panel: Entity) -> u64 {
+    world.get::<FilePreviewPanel>(panel).unwrap().generation
 }
 
-fn load_preview(
+pub(crate) fn file_open_result(
+    world: &World,
+    panel: Entity,
+    generation: u64,
+) -> Option<Result<(), String>> {
+    let Some(viewer) = world.get::<FilePreviewPanel>(panel) else {
+        return Some(Err("File viewer closed before opening completed".into()));
+    };
+    if viewer.generation != generation {
+        return Some(Err("File viewer changed before opening completed".into()));
+    }
+    if viewer.load.is_some() {
+        return None;
+    }
+    Some(if let Some(error) = &viewer.error {
+        Err(error.clone())
+    } else if viewer.missing {
+        Err("File no longer exists".into())
+    } else if viewer.content.is_none() {
+        Err("File content is unavailable".into())
+    } else {
+        Ok(())
+    })
+}
+
+/// Restore file capabilities on an already composed concrete Code panel. Reading
+/// remains asynchronous and uses the ordinary generation-gated document flow.
+pub(crate) fn load_preview(
     world: &mut World,
     panel: Entity,
     path: PathBuf,
@@ -2130,10 +1995,8 @@ mod tests {
                 .get::<FolderWorkspace>(default_workspace)
                 .is_none()
         );
-        open_folder(app.world_mut(), fixture.0.clone()).unwrap();
-        wait(&mut app, |world| {
-            world.resource::<FolderOpens>().0.is_empty()
-        });
+        let reopened = open_folder(app.world_mut(), fixture.0.clone()).unwrap();
+        wait(&mut app, |_| reopened.lock().unwrap().try_recv().is_ok());
         assert_eq!(
             app.world_mut()
                 .query_filtered::<Entity, With<Workspace>>()
@@ -3546,5 +3409,95 @@ mod tests {
         let fresh = fixture.path("new/.bed/filetree2.json");
         assert!(atomic_write(&fresh, &oversized).is_err());
         assert!(!fixture.path("new").exists());
+    }
+    #[test]
+    fn shared_file_route_opens_without_a_tree_and_preserves_existing_documents() {
+        use crate::opening::{FileOpenMode, open_file};
+        let fixture = Fixture::new();
+        let first = fixture.text("first.rs", "fn first() {}\n");
+        let second = fixture.text("second.rs", "fn second() {}\n");
+        let image = fixture.path("foo.png");
+        fs::write(&image, b"\x89PNG\0binary").unwrap();
+        let mut app = host();
+        let (owner, layout) = workspace(&mut app, "Shared route");
+        let mut workbench = Workbench::for_entity(app.world_mut(), layout).unwrap();
+        let source = workbench.destination_area(layout).unwrap();
+        let largest = workbench
+            .split_area(source, SplitAxis::Horizontal, 2500, [1, 1])
+            .unwrap();
+        let opened =
+            open_file(app.world_mut(), layout, first.clone(), FileOpenMode::Focus).unwrap();
+        assert_eq!(app.world().get::<InArea>(opened.panel).unwrap().0, largest);
+        wait(&mut app, |world| opened.result(world).is_some());
+        opened.result(app.world()).unwrap().unwrap();
+        assert!(
+            !app.world()
+                .get::<PanelInstance>(opened.panel)
+                .unwrap()
+                .preview
+        );
+        let document = edit_text(&mut app, opened.panel, "fn edited() {}\n");
+        let next = open_file(app.world_mut(), layout, second, FileOpenMode::Focus).unwrap();
+        wait(&mut app, |world| next.result(world).is_some());
+        next.result(app.world()).unwrap().unwrap();
+        assert_ne!(opened.panel, next.panel);
+        let reopened = open_file(app.world_mut(), layout, first, FileOpenMode::Focus).unwrap();
+        assert_eq!(reopened.panel, opened.panel);
+        assert_eq!(
+            app.world()
+                .get::<DocumentView>(reopened.panel)
+                .unwrap()
+                .document(),
+            document.id()
+        );
+        assert_eq!(text(&app, reopened.panel), "fn edited() {}\n");
+        let image = open_file(app.world_mut(), layout, image, FileOpenMode::Focus).unwrap();
+        wait(&mut app, |world| image.result(world).is_some());
+        image.result(app.world()).unwrap().unwrap();
+        assert!(matches!(
+            app.world()
+                .get::<FilePreviewPanel>(image.panel)
+                .unwrap()
+                .content,
+            Some(PreviewContent::Metadata(_))
+        ));
+        assert_eq!(viewers(&mut app, owner).len(), 3);
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, With<FileTreePanel>>()
+                .iter(app.world())
+                .count(),
+            0
+        );
+        stop(&mut app);
+    }
+
+    #[test]
+    fn shared_file_open_completion_rejects_replaced_or_closed_viewers() {
+        use crate::opening::{FileOpenMode, open_file};
+        let fixture = Fixture::new();
+        let first = fixture.text("first.rs", "first");
+        let second = fixture.text("second.rs", "second");
+        let mut app = host();
+        let (_, layout) = workspace(&mut app, "Open completion");
+        let first = open_file(app.world_mut(), layout, first, FileOpenMode::Preview).unwrap();
+        let second = open_file(app.world_mut(), layout, second, FileOpenMode::Preview).unwrap();
+        assert_eq!(first.panel, second.panel);
+        assert!(
+            first
+                .result(app.world())
+                .unwrap()
+                .unwrap_err()
+                .contains("changed")
+        );
+        app.world_mut().despawn(second.panel);
+        assert!(
+            second
+                .result(app.world())
+                .unwrap()
+                .unwrap_err()
+                .contains("closed")
+        );
+        stop(&mut app);
     }
 }

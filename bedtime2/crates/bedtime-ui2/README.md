@@ -102,9 +102,13 @@ The built-in themes use bed1's Everforest Medium terminal palettes. These are
 independent of the default foreground/background and are validated alongside the
 semantic colors; terminal consumers own contrast adjustment and OSC overrides.
 
-PaperMono supplies the UI typography, including the matching real bold monospace
+Bedfont (bundled Nordwand Mono 1.3.3) supplies the UI typography, including the matching real bold monospace
 face exposed by `fonts::monospace_bold(size)`. `fonts::definitions()` supplies both
 faces and egui's Unicode fallbacks for hosts customizing their font definitions.
+`fonts::DEFAULT_FAMILY` is the application-facing name, **Bedfont**. The original
+font files are unmodified; [provenance and license](assets/fonts/UPSTREAM.md)
+travel with the embedded assets. System font discovery and selection belong to
+the host application.
 Hosts replacing the definitions must retain that named bold family for terminal
 rendering. Workbench layout and panel configuration
 belongs to the workbench crate's `WorkbenchSurface`, independently of `Theme`.

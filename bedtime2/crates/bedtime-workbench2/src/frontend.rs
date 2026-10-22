@@ -619,11 +619,19 @@ fn surface(r: Rect, model: geometry::Rect, panel_gap: f32) -> Rect {
     Rect::from_corners((r.min + lo).min(max), max)
 }
 
-fn corner_hit_rect(area: Rect, high: [bool; 2], size: f32) -> Rect {
-    let size = size.min(area.width() * 0.5).min(area.height() * 0.5);
+fn corner_hit_rect(surface: Rect, high: [bool; 2], size: f32) -> Rect {
+    let size = size.min(surface.width() * 0.5).min(surface.height() * 0.5);
     let anchor = Vec2::new(
-        if high[0] { area.max.x } else { area.min.x },
-        if high[1] { area.max.y } else { area.min.y },
+        if high[0] {
+            surface.max.x
+        } else {
+            surface.min.x
+        },
+        if high[1] {
+            surface.max.y
+        } else {
+            surface.min.y
+        },
     );
     let inward = Vec2::new(
         if high[0] { -size } else { size },
@@ -1055,7 +1063,7 @@ fn draw(
         egui::Order::Foreground,
         frame.ui.id().with("preview"),
     ));
-    for &(entity, _, r, _) in &visual {
+    for &(entity, _, _, s) in &visual {
         if !settings.layout_editing || !settings.drag_corners {
             continue;
         }
@@ -1064,7 +1072,7 @@ fn draw(
             .into_iter()
             .enumerate()
         {
-            let zone = corner_hit_rect(r, high, settings.hit_size);
+            let zone = corner_hit_rect(s, high, settings.hit_size);
             if zone.width() <= 0.0 || zone.height() <= 0.0 {
                 continue;
             }
@@ -1087,15 +1095,22 @@ fn draw(
                     egui::StrokeKind::Inside,
                 );
             }
-            if !was_interacting && !cancel && state.gesture.is_none() && zone.contains(mouse) {
+            if !was_interacting && !cancel && state.gesture.is_none() {
                 if response.is_some_and(|response| response.is_pointer_button_down_on())
                     && frame
                         .ui
                         .input(|i| i.pointer.button_pressed(PointerButton::Primary))
                 {
+                    // egui owns the hit, including its interaction radius in
+                    // the gutter. The pointer can already have left the handle
+                    // if press and motion events arrived in the same frame.
+                    let start = frame
+                        .ui
+                        .input(|i| i.pointer.press_origin())
+                        .map_or(mouse, |p| Vec2::new(p.x, p.y));
                     state.gesture = Some(Gesture::Corner {
                         area: entity,
-                        start: mouse,
+                        start,
                         axis: None,
                     });
                     edits.push(LayoutEdit::FocusArea(entity));
@@ -2439,7 +2454,7 @@ mod tests {
     }
 
     #[test]
-    fn corner_hit_targets_grow_inward_from_each_outside_corner() {
+    fn corner_hit_targets_grow_inward_from_each_visible_panel_corner() {
         let area = Rect::from_corners(Vec2::new(50.0, 75.0), Vec2::new(450.0, 375.0));
         for (high, anchor, direction) in [
             ([false, false], area.min, Vec2::new(1.0, 1.0)),

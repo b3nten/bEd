@@ -52,6 +52,56 @@ start or explicit `restart()`. Cwd/environment setup affects the child, not the
 application. Without a directory override, the child inherits the application's
 working directory. `TERM_PROGRAM` defaults to `bed2` unless explicitly overridden.
 
+## Local shell commands
+
+Applications opt in by registering aliases and handling helper invocations before
+constructing the App:
+
+```rust,ignore
+use bedtime_terminal2::ShellCommandsAppExt;
+
+fn main() -> bevy::app::AppExit {
+    if let Some(exit) = bedtime_terminal2::handle_shell_command() {
+        return exit;
+    }
+    let mut app = bevy::prelude::App::new();
+    // Install normal Bevy, UI2, Workbench and TerminalPlugin capabilities.
+    app.add_shell_command(["+open", "+o"], open_from_shell)
+        .expect("Unique application shell aliases");
+    app.run()
+}
+```
+
+`run_shell_command(args_os)` is the lower-level, injectable variant, returning
+`Option<io::Result<()>>`. Both recognize the executable basename, so ordinary
+application arguments remain application-owned. A recognized helper failure must
+exit instead of starting a GUI. `handle_shell_command()` prints the error and
+returns an unsuccessful `AppExit`; neither helper terminates the process itself.
+
+`add_shell_command` accepts a `fn(&mut World, ShellInvocation)` handler. Register
+aliases before the first update; malformed/duplicate registrations fail atomically.
+No aliases means no command socket or helpers. Startup creates a private Unix
+socket and executable symlinks to this application's binary. Each child launch
+receives its helper PATH, endpoint and a fresh runtime token; saved launch options
+and the application's environment are untouched. Inherited parent endpoints and
+origins are removed, including when commands are disabled in a nested application.
+
+Handlers run during `TerminalSystems::Update`, after terminal observations. The
+invocation contains native `OsString` arguments, the helper's current directory,
+and the validated originating panel/workspace, independent of current focus or
+workspace activation. Restarted, stopped or closed origins are rejected. Command
+semantics, file/viewer routing and quit/readiness policy belong to the application.
+Workbench's argument-free contextual command API is unchanged.
+
+Complete `invocation.reply` with `Result<(), String>`. For asynchronous operations,
+retain it with the pending operation and complete it after its actual result;
+dropping it without completion returns an explicit abandonment error. Socket
+polling never waits for the handler's work. The helper waits at most 60 seconds;
+a timeout does not roll back an accepted application operation and is not retried.
+`shell_socket_path(world)` exposes the live endpoint
+for read-only integration. Socket/helper cleanup follows application exit/drop;
+no system-wide helper installation or separate executable build is needed.
+
 ## Ownership and lifecycle
 
 - An unshown panel is `Pending`. Its first content-size observation allows the
@@ -91,9 +141,10 @@ and usable after its shell has exited.
 
 The v2 crate reuses `bedtime-terminal` with default features disabled for its
 headless `rio-vt` model, bounded command queues, keyboard/paste encoding and Unix
-PTY implementation. It does **not** install v1's ImGui frontend, `BedTerminal`,
-terminal plugin, helper executables or command socket. The shared backend's
-prepared worker runs directly in the workbench-owned task.
+PTY implementation, plus its bounded local shell-command transport. It does
+**not** install v1's ImGui frontend, `BedTerminal` or terminal plugin. V2 owns its
+command registrations and terminal-origin validation. The shared backend's prepared
+worker runs directly in the workbench-owned task.
 
 The frontend is an ordinary egui fixed-grid canvas. Workbench supplies panel
 layout/clipping; the terminal owns focus-sensitive input and scrolling. Registered
@@ -119,7 +170,7 @@ differ from their resolved terminal colors. Explicit xterm-256/truecolor output
 and shell OSC palette/default/cursor overrides remain intact. OSC resets return
 to the current host theme, not the startup theme.
 
-UI2 supplies PaperMono regular and real bold with matching cell metrics and egui
+UI2 supplies Bedfont (Nordwand Mono) regular and real bold with matching cell metrics and egui
 Unicode fallbacks. Faint takes precedence over bold weight and bold-to-bright
 color. Italics use egui's synthetic shear. Grid origins, cells and glyph placement
 align to physical pixels at the current display scale; wide/combining clusters
@@ -141,8 +192,8 @@ UI release this canvas's held input without consuming another widget's events.
 
 - Native backend: macOS/Linux (Unix PTY); Windows PTY support is not implemented.
 - Local processes only: no SSH session or remote-workspace integration.
-- No `+` commands, shell acceptance hooks, app-command composer or executable
-  entrypoint. Input is ordinary terminal input.
+- Local `+` helpers are opt-in application commands; no shell acceptance hooks
+  or app-command composer. Ordinary input remains terminal input.
 - Inline terminal images are disabled, including graphics protocol processing.
   The bounded streaming filter also omits DCS protocols (including DCS queries and
   passthrough) and OSC 1337 user variables. CSI synchronized updates and ordinary
@@ -173,6 +224,7 @@ cargo test --offline --locked -p bedtime-terminal2
 cargo check --offline --locked -p bed2
 cargo build --offline --locked -p bed2 --features automation
 python3 bedtime2/tools/smoke_terminal.py
+python3 bedtime2/tools/smoke_open.py
 ```
 
 The test suite targets concrete composition/lazy startup, actual local PTY I/O,
@@ -185,6 +237,14 @@ truecolor and OSC override/reset behavior. It also checks that the running canva
 has no duplicate heading or Stop button, while the panel tab and exit/restart UI
 remain available. These commands are verification recipes, not a claim that they
 have passed on every platform.
+
+Shell commands were verified on 2026-10-22 on macOS: all 47 Terminal2 tests and
+11 shared transport tests passed. The new tests exercise deferred/error replies,
+native argument/cwd bytes, inactive-workspace origins, restart/close rejection,
+abandoned handlers and atomic registration. Unix socket tests require execution
+outside the macOS filesystem sandbox. `smoke_open.py` passed against the native
+automation application, including pre-GUI helper failure and saved-session loading
+through the shell's cwd. See the [application opening contract](../../../bed2/README.md#opening-from-the-terminal).
 
 The results below are historical, predating the entity-first refactor; they do
 not establish verification of the current in-progress worktree.

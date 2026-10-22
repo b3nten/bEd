@@ -17,7 +17,7 @@ pub struct WorkbenchSurface {
     pub padding: [f32; 2],
     /// Spacing in egui points between panels and from panels to shell edges.
     pub panel_gap: f32,
-    /// Corner-target size, measured inward from the area's outside corner.
+    /// Corner-target size, measured inward from the visible panel corner after gaps.
     /// Zero disables corner handles.
     pub hit_size: f32,
     pub debug: bool,

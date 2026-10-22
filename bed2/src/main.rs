@@ -12,9 +12,11 @@ mod cube;
 mod effects;
 mod file_editor;
 mod files;
+mod fonts;
 mod keybindings;
 mod layouts;
 mod menus;
+mod opening;
 mod session;
 mod settings;
 mod storage;
@@ -22,6 +24,10 @@ mod tasks;
 mod terminal;
 
 fn main() -> AppExit {
+    if let Some(exit) = bedtime_terminal2::handle_shell_command() {
+        return exit;
+    }
+
     let mut app = App::new();
 
     app.add_plugins((

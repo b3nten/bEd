@@ -37,8 +37,9 @@ and drawing immediately; there is no panel registry or delayed panel initializat
 `menus.rs` owns creation choices, and `main.rs` renders the titlebar.
 `cube.rs` owns the shared cube/ground/light scene and viewport implementation;
 `tasks.rs` adds the Tasks & Processes panel. `bedtime-terminal2::TerminalPlugin` adds local shell
-panels; `terminal.rs` contributes optional automation inspection.
-`files.rs` installs the file tree and file-backed Code panels; `file_editor.rs`
+panels; `terminal.rs` owns `+open`/`+o` integration and optional automation inspection.
+`opening.rs` owns file/folder opening, viewer selection, tab reuse and area
+placement. `files.rs` installs the file tree and the current file viewer; `file_editor.rs`
 owns their canonical document bindings and save backend. `code.rs` supplies
 canvas context-menu actions, analysis execution and the application-owned
 [Structure viewer](crates/bed-structure2/README.md).
@@ -49,9 +50,9 @@ without changing area focus. `select_panel` and `focus_area` are independent;
 `focus_panel` explicitly does both. Workbench hooks maintain ownership and fallback
 selection/focus immediately as composition applies.
 
-The memory-only Documents and Hello World demos remain removed. The file tree is
-the application entry point for opening documents; the standalone library examples
-remain available independently.
+The memory-only Documents and Hello World demos remain removed. Files and terminal
+helpers share the application opening route; opening a file needs no Files panel.
+The standalone library examples remain available independently.
 
 ## Local packages and installation
 
@@ -156,6 +157,46 @@ home contains an existing `.bed` directory. The reusable plugin chooses neither
 cwd nor storage itself. Core Workbench snapshots/restoration remain removed; application session recipes
 are described below.
 
+## Opening from the terminal
+
+Local terminals provide `+open` and `+o` through Terminal2's optional shell-command
+API. Main handles helper invocations before constructing Bevy or initializing a
+window/renderer. Helpers are private symlinks to the running executable, added to
+child PATH; no separate helper binary is packaged or installed globally.
+
+- `+open` opens the calling shell's current directory as a folder workspace,
+  activating an existing workspace for its canonical root or creating one and
+  loading its stored session. The temporary home workspace is retained.
+- `+open .` or one explicit directory uses that same folder-opening path.
+- `+open FILE ...` resolves paths relative to the calling shell's actual cwd,
+  including after `cd`, and opens pinned tabs in the originating workspace/layout.
+  `+o` is an alias with identical behavior. Supply directories separately from files.
+
+`opening.rs` is the shared route for file-opening intentions. Files validates its
+source panel/root and supplies preview/pin/focus intent; shell commands supply
+validated runtime origin and paths. The route owns viewer selection, same-layout
+reuse, protected preview replacement and placement. Currently every file uses the
+text/metadata viewer: a PNG opens as binary metadata, until an image viewer is
+implemented. Future viewer/area rules belong here, not in the tree or terminal.
+An existing viewer area is preferred; otherwise use the largest area without Files,
+splitting only when every area contains a tree. Reopening a file preserves its
+canonical document and unsaved edits.
+
+File helpers acknowledge after loads and document binding finish; missing files,
+closed origins and load failures return a nonzero exit status with a diagnostic.
+Folder helpers acknowledge validated workspace activation; normal session restore
+continues through the existing loading/error UI. Switching focus/workspaces cannot
+redirect an accepted file open. Commands respect quit and workspace readiness gates.
+The shared transport times out after 60 seconds without automatically retrying or
+rolling back an accepted operation.
+
+Verified on 2026-10-22: 99 application tests passed (the native GPU benchmark was
+left ignored), along with 47 Terminal2 tests and 11 shared transport tests. The
+native macOS/Metal `smoke_open.py` scenario passed two captures, exercising real
+helper dispatch, cwd workspace creation/reuse, relative paths with spaces, binary
+metadata, alias/reopen behavior, error exit status and saved-session restoration
+through no-argument `+open`. Native Linux was not exercised.
+
 ## Code and Structure
 
 Open a file through **Files**, then choose **Structure** from the application's
@@ -225,7 +266,7 @@ alternate screen, mouse reporting and resize use the headless terminal core with
 a new egui canvas. The terminal follows the active theme's font size, default and
 ANSI colors, with bed1's Everforest palettes for dark/light presets. Changing the Settings theme recolors existing indexed output without restarting
 the shell. The library also supports application-supplied ANSI palettes. Explicit truecolor and shell
-OSC overrides remain intact. PaperMono bold uses the actual bold face rather than
+OSC overrides remain intact. Bedfont bold uses the actual bold face rather than
 an overstrike; faint suppresses bold, and the grid/text align to physical pixels.
 Tabs follow the local foreground process (falling back to the shell name), and
 return to the shell when a job finishes. Names are observed off the UI thread,
@@ -247,9 +288,9 @@ background inherits panel opacity without adding another background layer.
   reconstruct a terminal panel, which starts lazily, never from a persisted PID or
   transcript. Startup waits for root/preferences readiness, and uses home for the
   default workspace or the explicit folder root (unless launch policy is overridden).
-  No shell helper executable or extra entrypoint is installed.
+  Local `+open`/`+o` helpers use the pre-startup dispatch described above.
 
-Initial support is macOS/Linux only, without SSH, `+` commands, inline images or
+Initial support is macOS/Linux only, without SSH, inline images or
 shared debugger sessions. Fonts determine glyph coverage; cross-cell contextual
 shaping, bidi reordering and color emoji are not implemented. The text-only parser
 also omits DCS protocols and OSC 1337. See the
@@ -277,7 +318,7 @@ Settings has no header or storage-location prose. Its sidebar contains:
 
 - **General:** Open last workspace on open (Global only, default off), Autosave
   (Never, Change Focus, Timer), plus timeout for Timer.
-- **Appearance:** Dark/Light theme, window opacity, macOS-only blur, panel opacity,
+- **Appearance:** Font family and size, Dark/Light theme, window opacity, macOS-only blur, panel opacity,
   border radius/gap, file-tree indentation and shader effects.
 - **Editor:** Line numbers, smart wrapping and smart indentation, all enabled by default.
 
@@ -295,6 +336,24 @@ appearance to the window. Keybinding settings are deferred; Save, Open Folder,
 Quit and layouts retain fixed Primary+S/O/Q and Primary+1–5 shortcuts. Primary is
 Command on macOS and Control elsewhere. Widget-owned editing shortcuts retain
 first refusal. The standalone Theme editor is retired.
+
+**Font family** defaults to **Bedfont**, the bundled regular/bold Nordwand Mono
+1.3.3 faces. The picker also lists installed system/user monospace families;
+fixed-width primary faces preserve editor wrapping and terminal cell geometry.
+**Font size** defaults to 15.5 points and accepts 8–72 points. Both values apply
+to the UI, code editor and terminal, with independent Global/Workspace inheritance.
+Changing fonts retains documents and running shells. A missing or unreadable
+installed family falls back to Bedfont while retaining the saved family name.
+The catalog is scanned once per launch; restart after installing a font.
+
+The RON settings fields are `font_family: "Bedfont"` and `font_size: 15.5`.
+Older records acquire these defaults. Bundled Unicode fallbacks remain available,
+and installed families use their closest available regular/bold weights. UI2 owns
+the bundled bytes and [font provenance](../bedtime2/crates/bedtime-ui2/assets/fonts/UPSTREAM.md);
+`fonts.rs` owns application family discovery, resolution and context replacement.
+After building with `--features automation`, `python3 bedtime2/tools/smoke_fonts.py`
+checks the real picker, live terminal resize, inheritance, fallback and persistence
+using an isolated config root.
 
 **Shader effects** enables whole-window CRT processing, disabled by default.
 Independent 0–1 sliders control scanlines, vignette, bloom, static noise,
@@ -427,6 +486,7 @@ python3 bedtime2/tools/smoke_bed2.py
 python3 bedtime2/tools/smoke_cube.py
 python3 bedtime2/tools/smoke_tasks.py
 python3 bedtime2/tools/smoke_terminal.py
+python3 bedtime2/tools/smoke_open.py
 python3 bedtime2/tools/smoke_code.py
 python3 bedtime2/tools/smoke_editor.py
 python3 bedtime2/tools/smoke_filetree.py

@@ -2,6 +2,8 @@
 use egui::{FontData, FontDefinitions, FontFamily, FontId};
 use std::sync::Arc;
 
+pub const DEFAULT_FAMILY: &str = "Bedfont";
+
 /// The bold companion to `FontId::monospace`, installed by UI2.
 /// Hosts replacing the font definitions should retain this family and supply
 /// their chosen monospace bold face with matching cell metrics.
@@ -9,18 +11,18 @@ pub fn monospace_bold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("Monospace Bold".into()))
 }
 
-/// PaperMono regular/bold, retaining egui's Unicode fallback fonts. Applications
+/// Bedfont (bundled Nordwand Mono) regular/bold, retaining egui's Unicode fallbacks. Applications
 /// can customize these definitions before passing them to `Context::set_fonts`.
 pub fn definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     for (name, bytes) in [
         (
-            "PaperMono",
-            include_bytes!("../assets/fonts/PaperMono-Regular.ttf").as_slice(),
+            DEFAULT_FAMILY,
+            include_bytes!("../assets/fonts/NordwandMono-Regular.ttf").as_slice(),
         ),
         (
-            "PaperMono-Bold",
-            include_bytes!("../assets/fonts/PaperMono-Bold.ttf").as_slice(),
+            "Bedfont-Bold",
+            include_bytes!("../assets/fonts/NordwandMono-Bold.ttf").as_slice(),
         ),
     ] {
         fonts
@@ -32,10 +34,10 @@ pub fn definitions() -> FontDefinitions {
             .families
             .get_mut(&family)
             .unwrap()
-            .insert(0, "PaperMono".into());
+            .insert(0, DEFAULT_FAMILY.into());
     }
     let mut bold = fonts.families[&FontFamily::Monospace].clone();
-    bold.insert(0, "PaperMono-Bold".into());
+    bold.insert(0, "Bedfont-Bold".into());
     fonts.families.insert(monospace_bold(1.0).family, bold);
     fonts
 }

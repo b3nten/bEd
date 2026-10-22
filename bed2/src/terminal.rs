@@ -1,11 +1,201 @@
-//! Application-only terminal observations. Shell input uses the normal UI path.
-use bevy::prelude::App;
+//! Application-owned shell commands and optional terminal observations.
+use bedtime_terminal2::{
+    ShellCommandsAppExt, ShellInvocation, ShellReply, TerminalPanel, TerminalSystems,
+};
+use bedtime_workbench2::{InWorkspace, Workbench, WorkspaceTask, WorkspaceWork};
+use bevy::prelude::*;
+use std::{ffi::OsString, path::PathBuf, sync::mpsc};
 
-pub fn install(_app: &mut App) {
+pub fn install(app: &mut App) {
+    app.init_resource::<ShellOpens>()
+        .add_shell_command(["+open", "+o"], open_from_shell)
+        .expect("Application shell aliases")
+        .add_systems(
+            Update,
+            poll_opens
+                .after(TerminalSystems::Update)
+                .after(crate::files::FilesSystems::Update)
+                .before(crate::close::CloseSystems::Update),
+        );
     #[cfg(feature = "automation")]
     {
         use bedtime_automation2::AutomationAppExt;
-        _app.register_automation_command("app.inspect_terminal", inspect);
+        app.register_automation_command("app.inspect_terminal", inspect);
+    }
+}
+
+enum OpenTargets {
+    Folder(PathBuf),
+    Files(Vec<PathBuf>),
+}
+
+enum OpenStage {
+    Resolve {
+        layout: Entity,
+        task: WorkspaceTask<Result<OpenTargets, String>>,
+    },
+    Folder(crate::opening::FolderOpenResult),
+    Files(Vec<crate::opening::OpenedFile>),
+}
+
+struct ShellOpen {
+    panel: Entity,
+    workspace: Entity,
+    stage: OpenStage,
+    reply: ShellReply,
+}
+
+#[derive(Resource, Default)]
+struct ShellOpens(Vec<ShellOpen>);
+
+fn resolve_targets(directory: PathBuf, arguments: Vec<OsString>) -> Result<OpenTargets, String> {
+    let mut files = Vec::with_capacity(arguments.len());
+    for argument in &arguments {
+        if argument.is_empty() {
+            return Err("File path must not be empty".into());
+        }
+        let path = directory.join(argument);
+        let path = path
+            .canonicalize()
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        let metadata = path
+            .metadata()
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        if metadata.is_dir() {
+            return if arguments.len() == 1 {
+                Ok(OpenTargets::Folder(path))
+            } else {
+                Err("Open a directory on its own, or supply only file paths".into())
+            };
+        }
+        files.push(path);
+    }
+    Ok(OpenTargets::Files(files))
+}
+
+fn open_from_shell(world: &mut World, invocation: ShellInvocation) {
+    let ShellInvocation {
+        arguments,
+        directory,
+        panel,
+        workspace,
+        reply,
+        ..
+    } = invocation;
+    let result = (|| {
+        if !crate::close::accepts_user_actions(world) {
+            return Err("Cancel quit before opening files or a workspace".into());
+        }
+        if arguments.is_empty() {
+            return crate::opening::open_folder(world, directory).map(OpenStage::Folder);
+        }
+        if !crate::storage::ready(world, workspace) {
+            return Err(
+                "The originating workspace is still loading or has a settings error".into(),
+            );
+        }
+        let layout = Workbench::for_entity(world, panel)?.panel_layout(panel)?;
+        let task = world
+            .get_mut::<WorkspaceWork>(workspace)
+            .ok_or("Workspace work is unavailable")?
+            .spawn_task(Some(panel), "Resolve shell paths", move |cancel| {
+                if cancel.is_cancelled() {
+                    return Err("File opening cancelled".into());
+                }
+                resolve_targets(directory, arguments)
+            })?;
+        Ok(OpenStage::Resolve { layout, task })
+    })();
+    match result {
+        Ok(stage) => world.resource_mut::<ShellOpens>().0.push(ShellOpen {
+            panel,
+            workspace,
+            stage,
+            reply,
+        }),
+        Err(error) => reply.complete(Err(error)),
+    }
+}
+
+fn poll_opens(world: &mut World) {
+    let pending = std::mem::take(&mut world.resource_mut::<ShellOpens>().0);
+    for mut request in pending {
+        let result = (|| -> Result<bool, String> {
+            if !crate::close::accepts_user_actions(world) {
+                return Err("File opening cancelled while quitting".into());
+            }
+            if world.get::<TerminalPanel>(request.panel).is_none()
+                || world
+                    .get::<InWorkspace>(request.panel)
+                    .is_none_or(|owner| owner.0 != request.workspace)
+                || world
+                    .get::<WorkspaceWork>(request.workspace)
+                    .is_none_or(WorkspaceWork::is_closing)
+            {
+                return Err("The originating terminal or workspace has closed".into());
+            }
+            match &mut request.stage {
+                OpenStage::Resolve { layout, task } => {
+                    let targets = match task.try_recv() {
+                        Ok(result) => result?,
+                        Err(mpsc::TryRecvError::Empty) => return Ok(false),
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            return Err("Shell path validation was cancelled".into());
+                        }
+                    };
+                    request.stage = match targets {
+                        OpenTargets::Folder(root) => {
+                            OpenStage::Folder(crate::opening::open_folder(world, root)?)
+                        }
+                        OpenTargets::Files(paths) => {
+                            if world
+                                .get::<InWorkspace>(*layout)
+                                .is_none_or(|owner| owner.0 != request.workspace)
+                            {
+                                return Err("The originating layout has closed".into());
+                            }
+                            let files = paths
+                                .into_iter()
+                                .map(|path| {
+                                    crate::opening::open_file(
+                                        world,
+                                        *layout,
+                                        path,
+                                        crate::opening::FileOpenMode::Focus,
+                                    )
+                                })
+                                .collect::<Result<_, _>>()?;
+                            OpenStage::Files(files)
+                        }
+                    };
+                    Ok(false)
+                }
+                OpenStage::Folder(result) => {
+                    match result.get_mut().expect("Folder result lock").try_recv() {
+                        Ok(result) => result.map(|_| true),
+                        Err(mpsc::TryRecvError::Empty) => Ok(false),
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            Err("Workspace opening was cancelled".into())
+                        }
+                    }
+                }
+                OpenStage::Files(files) => {
+                    let mut finished = true;
+                    for file in files {
+                        match file.result(world) {
+                            Some(result) => result?,
+                            None => finished = false,
+                        }
+                    }
+                    Ok(finished)
+                }
+            }
+        })();
+        match result {
+            Ok(false) => world.resource_mut::<ShellOpens>().0.push(request),
+            Ok(true) => request.reply.complete(Ok(())),
+            Err(error) => request.reply.complete(Err(error)),
+        }
     }
 }
 

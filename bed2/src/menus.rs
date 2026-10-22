@@ -398,7 +398,7 @@ fn poll_folder_dialog(world: &mut World) {
         }
     };
     if let Some(folder) = selected {
-        if let Err(error) = crate::files::open_folder(world, folder.path().to_path_buf()) {
+        if let Err(error) = crate::opening::open_folder(world, folder.path().to_path_buf()) {
             request_error_dialog(
                 world,
                 ErrorDialog {

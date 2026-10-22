@@ -32,15 +32,15 @@ macro_rules! settings {
         pub struct SettingsOverrides { $(pub $field: Option<$ty>,)* }
         impl SettingsOverrides {
             pub fn resolve(&self, global: &Settings) -> Settings {
-                Settings { $($field: self.$field.unwrap_or(global.$field),)* }
+                Settings { $($field: self.$field.clone().unwrap_or_else(|| global.$field.clone()),)* }
             }
             pub fn merge_loaded(baseline: &Self, live: &Self, disk: &Self) -> Self {
-                Self { $($field: if live.$field == baseline.$field { disk.$field } else { live.$field },)* }
+                Self { $($field: if live.$field == baseline.$field { disk.$field.clone() } else { live.$field.clone() },)* }
             }
         }
         impl Settings {
             pub fn merge_loaded(baseline: &Self, live: &Self, disk: &Self) -> Self {
-                Self { $($field: if live.$field == baseline.$field { disk.$field } else { live.$field },)* }
+                Self { $($field: if live.$field == baseline.$field { disk.$field.clone() } else { live.$field.clone() },)* }
             }
         }
     }
@@ -49,6 +49,8 @@ settings! {
     autosave: Autosave = Autosave::Timer,
     autosave_timeout: f64 = 1.0,
     theme: ThemeChoice = ThemeChoice::Dark,
+    font_family: String = bedtime_ui2::fonts::DEFAULT_FAMILY.into(),
+    font_size: f32 = 15.5,
     window_opacity: f32 = 1.0,
     window_blur: bool = false,
     panel_opacity: f32 = 1.0,
@@ -70,6 +72,15 @@ settings! {
 }
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
+        if self.font_family.trim().is_empty()
+            || self.font_family.len() > 256
+            || self.font_family.chars().any(char::is_control)
+        {
+            return Err("Font family must be a nonempty name of at most 256 bytes".into());
+        }
+        if !self.font_size.is_finite() || !(8.0..=72.0).contains(&self.font_size) {
+            return Err("Font size must be between 8 and 72 points".into());
+        }
         if !self.autosave_timeout.is_finite() || !(0.01..=86400.0).contains(&self.autosave_timeout)
         {
             return Err("Autosave timeout must be between 0.01 and 86400 seconds".into());
@@ -204,6 +215,12 @@ impl Plugin for SettingsPlugin {
             .add_systems(
                 Update,
                 update_preferences.before(bedtime_filetree2::FileTreeSystems::Update),
+            )
+            .add_systems(
+                PreUpdate,
+                crate::fonts::apply
+                    .after(bedtime_ui2::UiSystems::Configure)
+                    .before(bedtime_ui2::UiSystems::Draw),
             );
         #[cfg(feature = "automation")]
         {
@@ -247,6 +264,7 @@ fn apply_appearance(world: &mut World) {
         };
         palette.palette.background[3] = desired.window_opacity;
         palette.palette.panel_background[3] = desired.panel_opacity;
+        palette.metrics.font_size = desired.font_size;
         world.entity_mut(theme).insert(palette);
         let mut style = world.get_mut::<WorkbenchSurface>(surface).unwrap();
         style.rounding = desired.panel_radius;
@@ -418,7 +436,7 @@ impl Panel for SettingsPanel {
                             ($field:ident, $draw:expr) => {{
                                 ui.horizontal(|ui| {
                                     if ($draw)(ui, &mut values.$field).changed() && local {
-                                        overrides.$field = Some(values.$field);
+                                        overrides.$field = Some(values.$field.clone());
                                     }
                                     if local
                                         && overrides.$field.is_some()
@@ -428,7 +446,7 @@ impl Panel for SettingsPanel {
                                             .clicked()
                                     {
                                         overrides.$field = None;
-                                        values.$field = global.$field;
+                                        values.$field = global.$field.clone();
                                     }
                                 });
                             }};
@@ -479,6 +497,31 @@ impl Panel for SettingsPanel {
                                 }
                             }
                             Section::Appearance => {
+                                row!(font_family, |ui: &mut egui::Ui, value: &mut String| {
+                                    ui.label("Font family");
+                                    let before = value.clone();
+                                    let mut response = egui::ComboBox::from_id_salt("font-family")
+                                        .selected_text(value.as_str())
+                                        .height(300.0)
+                                        .show_ui(ui, |ui| {
+                                            for family in crate::fonts::available() {
+                                                ui.selectable_value(value, family.clone(), family);
+                                            }
+                                        })
+                                        .response;
+                                    if !crate::fonts::available().contains(value) {
+                                        ui.label("Unavailable; using Bedfont");
+                                    }
+                                    if before != *value {
+                                        response.mark_changed();
+                                    }
+                                    response
+                                });
+                                row!(font_size, |ui: &mut egui::Ui, value: &mut f32| ui.add(
+                                    egui::Slider::new(value, 8.0..=72.0)
+                                        .text("Font size")
+                                        .suffix(" pt")
+                                ));
                                 row!(theme, |ui: &mut egui::Ui, value: &mut ThemeChoice| {
                                     ui.label("Theme");
                                     let before = *value;
@@ -644,6 +687,26 @@ mod tests {
     }
     #[test]
     fn invalid_settings_are_rejected_at_the_boundary() {
+        for size in [0.0, 7.9, 72.1, f32::INFINITY, f32::NAN] {
+            assert!(
+                SettingsOverrides {
+                    font_size: Some(size),
+                    ..default()
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        for name in ["".into(), "  ".into(), "bad\nfont".into(), "x".repeat(257)] {
+            assert!(
+                SettingsOverrides {
+                    font_family: Some(name),
+                    ..default()
+                }
+                .validate()
+                .is_err()
+            );
+        }
         for field in [
             "scanline_intensity",
             "vignette_intensity",
@@ -686,6 +749,8 @@ mod tests {
     #[test]
     fn old_preferences_default_effects_off_and_overrides_inherit_individual_values() {
         let old: Settings = ron::from_str("(panel_gap: 9.0)").unwrap();
+        assert_eq!(old.font_family, "Bedfont");
+        assert_eq!(old.font_size, 15.5);
         assert!(!old.effects_enabled);
         let global = Settings {
             effects_enabled: true,
@@ -705,6 +770,45 @@ mod tests {
         assert_eq!(overrides.resolve(&global), global);
     }
     #[test]
+    fn font_settings_round_trip_merge_and_inherit_independently() {
+        let baseline = Settings::default();
+        let global = Settings {
+            font_family: "An installed family".into(),
+            font_size: 18.0,
+            ..baseline.clone()
+        };
+        let global: Settings = ron::from_str(&ron::to_string(&global).unwrap()).unwrap();
+        let local = SettingsOverrides {
+            font_family: Some("A workspace family".into()),
+            ..default()
+        };
+        let mut local: SettingsOverrides = ron::from_str(&ron::to_string(&local).unwrap()).unwrap();
+        assert_eq!(local.resolve(&global).font_family, "A workspace family");
+        assert_eq!(local.resolve(&global).font_size, 18.0);
+        local.font_family = None;
+        local.font_size = Some(24.0);
+        assert_eq!(local.resolve(&global).font_family, "An installed family");
+        assert_eq!(local.resolve(&global).font_size, 24.0);
+        let live = Settings {
+            font_family: "Live family".into(),
+            ..baseline.clone()
+        };
+        let merged = Settings::merge_loaded(&baseline, &live, &global);
+        assert_eq!(merged.font_family, "Live family");
+        assert_eq!(merged.font_size, 18.0);
+        let merged = SettingsOverrides::merge_loaded(
+            &SettingsOverrides::default(),
+            &local,
+            &SettingsOverrides {
+                font_family: Some("Loaded family".into()),
+                font_size: Some(30.0),
+                ..default()
+            },
+        );
+        assert_eq!(merged.font_family.as_deref(), Some("Loaded family"));
+        assert_eq!(merged.font_size, Some(24.0));
+    }
+    #[test]
     fn workspace_switch_applies_appearance_without_changing_global_values() {
         let mut app = App::new();
         app.add_plugins(bedtime_workbench2::WorkbenchCorePlugin)
@@ -718,6 +822,7 @@ mod tests {
                 theme: Some(ThemeChoice::Light),
                 window_opacity: Some(0.5),
                 panel_gap: Some(12.0),
+                font_size: Some(22.0),
                 ..default()
             }));
         let theme = app.world_mut().spawn(themes::dark()).id();
@@ -731,6 +836,14 @@ mod tests {
         apply_appearance(app.world_mut());
         assert_eq!(
             app.world()
+                .get::<bedtime_ui2::Theme>(theme)
+                .unwrap()
+                .metrics
+                .font_size,
+            15.5
+        );
+        assert_eq!(
+            app.world()
                 .get::<WorkbenchSurface>(surface)
                 .unwrap()
                 .panel_gap,
@@ -740,6 +853,14 @@ mod tests {
             .activate(second)
             .unwrap();
         apply_appearance(app.world_mut());
+        assert_eq!(
+            app.world()
+                .get::<bedtime_ui2::Theme>(theme)
+                .unwrap()
+                .metrics
+                .font_size,
+            22.0
+        );
         assert_eq!(
             app.world()
                 .get::<WorkbenchSurface>(surface)
@@ -776,12 +897,14 @@ mod tests {
 
 #[cfg(feature = "automation")]
 fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::AutomationResult {
+    let fonts = crate::fonts::inspect(world);
     let workspaces: Vec<_> = world
         .query_filtered::<Entity, With<bedtime_workbench2::Workspace>>()
         .iter(world)
         .collect();
     Ok(
         serde_json::json!({ "global": world.resource::<GlobalPreferences>().0,
+        "fonts": fonts,
         "startup": world.resource::<StartupPreferences>(),
         "workspaces": workspaces.into_iter().map(|workspace| serde_json::json!({
             "workspace": workspace.to_bits().to_string(), "effective": effective_settings(world, workspace),

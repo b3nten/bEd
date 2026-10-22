@@ -552,7 +552,7 @@ mod tests {
         let mut app = host();
         app.add_plugins(crate::files::FilesPlugin);
         workspace(&mut app, "Default");
-        crate::files::open_folder(app.world_mut(), root.clone()).unwrap();
+        crate::opening::open_folder(app.world_mut(), root.clone()).unwrap();
         app.world_mut().resource_mut::<AppClose>().phase = ClosePhase::Prompt;
         for _ in 0..3 {
             app.update();
@@ -564,7 +564,7 @@ mod tests {
                 .count(),
             0
         );
-        assert!(crate::files::open_folder(app.world_mut(), root.clone()).is_err());
+        assert!(crate::opening::open_folder(app.world_mut(), root.clone()).is_err());
         apply_close_choice(app.world_mut(), CloseChoice::Cancel);
         eventually(&mut app, |world| {
             world

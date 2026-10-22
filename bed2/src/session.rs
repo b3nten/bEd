@@ -463,7 +463,7 @@ fn restore(world: &mut World, workspace: Entity, session: &Session) -> Result<()
     owner.background_updates = session.background_updates;
     // A missing file leaves the editor/error visible; the graph is still valid.
     for (panel, path, title) in reopen {
-        if let Err(error) = crate::files::restore_file_panel(world, panel, path) {
+        if let Err(error) = crate::opening::restore_file_panel(world, panel, path) {
             request_error_dialog(
                 world,
                 ErrorDialog {

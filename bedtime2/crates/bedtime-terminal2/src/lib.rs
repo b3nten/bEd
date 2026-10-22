@@ -1,6 +1,7 @@
 //! Local terminal panels. Workbench owns the runtime's lifetime; the terminal
 //! worker alone owns the PTY and emulator. Drawing never starts or reaps a child.
 mod input;
+mod shell;
 mod view;
 
 use bedtime_terminal::{
@@ -20,6 +21,15 @@ pub use bedtime_terminal::{
     terminal::TerminalSnapshot,
     terminal_pty::{PtyOptions as TerminalOptions, TerminalShell, WindowSize},
 };
+pub use shell::{
+    ShellCommandsAppExt, ShellInvocation, ShellReply, handle_shell_command, run_shell_command,
+    shell_socket_path,
+};
+
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TerminalSystems {
+    Update,
+}
 
 /// Installs the terminal's ordinary Update system. Requires the
 /// application's Workbench and UI2 plugins; installs no windows or renderer.
@@ -27,7 +37,15 @@ pub struct TerminalPlugin;
 
 impl Plugin for TerminalPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, update_terminals);
+        app.init_resource::<shell::ShellCommands>()
+            .add_systems(Startup, shell::initialize)
+            .add_systems(
+                Update,
+                (update_terminals, shell::poll)
+                    .chain()
+                    .in_set(TerminalSystems::Update),
+            )
+            .add_systems(Last, shell::shutdown.after(bevy::app::OnAppExitSystems));
     }
 }
 
@@ -67,6 +85,7 @@ const MAX_PENDING_INPUTS: usize = 512;
 const MAX_PENDING_BYTES: usize = 4 * 1024 * 1024;
 
 struct Runtime {
+    shell_token: Option<String>,
     pty: TerminalPty,
     pending_inputs: VecDeque<TerminalInput>,
     task: WorkspaceTask<Result<(), String>>,
@@ -322,12 +341,13 @@ fn send_inputs(state: &mut TerminalPanel, inputs: Vec<TerminalInput>) {
 fn update_terminals(
     mut panels: Query<(Entity, &InWorkspace, &mut TerminalPanel, &mut PanelInstance)>,
     mut scopes: Query<&mut WorkspaceWork>,
+    shell: Res<shell::ShellCommands>,
 ) {
     for (panel, workspace, mut state, mut instance) in &mut panels {
         let mut scope = scopes
             .get_mut(workspace.0)
             .expect("Terminal workspace work scope");
-        update_terminal(panel, &mut state, &mut scope);
+        update_terminal(panel, &mut state, &mut scope, &shell);
 
         // The PTY worker owns OS process queries, including quiet/hidden jobs.
         // This reads its cached observation; OSC titles do not rename the tab.
@@ -356,7 +376,12 @@ fn update_terminals(
     }
 }
 
-fn update_terminal(panel: Entity, state: &mut TerminalPanel, scope: &mut WorkspaceWork) {
+fn update_terminal(
+    panel: Entity,
+    state: &mut TerminalPanel,
+    scope: &mut WorkspaceWork,
+    shell: &shell::ShellCommands,
+) {
     if !state.drawn {
         let cleanup = state.view.suspend();
         send_inputs(state, cleanup);
@@ -486,7 +511,7 @@ fn update_terminal(panel: Entity, state: &mut TerminalPanel, scope: &mut Workspa
     if matches!(state.status, TerminalStatus::Pending)
         && let Some(size) = state.size
     {
-        let result = start_terminal(panel, state, size, scope);
+        let result = start_terminal(panel, state, size, scope, shell);
         if let Err(error) = result {
             state.status = TerminalStatus::Failed(error);
         }
@@ -499,12 +524,14 @@ fn start_terminal(
     state: &mut TerminalPanel,
     size: WindowSize,
     scope: &mut WorkspaceWork,
+    shell: &shell::ShellCommands,
 ) -> Result<(), String> {
     let mut terminal = Terminal::new_text_only(size.num_cols as usize, size.num_lines as usize);
     if let Some(theme) = &state.theme {
         terminal.set_theme(theme);
     }
     let mut options = state.options.clone();
+    let shell_token = shell.configure(&mut options, panel)?;
     if !options.env_remove.iter().any(|name| name == "TERM_PROGRAM") {
         options
             .env
@@ -520,6 +547,7 @@ fn start_terminal(
     })?;
     state.snapshot = pty.snapshot();
     state.runtime = Some(Runtime {
+        shell_token,
         pty,
         pending_inputs: VecDeque::new(),
         task,
