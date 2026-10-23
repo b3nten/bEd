@@ -726,7 +726,10 @@ fn draw_status_bar(
                     egui::UiBuilder::new()
                         .id_salt("status-content")
                         .max_rect(content)
-                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                        .layout(
+                            egui::Layout::left_to_right(egui::Align::Center)
+                                .with_cross_justify(true),
+                        ),
                 );
                 row.spacing_mut().button_padding.y = button_padding_y;
                 row.set_clip_rect(content);
@@ -2508,7 +2511,24 @@ mod tests {
                         provided.then_some(|ui: &mut egui::Ui| {
                             calls += 1;
                             assert!(bounds.contains_rect(ui.clip_rect()));
-                            ui.label("Ready").on_hover_text("Application-owned status");
+                            let (icon, _) = ui
+                                .allocate_exact_size(egui::vec2(36.0, 18.0), egui::Sense::click());
+                            let spinner = ui.spinner().rect;
+                            let work = ui
+                                .add_sized(
+                                    egui::vec2(180.0, ui.text_style_height(&egui::TextStyle::Body)),
+                                    egui::Label::new("Checking workspace").truncate(),
+                                )
+                                .rect;
+                            let label = ui.label("1 error").rect;
+                            for rect in [icon, spinner, work, label] {
+                                assert!(ui.clip_rect().contains_rect(rect));
+                                assert!(
+                                    (rect.center().y - ui.clip_rect().center().y).abs() < 0.5,
+                                    "Control {rect:?} is off center in {:?}",
+                                    ui.clip_rect()
+                                );
+                            }
                             let button = ui.menu_button("LSP ready", |_| {}).response;
                             assert!(ui.clip_rect().contains_rect(button.rect));
                             assert!(

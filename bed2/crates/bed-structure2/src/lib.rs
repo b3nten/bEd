@@ -177,17 +177,17 @@ impl Panel for StructurePanel {
         let mut state = world.entity_mut(panel).take::<Self>().unwrap_or_default();
         let mut activation = None;
         if let Some((source, observation)) = state.refresh_outline(world, source) {
-            let height = ui.text_style_height(&egui::TextStyle::Body).max(16.0);
-            ui.spacing_mut().button_padding.y = 0.0;
-            ui.spacing_mut().interact_size.y = height;
-            ui.spacing_mut().item_spacing.y = 2.0;
+            let height = (context.theme.metrics.font_size + 10.0).max(24.0);
+            ui.spacing_mut().button_padding = egui::vec2(4.0, 0.0);
+            ui.spacing_mut().interact_size.y = height - 2.0;
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
             let mut toggle = None;
             // Descendants retain their order while each closing branch loses height.
             // Compute positions once, then allocate and paint only viewport rows.
             let mut rows = Vec::new();
             let mut ancestors: Vec<(usize, f32)> = Vec::new();
             let mut top = 0.0;
-            let stride = height + 2.0;
+            let stride = height;
             for (index, node) in observation.outline.iter().enumerate() {
                 while ancestors
                     .last()
@@ -218,6 +218,7 @@ impl Panel for StructurePanel {
             }
             egui::ScrollArea::both()
                 .id_salt(("code-structure", panel))
+                .auto_shrink([false, false])
                 .show_viewport(ui, |ui, viewport| {
                     let origin = ui.cursor().min;
                     ui.set_min_size(egui::vec2(viewport.width(), top));
@@ -239,44 +240,58 @@ impl Panel for StructurePanel {
                             egui::UiBuilder::new().id_salt(node.id).max_rect(rect),
                             |ui| {
                                 ui.set_clip_rect(ui.clip_rect().intersect(rect));
-                                ui.horizontal(|ui| {
-                                    ui.add_space(8.0 + node.depth.min(24) as f32 * 14.0);
-                                    if children {
-                                        let (arrow, response) = ui.allocate_exact_size(
-                                            egui::vec2(16.0, height),
-                                            egui::Sense::click(),
-                                        );
-                                        bedtime_ui2::paint_chevron(
-                                            ui.painter(),
-                                            arrow.center(),
-                                            openness,
-                                            ui.visuals().text_color(),
-                                        );
-                                        if response.clicked() {
-                                            toggle = Some(node.id);
-                                        }
-                                    } else {
-                                        ui.add_space(18.0);
-                                    }
-                                    let selected = state.selected == Some(node.id);
-                                    let ink = if selected {
-                                        bedtime_ui2::rainbow_ink(ui, context.motion)
-                                    } else {
-                                        ui.visuals().text_color()
-                                    };
-                                    let response = ui.selectable_label(
-                                        selected,
-                                        egui::RichText::new(&node.label).color(ink),
+                                let x = rect.left() + 8.0 + node.depth.min(24) as f32 * 16.0;
+                                if children {
+                                    let arrow = egui::Rect::from_min_size(
+                                        egui::pos2(x, rect.top()),
+                                        egui::vec2(14.0, height),
+                                    );
+                                    let response = ui.interact(
+                                        arrow,
+                                        ui.id().with("arrow"),
+                                        egui::Sense::click(),
+                                    );
+                                    bedtime_ui2::paint_chevron(
+                                        ui.painter(),
+                                        arrow.center(),
+                                        openness,
+                                        ui.visuals().text_color(),
                                     );
                                     if response.clicked() {
-                                        activation = Some(Activation {
-                                            source,
-                                            observation: observation.key,
-                                            item: node.id,
-                                        });
+                                        toggle = Some(node.id);
                                     }
-                                    response.on_hover_text(&node.kind);
-                                });
+                                }
+                                let selected = state.selected == Some(node.id);
+                                let ink = if selected {
+                                    bedtime_ui2::rainbow_ink(ui, context.motion)
+                                } else {
+                                    ui.visuals().text_color()
+                                };
+                                let font = egui::TextStyle::Body.resolve(ui.style());
+                                let text =
+                                    ui.painter().layout_no_wrap(node.label.clone(), font, ink);
+                                let label = egui::Rect::from_center_size(
+                                    egui::pos2(x + 18.0 + text.size().x / 2.0, rect.center().y),
+                                    egui::vec2(
+                                        text.size().x + 2.0 * ui.spacing().button_padding.x,
+                                        height - 2.0,
+                                    ),
+                                );
+                                let response = ui.put(
+                                    label,
+                                    egui::Button::selectable(
+                                        selected,
+                                        egui::RichText::new(&node.label).color(ink),
+                                    ),
+                                );
+                                if response.clicked() {
+                                    activation = Some(Activation {
+                                        source,
+                                        observation: observation.key,
+                                        item: node.id,
+                                    });
+                                }
+                                response.on_hover_text(&node.kind);
                             },
                         );
                     }

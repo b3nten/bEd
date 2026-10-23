@@ -587,7 +587,13 @@ impl EditorView {
                         egui::Sense::hover(),
                     )
                     .0;
-                let scroll = egui::ScrollArea::both()
+                let mut scroll = egui::ScrollArea::new([!self.settings.wrap, true]);
+                if self.settings.wrap {
+                    // Reset an unwrapped view's offset even while its wrap
+                    // index is still being prepared.
+                    scroll = scroll.horizontal_scroll_offset(0.0);
+                }
+                let scroll = scroll
                     .id_salt(id.with("scroll"))
                     .wheel_scroll_multiplier(wheel)
                     .auto_shrink([false, false])
@@ -895,7 +901,13 @@ impl EditorView {
                                 }
                             }
                         }
-                        ui.set_min_size(geometry.size(viewport.size()));
+                        // The horizontal parent layout advances the cursor past
+                        // the canvas. Extend from its origin after edits instead
+                        // of reserving another canvas at that cursor.
+                        ui.expand_to_include_rect(egui::Rect::from_min_size(
+                            origin,
+                            geometry.size(viewport.size()),
+                        ));
                         let clip = ui.clip_rect();
                         let painter = ui.painter().with_clip_rect(clip);
                         let first = geometry

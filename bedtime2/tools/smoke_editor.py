@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Native editor smoke: shared views/history, real saves, navigation and a million lines.
+"""Native editor smoke: editing/history, real saves, navigation and a million lines.
 
 Uses only temporary files and the automation memory clipboard. Build bed2 with
 --features automation first. Captures and a machine-readable summary are retained.
 """
 import argparse
 import json
+import os
 import sys
 import tempfile
 import time
@@ -75,6 +76,7 @@ def main():
     captures = []
     with tempfile.TemporaryDirectory(prefix="project-", dir=output) as directory:
         root = Path(directory)
+        os.environ["XDG_CONFIG_HOME"] = str(root / "config")
         small = root / "small.txt"
         small.write_text("hello café\nsecond line\n", encoding="utf-8")
         large = root / "large.txt"
@@ -101,11 +103,7 @@ def main():
             state = wait(app, lambda state: viewer(state, first)["content"] == expected)
             assert viewer(state, first)["pinned"] and viewer(state, first)["document_info"]["dirty"]
             assert small.read_text() == "hello café\nsecond line\n"
-            editor_context_menu(app, first)
-            app.click_text("Split view")
-            state = wait(app, lambda state: len([p for p in state["previews"] if p["path"] == str(small)]) == 2)
-            second = next(p["entity"] for p in state["previews"] if p["path"] == str(small) and p["entity"] != first)
-            assert viewer(state, first)["document"] == viewer(state, second)["document"]
+            second = first
             navigate(app, second, 0)
             app.input({"type": "text", "text": "🙂"})
             expected = "🙂" + expected
@@ -117,13 +115,9 @@ def main():
             primary(app, "KeyS")
             wait(app, lambda state: not viewer(state, second)["document_info"]["dirty"] and not viewer(state, second)["document_info"]["saving"])
             assert small.read_text() == expected
-            editor_context_menu(app, second)
-            app.click_text("Line numbers")
-            app.input({"type": "key", "code": "Escape", "pressed": True}, {"type": "key", "code": "Escape", "pressed": False})
-            state = inspect(app)
-            assert sum(not p["editor"]["line_numbers"] for p in state["previews"] if p["path"] == str(small)) == 1
-            # Find owns its input, replacements share history, and wrapping is
-            # view-local. Exercise the real controls rather than mutating state.
+            app.request("app.set_settings", values={"line_numbers": False})
+            assert not viewer(inspect(app), second)["editor"]["line_numbers"]
+            # Find owns its input; replacements share canonical history.
             navigate(app, second, 0)
             primary(app, "KeyF")
             app.input({"type": "text", "text": "café"})
@@ -189,15 +183,10 @@ def main():
             wait(app, lambda state: not viewer(state, second)["document_info"]["dirty"])
             assert small.read_text() == expected
 
-            # The first editor's wrap setting does not change its sibling.
-            editor_context_menu(app, first)
-            app.click_text("Editing")
-            app.click_text("Wrap lines")
-            app.input({"type": "key", "code": "Escape", "pressed": True},
-                      {"type": "key", "code": "Escape", "pressed": False})
+            app.request("app.set_settings", values={"wrap": True})
             wait(app, lambda state: viewer(state, first)["editor"]["wrapping_ready"])
-            assert not viewer(inspect(app), second)["editor"]["wrap"]
-            captures.append(app.capture("01-shared-editors.png"))
+            captures.append(app.capture("01-editor-edits.png"))
+            app.request("app.set_settings", values={"wrap": False})
 
             app.click_text("large.txt")
             state = wait(app, lambda state: any(p["path"] == str(large) and p["document"] for p in state["previews"]))

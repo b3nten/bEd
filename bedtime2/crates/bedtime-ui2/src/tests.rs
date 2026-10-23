@@ -31,12 +31,20 @@ fn themes_validate_boundary_values_and_map_to_egui() {
         ctx.global_style().visuals.panel_fill,
         theme::color(dark.palette.panel_background)
     );
+    assert_eq!(
+        ctx.global_style().visuals.hyperlink_color,
+        theme::color(dark.palette.accent)
+    );
     let light = themes::light();
     light.validate().unwrap();
     light.apply(&ctx);
     assert_eq!(
         ctx.global_style().visuals.panel_fill,
         theme::color(light.palette.panel_background)
+    );
+    assert_eq!(
+        ctx.global_style().visuals.hyperlink_color,
+        theme::color(light.palette.accent)
     );
     let mut bad = light;
     bad.metrics.font_size = f32::NAN;

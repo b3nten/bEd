@@ -26,14 +26,17 @@ struct FileSource {
     checkpoint: Arc<std::sync::Mutex<TextBuffer>>,
     saved: Arc<std::sync::Mutex<Option<SavedText>>>,
 }
+
 struct SavedText {
     revision: u64,
     identity: u64,
     text: TextBuffer,
 }
+
 pub(crate) fn source_path(world: &World, document: DocumentId) -> Option<&Path> {
     world.get::<FileSource>(document.0)?.path.as_deref()
 }
+
 /// Pair the worker's actual write capture with Workbench's acknowledged receipt.
 /// SourceChanged and failed writes never become language-server save events.
 pub(crate) fn take_saved_text(

@@ -155,54 +155,64 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
     if keyboard {
         navigate(ui, &mut state);
     }
-    egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(8, 4))
-        .show(ui, |ui| {
-            if snapshot.rows.is_empty() && snapshot.error.is_none() {
-                ui.weak("Loading directory…");
-            }
-            if state.is_busy() {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    if ui.small_button("Cancel").clicked() {
-                        state.queue(Action::CancelOperation);
-                    }
-                });
-            }
-            if let Some(progress) = &state.progress {
-                ui.weak(format!(
-                    "{} items · {} bytes",
-                    progress.completed_items, progress.bytes
-                ));
-            }
-            if state.show_hidden {
-                ui.weak("Showing hidden items temporarily");
-            }
-            if state
-                .editing
-                .as_ref()
-                .is_some_and(|edit| edit.kind != EditKind::Rename)
-            {
-                let mut edit = state.editing.take().unwrap();
-                ui.horizontal(|ui| {
-                    ui.label(if edit.kind == EditKind::File {
-                        "New file:"
-                    } else {
-                        "New folder:"
-                    });
-                    edit_widget(ui, context, &mut edit, panel, &mut state);
-                });
-                // Escape explicitly clears editing rather than acting like focus loss.
-                if !ui.ctx().data(|d| {
-                    d.get_temp::<bool>(egui::Id::new((panel, "cancel-edit")))
-                        .unwrap_or(false)
-                }) {
-                    state.editing = Some(edit);
+    let has_status = (snapshot.rows.is_empty() && snapshot.error.is_none())
+        || state.is_busy()
+        || state.progress.is_some()
+        || state.show_hidden
+        || state
+            .editing
+            .as_ref()
+            .is_some_and(|e| e.kind != EditKind::Rename);
+    if has_status {
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(8, 4))
+            .show(ui, |ui| {
+                if snapshot.rows.is_empty() && snapshot.error.is_none() {
+                    ui.weak("Loading directory…");
                 }
-                ui.ctx()
-                    .data_mut(|d| d.remove::<bool>(egui::Id::new((panel, "cancel-edit"))));
-            }
-        });
+                if state.is_busy() {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        if ui.small_button("Cancel").clicked() {
+                            state.queue(Action::CancelOperation);
+                        }
+                    });
+                }
+                if let Some(progress) = &state.progress {
+                    ui.weak(format!(
+                        "{} items · {} bytes",
+                        progress.completed_items, progress.bytes
+                    ));
+                }
+                if state.show_hidden {
+                    ui.weak("Showing hidden items temporarily");
+                }
+                if state
+                    .editing
+                    .as_ref()
+                    .is_some_and(|edit| edit.kind != EditKind::Rename)
+                {
+                    let mut edit = state.editing.take().unwrap();
+                    ui.horizontal(|ui| {
+                        ui.label(if edit.kind == EditKind::File {
+                            "New file:"
+                        } else {
+                            "New folder:"
+                        });
+                        edit_widget(ui, context, &mut edit, panel, &mut state);
+                    });
+                    // Escape explicitly clears editing rather than acting like focus loss.
+                    if !ui.ctx().data(|d| {
+                        d.get_temp::<bool>(egui::Id::new((panel, "cancel-edit")))
+                            .unwrap_or(false)
+                    }) {
+                        state.editing = Some(edit);
+                    }
+                    ui.ctx()
+                        .data_mut(|d| d.remove::<bool>(egui::Id::new((panel, "cancel-edit"))));
+                }
+            });
+    }
     let height = (context.theme.metrics.font_size + 10.0).max(24.0);
     state.view.row_height = height;
     let mut scroll = egui::ScrollArea::vertical()
@@ -696,22 +706,6 @@ fn paint_row(
 ) {
     let mut painter = ui.painter().clone();
     painter.set_opacity(alpha.clamp(0.0, 1.0));
-    if let Some(response) = response {
-        let selected = state.selection.contains(&row.path);
-        let visuals = ui.style().interact_selectable(response, selected);
-        let fill = ui.ctx().animate_color_with_time(
-            response.id.with("row-fill"),
-            visuals.bg_fill,
-            if context.motion.enabled {
-                context.motion.seconds
-            } else {
-                0.0
-            },
-        );
-        if selected || response.hovered() {
-            painter.rect_filled(rect.shrink2(egui::vec2(0.0, 1.0)), 4.0, fill);
-        }
-    }
     let x = rect.left() + INSET + row.depth as f32 * indent;
     let side = context.theme.metrics.font_size.min(18.0);
     let center = egui::pos2(x + 7.0, rect.center().y);
@@ -736,14 +730,6 @@ fn paint_row(
         FileTreeEntryKind::Symlink => BuiltinIcon::Extension,
         _ => file_icon(&row.path),
     };
-    // Icon artwork is cached by UI2. A scoped child applies opacity without
-    // allocating an animation or retained widget for offscreen entries.
-    ui.scope(|ui| {
-        ui.set_opacity(alpha);
-        context
-            .frame(ui)
-            .icon_at(icon, [x + 18.0, rect.center().y - side / 2.0], side);
-    });
     if matches!(row.directory_state, FileTreeDirectoryState::Failed(_)) {
         ink = color(context.theme.palette.error);
     }
@@ -762,6 +748,33 @@ fn paint_row(
         job.wrap.max_rows = 1;
         job.wrap.break_anywhere = true;
         let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+        if let Some(response) = response {
+            let selected = state.selection.contains(&row.path);
+            let visuals = ui.style().interact_selectable(response, selected);
+            let fill = ui.ctx().animate_color_with_time(
+                response.id.with("row-fill"),
+                visuals.bg_fill,
+                if context.motion.enabled {
+                    context.motion.seconds
+                } else {
+                    0.0
+                },
+            );
+            if selected || response.hovered() {
+                let label_rect = egui::Rect::from_min_max(
+                    egui::pos2(x + 18.0 - 4.0, rect.top() + 1.0),
+                    egui::pos2(
+                        x + 18.0 + side + 5.0 + galley.size().x + 4.0,
+                        rect.bottom() - 1.0,
+                    ),
+                );
+                painter.rect_filled(
+                    label_rect.intersect(rect.shrink(1.0)),
+                    visuals.corner_radius,
+                    fill,
+                );
+            }
+        }
         painter.galley(
             egui::pos2(
                 x + 18.0 + side + 5.0,
@@ -771,6 +784,14 @@ fn paint_row(
             ink,
         );
     }
+    // Icon artwork is cached by UI2. A scoped child applies opacity without
+    // allocating an animation or retained widget for offscreen entries.
+    ui.scope(|ui| {
+        ui.set_opacity(alpha);
+        context
+            .frame(ui)
+            .icon_at(icon, [x + 18.0, rect.center().y - side / 2.0], side);
+    });
 }
 
 #[cfg(test)]

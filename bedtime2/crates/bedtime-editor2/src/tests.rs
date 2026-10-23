@@ -664,6 +664,66 @@ fn independent_wheel_inputs_choose_their_axis_without_a_pause() {
 }
 
 #[test]
+fn horizontal_scrolling_requires_overflow_and_is_disabled_when_wrapped() {
+    let ctx = egui::Context::default();
+    let mut document = TextDocument::new("short text\n");
+    let mut view = EditorView::default();
+    let id = egui::Id::new("horizontal-overflow");
+    let scroll_right = |rect: egui::Rect| {
+        vec![
+            egui::Event::PointerMoved(rect.center()),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(-100.0, 0.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    };
+    let initial = frame(&ctx, &mut view, &mut document, id, vec![]);
+    let fitting = frame(
+        &ctx,
+        &mut view,
+        &mut document,
+        id,
+        scroll_right(initial.text_rect),
+    );
+    assert_eq!(
+        fitting.scroll.x, 0.0,
+        "fitting text must not scroll horizontally"
+    );
+
+    let mut document = TextDocument::new("x".repeat(300));
+    frame(&ctx, &mut view, &mut document, id, vec![]);
+    let overflowing = frame(
+        &ctx,
+        &mut view,
+        &mut document,
+        id,
+        scroll_right(initial.text_rect),
+    );
+    assert!(
+        overflowing.scroll.x > 0.0,
+        "long unwrapped lines must scroll"
+    );
+
+    view.settings.wrap = true;
+    for _ in 0..4 {
+        let wrapped = frame(
+            &ctx,
+            &mut view,
+            &mut document,
+            id,
+            scroll_right(initial.text_rect),
+        );
+        assert_eq!(
+            wrapped.scroll.x, 0.0,
+            "wrapping must reset and disable horizontal scrolling"
+        );
+    }
+}
+
+#[test]
 fn diagonal_wheel_inputs_switch_axes_without_a_gesture_restart() {
     let ctx = egui::Context::default();
     let mut document = TextDocument::new(("x".repeat(200) + "\n").repeat(100));

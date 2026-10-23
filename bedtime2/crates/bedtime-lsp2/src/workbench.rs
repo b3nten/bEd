@@ -35,8 +35,25 @@ struct ManagedServer {
     launch: Launch,
     handle: ServerHandle,
     task: WorkspaceTask<()>,
-    retiring: bool,
+    lifecycle: ServerLifecycle,
     bindings: HashSet<DocumentKey>,
+}
+// A stopped instance retains its launch identity so document reconciliation
+// cannot immediately start it again. Restart retires that identity after cleanup.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ServerLifecycle {
+    Running,
+    Restarting,
+    Stopping,
+    Stopped,
+}
+impl ManagedServer {
+    fn retiring(&self) -> bool {
+        matches!(
+            self.lifecycle,
+            ServerLifecycle::Restarting | ServerLifecycle::Stopping
+        )
+    }
 }
 pub struct DefinitionResult {
     pub origin: RequestOrigin,
@@ -94,7 +111,12 @@ fn next_key(document: Entity) -> DocumentKey {
 }
 pub fn server_status(world: &World, document: DocumentId) -> Option<ServerStatus> {
     let state = world.get::<DocumentLsp>(document.0)?;
-    Some(world.get::<ManagedServer>(state.server)?.handle.status())
+    let server = world.get::<ManagedServer>(state.server)?;
+    Some(if server.lifecycle == ServerLifecycle::Running {
+        server.handle.status()
+    } else {
+        ServerStatus::Stopped
+    })
 }
 pub fn document_server(world: &World, document: DocumentId) -> Option<Entity> {
     Some(world.get::<DocumentLsp>(document.0)?.server)
@@ -161,7 +183,7 @@ pub fn language_activity(world: &World, panel: Entity) -> Option<Arc<ServerActiv
     let document = world.get::<DocumentView>(panel)?.document();
     let binding = world.get::<DocumentLsp>(document.0)?;
     let server = world.get::<ManagedServer>(binding.server)?;
-    (!server.retiring && server.handle.status() == ServerStatus::Ready)
+    (server.lifecycle == ServerLifecycle::Running && server.handle.status() == ServerStatus::Ready)
         .then(|| server.handle.activity())
 }
 pub fn request_query(
@@ -262,8 +284,10 @@ pub fn notify_saved(
 fn retire_binding(world: &mut World, document: Entity) {
     if let Some(state) = world.entity_mut(document).take::<DocumentLsp>() {
         if let Some(mut server) = world.get_mut::<ManagedServer>(state.server) {
-            if server.handle.close(state.key).is_err() {
-                server.retiring = true;
+            if server.lifecycle == ServerLifecycle::Running
+                && server.handle.close(state.key).is_err()
+            {
+                server.lifecycle = ServerLifecycle::Restarting;
                 server.task.cancel();
             }
             server.bindings.remove(&state.key);
@@ -289,7 +313,7 @@ fn binding_current(world: &World, origin: &RequestOrigin) -> bool {
             && world.get::<LspDocument>(doc.0) == Some(&s.source)
             && world
                 .get::<ManagedServer>(s.server)
-                .is_some_and(|server| !server.retiring)
+                .is_some_and(|server| server.lifecycle == ServerLifecycle::Running)
     }) && inspect_document(world, doc).is_ok_and(|i| i.revision == origin.revision && !i.has_drafts)
 }
 pub fn definition_is_current(world: &World, result: &DefinitionResult) -> bool {
@@ -321,7 +345,11 @@ pub fn workspace_servers(world: &mut World, workspace: Entity) -> Vec<ServerObse
         .map(|(entity, server, _)| ServerObservation {
             entity,
             program: server.launch.config.program.clone(),
-            status: server.handle.status(),
+            status: if server.lifecycle == ServerLifecycle::Stopped {
+                ServerStatus::Stopped
+            } else {
+                server.handle.status()
+            },
             root: server.launch.root.clone(),
             languages: world
                 .get::<LspWorkspace>(workspace)
@@ -333,7 +361,7 @@ pub fn workspace_servers(world: &mut World, workspace: Entity) -> Vec<ServerObse
                         .collect()
                 })
                 .unwrap_or_default(),
-            retiring: server.retiring,
+            retiring: server.retiring(),
             activity: server.handle.activity(),
         })
         .collect()
@@ -342,7 +370,18 @@ pub fn restart_instance(world: &mut World, entity: Entity) -> Result<(), String>
     let mut managed = world
         .get_mut::<ManagedServer>(entity)
         .ok_or("Language server is unavailable")?;
-    managed.retiring = true;
+    managed.lifecycle = ServerLifecycle::Restarting;
+    managed.task.cancel();
+    Ok(())
+}
+
+/// Stop one launch configuration in this workspace until explicitly restarted
+/// or replaced by a different configuration. Shared-language bindings stop together.
+pub fn stop_instance(world: &mut World, entity: Entity) -> Result<(), String> {
+    let mut managed = world
+        .get_mut::<ManagedServer>(entity)
+        .ok_or("Language server is unavailable")?;
+    managed.lifecycle = ServerLifecycle::Stopping;
     managed.task.cancel();
     Ok(())
 }
@@ -384,8 +423,9 @@ fn update(world: &mut World) {
                 .is_some_and(|s| s.key == key && s.server == entity);
             if !valid {
                 let mut server = world.get_mut::<ManagedServer>(entity).unwrap();
-                if server.handle.close(key).is_err() {
-                    server.retiring = true;
+                if server.lifecycle == ServerLifecycle::Running && server.handle.close(key).is_err()
+                {
+                    server.lifecycle = ServerLifecycle::Restarting;
                     server.task.cancel();
                 }
                 server.bindings.remove(&key);
@@ -401,17 +441,25 @@ fn update(world: &mut World) {
             });
         if !wanted {
             let mut s = world.get_mut::<ManagedServer>(entity).unwrap();
-            s.retiring = true;
+            s.lifecycle = ServerLifecycle::Restarting;
             s.task.cancel();
         }
         let server = world.get::<ManagedServer>(entity).unwrap();
-        if server.retiring
+        if server.retiring()
             && !matches!(
                 server.task.status(),
                 WorkStatus::Running | WorkStatus::Cancelling
             )
         {
-            world.despawn(entity);
+            if server.lifecycle == ServerLifecycle::Restarting {
+                world.despawn(entity);
+            } else {
+                world.get_mut::<ManagedServer>(entity).unwrap().lifecycle =
+                    ServerLifecycle::Stopped;
+            }
+            continue;
+        }
+        if server.lifecycle != ServerLifecycle::Running {
             continue;
         }
         // Time and count cap main-world acceptance. Parsing/indexing is already
@@ -510,7 +558,7 @@ fn update(world: &mut World) {
             (source == &state.source
                 && project.servers.get(&source.language) == Some(&server.launch.config)
                 && project.root == server.launch.root
-                && !server.retiring
+                && server.lifecycle == ServerLifecycle::Running
                 && (viewers.contains(&DocumentId(doc)) || info.dirty))
                 .then_some(())
         })()
@@ -558,7 +606,7 @@ fn update(world: &mut World) {
                     (w.0 == info.workspace
                         && s.launch.config == config
                         && s.launch.root == project.root)
-                        .then_some((entity, s.retiring))
+                        .then_some((entity, s.lifecycle != ServerLifecycle::Running))
                 });
             let server = match existing {
                 Some((_, true)) => continue,
@@ -586,7 +634,7 @@ fn update(world: &mut World) {
                         launch,
                         handle,
                         task,
-                        retiring: false,
+                        lifecycle: ServerLifecycle::Running,
                         bindings: HashSet::new(),
                     });
                     entity

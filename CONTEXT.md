@@ -83,11 +83,11 @@ completion/resolve requests with
 shared text roots and managed server cleanup. bEd2 owns source/settings/save
 bridges, F12/context-menu/Cmd-click navigation into temporary previews and a conditional
 status bar with diagnostic counts, actual server progress, document/server errors
-and restart controls. View → Language Servers opens a persistent observer panel
+and per-server Restart/Stop submenus. View → Language Servers opens a persistent observer panel
 with process/capability/document state, bounded messages/stderr and restart.
 Closing that panel preserves workers. The compact status row uses an icon menu,
 active work and nonzero counts; missing/stale diagnostic details remain in the
-menu/panel and never imply background work. See the
+panel and never imply background work. See the
 [Zed-informed robustness review](MIGRATION/lsp2-investigation.md#status-and-robustness-review)
 for implemented changes and remaining reliability work.
 The [important parity milestones and Rust latency probe](MIGRATION/lsp2-investigation.md#important-ide-parity-milestones)
@@ -116,6 +116,12 @@ Native Linux LSP UI verification remains pending.
 The compact icon/menu and shorter row revisions passed the five-capture native
 smoke on the same date; the geometry regression verifies centered, unclipped
 controls despite roomy panel padding. The normal release binary was rebuilt.
+The current status menu contains only Open Language Servers and a Restart/Stop
+submenu per loaded server. Error details live on the row's message/count tooltip;
+document notices expire after eight seconds without clearing canonical failures.
+Stop retains a suppressed launch identity until Restart/configuration change.
+Documentation scroll viewports fit at least six text lines when space permits.
+See the application contract for context-action candidates and UI boundaries.
 
 bEd2 now owns centralized RON `.bed` metadata under the user config directory:
 `preferences.bed` holds global per-value settings and five layout defaults;
@@ -124,12 +130,25 @@ visibility and structural session behind one writer. No project metadata is read
 or written and no legacy JSON import runs. The default home workspace remains
 memory-only. See the [application contract](bed2/README.md#settings-layouts-and-persistence).
 
-Settings has General, Appearance and Editor sidebar sections, a Global/Workspace
-switch and individual override reset icons. Appearance includes font family and
+Settings has General, Appearance, Editor and Language servers sections, a Global/Workspace
+switch and individual override reset icons. Its padded, responsive header shows the
+active config path beside the scope toggle in one truncating, copy-on-click row. Language server defaults cover Rust, Go,
+TypeScript/TSX and Python; existing saved definitions remain intact with explicit
+buttons to add missing defaults. Rows place widgets before names, use switches for
+booleans and share vertically centered control geometry; Theme precedes fonts.
+Appearance includes font family and
 8–72-point size (default 15.5); Bedfont bundles Nordwand Mono regular/bold, alongside
 installed monospace families. Both values inherit independently and update the
 UI/editor/terminal; missing families retain their preference and use Bedfont.
+Installed font discovery runs once on a background worker; Appearance shows a
+loading state and saved system-family choices apply after discovery. A 2026-10-23
+probe measured a 488 ms scan of 787 faces, previously blocking first Appearance.
 See the [font contract](bed2/README.md#settings-layouts-and-persistence).
+On 2026-10-23, all 112 ordinary application tests, the six-capture native
+settings smoke and the four-capture font smoke passed, including single-row path
+geometry, narrow navigation, alignment, font selection/persistence and switch/reset
+inheritance. The font latency probe also passed explicitly; the GPU benchmark was
+left ignored.
 Keybinding configuration is deferred;
 fixed Save/Open Folder/Quit and Primary+1–5 shortcuts remain. Document autosave
 supports Never, Change Focus and Timer (default: one second idle), using canonical
@@ -224,8 +243,11 @@ default builds and the standalone example require no Workbench or language tools
 The editor locks each wheel input to its dominant axis without a timed gesture
 lock, retains revision-valid wrapping during resize, reserves fold-gutter space and animates folds with bed1 smoothstep timing. Files/Structure selections
 and editor caret/active numbers share its RGB cycle; disclosure arrows share UI2
-artwork. bEd2 editor actions live in the canvas context menu; the top control bar
-is removed. Titlebar tools use theme text ink, animate hover backgrounds and retain tooltips.
+artwork. Files and Structure use matching default row height, inset and indentation,
+with item-sized highlights. Completion rows follow bed1’s compact category/label/detail
+presentation without item tooltips. bEd2's canvas context menu has Cut/Copy/Paste and capability-gated LSP
+Go to Definition; the top control bar is removed. Folding stays in the gutter,
+and wrapping/line numbers stay in Settings. Titlebar tools use theme text ink, animate hover backgrounds and retain tooltips.
 The standalone and opt-in syntax examples provide two in-memory editor views.
 bEd2's file-backed views detect the initial language, retain explicit choices,
 and share analysis/structure through canonical documents. Opening an empty Code

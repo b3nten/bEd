@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Exercise syntax, folding, shared views and Structure against the real bed2 UI."""
+"""Exercise syntax, gutter folding and Structure against the real bed2 UI."""
 import argparse
 import json
+import os
 import re
 import tempfile
 from pathlib import Path
 from automation import Application
 from smoke_bed2 import open_panel, prepare_demo_layout
-from smoke_editor import editor_context_menu
 
 
 def wait_code(app, predicate, frames=300):
@@ -37,6 +37,7 @@ def main():
     captures = []
     with tempfile.TemporaryDirectory(prefix="bed2-code-project-") as directory:
         root=Path(directory).resolve()
+        os.environ["XDG_CONFIG_HOME"] = str(root / "config")
         source=root/"cats.rs"
         source.write_text("struct Cat {\n    name: String,\n}\nimpl Cat {\n    fn greet(&self) -> String {\n        format!(\"Hello, {}!\", self.name)\n    }\n}\nfn main() {\n    println!(\"hi\");\n}\n")
         (root/"dogs.py").write_text("def dog():\n    return 42\n")
@@ -59,8 +60,8 @@ def main():
             a=state["panels"][0]["panel"]
             assert code(state,a)["language"]=="rust"
             app.request("panel.focus",panel=a)
-            editor_context_menu(app, a)
-            app.click_text("Keep open")
+            app.click_text("cats.rs")
+            app.click_text("cats.rs")
             snapshot=app.inspect()
             area=next(ar["entity"] for w in snapshot["workbench"]["workspaces"] for l in w["layouts"] for ar in l["areas"] if any(p["entity"]==a for p in ar["panels"]))
             right=app.request("area.split",area=area,axis="horizontal",fraction=0.7)["area"]
@@ -85,10 +86,10 @@ def main():
             captures.append(app.capture("10-titlebar-hover-tooltip.png"))
 
 
-            # Folding is view state and Structure activation reveals a folded item.
-            editor_context_menu(app, a)
-            app.click_text("Folding")
-            app.click_text("Fold all")
+            # Folding remains available through the gutter.
+            view = next(p for p in app.request("app.inspect_filetree")["previews"] if p["entity"] == a)
+            rect, caret = view["editor_rect"], view["caret_rect"]
+            app.input({"type": "click", "position": [rect["min"][0] - 7, rect["min"][1] + (caret["max"][1] - caret["min"][1]) / 2]})
             state = wait_code(app, lambda s: code(s, a)["collapsed"] > 0)
             assert code(state, a)["revision"] == 0
             captures.append(app.capture("02-folded.png"))
@@ -96,23 +97,6 @@ def main():
             state = wait_code(app, lambda s: code(s, a)["selection"][0] != code(s, a)["selection"][1])
             assert code(state, a)["collapsed"] < code(state, a)["folds"]
             captures.append(app.capture("03-structure-navigation.png"))
-
-            editor_context_menu(app, a)
-            app.click_text("Split view")
-            state = wait_code(app, lambda s: len(s["panels"]) == 2)
-            sibling = next(p["panel"] for p in state["panels"] if str(p["panel"]) != str(a))
-            state = wait_code(app, lambda s: code(s, sibling)["highlights"] is not None)
-            assert code(state, sibling)["document"] == code(state, a)["document"]
-            assert code(state, sibling)["collapsed"] == 0
-            captures.append(app.capture("04-shared-view.png"))
-
-            # Closing while Structure keeps focus cannot pick another open viewer.
-            app.request("panel.focus", panel=structure)
-            app.request("panel.close", panel=str(sibling))
-            wait_code(app, lambda s: tracked(s) is None)
-            captures.append(app.capture("05-no-source.png"))
-            app.request("panel.focus", panel=a)
-            wait_code(app, lambda s: tracked(s) == str(a))
 
             # The retained source can be hidden behind an unrelated tab.
             app.request("panel.move",panel=cube,area=area,index=0)
@@ -134,9 +118,7 @@ def main():
             wait_code(app, lambda s: tracked(s) == str(a))
             captures.append(app.capture("07-automatic-source.png"))
             # Gutter controls remain interactive without line-number labels.
-            editor_context_menu(app, a)
-            app.click_text("Line numbers")
-            app.input({"type": "key", "code": "Escape", "pressed": True}, {"type": "key", "code": "Escape", "pressed": False})
+            app.request("app.set_settings", values={"line_numbers": False})
             state = app.request("app.inspect_code")
             before = code(state, a)["collapsed"]
             assert before > 0

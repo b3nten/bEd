@@ -135,6 +135,7 @@ impl Theme {
         style.visuals.faint_bg_color = color(p.surface);
         style.visuals.selection.bg_fill = color(p.selection);
         style.visuals.selection.stroke = egui::Stroke::new(1.0, color(p.accent));
+        style.visuals.hyperlink_color = color(p.accent);
         style.visuals.window_stroke = egui::Stroke::new(1.0, color(p.border));
         style.visuals.window_corner_radius = egui::CornerRadius::same(m.popup_rounding as u8);
         for (widget, fill) in [

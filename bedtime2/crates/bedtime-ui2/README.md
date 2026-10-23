@@ -300,3 +300,5 @@ with `visuals.button_frame = false` its resting background is transparent.
 egui button padding still supplies the hit rectangle.
 Callers attach descriptive tooltips through the existing themed tooltip helper.
 All respect `MotionPolicy.enabled`.
+
+Hyperlinks and editor modifier-hover underlines use the live theme accent.

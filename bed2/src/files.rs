@@ -522,12 +522,8 @@ impl Panel for FilePreviewPanel {
         };
         let document = world.get::<DocumentView>(panel).map(DocumentView::document);
         let info = document.and_then(|id| inspect_document(world, id).ok());
-        let mut pin = false;
         let mut reload = false;
-        let mut save = false;
-        let mut split = false;
         let mut resolution = None;
-        let pinned = !world.get::<PanelInstance>(panel).unwrap().preview;
         context.frame(ui).padded(surface.padding, |frame| {
                     let ui = frame.ui;
                     if document.is_none() {
@@ -560,12 +556,8 @@ impl Panel for FilePreviewPanel {
                             Ok(output) => {
                                 crate::lsp::editor_input(ui, world, panel, &output);
                                 output.response.context_menu(|ui| {
-                                    if !pinned && ui.button("Keep open").clicked() { pin = true; ui.close(); }
-                                    if ui.button("Reload").clicked() { reload = true; ui.close(); }
-                                    if ui.button("Save").clicked() { save = true; ui.close(); }
-                                    if ui.button("Split view").clicked() { split = true; ui.close(); }
-                                    ui.separator();
-                                    crate::code::context_menu(ui, world, panel);
+                                    crate::menus::editor_context_menu(ui, world, panel);
+                                    crate::lsp::context_menu(ui, world, panel);
                                 });
                                 let mut state = world.get_mut::<Self>(panel).unwrap();
                                 state.editor_rect = Some(output.text_rect);
@@ -587,17 +579,12 @@ impl Panel for FilePreviewPanel {
                         egui::ScrollArea::vertical().show(ui, |ui| { ui.monospace(summary.as_ref()); });
                     }
         });
-        if pin
-            || document.is_some_and(|id| {
-                inspect_document(world, id).is_ok_and(|info| info.dirty || info.has_drafts)
-            })
-        {
+        if document.is_some_and(|id| {
+            inspect_document(world, id).is_ok_and(|info| info.dirty || info.has_drafts)
+        }) {
             world.get_mut::<PanelInstance>(panel).unwrap().preview = false;
         }
         let result = (|| {
-            if save {
-                save_document(world, document.unwrap()).map_err(|e| e.to_string())?;
-            }
             if let Some(resolution) = resolution {
                 let id = document.unwrap();
                 let info = inspect_document(world, id).map_err(|e| e.to_string())?;
@@ -610,9 +597,6 @@ impl Panel for FilePreviewPanel {
                     resolution,
                 )
                 .map_err(|e| e.to_string())?;
-            }
-            if split {
-                split_editor(world, panel)?;
             }
             if reload && let Some(path) = path {
                 load_preview(world, panel, path, true)?;
@@ -627,6 +611,7 @@ impl Panel for FilePreviewPanel {
     }
 }
 
+#[cfg(test)]
 fn split_editor(world: &mut World, panel: Entity) -> Result<Entity, String> {
     let id = world
         .get::<DocumentView>(panel)

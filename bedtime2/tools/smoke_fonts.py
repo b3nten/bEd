@@ -14,7 +14,13 @@ from smoke_workspace_policy import clean_quit
 
 def settled(app):
     app.request("wait_frames", frames=5)
-    return app.request("app.inspect_settings")
+    for _ in range(600):
+        settings = app.request("app.inspect_settings")
+        if not settings["fonts"]["loading"]:
+            assert settings["fonts"]["error"] is None, settings
+            return settings
+        app.request("wait_frames", frames=1)
+    raise AssertionError("Installed font discovery did not finish")
 
 
 def assert_font(settings, requested, resolved):

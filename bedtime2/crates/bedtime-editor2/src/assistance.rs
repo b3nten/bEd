@@ -243,6 +243,8 @@ pub fn parse_snippet(input: &str) -> Result<(String, Vec<(u32, Range<usize>)>), 
 }
 #[derive(Clone, Debug)]
 pub struct CompletionChoice {
+    /// Short host-supplied category, such as `fn` or `type`.
+    pub kind: std::sync::Arc<str>,
     pub label: std::sync::Arc<str>,
     pub detail: std::sync::Arc<str>,
 }
@@ -573,29 +575,117 @@ impl EditorView {
             .fixed_pos(caret.left_bottom())
             .constrain_to(ui.ctx().content_rect().shrink(8.0))
             .show(ui.ctx(), |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_width(360.0);
-                    let row_height = ui.text_style_height(&egui::TextStyle::Body);
-                    let mut scroll = egui::ScrollArea::vertical().max_height(240.0);
-                    if menu.reveal {
-                        scroll = scroll.vertical_scroll_offset(
-                            (menu.selected.saturating_sub(4)) as f32
-                                * (row_height + ui.spacing().item_spacing.y),
+                let size = egui::TextStyle::Body.resolve(ui.style()).size;
+                egui::Frame::popup(ui.style())
+                    .inner_margin(egui::Margin::symmetric(
+                        (size * 0.6) as i8,
+                        (size * 0.4) as i8,
+                    ))
+                    .show(ui, |ui| {
+                        let font_size = size;
+                        ui.set_width(
+                            (font_size * 26.0)
+                                .min(ui.ctx().content_rect().width() - 24.0)
+                                .max(1.0),
                         );
-                        menu.reveal = false;
-                    }
-                    scroll.show_rows(ui, row_height, menu.choices.len(), |ui, rows| {
-                        for index in rows {
-                            let choice = &menu.choices[index];
-                            let response = ui
-                                .selectable_label(index == menu.selected, choice.label.as_ref())
-                                .on_hover_text(choice.detail.as_ref());
-                            if response.clicked() {
-                                accepted = Some(index);
-                            }
+                        ui.spacing_mut().item_spacing.y = font_size * 0.2;
+                        ui.spacing_mut().button_padding.y = 0.0;
+                        ui.spacing_mut().interact_size.y = font_size;
+                        let background = ui.visuals().window_fill;
+                        let accent = ui.visuals().selection.stroke.color;
+                        let selected_fill = background.lerp_to_gamma(accent, 0.24);
+                        let hover_fill = background.lerp_to_gamma(accent, 0.16);
+                        let row_height = ui.text_style_height(&egui::TextStyle::Body);
+                        let mut scroll = egui::ScrollArea::vertical()
+                            .max_height((row_height + ui.spacing().item_spacing.y) * 8.0);
+                        if menu.reveal {
+                            scroll = scroll.vertical_scroll_offset(
+                                (menu.selected.saturating_sub(4)) as f32
+                                    * (row_height + ui.spacing().item_spacing.y),
+                            );
+                            menu.reveal = false;
                         }
+                        scroll.show_rows(ui, row_height, menu.choices.len(), |ui, rows| {
+                            for index in rows {
+                                let choice = &menu.choices[index];
+                                let (rect, response) = ui.allocate_exact_size(
+                                    egui::vec2(ui.available_width(), row_height),
+                                    egui::Sense::click(),
+                                );
+                                let fill = if index == menu.selected
+                                    || response.is_pointer_button_down_on()
+                                {
+                                    selected_fill
+                                } else if response.hovered() {
+                                    hover_fill
+                                } else {
+                                    background
+                                };
+                                ui.painter().rect_filled(
+                                    rect.expand2(egui::vec2(0.0, 1.0)),
+                                    0.0,
+                                    fill,
+                                );
+                                let font = egui::TextStyle::Body.resolve(ui.style());
+                                let kind_width = font_size * 4.0;
+                                #[cfg(feature = "treesitter")]
+                                let kind_color = match choice.kind.as_ref() {
+                                    "fn" | "ctor" | "event" => self.syntax_palette.function,
+                                    "type" | "trait" | "mod" | "enum" | "struct" | "T" => {
+                                        self.syntax_palette.r#type
+                                    }
+                                    "field" | "prop" | "var" | "ref" => {
+                                        self.syntax_palette.variable
+                                    }
+                                    "unit" | "value" | "const" => self.syntax_palette.number,
+                                    "kw" | "op" => self.syntax_palette.keyword,
+                                    "file" | "dir" => self.syntax_palette.string,
+                                    _ => accent,
+                                };
+                                #[cfg(not(feature = "treesitter"))]
+                                let kind_color = accent;
+                                ui.painter().text(
+                                    rect.left_top(),
+                                    egui::Align2::LEFT_TOP,
+                                    choice.kind.as_ref(),
+                                    font.clone(),
+                                    kind_color,
+                                );
+                                let mut job = egui::text::LayoutJob::default();
+                                job.append(
+                                    choice.label.as_ref(),
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: font.clone(),
+                                        color: ui.visuals().text_color(),
+                                        ..Default::default()
+                                    },
+                                );
+                                if !choice.detail.trim().is_empty() {
+                                    job.append(
+                                        &format!("  {}", choice.detail),
+                                        0.0,
+                                        egui::TextFormat {
+                                            font_id: font,
+                                            color: ui.visuals().weak_text_color(),
+                                            ..Default::default()
+                                        },
+                                    );
+                                }
+                                job.wrap.max_width = (rect.width() - kind_width).max(1.0);
+                                job.wrap.max_rows = 1;
+                                let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                                ui.painter().galley(
+                                    rect.left_top() + egui::vec2(kind_width, 0.0),
+                                    galley,
+                                    ui.visuals().text_color(),
+                                );
+                                if response.clicked() {
+                                    accepted = Some(index);
+                                }
+                            }
+                        });
                     });
-                });
             });
         self.assistance.popup_rect = Some(popup.response.rect);
         if let Some(index) = accepted {
@@ -752,10 +842,12 @@ mod tests {
             0,
             vec![
                 CompletionChoice {
+                    kind: "fn".into(),
                     label: "foo".into(),
                     detail: "".into(),
                 },
                 CompletionChoice {
+                    kind: "fn".into(),
                     label: "far".into(),
                     detail: "".into(),
                 },

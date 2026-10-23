@@ -226,3 +226,8 @@ behavior remains unverified.
 Selected row labels use bed1's RGB sine cycle. Disclosure arrows share UI2's
 filled triangle with editor folds and Structure; expansion uses 160 ms smoothstep
 timing, including row movement. Reduced motion uses a steady selection color.
+
+Rows begin directly below the panel header when no status is shown. Selection and
+hover backgrounds fit the file icon and label rather than spanning the panel; full-row
+click, drag and context-menu targets remain available. Default rows use an
+8-point left inset, 16-point indentation and font size plus 10-point row height.

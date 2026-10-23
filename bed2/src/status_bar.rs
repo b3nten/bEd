@@ -8,6 +8,36 @@ use bedtime_lsp2::{
 use bedtime_ui2::{BuiltinIcon, UiContext, UiSystems, egui};
 use bedtime_workbench2::*;
 use bevy::prelude::*;
+use std::time::{Duration, Instant};
+
+const ERROR_DURATION: Duration = Duration::from_secs(8);
+
+/// Keep the observed error after dismissal so unchanged source state cannot
+/// recreate its notification every frame. Document failures remain authoritative.
+#[derive(Component, Default)]
+struct ErrorNotice {
+    observed: Option<(Option<DocumentId>, String, Instant)>,
+    reported_at: Option<Instant>,
+}
+
+impl ErrorNotice {
+    fn visible(&mut self, document: Option<DocumentId>, error: Option<&str>, now: Instant) -> bool {
+        let Some(error) = error else {
+            self.observed = None;
+            return false;
+        };
+        if self
+            .observed
+            .as_ref()
+            .is_none_or(|(previous_document, previous, _)| {
+                *previous_document != document || previous != error
+            })
+        {
+            self.observed = Some((document, error.to_owned(), now));
+        }
+        now.duration_since(self.observed.as_ref().unwrap().2) < ERROR_DURATION
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct StatusSnapshot {
@@ -24,6 +54,7 @@ struct StatusSnapshot {
     work: Vec<String>,
     unversioned: bool,
     document_error: Option<String>,
+    document_error_at: Option<Instant>,
     details: Vec<String>,
 }
 
@@ -57,7 +88,23 @@ fn install(world: &mut World) {
         .iter(world)
         .collect();
     for workspace in workspaces {
-        let state = snapshot(world, workspace);
+        let mut state = snapshot(world, workspace);
+        let mut notice = world
+            .entity_mut(workspace)
+            .take::<ErrorNotice>()
+            .unwrap_or_default();
+        if notice.reported_at != state.document_error_at {
+            notice.observed = None;
+            notice.reported_at = state.document_error_at;
+        }
+        if !notice.visible(
+            state.document,
+            state.document_error.as_deref(),
+            Instant::now(),
+        ) {
+            state.document_error = None;
+        }
+        world.entity_mut(workspace).insert(notice);
         let show = !state.lsp.is_empty() || state.document_error.is_some();
         let Ok(mut workbench) = Workbench::for_entity(world, workspace) else {
             continue;
@@ -136,26 +183,16 @@ fn snapshot(world: &mut World, workspace: Entity) -> StatusSnapshot {
         .and_then(|p| world.get::<DocumentView>(p))
         .map(DocumentView::document);
     let selected_status = document.and_then(|doc| workbench::server_status(world, doc));
-    let status = selected_status
-        .or_else(|| {
-            servers
-                .iter()
-                .find(|s| matches!(s.status, ServerStatus::Failed(_)))
-                .map(|s| s.status.clone())
-        })
-        .or_else(|| {
-            document
-                .is_none()
-                .then(|| {
-                    servers
-                        .iter()
-                        .find(|s| matches!(s.status, ServerStatus::Failed(_)))
-                        .or_else(|| servers.iter().find(|s| s.status == ServerStatus::Starting))
-                        .or_else(|| servers.first())
-                        .map(|s| s.status.clone())
-                })
-                .flatten()
-        });
+    // The menu stays available after Stop detaches the focused document, so
+    // the user can restart that workspace's retained instance.
+    let status = selected_status.or_else(|| {
+        servers
+            .iter()
+            .find(|s| matches!(s.status, ServerStatus::Failed(_)))
+            .or_else(|| servers.iter().find(|s| s.status == ServerStatus::Starting))
+            .or_else(|| servers.first())
+            .map(|s| s.status.clone())
+    });
     snapshot.lsp = match status {
         Some(ServerStatus::Ready) => "LSP ready",
         Some(ServerStatus::Starting) => {
@@ -230,9 +267,12 @@ fn snapshot(world: &mut World, workspace: Entity) -> StatusSnapshot {
             }
         }
         if snapshot.document_error.is_none() {
-            snapshot.document_error = panel
-                .and_then(|p| crate::lsp::error_for_panel(world, p))
-                .map(str::to_owned);
+            if let Some((error, reported_at)) =
+                panel.and_then(|p| crate::lsp::error_for_panel(world, p))
+            {
+                snapshot.document_error = Some(error.to_owned());
+                snapshot.document_error_at = Some(reported_at);
+            }
         }
     }
     if let Some(error) = &snapshot.document_error {
@@ -262,7 +302,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
     else {
         return;
     };
-    let mut restart = None;
+    let mut action = None;
     let menu = context
         .frame(ui)
         .icon_button_sized(BuiltinIcon::Diagnostics, 16.0);
@@ -282,22 +322,6 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
         );
     }
     egui::Popup::menu(&menu).show(|ui| {
-        ui.set_max_width(520.0);
-        ui.strong(if state.lsp.is_empty() {
-            "Document error"
-        } else {
-            &state.lsp
-        });
-        if !state.title.is_empty() {
-            ui.strong(&state.title);
-        }
-        egui::ScrollArea::vertical()
-            .max_height(240.0)
-            .show(ui, |ui| {
-                for detail in &state.details {
-                    ui.add(egui::Label::new(detail).wrap());
-                }
-            });
         let servers = workbench::workspace_servers(world, workspace);
         if ui.button("Open Language Servers").clicked() {
             if let Some(layout) = world
@@ -317,20 +341,37 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
             ui.separator();
         }
         for server in servers {
-            if ui
-                .add_enabled(
-                    !server.retiring,
-                    egui::Button::new(format!("Restart {}", server.program)),
-                )
-                .clicked()
-            {
-                restart = Some(server.entity);
-                ui.close();
-            }
+            let name = server.activity.server_name.as_deref().unwrap_or_else(|| {
+                std::path::Path::new(&server.program)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&server.program)
+            });
+            ui.push_id(server.entity, |ui| {
+                ui.menu_button(name, |ui| {
+                    if ui
+                        .add_enabled(!server.retiring, egui::Button::new("Restart"))
+                        .clicked()
+                    {
+                        action = Some((server.entity, true));
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            !server.retiring && server.status != ServerStatus::Stopped,
+                            egui::Button::new("Stop"),
+                        )
+                        .clicked()
+                    {
+                        action = Some((server.entity, false));
+                        ui.close();
+                    }
+                });
+            });
         }
     });
     if state.starting || !state.work.is_empty() {
-        ui.spinner();
+        ui.add(egui::Spinner::new().size(16.0));
     }
     if let Some(work) = state.work.first() {
         let label = if state.work.len() > 1 {
@@ -341,13 +382,23 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
         ui.add_sized(
             egui::vec2(
                 (ui.available_width() * 0.4).min(260.0),
-                ui.text_style_height(&egui::TextStyle::Body),
+                ui.available_height(),
             ),
             egui::Label::new(label).truncate(),
         )
         .on_hover_text(state.work.join("\n"));
     }
     if state.server_errors > 0 {
+        let details = workbench::workspace_servers(world, workspace)
+            .into_iter()
+            .filter_map(|server| match server.status {
+                ServerStatus::Failed(error) if !server.retiring => {
+                    Some(format!("{}: {error}", server.program))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
         ui.colored_label(
             ui.visuals().error_fg_color,
             format!(
@@ -359,7 +410,8 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
                     "errors"
                 }
             ),
-        );
+        )
+        .on_hover_text(details);
     }
     if state.document.is_some() {
         if state.errors > 0 {
@@ -387,12 +439,32 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
             );
         }
         if let Some(error) = &state.document_error {
-            ui.colored_label(ui.visuals().error_fg_color, "Document error")
-                .on_hover_text(error);
+            if let Some((_, _, since)) = world
+                .get::<ErrorNotice>(workspace)
+                .and_then(|n| n.observed.as_ref())
+            {
+                ui.ctx()
+                    .request_repaint_after(ERROR_DURATION.saturating_sub(since.elapsed()));
+            }
+            let summary = error
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or(error);
+            let width = ui.available_width().min(420.0);
+            ui.add_sized(
+                egui::vec2(width, ui.available_height()),
+                egui::Label::new(egui::RichText::new(summary).color(ui.visuals().error_fg_color))
+                    .truncate(),
+            )
+            .on_hover_text(error);
         }
     }
-    if let Some(server) = restart {
-        let _ = workbench::restart_instance(world, server);
+    if let Some((server, restart)) = action {
+        if restart {
+            let _ = workbench::restart_instance(world, server);
+        } else {
+            let _ = workbench::stop_instance(world, server);
+        }
     }
     if let Some(mut bar) = world.get_mut::<StatusBar>(context.view) {
         bar.snapshot = state;
@@ -405,6 +477,27 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
 mod tests {
     use super::*;
     use bedtime_editor2::{TextBuffer, workbench::bind_text_editor};
+
+    #[test]
+    fn error_notices_expire_without_reappearing_and_new_errors_get_their_own_time() {
+        let mut notice = ErrorNotice::default();
+        let now = Instant::now();
+        assert!(notice.visible(None, Some("No definition found"), now));
+        assert!(notice.visible(None, Some("No definition found"), now + ERROR_DURATION / 2));
+        assert!(!notice.visible(None, Some("No definition found"), now + ERROR_DURATION));
+        assert!(!notice.visible(None, Some("No definition found"), now + ERROR_DURATION * 2));
+        assert!(notice.visible(
+            None,
+            Some("Opening definition timed out"),
+            now + ERROR_DURATION * 2
+        ));
+        assert!(!notice.visible(None, None, now + ERROR_DURATION * 2));
+        assert!(notice.visible(
+            None,
+            Some("Opening definition timed out"),
+            now + ERROR_DURATION * 3
+        ));
+    }
 
     #[test]
     fn missing_lsp_reserves_no_status_row_in_either_workspace() {

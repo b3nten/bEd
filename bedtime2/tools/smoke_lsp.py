@@ -10,7 +10,7 @@ import time
 
 from automation import Application
 from smoke_bed2 import open_panel, prepare_demo_layout
-from smoke_editor import navigate, primary
+from smoke_editor import navigate, primary, editor_context_menu
 from smoke_workspace_policy import clean_quit
 
 
@@ -32,6 +32,22 @@ def wait_servers(app, predicate, seconds=30):
             return value
         app.request("wait_frames", frames=2)
     raise AssertionError(f"LSP observations did not settle: {value}")
+
+
+def escape(app):
+    app.input({"type": "key", "code": "Escape", "pressed": True},
+              {"type": "key", "code": "Escape", "pressed": False})
+
+
+def status_menu(app):
+    bar = app.request("app.inspect_status_bar")["bars"][0]
+    menu = bar["menu_rect"]
+    app.input({"type": "click", "position": [(menu["min"][0] + menu["max"][0]) / 2,
+                                               (menu["min"][1] + menu["max"][1]) / 2]})
+
+
+def ui_texts(app):
+    return [target["text"] for target in app.inspect()["ui"]["texts"]]
 
 
 def main():
@@ -71,6 +87,19 @@ def main():
                 app.click_text("main.rs")
                 app.request("wait_frames", frames=4)
                 assert app.request("app.inspect_status_bar")["bars"] == [], "No LSP should reserve no status row"
+                view = next(p for p in app.request("app.inspect_filetree")["previews"] if p["path"] == str(source))
+                panel = view["entity"]
+                navigate(app, panel, 0)
+                primary(app, "KeyA")
+                for action in ["Copy", "Cut", "Paste"]:
+                    editor_context_menu(app, panel)
+                    labels = ui_texts(app)
+                    assert all(label in labels for label in ["Cut", "Copy", "Paste"]), labels
+                    assert not any(label in labels for label in ["Save", "Reload", "Split view", "Keep open", "Editing", "Line numbers", "Folding", "Language server", "Go to Definition     F12"]), labels
+                    app.click_text(action)
+                    app.request("wait_frames", frames=3)
+                    content = next(p["content"] for p in app.request("app.inspect_filetree")["previews"] if p["entity"] == panel)
+                    assert content == ("" if action == "Cut" else source.read_text()), (action, content)
                 app.request("app.set_settings", values={"language_servers": {"rust": config}})
                 wait(app, lambda value: any(d["status"] == "Some(Ready)" and d["diagnostics"]
                                           and d["diagnostics"]["items"] for d in value["documents"]))
@@ -80,6 +109,9 @@ def main():
                 panel = next(p["entity"] for p in previews if p["path"] == str(source))
                 navigate(app, panel, 28)
                 captures.append(app.capture("01-diagnostics.png"))
+                editor_context_menu(app, panel)
+                assert "Go to Definition     F12" in ui_texts(app)
+                escape(app)
                 app.input({"type": "key", "code": "F12", "pressed": True},
                           {"type": "key", "code": "F12", "pressed": False})
                 until = time.monotonic() + 20
@@ -122,6 +154,34 @@ def main():
                     assert time.monotonic() < until, records
                     app.request("wait_frames", frames=2)
                 assert source.read_text() == replacement
+                status_menu(app)
+                labels = ui_texts(app)
+                assert "Open Language Servers" in labels and "Bedtime fixture" in labels, labels
+                assert "The server has not published a diagnostic report for this document." not in labels
+                app.click_text("Bedtime fixture")
+                assert "Restart" in ui_texts(app) and "Stop" in ui_texts(app)
+                app.click_text("Stop")
+                wait_servers(app, lambda value: any(s["status"] == "Stopped" and not s["retiring"] for s in value["servers"]))
+                assert app.request("app.inspect_status_bar")["bars"], "The stopped server must remain restartable"
+                # F12 produces an actionable, temporary message on the actual row.
+                navigate(app, panel, 0)
+                app.input({"type": "key", "code": "F12", "pressed": True},
+                          {"type": "key", "code": "F12", "pressed": False})
+                error_bar = next(bar for bar in app.request("app.inspect_status_bar")["bars"] if bar["document_error"])
+                error = error_bar["document_error"]
+                assert error in ui_texts(app) and "Document error" not in ui_texts(app), ui_texts(app)
+                error_target = next(t for t in app.inspect()["ui"]["texts"] if t["text"] == error)
+                rect = error_target["rect"]
+                app.input({"type": "move", "position": [(rect["min"][0]+rect["max"][0])/2, (rect["min"][1]+rect["max"][1])/2]})
+                app.request("wait_frames", frames=3)
+                assert ui_texts(app).count(error) >= 2, ui_texts(app)
+                time.sleep(8.2)
+                app.request("wait_frames", frames=3)
+                assert all(bar["document_error"] is None for bar in app.request("app.inspect_status_bar")["bars"])
+                status_menu(app)
+                app.click_text("Bedtime fixture")
+                app.click_text("Restart")
+                wait(app, lambda value: any(d["status"] == "Some(Ready)" for d in value["documents"]))
                 app.request("app.lsp_restart", panel=panel)
                 wait(app, lambda value: any(d["status"] == "Some(Ready)" for d in value["documents"]))
                 bad = dict(config, program="/nonexistent/bedtime-lsp-fixture")

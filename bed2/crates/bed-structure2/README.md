@@ -61,3 +61,9 @@ line numbers.
 Files now opens file-backed Code documents through the same editor/analysis path,
 including shared split views and detected/overridden languages. The Structure
 contract is unchanged; persisted code sessions remain future application work.
+
+Structure matches Files’ default 8-point left inset, 16-point indentation and
+font size plus 10-point row height. Both use the same disclosure artwork and
+item-sized selection backgrounds; Structure omits the file icon slot.
+Its scroll viewport fills the panel, keeping horizontal scrollbars at the panel
+bottom rather than immediately below short outlines. Bars appear only for overflow.

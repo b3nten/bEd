@@ -42,6 +42,9 @@ admitted journal cursor, shared diagnostics and document-specific error. A sourc
 or language change retires that attachment and creates a fresh generation.
 `workspace_servers` and `server_status` expose observations; `restart` and
 `restart_instance` request managed retirement before a replacement starts.
+`stop_instance` stops a shared launch configuration in that workspace and retains
+its identity so synchronization cannot relaunch it. Explicit Restart or a changed
+launch configuration releases that stop; document text/history is preserved.
 The application owns status rendering and which document it describes.
 
 `ServerHandle::activity()` and each `ServerObservation::activity` share an
@@ -207,6 +210,12 @@ idle/blocked/inherited-pipe cleanup. The opt-in real-server test requires an
 installed rust-analyzer and Rust toolchain and uses an offline dependency-free
 Cargo fixture. Native verification additionally exercises the bEd2 bridge,
 rendering, F12, temporary cross-file tabs, real saves, status errors and quit.
+
+On 2026-10-23, `real_rust_analyzer_reports_saved_associated_item_errors` passed
+against the installed rust-analyzer with default settings: opening a saved
+`String::foo()` error reports it, saving a correction clears it, and saving the
+invalid call again reports it. This isolates backend/compiler delivery; it does
+not establish successful checking in a particular application workspace.
 
 Verified on 2026-10-22: 21 deterministic tests and the opt-in real rust-analyzer
 test passed. The native macOS scenario passed five captures, including absent

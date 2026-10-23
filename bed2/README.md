@@ -15,7 +15,7 @@ conversion so antialiased edges remain smooth over transparent window background
 Toolbar icons use the theme's text color through hover and press, with animated
 interaction backgrounds.
 
-Settings has General, Appearance and Editor sections with a Global/Workspace
+Settings has General, Appearance, Editor and Language servers sections with a Global/Workspace
 switch. Startup opens a single terminal layout by default; General can opt into
 reopening the last folder workspace. Document autosave defaults to a one-second idle delay. Five numbered layout
 slots retain live views and workers; their starting arrangements can be saved as
@@ -114,8 +114,8 @@ auxiliary **View** menus:
 The same abstract definitions supply an in-window fallback where native menus are
 unavailable. Standard editing accelerators use the focused canonical editor or
 text widget, not a second undo history. Save/Open Folder/Quit bindings are app-owned.
-The constrained menus expose no New, Save All or Reload actions. Reload remains in
-the editor's context menu; Save As remains unfinished.
+The constrained menus expose no New, Save All or Reload actions. Source conflicts
+retain their inline recovery controls; Save As remains unfinished.
 
 Click **Files** in the titlebar to open or focus the tree in the current layout.
 With no argument its root and default terminal cwd are the user's home directory,
@@ -126,23 +126,23 @@ open Code by opening a file from Files. An explicit directory chooses a folder r
 cargo run --offline --locked -p bed2 -- /path/to/project
 ```
 
-The code editor has no top control bar. Right-click its canvas for Save, Reload,
-Split view, Keep open and editing/language/folding options. Titlebar tool icons
+The code editor has no top control bar. Its canvas context menu contains only
+Cut, Copy and Paste by default. A ready language server can contribute Go to
+Definition when it advertises that capability. Titlebar tool icons
 animate their background and ink on hover and show descriptive tooltips.
 
 Single-click opens a replaceable preview beside Files, updates Structure to that
 file, and retains tree focus.
-Double-click, Enter, or **Keep open** pins the tab; double-click/Enter focus the
-editor. Modified/drafting/saving/conflicted documents are never replaced by another
+Double-click or Enter pins the tab and focuses the editor. Modified/drafting/saving/conflicted documents are never replaced by another
 preview. Reopening a file within a workspace shares its canonical document,
 including retained edits/history after its last viewer closes. Different layouts
-have separate preview slots. **Split view** opens another view of the same document
-in an adjacent area.
+have separate preview slots. Shared editor views remain a library capability; the
+canvas menu does not expose view creation.
 
 UTF-8 files up to 256 MiB load on managed background workers. Binary, oversized and
 nonregular files show metadata. No synchronous full-file reads occur while drawing.
 **Save** or Cmd/Ctrl+S uses the canonical save service, source checkpoints and atomic
-replacement. A changed disk source refuses overwrite; **Reload** compares incoming
+replacement. A changed disk source refuses overwrite; **Reload to compare** in the inline conflict controls compares incoming
 bytes while preserving local edits, then **Keep my edits** / **Use disk contents**
 resolve an observed conflict. Confirmed tree moves preserve document/history and
 rebind saving to the new path. Deleted dirty sources retain edits and lose their
@@ -200,10 +200,10 @@ through no-argument `+open`. Native Linux was not exercised.
 ## Code and Structure
 
 Open a file through **Files**, then choose **Structure** from the application's
-**View** menu. File extensions choose the initial language; the language selector
-can override it, including Plain text. **Split view** shares the canonical document
-with independent selection, scrolling, wrapping and collapsed regions. **Folding** exposes Fold all
-and Unfold all; gutter arrows also work with **Line numbers** hidden. Syntax colors
+**View** menu. File extensions choose the initial language. Library hosts can
+share canonical documents across views with independent selection, scrolling,
+wrapping and collapsed regions. Gutter arrows fold/unfold regions and also work
+with **Line numbers** hidden. Syntax colors
 follow the live theme. Plain text remains editable without structural analysis.
 
 Structure uses the current eligible editor or remembers the last one while
@@ -227,26 +227,41 @@ file documents; folder session recipes reopen file descriptors, not unsaved cont
 ## Language servers and status bar
 
 Open a folder and a supported code file to start its configured local language
-server. Rust defaults to an installed `rust-analyzer`; no server is downloaded
-or installed. **Settings → Editor → Language servers** enables/disables language
+server. Defaults use `rust-analyzer` for Rust, `gopls` for Go,
+`typescript-language-server --stdio` for TypeScript/TSX and
+`pyright-langserver --stdio` for Python. Servers must be installed separately.
+**Settings → Language servers** enables/disables language
 tools and edits configured programs/arguments. **Apply** commits a server draft
 and restarts affected processes; typing in a draft does not restart on each key.
 Settings inherit Global/Workspace values and use the existing centralized RON
-`.bed` stores. The home workspace does not launch project servers.
+`.bed` stores. The home workspace does not launch project servers. Existing saved server maps
+are preserved; **Add … support** fills missing built-in definitions explicitly.
+TypeScript and TSX defaults share a process; their launch configurations can be
+customized independently.
+
+Settings has a 14-point inset around its header and navigation. The header shows
+its active configuration file beside the Global/Workspace toggle in a single row.
+The path truncates to the remaining width, shows its full value in a tooltip and
+copies on click; temporary scopes show **In-memory settings**.
+Narrow panels move sidebar navigation into a wrapping row above the scrollable
+content; long paths truncate without displacing the scope switch.
+Option rows place controls before their names and center their contents vertically.
+Boolean options use label-clickable switches; Theme precedes the font controls,
+and separators group startup/autosave, theme/fonts, window, panels, tree and effects.
 
 Current features are document synchronization, push diagnostics, definition
 navigation, symbol hover and completion. Diagnostics draw revision-bound underlines and message tooltips.
 **F12** or the canvas menu's **Go to Definition** resolves the caret, opens the
 destination through the common Files route and selects/reveals its range.
 Multiple targets present a chooser. Destinations use temporary preview tabs:
-another clean preview can be reused, editing/Keep open pins normally, and an
+another clean preview can be reused, editing or explicit tab activation pins normally, and an
 already pinned destination stays pinned. A source preview can itself be replaced;
 the accepted navigation retains its ticket/workspace and validates the target
 load stamp and revision before applying. Closed/rebound/newer requests cannot
 deliver late selection changes. Conversion for long target lines runs off-thread.
 
 **Cmd-click** (Ctrl-click on Linux) resolves the symbol under the pointer without
-first moving the caret. Modifier-hover underlines symbols and uses a link cursor.
+first moving the caret. Modifier-hover underlines symbols with the live theme accent and uses a link cursor.
 It shares F12's chooser, preview policy and revision/generation gates.
 
 Symbol hover waits **200 ms** before requesting information. Ordinary UI tooltips
@@ -254,6 +269,8 @@ remain instant. The input-capable popup combines documentation and current
 intersecting diagnostics, remains readable under the pointer, scrolls vertically,
 and dismisses with Escape. Bed1's presentation is the reference: compact text,
 wrapped signatures, themed code highlighting, bold/inline-code prose and rules.
+Both symbol and completion documentation reserve at least six text lines when
+scrolling is needed, bounded by the available screen region; shorter text shrinks.
 Documentation is parsed once per payload; a panel-owned managed Tree-sitter worker
 prepares fenced-code colors. It does not install the bed1 renderer/runtime.
 
@@ -285,12 +302,29 @@ actual standard-library method in a temporary tab.
 `status_bar.rs` installs the application's renderer in Workbench's existing
 workspace status slot. It displays startup/ready/failure state, current-document
 nonzero error/warning counts and document/save errors. It uses focused text or the application's remembered Structure source
-while Files/other tools have focus. A compact diagnostics icon opens status details and
-restart controls; server failures elsewhere in that workspace remain visible.
+while Files/other tools have focus. A compact diagnostics icon opens a menu with
+one submenu per loaded server, containing only Restart and Stop, plus Open Language
+Servers. Stop uses managed process cleanup and suppresses relaunch until explicit
+Restart or a changed launch configuration; shared-language bindings stop together.
+The menu remains reachable after stopping the last server. Server failures
+elsewhere in that workspace remain visible.
 Counts are cached with the report and never scan the source or diagnostics while
 drawing. Stale reports do not count as current errors. Without LSP state or a
 document error, the renderer is absent and the shell reserves no status height.
 The renderer tolerates the empty workspace before restoration creates a layout.
+Document/save/navigation failures display their first nonempty message line,
+truncated to fit the row, with the full error in a tooltip on that message. Notices
+expire after eight seconds; this dismisses the notice without clearing canonical
+save/conflict state. New navigation attempts can report the same error again.
+Server failure details are exposed on the server-error count tooltip. Controls
+share centered vertical bounds, and activity artwork uses the menu icon's size.
+
+Other useful context actions in the [LSP specification](https://github.com/microsoft/language-server-protocol/blob/gh-pages/_specifications/lsp/3.17/specification.md)
+include Find References, Go to Type Definition/Implementation, Rename and Code
+Actions. These remain candidates, not implemented menu entries. Location queries
+can reuse revision-checked navigation; Rename and Code Actions first need checked
+workspace-edit application across documents. Hover and completion already use
+pointer/typing or keyboard interactions, so they add no extra context menu entries.
 
 **View → Language Servers**, or **Open Language Servers** in the status menu,
 opens the application-owned `LspPanelPlugin` panel. It shows configured/inactive
@@ -304,9 +338,9 @@ startup or actual `$/progress` work, showing its title and percentage. Begin,
 report and end tokens are tracked per process, including simultaneous numeric and
 string tokens. The idle row contains only its menu icon; zero/unknown counts,
 missing/stale report labels and the document title stay out of the row. Diagnostic
-freshness and server lifecycle remain available in the menu and panel. Neither a
+freshness and server lifecycle remain available in the panel. Neither a
 missing nor stale report implies background work. An unfinished operation remains visible, with its age in
-the panel/menu after 30 seconds without an update; the client never invents an end.
+the panel after 30 seconds without an update; the client never invents an end.
 
 `lsp.rs` projects canonical document URIs/language IDs and folder settings into
 the optional [LSP2 plugin](../bedtime2/crates/bedtime-lsp2/README.md). The plugin
@@ -481,7 +515,14 @@ fixed-width primary faces preserve editor wrapping and terminal cell geometry.
 to the UI, code editor and terminal, with independent Global/Workspace inheritance.
 Changing fonts retains documents and running shells. A missing or unreadable
 installed family falls back to Bedfont while retaining the saved family name.
-The catalog is scanned once per launch; restart after installing a font.
+Installed fonts are scanned once per application on a background worker started
+with settings. Appearance and font inspection only read the current catalog;
+while discovery is pending, Bedfont remains available and the picker shows a
+loading message. Saved installed-family preferences apply after discovery finishes,
+without permanently recording the interim fallback. Restart after installing a font.
+A 2026-10-23 local probe measured 488 ms for 787 installed faces (six monospace
+families); this scan previously blocked the first Appearance draw. Reproduce with
+`cargo test --offline --locked -p bed2 system_font_discovery_latency_probe -- --ignored --nocapture`.
 
 The RON settings fields are `font_family: "Bedfont"` and `font_size: 15.5`.
 Older records acquire these defaults. Bundled Unicode fallbacks remain available,

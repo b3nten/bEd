@@ -111,10 +111,32 @@ def main():
                 largest = max(workspace(snapshot)["layouts"][0]["areas"], key=lambda a: (a["rect"]["max"][0]-a["rect"]["min"][0])*(a["rect"]["max"][1]-a["rect"]["min"][1]))
                 app.request("panel.move", panel=settings, area=largest["entity"])
                 app.request("panel.focus", panel=settings)
+                app.click_text("Language servers")
+                text = " ".join(t["text"] for t in app.inspect()["ui"]["texts"])
+                for label in ["Enable language servers", "Go · gopls", "Python · Pyright", "Rust · rust-analyzer", "TypeScript · TypeScript Language Server"]:
+                    assert label in text, (label, text)
+                header = app.inspect()["ui"]["texts"]
+                path = next(t for t in header if t["text"].startswith("/"))
+                scope = next(t for t in header if t["text"] == "Workspace")
+                assert abs(center(path["rect"])[1] - center(scope["rect"])[1]) <= 1, (path, scope)
+                assert path["rect"]["max"][0] < scope["rect"]["min"][0], (path, scope)
+                captures.append(app.capture("00-language-servers.png"))
+                app.request("window.resize", size=[520, 720])
+                app.request("wait_frames", frames=8)
+                app.click_text("Editor")
+                app.click_text("Language servers")
+                captures.append(app.capture("00-settings-narrow.png"))
+                app.request("window.resize", size=[1280, 900])
+                app.request("wait_frames", frames=8)
                 app.click_text("Appearance")
                 text = " ".join(t["text"] for t in app.inspect()["ui"]["texts"])
                 for label in ["Theme", "Window opacity", "Panel opacity", "Panel border radius", "Panel gap", "File tree indentation"]:
                     assert label in text, (label, text)
+                labels = {t["text"]: t["rect"] for t in app.inspect()["ui"]["texts"]}
+                for control, name in [("Dark", "Theme"), ("Bedfont", "Font family")]:
+                    assert labels[control]["max"][0] < labels[name]["min"][0], labels
+                    assert abs(center(labels[control])[1] - center(labels[name])[1]) <= 1, labels
+                assert center(labels["Theme"])[1] < center(labels["Font family"])[1] < center(labels["Font size"])[1], labels
                 captures.append(app.capture("01-settings-dark.png"))
                 app.click_text("Dark")
                 app.click_text("Light")

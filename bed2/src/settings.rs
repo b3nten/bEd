@@ -12,6 +12,7 @@ pub enum Autosave {
     #[default]
     Timer,
 }
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeChoice {
     #[default]
@@ -26,10 +27,13 @@ macro_rules! settings {
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
         #[serde(default, deny_unknown_fields)]
         pub struct Settings { $(pub $field: $ty,)* }
+
         impl Default for Settings { fn default() -> Self { Self { $($field: $value,)* } } }
+
         #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
         #[serde(default, deny_unknown_fields)]
         pub struct SettingsOverrides { $(pub $field: Option<$ty>,)* }
+
         impl SettingsOverrides {
             pub fn resolve(&self, global: &Settings) -> Settings {
                 Settings { $($field: self.$field.clone().unwrap_or_else(|| global.$field.clone()),)* }
@@ -38,6 +42,7 @@ macro_rules! settings {
                 Self { $($field: if live.$field == baseline.$field { disk.$field.clone() } else { live.$field.clone() },)* }
             }
         }
+
         impl Settings {
             pub fn merge_loaded(baseline: &Self, live: &Self, disk: &Self) -> Self {
                 Self { $($field: if live.$field == baseline.$field { disk.$field.clone() } else { live.$field.clone() },)* }
@@ -45,6 +50,7 @@ macro_rules! settings {
         }
     }
 }
+
 settings! {
     autosave: Autosave = Autosave::Timer,
     autosave_timeout: f64 = 1.0,
@@ -70,8 +76,37 @@ settings! {
     smart_wrapping: bool = true,
     smart_indentation: bool = true,
     language_servers_enabled: bool = true,
-    language_servers: std::collections::BTreeMap<String, bedtime_lsp2::ServerConfig> = [("rust".into(), bedtime_lsp2::ServerConfig::default())].into(),
+    language_servers: std::collections::BTreeMap<String, bedtime_lsp2::ServerConfig> = default_language_servers(),
 }
+
+// Protocol IDs, including TSX, map to identical launch configurations so the
+// workbench shares one TypeScript process within a workspace.
+fn default_language_servers() -> std::collections::BTreeMap<String, bedtime_lsp2::ServerConfig> {
+    [
+        ("rust", "rust-analyzer", vec![]),
+        ("go", "gopls", vec![]),
+        ("typescript", "typescript-language-server", vec!["--stdio"]),
+        (
+            "typescriptreact",
+            "typescript-language-server",
+            vec!["--stdio"],
+        ),
+        ("python", "pyright-langserver", vec!["--stdio"]),
+    ]
+    .into_iter()
+    .map(|(language, program, arguments)| {
+        (
+            language.into(),
+            bedtime_lsp2::ServerConfig {
+                program: program.into(),
+                arguments: arguments.into_iter().map(String::from).collect(),
+                ..default()
+            },
+        )
+    })
+    .collect()
+}
+
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
         if self.language_servers.len() > 32 {
@@ -123,11 +158,13 @@ impl Settings {
         Ok(())
     }
 }
+
 impl SettingsOverrides {
     pub fn validate(&self) -> Result<(), String> {
         self.resolve(&Settings::default()).validate()
     }
 }
+
 /// Startup policy is global: no workspace exists yet when it is resolved.
 #[derive(Resource, Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -160,6 +197,7 @@ pub struct EditorPreferences {
     pub smart_indent: bool,
     pub read_only: bool,
 }
+
 impl Default for EditorPreferences {
     fn default() -> Self {
         Self {
@@ -170,11 +208,13 @@ impl Default for EditorPreferences {
         }
     }
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct FileTreePreferences {
     pub read_only: bool,
     pub indent_size: f32,
 }
+
 impl Default for FileTreePreferences {
     fn default() -> Self {
         Self {
@@ -183,10 +223,12 @@ impl Default for FileTreePreferences {
         }
     }
 }
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerminalPreferences {
     pub project_directory: bool,
 }
+
 impl Default for TerminalPreferences {
     fn default() -> Self {
         Self {
@@ -194,11 +236,13 @@ impl Default for TerminalPreferences {
         }
     }
 }
+
 pub struct Preferences {
     pub editor: Option<EditorPreferences>,
     pub filetree: Option<FileTreePreferences>,
     pub terminal: Option<TerminalPreferences>,
 }
+
 pub fn effective_preferences(world: &World, workspace: Entity) -> Preferences {
     let s = effective_settings(world, workspace);
     Preferences {
@@ -215,14 +259,19 @@ pub fn effective_preferences(world: &World, workspace: Entity) -> Preferences {
         terminal: Some(TerminalPreferences::default()),
     }
 }
+
 #[derive(Component)]
 struct AppliedEditorPreferences(EditorPreferences, Option<bedtime_workbench2::DocumentId>);
+
 #[derive(Component)]
 struct AppliedFileTreePreferences(FileTreePreferences);
+
 #[derive(Component)]
 struct AppliedTerminalPreferences(TerminalPreferences, Option<PathBuf>);
+
 #[derive(Resource, Default)]
 struct AppliedAppearance(Option<Settings>);
+
 pub struct SettingsPlugin;
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
@@ -244,16 +293,20 @@ impl Plugin for SettingsPlugin {
             app.register_automation_command("app.inspect_settings", inspect)
                 .register_automation_command("app.set_settings", set);
         }
+        crate::fonts::install(app);
         crate::storage::install(app);
         crate::keybindings::install(app);
     }
 }
+
 pub fn configure(app: &mut App) {
     crate::storage::configure(app);
 }
+
 pub fn flush(world: &mut World) -> Result<bool, String> {
     crate::storage::flush(world)
 }
+
 fn apply_appearance(world: &mut World) {
     let active = world
         .query_filtered::<Entity, With<bedtime_workbench2::ActiveWorkspace>>()
@@ -291,6 +344,7 @@ fn apply_appearance(world: &mut World) {
     }
     world.resource_mut::<AppliedAppearance>().0 = Some(desired);
 }
+
 pub fn configure_editor(world: &mut World, panel: Entity) {
     let Some(workspace) = world
         .get::<bedtime_workbench2::InWorkspace>(panel)
@@ -387,17 +441,30 @@ fn update_preferences(world: &mut World) {
 #[derive(Component, Default)]
 #[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct SettingsPanel;
+
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Section {
     #[default]
     General,
     Appearance,
     Editor,
+    LanguageServers,
 }
+
 impl Panel for SettingsPanel {
     const KEY: &'static str = "bed.settings";
     const LABEL: &'static str = "Settings";
+
     fn draw(ui: &mut egui::Ui, world: &mut World, _: &UiContext<'_>, panel: Entity) {
+        egui::Frame::NONE.inner_margin(14.0).show(ui, |ui| {
+        // egui's horizontal widgets position their first control before later
+        // controls can enlarge the row. Include text and padding up front so
+        // slider rails, numeric editors, switches and names share one center.
+        ui.spacing_mut().interact_size.y =
+            (ui.text_style_height(&egui::TextStyle::Button)
+                .max(ui.text_style_height(&egui::TextStyle::Body))
+                + 2.0 * ui.spacing().button_padding.y)
+                .max(ui.spacing().interact_size.y);
         let workspace = world
             .get::<bedtime_workbench2::InWorkspace>(panel)
             .map(|o| o.0);
@@ -405,13 +472,32 @@ impl Panel for SettingsPanel {
         let section_id = ui.id().with((panel, "settings-section"));
         let mut local = ui.data_mut(|d| d.get_temp::<bool>(scope_id).unwrap_or(false));
         let mut section = ui.data_mut(|d| d.get_temp::<Section>(section_id).unwrap_or_default());
+        let wide = ui.available_width() >= 600.0;
         ui.horizontal(|ui| {
+            // Reserve the trailing scope controls first. The path gets the rest
+            // of this same row, so long filenames cannot push the switch out.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label("Workspace");
                 ui.add_enabled_ui(workspace.is_some(), |ui| {
-                    toggle(ui, &mut local);
+                    toggle(ui, &mut local, "");
                 });
                 ui.label("Global");
+                let path = if local {
+                    workspace.filter(|w| world.get::<crate::files::FolderWorkspace>(*w).is_some())
+                        .and_then(|w| crate::files::workspace_directory(world, w))
+                        .and_then(|root| crate::storage::workspace_path(world, &root))
+                } else {
+                    world.get_resource::<crate::storage::ConfigDirectory>()
+                        .map(|config| config.0.join("preferences.bed"))
+                };
+                let text = path.as_ref().map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "In-memory settings".into());
+                let response = ui.add(egui::Label::new(egui::RichText::new(&text).small().weak())
+                    .truncate().sense(egui::Sense::click()))
+                    .on_hover_text(if path.is_some() { format!("{text}\nClick to copy path") } else { text.clone() });
+                if response.clicked() && path.is_some() {
+                    ui.ctx().copy_text(text);
+                }
             });
         });
         crate::storage::draw_errors(ui, world);
@@ -430,16 +516,24 @@ impl Panel for SettingsPanel {
             global.clone()
         };
         let before = values.clone();
-        ui.horizontal_top(|ui| {
+        ui.with_layout(if wide {
+            egui::Layout::left_to_right(egui::Align::TOP)
+        } else {
+            egui::Layout::top_down(egui::Align::LEFT)
+        }, |ui| {
             ui.vertical(|ui| {
-                ui.set_min_width(110.0);
+                if wide { ui.set_width(145.0); }
+                let navigation = |ui: &mut egui::Ui| {
                 for (name, value) in [
                     ("General", Section::General),
                     ("Appearance", Section::Appearance),
                     ("Editor", Section::Editor),
+                    ("Language servers", Section::LanguageServers),
                 ] {
                     ui.selectable_value(&mut section, value, name);
                 }
+                };
+                if wide { ui.vertical(navigation); } else { ui.horizontal_wrapped(navigation); }
             });
             ui.separator();
             egui::ScrollArea::both()
@@ -447,7 +541,7 @@ impl Panel for SettingsPanel {
                 .id_salt((panel, "settings-content"))
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
-                        ui.set_min_width(320.0);
+                        ui.set_min_width(280.0);
                         macro_rules! row {
                             ($field:ident, $draw:expr) => {{
                                 ui.horizontal(|ui| {
@@ -470,17 +564,17 @@ impl Panel for SettingsPanel {
                         match section {
                             Section::General => {
                                 if !local {
-                                    ui.checkbox(
-                                        &mut world
-                                            .resource_mut::<StartupPreferences>()
-                                            .open_last_workspace,
-                                        "Open last workspace on open",
-                                    );
+                                    ui.horizontal(|ui| {
+                                        toggle(ui, &mut world.resource_mut::<StartupPreferences>().open_last_workspace,
+                                            "Open last workspace on open");
+                                    });
+                                    ui.separator();
                                 }
                                 row!(autosave, |ui: &mut egui::Ui, value: &mut Autosave| {
-                                    ui.label("Autosave");
                                     let before = *value;
-                                    let mut response = egui::ComboBox::from_id_salt("autosave")
+                                    let mut response = ui.scope_builder(
+                                        egui::UiBuilder::new().layout(egui::Layout::top_down(egui::Align::LEFT)),
+                                        |ui| egui::ComboBox::from_id_salt("autosave")
                                         .selected_text(match value {
                                             Autosave::Never => "Never",
                                             Autosave::ChangeFocus => "Change Focus",
@@ -495,37 +589,63 @@ impl Panel for SettingsPanel {
                                             );
                                             ui.selectable_value(value, Autosave::Timer, "Timer");
                                         })
-                                        .response;
+                                        .response).inner;
+                                    ui.label("Autosave");
                                     if before != *value {
                                         response.mark_changed();
                                     }
                                     response
                                 });
                                 if values.autosave == Autosave::Timer {
-                                    row!(autosave_timeout, |ui: &mut egui::Ui, value: &mut f64| ui
-                                        .add(
-                                            egui::DragValue::new(value)
-                                                .range(0.01..=86400.0)
-                                                .speed(0.1)
-                                                .suffix(" s")
-                                                .prefix("Autosave timeout ")
-                                        ));
+                                    row!(autosave_timeout, |ui: &mut egui::Ui, value: &mut f64| {
+                                        let response = ui.add(egui::DragValue::new(value)
+                                            .range(0.01..=86400.0).speed(0.1).suffix(" s"));
+                                        ui.label("Autosave timeout");
+                                        response
+                                    });
                                 }
                             }
                             Section::Appearance => {
+                                row!(theme, |ui: &mut egui::Ui, value: &mut ThemeChoice| {
+                                    let before = *value;
+                                    let mut response = ui.scope_builder(
+                                        egui::UiBuilder::new().layout(egui::Layout::top_down(egui::Align::LEFT)),
+                                        |ui| egui::ComboBox::from_id_salt("theme")
+                                        .selected_text(match value {
+                                            ThemeChoice::Dark => "Dark",
+                                            ThemeChoice::Light => "Light",
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(value, ThemeChoice::Dark, "Dark");
+                                            ui.selectable_value(value, ThemeChoice::Light, "Light");
+                                        })
+                                        .response).inner;
+                                    ui.label("Theme");
+                                    if before != *value {
+                                        response.mark_changed();
+                                    }
+                                    response
+                                });
+                                ui.separator();
                                 row!(font_family, |ui: &mut egui::Ui, value: &mut String| {
-                                    ui.label("Font family");
                                     let before = value.clone();
-                                    let mut response = egui::ComboBox::from_id_salt("font-family")
+                                    let mut response = ui.scope_builder(
+                                        egui::UiBuilder::new().layout(egui::Layout::top_down(egui::Align::LEFT)),
+                                        |ui| egui::ComboBox::from_id_salt("font-family")
                                         .selected_text(value.as_str())
                                         .height(300.0)
                                         .show_ui(ui, |ui| {
-                                            for family in crate::fonts::available() {
+                                            for family in crate::fonts::available(world) {
                                                 ui.selectable_value(value, family.clone(), family);
                                             }
                                         })
-                                        .response;
-                                    if !crate::fonts::available().contains(value) {
+                                        .response).inner;
+                                    ui.label("Font family");
+                                    if crate::fonts::loading(world) {
+                                        ui.label("Loading installed fonts…");
+                                    } else if let Some(error) = crate::fonts::error(world) {
+                                        ui.label(error);
+                                    } else if !crate::fonts::available(world).contains(value) {
                                         ui.label("Unavailable; using Bedfont");
                                     }
                                     if before != *value {
@@ -538,30 +658,13 @@ impl Panel for SettingsPanel {
                                         .text("Font size")
                                         .suffix(" pt")
                                 ));
-                                row!(theme, |ui: &mut egui::Ui, value: &mut ThemeChoice| {
-                                    ui.label("Theme");
-                                    let before = *value;
-                                    let mut response = egui::ComboBox::from_id_salt("theme")
-                                        .selected_text(match value {
-                                            ThemeChoice::Dark => "Dark",
-                                            ThemeChoice::Light => "Light",
-                                        })
-                                        .show_ui(ui, |ui| {
-                                            ui.selectable_value(value, ThemeChoice::Dark, "Dark");
-                                            ui.selectable_value(value, ThemeChoice::Light, "Light");
-                                        })
-                                        .response;
-                                    if before != *value {
-                                        response.mark_changed();
-                                    }
-                                    response
-                                });
+                                ui.separator();
                                 row!(window_opacity, |ui: &mut egui::Ui, value: &mut f32| ui.add(
                                     egui::Slider::new(value, 0.0..=1.0).text("Window opacity")
                                 ));
                                 #[cfg(target_os = "macos")]
-                                row!(window_blur, |ui: &mut egui::Ui, value: &mut bool| ui
-                                    .checkbox(value, "Window blur"));
+                                row!(window_blur, |ui: &mut egui::Ui, value: &mut bool| toggle(ui, value, "Window blur"));
+                                ui.separator();
                                 row!(panel_opacity, |ui: &mut egui::Ui, value: &mut f32| ui.add(
                                     egui::Slider::new(value, 0.0..=1.0).text("Panel opacity")
                                 ));
@@ -571,6 +674,7 @@ impl Panel for SettingsPanel {
                                 ));
                                 row!(panel_gap, |ui: &mut egui::Ui, value: &mut f32| ui
                                     .add(egui::Slider::new(value, 0.0..=32.0).text("Panel gap")));
+                                ui.separator();
                                 row!(
                                     file_tree_indentation,
                                     |ui: &mut egui::Ui, value: &mut f32| ui.add(
@@ -579,8 +683,7 @@ impl Panel for SettingsPanel {
                                     )
                                 );
                                 ui.separator();
-                                row!(effects_enabled, |ui: &mut egui::Ui, value: &mut bool| ui
-                                    .checkbox(value, "Shader effects"));
+                                row!(effects_enabled, |ui: &mut egui::Ui, value: &mut bool| toggle(ui, value, "Shader effects"));
                                 // Keep the controls visible and editable while disabled: values
                                 // are independent preferences and survive toggling the effects.
                                 row!(scanline_intensity, |ui: &mut egui::Ui, value: &mut f32| ui
@@ -613,17 +716,16 @@ impl Panel for SettingsPanel {
                                     ));
                             }
                             Section::Editor => {
-                                row!(line_numbers, |ui: &mut egui::Ui, value: &mut bool| ui
-                                    .checkbox(value, "Line numbers"));
-                                row!(smart_wrapping, |ui: &mut egui::Ui, value: &mut bool| ui
-                                    .checkbox(value, "Smart wrapping"));
-                                row!(smart_indentation, |ui: &mut egui::Ui, value: &mut bool| ui
-                                    .checkbox(value, "Smart indentation"));
-                                ui.separator();
+                                row!(line_numbers, |ui: &mut egui::Ui, value: &mut bool| toggle(ui, value, "Line numbers"));
+                                row!(smart_wrapping, |ui: &mut egui::Ui, value: &mut bool| toggle(ui, value, "Smart wrapping"));
+                                row!(smart_indentation, |ui: &mut egui::Ui, value: &mut bool| toggle(ui, value, "Smart indentation"));
+                            }
+                            Section::LanguageServers => {
+                                ui.heading("Language servers");
+                                ui.add(egui::Label::new("Install servers separately and make their executables available on PATH. Servers start when a supported file is opened in a folder workspace.").wrap());
                                 row!(
                                     language_servers_enabled,
-                                    |ui: &mut egui::Ui, value: &mut bool| ui
-                                        .checkbox(value, "Language servers")
+                                    |ui: &mut egui::Ui, value: &mut bool| toggle(ui, value, "Enable language servers")
                                 );
                                 row!(
                                     language_servers,
@@ -635,9 +737,17 @@ impl Panel for SettingsPanel {
                                         let mut changed = false;
                                         let mut response = ui
                                             .vertical(|ui| {
+                                                for (language, config) in default_language_servers() {
+                                                    if !servers.contains_key(&language)
+                                                        && ui.button(format!("Add {language} support")).clicked()
+                                                    {
+                                                        servers.insert(language, config);
+                                                        changed = true;
+                                                    }
+                                                }
                                                 for (language, server) in servers.iter_mut() {
                                                     let id =
-                                                        ui.id().with(("server-draft", language));
+                                                        ui.id().with(("server-draft", local, language));
                                                     let (baseline, mut draft) = ui.data_mut(|d| {
                                                         d.get_temp::<(
                                                             bedtime_lsp2::ServerConfig,
@@ -652,12 +762,29 @@ impl Panel for SettingsPanel {
                                                     if baseline != *server {
                                                         draft = server.clone();
                                                     }
-                                                    ui.label(language);
-                                                    ui.text_edit_singleline(&mut draft.program);
-                                                    for argument in &mut draft.arguments {
-                                                        ui.text_edit_singleline(argument);
-                                                    }
+                                                    ui.separator();
+                                                    let label = match language.as_str() {
+                                                        "rust" => "Rust · rust-analyzer",
+                                                        "go" => "Go · gopls",
+                                                        "typescript" => "TypeScript · TypeScript Language Server",
+                                                        "typescriptreact" => "TypeScript React (TSX)",
+                                                        "python" => "Python · Pyright",
+                                                        other => other,
+                                                    };
+                                                    egui::CollapsingHeader::new(label).id_salt(id).show(ui, |ui| {
                                                     ui.horizontal(|ui| {
+                                                        ui.add(egui::TextEdit::singleline(&mut draft.program)
+                                                            .desired_width((ui.available_width() - 100.0).clamp(100.0, 260.0)));
+                                                        ui.label("Executable");
+                                                    });
+                                                    for (index, argument) in draft.arguments.iter_mut().enumerate() {
+                                                        ui.horizontal(|ui| {
+                                                            ui.add(egui::TextEdit::singleline(argument).id_salt((id, index))
+                                                                .desired_width((ui.available_width() - 100.0).clamp(100.0, 260.0)));
+                                                            ui.label(format!("Argument {}", index + 1));
+                                                        });
+                                                    }
+                                                    ui.horizontal_wrapped(|ui| {
                                                         if ui.small_button("Add argument").clicked()
                                                             && draft.arguments.len() < 128
                                                         {
@@ -693,6 +820,7 @@ impl Panel for SettingsPanel {
                                                     ui.data_mut(|d| {
                                                         d.insert_temp(id, (server.clone(), draft))
                                                     });
+                                                    });
                                                 }
                                             })
                                             .response;
@@ -720,12 +848,18 @@ impl Panel for SettingsPanel {
             d.insert_temp(scope_id, local);
             d.insert_temp(section_id, section);
         });
+        });
     }
 }
-fn toggle(ui: &mut egui::Ui, value: &mut bool) {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(32.0, 18.0), egui::Sense::click());
+
+fn toggle(ui: &mut egui::Ui, value: &mut bool, label: &str) -> egui::Response {
+    let (rect, mut response) = ui.allocate_exact_size(egui::vec2(32.0, 18.0), egui::Sense::click());
+    if !label.is_empty() {
+        response = response.union(ui.add(egui::Label::new(label).sense(egui::Sense::click())));
+    }
     if response.clicked() {
         *value = !*value;
+        response.mark_changed();
     }
     let visuals = ui.style().interact(&response);
     ui.painter().rect_filled(
@@ -752,14 +886,46 @@ fn toggle(ui: &mut egui::Ui, value: &mut bool) {
             egui::WidgetType::Checkbox,
             ui.is_enabled(),
             *value,
-            "Workspace settings",
+            if label.is_empty() {
+                "Workspace settings"
+            } else {
+                label
+            },
         )
     });
+    response
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn built_in_servers_cover_supported_languages_and_preserve_saved_definitions() {
+        let defaults = Settings::default();
+        defaults.validate().unwrap();
+        for (language, program, arguments) in [
+            ("rust", "rust-analyzer", vec![]),
+            ("go", "gopls", vec![]),
+            ("typescript", "typescript-language-server", vec!["--stdio"]),
+            ("python", "pyright-langserver", vec!["--stdio"]),
+        ] {
+            let server = &defaults.language_servers[language];
+            assert_eq!(server.program, program);
+            assert_eq!(server.arguments, arguments);
+        }
+        assert_eq!(
+            defaults.language_servers["typescript"],
+            defaults.language_servers["typescriptreact"]
+        );
+        let old: Settings =
+            ron::from_str("(language_servers: {\"rust\": (program: \"custom-rust\")})").unwrap();
+        assert_eq!(old.language_servers.len(), 1);
+        assert_eq!(old.language_servers["rust"].program, "custom-rust");
+        let restored: Settings = ron::from_str(&ron::to_string(&defaults).unwrap()).unwrap();
+        assert_eq!(restored.language_servers, defaults.language_servers);
+    }
+
     #[test]
     fn workspace_overrides_are_per_value_and_reset_resumes_inheritance() {
         let mut world = World::new();
@@ -784,6 +950,7 @@ mod tests {
         world.resource_mut::<GlobalPreferences>().0.line_numbers = false;
         assert!(!effective_settings(&world, first).line_numbers);
     }
+
     #[test]
     fn invalid_settings_are_rejected_at_the_boundary() {
         for size in [0.0, 7.9, 72.1, f32::INFINITY, f32::NAN] {
@@ -845,6 +1012,7 @@ mod tests {
         );
         assert!(ron::from_str::<Settings>("(unknown: true)").is_err());
     }
+
     #[test]
     fn old_preferences_default_effects_off_and_overrides_inherit_individual_values() {
         let old: Settings = ron::from_str("(panel_gap: 9.0)").unwrap();
@@ -868,6 +1036,7 @@ mod tests {
         overrides.curvature_intensity = None;
         assert_eq!(overrides.resolve(&global), global);
     }
+
     #[test]
     fn font_settings_round_trip_merge_and_inherit_independently() {
         let baseline = Settings::default();
@@ -907,6 +1076,7 @@ mod tests {
         assert_eq!(merged.font_family.as_deref(), Some("Loaded family"));
         assert_eq!(merged.font_size, Some(24.0));
     }
+
     #[test]
     fn workspace_switch_applies_appearance_without_changing_global_values() {
         let mut app = App::new();
@@ -1011,6 +1181,7 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
         })).collect::<Vec<_>>() }),
     )
 }
+
 #[cfg(feature = "automation")]
 fn set(world: &mut World, arguments: serde_json::Value) -> bedtime_automation2::AutomationResult {
     if !crate::close::accepts_user_actions(world) {

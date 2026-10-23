@@ -21,6 +21,7 @@ struct Interaction {
     completion_rect: Option<egui::Rect>,
     documentation_rect: Option<egui::Rect>,
 }
+
 struct CompletionSession {
     origin: RequestOrigin,
     byte: usize,
@@ -28,6 +29,7 @@ struct CompletionSession {
     resolving: Option<(RequestOrigin, usize, bool)>,
     resolved: std::collections::HashSet<usize>,
 }
+
 pub(super) fn receive(world: &mut World) {
     for reply in take_intelligence(world) {
         if !query_is_current(world, &reply.origin, reply.kind) {
@@ -102,6 +104,7 @@ pub(super) fn receive(world: &mut World) {
         }
     }
 }
+
 fn clear_completion(world: &mut World, panel: Entity, state: &mut Interaction) {
     if state.completion.take().is_none() {
         return;
@@ -112,6 +115,7 @@ fn clear_completion(world: &mut World, panel: Entity, state: &mut Interaction) {
         editor.view.clear_completions();
     }
 }
+
 fn resolve(
     world: &mut World,
     panel: Entity,
@@ -155,6 +159,7 @@ fn resolve(
         Err(error) => state.error = Some(error),
     }
 }
+
 pub(super) fn draw(ui: &mut egui::Ui, world: &mut World, panel: Entity, output: &EditorOutput) {
     let mut state = world
         .entity_mut(panel)
@@ -348,17 +353,15 @@ pub(super) fn draw(ui: &mut egui::Ui, world: &mut World, panel: Entity, output: 
                             egui::Frame::popup(ui.style()).show(ui, |ui| {
                                 super::documentation::style(ui);
                                 ui.set_width((ui.ctx().content_rect().width() - 40.0).min(460.0));
-                                egui::ScrollArea::vertical()
-                                    .max_height(320.0)
-                                    .show(ui, |ui| {
-                                        if let Some(documentation) = &mut state.documentation {
-                                            documentation.show(ui, &palette);
-                                        }
-                                        for message in &diagnostics {
-                                            ui.separator();
-                                            ui.label(message);
-                                        }
-                                    });
+                                super::documentation::scroll_area(ui, 320.0).show(ui, |ui| {
+                                    if let Some(documentation) = &mut state.documentation {
+                                        documentation.show(ui, &palette);
+                                    }
+                                    for message in &diagnostics {
+                                        ui.separator();
+                                        ui.label(message);
+                                    }
+                                });
                             });
                         });
                     state.hover_rect = Some(result.response.rect);
@@ -403,9 +406,13 @@ pub(super) fn draw(ui: &mut egui::Ui, world: &mut World, panel: Entity, output: 
                                         egui::Frame::popup(ui.style()).show(ui, |ui| {
                                             super::documentation::style(ui);
                                             ui.set_width(width.max(100.0));
-                                            egui::ScrollArea::vertical()
-                                                .max_height((region.height() - 24.0).min(300.0))
-                                                .show(ui, |ui| {
+                                            super::documentation::scroll_area(
+                                                ui,
+                                                (region.height() - 24.0).min(300.0),
+                                            )
+                                            .show(
+                                                ui,
+                                                |ui| {
                                                     if !item.detail.is_empty() {
                                                         ui.add(
                                                             egui::Label::new(
@@ -421,7 +428,8 @@ pub(super) fn draw(ui: &mut egui::Ui, world: &mut World, panel: Entity, output: 
                                                     {
                                                         documentation.show(ui, &palette);
                                                     }
-                                                });
+                                                },
+                                            );
                                         });
                                     });
                             state.documentation_rect = Some(result.response.rect);
@@ -457,6 +465,7 @@ fn documentation_region(screen: egui::Rect, menu: egui::Rect) -> Option<egui::Re
     };
     (region.height() >= 80.0).then_some(region)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -475,6 +484,7 @@ mod tests {
         }
     }
 }
+
 #[cfg(feature = "automation")]
 pub(super) fn inspect(
     world: &mut World,

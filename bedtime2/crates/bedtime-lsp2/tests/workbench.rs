@@ -256,6 +256,63 @@ fn source_changes_and_restart_invalidate_pending_navigation() {
     assert_eq!(pids.len(), 2);
 }
 #[test]
+fn stopping_suppresses_relaunch_until_explicit_restart_and_preserves_document_edits() {
+    let mut f = Fixture::new("basic");
+    f.ready();
+    f.definition();
+    let server = document_server(f.app.world(), f.doc.id()).unwrap();
+    stop_instance(f.app.world_mut(), server).unwrap();
+    assert!(request_definition(f.app.world_mut(), f.panel).is_err());
+    let doc = f.doc.id();
+    f.wait(|world| world.get::<DocumentLsp>(doc.0).is_none());
+    let until = Instant::now() + Duration::from_secs(3);
+    loop {
+        f.app.update();
+        let servers = workspace_servers(f.app.world_mut(), f.workspace);
+        assert_eq!(servers.len(), 1);
+        if !servers[0].retiring && servers[0].status == ServerStatus::Stopped {
+            break;
+        }
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    edit_document(
+        f.app.world_mut(),
+        f.doc,
+        0,
+        BufferEdit::new(0..0, "edited "),
+        EditOptions::default(),
+    )
+    .unwrap();
+    for _ in 0..10 {
+        f.app.update();
+        assert!(f.app.world().get::<DocumentLsp>(f.doc.id().0).is_none());
+    }
+    assert_eq!(
+        f.records()
+            .iter()
+            .filter(|r| r["method"] == "initialize")
+            .count(),
+        1
+    );
+    assert!(f.records().iter().any(|r| r["method"] == "exit"));
+    restart_instance(f.app.world_mut(), server).unwrap();
+    f.ready();
+    f.definition();
+    assert_eq!(
+        f.records()
+            .iter()
+            .filter(|r| r["method"] == "initialize")
+            .count(),
+        2
+    );
+    assert_eq!(
+        read_document(f.app.world(), f.doc).unwrap().to_string(),
+        "edited source"
+    );
+}
+
+#[test]
 fn large_documents_do_not_launch_language_servers() {
     let mut f = Fixture::new("basic");
     edit_document(

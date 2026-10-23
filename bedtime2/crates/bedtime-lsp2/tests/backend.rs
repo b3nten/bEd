@@ -414,6 +414,101 @@ fn crlf_splitting_edits_refresh_instead_of_failing_the_session() {
 
 #[test]
 #[ignore = "requires an installed rust-analyzer and Rust toolchain"]
+fn real_rust_analyzer_reports_saved_associated_item_errors() {
+    let root = std::env::temp_dir().join(format!(
+        "bedtime-lsp2-saved-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='saved_diagnostics'\nversion='0.1.0'\nedition='2024'\n[workspace]\n",
+    )
+    .unwrap();
+    let path = root.join("src/lib.rs");
+    let broken = "pub fn probe() { String::foo(); }\n";
+    std::fs::write(&path, broken).unwrap();
+    let (handle, worker) = ServerHandle::prepare(Launch {
+        root: root.clone(),
+        config: ServerConfig {
+            environment: [("CARGO_NET_OFFLINE".into(), "true".into())].into(),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let stop = cancel.clone();
+    let worker = thread::spawn(move || worker.run(|| stop.load(Ordering::Acquire)));
+    let key = DocumentKey {
+        id: 1,
+        generation: 1,
+    };
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let update = |text: &str, revision| {
+            handle
+                .update(DocumentUpdate {
+                    key,
+                    uri: FileUri::from_path(&path).unwrap(),
+                    language: "rust".into(),
+                    revision,
+                    text: text.into(),
+                    changes: None,
+                })
+                .unwrap();
+        };
+        let wait_for = |revision, broken: bool| {
+            let until = Instant::now() + Duration::from_secs(45);
+            while Instant::now() < until {
+                while let Ok(event) = handle.try_recv() {
+                    if let Event::Diagnostics { report, .. } = event {
+                        if report.revision == revision
+                            && if broken {
+                                report.items().iter().any(|d| d.message.contains("foo"))
+                            } else {
+                                report.items().is_empty()
+                            }
+                        {
+                            return;
+                        }
+                    }
+                }
+                assert!(
+                    !matches!(handle.status(), ServerStatus::Failed(_)),
+                    "{:?}",
+                    handle.activity()
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+            panic!(
+                "Missing saved diagnostics at revision {revision}: {:?}",
+                handle.activity()
+            );
+        };
+        // Opening saved broken code must report the compiler error without didSave,
+        // including after the user restarts the server.
+        update(broken, 0);
+        wait_for(0, true);
+        let fixed = "pub fn probe() { let _ = String::new(); }\n";
+        update(fixed, 1);
+        std::fs::write(&path, fixed).unwrap();
+        handle.saved(key, fixed.into()).unwrap();
+        wait_for(1, false);
+        update(broken, 2);
+        std::fs::write(&path, broken).unwrap();
+        handle.saved(key, broken.into()).unwrap();
+        wait_for(2, true);
+    }));
+    cancel.store(true, Ordering::Release);
+    worker.join().unwrap();
+    let _ = std::fs::remove_dir_all(root);
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[test]
+#[ignore = "requires an installed rust-analyzer and Rust toolchain"]
 fn real_rust_analyzer_definition_and_unsaved_diagnostics() {
     let root = std::env::temp_dir().join(format!("bedtime-lsp2-real-{}", std::process::id()));
     std::fs::create_dir_all(root.join("src")).unwrap();

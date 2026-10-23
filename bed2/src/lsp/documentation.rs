@@ -14,15 +14,18 @@ struct Style {
     italic: bool,
     code: bool,
 }
+
 struct Run {
     text: String,
     style: Style,
 }
+
 enum Block {
     Prose(Vec<Run>),
     Code { text: String, source: Range<usize> },
     Rule,
 }
+
 pub(super) struct Documentation {
     text: String,
     markdown: bool,
@@ -30,6 +33,7 @@ pub(super) struct Documentation {
     blocks: Vec<Block>,
     analysis: Option<(AnalysisSession, WorkspaceTask<()>)>,
 }
+
 fn blocks(markup: &Markup, language: &str) -> (Vec<Block>, String) {
     if !markup.markdown {
         return (
@@ -146,6 +150,7 @@ fn blocks(markup: &Markup, language: &str) -> (Vec<Block>, String) {
     flush(&mut blocks, &mut runs);
     (blocks, source)
 }
+
 pub(super) fn prepare(
     world: &mut World,
     panel: Entity,
@@ -180,6 +185,7 @@ pub(super) fn prepare(
         analysis,
     });
 }
+
 pub(super) fn style(ui: &mut egui::Ui) {
     // Match bed1's compact documentation typography while keeping native text
     // selection and the active theme's syntax palette.
@@ -189,6 +195,15 @@ pub(super) fn style(ui: &mut egui::Ui) {
     }
     ui.spacing_mut().item_spacing = egui::vec2(size * 0.35, size * 0.25);
 }
+
+pub(super) fn scroll_area(ui: &egui::Ui, max_height: f32) -> egui::ScrollArea {
+    // Areas remember their previous content size. Without this floor a short
+    // hover can leave later documentation trapped in the default 64-point viewport.
+    egui::ScrollArea::vertical()
+        .min_scrolled_height((6.0 * ui.text_style_height(&egui::TextStyle::Body)).min(max_height))
+        .max_height(max_height)
+}
+
 impl Documentation {
     #[cfg(feature = "automation")]
     pub(super) fn highlight_count(&self) -> usize {
@@ -299,6 +314,41 @@ impl Documentation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn long_documentation_grows_to_six_lines_after_a_short_hover() {
+        let ctx = egui::Context::default();
+        let mut minimum = 0.0;
+        let mut height = 0.0;
+        for long in [false, false, true, true, true] {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                egui::Area::new(egui::Id::new("documentation-height"))
+                    .fixed_pos(egui::pos2(20.0, 20.0))
+                    .show(ui.ctx(), |ui| {
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            style(ui);
+                            ui.set_width(360.0);
+                            minimum = 6.0 * ui.text_style_height(&egui::TextStyle::Body);
+                            height = scroll_area(ui, 320.0)
+                                .show(ui, |ui| {
+                                    ui.label(if long {
+                                        "Documentation line\n".repeat(12)
+                                    } else {
+                                        "Short hover".into()
+                                    });
+                                })
+                                .inner_rect
+                                .height();
+                        });
+                    });
+            });
+            output.textures_delta.clear();
+        }
+        assert!(
+            height >= minimum,
+            "{height} points cannot fit six lines ({minimum})"
+        );
+    }
+
     #[test]
     fn rust_hover_keeps_code_prose_rules_and_inline_words_separate() {
         let (blocks,source)=blocks(&Markup {text:"```rust\npub fn new() -> Vec<u8>\n```\n\n---\n\nCon**cat**enate `变量` and [résumé](https://example.org).".into(),markdown:true},"rust");

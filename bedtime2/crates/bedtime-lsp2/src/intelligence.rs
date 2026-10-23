@@ -202,8 +202,43 @@ pub(crate) fn parse_completions(
     let choices = items
         .iter()
         .map(|i| bedtime_editor2::CompletionChoice {
+            kind: match i.raw.value["kind"].as_u64().unwrap_or(0) {
+                2 | 3 => "fn",
+                4 => "ctor",
+                5 => "field",
+                6 => "var",
+                7 => "type",
+                8 => "trait",
+                9 => "mod",
+                10 => "prop",
+                11 => "unit",
+                12 => "value",
+                13 | 20 => "enum",
+                14 => "kw",
+                17 => "file",
+                18 => "ref",
+                19 => "dir",
+                21 => "const",
+                22 => "struct",
+                23 => "event",
+                24 => "op",
+                25 => "T",
+                _ => "·",
+            }
+            .into(),
             label: i.label.as_str().into(),
-            detail: i.detail.as_str().into(),
+            detail: {
+                let detail = i.raw.value["labelDetails"]["detail"].as_str().unwrap_or("");
+                let description = i.raw.value["labelDetails"]["description"]
+                    .as_str()
+                    .unwrap_or("");
+                [detail, description]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+                    .into()
+            },
         })
         .collect::<Vec<_>>()
         .into();

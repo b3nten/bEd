@@ -3,7 +3,7 @@
 mod documentation;
 mod interaction;
 use bedtime_editor2::{Navigation, Reveal, TextBuffer, TextSelection, workbench::CodeLanguage};
-use bedtime_lsp2::{Location, ServerStatus, workbench::*};
+use bedtime_lsp2::{Location, workbench::*};
 use bedtime_ui2::egui;
 use bedtime_workbench2::*;
 use bevy::{ecs::message::MessageCursor, prelude::*};
@@ -19,6 +19,7 @@ struct LanguageState {
     navigating: Vec<Navigating>,
     saves_waiting: VecDeque<(DocumentId, TextBuffer)>,
 }
+
 struct Opening {
     source: DefinitionResult,
     location: Location,
@@ -26,6 +27,7 @@ struct Opening {
     started: Instant,
     workspace: Entity,
 }
+
 struct Navigating {
     source: DefinitionResult,
     target: Entity,
@@ -34,10 +36,13 @@ struct Navigating {
     opened: crate::opening::OpenedFile,
     workspace: Entity,
 }
+
 #[derive(Component, Default)]
-struct LanguageError(Option<String>);
+struct LanguageError(Option<(String, Instant)>);
+
 #[derive(Component)]
 struct Choices(DefinitionResult);
+
 pub struct LanguageToolsPlugin;
 impl Plugin for LanguageToolsPlugin {
     fn build(&self, app: &mut App) {
@@ -75,6 +80,7 @@ impl Plugin for LanguageToolsPlugin {
         }
     }
 }
+
 fn project(world: &mut World) {
     let workspaces: Vec<_> = world
         .query_filtered::<Entity, With<Workspace>>()
@@ -190,14 +196,18 @@ fn project(world: &mut World) {
         }
     }
 }
+
 fn show_error(world: &mut World, panel: Entity, error: String) {
     if let Ok(mut entity) = world.get_entity_mut(panel) {
-        entity.insert(LanguageError(Some(error)));
+        entity.insert(LanguageError(Some((error, Instant::now()))));
     }
 }
-pub(crate) fn error_for_panel(world: &World, panel: Entity) -> Option<&str> {
-    world.get::<LanguageError>(panel)?.0.as_deref()
+
+pub(crate) fn error_for_panel(world: &World, panel: Entity) -> Option<(&str, Instant)> {
+    let (message, reported_at) = world.get::<LanguageError>(panel)?.0.as_ref()?;
+    Some((message, *reported_at))
 }
+
 fn navigation_current(
     world: &World,
     source: &DefinitionResult,
@@ -233,6 +243,7 @@ fn navigation_current(
                 .get::<DocumentView>(panel)
                 .is_some_and(|view| view.document() == DocumentId(document)))
 }
+
 fn start_open(
     world: &mut World,
     source: DefinitionResult,
@@ -260,6 +271,7 @@ fn start_open(
     });
     Ok(())
 }
+
 fn navigate(world: &mut World) {
     let results = take_definitions(world);
     for result in results {
@@ -385,12 +397,14 @@ fn navigate(world: &mut World) {
         }
     }
 }
+
 fn invoke(world: &mut World, panel: Entity) {
     world.entity_mut(panel).insert(LanguageError(None));
     if let Err(error) = request_definition(world, panel) {
         show_error(world, panel, error);
     }
 }
+
 pub fn editor_input(
     ui: &mut egui::Ui,
     world: &mut World,
@@ -440,36 +454,26 @@ pub fn editor_input(
         }
     }
 }
+
 pub fn context_menu(ui: &mut egui::Ui, world: &mut World, panel: Entity) {
-    let Some(document) = world.get::<DocumentView>(panel).map(DocumentView::document) else {
+    let Some(activity) = language_activity(world, panel) else {
         return;
     };
-    let status = server_status(world, document);
-    if ui
-        .add_enabled(
-            status == Some(ServerStatus::Ready),
-            egui::Button::new("Go to Definition     F12"),
-        )
-        .clicked()
-    {
-        invoke(world, panel);
-        ui.close();
+    if activity.supports_definition {
+        ui.separator();
+        let composing = world
+            .get::<bedtime_editor2::workbench::WorkbenchEditor>(panel)
+            .is_some_and(|editor| editor.view.is_composing());
+        if ui
+            .add_enabled(!composing, egui::Button::new("Go to Definition     F12"))
+            .clicked()
+        {
+            invoke(world, panel);
+            ui.close();
+        }
     }
-    ui.menu_button("Language server",|ui| {
-        match &status {
-            Some(ServerStatus::Ready)=>{ui.label("Ready");},Some(ServerStatus::Starting)=>{ui.spinner();ui.label("Starting…");},
-            Some(ServerStatus::Failed(error))=>{ui.colored_label(ui.visuals().error_fg_color,error.as_ref());},Some(ServerStatus::Stopped)=>{ui.label("Stopped");},
-            None=>{ui.label("No server attached. Open a folder and configure language servers in Settings → Editor.");},
-        }
-        if let Some(state)=world.get::<DocumentLsp>(document.0) {
-            if let Some(error)=&state.error {ui.colored_label(ui.visuals().error_fg_color,error);}
-            if let Some(report)=&state.diagnostics {let revision=inspect_document(world,document).ok().map(|i|i.revision);ui.label(format!("{} diagnostics{}",report.items().len(),if revision!=Some(report.revision){" (stale)"}else if !report.verified {" (unversioned)"}else{""}));}
-        }
-        if let Some(LanguageError(Some(error)))=world.get::<LanguageError>(panel) {ui.colored_label(ui.visuals().error_fg_color,error);}
-        if ui.add_enabled(status.is_some(),egui::Button::new("Restart server")).clicked() {if let Err(error)=restart(world,document) {show_error(world,panel,error);}ui.close();}
-    });
-    ui.separator();
 }
+
 #[cfg(feature = "automation")]
 fn parse_panel(value: &serde_json::Value) -> Result<Entity, String> {
     Entity::try_from_bits(
@@ -481,6 +485,7 @@ fn parse_panel(value: &serde_json::Value) -> Result<Entity, String> {
     )
     .ok_or("Invalid panel ID".into())
 }
+
 #[cfg(feature = "automation")]
 fn inspect(world: &mut World, _: serde_json::Value) -> Result<serde_json::Value, String> {
     let docs: Vec<_> = world

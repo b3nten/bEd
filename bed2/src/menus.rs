@@ -427,6 +427,38 @@ enum EditAction {
 #[derive(Resource, Default)]
 struct PendingEdits(Vec<(Entity, egui::Id, EditAction)>);
 
+/// Use the same clipboard route as the native Edit menu, targeting this canvas.
+pub fn editor_context_menu(ui: &mut egui::Ui, world: &mut World, panel: Entity) {
+    let Some(document) = world.get::<DocumentView>(panel).map(DocumentView::document) else {
+        return;
+    };
+    let Some(editor) = world.get::<bedtime_editor2::workbench::WorkbenchEditor>(panel) else {
+        return;
+    };
+    let selected = !editor.view.selection().range().is_empty();
+    let writable = !editor.view.settings.read_only
+        && inspect_document(world, document).is_ok_and(|info| !info.has_drafts);
+    for (label, command, enabled) in [
+        ("Cut", ContextCommandId::of::<Cut>(), selected && writable),
+        ("Copy", ContextCommandId::of::<Copy>(), selected),
+        ("Paste", ContextCommandId::of::<Paste>(), writable),
+    ] {
+        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+            ui.close();
+            ui.memory_mut(|memory| {
+                memory.request_focus(egui::Id::new(("bedtime.editor", panel, document)));
+            });
+            world
+                .resource_mut::<GlobalCommandRequests>()
+                .submit(ContextCommandRequest {
+                    command,
+                    source: None,
+                    context: InvocationContext::Panel(panel),
+                });
+        }
+    }
+}
+
 pub fn has_pending_edits(world: &World) -> bool {
     world
         .get_resource::<PendingEdits>()

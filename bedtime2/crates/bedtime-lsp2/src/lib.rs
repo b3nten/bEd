@@ -34,6 +34,7 @@ pub struct ServerConfig {
     pub settings: serde_json::Value,
     pub initialization_options: serde_json::Value,
 }
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -45,6 +46,7 @@ impl Default for ServerConfig {
         }
     }
 }
+
 impl ServerConfig {
     pub fn validate(&self) -> Result<(), String> {
         if self.program.trim().is_empty()

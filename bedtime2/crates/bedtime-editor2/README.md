@@ -109,8 +109,10 @@ Stale or invalid requests fail before changing view state. Applications choose
 which document/view to open before requesting navigation.
 
 Each wheel input locks to its dominant axis, and the next input can immediately
-choose another axis. egui's smoothed tail retains the latest input's axis. Scrollbars remain
-independently draggable. Tree-sitter builds reserve a narrow fold column before
+choose another axis. egui's smoothed tail retains the latest input's axis. Scrollbars appear
+only for overflow and remain independently draggable. Wrapping disables horizontal
+scrolling and resets any previous horizontal offset, including during wrap preparation.
+Tree-sitter builds reserve a narrow fold column before
 analysis arrives, so asynchronous fold discovery never shifts text. Disclosure
 triangles share UI2's file-tree artwork. Fold bodies crop at normal font size
 with bed1's reversible 160 ms smoothstep timing; fractional row geometry is shared
@@ -288,3 +290,7 @@ These measure headless UI work; large-file semantic analysis is intentionally
 limited. The current Code/Structure native smoke passed eight captures under
 `target/bed2-code-smoke`. Background analysis timing and bounds are recorded in
 the Tree-sitter crate README.
+
+Completion menus use bed1-style compact rows: a host-supplied category, label and
+muted inline detail, with accent-tinted selection/hover backgrounds and up to eight
+visible rows. Item tooltips are omitted; the host owns resolved documentation.
