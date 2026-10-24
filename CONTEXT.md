@@ -1,6 +1,6 @@
 # Project context
 
-Last reviewed: 2026-10-23. This is the entry point for current project knowledge;
+Last reviewed: 2026-10-24. This is the entry point for current project knowledge;
 keep detailed contracts and decision history in the linked documents.
 
 ## Direction and code map
@@ -24,6 +24,32 @@ an explicit package when working on v2.
 | v2 Git panel, file-tree presentation and workspace preferences | [Git contract](bed2/README.md#git-panel), [coordinator](bed2/src/git.rs), [presentation](bed2/src/git/presentation.rs) |
 | Engineering guidance by task | [Engineering index](ENGINEERING.md) |
 
+## Accepted next direction — not yet implemented
+
+On 2026-10-24, accepted **one editing session per Bevy World**: remove Workbench's
+workspace entities/activation/membership and execution scope first; the host owns
+opening/closing sessions. Do not replace the scope with an equivalent mandatory
+Session entity. Layouts, panels, shared documents, managed work and checked close/
+save/shutdown guarantees remain. bEd2's initial folder-open policy should launch
+another application instance/window; the inspected production route still opens
+and activates a workspace in-place. Native App teardown/restart is not a prerequisite
+or a verified cross-platform capability.
+
+Then add **opt-in reflected world persistence** using Bevy 0.20 `DynamicWorld`.
+Workbench owns durable graph capture/validation/remapping and controlled structural
+restore, not storage I/O or a panel factory registry. bEd2 owns global/local routing,
+settings inheritance, files, write coordination, external loading and recovery.
+Separate `GlobalSettings`/`WorkspaceSettings` types may both be resources; runtime
+world scope does not determine persistence destination. The prototype demonstrates
+marked data and required-component restoration but still uses workspaces, and its
+synchronous/non-atomic storage is not production policy.
+
+The [decision and ordered implementation plan](MIGRATION/workbench-world-session-plan.md)
+covers both tasks, preservation requirements, prototype evidence, open implementation
+choices and verification gates. It supersedes older future-direction statements
+about workspace scopes and blanket application-only persistence, **not current APIs**.
+No production migration has been implemented by recording this decision.
+
 ## Current implementation and decision records
 
 - Applications own Bevy setup, windows, cameras and the renderer. UI2 remains
@@ -42,6 +68,9 @@ an explicit package when working on v2.
   and snapshot notifications. Applications own creation discovery and persistence.
   Command definitions and handlers are independent; bindings and handlers resolve
   panel → workspace → world. Document handlers are explicitly installed.
+  An isolated [reflected persistence prototype](bed2/README.md#reflected-persistence-prototype)
+  now explores marked types and Bevy 0.20 `DynamicWorld` partitions in `bed2/examples`;
+  it does not change this production ownership contract or session format.
   Destructive UI intentions use `PanelCloseRequested` and application-approved
   `commit_close`; raw despawn cleans up but cannot be vetoed. See the
   [accepted design and phase checklist](MIGRATION/application-composition.md).

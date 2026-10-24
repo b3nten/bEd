@@ -9,6 +9,13 @@ historical evidence, not the current API contract. The
 contracts and now links this application-owned persistence boundary. A checked item below means implementation is present in the inspected
 code, **not** that verification passed.
 
+> **Accepted next direction (2026-10-24; not yet implemented):** the
+> [one-world/session and reflected persistence plan](workbench-world-session-plan.md)
+> supersedes future workspace execution scopes and the blanket exclusion of reusable
+> persistence below. This file still describes the implemented workspace APIs and
+> original phase history until that migration lands. Concrete entity-first panels,
+> no factory catalog, explicit close decisions and host-owned I/O/recovery remain.
+
 ## Accepted ownership and design
 
 ### Concrete entities, not registered panel types

@@ -2018,6 +2018,7 @@ dependencies = [
  "bedtime-workbench2",
  "bevy",
  "bevy_egui",
+ "bevy_world_serialization",
  "blake3",
  "fontdb",
  "libc",

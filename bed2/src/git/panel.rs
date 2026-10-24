@@ -21,6 +21,7 @@ enum Action {
     Confirm,
     Cancel,
     Open(String),
+    Diff(String, DiffSide, bool),
     Terminal,
     OpenRoot,
     Options(GitPanelOptions),
@@ -278,10 +279,8 @@ impl Panel for GitPanel {
                         cancel(&mut session);
                         Ok(())
                     }
-                    Action::Open(path) => world
-                        .get::<InLayout>(panel)
-                        .map(|owner| owner.0)
-                        .ok_or("Git panel has no layout".into())
+                    Action::Diff(path, side, pin) => diff::open(world, panel, diff::Descriptor { root:PathBuf::from(&session.view.as_ref().unwrap().status.root), path, side },pin).map(|_|()),
+                    Action::Open(path) => Workbench::for_entity(world,panel).and_then(|w|w.panel_layout(panel))
                         .and_then(|layout| {
                             crate::opening::open_file(
                                 world,
@@ -781,8 +780,10 @@ fn draw_row(
                     response
                         .clone()
                         .on_hover_text(format!("{}\n{:?}", entry.path, stage));
+                    let side = match group { Some(Group::Staged)=>DiffSide::Staged,Some(Group::Unstaged)=>DiffSide::Unstaged,_=>if stage==Staging::Staged {DiffSide::Staged} else {DiffSide::Unstaged} };
                     if response.clicked() {
                         panel.selected = Some(entry.path.clone());
+                        *action=Some(Action::Diff(entry.path.clone(),side,false));
                     }
                     #[cfg(feature = "automation")]
                     {
@@ -797,9 +798,12 @@ fn draw_row(
                     if response.double_clicked()
                         || (response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                     {
-                        *action = Some(Action::Open(entry.path.clone()));
+                        *action = Some(Action::Diff(entry.path.clone(),side,true));
                     }
                     response.context_menu(|ui| {
+                        for (label,side) in [("Open unstaged diff",DiffSide::Unstaged),("Open staged diff",DiffSide::Staged)] {
+                            if ui.button(label).clicked() { *action=Some(Action::Diff(entry.path.clone(),side,true));ui.close(); }
+                        }
                         if ui.button("Open file").clicked() {
                             *action = Some(Action::Open(entry.path.clone()));
                             ui.close();

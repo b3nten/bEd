@@ -18,7 +18,7 @@ bedtime-git.workspace = true
 pulldown-cmark.workspace = true
 bed-structure2.workspace = true
 bedtime-treesitter2.workspace = true
-bedtime-editor2 = { workspace = true, features = ["workbench", "treesitter"] }
+bedtime-editor2 = { workspace = true, features = ["workbench", "treesitter", "diff"] }
 bedtime-lsp2 = { workspace = true, features = ["workbench"] }
 bedtime-automation2 = { workspace = true, optional = true }
 bedtime-ui2.workspace = true
@@ -36,6 +36,7 @@ ron = "0.12.2"
 blake3 = "1"
 
 [dev-dependencies]
+bevy_world_serialization = "=0.20.0"
 base64.workspace = true
 wgpu.workspace = true
 

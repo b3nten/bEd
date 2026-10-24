@@ -119,12 +119,15 @@ pub(crate) struct TabRecipe {
     #[serde(default)]
     pub(crate) model_view: Option<bedtime_model2::ViewState>,
     pub(crate) tree_root: Option<PathBuf>,
+    #[serde(default)]
+    pub(crate) git_diff: Option<crate::git::diff::Descriptor>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PanelKind {
     Git,
+    GitDiff,
     LanguageServers,
     Files,
     Code,
@@ -199,6 +202,10 @@ pub(crate) fn validate(session: &Session) -> Result<(), String> {
                 return Err("Invalid tab selection or tab count".into());
             }
             for tab in &area.tabs {
+                if let Some(diff)=&tab.git_diff {
+                    if tab.kind!=PanelKind::GitDiff {return Err("Git comparison on a non-diff tab".into());}
+                    diff.validate()?;
+                } else if tab.kind==PanelKind::GitDiff {return Err("Missing Git comparison descriptor".into());}
                 if let Some(view) = &tab.model_view {
                     if tab.kind != PanelKind::Model { return Err("Model view state on a non-model tab".into()); }
                     view.validate()?;
@@ -289,6 +296,8 @@ pub(crate) fn capture(world: &World, workspace: Entity) -> Result<Session, Strin
                     PanelKind::Viewport
                 } else if world.get::<crate::lsp_panel::LspPanel>(panel).is_some() {
                     PanelKind::LanguageServers
+                } else if world.get::<crate::git::diff::DiffPanel>(panel).is_some() {
+                    PanelKind::GitDiff
                 } else if world.get::<crate::git::GitPanel>(panel).is_some() {
                     PanelKind::Git
                 } else if world.get::<crate::tasks::TasksPanel>(panel).is_some() {
@@ -303,6 +312,7 @@ pub(crate) fn capture(world: &World, workspace: Entity) -> Result<Session, Strin
                 };
                 tabs.push(TabRecipe {
                     kind,
+                    git_diff: world.get::<crate::git::diff::DiffPanel>(panel).map(|d|d.descriptor.clone()),
                     // Foreground-process names are observations, not workspace
                     // mutations. A starter shell must not create a session file
                     // merely because its first title observation arrived.
@@ -439,6 +449,7 @@ fn restore(world: &mut World, workspace: Entity, session: &Session) -> Result<()
             let mut panels = Vec::new();
             for tab in &recipe.tabs {
                 let panel = match tab.kind {
+                    PanelKind::GitDiff => world.spawn((crate::git::diff::DiffPanel::new(tab.git_diff.clone().ok_or("Missing comparison descriptor")?),InArea(area))).id(),
                     PanelKind::Git => world
                         .spawn((crate::git::GitPanel::default(), InArea(area)))
                         .id(),
@@ -1255,6 +1266,7 @@ mod tests {
             let mut recipe = capture(app.world(), owner).unwrap();
             recipe.name = "Restored".into();
             recipe.layouts[0].areas[0].tabs.push(TabRecipe {
+                git_diff: None,
                 kind: PanelKind::Terminal,
                 title: "Terminal".into(),
                 preview: false,

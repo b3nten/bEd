@@ -3,9 +3,9 @@ use bedtime_editor2::{BufferEdit, TextBuffer};
 use bedtime_git::Status;
 use std::{fs, process::Command, sync::atomic::AtomicU64};
 
-struct Repo(PathBuf);
+pub(super) struct Repo(pub(super) PathBuf);
 impl Repo {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
             "bed2-git-{}-{}",
@@ -21,7 +21,7 @@ impl Repo {
         repo.git(&["config", "core.hooksPath", ".git/hooks"]);
         repo
     }
-    fn git(&self, args: &[&str]) -> String {
+    pub(super) fn git(&self, args: &[&str]) -> String {
         let output = Command::new("git")
             .arg("-C")
             .arg(&self.0)
@@ -36,10 +36,10 @@ impl Repo {
         );
         String::from_utf8_lossy(&output.stdout).into_owned()
     }
-    fn write(&self, name: &str, text: &str) {
+    pub(super) fn write(&self, name: &str, text: &str) {
         fs::write(self.0.join(name), text).unwrap();
     }
-    fn initial(&self) {
+    pub(super) fn initial(&self) {
         self.write("a.txt", "original\n");
         self.git(&["add", "a.txt"]);
         self.git(&["commit", "-m", "Initial"]);
@@ -58,7 +58,7 @@ impl Drop for Repo {
     }
 }
 
-fn host(root: &Path) -> (App, Entity, Entity) {
+pub(super) fn host(root: &Path) -> (App, Entity, Entity) {
     let mut app = App::new();
     app.add_plugins((
         WorkbenchCorePlugin,
@@ -81,7 +81,7 @@ fn host(root: &Path) -> (App, Entity, Entity) {
     settle(&mut app, workspace);
     (app, workspace, panel)
 }
-fn wait(app: &mut App, mut done: impl FnMut(&World) -> bool) {
+pub(super) fn wait(app: &mut App, mut done: impl FnMut(&World) -> bool) {
     let until = Instant::now() + Duration::from_secs(10);
     loop {
         app.update();
@@ -92,7 +92,7 @@ fn wait(app: &mut App, mut done: impl FnMut(&World) -> bool) {
         std::thread::sleep(Duration::from_millis(2));
     }
 }
-fn settle(app: &mut App, workspace: Entity) {
+pub(super) fn settle(app: &mut App, workspace: Entity) {
     wait(app, |w| {
         w.get::<GitSession>(workspace).is_some_and(|s| {
             s.view.is_some() && s.scan.is_none() && s.pending.is_none() && !s.refresh
@@ -116,14 +116,14 @@ fn refresh(app: &mut App, workspace: Entity) {
         .invalidate();
     settle(app, workspace);
 }
-fn bind(app: &mut App, panel: Entity, repo: &Repo) -> DocumentHandle<TextBuffer> {
+pub(super) fn bind(app: &mut App, panel: Entity, repo: &Repo) -> DocumentHandle<TextBuffer> {
     let text = TextBuffer::from(fs::read_to_string(repo.0.join("a.txt")).unwrap());
     crate::file_editor::bind_loaded(app.world_mut(), panel, &repo.0.join("a.txt"), &text, None)
         .unwrap();
     let id = app.world().get::<DocumentView>(panel).unwrap().document();
     cast_document(app.world(), id).unwrap()
 }
-fn edit(app: &mut App, document: DocumentHandle<TextBuffer>, text: &str) {
+pub(super) fn edit(app: &mut App, document: DocumentHandle<TextBuffer>, text: &str) {
     let info = inspect_document(app.world(), document.id()).unwrap();
     let len = read_document(app.world(), document).unwrap().len();
     edit_document(

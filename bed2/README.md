@@ -56,6 +56,92 @@ The memory-only Documents and Hello World demos remain removed. Files and termin
 helpers share the application opening route; opening a file needs no Files panel.
 The standalone library examples remain available independently.
 
+## Reflected persistence prototype
+
+An isolated experiment lives in [`examples/persist_world.rs`](examples/persist_world.rs),
+with the capture/restore layer in
+[`examples/persist_world/persistence.rs`](examples/persist_world/persistence.rs).
+It does **not** install in the real application, read its preferences, or change
+its session format. The only added dependency is a development dependency on
+Bevy 0.20's `bevy_world_serialization`.
+
+```sh
+cargo run --offline --locked -p bed2 --example persist_world
+# Renderer-free round trip:
+cargo run --offline --locked -p bed2 --example persist_world -- --roundtrip
+cargo test --offline --locked -p bed2 --example persist_world
+# Native save → mutate → load → screenshot → exit:
+cargo run --offline --locked -p bed2 --example persist_world -- --smoke
+```
+
+The desktop app has two workspaces with split areas and editable Notes tabs.
+Edit text, global large-text preference, workspace/panel values, layout geometry,
+tab ordering and selection. **save all** writes the displayed prototype path;
+**load / replace** deliberately replaces this app's notes/layouts. Runtime-only
+click counters reset. **inspect snapshot** displays the raw global/workspace
+partitions without writing a file. The default file is
+`std::env::temp_dir()/bed2-persist-prototype.ron`; saves are explicit, not automatic.
+Native smoke instead uses `target/persist-world-smoke.ron` and captures
+`target/persist-world-smoke.png`.
+
+### What it proves
+
+Types opt in through reflection type data, not a panel factory registry:
+
+```rust,ignore
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, WorkbenchPersist)]
+#[require(PanelInstance = PanelInstance::of::<Self>(), RuntimeOnly)]
+struct Notes { text: String }
+
+app.register_type::<Notes>();
+```
+
+`ReflectWorkbenchPersist` is a small custom type-data marker. Capture builds a
+deny-by-default `WorldFilter` from marked registrations and uses Bevy's
+`DynamicWorldBuilder`, `DynamicWorld::serialize` and `WorldDeserializer` directly.
+A marked resource is global. Marked components stay on their entity and are
+partitioned using workspace ownership; an unscoped marked entity is global.
+Workspace, area and panel-local `Preferences` use the same marked component type.
+Declarative binding examples exercise global/workspace/panel scope and remapped
+panel references, but do not install shortcut handlers or a binding editor.
+
+Bevy remaps annotated entity references to fresh IDs. Reflection insertion also
+recreates the Notes component's required `PanelInstance`, drawing function and
+runtime component. Unmarked data is excluded even when registered for reflection;
+load also rejects unmarked top-level component/resource types. Workspace partitions
+restore independently without importing global state or another workspace.
+
+### Where workbench still needs a layer
+
+- Core workbench types aren't reflected. Temporary reflected structural components
+  bridge workspace/layout/area/panel metadata without a persistent second live
+  layout model or a panel-kind enum. They are removed after restoration.
+- Bevy's stock writer uses `RelationshipHookMode::Skip`. The experiment reconstructs
+  workbench relationships parent-first with ordinary insertion, preserving area/tab
+  order, then restores focus/selection after attachment hooks run. Reverse ownership
+  collections and presentation state are regenerated, not serialized.
+- Each partition rejects entity references outside itself; reference fields must
+  use Bevy's `#[entities]` annotation. Global resources cannot refer to workspace
+  entities in this model. Cross-partition stable references are not implemented.
+- Parsing, the top-level type allowlist, reference closure, ownership and tiling are
+  checked in a disposable staging world before the desktop action retires live
+  workspaces. Required-component construction runs during staging too: this assumes
+  the prototype's value-only, side-effect-free component types.
+
+This is not production persistence: reflected Rust type paths are the schema,
+there are no migrations, asset-handle loading is unsupported, writes are synchronous
+and non-atomic, and replacement has no document/process admission or rollback.
+The application chooses the first restored workspace rather than persisting active
+workspace selection. The outer versioned RON archive contains a global RON payload
+and one RON payload per workspace; it is just one demonstration storage choice.
+Real bed2 settings/session persistence and its safer I/O remain unchanged.
+
+On 2026-10-24, all five prototype tests, the renderer-free executable round trip,
+and the native macOS save/mutate/load/render-capture smoke passed. The native smoke
+exercises the same file-action path as the toolbar; pointer-driven editing,
+dragging/resizing and native Linux were not verified by that smoke.
+
 ## Bed mascot
 
 **View → Bed** creates an interactive mascot panel supplied by

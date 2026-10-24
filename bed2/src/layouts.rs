@@ -126,6 +126,7 @@ impl LayoutTemplate {
                             .tools
                             .iter()
                             .map(|kind| TabRecipe {
+                                git_diff: None,
                                 kind: kind.panel_kind(),
                                 title: String::new(),
                                 preview: false,

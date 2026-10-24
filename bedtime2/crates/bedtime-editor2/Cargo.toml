@@ -8,6 +8,7 @@ description = "Embeddable plain text editor with optional Workbench document int
 
 [features]
 default = []
+diff = []
 treesitter = ["dep:bedtime-treesitter2"]
 workbench = ["dep:bedtime-workbench2"]
 

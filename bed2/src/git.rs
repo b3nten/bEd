@@ -1,6 +1,7 @@
 //! Local Git workflow. The workspace owns repository state and admitted work;
 //! panels only observe it. All Git/file I/O stays in managed workers.
 mod panel;
+pub(crate) mod diff;
 mod presentation;
 use presentation::{ChangeSet, DirectoryKey, Group, RepositoryView, Row};
 pub(crate) use presentation::{GitPanelOptions, GroupBy, ViewMode};
@@ -121,6 +122,7 @@ struct GitSession {
     output: String,
     scans: u64,
     had_panels: bool,
+    comparisons: diff::Comparisons,
 }
 impl GitSession {
     fn new(root: PathBuf) -> Self {
@@ -144,6 +146,7 @@ impl GitSession {
             output: String::new(),
             scans: 0,
             had_panels: false,
+            comparisons: Default::default(),
         }
     }
     fn writable(&self) -> bool {
@@ -183,6 +186,7 @@ enum Pending {
     Saving {
         operation: Operation,
         sources: Vec<SavedSource>,
+        guard: Option<diff::StageGuard>,
     },
     Review {
         task: WorkspaceTask<Result<bedtime_git::Diff, String>>,
@@ -244,10 +248,12 @@ fn changes_files(operation: &Operation) -> bool {
             | Operation::Continue
             | Operation::Abort
             | Operation::Discard { .. }
+            | Operation::DiscardRange { .. }
+            | Operation::DiscardHunk { .. }
     )
 }
 fn needs_write_lease(operation: &Operation) -> bool {
-    changes_files(operation) || matches!(operation, Operation::Stage { .. })
+    changes_files(operation) || matches!(operation, Operation::Stage { .. } | Operation::StageRange { .. } | Operation::StageHunk { .. })
 }
 
 fn begin(
@@ -280,6 +286,7 @@ fn begin(
             Operation::Stage { paths } => {
                 paths.is_empty() || paths.iter().any(|p| p == relative.as_ref())
             }
+            Operation::StageRange { path, .. } | Operation::StageHunk { path, .. } => path == relative.as_ref(),
             Operation::CreateBranch { .. }
             | Operation::SwitchBranch { .. }
             | Operation::Pull
@@ -287,7 +294,7 @@ fn begin(
             _ => false,
         };
         let replaces = match &operation {
-            Operation::Discard { path, .. } | Operation::Resolve { path, .. } => {
+            Operation::Discard { path, .. } | Operation::DiscardRange { path, .. } | Operation::DiscardHunk { path, .. } | Operation::Resolve { path, .. } => {
                 path == relative.as_ref()
             }
             Operation::Abort => true,
@@ -323,7 +330,7 @@ fn begin(
         }
     }
     session.error = None;
-    session.pending = Some(Pending::Saving { operation, sources });
+    session.pending = Some(Pending::Saving { operation, sources, guard: None });
     session.invalidate();
     Ok(())
 }
@@ -398,7 +405,7 @@ fn poll_pending(
             }
             Err(_) => return Err("Git review was cancelled.".into()),
         },
-        Pending::Saving { operation, sources } => {
+        Pending::Saving { operation, sources, guard } => {
             let mut saving = false;
             for source in &sources {
                 let info = inspect_document(world, source.id).map_err(|e| e.to_string())?;
@@ -425,7 +432,7 @@ fn poll_pending(
                 }
             }
             if saving || session.scan.is_some() {
-                session.pending = Some(Pending::Saving { operation, sources });
+                session.pending = Some(Pending::Saving { operation, sources, guard });
                 return Ok(());
             }
             // Check destructive gates again after queued reads/saves. New edits
@@ -434,7 +441,7 @@ fn poll_pending(
             if changes_files(&operation) {
                 for (info, path) in source_infos(world, &root) {
                     let affected = match &operation {
-                        Operation::Discard { path: p, .. } | Operation::Resolve { path: p, .. } => {
+                        Operation::Discard { path: p, .. } | Operation::DiscardRange { path: p, .. } | Operation::DiscardHunk { path: p, .. } | Operation::Resolve { path: p, .. } => {
                             path == root.join(p)
                         }
                         _ => true,
@@ -464,7 +471,7 @@ fn poll_pending(
             };
             let observations = if changes_files(&operation) {
                 let affected = match &operation {
-                    Operation::Discard { path, .. } | Operation::Resolve { path, .. } => {
+                    Operation::Discard { path, .. } | Operation::DiscardRange { path, .. } | Operation::DiscardHunk { path, .. } | Operation::Resolve { path, .. } => {
                         root.join(path)
                     }
                     _ => root.clone(),
@@ -477,12 +484,19 @@ fn poll_pending(
                 .then(|| session.view.as_ref().unwrap().status.snapshot.clone());
             let requested = Arc::new(AtomicBool::new(false));
             let stop = requested.clone();
-            let op = operation.clone();
+            let mut op = operation.clone();
             let task = Workbench::for_entity(world, workspace)?.work().spawn_task(None, "Git operation", move |cancel| {
                 let result = (|| {
                     if let Some(expected) = expected_commit {
                         let Output::Status(status) = git_job(root.clone(), Operation::Status, &cancel, &stop)? else { unreachable!() };
                         if status.snapshot != expected { return Err("Repository state changed before commit. Review the refreshed status and retry.".into()); }
+                    }
+                    if let Some(guard)=guard {
+                        if let Operation::StageRange { path, snapshot, .. } = &mut op {
+                            let Output::Diff(fresh)=git_job(root.clone(),Operation::Diff {path:path.clone(),side:DiffSide::Unstaged},&cancel,&stop)? else {unreachable!()};
+                            guard.validate(&fresh)?;
+                            *snapshot=fresh.snapshot;
+                        }
                     }
                     match git_job(root, op, &cancel, &stop)? { Output::Done { output } => Ok(output), _ => Err("Unexpected Git operation response".into()) }
                 })();
@@ -573,7 +587,7 @@ fn reproject(world: &mut World, workspace: Entity, session: &mut GitSession) -> 
 
 fn update(world: &mut World) {
     let requested: Vec<_> = world
-        .query_filtered::<&InWorkspace, With<GitPanel>>()
+        .query_filtered::<&InWorkspace, Or<(With<GitPanel>, With<diff::DiffPanel>)>>()
         .iter(world)
         .map(|owner| owner.0)
         .collect();
@@ -608,9 +622,9 @@ fn update(world: &mut World) {
             .get::<WorkspaceWork>(workspace)
             .is_none_or(WorkspaceWork::is_closing);
         let visible = world
-            .query::<(&InWorkspace, &PanelPresentation, &GitPanel)>()
+            .query_filtered::<(&InWorkspace, &PanelPresentation), Or<(With<GitPanel>, With<diff::DiffPanel>)>>()
             .iter(world)
-            .any(|(owner, presentation, _)| owner.0 == workspace && presentation.visible);
+            .any(|(owner, presentation)| owner.0 == workspace && presentation.visible);
         let mut session = world.entity_mut(workspace).take::<GitSession>().unwrap();
         let has_panels = requested.contains(&workspace);
         if has_panels && !session.had_panels {
@@ -712,6 +726,7 @@ fn update(world: &mut World) {
                 }
             }
         }
+        if !closing { diff::update(world, workspace, &mut session); }
         world.entity_mut(workspace).insert(session);
     }
 }
@@ -722,5 +737,5 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
         serde_json::json!({"workspace":workspace.to_bits().to_string(),"root":session.root,"status":session.view.as_ref().map(|v| v.status.as_ref()),"busy":session.pending.is_some(),"refreshing":session.scan.is_some(),"scans":session.scans,"options":session.options,"projecting":session.projection.is_some(),"presented_options":session.view.as_ref().map(|v| v.options),"row_count":session.view.as_ref().map(|v|v.rows.len()),"draft":session.draft,"commit_mode":session.commit_mode,"error":session.error,"output":session.output,"confirmation":session.confirmation,"progress":session.progress()})
     }).collect();
     let panels: Vec<_> = world.query::<(Entity, &GitPanel)>().iter(world).map(|(entity, panel)| serde_json::json!({"entity":entity.to_bits().to_string(),"rendered_rows":panel.rendered_rows,"draw_micros":panel.draw_micros,"tree":panel.tree_diagnostics(),"controls":panel.controls.iter().map(|(key, rect)| (key.clone(),serde_json::json!({"min":[rect.min.x,rect.min.y],"max":[rect.max.x,rect.max.y]}))).collect::<serde_json::Map<String,serde_json::Value>>()})).collect();
-    Ok(serde_json::json!({"sessions":sessions,"panels":panels}))
+    Ok(serde_json::json!({"sessions":sessions,"panels":panels,"diffs":diff::inspect(world)}))
 }

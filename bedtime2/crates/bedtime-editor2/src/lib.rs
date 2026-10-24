@@ -17,6 +17,8 @@ pub use whitespace::Indentation;
 mod diagnostics;
 mod document;
 pub use diagnostics::*;
+#[cfg(feature = "diff")]
+pub mod diff;
 mod layout;
 mod text;
 pub use document::*;
@@ -103,6 +105,8 @@ struct Composition {
 #[derive(Component, Default)]
 pub struct EditorView {
     pub settings: EditorSettings,
+    #[cfg(feature = "diff")]
+    diff: diff::DiffState,
     diagnostics: Option<std::sync::Arc<Diagnostics>>,
     pub language_tools: bool,
     assistance: assistance::Assistance,
@@ -181,6 +185,10 @@ pub struct SymbolHit {
     pub rect: egui::Rect,
 }
 pub struct EditorOutput {
+    #[cfg(feature = "diff")]
+    pub diff_request: Option<diff::DiffRequest>,
+    #[cfg(feature = "diff")]
+    pub diff_controls: Vec<(u64, usize, egui::Rect)>,
     pub hovered_symbol: Option<SymbolHit>,
     pub hovered_text: Option<SymbolHit>,
     pub definition_clicked: Option<usize>,
@@ -239,6 +247,12 @@ impl EditorView {
             Navigation::scroll_to_line(snapshot, line, reveal, focus)?,
         )
     }
+    fn diff_active(&self) -> bool {
+        #[cfg(feature = "diff")]
+        { self.diff.active() }
+        #[cfg(not(feature = "diff"))]
+        { false }
+    }
     fn prepare_folds(&mut self, snapshot: &TextSnapshot, width: Option<usize>) {
         let wrap = self
             .wrapping
@@ -246,7 +260,7 @@ impl EditorView {
             .as_ref()
             .filter(|w| width.is_some() && w.snapshot.revision == snapshot.revision);
         self.folding
-            .prepare(&snapshot.text, wrap, self.composition.is_none());
+            .prepare(&snapshot.text, wrap, self.composition.is_none() && !self.diff_active());
     }
     fn reconcile_folds(
         &mut self,
@@ -540,7 +554,8 @@ impl EditorView {
             0.0
         };
         // Reserve the column before analysis arrives, including plain-text views.
-        let fold_gutter = cfg!(feature = "treesitter");
+        let fold_gutter = cfg!(feature = "treesitter") && !self.diff_active();
+        let gutter_width = if self.diff_active() { gutter_width * 2.0 + metrics.cell * 2.0 } else { gutter_width };
         let gutter_width = gutter_width + if fold_gutter { 14.0 } else { 0.0 };
         let hovered = ui.rect_contains_pointer(ui.available_rect_before_wrap());
         let wheel = if hovered {
@@ -572,6 +587,12 @@ impl EditorView {
             .map(|nav| (nav.range.clone(), nav.reveal));
         let mut failure = None;
         let mut number_rows = Vec::new();
+        #[cfg(feature = "diff")]
+        let mut historical_numbers = Vec::new();
+        #[cfg(feature = "diff")]
+        let mut diff_request = None;
+        #[cfg(feature = "diff")]
+        let mut diff_controls = Vec::new();
         let mut caret_rect = egui::Rect::NOTHING;
         let mut hovered_symbol = None;
         let mut hovered_text = None;
@@ -613,13 +634,18 @@ impl EditorView {
                         {
                             failure = Some(error);
                         }
+                        #[cfg(feature = "diff")]
+                        {
+                            let wrap=self.active_wrap(&snapshot,wrap_width).cloned();
+                            self.diff.prepare(ui.ctx(), &snapshot, wrap);
+                        }
                         self.prepare_folds(&snapshot, wrap_width);
                         self.folding.animate(
                             &snapshot.text,
                             self.wrapping.index.as_ref().filter(|index| {
                                 wrap_width.is_some() && index.snapshot.revision == snapshot.revision
                             }),
-                            self.composition.is_none(),
+                            self.composition.is_none() && !self.diff_active(),
                             now,
                             motion.enabled,
                             ui.ctx(),
@@ -629,6 +655,8 @@ impl EditorView {
                             metrics: &metrics,
                             wrap: self.active_wrap(&snapshot, wrap_width),
                             folds: &self.folding.display_map,
+                            #[cfg(feature = "diff")]
+                            diff: self.diff.current(snapshot.revision, self.active_wrap(&snapshot, wrap_width)).filter(|_|self.composition.is_none()),
                         };
                         let size = geometry.size(viewport.size());
                         let rect = egui::Rect::from_min_size(origin, size);
@@ -651,6 +679,8 @@ impl EditorView {
                                 metrics: &metrics,
                                 wrap: self.active_wrap(&snapshot, wrap_width),
                                 folds: &self.folding.display_map,
+                            #[cfg(feature = "diff")]
+                            diff: self.diff.current(snapshot.revision, self.active_wrap(&snapshot, wrap_width)).filter(|_|self.composition.is_none()),
                             };
                             let local = position - origin.to_vec2();
                             let hit = geometry.hit(ui, local);
@@ -698,6 +728,8 @@ impl EditorView {
                                     metrics: &metrics,
                                     wrap: self.active_wrap(&snapshot, wrap_width),
                                     folds: &self.folding.display_map,
+                            #[cfg(feature = "diff")]
+                            diff: self.diff.current(snapshot.revision, self.active_wrap(&snapshot, wrap_width)).filter(|_|self.composition.is_none()),
                                 };
                                 let local = position - origin.to_vec2();
                                 let hit = geometry.hit(ui, local);
@@ -833,11 +865,11 @@ impl EditorView {
                             active_wrap
                         };
                         self.folding
-                            .prepare(&display, wrap, self.composition.is_none());
+                            .prepare(&display, wrap, self.composition.is_none() && !self.diff_active());
                         self.folding.animate(
                             &display,
                             wrap,
-                            self.composition.is_none(),
+                            self.composition.is_none() && !self.diff_active(),
                             now,
                             motion.enabled,
                             ui.ctx(),
@@ -848,6 +880,8 @@ impl EditorView {
                             metrics: &metrics,
                             wrap,
                             folds: &self.folding.display_map,
+                            #[cfg(feature = "diff")]
+                            diff: self.diff.current(snapshot.revision, self.active_wrap(&snapshot, wrap_width)).filter(|_|self.composition.is_none()),
                         };
                         if self.language_tools && self.composition.is_none() && response.hovered() {
                             if let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) {
@@ -911,10 +945,8 @@ impl EditorView {
                         let clip = ui.clip_rect();
                         let painter = ui.painter().with_clip_rect(clip);
                         let first = geometry
-                            .folds
                             .row_at((viewport.top() - 6.0) / metrics.height);
                         let last = (geometry
-                            .folds
                             .row_at((viewport.bottom() + 6.0) / metrics.height)
                             + 2)
                         .min(geometry.rows());
@@ -925,6 +957,35 @@ impl EditorView {
                         let mut local_caret = geometry.caret_for(selection.head, self.upstream);
                         let caret_row = geometry.visual_row_for(selection.head, self.upstream);
                         for row in first..last {
+                            #[cfg(feature = "diff")]
+                            if let Some(projection) = geometry.diff {
+                                let y=origin.y+6.0+geometry.row_y(row)*metrics.height;
+                                match projection.row(row) {
+                                    diff::Row::Control(chunk) => {
+                                        let rect=egui::Rect::from_min_size(egui::pos2(origin.x+8.0,y),egui::vec2(viewport.width().max(160.0),metrics.height));
+                                        let mut controls=ui.new_child(egui::UiBuilder::new().id_salt((id,"diff",chunk)).max_rect(rect).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                                        controls.spacing_mut().interact_size.y=metrics.height;
+                                        for action in &self.diff.actions {
+                                            let response=controls.add_enabled(action.enabled,egui::Button::new(&action.label).small());
+                                            diff_controls.push((action.id,chunk,response.rect));
+                                            if response.clicked() { diff_request=Some(diff::DiffRequest { action:action.id, comparison:projection.comparison, revision:projection.revision, range:projection.ranges[chunk].clone() }); }
+                                        }
+                                        continue;
+                                    }
+                                    diff::Row::Historical(old_row) => {
+                                        let segment=projection.historical_segment(old_row);
+                                        let line=if projection.width.is_some() {
+                                            layout::VisibleLine::fragment(ui,&projection.baseline,&metrics,segment.bytes,(segment.indent as f32-segment.columns.start as f32)*metrics.cell)
+                                        } else { layout::VisibleLine::new(ui,&projection.baseline,&metrics,segment.line,first_cell..last_cell) };
+                                        painter.rect_filled(egui::Rect::from_min_max(egui::pos2(clip.left(),y),egui::pos2(clip.right(),y+metrics.height)),0.0,ui.visuals().error_fg_color.gamma_multiply(0.12));
+                                        painter.galley(egui::pos2(origin.x+8.0+line.left(),y),line.galley.clone(),ui.visuals().text_color());
+                                        if segment.part==0 { historical_numbers.push((segment.line,y)); }
+                                        rendered_lines+=1; laid_out_bytes+=line.source_bytes;
+                                        continue;
+                                    }
+                                    diff::Row::Document(_) => {}
+                                }
+                            }
                             let segment = geometry.segment(row);
                             let line = geometry.line(ui, row, first_cell..last_cell);
                             #[cfg(feature = "treesitter")]
@@ -943,15 +1004,21 @@ impl EditorView {
                             }
                             laid_out_bytes += line.source_bytes;
                             rendered_lines += 1;
-                            let y = origin.y + 6.0 + geometry.folds.row_y(row) * metrics.height;
+                            let y = origin.y + 6.0 + geometry.row_y(row) * metrics.height;
                             if segment.part == 0 {
                                 number_rows.push((
                                     segment.line,
                                     y,
-                                    geometry.folds.row_height(row) * metrics.height,
+                                    geometry.row_height(row) * metrics.height,
                                 ));
                             }
-                            let row_height = geometry.folds.row_height(row) * metrics.height;
+                            #[cfg(feature = "diff")]
+                            if let Some(projection)=geometry.diff {
+                                if projection.old_line(segment.line).is_none() {
+                                    painter.rect_filled(egui::Rect::from_min_max(egui::pos2(clip.left(),y),egui::pos2(clip.right(),y+metrics.height)),0.0,egui::Color32::from_rgb(70,180,90).gamma_multiply(0.12));
+                                }
+                            }
+                            let row_height = geometry.row_height(row) * metrics.height;
                             let painter =
                                 painter.with_clip_rect(clip.intersect(egui::Rect::from_min_max(
                                     egui::pos2(clip.left(), y),
@@ -1119,7 +1186,7 @@ impl EditorView {
                                 local_caret = egui::Rect::from_min_size(
                                     egui::pos2(
                                         8.0 + line.x_at(selection.head),
-                                        6.0 + geometry.folds.row_y(row) * metrics.height,
+                                        6.0 + geometry.row_y(row) * metrics.height,
                                     ),
                                     egui::vec2(0.0, metrics.height),
                                 );
@@ -1212,6 +1279,17 @@ impl EditorView {
         }
         self.scroll = scroll.state.offset;
         self.observed_revision = Some(snapshot.revision);
+        #[cfg(feature = "diff")]
+        if self.settings.line_numbers {
+            if let Some(projection)=self.diff.current(snapshot.revision,self.active_wrap(&snapshot,self.settings.wrap.then_some(1))) {
+                let painter=ui.painter().with_clip_rect(gutter.intersect(ui.clip_rect()));
+                let x=gutter.left()+gutter.width()/2.0-6.0;
+                for (row,y) in historical_numbers { painter.text(egui::pos2(x,y),egui::Align2::RIGHT_TOP,(row+1).to_string(),metrics.font.clone(),ui.visuals().error_fg_color); }
+                for &(row,y,_) in &number_rows {
+                    if let Some(old)=projection.old_line(row) { painter.text(egui::pos2(x,y),egui::Align2::RIGHT_TOP,(old+1).to_string(),metrics.font.clone(),ui.visuals().weak_text_color()); }
+                }
+            }
+        }
         if self.settings.line_numbers || fold_gutter {
             let painter = ui
                 .painter()
@@ -1282,6 +1360,10 @@ impl EditorView {
             scroll.inner.has_focus(),
         );
         Ok(EditorOutput {
+            #[cfg(feature = "diff")]
+            diff_request,
+            #[cfg(feature = "diff")]
+            diff_controls,
             hovered_symbol,
             hovered_text,
             definition_clicked,
@@ -1568,6 +1650,8 @@ impl EditorView {
                                 metrics: &layout::Metrics::new(ui),
                                 wrap,
                                 folds: &self.folding.map,
+                                #[cfg(feature = "diff")]
+                                diff: self.diff.current(snapshot.revision,wrap),
                             };
                             let column = *self
                                 .preferred_column
